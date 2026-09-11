@@ -1097,6 +1097,10 @@ add_executable(stick_identity_test tests/stick_identity_test.cpp)
 target_include_directories(stick_identity_test PRIVATE src)
 add_test(NAME stick_identity_test COMMAND stick_identity_test)
 
+add_executable(stick_path_match_test tests/stick_path_match_test.cpp)
+target_include_directories(stick_path_match_test PRIVATE src)
+add_test(NAME stick_path_match_test COMMAND stick_path_match_test)
+
 add_executable(stick_presence_diff_test tests/stick_presence_diff_test.cpp)
 target_include_directories(stick_presence_diff_test PRIVATE src)
 add_test(NAME stick_presence_diff_test COMMAND stick_presence_diff_test)

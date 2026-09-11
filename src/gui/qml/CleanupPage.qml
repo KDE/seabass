@@ -89,7 +89,7 @@ Page {
         leftPadding: 0
         rightPadding: 0
         topPadding: 0
-        bottomPadding: 0
+        bottomPadding: Theme.headerBottomPadding
         // Opaque background override, see AppSettingsPage.qml's header
         // for why (KDE's Breeze style bleeds the window behind Seabass
         // through an unstyled ToolBar). This page is the one that made the

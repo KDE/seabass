@@ -373,6 +373,18 @@ std::vector<StickBackupDescription> RestoreStickBackup::describeAll(const fs::pa
     return descriptions;
 }
 
+int RestoreStickBackup::countArchives(const fs::path &directory)
+{
+    int count = 0;
+    std::error_code ec;
+    for (const fs::directory_entry &entry : fs::directory_iterator(directory, ec)) {
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".zip") {
+            count++;
+        }
+    }
+    return count;
+}
+
 RestorePreview RestoreStickBackup::preview(const RestoreOptions &options)
 {
     RestorePreview preview;

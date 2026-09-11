@@ -126,7 +126,7 @@ Page {
         leftPadding: 0
         rightPadding: 0
         topPadding: 0
-        bottomPadding: 0
+        bottomPadding: Theme.headerBottomPadding
         RowLayout {
             anchors.fill: parent
             anchors.margins: Theme.pageMargin

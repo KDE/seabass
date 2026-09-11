@@ -24,6 +24,36 @@ Page {
             root.editRegistry.refreshLocks();
         }
     }
+    // How many rows are actual removable media, i.e. not a folder
+    // someone opened and not a browsed backup.
+    //
+    // The model answers this itself; the loop is for the QML tests,
+    // which stand a plain array of stick objects in for the model and
+    // have no such property. Same shape as the editRegistry guard above:
+    // this page is built to run against fakes.
+    readonly property int removableStickCount: {
+        var model = root.mediaController.sticks;
+        if (model === null || model === undefined) {
+            return 0;
+        }
+        if (model.removableCount !== undefined) {
+            return model.removableCount;
+        }
+        var count = 0;
+        for (var i = 0; i < (model.length || 0); ++i) {
+            if (!model[i].isFolder) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // The two store counts, readable by a test that wants to check a
+    // button's enabled state against the thing that decides it rather
+    // than against a hardcoded expectation of what the machine holds.
+    readonly property int homeBackupsFullCount: homeBackups.fullBackupCount
+    readonly property int homeBackupsMetadataCount: homeBackups.metadataTrackCount
+
     function isLockedByOther(libraryId) {
         return libraryId.length > 0 && root.editRegistry !== null && root.editRegistry !== undefined
             && root.editRegistry.lockedByOther.indexOf(libraryId) >= 0;
@@ -36,6 +66,9 @@ Page {
     StackView.onActivated: {
         root.backupAdvisor.reassessAll();
         root.refreshLocks();
+        // Coming back from having made a backup, or deleted the last
+        // one: the two buttons under the list are stale until asked.
+        homeBackups.refresh();
     }
     // Another instance taking or dropping a lock shows up within 2 s
     // while this page is in front.
@@ -98,6 +131,14 @@ Page {
             wrapMode: Text.WordWrap
         }
     }
+    // The two counts the row under the stick list needs, and nothing
+    // else. Both are probes that open nothing and create nothing -- see
+    // HomeBackupsController.
+    HomeBackupsController {
+        id: homeBackups
+        backupDirectory: root.appSettingsController.stickBackupDirectory
+    }
+
     LockedLibraryDialog {
         id: lockedDialog
         objectName: "lockedDialog"
@@ -144,31 +185,11 @@ Page {
     signal cloneStickRequested(string sourceLabel, string sourceRekordboxPath, string sourceEnginePath,
                                string targetMountPoint, string targetLabel, bool targetHasLibrary)
 
-    // A subtle brand watermark in the corner of the very first page shown --
-    // same "Seabass / Your DJ Toolbox" text as AboutPage.qml, just
-    // bigger and dimmer, since here it's sitting in the background behind
-    // real content rather than being the page's own subject. Declared
-    // before the ColumnLayout below (and given no width/height of its own)
-    // so it never participates in layout and never intercepts input --
-    // it's purely decorative.
-    ColumnLayout {
-        anchors.left: parent.left
-        anchors.bottom: parent.bottom
-        anchors.margins: 24
-        spacing: 4
-        opacity: 0.25
-
-        Label {
-            text: "Seabass"
-            font.bold: true
-            font.pointSize: Theme.baseFontPointSize * 3.2
-        }
-        Label {
-            text: "Your DJ Toolbox"
-            font.pointSize: Theme.baseFontPointSize * 1.6
-            color: Qt.lighter(Theme.accent, 1.3)
-        }
-    }
+    // The brand watermark that used to sit in this corner is gone: the
+    // header now carries "Seabass / Your DJ Toolbox" as the page's own
+    // title, and the same two words twice on one screen read as a
+    // mistake rather than as branding. The window still has the Sound
+    // Bass mark behind everything (Main.qml's WatermarkLayer).
 
     ColumnLayout {
         anchors.fill: parent
@@ -176,51 +197,109 @@ Page {
         spacing: 12
 
         RowLayout {
-            PageTitle {
-                text: "Home"
-                level: "page"
+            Layout.fillWidth: true
+
+            // The app's own name where every other page has a page
+            // title, because this page's subject IS the app: it is the
+            // one screen you arrive at rather than navigate to, and
+            // "Home" named the position rather than the thing.
+            ColumnLayout {
+                objectName: "brandLockup"
+                spacing: 0
+                // Same two colours AboutPage gives this pair, which is
+                // the only other place the lockup appears: the Kelp
+                // palette's text, and its accent lightened, so the name
+                // and the slogan read as one mark rather than as a title
+                // that happens to have a line under it.
+                Label {
+                    objectName: "brandName"
+                    text: "Seabass"
+                    font.family: Theme.titleFamily
+                    font.weight: Font.Bold
+                    font.pointSize: Theme.titleMedium
+                    color: Theme.text
+                }
+                Label {
+                    objectName: "brandSlogan"
+                    text: "Your DJ Toolbox"
+                    font.family: Theme.titleFamily
+                    font.weight: Theme.titleWeight
+                    // A clear step down from the name above it: this is
+                    // the subtitle, and at the same size the pair read as
+                    // two competing titles.
+                    font.pointSize: Theme.subtitleSize
+                    color: Qt.lighter(Theme.accent, 1.3)
+                }
             }
             Item { Layout.fillWidth: true }
             ToolButton {
                 objectName: "openBackupButton"
-                text: "🗄"
-                font.pointSize: Theme.fontLarge
+                icon.name: "package-x-generic"
+                display: AbstractButton.IconOnly
+                text: "Browse a full stick backup"
                 ToolTip.visible: hovered
                 ToolTip.text: "Browse a full stick backup -- opened in place, nothing is unpacked"
                 onClicked: openBackupDialog.open()
             }
             ToolButton {
                 objectName: "openFolderButton"
-                text: "📂"
-                font.pointSize: Theme.fontLarge
+                icon.name: "folder-open"
+                display: AbstractButton.IconOnly
+                text: "Open a library from a folder"
                 ToolTip.visible: hovered
                 ToolTip.text: "Open a library from a folder -- a copy on this computer, or a restored stick"
                 onClicked: openFolderDialog.open()
             }
+            // Breeze's own icons rather than emoji.
+            //
+            // These were plain emoji with no font.family, which the
+            // system resolves to the color emoji font: five full-color
+            // pictures in a header whose every other mark is a flat
+            // glyph. Named theme icons instead, so they are monochrome,
+            // follow the desktop's icon theme, and recolor with it.
+            //
+            // icon.name, not a bundled .svg: Breeze recolors through
+            // `fill:currentColor`, which Qt's SVG renderer does not
+            // resolve (see HomeIcon.qml, which had to become a Shape for
+            // exactly that reason). Going through QIcon::fromTheme gets
+            // the platform's own resolved, recolored icon instead.
+            //
+            // text is set on each despite IconOnly: it never renders,
+            // and it is what an assistive reader announces.
             ToolButton {
-                // Plain "ℹ️"/"⚙️" (with the emoji variation selector) render
-                // in the system's color emoji font instead of a flat
-                // monochrome glyph -- same full-color look as the
-                // ActionCard icons further down the page, not a
-                // font.family override forcing the outline symbol style
-                // the way this used to.
-                text: "ℹ️"
-                font.pointSize: Theme.fontLarge
+                objectName: "aboutButton"
+                icon.name: "help-about"
+                display: AbstractButton.IconOnly
+                text: "About Seabass"
                 ToolTip.visible: hovered
                 ToolTip.text: "About Seabass"
                 onClicked: root.aboutRequested()
             }
             ToolButton {
-                text: "⚙️"
-                font.pointSize: Theme.fontLarge
+                objectName: "preferencesButton"
+                icon.name: "configure"
+                display: AbstractButton.IconOnly
+                text: "Preferences"
                 ToolTip.visible: hovered
                 ToolTip.text: "Preferences"
                 onClicked: root.appSettingsRequested()
             }
             ToolButton {
                 id: donateButton
-                text: "❤️"
-                font.pointSize: Theme.fontLarge
+                objectName: "donateButton"
+                // The one that stays in colour, deliberately: this is
+                // the only button in the header asking for something
+                // rather than offering something, and a red mark among
+                // five grey ones is what makes it findable.
+                //
+                // Breeze's favourite emblem, which is a star rather than
+                // a heart -- the theme ships no heart in any category
+                // (checked across every installed theme). Its artwork is
+                // fill:currentColor, so icon.color is what colours it.
+                icon.name: "emblem-favorite"
+                icon.color: Theme.danger
+                display: AbstractButton.IconOnly
+                text: "Support Seabass"
                 ToolTip.visible: hovered
                 ToolTip.text: "Support Seabass"
                 onClicked: root.donationRequested()
@@ -272,10 +351,21 @@ Page {
         // whatever stick happens to be plugged in right now -- pulled out
         // of the per-stick Backups hub for exactly that reason (see
         // BackupsHubPage.qml's own comment for what stays there because
-        // it genuinely does need a specific stick). Always here, even
-        // with no stick inserted at all.
+        // it genuinely does need a specific stick).
+        //
+        // Shown only while no stick is plugged in. With one in, the
+        // sticks are what this page is about and these two cards sit
+        // above them taking the top of the screen for the case that is
+        // not happening. They are still reachable from the row under the
+        // list, which is where someone looks for them once there is a
+        // stick to compare against.
+        //
+        // removableCount, not the row count: a folder someone opened is
+        // not a stick, and should not make the no-stick tools vanish.
         ColumnLayout {
+            objectName: "noStickBackupTools"
             Layout.fillWidth: true
+            visible: root.removableStickCount === 0
             spacing: 8
 
             Subtitle { text: "Backups"; color: Theme.textMuted }
@@ -472,10 +562,22 @@ Page {
                                     Layout.fillWidth: true
                                     spacing: 8
                                     Label {
+                                        objectName: "stickPathLabel"
                                         text: delegateRoot.mounted ? delegateRoot.mountPoint : delegateRoot.devicePath
                                         color: Theme.textMuted
                                         font.pointSize: Theme.baseFontPointSize * 0.9
                                         elide: Text.ElideMiddle
+                                        // A Text's Layout.minimumWidth
+                                        // defaults to its implicit width,
+                                        // so this had a floor at its full
+                                        // natural size: the elide could
+                                        // never fire and a long mount
+                                        // point pushed the size beside it
+                                        // off the card instead. The
+                                        // maximum keeps a short path from
+                                        // stretching; the minimum is what
+                                        // lets a long one shorten.
+                                        Layout.minimumWidth: 0
                                         Layout.maximumWidth: implicitWidth
                                         Layout.fillWidth: true
                                     }
@@ -873,6 +975,52 @@ Page {
                 font.pointSize: Theme.fontLarge
                 color: Theme.textMuted
             }
+        }
+
+        // Under every stick, because what is in here is not about any of
+        // them: these are the two stores this computer keeps, and the
+        // question they answer ("what have I got saved?") is one you ask
+        // after looking at the sticks rather than before.
+        //
+        // Each is off when its store is empty rather than hidden. A
+        // button that is missing tells you nothing; one that is there
+        // and grey tells you the feature exists and that you have not
+        // used it yet, and its tooltip says how to start.
+        RowLayout {
+            objectName: "browseBackupsRow"
+            Layout.fillWidth: true
+            spacing: Theme.rowSpacing
+
+            Button {
+                objectName: "browseFullBackupsButton"
+                text: "Browse Full Backups"
+                icon.name: "package-x-generic"
+                enabled: homeBackups.fullBackupCount > 0
+                onClicked: openBackupDialog.open()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: homeBackups.fullBackupCount > 0
+                    ? "Open one of the " + homeBackups.fullBackupCount
+                      + " full stick backups on this computer. Nothing is unpacked."
+                    : "No full stick backups yet. A stick's Backups card makes one."
+            }
+            Button {
+                objectName: "browseMetadataBackupsButton"
+                text: "Browse Metadata Backups"
+                icon.name: "view-list-details"
+                enabled: homeBackups.metadataTrackCount > 0
+                // No stick: the page opens on its browse half, which is
+                // the half this button is about. Backing up needs a
+                // stick and says so there.
+                onClicked: root.metadataBackupRequested("", "", "", "")
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: homeBackups.metadataTrackCount > 0
+                    ? "The cues, ratings and comments kept on this computer for "
+                      + homeBackups.metadataTrackCount + " tracks"
+                    : "Nothing backed up yet. A stick's Metadata Backup card fills this."
+            }
+            Item { Layout.fillWidth: true }
         }
     }
 }

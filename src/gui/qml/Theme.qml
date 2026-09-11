@@ -355,6 +355,12 @@ QtObject {
     // Unscaled on purpose. These are gaps between things, not type, and
     // the pages already in the tree use these same numbers literally --
     // so adopting the tokens moves nothing that was already right.
+    // The gap a page's header leaves under itself, so the breadcrumb is
+    // not sitting directly on the first line of the body. Set as a
+    // ToolBar's bottomPadding by every page's header; the other three
+    // sides stay zeroed so the header's horizontal inset is pageMargin
+    // and nothing else (see any page's header comment for why).
+    readonly property real headerBottomPadding: 8
     readonly property real pageMargin: 16
     readonly property real cardPadding: 16
     readonly property real sectionSpacing: 14   // between blocks down a page

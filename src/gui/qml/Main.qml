@@ -152,6 +152,104 @@ ApplicationWindow {
         onUnderstood: EditSessionRegistry.acknowledgeStickReturned()
     }
 
+    // ---- a stick pulled out from under a page that was reading it ----
+    //
+    // StickRemovedDialog above covers the page that was EDITING one: it
+    // hangs off an edit session, and a session only exists once
+    // something has been staged. Every other page that was opened
+    // against a stick -- Browse Library, Library Health, Statistics,
+    // Sync, the metadata pages -- had no session and so said nothing at
+    // all. The stick went, the page stayed up showing a library that was
+    // no longer there, and every button on it failed one at a time.
+    //
+    // Done here, once, rather than on each of the nineteen pages that
+    // carry a catalog path: the window is the only thing that knows
+    // which page is in front, and a rule each page implemented for
+    // itself is a rule some page would be missing.
+    property string stickGoneLabel: ""
+
+    // The catalog path the page in front was opened against, or "" for
+    // a page that is not about one stick. Read off whichever property
+    // the page happens to carry -- the three names below are the only
+    // spellings in use, and a page with none of them is not referencing
+    // a stick.
+    function currentPageStickPath() {
+        var page = stackView.currentItem;
+        if (!page) {
+            return "";
+        }
+        var candidates = [page.rekordboxPath, page.enginePath, page.pioneerRoot];
+        for (var i = 0; i < candidates.length; ++i) {
+            if (typeof candidates[i] === "string" && candidates[i].length > 0) {
+                return candidates[i];
+            }
+        }
+        return "";
+    }
+
+    function checkCurrentPageStick() {
+        // One dialog at a time. A page mid-edit gets StickRemovedDialog,
+        // which offers to discard the staged changes and waits for the
+        // same stick to come back; this one would be a second modal over
+        // it saying less.
+        if (EditSessionRegistry.stickRemovedSession) {
+            stickGoneDialog.close();
+            return;
+        }
+        var path = window.currentPageStickPath();
+        if (path.length === 0 || mediaCtrl.pathIsPresent(path)) {
+            // Also the way out: plugging the stick back in closes this
+            // by itself, rather than leaving a stale warning to dismiss.
+            stickGoneDialog.close();
+            return;
+        }
+        if (!stickGoneDialog.opened) {
+            stickGoneDialog.open();
+        }
+    }
+
+    Connections {
+        target: mediaCtrl.sticks
+        function onCountsChanged() {
+            // The label has to be read while the stick is still listed,
+            // so it is captured on every change rather than looked up
+            // after the row has gone.
+            var path = window.currentPageStickPath();
+            var label = mediaCtrl.stickLabelForPath(path);
+            if (label.length > 0) {
+                window.stickGoneLabel = label;
+            }
+            window.checkCurrentPageStick();
+        }
+    }
+    Connections {
+        target: stackView
+        function onCurrentItemChanged() {
+            var path = window.currentPageStickPath();
+            var label = mediaCtrl.stickLabelForPath(path);
+            if (label.length > 0) {
+                window.stickGoneLabel = label;
+            }
+            window.checkCurrentPageStick();
+        }
+    }
+
+    MessageDialog {
+        id: stickGoneDialog
+        objectName: "stickGoneDialog"
+        severity: SeabassDialog.Warning
+        closePolicy: Popup.NoAutoClose
+        title: "USB stick removed"
+        headline: (window.stickGoneLabel.length > 0
+                    ? "USB stick " + window.stickGoneLabel : "The USB stick")
+            + " this page is reading has been removed."
+        detailText: "Nothing was being written, so nothing is damaged. Plug the stick back in to carry "
+            + "on, or go back to the stick list."
+        acceptText: "Back to the stick list"
+        showReject: false
+        onAccepted: stackView.pop(null)
+    }
+
     // Pushes the resolved Material colors + the theme toggle into the
     // Theme singleton. A pure-QML singleton has no place in the visual
     // tree of its own, so it can't read the Material attached properties

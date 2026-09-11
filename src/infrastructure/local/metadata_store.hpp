@@ -161,6 +161,18 @@ public:
     // this feature costs on disk.
     std::uint64_t artworkBytesOnDisk() const;
 
+    // How many tracks a store already on disk holds, without creating or
+    // migrating anything. 0 when there is no database yet, when it is
+    // unreadable, or when it predates the tracks table.
+    //
+    // Constructing a MetadataStore would answer the same question and
+    // have side effects while doing it: it creates the database and its
+    // schema on first use, and migrates a version-1 one in place. A
+    // button deciding whether to grey itself out must not do either --
+    // launching Seabass and never touching this feature should leave no
+    // trace of it on disk.
+    static int storedTrackCountIfPresent(std::filesystem::path databasePath = defaultDatabasePath());
+
     static std::filesystem::path defaultDatabasePath();
     // Where cover art copies live, derived from the database path.
     std::filesystem::path artworkDir() const;

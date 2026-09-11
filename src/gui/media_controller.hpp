@@ -29,6 +29,13 @@ class DetectedStickListModel : public QAbstractListModel
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Populated by MediaController; not constructible from QML")
+    Q_PROPERTY(int count READ rowCount NOTIFY countsChanged)
+    // Rows that are actual removable media, i.e. not an opened folder or
+    // a browsed stick backup. "Is a stick plugged in?" is a different
+    // question from "is anything in the list?", and the first page asks
+    // the first one: a folder someone opened is not a reason to hide the
+    // tools that exist for when no stick is present.
+    Q_PROPERTY(int removableCount READ removableCount NOTIFY countsChanged)
 
 public:
     enum Roles {
@@ -77,6 +84,10 @@ public:
 
     void setSticks(std::vector<application::DetectedStick> sticks);
     const std::vector<application::DetectedStick> &sticks() const { return m_sticks; }
+    int removableCount() const;
+
+signals:
+    void countsChanged();
 
 private:
     std::vector<application::DetectedStick> m_sticks;
@@ -209,6 +220,21 @@ public:
     // capacity when there is no filesystem UUID), and only a mounted row
     // has a mount point to record in a lock cookie.
     std::optional<application::DetectedStick> stickForLibraryId(const QString &libraryId) const;
+
+    // Is `path` still on something this controller can see?
+    //
+    // For a page that was opened against one stick and has no edit
+    // session to notice the stick leaving: it holds a catalog path, the
+    // stick it came from is either still in the list or it is not, and
+    // every page's answer comes from the same place rather than from
+    // each page inventing its own presence test.
+    //
+    // Prefix match on the mount point, with a separator, so /media/RV2
+    // does not answer for /media/RV22. An empty path is "present":
+    // nothing was being referenced, so nothing has gone.
+    Q_INVOKABLE bool pathIsPresent(const QString &path) const;
+    // The label of the stick `path` is on, for naming it in a message.
+    Q_INVOKABLE QString stickLabelForPath(const QString &path) const;
     std::string mountPointFor(const application::StickIdentity &identity) const;
 
 signals:

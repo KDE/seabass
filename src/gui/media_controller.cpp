@@ -1,5 +1,7 @@
 #include "media_controller.hpp"
 
+#include "application/stick_path_match.hpp"
+
 #include <QCoreApplication>
 #include <QSettings>
 #include <QtConcurrent/QtConcurrentRun>
@@ -120,6 +122,17 @@ QHash<int, QByteArray> DetectedStickListModel::roleNames() const
     };
 }
 
+int DetectedStickListModel::removableCount() const
+{
+    int count = 0;
+    for (const auto &stick : m_sticks) {
+        if (!stick.isFolder) {
+            count++;
+        }
+    }
+    return count;
+}
+
 QVariantMap DetectedStickListModel::get(int row) const
 {
     QVariantMap result;
@@ -152,6 +165,10 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
     beginResetModel();
     m_sticks = std::move(sticks);
     endResetModel();
+    // endResetModel() tells a view its rows changed; it does not
+    // re-evaluate a binding on a property of this object, so the counts
+    // have to say so themselves.
+    emit countsChanged();
 }
 
 MediaController::MediaController(QObject *parent) : QObject(parent)
@@ -552,6 +569,31 @@ QString MediaController::libraryIdForMountPoint(const QString &mountPoint) const
 {
     auto identity = lastKnownIdentity(mountPoint.toStdString());
     return identity ? QString::fromStdString(identity->libraryId()) : QString();
+}
+
+bool MediaController::pathIsPresent(const QString &path) const
+{
+    if (path.isEmpty()) {
+        return true;  // nothing referenced, so nothing missing
+    }
+    const std::string wanted = path.toStdString();
+    for (const auto &stick : m_model.sticks()) {
+        if (application::pathIsUnder(wanted, stick.mountPoint)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString MediaController::stickLabelForPath(const QString &path) const
+{
+    const std::string wanted = path.toStdString();
+    for (const auto &stick : m_model.sticks()) {
+        if (application::pathIsUnder(wanted, stick.mountPoint)) {
+            return QString::fromStdString(stick.label);
+        }
+    }
+    return {};
 }
 
 std::optional<application::DetectedStick> MediaController::stickForLibraryId(const QString &libraryId) const

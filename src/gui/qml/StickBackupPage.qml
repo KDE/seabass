@@ -105,7 +105,7 @@ Page {
         leftPadding: 0
         rightPadding: 0
         topPadding: 0
-        bottomPadding: 0
+        bottomPadding: Theme.headerBottomPadding
         background: Rectangle { color: Theme.surface }
         RowLayout {
             anchors.fill: parent

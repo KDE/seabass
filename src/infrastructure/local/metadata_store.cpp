@@ -225,6 +225,31 @@ fs::path MetadataStore::defaultDatabasePath()
     return paths::localMetadataDir() / "metadata.db";
 }
 
+int MetadataStore::storedTrackCountIfPresent(fs::path databasePath)
+{
+    std::error_code ec;
+    if (!fs::exists(databasePath, ec)) {
+        return 0;
+    }
+    sqlite3 *db = nullptr;
+    // READONLY and no CREATE: the point of this function is that asking
+    // costs nothing and changes nothing.
+    if (sqlite3_open_v2(databasePath.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return 0;
+    }
+    int count = 0;
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM tracks", -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            count = sqlite3_column_int(stmt, 0);
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return count;
+}
+
 fs::path MetadataStore::artworkDir() const
 {
     return m_databasePath.parent_path() / "artwork";

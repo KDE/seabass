@@ -53,7 +53,7 @@ Page {
         leftPadding: 0
         rightPadding: 0
         topPadding: 0
-        bottomPadding: 0
+        bottomPadding: Theme.headerBottomPadding
         // Opaque background override: KDE's Breeze style bleeds the
         // window behind Seabass through an unstyled ToolBar.
         background: Rectangle { color: Theme.surface }

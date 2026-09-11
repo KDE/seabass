@@ -291,7 +291,9 @@ TestCase {
         compare(page.mediaController.calls.indexOf("unmount:/dev/sdb1") >= 0, true);
     }
 
-    function test_generalBackupsBlockIsAlwaysThereAndRequestsWithNoStick() {
+    function test_generalBackupsBlockRequestsWithNoStick() {
+        // With no stick in, which is when this block is shown at all --
+        // see test_theNoStickToolsStepAsideOnceAStickIsIn.
         var page = makePage([], {});
         var restoreCard = findChild(page, "generalRestoreCard");
         var localCueCard = findChild(page, "generalLocalCueCard");
@@ -463,6 +465,104 @@ TestCase {
         walkBackup(page);
         verify(backupButton !== null, "no openBackupButton on the toolbar");
         compare(backupButton.visible, true);
+    }
+
+    // Finds the first descendant with `objectName`, anywhere on the page.
+    function findByName(page, objectName) {
+        var found = null;
+        function walk(item) {
+            if (found !== null) return;
+            if (item.objectName === objectName) { found = item; return; }
+            for (var i = 0; i < item.children.length; ++i) walk(item.children[i]);
+        }
+        walk(page);
+        return found;
+    }
+
+    function test_theNoStickToolsStepAsideOnceAStickIsIn() {
+        // Two cards about this computer's own backup stores. With no
+        // stick in they are the only thing to do here; with one in they
+        // sit above the thing the page is actually about, taking the top
+        // of the screen for the case that is not happening.
+        var empty = makePage([], {});
+        var tools = findByName(empty, "noStickBackupTools");
+        verify(tools !== null, "the no-stick tools must exist");
+        compare(tools.visible, true, "and must be shown when no stick is in");
+
+        var withStick = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})});
+        compare(findByName(withStick, "noStickBackupTools").visible, false,
+                "and must step aside once a stick is in");
+    }
+
+    function test_anOpenedFolderIsNotAStick() {
+        // The tools are for "no stick plugged in", and a folder someone
+        // opened from disk is not one. Hiding them for a folder row
+        // would take away the only route to them in exactly the session
+        // where there is no stick to offer instead.
+        var page = makePage([makeStick({label: "COPY", mountPoint: "/home/sebas/copy", isFolder: true,
+                                        devicePath: ""})],
+                            {});
+        compare(findByName(page, "noStickBackupTools").visible, true,
+                "an opened folder must not count as a stick being in");
+    }
+
+    function test_theTwoStoresAreOfferedUnderTheList() {
+        // Offered and off, rather than absent, when a store is empty: a
+        // missing button says nothing, and a grey one says the feature
+        // exists and its tooltip says how to fill it.
+        var page = makePage([], {});
+        var full = findByName(page, "browseFullBackupsButton");
+        var meta = findByName(page, "browseMetadataBackupsButton");
+        verify(full !== null, "Browse Full Backups must exist");
+        verify(meta !== null, "Browse Metadata Backups must exist");
+        compare(full.visible, true);
+        compare(meta.visible, true);
+        compare(full.text, "Browse Full Backups");
+        compare(meta.text, "Browse Metadata Backups");
+        // The probes run against this test run's own sandboxed
+        // SEABASS_HOME, so the counts are whatever that happens to
+        // hold. What is pinned is that each button's enabled state is
+        // its own store's count and not the other one's, and not a
+        // constant.
+        var backups = findByName(page, "browseBackupsRow");
+        verify(backups !== null, "the row under the list must exist");
+        compare(full.enabled, page.homeBackupsFullCount > 0);
+        compare(meta.enabled, page.homeBackupsMetadataCount > 0);
+    }
+
+    function test_theHeaderCarriesTheBrandRatherThanTheWordHome() {
+        // This is the one page you arrive at rather than navigate to, so
+        // "Home" named the position rather than the thing.
+        var page = makePage([], {});
+        var name = findByName(page, "brandName");
+        var slogan = findByName(page, "brandSlogan");
+        verify(name !== null && slogan !== null, "the brand lockup must be in the header");
+        compare(name.text, "Seabass");
+        compare(slogan.text, "Your DJ Toolbox");
+        // The slogan is the subtitle of the pair. At the same size they
+        // read as two competing titles.
+        verify(slogan.font.pointSize < name.font.pointSize,
+               "the slogan must be a clear step smaller than the name");
+    }
+
+    function test_aLongMountPointElidesInsteadOfPushingTheCardWide() {
+        // The label already asked to elide and could not: a Text's
+        // Layout.minimumWidth defaults to its implicit width, so it had
+        // a floor at full natural size and the row overflowed instead.
+        var page = makePage([makeStick({
+            label: "LONGONE",
+            mountPoint: "/run/media/sebas/a-very-long-mount-point-name-that-will-not-fit-on-one-card-line"
+        })], {});
+        var label = findByName(page, "stickPathLabel");
+        verify(label !== null, "the stick path label must exist");
+        compare(label.elide, Text.ElideMiddle);
+        // The observable, not the layout property that produces it: the
+        // label is narrower than the text it was given, which is only
+        // possible if it was allowed to shrink and did.
+        verify(label.implicitWidth > 0, "the label must have measured its text");
+        verify(label.width < label.implicitWidth,
+               "a path too long for the card must be elided down (width " + label.width
+               + " vs implicit " + label.implicitWidth + ")");
     }
 
     Component {

@@ -25,7 +25,7 @@ Page {
         leftPadding: 0
         rightPadding: 0
         topPadding: 0
-        bottomPadding: 0
+        bottomPadding: Theme.headerBottomPadding
         // Explicit opaque background. KDE's platform theme integration
         // resolves ToolBar to its own "org.kde.breeze" style regardless of
         // this app's Material palette (see main.cpp's exportMaterialPalette()

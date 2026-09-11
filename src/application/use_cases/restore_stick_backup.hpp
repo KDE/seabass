@@ -134,6 +134,16 @@ public:
     // is described, newest first, unreadable ones last.
     static StickBackupDescription describe(const std::filesystem::path &archivePath);
     static std::vector<StickBackupDescription> describeAll(const std::filesystem::path &directory);
+
+    // How many archives `directory` holds, without opening any of them.
+    //
+    // describeAll() reads every manifest, which is right when the answer
+    // is a list to show and far too much when it is only "is there
+    // anything here?" -- a question a button asks to decide whether to
+    // grey itself out, on the UI thread, every time the first page comes
+    // back into view. Same rule for what counts as an archive: a regular
+    // file directly inside the directory, named .zip.
+    static int countArchives(const std::filesystem::path &directory);
     static RestorePreview preview(const RestoreOptions &options);
     static RestoreSummary execute(const RestoreOptions &options, ProgressReporter &reporter = NullProgressReporter::instance());
 };

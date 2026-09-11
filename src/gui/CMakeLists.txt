@@ -135,6 +135,8 @@ set(SEABASS_GUI_SOURCES
     engine_library_creator_controller.cpp
     format_usb_controller.hpp
     format_usb_controller.cpp
+    home_backups_controller.hpp
+    home_backups_controller.cpp
     stick_backup_controller.hpp
     stick_backup_controller.cpp
     restore_stick_backup_controller.hpp
