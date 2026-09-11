@@ -2,6 +2,9 @@
 #include <QQmlEngine>
 #include <QDir>
 #include <QCoreApplication>
+#include <QTemporaryDir>
+#include <filesystem>
+#include "../scratch_path.hpp"
 #include <QSettings>
 #include <QString>
 #include <QtQuickTest/quicktest.h>
@@ -53,48 +56,70 @@ public slots:
         // apply, identically, on every platform -- the registry (or
         // equivalent) is never touched by a test run again.
         //
-        // Unconditional, which it was not. It used to redirect only when
-        // XDG_CONFIG_HOME was ALREADY set -- true under ctest, which sets
-        // it, and false for the command docs/testing.md tells you to run:
+        // Unconditional, and it trusts nothing it was handed. The
+        // redirect used to happen only when XDG_CONFIG_HOME was ALREADY
+        // set -- true under ctest, which sets it, and false for the
+        // command docs/testing.md tells you to run:
         //
         //     SEABASS_SCREENSHOT_DIR=<dir> QT_QPA_PLATFORM=offscreen \
         //         build/seabass_qml_tests -input tests/qml
         //
         // Plasma does not export XDG_CONFIG_HOME (it is a default, not a
         // setting), so on a normal KDE desktop that guard fell straight
-        // through and every direct run wrote the suite's fixture values
+        // through and every direct run wrote the suite's own fixtures
         // into the real ~/.config/seabass/seabass.conf -- including
         // tst_AppSettingsPage's fake "/home/somebody/Music/..." backup
-        // directory, which the real app then showed back to its user as
-        // if they had chosen it. Measured: remove the key, run that
-        // command, and it is back.
+        // directory, which the app then read back and showed as the
+        // user's own choice.
         //
-        // So when the variable is absent a sandbox is invented rather
-        // than skipped. Falling back to the real store is never the right
-        // answer for a test binary, however it was started.
-        QString configHome = QString::fromLocal8Bit(qgetenv("XDG_CONFIG_HOME"));
-        if (configHome.isEmpty()) {
-            configHome = QDir::tempPath()
-                + QStringLiteral("/seabass-qml-test-config-%1").arg(QCoreApplication::applicationPid());
-            // Exported as well as used, so that anything this process
-            // starts, and QStandardPaths itself, agree with QSettings
-            // about where the settings live.
-            qputenv("XDG_CONFIG_HOME", configHome.toLocal8Bit());
+        // Honouring the variable when it IS set would leave the same
+        // hole open from the other side: plenty of setups export
+        // XDG_CONFIG_HOME="$HOME/.config" from a dotfile or an
+        // environment.d drop-in, and then the "sandbox" is the real
+        // store and every check below passes while the fixtures land in
+        // it. So this makes its own directory every run and points the
+        // platform's own variables at it -- via the same helpers the C++
+        // tests use, which also covers APPDATA for Windows, where the
+        // native store is the registry and no XDG variable is read.
+        //
+        // SEABASS_HOME too: sandboxSeabassHome() leaves an inherited one
+        // alone (ctest sets one per test), but on a direct run there is
+        // none, and AppSettingsController would otherwise point the
+        // local root at the developer's real ~/Seabass -- which is what
+        // tst_StickListPage's home-backup probes would then be reading.
+        static QTemporaryDir sandbox;
+        if (!sandbox.isValid()) {
+            qCritical("seabass_qml_tests: could not create a settings sandbox (%s) -- refusing "
+                      "to run rather than fall back to the real store.",
+                      qPrintable(sandbox.errorString()));
+            std::abort();
         }
-        QDir().mkpath(configHome);
+        const std::filesystem::path sandboxRoot(sandbox.path().toStdString());
+        // Named "Seabass" rather than "home": SEABASS_HOME stands in for
+        // the real ~/Seabass, and pages that show the user where they
+        // write show this path. tst_MetadataBackupPage asserts the label
+        // names a Seabass location, which under ctest passed only
+        // because the build directory happens to sit under ~/Seabass --
+        // an accident this would otherwise have turned into a failure.
+        seabass::testing::sandboxSeabassHome(sandboxRoot / "Seabass");
+        seabass::testing::sandboxSettings(sandboxRoot / "config");
         QSettings::setDefaultFormat(QSettings::IniFormat);
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, configHome);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                           QString::fromStdString((sandboxRoot / "config").string()));
 
-        // And proof, before a single test runs. The failure this guards
-        // against is silent by nature: the suite passes either way, and
-        // the only evidence is a fixture value turning up in a real
-        // config file days later. Refusing to start is the loud version.
+        // And proof -- against the real store, computed independently,
+        // rather than against the string just handed to setPath(), which
+        // would agree with itself whatever it pointed at. What has to be
+        // true is that nothing lands under the user's own config
+        // directory; the sandbox lives in the temp tree, so it cannot.
         {
             const QSettings probe("seabass", "seabass");
-            if (!probe.fileName().startsWith(configHome)) {
+            const QString realConfigRoot = QDir::homePath() + QStringLiteral("/.config");
+            if (probe.fileName().startsWith(realConfigRoot)
+                || !probe.fileName().startsWith(sandbox.path())) {
                 qCritical("seabass_qml_tests: settings would be written to %s, outside the "
                           "sandbox at %s -- refusing to run rather than touch the real store.",
-                          qPrintable(probe.fileName()), qPrintable(configHome));
+                          qPrintable(probe.fileName()), qPrintable(sandbox.path()));
                 std::abort();
             }
         }
