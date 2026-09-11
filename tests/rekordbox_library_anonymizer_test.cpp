@@ -462,7 +462,13 @@ int main()
     assert(result.errorMessage.empty());
     assert(result.tracksKept == 2);
     assert(result.tracksDropped == 1);
-    assert(result.artistsRenamed == 1);  // only artist 5 (shared by the 2 kept tracks) -- not artist 6
+    // Both artists, not just the one the kept tracks share. Artist 6
+    // belongs to the dropped track, and this used to assert that its row
+    // was left alone -- which is precisely how a real export shipped 15
+    // real artist names, on rows nothing referred to any more. The per-id
+    // pass still renames what kept tracks reference; a wholesale pass
+    // then covers every row that one cannot reach.
+    assert(result.artistsRenamed == 2);
     assert(result.playlistsRenamed == 1);
     std::cout << "case 1 (anonymizeRekordboxLibrary: prune/rename counts correct) OK\n";
 

@@ -549,6 +549,27 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         result.labelsRenamed = writer.overwriteAllNames(
             PdbRowWriter::NameTable::Labels, [](size_t i) { return placeholder("Label", i); });
 
+        // And then artists and playlists wholesale, over the top of the
+        // per-id passes above. Those rename what a kept track refers to;
+        // an artist row nothing refers to any more, or a playlist row
+        // outside the enumerated tree, is never reached by them and kept
+        // its real name -- 15 artists and 2 playlists of a real library
+        // survived every other scrub in this file.
+        result.artistsRenamed = std::max(
+            result.artistsRenamed,
+            writer.overwriteAllNames(PdbRowWriter::NameTable::Artists,
+                                     [](size_t i) { return placeholder("Artist", i); }));
+        result.playlistsRenamed = std::max(
+            result.playlistsRenamed,
+            writer.overwriteAllNames(PdbRowWriter::NameTable::Playlists,
+                                     [](size_t i) { return placeholder("Playlist", i); }));
+
+        // Last edit of all, after every overwrite above: clear what the
+        // format itself considers free. Everything scrubbed so far was
+        // scrubbed in the live rows; this is where the copies rekordbox
+        // left behind when it edited those rows still sit.
+        result.freeBytesZeroed = writer.zeroUnusedSpace();
+
         bool anyEditAttempted = !kept.empty() || !dropped.empty() || !sortedArtistIds.empty() ||
                                  !enumerated.playlistIds.empty() || result.albumsRenamed > 0 ||
                                  result.genresRenamed > 0 || result.labelsRenamed > 0;

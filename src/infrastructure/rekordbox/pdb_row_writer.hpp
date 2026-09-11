@@ -130,6 +130,31 @@ public:
     // this id exists.
     bool overwriteTrackExtraText(uint32_t trackId, const TrackExtraTextOverride &text);
 
+    // Zeroes every byte of every data page that no *present* row
+    // occupies, and returns how many bytes that was.
+    //
+    // Overwriting a row leaves the old bytes where they were: rekordbox
+    // marks the row not-present and writes the new one elsewhere in the
+    // page, so a pdb carries the text of everything it has ever held. On
+    // a real 1,161-track export one title appeared eleven times where
+    // three would do, and 1,255 readable fragments of the real library
+    // survived a scrub that had correctly rewritten every live row.
+    //
+    // Nothing reads this space -- it is free by the format's own
+    // accounting -- so clearing it costs nothing and is the only way to
+    // stop a copied pdb carrying its history. Call it after every edit:
+    // it works from where rows are now, so anything written afterwards
+    // would be missed.
+    //
+    // Bounds come from the format rather than from guesswork: the heap
+    // starts at the page's heap_pos and ends where the row-index groups
+    // begin (len_page - num_row_groups * 0x24), and a row's extent runs
+    // to the next row's start. That last part is an upper bound rather
+    // than the true length, so this under-clears rather than over-clears
+    // -- it can leave a few bytes of a dead row's tail inside a live
+    // row's extent, and can never truncate a live row.
+    int zeroUnusedSpace();
+
     // Overwrites an artist_row's name field the same way (near/far
     // offset per specs/rekordbox_pdb.ksy's artist_row -- see the .cpp).
     // Returns false if no artist with this id exists.
@@ -158,6 +183,8 @@ public:
         Genres,
         Albums,
         Labels,
+        Artists,
+        Playlists,
     };
 
     // Replaces the name in every present row of `table` with

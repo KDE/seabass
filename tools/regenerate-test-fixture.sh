@@ -26,7 +26,7 @@ STICK="${1:-}"
 BUILD="${2:-$(cd "$(dirname "$0")/.." && pwd)/../builds/master}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d)"
-trap 'rm -rf "$OUT"' EXIT
+trap 'rm -rf "$OUT"' EXIT   # the zip beside it is deliberately kept
 
 if [ -z "$STICK" ]; then
     for candidate in /media/"$USER"/*; do
@@ -72,7 +72,9 @@ if "$CLI" anonymize "${ARGS[@]}" --out "$OUT" 2>&1 | grep -vE '^warning: track i
     :
 fi
 
-if [ ! -f "$OUT/MANIFEST.txt" ]; then
+# The CLI zips the staging directory and removes it, so the zip beside
+# $OUT is what says it succeeded -- not a MANIFEST left behind.
+if [ ! -f "$OUT.zip" ]; then
     echo
     echo "REFUSED -- the export still held real data, so nothing was written."
     echo "That is the gate working. The detail above names the file and what"
@@ -82,10 +84,13 @@ if [ ! -f "$OUT/MANIFEST.txt" ]; then
 fi
 
 echo
-echo "Export verified clean. To adopt it as the committed fixture:"
+echo "Export verified clean: $OUT.zip"
+echo
+echo "To adopt it as the committed fixture:"
 echo
 echo "  rm -rf $REPO/tests/fixtures/anonymized_library"
-echo "  cp -r $OUT $REPO/tests/fixtures/anonymized_library"
+echo "  mkdir -p $REPO/tests/fixtures/anonymized_library"
+echo "  unzip -q $OUT.zip -d $REPO/tests/fixtures/anonymized_library"
 echo "  cd $REPO && ctest --test-dir $BUILD"
 echo
 echo "Then, because the old one is public on both hosts and a replacement"

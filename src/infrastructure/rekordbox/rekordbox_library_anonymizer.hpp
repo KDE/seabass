@@ -24,6 +24,9 @@ struct RekordboxAnonymizationResult
     int albumsRenamed = 0;
     int genresRenamed = 0;
     int labelsRenamed = 0;
+    // Bytes of free space cleared: the pdb's memory of rows it no longer
+    // has.
+    int freeBytesZeroed = 0;
     int playlistsRenamed = 0;
     // Analysis files removed because no kept track pointed at them, when
     // pruneUnreferencedAnalysisFiles was asked for.

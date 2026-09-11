@@ -113,6 +113,16 @@ constexpr size_t AlbumNameOffsetNear = 0x15;
 constexpr size_t AlbumNameOffsetFar = 0x16;
 constexpr uint16_t AlbumSubtypeFarNameFlag = 0x04;
 
+// One row-index group is sixteen 2-byte row offsets plus the present
+// and transaction flag words: 0x24 bytes, built backwards from the end
+// of the page -- see specs/rekordbox_pdb.ksy's row_group.
+constexpr size_t RowGroupSizeBytes = 0x24;
+
+// track_row carries twenty-one string offsets, and the strings they
+// point at are the tail of the row -- so the furthest of them is where
+// the row really ends.
+constexpr int TrackStringCount = 21;
+
 // genre_row and label_row are the simple case: id(u4) and then the name
 // immediately after it, no indirection at all.
 constexpr size_t SimpleNameRowNameOffset = 4;
@@ -412,6 +422,102 @@ std::vector<PlaylistEntryMatch> findAllPlaylistEntriesForTrack(const std::string
     return matches;
 }
 
+// The byte ranges a row actually uses: its fixed header, and each
+// string it points at. Everything else between this row and the next is
+// space the format has forgotten about.
+//
+// A single "the row runs to here" answer is not enough. rekordbox leaves
+// a row the space it was first given and moves the name around inside
+// it, so an old value can sit *before* the current one as easily as
+// after -- 15 real artist names and 2 playlist names survived a pass
+// that cleared only the tail of each row.
+//
+// Every case returns the whole extent, clearing nothing, the moment
+// anything fails to add up. Measuring a row short clears bytes it still
+// needs: reading key_row's name at genre_row's offset once left the
+// catalog unparseable. Erring towards keeping is the only safe
+// direction, and the caller's own reparse check is the backstop.
+std::vector<std::pair<size_t, size_t>> rowKeepRanges(const std::string &buffer, Pdb::page_type_t pageType,
+                                                      size_t rowBase, size_t bound)
+{
+    std::vector<std::pair<size_t, size_t>> keep;
+    const std::vector<std::pair<size_t, size_t>> wholeExtent{{rowBase, bound}};
+
+    auto addString = [&](size_t absOffset, size_t minOffset) {
+        // An unused slot points back into the fixed header rather than
+        // at a string; there is nothing there to keep.
+        if (absOffset < minOffset || absOffset >= bound) {
+            return false;
+        }
+        const DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, absOffset);
+        if (span.totalBytes == 0 || absOffset + span.totalBytes > bound) {
+            return false;
+        }
+        keep.emplace_back(absOffset, absOffset + span.totalBytes);
+        return true;
+    };
+
+    try {
+        switch (pageType) {
+        case Pdb::PAGE_TYPE_TRACKS: {
+            const size_t header = rowBase + TrackOfsStringsOffset + TrackStringCount * 2;
+            if (header > bound) {
+                return wholeExtent;
+            }
+            keep.emplace_back(rowBase, header);
+            for (int i = 0; i < TrackStringCount; ++i) {
+                addString(trackStringAbsOffset(buffer, rowBase, i), header);
+            }
+            break;
+        }
+        case Pdb::PAGE_TYPE_ARTISTS: {
+            const uint16_t subtype = readU16LE(buffer, rowBase + ArtistSubtypeOffset);
+            const size_t header =
+                rowBase + ((subtype & ArtistSubtypeFarNameFlag) ? ArtistNameOffsetFar + 2 : ArtistNameOffsetNear + 1);
+            if (header > bound || !addString(artistNameAbsOffset(buffer, rowBase), header)) {
+                return wholeExtent;
+            }
+            keep.emplace_back(rowBase, header);
+            break;
+        }
+        case Pdb::PAGE_TYPE_ALBUMS: {
+            const uint16_t subtype = readU16LE(buffer, rowBase + AlbumSubtypeOffset);
+            const size_t header =
+                rowBase + ((subtype & AlbumSubtypeFarNameFlag) ? AlbumNameOffsetFar + 2 : AlbumNameOffsetNear + 1);
+            if (header > bound || !addString(albumNameAbsOffset(buffer, rowBase), header)) {
+                return wholeExtent;
+            }
+            keep.emplace_back(rowBase, header);
+            break;
+        }
+        case Pdb::PAGE_TYPE_GENRES:
+        case Pdb::PAGE_TYPE_LABELS: {
+            const size_t header = rowBase + SimpleNameRowNameOffset;
+            if (header > bound || !addString(header, header)) {
+                return wholeExtent;
+            }
+            keep.emplace_back(rowBase, header);
+            break;
+        }
+        case Pdb::PAGE_TYPE_PLAYLIST_TREE: {
+            const size_t header = rowBase + PlaylistTreeNameOffset;
+            if (header > bound || !addString(header, header)) {
+                return wholeExtent;
+            }
+            keep.emplace_back(rowBase, header);
+            break;
+        }
+        default:
+            // Including keys: key_row is id + id2 + name, a shape this
+            // has already been burned by getting wrong.
+            return wholeExtent;
+        }
+    } catch (const std::exception &) {
+        return wholeExtent;
+    }
+    return keep.empty() ? wholeExtent : keep;
+}
+
 }  // namespace
 
 PdbRowWriter::PdbRowWriter(std::string pdbPath) : m_pdbPath(std::move(pdbPath)), m_buffer(readWholeFile(m_pdbPath))
@@ -617,6 +723,12 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
     case NameTable::Labels:
         pageType = Pdb::PAGE_TYPE_LABELS;
         break;
+    case NameTable::Artists:
+        pageType = Pdb::PAGE_TYPE_ARTISTS;
+        break;
+    case NameTable::Playlists:
+        pageType = Pdb::PAGE_TYPE_PLAYLIST_TREE;
+        break;
     }
 
     // Collect every row first and only then write. Overwriting mutates
@@ -651,14 +763,162 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
 
     int replaced = 0;
     for (size_t i = 0; i < rows.size(); ++i) {
-        const size_t nameAt = table == NameTable::Albums
-            ? albumNameAbsOffset(m_buffer, rows[i].rowBodyOffset)
-            : rows[i].rowBodyOffset + SimpleNameRowNameOffset;
+        size_t nameAt = rows[i].rowBodyOffset + SimpleNameRowNameOffset;
+        if (table == NameTable::Albums) {
+            nameAt = albumNameAbsOffset(m_buffer, rows[i].rowBodyOffset);
+        } else if (table == NameTable::Artists) {
+            nameAt = artistNameAbsOffset(m_buffer, rows[i].rowBodyOffset);
+        } else if (table == NameTable::Playlists) {
+            nameAt = rows[i].rowBodyOffset + PlaylistTreeNameOffset;
+        }
         overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i));
         m_editedPageIndices.insert(rows[i].pageIndex);
         ++replaced;
     }
     return replaced;
+}
+
+int PdbRowWriter::zeroUnusedSpace()
+{
+    struct PageWork
+    {
+        uint32_t pageIndex = 0;
+        Pdb::page_type_t pageType = Pdb::PAGE_TYPE_TRACKS;
+        size_t numRows = 0;
+        size_t groups = 0;
+        size_t pageStart = 0;
+        size_t lenPage = 0;
+        size_t heapStart = 0;   // absolute, first byte a row can occupy
+        size_t indexEnd = 0;    // absolute, first byte of the row-index groups
+        std::vector<std::pair<size_t, bool>> rows;  // absolute row_base, present
+    };
+    std::vector<PageWork> work;
+
+    {
+        std::istringstream iss(m_buffer);
+        kaitai::kstream ks(&iss);
+        Pdb pdb(false, &ks);
+        const size_t lenPage = pdb.len_page();
+        for (const auto &table : *pdb.tables()) {
+            forEachDataPage(*table, [&](Pdb::page_t *page) {
+                PageWork w;
+                w.pageIndex = page->page_index();
+                w.pageType = page->type();
+                const size_t pageStart = lenPage * static_cast<size_t>(w.pageIndex);
+                w.heapStart = pageStart + static_cast<size_t>(page->heap_pos());
+                const size_t groups = static_cast<size_t>(page->num_row_groups());
+                if (groups * RowGroupSizeBytes >= lenPage) {
+                    return;  // nonsense geometry: leave the page alone
+                }
+                w.indexEnd = pageStart + lenPage - groups * RowGroupSizeBytes;
+                w.numRows = static_cast<size_t>(page->num_rows());
+                w.groups = groups;
+                w.pageStart = pageStart;
+                w.lenPage = lenPage;
+                for (const auto &group : *page->row_groups()) {
+                    for (const auto &row : *group->rows()) {
+                        w.rows.emplace_back(pageStart + static_cast<size_t>(row->row_base()), row->present());
+                    }
+                }
+                work.push_back(std::move(w));
+            });
+        }
+    }
+
+    int zeroed = 0;
+    for (auto &page : work) {
+        if (page.indexEnd <= page.heapStart || page.indexEnd > m_buffer.size()) {
+            continue;
+        }
+        // A page with no rows left is not a page to skip -- it is a page
+        // whose heap is entirely free, still sitting in its table's chain
+        // holding the text of everything it used to have. One such
+        // playlist page kept a real playlist name through every other
+        // pass here.
+
+        // Every row start on the page, live or dead: a row runs until
+        // the next one begins, whichever row that is.
+        std::vector<size_t> starts;
+        starts.reserve(page.rows.size());
+        for (const auto &row : page.rows) {
+            if (row.first >= page.heapStart && row.first < page.indexEnd) {
+                starts.push_back(row.first);
+            }
+        }
+        std::sort(starts.begin(), starts.end());
+        starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
+
+        // What the live rows occupy, and therefore what must survive.
+        std::vector<std::pair<size_t, size_t>> keep;
+        for (const auto &row : page.rows) {
+            if (!row.second || row.first < page.heapStart || row.first >= page.indexEnd) {
+                continue;
+            }
+            auto next = std::upper_bound(starts.begin(), starts.end(), row.first);
+            const size_t bound = next == starts.end() ? page.indexEnd : *next;
+            for (const auto &span : rowKeepRanges(m_buffer, page.pageType, row.first, bound)) {
+                if (span.second > span.first) {
+                    keep.emplace_back(span.first, std::min(span.second, bound));
+                }
+            }
+        }
+        std::sort(keep.begin(), keep.end());
+
+        // Clear the complement of that, inside the heap only. The page
+        // header and the row-index groups are never touched: the index
+        // still has to describe which rows are absent.
+        size_t cursor = page.heapStart;
+        bool touched = false;
+        auto clear = [&](size_t from, size_t to) {
+            if (to <= from) {
+                return;
+            }
+            std::fill(m_buffer.begin() + static_cast<std::ptrdiff_t>(from),
+                      m_buffer.begin() + static_cast<std::ptrdiff_t>(to), '\0');
+            zeroed += static_cast<int>(to - from);
+            touched = true;
+        };
+        for (const auto &span : keep) {
+            clear(cursor, std::min(span.first, page.indexEnd));
+            cursor = std::max(cursor, span.second);
+        }
+        clear(cursor, page.indexEnd);
+
+        // The row index itself has slack too. Each group has sixteen
+        // 2-byte offset slots and the last group is almost never full,
+        // so the slots past num_rows hold whatever was written over them
+        // last. A real playlist name survived every pass above by
+        // sitting in exactly those bytes, on a page whose last group had
+        // four rows in sixteen slots.
+        //
+        // Only slots at or beyond num_rows are touched. Those are unused
+        // by the format's own count, so nothing reads them; the used
+        // slots, the present flags and the transaction flags are left
+        // exactly as they are.
+        for (size_t g = 0; g < page.groups; ++g) {
+            const size_t groupBase = page.pageStart + page.lenPage - g * RowGroupSizeBytes;
+            for (size_t r = 0; r < 16; ++r) {
+                if (g * 16 + r < page.numRows) {
+                    continue;
+                }
+                const size_t slot = groupBase - 6 - r * 2;
+                if (slot < page.indexEnd || slot + 2 > page.pageStart + page.lenPage) {
+                    continue;
+                }
+                if (m_buffer[slot] != '\0' || m_buffer[slot + 1] != '\0') {
+                    m_buffer[slot] = '\0';
+                    m_buffer[slot + 1] = '\0';
+                    zeroed += 2;
+                    touched = true;
+                }
+            }
+        }
+
+        if (touched) {
+            m_editedPageIndices.insert(page.pageIndex);
+        }
+    }
+    return zeroed;
 }
 
 bool PdbRowWriter::repointPlaylistEntry(uint32_t playlistId, uint32_t oldTrackId, uint32_t newTrackId)

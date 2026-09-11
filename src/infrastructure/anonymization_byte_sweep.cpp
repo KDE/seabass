@@ -130,6 +130,13 @@ const std::set<std::string> &staticVocabulary()
         // The fixed column header AnonymizeLibrary writes at the top of
         // files.tsv: "# relative path\tsize in bytes".
         "relative", "path", "size", "bytes",
+        // rekordbox's own UI column labels, which live in the pdb's
+        // columns table on every export: "FILE NAME", "HOT CUE BANK",
+        // "ORIGINAL ARTIST", "PLAY COUNT" and their neighbours. Format
+        // constants, identical in every library, naming nobody.
+        "file", "hot", "cue", "bank", "original", "play", "count", "name",
+        "time", "rating", "colour", "color", "remixer", "composer", "year",
+        "bitrate", "tempo", "history", "search", "tag", "list", "info",
     };
     return vocabulary;
 }
