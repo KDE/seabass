@@ -23,7 +23,7 @@ constexpr double SafetyMargin = 1.5;
 // LibdjinteropEngineCueWriter and OneLibraryCueWriter. Unlike sequential
 // throughput (see knownSequentialBytesPerSec), this isn't measured per-
 // stick anywhere yet -- a natural follow-up would be recording real
-// observed per-item latency the same way StickBenchmarkHistory already
+// observed per-item latency the same way the USB Stick Performance page already
 // does for sequential speed, rather than guessing indefinitely.
 constexpr double ConservativePerItemWriteSeconds = 0.2;
 

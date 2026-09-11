@@ -112,6 +112,9 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
         if (statvfs(mountPoint.c_str(), &vfs) == 0) {
             info.totalBytes = static_cast<std::uint64_t>(vfs.f_blocks) * vfs.f_frsize;
             info.freeBytes = static_cast<std::uint64_t>(vfs.f_bavail) * vfs.f_frsize;
+            // On vfat/exfat the kernel reports the cluster size as the
+            // fragment size; confirmed 32 KiB on a real stick.
+            info.clusterBytes = vfs.f_frsize;
         }
     }
 
@@ -184,6 +187,10 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
     if (GetDiskFreeSpaceExW(root.c_str(), &freeAvailable, &totalBytes, &totalFree)) {
         info.totalBytes = totalBytes.QuadPart;
         info.freeBytes = freeAvailable.QuadPart;
+    }
+    DWORD sectorsPerCluster = 0, bytesPerSector = 0, freeClusters = 0, totalClusters = 0;
+    if (GetDiskFreeSpaceW(root.c_str(), &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters)) {
+        info.clusterBytes = static_cast<std::uint64_t>(sectorsPerCluster) * bytesPerSector;
     }
 
     // The volume serial plays the role ID_FS_UUID plays on Linux --

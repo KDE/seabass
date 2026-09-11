@@ -112,6 +112,7 @@ TestCase {
             {name: "DuplicatesPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "CleanupPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "StickStatisticsPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
+            {name: "StickPerformancePage", props: stickProps({})},
             {name: "StickBackupPage", props: stickProps({appSettingsController: realAppSettings, controller: realStickBackup})},
             {name: "TrackDetailPage", props: props({scanController: realScan, trackIndex: -1, format: "rekordbox",
                 libraryPath: stick.rekordboxPath, playbackController: realPlayback, appSettingsController: realAppSettings})},

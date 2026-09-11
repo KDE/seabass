@@ -109,7 +109,7 @@ memory pressure much closer to the cold case. The measured components add up
 to 105 s of the observed 155 s under the cold condition, against 65 s warm.
 
 Reads are easier: `posix_fadvise(POSIX_FADV_DONTNEED)` drops the page cache
-for a file on Linux, which is what `stick_speed_benchmark.cpp` already uses.
+for a file on Linux, which is what `stick_performance_probe.cpp` already uses.
 There is no equivalent on Windows or macOS.
 
 ## Baseline: 2026-09-07, RV2

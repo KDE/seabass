@@ -11,8 +11,6 @@
 #include "domain/filesystem_compatibility.hpp"
 #include "domain/library_statistics.hpp"
 #include "gui/library_catalog_cache.hpp"
-#include "infrastructure/benchmark/stick_benchmark_history.hpp"
-#include "infrastructure/benchmark/stick_speed_benchmark.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 
@@ -96,20 +94,6 @@ QVariantMap toVariant(const infrastructure::system::StickHardwareInfo &hw,
     return m;
 }
 
-QVariantMap toVariant(const infrastructure::benchmark::BenchmarkRecord &r)
-{
-    QVariantMap m;
-    m["ranAt"] = QString::fromStdString(r.ranAt);
-    m["stickLabel"] = QString::fromStdString(r.stickLabel);
-    m["filesystem"] = QString::fromStdString(r.filesystem);
-    m["usbSpeedLabel"] = QString::fromStdString(r.usbSpeedLabel);
-    m["usbSpeedMbps"] = r.usbSpeedMbps;
-    m["databaseReadMbps"] = r.databaseReadMbps;
-    m["audioReadMbps"] = r.audioReadMbps;
-    m["score"] = r.score;
-    return m;
-}
-
 // Best-effort recursive directory size, skipping anything that errors
 // (permission-denied entries, a symlink loop, the stick being unplugged
 // mid-walk) rather than aborting the whole statistics scan over it.
@@ -164,14 +148,12 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
 
         std::vector<domain::Track> combinedTracks;
         std::set<std::string> seenFilePaths;
-        std::vector<std::string> databaseFiles;
 
         auto &catalogCache = LibraryCatalogCache::instance();
 
         if (!rekordboxPath.isEmpty()) {
             auto tracks = catalogCache.tracksFor("rekordbox", rekordboxPath.toStdString(), noProgress, cancel);
             result.rekordboxStats = toVariant(domain::LibraryStatisticsCalculator::calculate(tracks));
-            databaseFiles.push_back(rekordboxPath.toStdString() + "/rekordbox/export.pdb");
             for (auto &t : tracks) {
                 if (!t.filePath.empty() && seenFilePaths.insert(t.filePath).second) {
                     combinedTracks.push_back(std::move(t));
@@ -181,11 +163,9 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
         if (!enginePath.isEmpty()) {
             auto tracks = catalogCache.tracksFor("engine", enginePath.toStdString(), noProgress, cancel);
             result.engineStats = toVariant(domain::LibraryStatisticsCalculator::calculate(tracks));
-            databaseFiles.push_back((fs::path(enginePath.toStdString()) / "Database2" / "m.db").string());
             for (auto &t : tracks) {
                 // Streaming tracks have no local file by design (see
-                // Track::streamingSource) -- never counted as disk usage
-                // or sampled for the read-speed benchmark.
+                // Track::streamingSource) -- never counted as disk usage.
                 if (!t.streamingSource.empty()) {
                     continue;
                 }
@@ -198,32 +178,10 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
             infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxPath.toStdString())) {
             auto tracks = catalogCache.tracksFor("onelibrary", rekordboxPath.toStdString(), noProgress, cancel);
             result.oneLibraryStats = toVariant(domain::LibraryStatisticsCalculator::calculate(tracks));
-            databaseFiles.push_back(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(rekordboxPath.toStdString()));
             // OneLibrary's own tracks reference the same physical files
             // already counted via rekordbox/Engine above -- not added to
             // combinedTracks again, that would double-count disk usage.
         }
-
-        // Sample a spread of real audio files (not just the first N,
-        // which on most exports would all be the same artist/album) for
-        // the read-speed benchmark's later, separate run.
-        constexpr std::size_t maxSamples = 20;
-        QVariantList audioSampleFiles;
-        if (!combinedTracks.empty()) {
-            std::size_t step = std::max<std::size_t>(1, combinedTracks.size() / maxSamples);
-            for (std::size_t i = 0; i < combinedTracks.size() && static_cast<std::size_t>(audioSampleFiles.size()) < maxSamples;
-                 i += step) {
-                if (!combinedTracks[i].filePath.empty()) {
-                    audioSampleFiles << QString::fromStdString(combinedTracks[i].filePath);
-                }
-            }
-        }
-        QVariantList databaseFilesVariant;
-        for (const auto &f : databaseFiles) {
-            databaseFilesVariant << QString::fromStdString(f);
-        }
-        result.benchmarkSamples["databaseFiles"] = databaseFilesVariant;
-        result.benchmarkSamples["audioFiles"] = audioSampleFiles;
 
         // Disk usage breakdown. Audio Files/Artwork come from the
         // already-scanned, deduplicated track list (no extra filesystem
@@ -288,51 +246,12 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
     return result;
 }
 
-// Runs entirely on a background thread (see
-// StickStatisticsController::runBenchmark()).
-QVariantMap runBenchmarkTask(QVariantMap samples, QVariantMap filesystemInfo, QString stickLabel)
-{
-    std::vector<std::string> databaseFiles;
-    for (const auto &v : samples.value("databaseFiles").toList()) {
-        databaseFiles.push_back(v.toString().toStdString());
-    }
-    std::vector<std::string> audioFiles;
-    for (const auto &v : samples.value("audioFiles").toList()) {
-        audioFiles.push_back(v.toString().toStdString());
-    }
-
-    auto benchmarkResult = infrastructure::benchmark::StickSpeedBenchmark::run(databaseFiles, audioFiles);
-
-    infrastructure::benchmark::BenchmarkRecord record;
-    record.stickLabel = stickLabel.toStdString();
-    record.stickIdentifier = filesystemInfo.value("stickIdentifier").toString().toStdString();
-    record.filesystem = filesystemInfo.value("filesystem").toString().toStdString();
-    record.usbSpeedLabel = filesystemInfo.value("usbSpeedLabel").toString().toStdString();
-    record.usbSpeedMbps = filesystemInfo.value("usbSpeedMbps").toDouble();
-    record.databaseReadMbps = benchmarkResult.databaseReadMbps;
-    record.audioReadMbps = benchmarkResult.audioReadMbps;
-    record.score = benchmarkResult.score;
-
-    QVariantMap out;
-    try {
-        infrastructure::benchmark::StickBenchmarkHistory history;
-        history.record(record);
-        out["success"] = true;
-    } catch (const std::exception &e) {
-        out["success"] = false;
-        out["errorMessage"] = QString::fromStdString(e.what());
-    }
-    return out;
-}
-
 }  // namespace
 
 StickStatisticsController::StickStatisticsController(QObject *parent) : QObject(parent)
 {
     connect(&m_watcher, &QFutureWatcher<StickStatisticsScanResult>::finished, this,
             &StickStatisticsController::onScanFinished);
-    connect(&m_benchmarkWatcher, &QFutureWatcher<QVariantMap>::finished, this,
-            &StickStatisticsController::onBenchmarkFinished);
 }
 
 void StickStatisticsController::scan(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath)
@@ -370,53 +289,7 @@ void StickStatisticsController::onScanFinished()
     m_engineStats = result.engineStats;
     m_oneLibraryStats = result.oneLibraryStats;
     m_diskUsage = result.diskUsage;
-    m_benchmarkSamples = result.benchmarkSamples;
     emit resultsChanged();
-    loadBenchmarkHistory();
-}
-
-void StickStatisticsController::runBenchmark()
-{
-    if (m_benchmarkRunning || m_filesystemInfo.isEmpty()) {
-        return;
-    }
-    setBenchmarkErrorMessage({});
-    setBenchmarkRunning(true);
-    m_benchmarkWatcher.setFuture(
-        QtConcurrent::run(runBenchmarkTask, m_benchmarkSamples, m_filesystemInfo, m_filesystemInfo.value("stickIdentifier").toString()));
-}
-
-void StickStatisticsController::onBenchmarkFinished()
-{
-    QVariantMap result = m_benchmarkWatcher.result();
-    setBenchmarkRunning(false);
-    if (!result.value("success").toBool()) {
-        setBenchmarkErrorMessage(result.value("errorMessage").toString());
-        return;
-    }
-    loadBenchmarkHistory();
-}
-
-void StickStatisticsController::loadBenchmarkHistory()
-{
-    QString stickIdentifier = m_filesystemInfo.value("stickIdentifier").toString();
-    if (stickIdentifier.isEmpty()) {
-        m_benchmarkHistory = {};
-        emit benchmarkHistoryChanged();
-        return;
-    }
-    try {
-        infrastructure::benchmark::StickBenchmarkHistory history;
-        auto records = history.historyFor(stickIdentifier.toStdString());
-        QVariantList list;
-        for (const auto &r : records) {
-            list << toVariant(r);
-        }
-        m_benchmarkHistory = list;
-    } catch (const std::exception &e) {
-        setBenchmarkErrorMessage(QString::fromStdString(e.what()));
-    }
-    emit benchmarkHistoryChanged();
 }
 
 void StickStatisticsController::setBusy(bool busy)
@@ -435,24 +308,6 @@ void StickStatisticsController::setErrorMessage(const QString &message)
     }
     m_errorMessage = message;
     emit errorMessageChanged();
-}
-
-void StickStatisticsController::setBenchmarkRunning(bool running)
-{
-    if (m_benchmarkRunning == running) {
-        return;
-    }
-    m_benchmarkRunning = running;
-    emit benchmarkRunningChanged();
-}
-
-void StickStatisticsController::setBenchmarkErrorMessage(const QString &message)
-{
-    if (m_benchmarkErrorMessage == message) {
-        return;
-    }
-    m_benchmarkErrorMessage = message;
-    emit benchmarkErrorMessageChanged();
 }
 
 }  // namespace seabass::gui

@@ -233,6 +233,7 @@ add_library(seabass_core STATIC
     src/domain/junk_cue.cpp
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
+    src/domain/stick_performance.cpp
     src/domain/local_restore.cpp
     src/domain/metadata_backup_plan.cpp
     src/domain/metadata_merge.cpp
@@ -244,8 +245,8 @@ add_library(seabass_core STATIC
     src/domain/usb_filesystem.cpp
     src/application/ports/progress_reporter.cpp
     src/application/use_cases/anonymize_library.cpp
-    src/infrastructure/benchmark/stick_benchmark_history.cpp
-    src/infrastructure/benchmark/stick_speed_benchmark.cpp
+    src/infrastructure/benchmark/stick_performance_probe.cpp
+    src/infrastructure/benchmark/stick_write_probe.cpp
     src/infrastructure/bulk_write_strategy.cpp
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/rekordbox/anlz_byte_source.cpp
@@ -1189,22 +1190,24 @@ add_executable(rekordbox_settings_test
 target_include_directories(rekordbox_settings_test PRIVATE src)
 add_test(NAME rekordbox_settings_test COMMAND rekordbox_settings_test)
 
-# --- infrastructure-layer test needing a real (temp-file) SQLite db ---
+# --- stick performance: the pure scoring model, and the two probes against
+# real (scratch) files ---
 
-add_executable(stick_speed_benchmark_test
-    src/infrastructure/benchmark/stick_speed_benchmark.cpp
-    tests/stick_speed_benchmark_test.cpp
+add_executable(stick_performance_test
+    src/domain/stick_performance.cpp
+    tests/stick_performance_test.cpp
 )
-target_include_directories(stick_speed_benchmark_test PRIVATE src)
-add_test(NAME stick_speed_benchmark_test COMMAND stick_speed_benchmark_test)
+target_include_directories(stick_performance_test PRIVATE src)
+add_test(NAME stick_performance_test COMMAND stick_performance_test)
 
-add_executable(stick_benchmark_history_test
-    src/infrastructure/benchmark/stick_benchmark_history.cpp
-    tests/stick_benchmark_history_test.cpp
+add_executable(stick_performance_probe_test
+    src/infrastructure/benchmark/stick_performance_probe.cpp
+    src/infrastructure/benchmark/stick_write_probe.cpp
+    src/domain/stick_performance.cpp
+    tests/stick_performance_probe_test.cpp
 )
-target_include_directories(stick_benchmark_history_test PRIVATE src)
-target_link_libraries(stick_benchmark_history_test PRIVATE SQLite::SQLite3)
-add_test(NAME stick_benchmark_history_test COMMAND stick_benchmark_history_test)
+target_include_directories(stick_performance_probe_test PRIVATE src)
+add_test(NAME stick_performance_probe_test COMMAND stick_performance_probe_test)
 
 add_executable(local_cue_store_test
     src/domain/track_matching.cpp

@@ -160,6 +160,7 @@ Page {
     signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal stickPerformanceRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal engineLibraryCreatorRequested(string stickLabel, string rekordboxPath)
     signal settingsRequested(string stickLabel, string pioneerRoot)
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
@@ -778,7 +779,7 @@ Page {
                         }
                         ActionCard {
                             cardTitle: "Library Statistics"
-                            cardSubtitle: "Filesystem, library stats, disk usage, and read-speed benchmark"
+                            cardSubtitle: "Filesystem, library stats, and disk usage"
                             cardIcon: "📊"
                             // Graduated from experimental (see
                             // docs/experimental-features.md) after real
@@ -786,6 +787,23 @@ Page {
                             visible: delegateRoot.hasKnownLibrary
                             enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
                             onClicked: root.stickStatisticsRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
+                        }
+                        ActionCard {
+                            cardTitle: "USB Stick Performance"
+                            cardSubtitle: "Measure the stick the way a player reads it, per player generation"
+                            cardIcon: "⏱"
+                            // See docs/experimental-features.md: the
+                            // measurement only reads, but the optional
+                            // write test on the page is a write path
+                            // nobody has run against real hardware yet.
+                            experimental: true
+                            experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
+                            // Reads only, but a browsed backup is a folder
+                            // on this computer and measuring it would say
+                            // nothing about any stick.
+                            visible: delegateRoot.writable
+                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
+                            onClicked: root.stickPerformanceRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
                         }
                         ActionCard {
                             cardTitle: "Metadata Backup"

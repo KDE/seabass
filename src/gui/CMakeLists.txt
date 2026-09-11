@@ -83,6 +83,7 @@ set(SEABASS_GUI_QML_FILES
     qml/LibraryConsistencyPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
+    qml/StickPerformancePage.qml
     qml/TreemapView.qml
     qml/EngineLibraryCreatorPage.qml
     qml/SyncPage.qml
@@ -131,6 +132,10 @@ set(SEABASS_GUI_SOURCES
     library_consistency_controller.cpp
     stick_statistics_controller.hpp
     stick_statistics_controller.cpp
+    stick_performance_controller.hpp
+    stick_performance_controller.cpp
+    stick_performance_cache.hpp
+    stick_performance_cache.cpp
     engine_library_creator_controller.hpp
     engine_library_creator_controller.cpp
     format_usb_controller.hpp

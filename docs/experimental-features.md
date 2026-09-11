@@ -18,6 +18,20 @@ from day one.
 
 ## Currently experimental
 
+- **USB Stick Performance** (added 2026-09-11) — its own page from the
+  stick's card grid: reads real files on the stick the three ways a DJ
+  player reads it (streaming, 4 KiB random reads, small analysis-file
+  opens), turns that into a DJ Workload Score with a verdict per player
+  generation, and offers an optional write test that writes throwaway
+  files into a hidden `.seabass-write-test` folder and removes them
+  again. The read measurement is harmless; the write test is a write
+  path that has only been exercised against scratch directories in
+  `stick_performance_probe_test`, never a real stick. Promote once the
+  write test has run on real hardware and the verdict thresholds have
+  been checked against at least one known-slow stick. Replaced the
+  read-speed benchmark and its history table that Library Statistics
+  used to carry.
+
 - **Format USB Stick** (added 2026-09-05) — erases and reformats a
   removable drive as FAT32 or exFAT (always MBR), for a stick that's
   never been prepared for CDJ/XDJ/Engine OS hardware, or one being
@@ -109,5 +123,6 @@ from day one.
   cleanup.
 
 - **Stick Statistics** (added 2026-08-29, graduated 2026-08-30) —
-  filesystem/hardware info, per-catalog library stats, a Filelight-style
-  disk usage breakdown, and a local read-speed benchmark with history.
+  filesystem/hardware info, per-catalog library stats, and a
+  Filelight-style disk usage breakdown. Its read-speed benchmark moved to
+  USB Stick Performance on 2026-09-11.

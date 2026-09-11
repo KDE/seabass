@@ -18,7 +18,7 @@
 
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/write_guard.hpp"
-#include "infrastructure/benchmark/stick_benchmark_history.hpp"
+#include "gui/stick_performance_cache.hpp"
 #include "infrastructure/stick_backup/archive_compactor.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
@@ -144,14 +144,11 @@ void StickBackupController::refresh()
         }
         result->stickIdentifier = QString::fromStdString(options.stickIdentifier);
         result->preview = BackupStick::preview(options);
-        try {
-            infrastructure::benchmark::StickBenchmarkHistory history;
-            auto records = history.historyFor(options.stickIdentifier);
-            if (!records.empty()) {
-                result->readMbps = records.front().audioReadMbps;
-            }
-        } catch (const std::exception &) {
-            // No benchmark history is not an error; the ETA just stays unknown.
+        // Measured this session on the USB Stick Performance page, if at
+        // all; otherwise the ETA stays unknown. Nothing is persisted.
+        if (auto measured = StickPerformanceCache::instance().lookup(options.stickIdentifier);
+            measured && measured->streamingBytesPerSecond > 0.0) {
+            result->readMbps = measured->streamingBytesPerSecond / (1024.0 * 1024.0);
         }
         result->blockedBy = QString::fromStdString(infrastructure::system::conflictingDjSoftwareName());
         return result;

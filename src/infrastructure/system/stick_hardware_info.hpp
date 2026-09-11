@@ -16,6 +16,11 @@ struct StickHardwareInfo
     std::string filesystem;    // lowercase OS-reported type, e.g. "vfat", "exfat", "ntfs3"; empty if undetectable
     std::uint64_t totalBytes = 0;
     std::uint64_t freeBytes = 0;  // available to this user, not raw free blocks (matches "df"'s own convention)
+    // The filesystem's allocation unit (FAT cluster): a stick formatted
+    // with tiny clusters has a huge allocation table and pays one USB
+    // command per cluster run when reading a fragmented file. 0 if
+    // unknown.
+    std::uint64_t clusterBytes = 0;
     // The negotiated USB link speed, not the physical connector shape
     // (USB-A vs USB-C): the kernel exposes the former via a plain sysfs
     // attribute on the USB device, but has no portable, generic way to

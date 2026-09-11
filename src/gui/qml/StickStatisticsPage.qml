@@ -4,9 +4,9 @@ import QtQuick.Layouts
 import SeabassGui
 
 // USB Stick Statistics: filesystem/hardware facts, per-catalog library
-// stats, a Filelight-style disk usage breakdown, and a local read-speed
-// benchmark with history. Read-only, like Browse Library -- this page
-// never writes anything to the stick.
+// stats, and a Filelight-style disk usage breakdown. Read-only, like
+// Browse Library -- this page never writes anything to the stick. How
+// fast the stick is lives on its own page, StickPerformancePage.
 Page {
     id: root
     required property string stickLabel
@@ -59,17 +59,6 @@ Page {
         var maxCues = Math.max(rbCues, enCues);
         var minCues = Math.min(rbCues, enCues);
         return maxCues > 0 && (minCues / maxCues) < 0.5;
-    }
-
-    // isoUtc: an ISO 8601 UTC timestamp as stored by StickBenchmarkHistory
-    // (e.g. "2026-08-30T13:34:00Z"). JS Date parses that format natively
-    // and Qt.formatDateTime renders it in the user's own locale/timezone,
-    // no manual parsing needed.
-    function formatTimestamp(isoUtc) {
-        if (!isoUtc) return "";
-        var date = new Date(isoUtc);
-        if (isNaN(date.getTime())) return isoUtc;
-        return Qt.formatDateTime(date, "MMM d, yyyy h:mm AP");
     }
 
     function statsForSource(source) {
@@ -497,82 +486,6 @@ Page {
                         Layout.fillHeight: true
                         node: root.currentTreemapNode
                         onBoxClicked: (childNode) => root.treemapStack = root.treemapStack.concat([childNode])
-                    }
-                }
-            }
-
-            // -- Speed benchmark -----------------------------------------
-            GroupBox {
-                label: Subtitle { text: "Read-Speed Benchmark" }
-                Layout.fillWidth: true
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 10
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        Button {
-                            text: controller.benchmarkRunning ? "Running..." : "Run Benchmark"
-                            enabled: !controller.benchmarkRunning && !controller.busy
-                            onClicked: controller.runBenchmark()
-                        }
-                        BusyIndicator {
-                            running: controller.benchmarkRunning
-                            visible: controller.benchmarkRunning
-                            implicitWidth: 20
-                            implicitHeight: 20
-                        }
-                        Label {
-                            visible: controller.benchmarkErrorMessage.length > 0
-                            text: controller.benchmarkErrorMessage
-                            color: Theme.danger
-                        }
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                        text: "Reads real sample files already on this stick to measure MiB/s, then computes a "
-                            + "comparative-only score (not an absolute/manufacturer number) so sticks tested on "
-                            + "this computer can be ranked against each other over time."
-                    }
-
-                    Label {
-                        text: "History for this stick (" + controller.benchmarkHistory.length + " run(s))"
-                        font.bold: true
-                        Layout.topMargin: 8
-                    }
-                    Repeater {
-                        model: controller.benchmarkHistory
-                        delegate: Frame {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            contentItem: RowLayout {
-                                spacing: 12
-                                Label {
-                                    text: root.formatTimestamp(modelData.ranAt)
-                                    color: Theme.textMuted
-                                    font.pointSize: Theme.fontSmall
-                                }
-                                Label { text: "Score: " + modelData.score; font.bold: true }
-                                Label { text: modelData.usbSpeedLabel; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
-                                Label {
-                                    text: "DB " + modelData.databaseReadMbps.toFixed(1) + " MiB/s, Audio "
-                                        + modelData.audioReadMbps.toFixed(1) + " MiB/s"
-                                    color: Theme.textMuted
-                                    font.pointSize: Theme.fontSmall
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
-                        }
-                    }
-                    Label {
-                        visible: controller.benchmarkHistory.length === 0
-                        text: "No benchmark runs yet for this stick."
-                        color: Theme.textMuted
                     }
                 }
             }
