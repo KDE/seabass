@@ -81,6 +81,11 @@ Page {
         return "NOT MEASURED";
     }
 
+    // One column width for the player-group names and one for the badges,
+    // shared by every row, so the three columns line up down the page.
+    readonly property real advisoryGroupWidth: 250
+    readonly property real badgeWidth: 96
+
     readonly property bool hasResults: Object.keys(controller.score).length > 0
     readonly property bool hasWriteResults: Object.keys(controller.writeEstimate).length > 0
     readonly property bool hasWearResults: Object.keys(controller.wearAssessment).length > 0
@@ -126,7 +131,14 @@ Page {
                 property string unit: ""
                 property string note: ""
                 property color valueColor: Theme.text
-                spacing: 2
+                // Equal columns in whichever grid holds these, so a long
+                // note under one tile does not push its neighbours.
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                // Top-aligned, so a tile whose note wraps to two lines does
+                // not float its number above its neighbours'.
+                Layout.alignment: Qt.AlignTop
+                spacing: Theme.tightSpacing / 3
                 RowLayout {
                     spacing: Theme.tightSpacing
                     StatValue { text: statTile.value; color: statTile.valueColor }
@@ -140,6 +152,11 @@ Page {
                 }
                 TableHeaderLabel { label: statTile.label }
                 Label {
+                    // Wrapping is what lets the columns be equal: an
+                    // unwrapped note sets the column's minimum width to
+                    // its own length.
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
                     text: statTile.note
                     visible: statTile.note.length > 0
                     color: Theme.textMuted
@@ -169,7 +186,7 @@ Page {
                 RowLayout {
                     id: scratchRow
                     anchors.fill: parent
-                    anchors.margins: Theme.cardPadding / 2
+                    anchors.margins: Theme.rowSpacing
                     spacing: Theme.rowSpacing
                     Label {
                         text: "⚠"
@@ -195,12 +212,16 @@ Page {
             }
 
             // -- DJ Workload Score ---------------------------------------
-            GroupBox {
-                label: Subtitle { text: "DJ Workload Score" }
+            // No bordered card around a single block: it would indent the
+            // section off the page's one left line (see Theme.qml's spacing
+            // scale and the alignment note in the design docs).
+            ColumnLayout {
                 Layout.fillWidth: true
+                spacing: Theme.rowSpacing
+                Subtitle { text: "DJ Workload Score" }
 
                 ColumnLayout {
-                    anchors.fill: parent
+                    Layout.fillWidth: true
                     spacing: Theme.rowSpacing
 
                     RowLayout {
@@ -216,7 +237,7 @@ Page {
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 2
+                            spacing: Theme.tightSpacing / 3
                             Label {
                                 objectName: "speedClass"
                                 text: root.hasResults ? controller.score.speedClass + " by today's standards" : "Not measured yet"
@@ -307,13 +328,17 @@ Page {
             }
 
             // -- What was measured ---------------------------------------
-            GroupBox {
-                label: Subtitle { text: "What was measured" }
+            // No bordered card around a single block: it would indent the
+            // section off the page's one left line (see Theme.qml's spacing
+            // scale and the alignment note in the design docs).
+            ColumnLayout {
                 Layout.fillWidth: true
                 visible: root.hasResults
+                spacing: Theme.rowSpacing
+                Subtitle { text: "What was measured" }
 
                 ColumnLayout {
-                    anchors.fill: parent
+                    Layout.fillWidth: true
                     spacing: Theme.rowSpacing
 
                     GridLayout {
@@ -385,13 +410,17 @@ Page {
             }
 
             // -- On a player ---------------------------------------------
-            GroupBox {
-                label: Subtitle { text: "On a player" }
+            // No bordered card around a single block: it would indent the
+            // section off the page's one left line (see Theme.qml's spacing
+            // scale and the alignment note in the design docs).
+            ColumnLayout {
                 Layout.fillWidth: true
                 visible: root.hasResults
+                spacing: Theme.rowSpacing
+                Subtitle { text: "On a player" }
 
                 ColumnLayout {
-                    anchors.fill: parent
+                    Layout.fillWidth: true
                     spacing: Theme.rowSpacing
 
                     Label {
@@ -414,20 +443,36 @@ Page {
                                 required property int index
                                 objectName: "advisoryRow"
                                 Layout.fillWidth: true
-                                implicitHeight: advisoryLayout.implicitHeight + Theme.cardPadding
-                                radius: 3
-                                color: index % 2 === 0 ? Theme.rowOdd : "transparent"
+                                implicitHeight: advisoryLayout.implicitHeight + 2 * Theme.rowSpacing
+                                color: "transparent"
+
+                                // A rule under each row rather than a filled
+                                // band: a fill needs an inset for its text,
+                                // and that inset is a second left edge.
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 1
+                                    color: Theme.borderSubtle
+                                    visible: advisoryRow.index < controller.advisories.length - 1
+                                }
 
                                 RowLayout {
                                     id: advisoryLayout
-                                    anchors.fill: parent
-                                    anchors.margins: Theme.cardPadding / 2
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
                                     spacing: Theme.rowSpacing
 
                                     ColumnLayout {
-                                        Layout.preferredWidth: 250
-                                        Layout.maximumWidth: 250
-                                        spacing: 2
+                                        // Fixed, not preferred: a preferred width
+                                        // shrinks to the text and the badge column
+                                        // then wanders from row to row.
+                                        Layout.minimumWidth: root.advisoryGroupWidth
+                                        Layout.preferredWidth: root.advisoryGroupWidth
+                                        Layout.maximumWidth: root.advisoryGroupWidth
+                                        spacing: Theme.tightSpacing / 3
                                         Label { text: advisoryRow.modelData.group; font.bold: true }
                                         Label {
                                             Layout.fillWidth: true
@@ -438,7 +483,7 @@ Page {
                                         }
                                     }
                                     StatusBadge {
-                                        Layout.preferredWidth: 96
+                                        Layout.preferredWidth: root.badgeWidth
                                         Layout.alignment: Qt.AlignVCenter
                                         label: advisoryRow.modelData.verdictLabel
                                         badgeColor: root.verdictColor(advisoryRow.modelData.verdict)
@@ -457,12 +502,16 @@ Page {
             }
 
             // -- Wear check ------------------------------------------------
-            GroupBox {
-                label: Subtitle { text: "Wear" }
+            // No bordered card around a single block: it would indent the
+            // section off the page's one left line (see Theme.qml's spacing
+            // scale and the alignment note in the design docs).
+            ColumnLayout {
                 Layout.fillWidth: true
+                spacing: Theme.rowSpacing
+                Subtitle { text: "Wear" }
 
                 ColumnLayout {
-                    anchors.fill: parent
+                    Layout.fillWidth: true
                     spacing: Theme.rowSpacing
 
                     Label {
@@ -520,6 +569,7 @@ Page {
                         spacing: Theme.rowSpacing
                         StatusBadge {
                             objectName: "wearBadge"
+                            Layout.preferredWidth: root.badgeWidth
                             Layout.alignment: Qt.AlignTop
                             label: (controller.wearAssessment.label || "").toUpperCase()
                             badgeColor: root.wearColor(controller.wearAssessment.state)
@@ -570,12 +620,16 @@ Page {
             }
 
             // -- Write test (optional) -----------------------------------
-            GroupBox {
-                label: Subtitle { text: "Write Test" }
+            // No bordered card around a single block: it would indent the
+            // section off the page's one left line (see Theme.qml's spacing
+            // scale and the alignment note in the design docs).
+            ColumnLayout {
                 Layout.fillWidth: true
+                spacing: Theme.rowSpacing
+                Subtitle { text: "Write Test" }
 
                 ColumnLayout {
-                    anchors.fill: parent
+                    Layout.fillWidth: true
                     spacing: Theme.rowSpacing
 
                     Label {
@@ -649,7 +703,7 @@ Page {
                             Layout.fillWidth: true
                             spacing: Theme.rowSpacing
                             StatusBadge {
-                                Layout.preferredWidth: 96
+                                Layout.preferredWidth: root.badgeWidth
                                 label: root.verdictText(controller.writeEstimate.cueSaveVerdict)
                                 badgeColor: root.verdictColor(controller.writeEstimate.cueSaveVerdict)
                             }
@@ -665,7 +719,7 @@ Page {
                             Layout.fillWidth: true
                             spacing: Theme.rowSpacing
                             StatusBadge {
-                                Layout.preferredWidth: 96
+                                Layout.preferredWidth: root.badgeWidth
                                 label: root.verdictText(controller.writeEstimate.exportVerdict)
                                 badgeColor: root.verdictColor(controller.writeEstimate.exportVerdict)
                             }
