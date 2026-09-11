@@ -19,7 +19,9 @@
 #include <string>
 
 #include "scratch_path.hpp"
+#include "gui/local_file_url.hpp"
 #include "gui/media_controller.hpp"
+#include "gui/seabass_settings.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 
@@ -94,10 +96,26 @@ int main(int argc, char **argv)
     // And proof, before anything is written: if this ever resolves back
     // to the real store, the assert fires here rather than after the
     // developer's own settings have been appended to.
+    //
+    // Probed with the same openSeabassSettings() production code
+    // actually calls, not a bare QSettings("seabass", "seabass") here:
+    // that two-argument constructor is documented to fall back to
+    // QSettings::defaultFormat() when no format is given, but on this
+    // Qt6/Windows build it does not -- measured directly, its
+    // QSettings::format() reads back NativeFormat and fileName()
+    // resolves to the registry regardless of setDefaultFormat()/setPath()
+    // above. Checking a plain QSettings("seabass","seabass") here would
+    // have passed a probe that wasn't checking what MediaController
+    // actually opens.
     {
-        const QSettings probe("seabass", "seabass");
+        QSettings probe = seabass::gui::openSeabassSettings();
         const std::string where = probe.fileName().toStdString();
-        assert(where.rfind((scratch / "config").string(), 0) == 0
+        // generic_string(), not string(): QSettings::fileName() always
+        // normalizes to forward slashes (Qt's own convention, like
+        // QDir/QFile), regardless of platform, so comparing against
+        // fs::path's native (backslash, on Windows) form failed this
+        // assert even once the path itself resolved correctly.
+        assert(where.rfind((scratch / "config").generic_string(), 0) == 0
                && "QSettings must resolve inside the test's scratch tree");
     }
 
@@ -212,9 +230,22 @@ int main(int argc, char **argv)
 
     // A QML FolderDialog hands over a file:// URL, and that is what the
     // controller receives; it must not be stripped by hand.
+    //
+    // Built with toLocalFileUrl(), not "file://" + both.string(): that
+    // concatenation is exactly the malformed-URL trap that helper's own
+    // doc comment warns about -- it happens to produce a valid URL on
+    // Linux (an absolute POSIX path already starts with '/', giving the
+    // required triple slash) but not on Windows, where both.string() is
+    // a backslash path with no leading slash at all
+    // ("file://C:\...\restored-backup", missing the slash before the
+    // drive letter and never a URL QUrl::toLocalFile() -- what
+    // openFolder() actually parses this through -- can resolve). A real
+    // QML FolderDialog never hands back a URL shaped like that on any
+    // platform; the fixture should not build a test case around one
+    // either.
     {
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString("file://" + both.string())).isEmpty());
+        assert(controller.openFolder(seabass::gui::toLocalFileUrl(both.string())).isEmpty());
         assert(rowForMountPoint(*controller.sticksModel(), both.string()) >= 0);
         std::cout << "case 7b (file:// URL accepted) OK\n";
     }
@@ -293,7 +324,13 @@ int main(int argc, char **argv)
         {
             MediaController whileAway;
             assert(rowForMountPoint(*whileAway.sticksModel(), share.string()) < 0);
-            QSettings settings("seabass", "seabass");
+            // openSeabassSettings(), not a bare QSettings("seabass",
+            // "seabass") -- the same Windows quirk documented at its
+            // definition (the two-argument constructor ignores
+            // setDefaultFormat()) meant this probe read the real
+            // registry while MediaController's own writes went to the
+            // sandbox, so it never found the row it was checking for.
+            QSettings settings = seabass::gui::openSeabassSettings();
             const int count = settings.beginReadArray(QStringLiteral("openedFolders"));
             bool stillListed = false;
             for (int i = 0; i < count; ++i) {

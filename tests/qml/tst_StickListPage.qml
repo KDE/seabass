@@ -605,10 +605,21 @@ TestCase {
         // The label already asked to elide and could not: a Text's
         // Layout.minimumWidth defaults to its implicit width, so it had
         // a floor at full natural size and the row overflowed instead.
+        //
+        // A narrow page, deliberately: at this file's usual 1080px width
+        // there is comfortably more than enough room for this label's
+        // implicit width regardless of platform (measured 518px on
+        // Windows; whatever it measures elsewhere, it is nowhere near
+        // 1080 minus the icon column and the size label beside it), so
+        // nothing forces the label to shrink and the assertion below
+        // fails not because the elide mechanism is broken but because
+        // this test never actually ran it out of room. A page this
+        // narrow leaves stickPathLabel's row well under 518px on any
+        // reasonable font metrics, which is what actually exercises it.
         var page = makePage([makeStick({
             label: "LONGONE",
             mountPoint: "/run/media/sebas/a-very-long-mount-point-name-that-will-not-fit-on-one-card-line"
-        })], {});
+        })], {}, {width: 480, height: 980});
         var label = findByName(page, "stickPathLabel");
         verify(label !== null, "the stick path label must exist");
         compare(label.elide, Text.ElideMiddle);
