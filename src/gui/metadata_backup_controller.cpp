@@ -694,15 +694,35 @@ void MetadataBackupController::onSaveFinished()
     };
     m_hasResult = true;
 
-    // Staged additions have landed, so they are no longer staged. The
-    // proposals stay on the list: a row that has just been stored now
-    // matches what the store holds, and saying so on a rescan is more
-    // honest than quietly dropping it the instant it is written.
+    // Staged additions have landed, so they are no longer staged.
     m_proposalModel.unstageAll();
     // Deletions ride along in the same Save, after the write, so a run
     // that fails to store does not also forget things.
     applyStagedDeletions();
     emit resultChanged();
+
+    // And the plan is now stale by exactly the amount that was just
+    // written. Leaving it up meant a list still headed "1469 tracks to
+    // back up", with every row still badged "new", describing work that
+    // had already happened -- the page contradicting the summary dialog
+    // in front of it. Cheap to redo: the catalogs this re-reads are the
+    // ones LibraryCatalogCache is still holding.
+    //
+    // Not after a cancelled run, which stopped part way and whose
+    // staging is still the best description of what is left to do.
+    if (!summary.cancelled && !m_browsingStore && !m_sourceLibraryPath.isEmpty()) {
+        // Kept across the rescan. startScan() drops the playlist filter
+        // because it is normally switching to a different stick, whose
+        // playlists are not this one's -- but this is the same stick,
+        // and someone working through a library playlist by playlist
+        // should not be thrown back to "All tracks" by each save they
+        // make. Restored after the call, which onScanFinished() then
+        // applies when the new proposals arrive.
+        const QString playlist = m_playlist;
+        startScan(m_sourceLibraryPath, m_sourceLibraryId, m_sourceStickLabel);
+        m_playlist = playlist;
+        emit filterChanged();
+    }
 }
 
 void MetadataBackupController::applyStagedDeletions()
