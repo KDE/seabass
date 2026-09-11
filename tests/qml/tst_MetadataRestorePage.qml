@@ -109,6 +109,34 @@ TestCase {
                 "breadcrumb text and body text must share a left edge");
     }
 
+    // The artwork the store copied, drawn on the rows that are offering
+    // it. Needs a real stick, because a proposal only exists where a
+    // stick track matched a stored one -- and the cover comes from the
+    // stored side, which is the whole point: the stick this page exists
+    // for is the stick that lost its own.
+    //
+    // Read-only. Nothing reaches the stick before Restore is pressed,
+    // and this never presses it.
+    function test_screenshot_theProposalsDrawStoredArtwork() {
+        if (!screenshotDir || !liveStickRoot) {
+            skip("SEABASS_SCREENSHOT_DIR and SEABASS_LIVE_STICK not both set");
+        }
+        var page = make({
+            stickLabel: "LIVE",
+            rekordboxPath: liveStickRoot + "/PIONEER",
+            enginePath: liveStickRoot + "/Engine Library",
+        });
+        var list = findChild(page, "proposalList");
+        verify(list, "the proposal list must exist");
+        // The scan runs on a worker thread over a real stick, so this
+        // waits on the list rather than on a fixed delay.
+        tryVerify(function () { return list.count > 0; }, 60000,
+                  "the scan must produce proposals against this stick");
+        waitForRendering(page);
+        var image = grabImage(page);
+        image.save(screenshotDir + "/MetadataRestorePage-live.png");
+    }
+
     function test_screenshot() {
         if (!screenshotDir) {
             skip("SEABASS_SCREENSHOT_DIR not set");
