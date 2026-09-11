@@ -234,6 +234,7 @@ add_library(seabass_core STATIC
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
     src/domain/local_restore.cpp
+    src/domain/metadata_backup_plan.cpp
     src/domain/metadata_merge.cpp
     src/domain/metadata_restore.cpp
     src/domain/sync_planning.cpp
@@ -1025,6 +1026,15 @@ add_executable(metadata_restore_test
 )
 target_include_directories(metadata_restore_test PRIVATE src)
 add_test(NAME metadata_restore_test COMMAND metadata_restore_test)
+
+add_executable(metadata_backup_plan_test
+    src/domain/metadata_backup_plan.cpp
+    src/domain/metadata_merge.cpp
+    src/domain/track_matching.cpp
+    tests/metadata_backup_plan_test.cpp
+)
+target_include_directories(metadata_backup_plan_test PRIVATE src)
+add_test(NAME metadata_backup_plan_test COMMAND metadata_backup_plan_test)
 
 add_executable(metadata_merge_test
     src/domain/metadata_merge.cpp
