@@ -222,6 +222,11 @@ def fin(body_polygon, base, apex, leading, trailing, upper: bool):
 
 def bar_rects():
     """(x, width, level) for each bar, spanning the body exactly."""
+    if len(BAR_LEVELS) != BAR_COUNT:
+        raise SystemExit(
+            f"BAR_LEVELS has {len(BAR_LEVELS)} entries but BAR_COUNT is {BAR_COUNT}; "
+            "the bars would be laid out for a count they no longer have"
+        )
     span = BODY_NOSE_X - BODY_TAIL_X
     width = (span - BAR_GAP * (BAR_COUNT - 1)) / BAR_COUNT
     for i, level in enumerate(BAR_LEVELS):
@@ -305,7 +310,7 @@ def check_svg(svg: str) -> None:
     place this can go wrong, but the cost of getting it wrong is a blank
     window icon with no error anywhere, so it is worth a hard stop.
     """
-    head, _, rest = svg.partition("<!--")
+    _, _, rest = svg.partition("<!--")
     comment, _, _ = rest.partition("-->")
     if "--" in comment:
         raise SystemExit(
