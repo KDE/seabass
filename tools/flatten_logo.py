@@ -93,7 +93,13 @@ BAR_GAP = 1.1
 # nose and the peduncle solid.
 BAR_LEVELS = [3.5, 6.5, 10.5, 8.0, 11.5, 5.5, 3.0]
 
-EYE_CENTRE = (12.5, -4.0)
+# The eye is centred on a bar rather than placed at a hand-picked x. The
+# gaps between bars are transparent, so an eye wide enough to cross one
+# paints its ring over nothing: a notch of background bitten out of the
+# eye on a light ground, and an outer edge that dissolves on a dark one.
+# Hand-placed, it overhung its bar by 0.71 units and did exactly that.
+EYE_BAR = 5
+EYE_Y = -4.0
 EYE_RING_R = 2.2
 EYE_WHITE_R = 1.6
 EYE_PUPIL_R = 0.9
@@ -199,15 +205,22 @@ def outline_arc(body_polygon, x_from: float, x_to: float, upper: bool):
     return arc
 
 
-def fin(body_polygon, base, apex, leading, trailing, upper: bool):
+def fin(body_polygon, base, apex, leading, trailing, upper: bool, name: str):
     """A fin rooted in the body outline between base[0] and base[1].
 
     Walks the body's own edge from the rear of the base to the front, out
     along the leading edge to the apex, then back down the trailing edge.
+
+    A base too narrow to catch any of the flattened outline's points would
+    leave the fish finless. Raise rather than skip: the icon is written to
+    three places at once and a silent success is worse than a stack trace.
     """
     arc = outline_arc(body_polygon, base[0], base[1], upper)
-    if not arc:
-        return None
+    if len(arc) < 2:
+        raise SystemExit(
+            f"the {name} fin's base spans {base[0]} to {base[1]}, which catches "
+            f"{len(arc)} points of the body outline; it needs at least two"
+        )
     rear, front = arc[0], arc[-1]
     poly = list(arc)
     poly += flatten([(front, leading[0], leading[1], apex)])
@@ -240,23 +253,32 @@ def build_shapes():
 
     shapes.append(("poly", flatten(TAIL), "fin"))
 
-    dorsal = fin(body, DORSAL_BASE, DORSAL_APEX, DORSAL_LEADING, DORSAL_TRAILING, True)
-    if dorsal:
-        shapes.append(("poly", dorsal, "fin"))
-    anal = fin(body, ANAL_BASE, ANAL_APEX, ANAL_LEADING, ANAL_TRAILING, False)
-    if anal:
-        shapes.append(("poly", anal, "fin"))
+    shapes.append(("poly", fin(body, DORSAL_BASE, DORSAL_APEX, DORSAL_LEADING,
+                               DORSAL_TRAILING, True, "dorsal"), "fin"))
+    shapes.append(("poly", fin(body, ANAL_BASE, ANAL_APEX, ANAL_LEADING,
+                               ANAL_TRAILING, False, "anal"), "fin"))
 
     for i, (x, width, level) in enumerate(bar_rects()):
         bright = "current" if i % 2 == 0 else "kelp"
         slab = clip_to_rect(body, x, -BODY_HALF_H, x + width, BODY_HALF_H)
-        if len(slab) >= 3:
-            shapes.append(("poly", slab, "deep"))
         lit = clip_to_rect(body, x, -level, x + width, level)
-        if len(lit) >= 3:
-            shapes.append(("poly", lit, bright))
+        if len(slab) < 3 or len(lit) < 3:
+            raise SystemExit(
+                f"bar {i} at x={x:.2f} level={level} collapsed to "
+                f"{len(slab)}/{len(lit)} points; it would not be drawn at all"
+            )
+        shapes.append(("poly", slab, "deep"))
+        shapes.append(("poly", lit, bright))
 
-    ex, ey = EYE_CENTRE
+    bars = list(bar_rects())
+    bx, bw, _ = bars[EYE_BAR]
+    reach = max(EYE_RING_R, EYE_PUPIL_DX + EYE_PUPIL_R)
+    if reach > bw / 2:
+        raise SystemExit(
+            f"the eye reaches {reach:.2f} from its centre but bar {EYE_BAR} is only "
+            f"{bw:.2f} wide, so it would be painted over a transparent gap"
+        )
+    ex, ey = bx + bw / 2, EYE_Y
     shapes.append(("circle", (ex, ey, EYE_RING_R), EYE_DARK))
     shapes.append(("circle", (ex, ey, EYE_WHITE_R), EYE_WHITE))
     shapes.append(("circle", (ex + EYE_PUPIL_DX, ey, EYE_PUPIL_R), EYE_DARK))
@@ -389,7 +411,7 @@ def render(shapes, scale, ox, oy, size: int, supersample: int = 8):
         for y in range(px):
             t = min(1.0, max(0.0, (y - top) / (bottom - top)))
             pixels[0, y] = tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
-        ramps[name] = strip.resize((px, px))
+        ramps[name] = strip.resize((px, px)).convert("RGBA")
 
     canvas = Image.new("RGBA", (px, px), (0, 0, 0, 0))
     for kind, payload, fill in shapes:
@@ -402,9 +424,8 @@ def render(shapes, scale, ox, oy, size: int, supersample: int = 8):
             x, y = to_px(cx, cy)
             rr = r * scale * k
             pen.ellipse([x - rr, y - rr, x + rr, y + rr], fill=255)
-        if fill in ramps:
-            layer = ramps[fill].convert("RGBA")
-        else:
+        layer = ramps.get(fill)
+        if layer is None:
             layer = Image.new("RGBA", (px, px), _hex_rgb(fill) + (255,))
         canvas.paste(layer, (0, 0), mask)
 
@@ -415,6 +436,13 @@ def render(shapes, scale, ox, oy, size: int, supersample: int = 8):
 
 PNG_SIZES = [16, 32, 48, 64, 128, 180, 192, 256, 512, 1024]
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
+
+# iOS ignores the alpha channel on an apple-touch-icon and composites what
+# is left over black. The body's deep tone is near-black navy, so a
+# transparent 180 px icon loses the whole silhouette on a home screen and
+# only the lit bars survive. This one size gets an opaque ground, the same
+# near-white the mark is drawn against on the site.
+OPAQUE_PNG_GROUND = {180: "#eef6fb"}
 
 
 def main() -> None:
@@ -444,15 +472,26 @@ def main() -> None:
         print(f"wrote {ico} ({', '.join(str(s) for s in ICO_SIZES)})")
 
     if args.website:
+        # Finding 3: create the directories before writing anything, so a
+        # mistyped --website fails before the app's own files are rewritten.
         root = Path(args.website)
-        (root / "assets" / "seabass.svg").write_text(svg)
-        print(f"wrote {root / 'assets' / 'seabass.svg'}")
-        icons = root / "assets" / "icons"
+        assets = root / "assets"
+        icons = assets / "icons"
         icons.mkdir(parents=True, exist_ok=True)
+        (assets / "seabass.svg").write_text(svg)
+        print(f"wrote {assets / 'seabass.svg'}")
         for size in PNG_SIZES:
             out = icons / f"seabass-{size}.png"
-            render(shapes, scale, ox, oy, size).save(out, optimize=True)
-            print(f"wrote {out}")
+            image = render(shapes, scale, ox, oy, size)
+            ground = OPAQUE_PNG_GROUND.get(size)
+            if ground:
+                from PIL import Image
+
+                flat = Image.new("RGBA", image.size, _hex_rgb(ground) + (255,))
+                flat.alpha_composite(image)
+                image = flat.convert("RGB")
+            image.save(out, optimize=True)
+            print(f"wrote {out}" + (f" (opaque {ground})" if ground else ""))
 
 
 if __name__ == "__main__":
