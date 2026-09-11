@@ -46,4 +46,18 @@ struct StickSpace
 // warning nobody can act on.
 StickSpace measureStickSpace(const std::filesystem::path &stickRoot);
 
+// The same measurement, remembered for the life of the process.
+//
+// The walk behind it is thousands of stats on removable media -- one
+// analysis directory per track -- and it was being run on the GUI thread
+// every time an edit page opened, before the page's own busy overlay
+// existed to explain the wait. Remembered per stick root, keyed on the
+// analysis tree's own mtime so a tree that has grown is measured again
+// (rekordbox adds a directory per track, which moves the parent's mtime).
+//
+// For the WARNING only. save_context.cpp deliberately calls
+// measureStickSpace() directly: the decision that actually picks where a
+// backup is written must not run on a remembered number.
+StickSpace measureStickSpaceCached(const std::filesystem::path &stickRoot);
+
 }  // namespace seabass::infrastructure::backup

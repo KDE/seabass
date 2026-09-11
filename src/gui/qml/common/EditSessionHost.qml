@@ -81,6 +81,15 @@ Item {
         property var session: null
         property var pendingLeave: null
         property bool leaveAfterSave: false
+        property bool lowSpaceAsked: false
+
+        function askAboutLowSpace() {
+            if (!host.backupWouldGoLocal || internal.lowSpaceAsked) {
+                return;
+            }
+            internal.lowSpaceAsked = true;
+            lowSpaceDialog.open();
+        }
 
         function runPendingLeave() {
             var fn = internal.pendingLeave;
@@ -97,10 +106,19 @@ Item {
             internal.session = host.registry.openSession(host.libraryId, host.stickLabel, host.rekordboxPath,
                                                          host.enginePath);
         }
-        if (host.backupWouldGoLocal) {
-            lowSpaceDialog.open();
-        }
+        // Usually false at this instant now: the measurement behind it
+        // runs on a worker thread (see LibraryEditSession::
+        // setLibraryPaths for why) and lands a moment later, which is
+        // what onBackupWouldGoLocalChanged below is for. Still checked
+        // here because a remembered measurement answers immediately.
+        internal.askAboutLowSpace();
     }
+
+    // The measurement landing is what usually raises this dialog. Asked
+    // once: the property can settle more than once (a re-measure on the
+    // same session), and a question the user already answered must not
+    // be put to them again.
+    onBackupWouldGoLocalChanged: internal.askAboutLowSpace()
 
     // Bytes as the user reads them, for the one place that needs it.
     function humanSize(bytes) {

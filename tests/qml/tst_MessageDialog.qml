@@ -257,6 +257,50 @@ TestCase {
         verify(dialog.detailText.indexOf("only") >= 0);
     }
 
+    // The measurement arrives late now -- it walks the analysis tree on a
+    // worker thread rather than freezing the page's construction for
+    // seconds -- so the gate has to open on the answer landing, not only
+    // on the page being built.
+    function test_asksWhenTheMeasurementArrivesAfterThePageIsUp() {
+        var host = makeHost({
+            backupGoesLocal: false,
+            stickBytesCapacity: 0,
+            stickBytesFree: 0,
+            backupBytesWorstCase: 0
+        });
+        var dialog = findByObjectName(host, "lowSpaceDialog");
+        compare(dialog.opened, false, "nothing to ask about until the numbers are in");
+
+        // What the worker finishing looks like from QML.
+        host.registry.session.stickBytesCapacity = 30 * testCase.gb;
+        host.registry.session.stickBytesFree = 1.2 * testCase.gb;
+        host.registry.session.backupBytesWorstCase = 812 * testCase.mb;
+        host.registry.session.backupGoesLocal = true;
+
+        tryCompare(dialog, "opened", true);
+        verify(dialog.headline.indexOf("812 MB") >= 0);
+    }
+
+    // And asked once. The property can settle more than once on one
+    // session; a question already answered must not be put again.
+    function test_doesNotAskTwiceIfTheAnswerSettlesAgain() {
+        var host = makeHost({
+            backupGoesLocal: true,
+            stickBytesCapacity: 30 * testCase.gb,
+            stickBytesFree: 1.2 * testCase.gb,
+            backupBytesWorstCase: 812 * testCase.mb
+        });
+        var dialog = findByObjectName(host, "lowSpaceDialog");
+        tryCompare(dialog, "opened", true);
+        dialog.close();
+        tryCompare(dialog, "opened", false);
+
+        host.registry.session.backupGoesLocal = false;
+        host.registry.session.backupGoesLocal = true;
+        wait(50);
+        compare(dialog.opened, false, "the gate must not re-ask once it has been answered");
+    }
+
     // The threshold itself is C++'s, and tests/stick_space_test.cpp covers
     // it -- including that the backup's own size is in the comparison and
     // that headroom scales with the device. What matters here is only that

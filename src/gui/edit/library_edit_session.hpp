@@ -62,10 +62,13 @@ class LibraryEditSession : public QObject
     Q_PROPERTY(QVariantMap lastSummary READ lastSummary NOTIFY saveFinished)
     // Where this session's backups will go, measured once when the
     // session opens. See infrastructure/backup/stick_space.hpp.
-    Q_PROPERTY(bool backupGoesLocal READ backupGoesLocal CONSTANT)
-    Q_PROPERTY(double stickBytesFree READ stickBytesFree CONSTANT)
-    Q_PROPERTY(double stickBytesCapacity READ stickBytesCapacity CONSTANT)
-    Q_PROPERTY(double backupBytesWorstCase READ backupBytesWorstCase CONSTANT)
+    // NOTIFY, not CONSTANT: the measurement behind these runs on a worker
+    // thread now (it is thousands of stats on a real stick) and lands
+    // after the page is already up, so a binding has to be told.
+    Q_PROPERTY(bool backupGoesLocal READ backupGoesLocal NOTIFY stickSpaceChanged)
+    Q_PROPERTY(double stickBytesFree READ stickBytesFree NOTIFY stickSpaceChanged)
+    Q_PROPERTY(double stickBytesCapacity READ stickBytesCapacity NOTIFY stickSpaceChanged)
+    Q_PROPERTY(double backupBytesWorstCase READ backupBytesWorstCase NOTIFY stickSpaceChanged)
 
 public:
     LibraryEditSession(EditSessionRegistry *registry, QString libraryId, QString stickLabel, QString mountPoint,
@@ -138,6 +141,7 @@ public:
     void heartbeat();
 
 signals:
+    void stickSpaceChanged();
     void stickLabelChanged();
     void stateChanged();
     void pendingChanged();
@@ -169,6 +173,10 @@ private:
     QString m_rekordboxPath;
     QString m_enginePath;
     infrastructure::backup::StickSpace m_stickSpace;
+    // Kept so the session can be torn down while a measurement is still
+    // running; the task itself touches nothing but a path, so a watcher
+    // going away with it is safe.
+    QFutureWatcher<infrastructure::backup::StickSpace> m_stickSpaceWatcher;
     std::vector<std::shared_ptr<PendingChange>> m_changes;
     std::vector<UndoableBackup> m_lastBackups;
     QFutureWatcher<SaveLoopResult> m_watcher;

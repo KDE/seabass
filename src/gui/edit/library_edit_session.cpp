@@ -1,6 +1,8 @@
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "gui/edit/library_edit_session.hpp"
 
+#include <QtConcurrent>
+
 #include <filesystem>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -73,6 +75,10 @@ LibraryEditSession::LibraryEditSession(EditSessionRegistry *registry, QString li
       m_mountPoint(std::move(mountPoint))
 {
     connect(&m_watcher, &QFutureWatcher<SaveLoopResult>::finished, this, &LibraryEditSession::onSaveFinished);
+    connect(&m_stickSpaceWatcher, &QFutureWatcherBase::finished, this, [this] {
+        m_stickSpace = m_stickSpaceWatcher.result();
+        emit stickSpaceChanged();
+    });
 }
 
 LibraryEditSession::~LibraryEditSession()
@@ -122,10 +128,26 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
     // Measured once here rather than per save: this is where the stick
     // root becomes known, and the answer is shown when an edit page opens
     // so the user can back out before staging anything.
+    //
+    // On a worker thread, because the measurement walks the whole
+    // analysis tree -- one directory per track, so thousands of stats on
+    // removable media -- and this runs inside the page's construction,
+    // from EditSessionHost's Component.onCompleted. QML completes
+    // children before the root, so it happened before the page's own
+    // busy overlay existed: clicking Browse Library froze the window for
+    // seconds with no spinner and nothing to say why. The answer still
+    // arrives well before anything can be staged (the library is
+    // read-only until a cue is), which is all the question needs.
+    //
+    // Nothing here decides where a backup is actually written --
+    // save_context.cpp measures that for itself, unremembered, at save
+    // time. This number only asks the user a question.
     const QString &any = m_rekordboxPath.isEmpty() ? m_enginePath : m_rekordboxPath;
     if (!any.isEmpty()) {
-        m_stickSpace = infrastructure::backup::measureStickSpace(
-            infrastructure::backup::stickRootForCatalogPath(any.toStdString()));
+        const std::filesystem::path root =
+            infrastructure::backup::stickRootForCatalogPath(any.toStdString());
+        m_stickSpaceWatcher.setFuture(QtConcurrent::run(
+            infrastructure::backup::measureStickSpaceCached, root));
     }
 }
 
