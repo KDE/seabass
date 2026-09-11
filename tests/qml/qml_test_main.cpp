@@ -1,5 +1,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QDir>
+#include <QCoreApplication>
 #include <QSettings>
 #include <QString>
 #include <QtQuickTest/quicktest.h>
@@ -50,10 +52,51 @@ public slots:
         // same XDG_CONFIG_HOME directory makes the redirect actually
         // apply, identically, on every platform -- the registry (or
         // equivalent) is never touched by a test run again.
-        if (const char *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
-            xdgConfigHome != nullptr && *xdgConfigHome != '\0') {
-            QSettings::setDefaultFormat(QSettings::IniFormat);
-            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, QString::fromLocal8Bit(xdgConfigHome));
+        //
+        // Unconditional, which it was not. It used to redirect only when
+        // XDG_CONFIG_HOME was ALREADY set -- true under ctest, which sets
+        // it, and false for the command docs/testing.md tells you to run:
+        //
+        //     SEABASS_SCREENSHOT_DIR=<dir> QT_QPA_PLATFORM=offscreen \
+        //         build/seabass_qml_tests -input tests/qml
+        //
+        // Plasma does not export XDG_CONFIG_HOME (it is a default, not a
+        // setting), so on a normal KDE desktop that guard fell straight
+        // through and every direct run wrote the suite's fixture values
+        // into the real ~/.config/seabass/seabass.conf -- including
+        // tst_AppSettingsPage's fake "/home/somebody/Music/..." backup
+        // directory, which the real app then showed back to its user as
+        // if they had chosen it. Measured: remove the key, run that
+        // command, and it is back.
+        //
+        // So when the variable is absent a sandbox is invented rather
+        // than skipped. Falling back to the real store is never the right
+        // answer for a test binary, however it was started.
+        QString configHome = QString::fromLocal8Bit(qgetenv("XDG_CONFIG_HOME"));
+        if (configHome.isEmpty()) {
+            configHome = QDir::tempPath()
+                + QStringLiteral("/seabass-qml-test-config-%1").arg(QCoreApplication::applicationPid());
+            // Exported as well as used, so that anything this process
+            // starts, and QStandardPaths itself, agree with QSettings
+            // about where the settings live.
+            qputenv("XDG_CONFIG_HOME", configHome.toLocal8Bit());
+        }
+        QDir().mkpath(configHome);
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, configHome);
+
+        // And proof, before a single test runs. The failure this guards
+        // against is silent by nature: the suite passes either way, and
+        // the only evidence is a fixture value turning up in a real
+        // config file days later. Refusing to start is the loud version.
+        {
+            const QSettings probe("seabass", "seabass");
+            if (!probe.fileName().startsWith(configHome)) {
+                qCritical("seabass_qml_tests: settings would be written to %s, outside the "
+                          "sandbox at %s -- refusing to run rather than touch the real store.",
+                          qPrintable(probe.fileName()), qPrintable(configHome));
+                std::abort();
+            }
         }
 
         const char *dir = std::getenv("SEABASS_SCREENSHOT_DIR");
