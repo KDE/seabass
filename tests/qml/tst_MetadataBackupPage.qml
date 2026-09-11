@@ -61,9 +61,60 @@ TestCase {
         // that implements the rule, so the two cannot drift apart.
         var page = make();
         verify(page.children.length > 0, "page did not build");
-        var help = findChild(page, "backUpNowButton");
-        verify(help, "the Add button must exist");
-        compare(help.text, "Add", "the button that fills the backup is called Add");
+        verify(findChild(page, "backupInfoButton"), "the info button explaining the rule must exist");
+    }
+
+    function test_theSaveButtonSaysBackUp() {
+        // The standard floating Save, with the word this page's save
+        // actually means. There is no second button that writes.
+        var page = make();
+        var overlay = findChild(page, "saveOverlay");
+        verify(overlay, "the standard save overlay must exist");
+        compare(overlay.label, "Back Up", "the save button says what this page's save does");
+        verify(!findChild(page, "backUpNowButton"),
+               "the old always-on Add button must be gone: a backup is staged now");
+        verify(!findChild(page, "deleteStagedButton"),
+               "deleting goes through the same Save button, not one of its own");
+    }
+
+    function test_nothingIsStagedSoNothingIsOffered() {
+        // The floating button is only up when there is something to
+        // save, and the escape hatch beside it only when there is
+        // something to clear.
+        var page = make();
+        var overlay = findChild(page, "saveOverlay");
+        verify(!overlay.visible, "the save button must be hidden with nothing staged");
+        var clear = findChild(page, "clearStagingButton");
+        verify(!clear || !clear.visible, "Clear must not be offered with nothing staged");
+    }
+
+    function test_thePickerChoosesWhichPopulationTheListShows() {
+        // One list, two populations. The picker's first entry is the
+        // store itself, which is where the page opens.
+        var page = make();
+        var picker = findChild(page, "sourcePicker");
+        verify(picker, "the source picker must exist");
+        verify(picker.model.length >= 2,
+               "the picker offers the store and at least the stick the page was opened on");
+        compare(picker.model[0].name, "Everything stored", "index 0 is the store");
+        verify(picker.model[0].isStore, "and it is marked as such");
+        compare(picker.currentIndex, 0, "the page opens on the store, which is never empty-looking");
+        // The stick's list is the other population, and it is not the
+        // one showing.
+        var stored = findChild(page, "storedTrackList");
+        var proposals = findChild(page, "proposalList");
+        verify(stored && stored.visible, "the stored list shows while the source is the store");
+        verify(proposals && !proposals.visible, "the stick's list is hidden until a stick is picked");
+    }
+
+    function test_thePlaylistPickerBelongsToAStick() {
+        // Filtering a backup by playlist only means anything when the
+        // source is a stick; the store does not have this stick's
+        // playlists.
+        var page = make();
+        var playlist = findChild(page, "playlistPicker");
+        verify(playlist, "the playlist picker must exist");
+        verify(!playlist.visible, "it stays hidden while the source is the store");
     }
 
     function test_saysWhereItWritesInstead() {
@@ -91,10 +142,13 @@ TestCase {
     }
 
     function test_backUpNeedsAStick() {
+        // With no stick to read, the picker offers only the store, so
+        // there is nothing to pick that could start a backup.
         var page = make({stickLabel: "", rekordboxPath: "", enginePath: ""});
-        var button = findChild(page, "backUpNowButton");
-        verify(button, "the Add button must exist");
-        verify(!button.enabled, "Add must be off with no stick to read");
+        var picker = findChild(page, "sourcePicker");
+        verify(picker, "the source picker must exist");
+        compare(picker.model.length, 1, "only the store is on offer with no stick attached");
+        verify(picker.model[0].isStore, "and that one entry is the store");
     }
 
     function test_deletingIsMarkedAndConfirmed() {
@@ -104,10 +158,10 @@ TestCase {
         // marked first, one button acts on what is marked, and a dialog
         // stands between that and the delete.
         var page = make();
-        var deleteButton = findChild(page, "deleteStagedButton");
-        // Nothing marked on an empty list, so the button is not offered
+        var overlay = findChild(page, "saveOverlay");
+        // Nothing marked, so the one button that commits is not offered
         // at all rather than offered and inert.
-        verify(!deleteButton || !deleteButton.visible, "Delete must not be offered with nothing marked");
+        verify(!overlay.visible, "the save button must not be offered with nothing marked");
         verify(findChild(page, "confirmDeleteDialog"), "a confirmation dialog must exist");
         // And there is exactly one button down there. A second one that
         // turned a selection into a set of marks was the shape this page

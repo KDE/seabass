@@ -303,7 +303,15 @@ public:
     // ---- committing ---------------------------------------------------
     // Writes the staged additions into the store and deletes the staged
     // removals from it. Nothing on any stick is touched either way.
+    //
+    // A save that would only add things just runs. A save that would
+    // forget something stops and emits deletionConfirmationRequired()
+    // instead, because the store's copy of a cue set may be the only one
+    // left if the stick it came from has been rebuilt since -- staging
+    // is an intention, and this is the step that asks whether you meant
+    // it. The page answers with saveConfirmed().
     Q_INVOKABLE void save();
+    Q_INVOKABLE void saveConfirmed();
 
     // ---- filtering ----------------------------------------------------
     // Narrows whichever population is showing. The browse list pages
@@ -335,9 +343,13 @@ signals:
     void analysisChanged();
     void filterChanged();
     void actionFeedback(const QString &message, bool isError);
+    // Raised by save() when something is staged for deletion. The page
+    // puts the question and calls saveConfirmed() on a yes.
+    void deletionConfirmationRequired();
 
 private:
     void startScan(const QString &libraryPath, const QString &libraryId, const QString &stickLabel);
+    void beginSave();
     void onScanFinished();
     void onSaveFinished();
     void applyStagedDeletions();

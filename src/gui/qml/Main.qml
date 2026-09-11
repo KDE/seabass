@@ -743,6 +743,9 @@ ApplicationWindow {
     Component {
         id: metadataBackupPageComponent
         MetadataBackupPage {
+            // For the source picker: every stick with a library on it,
+            // plus the store itself.
+            mediaController: mediaCtrl
             // The link in the page's first line. Pushed with this same
             // stick, because "restore to any stick" starts with the one
             // you are already looking at.

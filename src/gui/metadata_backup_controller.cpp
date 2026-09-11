@@ -622,6 +622,26 @@ void MetadataBackupController::save()
     if (m_busy || !dirty()) {
         return;
     }
+    if (stagedForDeletionCount() > 0) {
+        // Adding to a backup is safe and reversible; taking something
+        // out of one is neither, and what goes may be the only copy
+        // left. The page asks, then calls saveConfirmed().
+        emit deletionConfirmationRequired();
+        return;
+    }
+    beginSave();
+}
+
+void MetadataBackupController::saveConfirmed()
+{
+    if (m_busy || !dirty()) {
+        return;
+    }
+    beginSave();
+}
+
+void MetadataBackupController::beginSave()
+{
     setErrorMessage({});
     m_hasResult = false;
     m_lastRun.clear();

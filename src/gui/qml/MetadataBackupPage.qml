@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// Metadata Backup: read what the DJ added to this stick's tracks into a
+// Metadata Backup: read what the DJ added to a stick's tracks into a
 // database on this computer, and browse what is in there.
 //
 // The two halves sit on one page on purpose. "Back up" and "look at what
@@ -11,25 +11,41 @@ import SeabassGui
 // browse view on its own page would be a place nobody visits until
 // something has already gone wrong.
 //
-// Nothing here writes to the stick. Putting metadata back is a different
+// One list answers both, and the source picker chooses which question it
+// is answering. Pick a stick and the list is that stick measured against
+// the store -- only the tracks a backup would actually change, ticked to
+// add. Pick "Everything stored" and it is the store itself, ticked to
+// forget. Two lists side by side was the alternative and it made a tall
+// page where the thing you were looking at was never the whole width.
+//
+// Nothing here writes to a stick. Putting metadata back is a different
 // page, linked from the line at the top, because it is a different
-// decision. The one destructive thing this page can do is forget an
-// entry, and that is staged and confirmed rather than done on a click.
+// decision. But the shape is the standard one either way: nothing
+// happens until Save, the button says what it would do, and leaving with
+// something staged asks first.
 Page {
     id: root
     required property string stickLabel
     required property string rekordboxPath
     required property string enginePath
     required property string libraryId
+    // For the source picker. Optional so the QML tests can build the
+    // page without the whole media stack behind it; the picker then
+    // offers the stick the page was opened on and the store, which is
+    // exactly what it offered before there was a picker at all.
+    property var mediaController: null
 
     readonly property bool hasStick: root.rekordboxPath.length > 0 || root.enginePath.length > 0
     // Any catalog directory will do: the controller reads every catalog
     // on the stick that one belongs to.
     readonly property string libraryPath: root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath
 
-    // The row whose detail is showing, or -1. One at a time: this is a
-    // list to scan, not a tree to keep open.
+    // The row whose detail is showing, or -1/"" . One at a time: this is
+    // a list to scan, not a tree to keep open. The two populations keep
+    // their own, because a store row id and a stick path are not
+    // comparable and a shared one would open a row in the other list.
     property var expandedTrackId: -1
+    property string expandedProposalPath: ""
 
     signal metadataRestoreRequested()
 
@@ -40,8 +56,117 @@ Page {
         return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
     }
 
+    // ---- the source picker's model ------------------------------------
+    //
+    // Index 0 is the store, and every stick that has a library on it
+    // follows. Rebuilt whenever the detected sticks change rather than
+    // bound per row: a ComboBox wants a plain array, and this one is a
+    // handful of entries that changes when someone plugs something in.
+    property var sourceModel: []
+
+    function rebuildSourceModel() {
+        var list = [{
+            name: "Everything stored",
+            isStore: true,
+            rekordboxPath: "",
+            enginePath: "",
+            libraryId: "",
+        }];
+        var seen = {};
+        if (root.mediaController && root.mediaController.sticks) {
+            var sticks = root.mediaController.sticks;
+            for (var i = 0; i < sticks.count; i++) {
+                var stick = sticks.get(i);
+                if (!stick.hasRekordbox && !stick.hasEngine) {
+                    continue;
+                }
+                var path = stick.rekordboxPath.length > 0 ? stick.rekordboxPath : stick.enginePath;
+                seen[path] = true;
+                list.push({
+                    name: stick.label,
+                    isStore: false,
+                    rekordboxPath: stick.rekordboxPath,
+                    enginePath: stick.enginePath,
+                    libraryId: stick.libraryId,
+                });
+            }
+        }
+        // The stick this page was opened on, when the media controller
+        // is not there to list it (tests) or has not caught up yet.
+        // Without this the picker could open on a page whose own stick
+        // was not among its options.
+        if (root.hasStick && !seen[root.libraryPath]) {
+            list.push({
+                name: root.stickLabel,
+                isStore: false,
+                rekordboxPath: root.rekordboxPath,
+                enginePath: root.enginePath,
+                libraryId: root.libraryId,
+            });
+        }
+        root.sourceModel = list;
+    }
+
+    Component.onCompleted: root.rebuildSourceModel()
+
+    Connections {
+        target: root.mediaController && root.mediaController.sticks ? root.mediaController.sticks : null
+        function onCountsChanged() { root.rebuildSourceModel(); }
+    }
+
+    // Which entry the combo should be showing, derived from the
+    // controller rather than held beside it: the controller can refuse a
+    // switch (staged changes), and a combo holding its own index would
+    // then show a source the list is not actually showing.
+    readonly property int currentSourceIndex: {
+        if (controller.browsingStore) {
+            return 0;
+        }
+        for (var i = 1; i < root.sourceModel.length; i++) {
+            if (root.sourceModel[i].name === controller.sourceStickLabel) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    // ---- leaving with something staged --------------------------------
+    property var pendingLeave: null
+
+    function requestLeave(leaveFn) {
+        if (controller.busy) {
+            return;
+        }
+        if (controller.dirty) {
+            root.pendingLeave = leaveFn;
+            unsavedDialog.open();
+            return;
+        }
+        leaveFn();
+    }
+
+    function runPendingLeave() {
+        var fn = root.pendingLeave;
+        root.pendingLeave = null;
+        if (fn) {
+            fn();
+        }
+    }
+
     MetadataBackupController {
         id: controller
+    }
+
+    Connections {
+        target: controller
+        function onActionFeedback(message, isError) {
+            messagePopup.show(message, isError);
+        }
+        // A save that would only add things just runs. One that would
+        // forget something asks first.
+        function onDeletionConfirmationRequired() {
+            confirmDeleteDialog.open();
+        }
     }
 
     header: ToolBar {
@@ -65,10 +190,16 @@ Page {
                 stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Metadata Backup"
-                onHomeRequested: root.StackView.view.pop(null)
-                onBackRequested: root.StackView.view.pop()
+                onHomeRequested: root.requestLeave(() => root.StackView.view.pop(null))
+                onBackRequested: root.requestLeave(() => root.StackView.view.pop())
             }
             Item { Layout.fillWidth: true }
+            BusyIndicator {
+                running: controller.busy
+                visible: controller.busy
+                implicitWidth: Theme.iconSizeSmall
+                implicitHeight: Theme.iconSizeSmall
+            }
         }
     }
 
@@ -96,7 +227,7 @@ Page {
                 + "The audio can be re-imported from anywhere. This cannot. "
                 + "You can restore the locally backed up metadata to any stick "
                 + "<a href=\"restore\">here</a>."
-            onLinkActivated: root.metadataRestoreRequested()
+            onLinkActivated: root.requestLeave(() => root.metadataRestoreRequested())
             // A link that does not say it is one is a link nobody
             // clicks.
             MouseArea {
@@ -106,80 +237,171 @@ Page {
             }
         }
 
-        // ---- run a backup -------------------------------------------
+        // ---- what the list is showing -------------------------------
         //
         // Not in a card. A bordered box indents everything inside it by
         // its own padding, which is how this page ended up with four
-        // different left edges at once; there is one block above the
-        // list, so a border separating it from nothing costs the
-        // alignment and buys nothing.
-        ColumnLayout {
-            id: runLayout
+        // different left edges at once.
+        RowLayout {
             Layout.fillWidth: true
-            spacing: Theme.tightSpacing
+            spacing: Theme.rowSpacing
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.rowSpacing
-                Label {
-                    text: root.hasStick ? "Back up " + root.stickLabel : "No stick selected"
-                    color: Theme.text
-                    font.family: Theme.titleFamily
-                    font.weight: Theme.cardTitleWeight
-                    font.pointSize: Theme.fontMedium
+            Label {
+                text: "Source:"
+                color: Theme.textMuted
+                font.pointSize: Theme.fontNormal
+            }
+
+            ComboBox {
+                objectName: "sourcePicker"
+                Layout.preferredWidth: Math.max(180, Math.min(300, root.width * 0.3))
+                enabled: !controller.busy
+                model: root.sourceModel
+                textRole: "name"
+                currentIndex: root.currentSourceIndex
+                onActivated: index => {
+                    var entry = root.sourceModel[index];
+                    if (!entry) {
+                        return;
+                    }
+                    // The controller refuses while anything is staged,
+                    // and says so by returning false rather than by
+                    // silently doing nothing. The question belongs to
+                    // the page, so it is asked here.
+                    var accepted = entry.isStore
+                        ? controller.browseStore()
+                        : controller.selectStick(entry.rekordboxPath.length > 0 ? entry.rekordboxPath
+                                                                                : entry.enginePath,
+                                                 entry.libraryId, entry.name);
+                    if (!accepted) {
+                        switchSourceDialog.pendingEntry = entry;
+                        switchSourceDialog.open();
+                    }
                 }
-                Item { Layout.fillWidth: true }
-                Button {
-                    objectName: "backUpNowButton"
-                    text: "Add"
-                    enabled: root.hasStick && !controller.busy
-                    highlighted: true
-                    onClicked: controller.backUp(root.libraryPath, root.libraryId, root.stickLabel)
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 400
-                    ToolTip.text: root.hasStick
-                        ? "Read " + root.stickLabel + " and add what it holds to the backup"
-                        : "Choose a stick first"
-                }
-                InfoButton {
-                    explanationTitle: "What a metadata backup stores"
-                    summaryText: "Everything you added to your tracks yourself, kept on this computer so "
-                        + "a reformatted or rebuilt stick does not take it with it."
-                    explanationText: "Seabass reads every catalog on the stick (DeviceLibrary, "
-                        + "Device Library Plus and Engine) and folds them into one entry per file, so a "
-                        + "track all three list is stored once with the union of its cues.\n\n"
-                        + "Stored: cues and loops, rating, comment, play count, playlist membership, "
-                        + "cover art, and enough of the title, artist and length to find the track "
-                        + "again later.\n\n"
-                        + "Not stored: waveforms, beat grids, analysis files and audio. All of it is "
-                        + "derived from the audio file, all of it is large, and none of it is your work.\n\n"
-                        + "## How a track is recognised\n\n"
-                        + "On its title, artist and length, the same rule Seabass uses to match tracks "
-                        + "between rekordbox and Engine everywhere else, falling back to the filename "
-                        + "when a catalog has no title and artist to offer.\n\n"
-                        + "Deliberately not on where the file sits. A path is the strongest signal while "
-                        + "two catalogs are describing one stick, and the weakest thing to key a backup "
-                        + "on: this store is meant to outlive the stick it came from, and a re-export "
-                        + "renames folders, a rebuilt library moves Contents/ around, and the same track "
-                        + "bought again lands somewhere else entirely. Title and artist travel with the "
-                        + "recording, so a backup taken from one stick can be put back on a different "
-                        + "one.\n\n"
-                        + "Length is a guard rather than part of the key: two readings of one file differ "
-                        + "by a rounding, so it has to agree within a couple of seconds, and a track "
-                        + "whose length could not be read is not held against it. What it catches is a "
-                        + "radio edit and an extended mix filed under one name.\n\n"
-                        + controller.mergeRuleHelp
-                }
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: controller.browsingStore
+                    ? "Showing everything backed up on this computer. Pick a stick to see what backing it up would change."
+                    : "Showing what backing up " + controller.sourceStickLabel + " would change. "
+                      + "Pick \"Everything stored\" to browse the backup itself."
             }
 
             Label {
+                visible: !controller.browsingStore
+                text: "Playlist:"
+                color: Theme.textMuted
+                font.pointSize: Theme.fontNormal
+            }
+
+            PlaylistPickerCombo {
+                objectName: "playlistPicker"
+                visible: !controller.browsingStore
+                Layout.preferredWidth: Math.max(160, Math.min(260, root.width * 0.26))
+                enabled: !controller.busy && controller.hasScanned
+                model: {
+                    var list = [{ name: "All tracks", count: controller.proposalCount }];
+                    for (var i = 0; i < controller.playlistNames.length; i++) {
+                        var name = controller.playlistNames[i];
+                        list.push({ name: name, count: controller.playlistTrackCounts[name] });
+                    }
+                    return list;
+                }
+                currentIndex: {
+                    if (controller.selectedPlaylist.length === 0) {
+                        return 0;
+                    }
+                    for (var i = 0; i < controller.playlistNames.length; i++) {
+                        if (controller.playlistNames[i] === controller.selectedPlaylist) {
+                            return i + 1;
+                        }
+                    }
+                    return 0;
+                }
+                onPlaylistPicked: (index, modelData) => controller.setPlaylist(index === 0 ? "" : modelData.name)
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: "Back up one playlist instead of the whole stick"
+            }
+
+            Item { Layout.fillWidth: true }
+
+            InfoButton {
+                objectName: "backupInfoButton"
+                explanationTitle: "What a metadata backup stores"
+                summaryText: "Everything you added to your tracks yourself, kept on this computer so "
+                    + "a reformatted or rebuilt stick does not take it with it."
+                explanationText: "Seabass reads every catalog on the stick (DeviceLibrary, "
+                    + "Device Library Plus and Engine) and folds them into one entry per file, so a "
+                    + "track all three list is stored once with the union of its cues.\n\n"
+                    + "Stored: cues and loops, rating, comment, play count, playlist membership, "
+                    + "cover art, and enough of the title, artist and length to find the track "
+                    + "again later.\n\n"
+                    + "Not stored: waveforms, beat grids, analysis files and audio. All of it is "
+                    + "derived from the audio file, all of it is large, and none of it is your work.\n\n"
+                    + "## Only what would change\n\n"
+                    + "Picking a stick lists the tracks a backup would actually add to or update in "
+                    + "the store, and nothing else. A track the store already holds everything for is "
+                    + "counted, not listed: it is not a decision anyone needs to make.\n\n"
+                    + "## How a track is recognised\n\n"
+                    + "On its title, artist and length, the same rule Seabass uses to match tracks "
+                    + "between rekordbox and Engine everywhere else, falling back to the filename "
+                    + "when a catalog has no title and artist to offer.\n\n"
+                    + "Deliberately not on where the file sits. A path is the strongest signal while "
+                    + "two catalogs are describing one stick, and the weakest thing to key a backup "
+                    + "on: this store is meant to outlive the stick it came from, and a re-export "
+                    + "renames folders, a rebuilt library moves Contents/ around, and the same track "
+                    + "bought again lands somewhere else entirely. Title and artist travel with the "
+                    + "recording, so a backup taken from one stick can be put back on a different "
+                    + "one.\n\n"
+                    + "Length is a guard rather than part of the key: two readings of one file differ "
+                    + "by a rounding, so it has to agree within a couple of seconds, and a track "
+                    + "whose length could not be read is not held against it. What it catches is a "
+                    + "radio edit and an extended mix filed under one name.\n\n"
+                    + controller.mergeRuleHelp
+            }
+        }
+
+        // ---- what this source amounts to ----------------------------
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: Theme.tightSpacing
+
+            Label {
+                objectName: "sourceSummary"
                 Layout.fillWidth: true
                 visible: !controller.busy
-                text: "Nothing on the stick is changed or at risk. This only ever writes here: "
-                    + controller.storeLocation
+                wrapMode: Text.WordWrap
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
-                wrapMode: Text.WordWrap
+                text: {
+                    if (controller.browsingStore) {
+                        return "Nothing on any stick is changed or at risk. This only ever writes here: "
+                             + controller.storeLocation;
+                    }
+                    if (!controller.hasScanned) {
+                        return "Reading " + controller.sourceStickLabel + "...";
+                    }
+                    if (controller.proposalCount === 0) {
+                        return "Everything on " + controller.sourceStickLabel
+                             + " is already backed up. Nothing to do.";
+                    }
+                    var line = controller.proposalCount
+                             + (controller.proposalCount === 1 ? " track on " : " tracks on ")
+                             + controller.sourceStickLabel + " would add something to the backup";
+                    if (controller.alreadyCurrent > 0) {
+                        line += "; " + controller.alreadyCurrent
+                             + (controller.alreadyCurrent === 1 ? " is" : " are") + " already stored and current";
+                    }
+                    line += ".";
+                    if (controller.withoutIdentity > 0) {
+                        line += " " + controller.withoutIdentity
+                             + (controller.withoutIdentity === 1
+                                 ? " track has too little to go on to be stored"
+                                 : " tracks have too little to go on to be stored")
+                             + " and were left out.";
+                    }
+                    return line;
+                }
             }
 
             ProgressReport {
@@ -208,30 +430,149 @@ Page {
             color: Theme.borderSubtle
         }
 
-        // ---- what is in the store -----------------------------------
+        // ---- one toolbar over whichever list is showing --------------
         MetadataListToolbar {
             objectName: "browseToolbar"
             Layout.fillWidth: true
-            selectionEnabled: controller.loadedCount > 0 && !controller.busy
-            selectAllTooltip: controller.canLoadMore
-                ? "Mark every track loaded so far for deletion. Scroll to the end of the list to load the rest."
-                : "Mark every track in the list for deletion from the Metadata Backup"
-            summary: controller.storedTrackCount === 0
-                ? "Nothing stored yet"
-                : (controller.stagedForDeletionCount > 0
-                    ? controller.stagedForDeletionCount + " of " + controller.matchCount + " staged"
-                    : (controller.matchCount === controller.storedTrackCount
-                        ? controller.storedTrackCount + " tracks stored, "
-                          + root.formatBytes(controller.artworkBytes) + " of cover art"
-                        : controller.matchCount + " of " + controller.storedTrackCount + " tracks"))
+            selectionEnabled: controller.browsingStore
+                ? (controller.loadedCount > 0 && !controller.busy)
+                : (controller.proposalCount > 0 && !controller.busy)
+            selectAllTooltip: controller.browsingStore
+                ? (controller.canLoadMore
+                    ? "Mark every track loaded so far for deletion. Scroll to the end of the list to load the rest."
+                    : "Mark every track in the list for deletion from the Metadata Backup")
+                : "Stage every track on this stick's list, including any the search or playlist is hiding"
+            summary: {
+                if (!controller.browsingStore) {
+                    if (controller.stagedAddCount > 0) {
+                        return controller.stagedAddCount + " of " + controller.proposalCount + " staged";
+                    }
+                    if (controller.visibleProposalCount !== controller.proposalCount) {
+                        return controller.visibleProposalCount + " of " + controller.proposalCount + " shown";
+                    }
+                    return controller.proposalCount
+                         + (controller.proposalCount === 1 ? " track" : " tracks") + " to back up";
+                }
+                if (controller.storedTrackCount === 0) {
+                    return "Nothing stored yet";
+                }
+                if (controller.stagedForDeletionCount > 0) {
+                    return controller.stagedForDeletionCount + " of " + controller.matchCount + " staged";
+                }
+                if (controller.matchCount === controller.storedTrackCount) {
+                    return controller.storedTrackCount + " tracks stored, "
+                         + root.formatBytes(controller.artworkBytes) + " of cover art";
+                }
+                return controller.matchCount + " of " + controller.storedTrackCount + " tracks";
+            }
             onSearchChanged: text => controller.search(text)
-            onSelectAllRequested: controller.stageAllForDeletion()
-            onSelectNoneRequested: controller.clearDeletionStaging()
+            onSelectAllRequested: controller.browsingStore ? controller.stageAllForDeletion()
+                                                           : controller.stageAllForAdd()
+            onSelectNoneRequested: controller.browsingStore ? controller.clearDeletionStaging()
+                                                            : controller.unstageAllForAdd()
         }
 
+        // ---- the stick's list ---------------------------------------
+        ListView {
+            id: proposalList
+            objectName: "proposalList"
+            visible: !controller.browsingStore
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            model: controller.proposals
+            spacing: 2
+            ScrollBar.vertical: BigScrollBar {}
+
+            delegate: MetadataTrackDelegate {
+                id: proposalRow
+                // Roles the shared delegate does not already declare a
+                // property for.
+                required property bool isNew
+                required property int cuesAdded
+                required property bool cuesConflict
+                required property bool cuesOffered
+                required property int storedCueCount
+                required property string cueSummary
+                required property string changeSummary
+                required property bool staged
+
+                // And the ones it does, marked required here so the
+                // model fills them.
+                required index
+                required title
+                required artist
+                required filename
+                required relativePath
+                required durationText
+                required rating
+                required comment
+                required cueCount
+                required artworkUrl
+                required storedFrom
+
+                // Ticking a row IS staging it. There is no second
+                // selection to keep in step with this one, and so no way
+                // for the two to disagree.
+                selected: proposalRow.staged
+                selectTooltip: "Stage this track to be added to the Metadata Backup"
+                cueTooltip: proposalRow.cueSummary
+                expanded: root.expandedProposalPath === proposalRow.relativePath
+                // What the badge counts is not what is on the track but
+                // what a backup would change about it, and on a track
+                // the store already partly holds those are different
+                // numbers.
+                cueBadgeLabel: proposalRow.changeSummary.length > 0
+                    ? proposalRow.changeSummary
+                    : proposalRow.cueCount + (proposalRow.cueCount === 1 ? " cue" : " cues")
+                cueBadgeColor: proposalRow.isNew ? Theme.good
+                             : (proposalRow.cuesConflict ? Theme.warnIcon : Theme.good)
+                detailNote: proposalRow.isNew
+                    ? "The backup has never seen this track."
+                    : (proposalRow.cuesConflict && proposalRow.cuesOffered
+                        ? "The backup has " + proposalRow.storedCueCount
+                          + " cues of its own for this track. Backing up replaces them."
+                        : (proposalRow.cuesConflict
+                            ? "The backup's own cues are staying: this stick's did not beat them."
+                            : ""))
+
+                onSelectionToggled: controller.toggleStagedForAdd(proposalRow.index)
+                onExpandToggled: root.expandedProposalPath =
+                    proposalRow.expanded ? "" : proposalRow.relativePath
+
+                actionItems: [
+                    Button {
+                        objectName: "stageAddButton"
+                        text: proposalRow.staged ? "Staged" : "Back up"
+                        enabled: !controller.busy
+                        onClicked: controller.toggleStagedForAdd(proposalRow.index)
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: proposalRow.staged
+                            ? "Staged. Press again to take it back off the list."
+                            : "Stage this track to be added to the Metadata Backup"
+                    }
+                ]
+            }
+
+            Label {
+                anchors.centerIn: parent
+                width: parent.width * 0.7
+                visible: proposalList.count === 0 && !controller.busy && controller.hasScanned
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+                text: controller.proposalCount === 0
+                    ? "Everything on this stick is already in the backup, and up to date."
+                    : "No track on this stick matches that search."
+            }
+        }
+
+        // ---- what is in the store -----------------------------------
         ListView {
             id: trackList
             objectName: "storedTrackList"
+            visible: controller.browsingStore
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -322,21 +663,20 @@ Page {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 text: controller.storedTrackCount === 0
-                    ? "Nothing has been backed up yet. Add reads this stick and stores what you added to it."
+                    ? "Nothing has been backed up yet. Pick a stick above to see what it would add."
                     : "No stored track matches that search."
                 color: Theme.textMuted
             }
         }
 
-        // ---- the one destructive action -----------------------------
+        // ---- a way out of a staging you did not mean -----------------
         //
-        // Under the list rather than floating over it: this page has no
-        // edit session and writes nothing to the stick, so it must not
-        // borrow the floating Save button's shape, which everywhere else
-        // in Seabass means "write my edits to the stick".
+        // Under the list rather than beside the Save button: it is the
+        // opposite of the primary action, and the two should not be
+        // adjacent enough to hit by accident.
         RowLayout {
             Layout.fillWidth: true
-            visible: controller.stagedForDeletionCount > 0
+            visible: controller.dirty && !controller.busy
             spacing: Theme.rowSpacing
 
             Label {
@@ -344,25 +684,105 @@ Page {
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
                 wrapMode: Text.WordWrap
-                text: controller.stagedForDeletionCount + " marked for deletion. Nothing has gone yet."
+                text: {
+                    var parts = [];
+                    if (controller.stagedAddCount > 0) {
+                        parts.push(controller.stagedAddCount + " to back up");
+                    }
+                    if (controller.stagedForDeletionCount > 0) {
+                        parts.push(controller.stagedForDeletionCount + " to forget");
+                    }
+                    return parts.join(", ") + ". Nothing has happened yet.";
+                }
             }
             Button {
-                objectName: "deleteStagedButton"
-                text: "Delete"
-                onClicked: confirmDeleteDialog.open()
+                objectName: "clearStagingButton"
+                text: "Clear"
+                onClicked: controller.clearAllStaging()
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
-                ToolTip.text: controller.allLoadedStaged
-                    ? "Delete every track in the list from the Metadata Backup on this computer"
-                    : "Delete the marked tracks from the Metadata Backup on this computer"
+                ToolTip.text: "Unstage everything, in both the stick's list and the backup's"
             }
         }
     }
 
+    // ---- the one button that commits ----------------------------------
+    //
+    // The standard floating Save, with the word this page's save
+    // actually means. Everywhere else in Seabass that button writes to a
+    // stick; here it writes to this computer, which is why the dialogs
+    // around it say so in their own words rather than borrowing the
+    // stick wording.
+    SaveOverlayButton {
+        objectName: "saveOverlay"
+        session: controller
+        label: "Back Up"
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 24
+        z: 900
+    }
+
     MessagePopup { id: messagePopup }
 
+    UnsavedChangesDialog {
+        id: unsavedDialog
+        objectName: "unsavedDialog"
+        pendingCount: controller.pendingCount
+        message: "You have staged changes to your metadata backup. Save them before leaving?"
+        // The stock line says "not on the stick yet", which is the one
+        // thing that is never true here.
+        detailText: controller.pendingCount > 0
+            ? controller.pendingCount + " change(s) are staged and not in the backup yet." : ""
+        saveText: "Back Up"
+        onSaveRequested: {
+            controller.save();
+            root.runPendingLeave();
+        }
+        onDiscardRequested: {
+            controller.clearAllStaging();
+            root.runPendingLeave();
+        }
+    }
+
+    // Changing source throws the staging away, because it was decided
+    // against numbers the next scan replaces. Asked rather than done.
+    MessageDialog {
+        id: switchSourceDialog
+        objectName: "switchSourceDialog"
+        property var pendingEntry: null
+        severity: SeabassDialog.Warning
+        title: "Change source"
+        headline: "Discard what you have staged?"
+        detailText: controller.pendingCount
+            + " change(s) are staged against "
+            + (controller.browsingStore ? "the backup" : controller.sourceStickLabel)
+            + ". Changing source discards them, because what they were decided against is about to be "
+            + "read again. Nothing has been written, so nothing is lost but the ticking."
+        acceptText: "Discard and change"
+        rejectText: "Stay here"
+        onAccepted: {
+            var entry = switchSourceDialog.pendingEntry;
+            switchSourceDialog.pendingEntry = null;
+            if (!entry) {
+                return;
+            }
+            if (entry.isStore) {
+                controller.discardStagingAndBrowseStore();
+            } else {
+                controller.discardStagingAndSelectStick(
+                    entry.rekordboxPath.length > 0 ? entry.rekordboxPath : entry.enginePath,
+                    entry.libraryId, entry.name);
+            }
+        }
+        onRejected: switchSourceDialog.pendingEntry = null
+    }
+
     // A backup is the one copy of these cues that may still exist, so
-    // forgetting one is confirmed rather than clicked.
+    // forgetting one is confirmed rather than clicked. The Save button
+    // is the same standard one every editing page has; what makes this
+    // page's save different is that part of it is destructive, and that
+    // part gets said out loud before it happens.
     MessageDialog {
         id: confirmDeleteDialog
         objectName: "confirmDeleteDialog"
@@ -374,14 +794,12 @@ Page {
               + controller.stagedForDeletionCount + " tracks?"
         detailText: "Nothing on any stick changes. What goes is this computer's copy, which may be the "
             + "only one left if the stick it came from has been rebuilt since."
+            + (controller.stagedAddCount > 0
+                ? " The " + controller.stagedAddCount + " track(s) staged to be backed up are stored first."
+                : "")
         acceptText: "Delete"
         rejectText: "Cancel"
-        onAccepted: {
-            var removed = controller.deleteStaged();
-            messagePopup.show(removed === 1 ? "One track removed from the metadata backup."
-                                            : removed + " tracks removed from the metadata backup.",
-                              false);
-        }
+        onAccepted: controller.saveConfirmed()
     }
 
     // ---- what the run did ---------------------------------------------
@@ -408,11 +826,6 @@ Page {
                            ? ", " + run.artworkFilesAdded + " new cover "
                              + (run.artworkFilesAdded === 1 ? "image" : "images")
                            : "") + ".");
-            lines.push("Read from: " + run.catalogsRead.join(", ") + ".");
-            if (run.catalogsUnreadable.length > 0) {
-                lines.push("Could not read: " + run.catalogsUnreadable.join(", ")
-                           + ". Anything only those held was not backed up.");
-            }
             summaryDialog.show({
                 written: run.tracksAdded + run.tracksUpdated,
                 total: run.tracksSeen,
