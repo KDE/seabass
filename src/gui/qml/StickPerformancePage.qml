@@ -188,7 +188,7 @@ Page {
                     Button {
                         objectName: "scratchMeasureButton"
                         text: "Measure With Throwaway Files"
-                        enabled: !controller.busy && !controller.writeBusy
+                        enabled: !controller.anyBusy
                         onClicked: controller.measureWithScratchFiles(root.stickLabel, root.mountPoint)
                     }
                 }
@@ -285,9 +285,10 @@ Page {
                         spacing: Theme.rowSpacing
                         Button {
                             objectName: "measureButton"
-                            text: root.hasResults ? "Measure Again" : "Measure"
-                            enabled: !controller.busy && !controller.writeBusy
-                            onClicked: controller.facts.sampleKind === "scratch"
+                            text: controller.busy ? "Cancel" : (root.hasResults ? "Measure Again" : "Measure")
+                            enabled: controller.busy || !controller.anyBusy
+                            onClicked: controller.busy ? controller.cancel()
+                                : controller.facts.sampleKind === "scratch"
                                 ? controller.measureWithScratchFiles(root.stickLabel, root.mountPoint)
                                 : controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
                         }
@@ -481,7 +482,7 @@ Page {
                         Button {
                             objectName: "wearButton"
                             text: controller.wearBusy ? "Cancel" : (root.hasWearResults ? "Check for Wear Again" : "Check for Wear")
-                            enabled: !controller.busy
+                            enabled: controller.wearBusy || !controller.anyBusy
                             onClicked: controller.wearBusy
                                 ? controller.cancelWearCheck()
                                 : controller.checkWear(root.rekordboxPath, root.enginePath, root.mountPoint)
@@ -593,9 +594,10 @@ Page {
                         spacing: Theme.rowSpacing
                         Button {
                             objectName: "writeTestButton"
-                            text: controller.writeBusy ? "Writing..." : (root.hasWriteResults ? "Run Write Test Again" : "Run Write Test")
-                            enabled: !controller.writeBusy && !controller.busy
-                            onClicked: controller.measureWrites(root.rekordboxPath, root.enginePath, root.mountPoint)
+                            text: controller.writeBusy ? "Cancel" : (root.hasWriteResults ? "Run Write Test Again" : "Run Write Test")
+                            enabled: controller.writeBusy || !controller.anyBusy
+                            onClicked: controller.writeBusy ? controller.cancelWrites()
+                                : controller.measureWrites(root.rekordboxPath, root.enginePath, root.mountPoint)
                         }
                         BusyIndicator {
                             running: controller.writeBusy
@@ -690,19 +692,14 @@ Page {
         }
     }
 
-    // A cancelled measurement takes the user back to where they came
-    // from, like Library Statistics. Bound to the real controller, not
-    // the overridable one: a test's fake is a plain object with no
-    // signals, and Connections refuses those loudly.
-    Connections {
-        target: realController
-        function onCancelled() { root.StackView.view.pop(); }
-    }
-
+    // A cancelled measurement stays on the page, unlike Library
+    // Statistics' scan: the page is still useful with nothing measured,
+    // and the button reads "Measure" again.
     BusyOverlay {
         anchors.fill: parent
         busy: controller.busy
-        label: "Measuring the stick..."
+        label: controller.facts.sampleKind === "scratch" || controller.needsScratchFiles
+            ? "Writing throwaway files and reading them back..." : "Measuring the stick..."
         cancellable: controller.busy
         onCancelRequested: controller.cancel()
     }

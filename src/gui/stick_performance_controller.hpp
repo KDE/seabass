@@ -37,6 +37,7 @@ struct StickWriteResult
     QVariantMap measurement;  // streamingWriteBytesPerSecond, smallFileWritesPerSecond, ... see the .cpp
     QVariantMap estimate;     // cueSaveSeconds, exportTrackSeconds, exportHundredTracksSeconds, verdicts
     QString errorMessage;
+    bool cancelled = false;
 };
 
 struct StickWearResult
@@ -81,6 +82,9 @@ class StickPerformanceController : public QObject
     Q_PROPERTY(QVariantMap writeMeasurement READ writeMeasurement NOTIFY writeResultsChanged)
     Q_PROPERTY(QVariantMap writeEstimate READ writeEstimate NOTIFY writeResultsChanged)
     Q_PROPERTY(bool wearBusy READ wearBusy NOTIFY wearBusyChanged)
+    // Any of the three: the page disables every other start button
+    // while one runs, and each running one turns into its own Cancel.
+    Q_PROPERTY(bool anyBusy READ anyBusy NOTIFY anyBusyChanged)
     Q_PROPERTY(QString wearErrorMessage READ wearErrorMessage NOTIFY wearErrorMessageChanged)
     Q_PROPERTY(qlonglong wearBytesDone READ wearBytesDone NOTIFY wearProgressChanged)
     Q_PROPERTY(qlonglong wearBytesTotal READ wearBytesTotal NOTIFY wearProgressChanged)
@@ -107,6 +111,7 @@ public:
     QVariantMap writeMeasurement() const { return m_writeMeasurement; }
     QVariantMap writeEstimate() const { return m_writeEstimate; }
     bool wearBusy() const { return m_wearBusy; }
+    bool anyBusy() const { return m_busy || m_writeBusy || m_wearBusy; }
     QString wearErrorMessage() const { return m_wearErrorMessage; }
     qlonglong wearBytesDone() const { return m_wearBytesDone; }
     qlonglong wearBytesTotal() const { return m_wearBytesTotal; }
@@ -141,6 +146,8 @@ public:
     // while rekordbox or Engine DJ is running, the same guard every write
     // path in this app applies, and never on a browsed backup.
     Q_INVOKABLE void measureWrites(const QString &rekordboxPath, const QString &enginePath, const QString &mountPoint);
+    // Stops after the current file; the scratch folder is removed either way.
+    Q_INVOKABLE void cancelWrites();
 
 signals:
     void busyChanged();
@@ -154,6 +161,7 @@ signals:
     void wearErrorMessageChanged();
     void wearProgressChanged();
     void wearResultsChanged();
+    void anyBusyChanged();
 
 private:
     void onFinished();
@@ -171,6 +179,7 @@ private:
     QFutureWatcher<StickPerformanceResult> m_watcher;
     application::CancellationToken m_cancel;  // fresh per measure()
     QFutureWatcher<StickWriteResult> m_writeWatcher;
+    application::CancellationToken m_writeCancel;  // fresh per measureWrites()
     QFutureWatcher<StickWearResult> m_wearWatcher;
     application::CancellationToken m_wearCancel;  // fresh per checkWear()
 

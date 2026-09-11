@@ -25,7 +25,8 @@ TestCase {
             busy: false, errorMessage: "", measuredAt: "11 Sep 2026, 16:52", calls: [],
             writeBusy: false, writeErrorMessage: "", needsScratchFiles: false,
             wearBusy: false, wearErrorMessage: "", wearBytesDone: 0, wearBytesTotal: 0, wearFilesDone: 0, wearFilesTotal: 0,
-            wearCheck: {}, wearAssessment: {},
+            wearCheck: {}, wearAssessment: {}, anyBusy: false,
+            cancelWrites: function() { this.calls.push("cancelWrites"); },
             checkWear: function(rb, en, mp) { this.calls.push("wear:" + mp); },
             cancelWearCheck: function() { this.calls.push("cancelWear"); },
             filesystemInfo: {}, measurement: {}, score: {}, advisories: [], facts: {}, trend: {},
@@ -176,6 +177,47 @@ TestCase {
         compare(findOne(page2, "wearButton").text, "Check for Wear Again");
         compare(findOne(page2, "wearBadge").label, "WATCH THIS STICK");
         verify(findOne(page2, "wearSummary").text.indexOf("1 of 7529") >= 0);
+    }
+
+    // One thing at a time: while any of the three runs, the other start
+    // buttons are disabled and the running one is its own Cancel.
+    function test_onlyOneOperationAtATimeAndEachCancels() {
+        var writing = fakeController(true, false);
+        writing.writeBusy = true;
+        writing.anyBusy = true;
+        var page = makePage(writing);
+        compare(findOne(page, "measureButton").enabled, false);
+        compare(findOne(page, "wearButton").enabled, false);
+        var writeButton = findOne(page, "writeTestButton");
+        compare(writeButton.enabled, true);
+        compare(writeButton.text, "Cancel");
+        writeButton.clicked();
+        var calls = page.controller.calls;
+        compare(calls[calls.length - 1], "cancelWrites");
+
+        var measuring = fakeController(true, false);
+        measuring.busy = true;
+        measuring.anyBusy = true;
+        var page2 = makePage(measuring);
+        compare(findOne(page2, "writeTestButton").enabled, false);
+        compare(findOne(page2, "wearButton").enabled, false);
+        var measureButton = findOne(page2, "measureButton");
+        compare(measureButton.text, "Cancel");
+        measureButton.clicked();
+        calls = page2.controller.calls;
+        compare(calls[calls.length - 1], "cancel");
+
+        var wearing = fakeController(true, false);
+        wearing.wearBusy = true;
+        wearing.anyBusy = true;
+        var page3 = makePage(wearing);
+        compare(findOne(page3, "measureButton").enabled, false);
+        compare(findOne(page3, "writeTestButton").enabled, false);
+        var wearButton = findOne(page3, "wearButton");
+        compare(wearButton.text, "Cancel");
+        wearButton.clicked();
+        calls = page3.controller.calls;
+        compare(calls[calls.length - 1], "cancelWear");
     }
 
     function test_screenshot() {

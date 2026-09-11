@@ -511,13 +511,15 @@ StickWearResult runWearTask(std::string stickRoot, std::string stickIdentifier,
     return result;
 }
 
-StickWriteResult runWriteTask(std::string stickRoot)
+StickWriteResult runWriteTask(std::string stickRoot, application::CancellationToken cancel)
 {
     StickWriteResult result;
     try {
-        auto measurement = infrastructure::benchmark::StickWriteProbe::run(stickRoot);
+        auto measurement = infrastructure::benchmark::StickWriteProbe::run(stickRoot, cancel);
         result.measurement = toVariant(measurement);
         result.estimate = toVariant(domain::estimateWriteWorkloads(measurement));
+    } catch (const application::OperationCancelled &) {
+        result.cancelled = true;
     } catch (const std::exception &e) {
         result.errorMessage = QString::fromStdString(e.what());
     }
@@ -604,6 +606,7 @@ void StickPerformanceController::setWearBusy(bool busy)
     }
     m_wearBusy = busy;
     emit wearBusyChanged();
+    emit anyBusyChanged();
 }
 
 void StickPerformanceController::setWearErrorMessage(const QString &message)
@@ -634,13 +637,24 @@ void StickPerformanceController::measureWrites(const QString &rekordboxPath, con
     }
     setWriteErrorMessage({});
     setWriteBusy(true);
-    m_writeWatcher.setFuture(QtConcurrent::run(runWriteTask, stickRoot));
+    m_writeCancel = application::CancellationToken();
+    m_writeWatcher.setFuture(QtConcurrent::run(runWriteTask, stickRoot, m_writeCancel));
+}
+
+void StickPerformanceController::cancelWrites()
+{
+    if (m_writeBusy) {
+        m_writeCancel.cancel();
+    }
 }
 
 void StickPerformanceController::onWriteFinished()
 {
     StickWriteResult result = m_writeWatcher.result();
     setWriteBusy(false);
+    if (result.cancelled) {
+        return;
+    }
     if (!result.errorMessage.isEmpty()) {
         setWriteErrorMessage(result.errorMessage);
         return;
@@ -657,6 +671,7 @@ void StickPerformanceController::setWriteBusy(bool busy)
     }
     m_writeBusy = busy;
     emit writeBusyChanged();
+    emit anyBusyChanged();
 }
 
 void StickPerformanceController::setWriteErrorMessage(const QString &message)
@@ -754,6 +769,7 @@ void StickPerformanceController::setBusy(bool busy)
     }
     m_busy = busy;
     emit busyChanged();
+    emit anyBusyChanged();
 }
 
 void StickPerformanceController::setErrorMessage(const QString &message)
