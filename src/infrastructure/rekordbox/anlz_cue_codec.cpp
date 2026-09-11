@@ -44,12 +44,19 @@ std::vector<RawHotCueEntry> AnlzCueCodec::decodeHotCues(const std::string &pco2S
         }
         uint32_t lenEntry = readU32BE(pco2SectionBytes, offset + 8);
         uint32_t hotCue = readU32BE(pco2SectionBytes, offset + 12);
+        const unsigned char entryType = static_cast<unsigned char>(pco2SectionBytes[offset + 16]);
         uint32_t time = readU32BE(pco2SectionBytes, offset + 20);
+        uint32_t loopTime = readU32BE(pco2SectionBytes, offset + 24);
         uint32_t lenComment = readU32BE(pco2SectionBytes, offset + 40);
 
         RawHotCueEntry entry;
         entry.hotCueNumber = hotCue;
         entry.timeMs = time;
+        entry.isLoop = entryType == 2;  // cue_entry_type::loop, per the spec
+        entry.loopEndMs = entry.isLoop ? loopTime : 0;
+        if (lenEntry >= NoCommentEntrySize && offset + lenEntry <= pco2SectionBytes.size()) {
+            entry.rawBytes = pco2SectionBytes.substr(offset, lenEntry);
+        }
 
         size_t colorPos = offset + FixedEntrySize + 4 + lenComment;
         if ((lenEntry - lenComment) > 44 && colorPos + 4 <= pco2SectionBytes.size()) {
@@ -81,6 +88,17 @@ std::string AnlzCueCodec::encodeHotCues(const std::vector<RawHotCueEntry> &cues,
 
     uint16_t orderCounter = 0;
     for (const auto &cue : cues) {
+        if (!cue.rawBytes.empty()) {
+            // An entry read from the file and not changed: back as it
+            // was, comment, colour id and loop included. The size field
+            // is checked so a torn raw entry cannot corrupt the section.
+            if (cue.rawBytes.size() < NoCommentEntrySize || readU32BE(cue.rawBytes, 8) != cue.rawBytes.size()) {
+                throw std::runtime_error("AnlzCueCodec: a carried-over cue entry is not self-consistent");
+            }
+            ++orderCounter;
+            body += cue.rawBytes;
+            continue;
+        }
         bool hasColor = cue.color.has_value();
         uint32_t lenEntry = static_cast<uint32_t>(hasColor ? WithColorEntrySize : NoCommentEntrySize);
 
@@ -89,10 +107,10 @@ std::string AnlzCueCodec::encodeHotCues(const std::vector<RawHotCueEntry> &cues,
         appendU32BE(entry, 16);  // len_header, matches real data
         appendU32BE(entry, lenEntry);
         appendU32BE(entry, cue.hotCueNumber);
-        entry.push_back(static_cast<char>(1));  // cue_entry_type::memory_cue (a cue point, not a loop)
+        entry.push_back(static_cast<char>(cue.isLoop ? 2 : 1));  // cue_entry_type: loop (2) or cue point (1)
         entry += std::string(reinterpret_cast<const char *>(Pad3Template), 3);
         appendU32BE(entry, cue.timeMs);
-        appendU32BE(entry, NotALoopSentinel);
+        appendU32BE(entry, cue.isLoop ? cue.loopEndMs : NotALoopSentinel);
         entry.push_back(static_cast<char>(0));  // color_id (legacy field; RGB below is authoritative when present)
         entry.push_back(static_cast<char>(Pad7FirstByte));
         appendU16BE(entry, ++orderCounter);  // see confidence notes: shape-matched, not confirmed semantics

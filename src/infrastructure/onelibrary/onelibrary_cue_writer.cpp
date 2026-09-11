@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
@@ -160,6 +161,19 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
             contentId = find.columnInt64(0);
         }
 
+        // The colour index of every cue this track has now, by slot and
+        // position: the domain model carries no OneLibrary colour, so a
+        // whole-set rewrite used to reset every cue to colour 0. A cue
+        // that keeps its slot and position keeps its colour.
+        std::map<std::pair<int64_t, int64_t>, int64_t> colorByKindAndPosition;
+        {
+            SqlCipherStatement colours(db, "SELECT kind, inUsec, colorTableIndex FROM cue WHERE content_id = ?");
+            colours.bindInt64(1, contentId);
+            while (colours.step()) {
+                colorByKindAndPosition[{colours.columnInt64(0), colours.columnInt64(1)}] = colours.columnInt64(2);
+            }
+        }
+
         db.exec("BEGIN IMMEDIATE;");
         try {
             {
@@ -192,24 +206,30 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
                 // see docs/onelibrary-format.md.
                 int kind = cue.kind == CuePoint::Kind::Hot ? cue.hotCueNumber : 0;
                 int64_t inUsec = static_cast<int64_t>(cue.positionMs * 1000.0);
+                // A loop keeps its out point and is flagged as one; a cue
+                // point has out == in, matching export.pdb's convention.
+                const int64_t outUsec = cue.isLoop ? static_cast<int64_t>(cue.loopEndMs * 1000.0) : inUsec;
 
                 SqlCipherStatement insert(db,
                                            "INSERT INTO cue (content_id, kind, colorTableIndex, cueComment, "
-                                           "isActiveLoop, inUsec, outUsec) VALUES (?, ?, ?, ?, 0, ?, ?)");
+                                           "isActiveLoop, inUsec, outUsec) VALUES (?, ?, ?, ?, ?, ?, ?)");
                 insert.bindInt64(1, contentId);
                 insert.bindInt64(2, kind);
                 // colorTableIndex: no verified RGB/hex -> index mapping
                 // exists anywhere this was cross-checked against (see
-                // docs/onelibrary-format.md), 0 (a defined, inert
-                // default) rather than a fabricated guess.
-                insert.bindInt64(3, 0);
+                // docs/onelibrary-format.md), so a cue that was here
+                // before keeps the index it had, and a new one gets 0 (a
+                // defined, inert default) rather than a fabricated guess.
+                auto knownColour = colorByKindAndPosition.find({static_cast<int64_t>(kind), inUsec});
+                insert.bindInt64(3, knownColour == colorByKindAndPosition.end() ? 0 : knownColour->second);
                 if (cue.comment.empty()) {
                     insert.bindNull(4);
                 } else {
                     insert.bindText(4, cue.comment);
                 }
-                insert.bindInt64(5, inUsec);
-                insert.bindInt64(6, inUsec);  // outUsec: cue points (not loops) start==end, matching export.pdb's own convention
+                insert.bindInt64(5, cue.isLoop ? 1 : 0);
+                insert.bindInt64(6, inUsec);
+                insert.bindInt64(7, outUsec);
                 insert.run();
             }
             db.exec("COMMIT;");

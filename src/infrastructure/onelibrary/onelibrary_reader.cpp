@@ -99,7 +99,8 @@ std::vector<Track> OneLibraryReader::readAll()
     // doc comment on the confidence level of that mapping).
     std::unordered_map<int64_t, std::vector<CuePoint>> cuesByContentId;
     {
-        SqlCipherStatement stmt(db, "SELECT content_id, kind, inUsec, cueComment FROM cue ORDER BY content_id");
+        SqlCipherStatement stmt(db, "SELECT content_id, kind, inUsec, cueComment, isActiveLoop, outUsec FROM cue "
+                                    "ORDER BY content_id");
         while (stmt.step()) {
             int64_t contentId = stmt.columnInt64(0);
             int64_t kind = stmt.columnInt64(1);
@@ -108,6 +109,12 @@ std::vector<Track> OneLibraryReader::readAll()
             cue.hotCueNumber = kind == 0 ? 0 : static_cast<int>(kind);
             cue.positionMs = static_cast<double>(stmt.columnInt64(2)) / 1000.0;
             cue.comment = stmt.columnText(3);
+            // A loop is flagged and carries its out point; the writer
+            // mirrors this, so loops survive a OneLibrary round trip.
+            if (stmt.columnInt64(4) != 0 && stmt.columnInt64(5) > stmt.columnInt64(2)) {
+                cue.isLoop = true;
+                cue.loopEndMs = static_cast<double>(stmt.columnInt64(5)) / 1000.0;
+            }
             // No color-lookup table exists anywhere in this schema (see
             // OneLibraryCueWriter's own doc comment) -- left empty rather
             // than fabricated, same honesty the writer already has.

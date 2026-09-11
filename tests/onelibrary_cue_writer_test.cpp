@@ -44,6 +44,7 @@ void createFixture(const std::string &pioneerRoot)
         "outUsec integer);");
     db.exec("CREATE TABLE hotCueBankList_cue(hotCueBankList_id integer, cue_id integer, sequenceNo integer);");
     db.exec("CREATE TABLE playlist_content(content_id integer, playlist_id integer, sequenceNo integer);");
+    db.exec("CREATE TABLE playlist(playlist_id integer primary key, name varchar, playlist_id_parent integer);");
     db.exec("INSERT INTO content (content_id, title, path) VALUES (1, 'Test Track', '/Contents/Test Track.mp3');");
 }
 
@@ -689,6 +690,52 @@ int main()
         assert(readWholeFile(dbPath) == tamperedBytes);
 
         std::cout << "case 15 (staleness guard refuses an external same-length write with size and mtime unchanged) OK\n";
+    }
+
+    // A loop keeps its out point through a write (the reader's side is
+    // covered in onelibrary_reader_test), and a cue that keeps its slot
+    // and position keeps the colour index the stick had for it, even
+    // though the domain model does not carry one.
+    {
+        fs::path scratch = freshScratch();
+        std::string pioneerRoot = (scratch / "PIONEER").string();
+        createFixture(pioneerRoot);
+        std::string filePath = (scratch / "Contents" / "Test Track.mp3").string();
+        CuePoint loop{CuePoint::Kind::Hot, 2, 1000.0, "#FF0000", "loop"};
+        loop.isLoop = true;
+        loop.loopEndMs = 3000.0;
+        CuePoint point{CuePoint::Kind::Memory, 0, 7000.0, "", ""};
+        {
+            OneLibraryCueWriter writer(pioneerRoot);
+            writer.writeCuesForPath(filePath, {loop, point});
+        }
+        {
+            std::string key = deriveOneLibraryKey();
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + key + "';");
+            SqlCipherStatement check(db, "SELECT kind, isActiveLoop, inUsec, outUsec FROM cue ORDER BY kind");
+            assert(check.step());
+            assert(check.columnInt64(0) == 0 && check.columnInt64(1) == 0 && check.columnInt64(2) == check.columnInt64(3));
+            assert(check.step());
+            assert(check.columnInt64(0) == 2 && check.columnInt64(1) == 1 && check.columnInt64(2) == 1000000
+                   && check.columnInt64(3) == 3000000);
+            // The stick's own colour on the loop, as rekordbox would have set it.
+            db.exec("UPDATE cue SET colorTableIndex = 5 WHERE kind = 2;");
+        }
+        {
+            // The same cues written again (an unrelated save touching
+            // this track): the loop's colour index survives.
+            OneLibraryCueWriter writer(pioneerRoot);
+            writer.writeCuesForPath(filePath, {loop, point});
+            std::string key = deriveOneLibraryKey();
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
+            db.exec("PRAGMA key = '" + key + "';");
+            SqlCipherStatement check(db, "SELECT colorTableIndex FROM cue WHERE kind = 2");
+            assert(check.step() && check.columnInt64(0) == 5);
+        }
+        std::cout << "case: loops round-trip and a kept cue keeps its colour index OK\n";
     }
 
     std::cout << "All onelibrary_cue_writer_test cases passed.\n";

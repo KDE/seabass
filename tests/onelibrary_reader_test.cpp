@@ -59,7 +59,7 @@ void createFixture(const std::string &pioneerRoot)
         "key_id integer, djPlayCount integer, image_id integer, album_id integer);");
     db.exec("CREATE TABLE playlist(playlist_id integer primary key, name varchar, playlist_id_parent integer);");
     db.exec("CREATE TABLE playlist_content(content_id integer, playlist_id integer, sequenceNo integer);");
-    db.exec("CREATE TABLE cue(content_id integer, kind integer, inUsec integer, cueComment varchar);");
+    db.exec("CREATE TABLE cue(content_id integer, kind integer, inUsec integer, cueComment varchar, isActiveLoop integer, outUsec integer);");
 
     db.exec("INSERT INTO artist VALUES (1, 'Test Artist');");
     db.exec("INSERT INTO album VALUES (1, 'Test Album');");
@@ -87,8 +87,10 @@ void createFixture(const std::string &pioneerRoot)
     db.exec("INSERT INTO playlist VALUES (11, 'Peak Time', 10);");
     db.exec("INSERT INTO playlist_content VALUES (566, 11, 3);");
 
-    db.exec("INSERT INTO cue VALUES (566, 0, 12345000, 'breakdown');");   // memory cue
-    db.exec("INSERT INTO cue VALUES (566, 1, 1000000, 'drop');");        // hot cue slot 1
+    db.exec("INSERT INTO cue (content_id, kind, inUsec, cueComment) VALUES (566, 0, 12345000, 'breakdown');");   // memory cue
+    db.exec("INSERT INTO cue (content_id, kind, inUsec, cueComment) VALUES (566, 1, 1000000, 'drop');");        // hot cue slot 1
+    db.exec("INSERT INTO cue (content_id, kind, inUsec, cueComment, isActiveLoop, outUsec) "
+            "VALUES (566, 2, 2000000, 'loop', 1, 4000000);");  // hot loop in slot 2, 2.0 s to 4.0 s
 }
 
 const Track *findBySourceId(const std::vector<Track> &tracks, const std::string &sourceId)
@@ -136,13 +138,18 @@ int main()
         assert(t->playCount.has_value() && *t->playCount == 5);
         assert(t->artworkPath == artFile.string());
 
-        assert(t->cues.size() == 2);
-        bool sawHot = false, sawMemory = false;
+        assert(t->cues.size() == 3);
+        bool sawHot = false, sawMemory = false, sawLoop = false;
         for (const auto &c : t->cues) {
-            if (c.kind == CuePoint::Kind::Hot) {
+            if (c.kind == CuePoint::Kind::Hot && c.hotCueNumber == 2) {
+                // A loop row: flagged, and its out point carried.
+                assert(c.isLoop && c.loopEndMs == 4000.0 && c.positionMs == 2000.0);
+                sawLoop = true;
+            } else if (c.kind == CuePoint::Kind::Hot) {
                 assert(c.hotCueNumber == 1);
                 assert(c.positionMs == 1000.0);  // 1,000,000us -> 1000.0ms
                 assert(c.comment == "drop");
+                assert(!c.isLoop);
                 sawHot = true;
             } else {
                 assert(c.hotCueNumber == 0);
@@ -151,7 +158,7 @@ int main()
                 sawMemory = true;
             }
         }
-        assert(sawHot && sawMemory);
+        assert(sawHot && sawMemory && sawLoop);
 
         assert(t->playlists.size() == 1);
         assert(t->playlists[0].name == "Techno/Peak Time");

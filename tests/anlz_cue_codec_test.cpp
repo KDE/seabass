@@ -1,4 +1,5 @@
 #include <cassert>
+#include <stdexcept>
 #include <iostream>
 
 #include "infrastructure/rekordbox/anlz_cue_codec.hpp"
@@ -116,6 +117,59 @@ int main()
         auto asHot = AnlzCueCodec::decodeHotCues(encoded, CueListTypeHot);
         assert(asHot.empty());
         std::cout << "case 5 (memory-cues list round trip, hotCueNumber=0) OK\n";
+    }
+
+    // A loop encodes as the spec's loop entry type with its out point,
+    // and decodes back as one.
+    {
+        RawHotCueEntry loop;
+        loop.hotCueNumber = 3;
+        loop.timeMs = 42000;
+        loop.isLoop = true;
+        loop.loopEndMs = 46000;
+        loop.color = std::make_tuple(uint8_t{0}, uint8_t{255}, uint8_t{0});
+        RawHotCueEntry point;
+        point.hotCueNumber = 4;
+        point.timeMs = 50000;
+        auto encoded = AnlzCueCodec::encodeHotCues({loop, point});
+        auto decoded = AnlzCueCodec::decodeHotCues(encoded);
+        assert(decoded.size() == 2);
+        assert(decoded[0].isLoop && decoded[0].loopEndMs == 46000 && decoded[0].timeMs == 42000);
+        assert(static_cast<unsigned char>(decoded[0].rawBytes[16]) == 2);
+        assert(!decoded[1].isLoop && decoded[1].loopEndMs == 0);
+        assert(static_cast<unsigned char>(decoded[1].rawBytes[16]) == 1);
+        std::cout << "case 6 (a loop round-trips with its out point) OK\n";
+    }
+
+    // An entry read from a file is carried back byte for byte when it
+    // is re-encoded: the real coloured entry of case 2, with its legacy
+    // colour id and every byte this codec does not model, comes out of
+    // a decode/encode round trip identical.
+    {
+        auto section = fromHex(
+            "50434f32000000140000006c000000010001000050435032000000100000005800000001010003e800002c"
+            "45ffffffff000101a80000000000000000000000002bff001700000000000000000000000000000000000000"
+            "000000000000000000000000000000000000000000");
+        auto cues = AnlzCueCodec::decodeHotCues(section);
+        assert(cues.size() == 1 && !cues[0].rawBytes.empty());
+        auto encoded = AnlzCueCodec::encodeHotCues(cues);
+        assert(encoded == section);
+        // Clearing rawBytes falls back to a fresh encode, which differs
+        // in the bytes the model does not carry (proving the carry-over
+        // is what preserved them above).
+        cues[0].rawBytes.clear();
+        assert(AnlzCueCodec::encodeHotCues(cues) != section);
+        // A torn raw entry is refused rather than written.
+        auto torn = AnlzCueCodec::decodeHotCues(section);
+        torn[0].rawBytes.pop_back();
+        bool refused = false;
+        try {
+            AnlzCueCodec::encodeHotCues(torn);
+        } catch (const std::runtime_error &) {
+            refused = true;
+        }
+        assert(refused);
+        std::cout << "case 7 (an unchanged entry is written back byte for byte) OK\n";
     }
 
     std::cout << "all cases passed\n";

@@ -1,5 +1,19 @@
 # Reverse-engineering plan: writing hot loops to rekordbox's ANLZ format
 
+> **Status 2026-09-11.** Two things changed since this plan was written.
+> First, every rewrite of a track's cue lists now carries the entries it
+> did not change back **byte for byte** (`RawHotCueEntry::rawBytes`,
+> `AnlzCueCodec::encodeHotCues`): an existing loop, comment or legacy
+> colour id survives an Add Cue, Sync, Clean Up or Restore on that track,
+> which it did not before -- every save flattened them silently. Second,
+> a loop that arrives from the domain (an Engine hot loop synced over)
+> is encoded as the spec's loop entry type with its out point in
+> `loop_time`, the same two fields the reader takes it from. The
+> validation work below, against captured real loop entries, still
+> stands as the bar for calling loop *creation* confirmed; nothing here
+> writes a comment yet.
+
+
 ## Why this exists
 
 Seabass now *reads* loops from rekordbox correctly (`kaitai_rekordbox_reader.cpp`,

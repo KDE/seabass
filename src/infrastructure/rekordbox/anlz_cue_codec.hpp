@@ -14,14 +14,26 @@ namespace seabass::infrastructure::rekordbox
 // memory cues (hotCueNumber == 0, per the kaitai spec's own
 // classification: a cue_extended_entry_t is only "hot" when its
 // hot_cue field is nonzero, regardless of which list/section it's in).
-// v1 scope: no comment support (always written with an empty comment,
-// matching the exact byte shape validated against real rekordbox-written
-// entries) and no loop support.
+// Freshly encoded entries carry no comment (the byte shape validated
+// against real rekordbox-written entries has an empty one). Entries read
+// from a file keep their exact bytes in rawBytes, and the encoder writes
+// those back verbatim: a rewrite that replaces the whole list must not
+// flatten the comment, legacy colour id or loop of a cue it did not
+// touch, which is what every save used to do.
 struct RawHotCueEntry
 {
     uint32_t hotCueNumber = 0;  // 1-8 for a hot cue; 0 for a memory cue
     uint32_t timeMs = 0;
     std::optional<std::tuple<uint8_t, uint8_t, uint8_t>> color;  // (r, g, b), if any
+    // A loop: the player repeats between timeMs and loopEndMs. Encoded
+    // as the spec's cue_entry_type loop (2) with loop_time set, the same
+    // fields the reader takes them from.
+    bool isLoop = false;
+    uint32_t loopEndMs = 0;
+    // The entry exactly as it sat in the file, set by the decoder. When
+    // present, encodeHotCues() appends it unchanged instead of encoding
+    // the fields above.
+    std::string rawBytes;
 };
 
 // cue_list_type values for the PCO2 section's `type` field -- which of

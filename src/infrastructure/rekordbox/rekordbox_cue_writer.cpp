@@ -1,6 +1,7 @@
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 
 #include "infrastructure/rekordbox/anlz_cue_codec.hpp"
@@ -97,18 +98,51 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
 
     auto file = AnlzFile::readRaw(extPath);
 
+    // Whatever the file holds now, with each entry's exact bytes. A cue
+    // in the new list that matches one of these (same slot or time, same
+    // loop, a colour that does not contradict) is written back verbatim,
+    // so its comment, legacy colour id and loop survive a rewrite the
+    // domain model cannot represent in full.
+    auto existing = [&](uint32_t listType) {
+        std::vector<RawHotCueEntry> entries;
+        for (const auto &section : file.sections) {
+            if (isCueListSection(section, listType)) {
+                entries = AnlzCueCodec::decodeHotCues(section.rawBytes, listType);
+                break;
+            }
+        }
+        return entries;
+    };
+    const std::vector<RawHotCueEntry> existingHot = existing(CueListTypeHot);
+    const std::vector<RawHotCueEntry> existingMemory = existing(CueListTypeMemory);
+    auto carryOver = [](const RawHotCueEntry &wanted, const std::vector<RawHotCueEntry> &from) -> std::optional<RawHotCueEntry> {
+        for (const auto &have : from) {
+            if (have.rawBytes.empty() || have.hotCueNumber != wanted.hotCueNumber || have.timeMs != wanted.timeMs
+                || have.isLoop != wanted.isLoop || (have.isLoop && have.loopEndMs != wanted.loopEndMs)) {
+                continue;
+            }
+            if (wanted.color && have.color && *wanted.color != *have.color) {
+                continue;  // a genuinely new colour: encode it fresh
+            }
+            return have;
+        }
+        return std::nullopt;
+    };
+
     std::vector<RawHotCueEntry> hotEntries;
     std::vector<RawHotCueEntry> memoryEntries;
     for (const auto &cue : cues) {
         RawHotCueEntry entry;
         entry.timeMs = static_cast<uint32_t>(cue.positionMs);
         entry.color = parseColor(cue.color);
+        entry.isLoop = cue.isLoop;
+        entry.loopEndMs = cue.isLoop ? static_cast<uint32_t>(cue.loopEndMs) : 0;
         if (cue.kind == domain::CuePoint::Kind::Hot) {
             entry.hotCueNumber = static_cast<uint32_t>(cue.hotCueNumber);
-            hotEntries.push_back(entry);
+            hotEntries.push_back(carryOver(entry, existingHot).value_or(entry));
         } else {
             entry.hotCueNumber = 0;  // memory cues carry no hot-cue slot
-            memoryEntries.push_back(entry);
+            memoryEntries.push_back(carryOver(entry, existingMemory).value_or(entry));
         }
     }
 

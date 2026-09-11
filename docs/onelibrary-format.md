@@ -155,3 +155,15 @@ number, not only the position.
 
 Worth keeping as a caution: "the value differs between runs" is good
 evidence of uninitialised memory, but it does not say whose.
+
+## Loops and colours on rewrite (2026-09-11)
+
+`OneLibraryCueWriter::writeCuesForPath` replaces a track's whole cue set.
+It now writes a loop as `isActiveLoop = 1` with its out point in
+`outUsec` (a cue point keeps `outUsec == inUsec`), and the reader takes
+`isActiveLoop`/`outUsec` back into `CuePoint::isLoop`/`loopEndMs`, so a
+loop survives a OneLibrary round trip. A cue that keeps its slot and
+position also keeps the `colorTableIndex` the stick had for it; the
+domain model carries no OneLibrary colour, and a rewrite used to reset
+every cue to colour 0. Bank membership (`hotCueBankList_cue`) is still
+dropped on rewrite.
