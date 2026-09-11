@@ -44,6 +44,7 @@ struct StickWearResult
 {
     QVariantMap check;       // filesRead, bytesRead, medianBytesPerSecond, seconds, unreadable[], slow[{path, bytesPerSecond}]
     QVariantMap assessment;  // state, label, summary
+    QVariantMap trend;       // the trend recomputed with this wear state; empty when the history is unavailable
     QString errorMessage;
     bool cancelled = false;
 };
@@ -61,8 +62,8 @@ struct StickWearResult
 // measureWithScratchFiles() writes the write test's throwaway files,
 // reads them back, and removes them, which is the only way to measure a
 // blank stick. Nothing is persisted; the result goes into
-// StickPerformanceCache for this session (the backup ETA) and the local
-// history file (the trend).
+// the local history file (the trend, and Full Stick Backup's time
+// estimate).
 class StickPerformanceController : public QObject
 {
     Q_OBJECT
@@ -95,6 +96,10 @@ class StickPerformanceController : public QObject
 
 public:
     explicit StickPerformanceController(QObject *parent = nullptr);
+    // Cancels whatever runs and waits for it: the wear task posts
+    // progress to this object from its thread, and the measure and write
+    // tasks write to the stick, so neither may outlive the page.
+    ~StickPerformanceController() override;
 
     bool busy() const { return m_busy; }
     QString errorMessage() const { return m_errorMessage; }
@@ -123,7 +128,8 @@ public:
     // Reads every file on the stick once (see StickSurfaceCheck) and
     // judges wear from what failed or read abnormally slowly. Read-only;
     // minutes on a big stick, hence its own progress and cancel.
-    Q_INVOKABLE void checkWear(const QString &rekordboxPath, const QString &enginePath, const QString &mountPoint);
+    Q_INVOKABLE void checkWear(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
+                               const QString &mountPoint);
     Q_INVOKABLE void cancelWearCheck();
     // Called from the wear task's worker thread through a queued call.
     Q_INVOKABLE void applyWearProgress(qlonglong bytesDone, qlonglong bytesTotal, qlonglong filesDone, qlonglong filesTotal);

@@ -89,94 +89,103 @@ std::string describeSetWait(const DjWorkloadScore &score)
 std::vector<PlayerAdvisory> advisePlayers(const StickPerformanceMeasurement &m, const DjWorkloadScore &s)
 {
     std::vector<PlayerAdvisory> rows;
+    const bool haveRandom = s.browseVerdict != Verdict::Unknown;
+    const bool haveStreaming = s.streamingVerdict != Verdict::Unknown;
     const std::string pageMs = [&] {
         std::ostringstream o;
         o.precision(1);
         o << std::fixed << m.randomReadMedianMs << " ms";
         return o.str();
     }();
-    const std::string opensPerSecond = std::to_string(static_cast<int>(std::lround(m.smallFileOpensPerSecond)));
     const std::string streamingMBps = std::to_string(static_cast<int>(std::lround(m.streamingBytesPerSecond / 1e6)));
 
-    // Device Library: export.pdb's 4 KiB pages read as you browse, one
-    // analysis file per track load.
-    {
+    // The rekordbox rows are judged on the small random read first; when
+    // that could not be measured (no file on the stick large enough to
+    // seek in), they fall back to the track-load verdict and say so
+    // rather than quoting a 0.0 ms page.
+    auto rekordboxRow = [&](const char *group, const char *players, const std::string &fine, const std::string &slower,
+                            const std::string &sluggish) {
         PlayerAdvisory row;
-        row.group = "Device Library players";
-        row.players = "CDJ-2000 · NXS · NXS2 · XDJ-1000MK2 · XDJ-XZ · XDJ-RX3 · CDJ-3000";
+        row.group = group;
+        row.players = players;
         row.verdict = worst(s.browseVerdict, s.trackLoadVerdict);
-        switch (row.verdict) {
-        case Verdict::Fine:
-            row.summary = "Reads the database in 4 KiB pages straight off the stick as you browse, the same size as the "
-                          "small random read, and one analysis file per track load. " + pageMs + " a page keeps up with the "
-                          "jog wheel.";
-            break;
-        case Verdict::Slower:
-            row.summary = "Every database page is a " + pageMs + " wait and a folder of thousands of tracks is hundreds "
-                          "of pages. Expect a longer \"Loading\" at insertion and a short pause before each waveform appears.";
-            break;
-        case Verdict::Sluggish:
-            row.summary = "Every database page is a " + pageMs + " wait. Expect a long \"Loading\" at insertion, browsing "
-                          "that lags the jog wheel, and a visible pause before each waveform appears.";
-            break;
-        case Verdict::Unknown:
-            row.summary = "Not measured.";
-            break;
+        if (!haveRandom && row.verdict != Verdict::Unknown) {
+            row.summary = "Small random reads could not be measured on this stick, so this is judged on track loads "
+                          "alone" +
+                          std::string(row.verdict == Verdict::Fine ? ", which are fine." : ", which are not quick.");
+        } else {
+            switch (row.verdict) {
+            case Verdict::Fine:
+                row.summary = fine;
+                break;
+            case Verdict::Slower:
+                row.summary = slower;
+                break;
+            case Verdict::Sluggish:
+                row.summary = sluggish;
+                break;
+            case Verdict::Unknown:
+                row.summary = "Not measured.";
+                break;
+            }
         }
         rows.push_back(row);
-    }
+    };
 
-    // OneLibrary: SQLite on the stick for every list and search.
-    {
-        PlayerAdvisory row;
-        row.group = "OneLibrary players";
-        row.players = "CDJ-3000X · OPUS-QUAD · OMNIS-DUO · XDJ-AZ · rekordbox 7";
-        row.verdict = worst(s.browseVerdict, s.trackLoadVerdict);
-        switch (row.verdict) {
-        case Verdict::Fine:
-            row.summary = "Runs every list, sort and search as a SQLite query on the stick. Small random reads decide how "
-                          "snappy that feels; this stick answers in " + pageMs + ".";
-            break;
-        case Verdict::Slower:
-            row.summary = "Search and sort run as SQLite queries on the stick as you type. At " + pageMs + " per read, "
-                          "typing a search and scrolling a long playlist stutter.";
-            break;
-        case Verdict::Sluggish:
-            row.summary = "Search and sort run as SQLite queries on the stick as you type. At " + pageMs + " per read "
-                          "every keystroke and every scroll waits on the stick; this is the generation that suffers most.";
-            break;
-        case Verdict::Unknown:
-            row.summary = "Not measured.";
-            break;
-        }
-        rows.push_back(row);
-    }
+    rekordboxRow("Device Library players", "CDJ-2000 · NXS · NXS2 · XDJ-1000MK2 · XDJ-XZ · XDJ-RX3 · CDJ-3000",
+                 "Reads the database in 4 KiB pages straight off the stick as you browse, the same size as the small "
+                 "random read, and one analysis file per track load. " + pageMs + " a page keeps up with the jog wheel.",
+                 "Every database page is a " + pageMs + " wait and a folder of thousands of tracks is hundreds of pages. "
+                 "Expect a longer \"Loading\" at insertion and a short pause before each waveform appears.",
+                 "Every database page is a " + pageMs + " wait. Expect a long \"Loading\" at insertion, browsing that "
+                 "lags the jog wheel, and a visible pause before each waveform appears.");
+
+    rekordboxRow("OneLibrary players", "CDJ-3000X · OPUS-QUAD · OMNIS-DUO · XDJ-AZ · rekordbox 7",
+                 "Runs every list, sort and search as a SQLite query on the stick. Small random reads decide how snappy "
+                 "that feels; this stick answers in " + pageMs + ".",
+                 "Search and sort run as SQLite queries on the stick as you type. At " + pageMs + " per read, typing a "
+                 "search and scrolling a long playlist stutter.",
+                 "Search and sort run as SQLite queries on the stick as you type. At " + pageMs + " per read every "
+                 "keystroke and every scroll waits on the stick; this is the generation that suffers most.");
 
     // Engine OS: SQLite in place, plus Denon's 20 MB/s floor, which also
-    // paces the on-player migration of an older library.
+    // paces the on-player migration of an older library. Each sentence
+    // only quotes the number that was measured.
     {
         PlayerAdvisory row;
         row.group = "Engine OS players";
         row.players = "SC5000 · SC6000 · Prime 4 / 4+ · Prime 2 · Prime GO · SC Live";
         row.verdict = worst(s.browseVerdict, s.streamingVerdict);
+        const std::string browsePart = !haveRandom ? std::string()
+            : s.browseVerdict == Verdict::Fine ? "Browsing answers in " + pageMs + " per read, which keeps up."
+            : s.browseVerdict == Verdict::Slower ? "Browsing at " + pageMs + " per read is noticeably behind a current stick."
+            : "Reads of " + pageMs + " make every list wait.";
+        const std::string streamPart = !haveStreaming ? std::string()
+            : s.streamingVerdict == Verdict::Fine
+                ? "Denon asks for at least 20 MB/s and this stick streams at " + streamingMBps + " MB/s."
+            : s.streamingVerdict == Verdict::Slower
+                ? "Streaming at " + streamingMBps + " MB/s is under Denon's 20 MB/s minimum for Engine OS media, so the "
+                  "one-time migration of an older library and every export take longer."
+                : "Streaming at " + streamingMBps + " MB/s is far under Denon's 20 MB/s minimum.";
         switch (row.verdict) {
         case Verdict::Fine:
-            row.summary = "Reads its SQLite database in place, like OneLibrary. Denon asks for at least 20 MB/s and this "
-                          "stick streams at " + streamingMBps + " MB/s. A library from an older Engine DJ is migrated on "
-                          "the player at the stick's own speed.";
+            row.summary = "Reads its SQLite database in place, like OneLibrary. " + (streamPart.empty() ? browsePart : streamPart) +
+                          " A library from an older Engine DJ is migrated on the player at the stick's own speed.";
             break;
         case Verdict::Slower:
-            row.summary = "Same SQLite-on-the-stick model. " + (s.streamingVerdict != Verdict::Fine
-                              ? "Streaming at " + streamingMBps + " MB/s is under Denon's 20 MB/s minimum for Engine OS "
-                                "media, so the one-time migration of an older library and every export take longer."
-                              : "Browsing at " + pageMs + " per read is noticeably behind a current stick.");
+        case Verdict::Sluggish: {
+            row.summary = "Same SQLite-on-the-stick model. ";
+            if (!streamPart.empty() && s.streamingVerdict != Verdict::Fine) {
+                row.summary += streamPart;
+            }
+            if (!browsePart.empty() && s.browseVerdict != Verdict::Fine) {
+                row.summary += (row.summary.back() == ' ' ? "" : " ") + browsePart;
+            }
+            if (row.verdict == Verdict::Sluggish) {
+                row.summary += " Expect lag scrolling long playlists and the \"preparing library\" pass to run into minutes.";
+            }
             break;
-        case Verdict::Sluggish:
-            row.summary = "Same SQLite-on-the-stick model, and " + (s.streamingVerdict == Verdict::Sluggish
-                              ? "streaming at " + streamingMBps + " MB/s is far under Denon's 20 MB/s minimum. "
-                              : "reads of " + pageMs + " make every list wait. ") +
-                          "Expect lag scrolling long playlists and the \"preparing library\" pass to run into minutes.";
-            break;
+        }
         case Verdict::Unknown:
             row.summary = "Not measured.";
             break;
@@ -184,7 +193,6 @@ std::vector<PlayerAdvisory> advisePlayers(const StickPerformanceMeasurement &m, 
         rows.push_back(row);
     }
 
-    (void)opensPerSecond;
     return rows;
 }
 
@@ -259,7 +267,7 @@ WearAssessment assessWear(const StickSurfaceCheck &check, const StickPerformance
 }
 
 TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int currentOutliers,
-                            const std::vector<TrendPoint> &earlier)
+                            const std::string &currentWearState, const std::vector<TrendPoint> &earlier)
 {
     TrendAssessment t;
     t.earlierCount = static_cast<int>(earlier.size());
@@ -268,12 +276,12 @@ TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int cu
         t.summary = "First measurement of this stick on this computer; the next one will show whether it is changing.";
         return t;
     }
-    std::string lastWear;
+    bool wasHealthy = false;
+    int earlierOutliers = 0;
     for (const auto &p : earlier) {
         t.bestEarlierScore = std::max(t.bestEarlierScore, p.score);
-        if (!p.wearState.empty()) {
-            lastWear = p.wearState;
-        }
+        wasHealthy = wasHealthy || p.wearState == "healthy";
+        earlierOutliers = std::max(earlierOutliers, p.outliers);
     }
     std::ostringstream out;
     out << "Measured " << (earlier.size() + 1) << " times since " << earlier.front().measuredAtUtc.substr(0, 10) << ": ";
@@ -293,13 +301,23 @@ TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int cu
     }
     const bool scoreDropped = t.bestEarlierScore > 0 && currentScore * 4 < t.bestEarlierScore * 3;
     const bool randomDoubled = bestRandom > 0.0 && currentRandomReadMs > 2.0 * bestRandom;
-    if (scoreDropped || randomDoubled) {
+    // A tail that was flat every time before and now stalls repeatedly is
+    // the wear symptom arriving, even while the medians hold.
+    const bool tailAppeared = earlierOutliers == 0 && currentOutliers >= 5;
+    const bool wearWorsened = wasHealthy && (currentWearState == "watch" || currentWearState == "failing");
+    if (wearWorsened) {
+        t.state = TrendState::Worsened;
+        out << " The wear check found " << (currentWearState == "failing" ? "unreadable" : "abnormally slow")
+            << " files where an earlier check found none: this stick is wearing out.";
+    } else if (scoreDropped || randomDoubled || tailAppeared) {
         t.state = TrendState::Slowing;
         out << " Slower than it used to be";
         if (randomDoubled) {
             out << ": small reads take " << std::fixed;
             out.precision(1);
             out << currentRandomReadMs << " ms against " << bestRandom << " ms before, which is what wear looks like";
+        } else if (tailAppeared) {
+            out << ": " << currentOutliers << " small reads stalled where none did before; run the wear check";
         } else {
             out << "; if it is on the same kind of port as before, run the wear check";
         }
@@ -308,7 +326,6 @@ TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int cu
         t.state = TrendState::Steady;
         out << " Steady.";
     }
-    (void)currentOutliers;
     t.summary = out.str();
     return t;
 }

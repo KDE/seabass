@@ -74,12 +74,6 @@ Page {
         return Theme.textMuted;
     }
 
-    function verdictText(key) {
-        if (key === "fine") return "FINE";
-        if (key === "slower") return "SLOWER";
-        if (key === "sluggish") return "SLUGGISH";
-        return "NOT MEASURED";
-    }
 
     // One column width for the player-group names and one for the badges,
     // shared by every row, so the three columns line up down the page.
@@ -538,7 +532,7 @@ Page {
                             enabled: controller.wearBusy || !controller.anyBusy
                             onClicked: controller.wearBusy
                                 ? controller.cancelWearCheck()
-                                : controller.checkWear(root.rekordboxPath, root.enginePath, root.mountPoint)
+                                : controller.checkWear(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
                         }
                         // ProgressTrack, not a bare ProgressBar: Breeze's
                         // own delegate reads its background's edges before
@@ -712,7 +706,7 @@ Page {
                             spacing: Theme.rowSpacing
                             StatusBadge {
                                 Layout.minimumWidth: root.badgeWidth
-                                label: root.verdictText(controller.writeEstimate.cueSaveVerdict)
+                                label: controller.writeEstimate.cueSaveVerdictLabel || "NOT MEASURED"
                                 badgeColor: root.verdictColor(controller.writeEstimate.cueSaveVerdict)
                             }
                             Label {
@@ -728,7 +722,7 @@ Page {
                             spacing: Theme.rowSpacing
                             StatusBadge {
                                 Layout.minimumWidth: root.badgeWidth
-                                label: root.verdictText(controller.writeEstimate.exportVerdict)
+                                label: controller.writeEstimate.exportVerdictLabel || "NOT MEASURED"
                                 badgeColor: root.verdictColor(controller.writeEstimate.exportVerdict)
                             }
                             Label {

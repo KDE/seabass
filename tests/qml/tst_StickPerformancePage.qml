@@ -27,7 +27,7 @@ TestCase {
             wearBusy: false, wearErrorMessage: "", wearBytesDone: 0, wearBytesTotal: 0, wearFilesDone: 0, wearFilesTotal: 0,
             wearCheck: {}, wearAssessment: {}, anyBusy: false,
             cancelWrites: function() { this.calls.push("cancelWrites"); },
-            checkWear: function(rb, en, mp) { this.calls.push("wear:" + mp); },
+            checkWear: function(label, rb, en, mp) { this.calls.push("wear:" + label + ":" + mp); },
             cancelWearCheck: function() { this.calls.push("cancelWear"); },
             filesystemInfo: {}, measurement: {}, score: {}, advisories: [], facts: {}, trend: {},
             writeMeasurement: {}, writeEstimate: {},
@@ -166,7 +166,7 @@ TestCase {
         compare(button.text, "Check for Wear");
         button.clicked();
         var calls = page.controller.calls;
-        compare(calls[calls.length - 1], "wear:/media/WHALESHARK2");
+        compare(calls[calls.length - 1], "wear:WHALESHARK2:/media/WHALESHARK2");
 
         var done = fakeController(true, false);
         done.wearCheck = {filesRead: 7529, bytesRead: 21000000000, medianBytesPerSecond: 138e6, seconds: 152,

@@ -13,6 +13,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
@@ -107,7 +110,10 @@ public:
             m_direct = false;
         }
 #elif defined(_WIN32)
-        std::wstring wide(path.begin(), path.end());
+        // fs::path decodes the UTF-8 the callers hand in; widening byte by
+        // byte would turn every accented filename into one that does not
+        // exist and silently drop it from the measurement.
+        std::wstring wide = fs::path(path).wstring();
         m_handle = CreateFileW(wide.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
                                FILE_FLAG_NO_BUFFERING, nullptr);
         if (m_handle == INVALID_HANDLE_VALUE) {

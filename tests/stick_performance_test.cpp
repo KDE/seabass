@@ -131,7 +131,8 @@ int main()
     }
 
     // Case 5: a partial measurement compares like with like: only the
-    // streaming number, and the score is that dimension alone.
+    // streaming number, and the score is that dimension alone. The
+    // advisories then never quote the number that was not measured.
     {
         StickPerformanceMeasurement m;
         m.streamingBytesPerSecond = 20.0e6;
@@ -139,7 +140,26 @@ int main()
         assert(s.browseVerdict == Verdict::Unknown);
         assert(s.trackLoadVerdict == Verdict::Fine || s.trackLoadVerdict == Verdict::Slower);
         assert(s.score == 50);  // half the reference streaming rate, nothing else measured
-        std::cout << "case 5 (partial measurement scores only what was measured) OK\n";
+        auto rows = advisePlayers(m, s);
+        for (const auto &row : rows) {
+            assert(row.summary.find("0.0 ms") == std::string::npos);
+            assert(row.summary.find(" 0 MB/s") == std::string::npos);
+        }
+        assert(rows[0].summary.find("judged on track loads alone") != std::string::npos);
+
+        // The mirror image: random reads measured, nothing streamed. The
+        // Engine OS row must not claim "0 MB/s is under Denon's minimum".
+        StickPerformanceMeasurement r;
+        r.randomReadMedianMs = 3.0;
+        r.randomReads = 300;
+        auto rs = scoreDjWorkload(r);
+        assert(rs.browseVerdict == Verdict::Slower);
+        assert(rs.streamingVerdict == Verdict::Unknown);
+        auto rrows = advisePlayers(r, rs);
+        assert(rrows[2].verdict == Verdict::Slower);
+        assert(rrows[2].summary.find("MB/s") == std::string::npos);
+        assert(rrows[2].summary.find("3.0 ms") != std::string::npos);
+        std::cout << "case 5 (partial measurement scores and advises only what was measured) OK\n";
     }
 
     // Case 6: slower is lower, monotonically, on each dimension.
@@ -243,25 +263,42 @@ int main()
     // Case 10: the trend. First run says so; steady runs are steady; a
     // quarter drop in score or a doubled random-read median is slowing.
     {
-        auto first = assessTrend(83, 0.8, 0, {});
+        auto first = assessTrend(83, 0.8, 0, "", {});
         assert(first.state == TrendState::Unknown);
         assert(first.earlierCount == 0);
 
         std::vector<TrendPoint> earlier = {{"2026-06-01T10:00:00Z", 85, 0.78, 0, "healthy"},
                                            {"2026-07-15T10:00:00Z", 84, 0.80, 0, ""}};
-        auto steady = assessTrend(83, 0.81, 0, earlier);
+        auto steady = assessTrend(83, 0.81, 0, "", earlier);
         assert(steady.state == TrendState::Steady);
         assert(steady.bestEarlierScore == 85);
         assert(steady.summary.find("3 times since 2026-06-01") != std::string::npos);
         assert(steady.summary.find("85, 84, 83") != std::string::npos);
 
-        auto dropped = assessTrend(60, 0.9, 0, earlier);
+        auto dropped = assessTrend(60, 0.9, 0, "", earlier);
         assert(dropped.state == TrendState::Slowing);
         assert(dropped.summary.find("Slower than it used to be") != std::string::npos);
 
-        auto doubled = assessTrend(80, 1.7, 2, earlier);
+        auto doubled = assessTrend(80, 1.7, 2, "", earlier);
         assert(doubled.state == TrendState::Slowing);
         assert(doubled.summary.find("what wear looks like") != std::string::npos);
+
+        // A tail that was flat before and stalls now is slowing too.
+        auto stalls = assessTrend(84, 0.8, 6, "", earlier);
+        assert(stalls.state == TrendState::Slowing);
+        assert(stalls.summary.find("stalled where none did before") != std::string::npos);
+
+        // An earlier healthy wear check and a bad one now: worsened, even
+        // with the medians steady.
+        auto worsened = assessTrend(84, 0.8, 0, "watch", earlier);
+        assert(worsened.state == TrendState::Worsened);
+        assert(worsened.summary.find("abnormally slow files") != std::string::npos);
+        auto failing = assessTrend(84, 0.8, 0, "failing", earlier);
+        assert(failing.state == TrendState::Worsened);
+        // Healthy now, or no earlier check to compare with: not worsened.
+        assert(assessTrend(84, 0.8, 0, "healthy", earlier).state == TrendState::Steady);
+        std::vector<TrendPoint> unchecked = {{"2026-06-01T10:00:00Z", 85, 0.78, 0, ""}};
+        assert(assessTrend(84, 0.8, 0, "watch", unchecked).state == TrendState::Steady);
         std::cout << "case 10 (trend over earlier measurements) OK\n";
     }
 

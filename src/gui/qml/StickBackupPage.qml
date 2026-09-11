@@ -430,7 +430,7 @@ Page {
                         visible: root.controller.busy !== true && root.since.estimatedSeconds >= 0
                         color: Theme.textMuted
                         font.pointSize: Theme.fontSmall
-                        text: "Time estimated from this stick's last read-speed benchmark."
+                        text: "Time estimated from this stick's last USB Stick Performance measurement."
                     }
 
                     // Running: progress.

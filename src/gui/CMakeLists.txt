@@ -134,8 +134,6 @@ set(SEABASS_GUI_SOURCES
     stick_statistics_controller.cpp
     stick_performance_controller.hpp
     stick_performance_controller.cpp
-    stick_performance_cache.hpp
-    stick_performance_cache.cpp
     engine_library_creator_controller.hpp
     engine_library_creator_controller.cpp
     format_usb_controller.hpp

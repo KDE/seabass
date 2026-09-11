@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <fstream>
+#include <locale>
 #include <sstream>
+#include <stdexcept>
 
+#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/app_data_directory.hpp"
 
 namespace seabass::infrastructure::local
@@ -22,6 +25,23 @@ std::string field(std::string value)
         if (c == '\t' || c == '\n' || c == '\r') {
             c = ' ';
         }
+    }
+    return value;
+}
+
+// The numbers are written and read in the classic locale, whatever the
+// GUI set from the environment: std::stod under a comma-decimal locale
+// reads "1.08" as 1 without complaint (duration_cache.cpp documents the
+// same trap), and a trend built on that flags healthy sticks as worn.
+template <typename T>
+T parseNumber(const std::string &text)
+{
+    std::istringstream in(text);
+    in.imbue(std::locale::classic());
+    T value{};
+    in >> value;
+    if (in.fail()) {
+        throw std::invalid_argument("not a number: " + text);
     }
     return value;
 }
@@ -58,11 +78,11 @@ std::vector<StickPerformanceRecord> StickPerformanceHistory::readAll() const
             r.measuredAtUtc = fields[0];
             r.stickIdentifier = fields[1];
             r.stickLabel = fields[2];
-            r.score = std::stoi(fields[3]);
-            r.streamingBytesPerSecond = std::stod(fields[4]);
-            r.randomReadMedianMs = std::stod(fields[5]);
-            r.smallFileMedianMs = std::stod(fields[6]);
-            r.outliers = std::stoi(fields[7]);
+            r.score = parseNumber<int>(fields[3]);
+            r.streamingBytesPerSecond = parseNumber<double>(fields[4]);
+            r.randomReadMedianMs = parseNumber<double>(fields[5]);
+            r.smallFileMedianMs = parseNumber<double>(fields[6]);
+            r.outliers = parseNumber<int>(fields[7]);
             r.wearState = fields.size() > 8 ? fields[8] : "";
             records.push_back(r);
         } catch (const std::exception &) {
@@ -74,15 +94,22 @@ std::vector<StickPerformanceRecord> StickPerformanceHistory::readAll() const
 
 void StickPerformanceHistory::writeAll(const std::vector<StickPerformanceRecord> &records) const
 {
-    std::error_code ec;
-    fs::create_directories(m_path.parent_path(), ec);
-    std::ofstream out(m_path, std::ios::trunc);
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
     out << "# Seabass stick performance history: measured-at, stick id, label, score, streaming B/s, "
            "random read ms, small file ms, tail outliers, wear state\n";
     for (const auto &r : records) {
         out << field(r.measuredAtUtc) << '\t' << field(r.stickIdentifier) << '\t' << field(r.stickLabel) << '\t'
             << r.score << '\t' << r.streamingBytesPerSecond << '\t' << r.randomReadMedianMs << '\t'
             << r.smallFileMedianMs << '\t' << r.outliers << '\t' << field(r.wearState) << '\n';
+    }
+    std::error_code ec;
+    fs::create_directories(m_path.parent_path(), ec);
+    // Temp file, fsync, rename: a crash or a full disk mid-write leaves
+    // the previous file intact rather than an empty one, like every
+    // other store under infrastructure/local.
+    if (!infrastructure::writeFileDurablyAtomic(m_path.string(), out.str())) {
+        throw std::runtime_error("could not write " + m_path.string());
     }
 }
 

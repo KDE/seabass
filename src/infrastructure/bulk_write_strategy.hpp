@@ -12,7 +12,7 @@ struct BulkWriteStrategyInputs
     int itemCount = 0;
     std::uintmax_t existingFileBytes = 0;
     // Real measured sequential throughput for this exact stick, when
-    // available (see gui::StickPerformanceCache). Left unset by every caller
+    // available (see infrastructure::local::StickPerformanceHistory). Left unset by every caller
     // in this codebase today -- wiring that lookup in needs a mount
     // point/stick label these callers don't currently carry -- so a
     // conservative fallback below is used instead.

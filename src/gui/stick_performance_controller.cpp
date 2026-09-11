@@ -13,13 +13,15 @@
 
 #include "domain/filesystem_compatibility.hpp"
 #include "domain/stick_performance.hpp"
+#include "gui/future_result.hpp"
 #include "gui/library_catalog_cache.hpp"
-#include "gui/stick_performance_cache.hpp"
+#include "gui/write_guard.hpp"
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
 #include "infrastructure/benchmark/stick_surface_check.hpp"
 #include "infrastructure/benchmark/stick_write_probe.hpp"
 #include "infrastructure/local/stick_performance_history.hpp"
-#include "infrastructure/system/rekordbox_process_detector.hpp"
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/scratch_dir_guard.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 
 namespace seabass::gui
@@ -219,13 +221,40 @@ std::uint64_t sizeOf(const fs::directory_entry &entry)
     return ec ? 0 : size;
 }
 
-// Removes the scratch folder on every exit path of a throwaway-file
-// measurement, including the one where the read probe threw.
-struct ScratchGuard
+QString trendStateKey(domain::TrendState state)
 {
-    std::string root;
-    ~ScratchGuard() { infrastructure::benchmark::StickWriteProbe::removeScratch(root); }
-};
+    switch (state) {
+    case domain::TrendState::Steady:
+        return QStringLiteral("steady");
+    case domain::TrendState::Slowing:
+        return QStringLiteral("slowing");
+    case domain::TrendState::Worsened:
+        return QStringLiteral("worsened");
+    case domain::TrendState::Unknown:
+        break;
+    }
+    return QStringLiteral("unknown");
+}
+
+QVariantMap toVariant(const domain::TrendAssessment &trend)
+{
+    QVariantMap t;
+    t["state"] = trendStateKey(trend.state);
+    t["summary"] = QString::fromStdString(trend.summary);
+    t["earlierCount"] = trend.earlierCount;
+    t["bestEarlierScore"] = trend.bestEarlierScore;
+    return t;
+}
+
+std::vector<domain::TrendPoint> earlierPoints(const infrastructure::local::StickPerformanceHistory &history,
+                                              const std::string &stickIdentifier)
+{
+    std::vector<domain::TrendPoint> earlier;
+    for (const auto &r : history.forStick(stickIdentifier)) {
+        earlier.push_back({r.measuredAtUtc, r.score, r.randomReadMedianMs, r.outliers, r.wearState});
+    }
+    return earlier;
+}
 
 // Every Nth of a sorted list, so the sample spreads over the whole
 // library rather than clustering on one artist.
@@ -264,14 +293,18 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
         std::uint64_t smallFolders = 0;
         QString sampleKind;
         std::optional<domain::StickWriteMeasurement> writeMeasurement;
-        std::optional<ScratchGuard> scratchGuard;
+        // Removes the scratch folder on every exit path of a throwaway-file
+        // measurement, the one where the read probe threw included. The
+        // shared move-only guard, not a local struct: see its header for
+        // the emplace-with-a-temporary bug a copyable one caused once.
+        std::optional<infrastructure::ScratchDirGuard> scratchGuard;
 
         if (useScratchFiles) {
             // A blank stick: the write test's own files are what gets
             // read back. Written and measured first, read second, removed
             // whatever happens in between.
             infrastructure::benchmark::ScratchFiles files;
-            scratchGuard.emplace(ScratchGuard{stickRoot});
+            scratchGuard.emplace(fs::path(stickRoot) / infrastructure::benchmark::StickWriteProbe::kScratchFolderName);
             writeMeasurement = infrastructure::benchmark::StickWriteProbe::run(stickRoot, cancel, {}, &files);
             audioFiles = files.streamFiles;
             smallFiles = files.smallFiles;
@@ -297,6 +330,11 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             if (!rekordboxPath.isEmpty()) {
                 collect("rekordbox", rekordboxPath);
                 databaseFiles.push_back(rekordboxPath.toStdString() + "/rekordbox/export.pdb");
+                // rekordbox 7 sticks carry OneLibrary's SQLite file too, and
+                // the players that read it read all of it at insertion.
+                if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxPath.toStdString())) {
+                    databaseFiles.push_back(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(rekordboxPath.toStdString()));
+                }
             }
             if (!enginePath.isEmpty()) {
                 collect("engine", enginePath);
@@ -371,37 +409,15 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             result.writeEstimate = toVariant(domain::estimateWriteWorkloads(*writeMeasurement));
         }
 
-        StickPerformanceCache::instance().store(hwInfo.stickIdentifier, measurement);
-
         // The trend: everything measured before on this computer, then
         // this run appended. A history that cannot be read or written
         // costs the trend line, never the measurement.
         try {
             infrastructure::local::StickPerformanceHistory history;
-            std::vector<domain::TrendPoint> earlier;
-            for (const auto &r : history.forStick(hwInfo.stickIdentifier)) {
-                earlier.push_back({r.measuredAtUtc, r.score, r.randomReadMedianMs, r.outliers, r.wearState});
-            }
-            auto trend = domain::assessTrend(score.score, measurement.randomReadMedianMs,
-                                             measurement.randomReadOutliers + measurement.smallFileOutliers, earlier);
-            QVariantMap t;
-            t["state"] = [&] {
-                switch (trend.state) {
-                case domain::TrendState::Steady:
-                    return QStringLiteral("steady");
-                case domain::TrendState::Slowing:
-                    return QStringLiteral("slowing");
-                case domain::TrendState::Worsened:
-                    return QStringLiteral("worsened");
-                case domain::TrendState::Unknown:
-                    break;
-                }
-                return QStringLiteral("unknown");
-            }();
-            t["summary"] = QString::fromStdString(trend.summary);
-            t["earlierCount"] = trend.earlierCount;
-            t["bestEarlierScore"] = trend.bestEarlierScore;
-            result.trend = t;
+            auto earlier = earlierPoints(history, hwInfo.stickIdentifier);
+            result.trend = toVariant(domain::assessTrend(score.score, measurement.randomReadMedianMs,
+                                                         measurement.randomReadOutliers + measurement.smallFileOutliers,
+                                                         {}, earlier));
 
             infrastructure::local::StickPerformanceRecord record;
             record.measuredAtUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString();
@@ -441,12 +457,17 @@ QString wearStateKey(domain::WearState state)
 
 // Runs on a worker thread; progress goes back to the controller through
 // queued calls, the same way StickBackupController's backup does.
-StickWearResult runWearTask(std::string stickRoot, std::string stickIdentifier,
+StickWearResult runWearTask(std::string stickRoot, std::string stickLabel, std::string stickIdentifier,
                             domain::StickPerformanceMeasurement probe, application::CancellationToken cancel,
                             StickPerformanceController *controller)
 {
     StickWearResult result;
     try {
+        // Without a completed measurement there is no identifier on the
+        // controller yet; the stick can still say who it is.
+        if (stickIdentifier.empty()) {
+            stickIdentifier = infrastructure::system::readStickHardwareInfo(stickRoot, stickLabel).stickIdentifier;
+        }
         QElapsedTimer sinceLast;
         sinceLast.start();
         auto progress = [&](std::uint64_t bytesDone, std::uint64_t bytesTotal, std::uint64_t filesDone,
@@ -494,11 +515,23 @@ StickWearResult runWearTask(std::string stickRoot, std::string stickIdentifier,
         a["summary"] = QString::fromStdString(assessment.summary);
         result.assessment = a;
 
-        // Remembered with the latest measurement of this stick, so the
-        // next trend can say "was healthy in June".
+        // Remembered with the latest measurement of this stick, and the
+        // trend recomputed against the earlier ones, which is the only
+        // way "was healthy in June, not now" can ever be said.
         if (!stickIdentifier.empty()) {
             try {
                 infrastructure::local::StickPerformanceHistory history;
+                auto records = history.forStick(stickIdentifier);
+                if (!records.empty()) {
+                    const auto &latest = records.back();
+                    std::vector<domain::TrendPoint> earlier;
+                    for (std::size_t i = 0; i + 1 < records.size(); ++i) {
+                        earlier.push_back({records[i].measuredAtUtc, records[i].score, records[i].randomReadMedianMs,
+                                           records[i].outliers, records[i].wearState});
+                    }
+                    result.trend = toVariant(domain::assessTrend(latest.score, latest.randomReadMedianMs, latest.outliers,
+                                                                 wearStateKey(assessment.state).toStdString(), earlier));
+                }
                 history.setLatestWearState(stickIdentifier, wearStateKey(assessment.state).toStdString());
             } catch (const std::exception &) {
             }
@@ -538,10 +571,10 @@ StickPerformanceController::StickPerformanceController(QObject *parent) : QObjec
             &StickPerformanceController::onWearFinished);
 }
 
-void StickPerformanceController::checkWear(const QString &rekordboxPath, const QString &enginePath,
-                                           const QString &mountPoint)
+void StickPerformanceController::checkWear(const QString &stickLabel, const QString &rekordboxPath,
+                                           const QString &enginePath, const QString &mountPoint)
 {
-    if (m_wearBusy || m_busy) {
+    if (anyBusy()) {
         return;
     }
     std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
@@ -561,7 +594,7 @@ void StickPerformanceController::checkWear(const QString &rekordboxPath, const Q
     emit wearProgressChanged();
     setWearBusy(true);
     m_wearCancel = application::CancellationToken();
-    m_wearWatcher.setFuture(QtConcurrent::run(runWearTask, stickRoot,
+    m_wearWatcher.setFuture(QtConcurrent::run(runWearTask, stickRoot, stickLabel.toStdString(),
                                               m_filesystemInfo.value("stickIdentifier").toString().toStdString(), probe,
                                               m_wearCancel, this));
 }
@@ -597,6 +630,10 @@ void StickPerformanceController::onWearFinished()
     m_wearCheck = result.check;
     m_wearAssessment = result.assessment;
     emit wearResultsChanged();
+    if (!result.trend.isEmpty()) {
+        m_trend = result.trend;
+        emit resultsChanged();
+    }
 }
 
 void StickPerformanceController::setWearBusy(bool busy)
@@ -618,10 +655,20 @@ void StickPerformanceController::setWearErrorMessage(const QString &message)
     emit wearErrorMessageChanged();
 }
 
+StickPerformanceController::~StickPerformanceController()
+{
+    m_cancel.cancel();
+    m_writeCancel.cancel();
+    m_wearCancel.cancel();
+    awaitQuietly(m_watcher);
+    awaitQuietly(m_writeWatcher);
+    awaitQuietly(m_wearWatcher);
+}
+
 void StickPerformanceController::measureWrites(const QString &rekordboxPath, const QString &enginePath,
                                                const QString &mountPoint)
 {
-    if (m_writeBusy || m_busy) {
+    if (anyBusy()) {
         return;
     }
     std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
@@ -629,10 +676,8 @@ void StickPerformanceController::measureWrites(const QString &rekordboxPath, con
         setWriteErrorMessage(QStringLiteral("No stick to write a test onto."));
         return;
     }
-    std::string running = infrastructure::system::conflictingDjSoftwareName();
-    if (!running.empty()) {
-        setWriteErrorMessage(QStringLiteral("Close %1 before running the write test; it may be writing this stick too.")
-                                 .arg(QString::fromStdString(running)));
+    if (QString refusal = refuseIfDjSoftwareRunning(); !refusal.isEmpty()) {
+        setWriteErrorMessage(refusal);
         return;
     }
     setWriteErrorMessage({});
@@ -699,10 +744,8 @@ void StickPerformanceController::measureWithScratchFiles(const QString &stickLab
         setErrorMessage(QStringLiteral("No stick to write a test onto."));
         return;
     }
-    std::string running = infrastructure::system::conflictingDjSoftwareName();
-    if (!running.empty()) {
-        setErrorMessage(QStringLiteral("Close %1 before measuring with throwaway files; it may be writing this stick too.")
-                            .arg(QString::fromStdString(running)));
+    if (QString refusal = refuseIfDjSoftwareRunning(); !refusal.isEmpty()) {
+        setErrorMessage(refusal);
         return;
     }
     startMeasure(stickLabel, {}, {}, mountPoint, true);
@@ -712,7 +755,7 @@ void StickPerformanceController::startMeasure(const QString &stickLabel, const Q
                                               const QString &enginePath, const QString &mountPoint,
                                               bool useScratchFiles)
 {
-    if (m_busy || m_writeBusy) {
+    if (anyBusy()) {
         return;
     }
     setErrorMessage({});

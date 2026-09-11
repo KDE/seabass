@@ -213,6 +213,16 @@ TestCase {
         compare(spy.signalArguments[0][3], "/media/SPARE");
     }
 
+    // The card is experimental: with the setting off it must not show,
+    // even though its own visible binding replaces ActionCard's default.
+    function test_performanceCardHonoursTheExperimentalGate() {
+        var settings = fakeAppSettings();
+        settings.experimentalFeaturesEnabled = false;
+        var page = makePage([makeStick({})], {}, {appSettingsController: settings});
+        var card = findCard(page, "/media/MAIN", "USB Stick Performance");
+        verify(card === null || !card.visible, "performance card shown with experimental features off");
+    }
+
     function test_emptyStickOffersCloneFromThePeer() {
         var spare = makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1",
                                hasRekordbox: false, hasEngine: false, rekordboxPath: "", enginePath: ""});

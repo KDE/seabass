@@ -166,7 +166,10 @@ struct TrendAssessment
     int earlierCount = 0;
 };
 
+// currentWearState: the wear check's result for this measurement when it
+// has run ("healthy", "watch", "failing"), else empty. Worsened means an
+// earlier check said healthy and this one does not.
 TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int currentOutliers,
-                            const std::vector<TrendPoint> &earlier);
+                            const std::string &currentWearState, const std::vector<TrendPoint> &earlier);
 
 }  // namespace seabass::domain

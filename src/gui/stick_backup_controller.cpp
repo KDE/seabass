@@ -18,7 +18,7 @@
 
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/write_guard.hpp"
-#include "gui/stick_performance_cache.hpp"
+#include "infrastructure/local/stick_performance_history.hpp"
 #include "infrastructure/stick_backup/archive_compactor.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
@@ -144,11 +144,20 @@ void StickBackupController::refresh()
         }
         result->stickIdentifier = QString::fromStdString(options.stickIdentifier);
         result->preview = BackupStick::preview(options);
-        // Measured this session on the USB Stick Performance page, if at
-        // all; otherwise the ETA stays unknown. Nothing is persisted.
-        if (auto measured = StickPerformanceCache::instance().lookup(options.stickIdentifier);
-            measured && measured->streamingBytesPerSecond > 0.0) {
-            result->readMbps = measured->streamingBytesPerSecond / (1024.0 * 1024.0);
+        // The newest streaming rate USB Stick Performance recorded for
+        // this stick on this computer, if it ever measured it; otherwise
+        // the ETA stays unknown.
+        try {
+            infrastructure::local::StickPerformanceHistory history;
+            auto records = history.forStick(options.stickIdentifier);
+            for (auto it = records.rbegin(); it != records.rend(); ++it) {
+                if (it->streamingBytesPerSecond > 0.0) {
+                    result->readMbps = it->streamingBytesPerSecond / (1024.0 * 1024.0);
+                    break;
+                }
+            }
+        } catch (const std::exception &) {
+            // No history is not an error; the ETA just stays unknown.
         }
         result->blockedBy = QString::fromStdString(infrastructure::system::conflictingDjSoftwareName());
         return result;

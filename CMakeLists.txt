@@ -1222,6 +1222,8 @@ add_executable(stick_performance_probe_test
     src/infrastructure/local/stick_performance_history.cpp
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/paths/seabass_paths.cpp
+    src/infrastructure/durable_file_write.cpp
+    src/infrastructure/work_counters.cpp
     src/domain/stick_performance.cpp
     tests/stick_performance_probe_test.cpp
 )

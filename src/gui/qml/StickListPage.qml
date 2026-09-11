@@ -804,7 +804,11 @@ Page {
                             // A browsed backup or an opened folder is on
                             // this computer, and measuring it would say
                             // nothing about any stick.
+                            // Restating the experimental gate: a visible
+                            // binding of our own replaces ActionCard's
+                            // default, which is where the gate lives.
                             visible: delegateRoot.mounted && !delegateRoot.isBrowsedBackup && !delegateRoot.isFolder
+                                && (!experimental || experimentalFeaturesEnabled)
                             onClicked: root.stickPerformanceRequested(delegateRoot.label, delegateRoot.rekordboxPath,
                                                                       delegateRoot.enginePath, delegateRoot.mountPoint)
                         }
