@@ -292,11 +292,21 @@ Page {
                 // rather than offering something, and a red mark among
                 // five grey ones is what makes it findable.
                 //
-                // Breeze's favourite emblem, which is a star rather than
-                // a heart -- the theme ships no heart in any category
-                // (checked across every installed theme). Its artwork is
-                // fill:currentColor, so icon.color is what colours it.
-                icon.name: "emblem-favorite"
+                // Breeze's own heart: "love", the icon Amarok uses for
+                // loving a track. Same artwork as love-amarok, which is
+                // byte-for-byte the same path, and the one of the two
+                // that ships every size (16/22/24/32, plus @2x and @3x)
+                // in both the light and dark themes.
+                //
+                // Not emblem-favorite, which this first reached for and
+                // which is a five-pointed star. Breeze does have a heart;
+                // it is filed under an intent rather than under a shape,
+                // so searching the theme for "heart" or "favorite" finds
+                // everything except the heart.
+                //
+                // Its artwork is fill:currentColor, so icon.color is
+                // what colours it.
+                icon.name: "love"
                 icon.color: Theme.danger
                 display: AbstractButton.IconOnly
                 text: "Support Seabass"

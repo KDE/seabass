@@ -530,6 +530,33 @@ TestCase {
         compare(meta.enabled, page.homeBackupsMetadataCount > 0);
     }
 
+    function test_theDonateButtonIsAHeartAndTheOnlyColouredOne() {
+        // Pinned because it was got wrong once and the mistake was not
+        // visible in the source: Breeze files its heart under "love",
+        // the intent, rather than under a shape, so searching the theme
+        // for "heart" or "favorite" turns up everything except the
+        // heart -- and emblem-favorite, which looks like the obvious
+        // answer, is a five-pointed star.
+        var page = makePage([], {});
+        var donate = findByName(page, "donateButton");
+        verify(donate !== null, "the donate button must exist");
+        compare(donate.icon.name, "love", "Breeze's heart is called love, not emblem-favorite");
+        // And it is the one that stays coloured: the only button in the
+        // header asking for something rather than offering something.
+        compare(donate.icon.color, Theme.danger);
+        var grey = ["openBackupButton", "openFolderButton", "aboutButton", "preferencesButton"];
+        for (var i = 0; i < grey.length; ++i) {
+            var button = findByName(page, grey[i]);
+            verify(button !== null, grey[i] + " must exist");
+            // A theme icon rather than an emoji: a bare emoji resolves
+            // to the system's colour emoji font, which is how these came
+            // to be five full-colour pictures in a header of flat marks.
+            verify(button.icon.name.length > 0, grey[i] + " must use a theme icon, not an emoji");
+            verify(button.icon.color !== donate.icon.color,
+                   grey[i] + " must not be tinted like the donate button, or nothing marks that one out");
+        }
+    }
+
     function test_theHeaderCarriesTheBrandRatherThanTheWordHome() {
         // This is the one page you arrive at rather than navigate to, so
         // "Home" named the position rather than the thing.
