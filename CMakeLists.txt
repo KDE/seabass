@@ -1209,6 +1209,17 @@ add_executable(stick_performance_probe_test
 target_include_directories(stick_performance_probe_test PRIVATE src)
 add_test(NAME stick_performance_probe_test COMMAND stick_performance_probe_test)
 
+# Both probes against a real stick; skips itself unless SEABASS_LIVE_STICK
+# (and, for the write half, SEABASS_LIVE_WRITE=1) is set.
+add_executable(stick_performance_live_test
+    src/infrastructure/benchmark/stick_performance_probe.cpp
+    src/infrastructure/benchmark/stick_write_probe.cpp
+    src/domain/stick_performance.cpp
+    tests/stick_performance_live_test.cpp
+)
+target_include_directories(stick_performance_live_test PRIVATE src)
+add_test(NAME stick_performance_live_test COMMAND stick_performance_live_test)
+
 add_executable(local_cue_store_test
     src/domain/track_matching.cpp
     src/application/ports/progress_reporter.cpp

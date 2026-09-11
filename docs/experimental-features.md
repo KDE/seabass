@@ -25,10 +25,12 @@ from day one.
   generation, and offers an optional write test that writes throwaway
   files into a hidden `.seabass-write-test` folder and removes them
   again. The read measurement is harmless; the write test is a write
-  path that has only been exercised against scratch directories in
-  `stick_performance_probe_test`, never a real stick. Promote once the
-  write test has run on real hardware and the verdict thresholds have
-  been checked against at least one known-slow stick. Replaced the
+  path. It has run once on real hardware (a 32 GB exFAT stick on a USB
+  2.0 port, Linux, 2026-09-11, via `stick_performance_live_test` with
+  `SEABASS_LIVE_STICK` and `SEABASS_LIVE_WRITE=1`): the scratch folder
+  came and went, free space was unchanged. Promote once it has also run
+  on Windows and the verdict thresholds have been checked against at
+  least one known-slow stick. Replaced the
   read-speed benchmark and its history table that Library Statistics
   used to carry.
 
