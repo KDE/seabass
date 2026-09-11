@@ -8,9 +8,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 Here are some ideas which could be implememted in Seabass. No guarantees, this is NOT a roadmap, just a record of brainstorming.
 
-## Loops
-
-Show / display loops on tracks
+- Slogan becomes "Your DJ Tools" throughout (instead of DJ USB Stick Management)
 
 ## Better device settings
 
@@ -21,10 +19,10 @@ Show / display loops on tracks
 - deck colors?
 - cue point colors?
 
-## DBus interface for creating screenshots
 
-- behind a cli switch
-- makes updating the website easier
+## [v2?] Formatting
+
+- Windows onboard tools don't format exfat>32GB, can we do this ourselves?
 
 ## Developer Settings category:
 
