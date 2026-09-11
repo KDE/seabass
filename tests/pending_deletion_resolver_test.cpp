@@ -49,7 +49,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/dup.mp3", "Duplicate Track")};
         std::vector<Track> current = {makeTrack("/stick/Contents/survivor.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current));
+        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.size() == 1);
         assert(result.safeToDelete[0].filePath == "/stick/Contents/dup.mp3");
         assert(result.stillReferenced.empty());
@@ -63,7 +63,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/still-used.mp3", "Still Used")};
         std::vector<Track> current = {makeTrack("/stick/Contents/still-used.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current));
+        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         assert(result.stillReferenced[0].filePath == "/stick/Contents/still-used.mp3");
@@ -78,7 +78,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("C:\\Stick\\Contents\\dup.mp3", "Dup")};
         std::vector<Track> current = {makeTrack("C:/Stick/Contents/dup.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current));
+        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "C:/Stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 3 (path-separator-insensitive matching) OK\n";
@@ -90,7 +90,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("", "No Path")};
         std::vector<Track> current;
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current));
+        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 4 (empty filePath -> left alone, never guessed at) OK\n";
@@ -105,7 +105,7 @@ int main()
         };
         std::vector<Track> current = {makeTrack("/stick/Contents/used.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current));
+        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.size() == 2);
         assert(result.stillReferenced.size() == 1);
         assert(result.stillReferenced[0].filePath == "/stick/Contents/used.mp3");
@@ -120,7 +120,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/shared.mp3", "Shared Track")};
 
         // Only rekordbox consulted -- and rekordbox has indeed forgotten it.
-        auto oneCatalog = resolvePendingDeletions(pending, rekordboxOnly({makeTrack("/stick/Contents/other.mp3")}));
+        auto oneCatalog = resolvePendingDeletions(pending, rekordboxOnly({makeTrack("/stick/Contents/other.mp3")}), "/stick");
         assert(oneCatalog.safeToDelete.size() == 1);  // this is what used to happen
 
         // Every catalog consulted: Engine still plays it, OneLibrary too.
@@ -129,7 +129,7 @@ int main()
         all.engine = {makeTrack("/stick/Contents/shared.mp3")};
         all.oneLibrary = {makeTrack("/stick/Contents/shared.mp3")};
 
-        auto result = resolvePendingDeletions(pending, all);
+        auto result = resolvePendingDeletions(pending, all, "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 6 (a file another catalog still references is never deleted) OK\n";
@@ -147,7 +147,7 @@ int main()
         catalogs.engine = std::vector<Track>{};
         catalogs.oneLibrary = {makeTrack("/stick/Contents/kept.mp3")};
 
-        auto result = resolvePendingDeletions(pending, catalogs);
+        auto result = resolvePendingDeletions(pending, catalogs, "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 7 (OneLibrary alone protects a file) OK\n";
@@ -158,7 +158,7 @@ int main()
     {
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/a.mp3", "A"),
                                                  makePending("/stick/Contents/b.mp3", "B")};
-        auto result = resolvePendingDeletions(pending, CatalogTracks{});
+        auto result = resolvePendingDeletions(pending, CatalogTracks{}, "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 2);
         std::cout << "case 8 (no catalogs -> nothing is safe to delete) OK\n";
@@ -168,9 +168,27 @@ int main()
     // file, so a case-different spelling in the catalog still protects it.
     {
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/Artist/Track.mp3", "T")};
-        auto result = resolvePendingDeletions(pending, rekordboxOnly({makeTrack("/stick/contents/artist/TRACK.MP3")}));
+        auto result = resolvePendingDeletions(pending, rekordboxOnly({makeTrack("/stick/contents/artist/TRACK.MP3")}), "/stick");
         assert(result.safeToDelete.empty());
         std::cout << "case 9 (case-different spelling still protects) OK\n";
+    }
+
+    // An entry pointing outside this stick's root: a moved mount point
+    // (the clone now sits where the original was). Neither safe to
+    // delete nor merely "still referenced": it is not this stick's file.
+    {
+        std::vector<PendingDeletion> pending = {makePending("/media/other/Contents/x.mp3", "Elsewhere"),
+                                               makePending("/stick/Contents/dup.mp3", "Here")};
+        std::vector<Track> current = {makeTrack("/stick/Contents/survivor.mp3")};
+        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
+        assert(result.notOnThisStick.size() == 1);
+        assert(result.notOnThisStick[0].filePath == "/media/other/Contents/x.mp3");
+        assert(result.safeToDelete.size() == 1 && result.safeToDelete[0].filePath == "/stick/Contents/dup.mp3");
+        assert(isUnderStickRoot("/stick/Contents/a.mp3", "/stick/"));
+        assert(isUnderStickRoot("/STICK/contents/a.mp3", "/stick"));
+        assert(!isUnderStickRoot("/stick2/Contents/a.mp3", "/stick"));
+        assert(!isUnderStickRoot("/stick", "/stick"));
+        std::cout << "case: an entry outside the stick root is set aside, not deleted OK\n";
     }
 
     std::cout << "all cases passed\n";

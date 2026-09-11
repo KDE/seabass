@@ -6,7 +6,9 @@
 #include <string>
 #include <vector>
 
+#include "domain/junk_cue.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -25,7 +27,11 @@ std::vector<domain::CuePoint> cuesWithoutJunk(const domain::Track &track)
 {
     std::vector<domain::CuePoint> remainingCues;
     for (const auto &c : track.cues) {
-        if (!(c.kind == domain::CuePoint::Kind::Memory && c.positionMs == 0.0)) {
+        // The same rule the finder uses (domain::JunkCueFinder): a memory
+        // cue inside the first second. The remover used to test == 0.0,
+        // so a cue at 12 ms was listed, "removed", and survived the
+        // rewrite.
+        if (!domain::isJunkMemoryCue(c)) {
             remainingCues.push_back(c);
         }
     }
@@ -52,8 +58,13 @@ struct JunkCueWriterContext
                 ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "junk-cue-cleanup");
             }
         } else if (format == "engine") {
-            ctx.backupOnce((fs::path(root) / "Database2" / "m.db").string(), "junk-cue-cleanup");
-            engine = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(root);
+            // Through the save's shared FormatWriteSession for this
+            // database, like RepairIssueChange: Library Health stages
+            // both kinds of change into one save, and when the repairs
+            // moved m.db to a scratch copy, junk-cue writes made straight
+            // to the stick were overwritten by the scratch's commit.
+            engineSession = &sharedFormatWriteSession(ctx, "engine", root, 0, "junk-cue-cleanup");
+            engine = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "junk-cue-cleanup");
             oneLibrary = std::make_unique<infrastructure::onelibrary::OneLibraryCueWriter>(root);
@@ -62,6 +73,7 @@ struct JunkCueWriterContext
 
     std::unique_ptr<infrastructure::rekordbox::RekordboxCueWriter> rekordbox;
     std::unique_ptr<infrastructure::engine::LibdjinteropEngineCueWriter> engine;
+    FormatWriteSession *engineSession = nullptr;
     std::unique_ptr<infrastructure::onelibrary::OneLibraryCueWriter> oneLibrary;
     bool hasOneLibrary = false;
 };
@@ -147,6 +159,7 @@ ChangeOutcome RemoveJunkCueChange::apply(SaveContext &ctx)
         }
     } else if (format == "engine") {
         w.engine->writeHotCues(m_track.sourceId, remainingCues);
+        w.engineSession->noteItemApplied();
     } else if (format == "onelibrary") {
         w.oneLibrary->writeCuesForPath(m_track.filePath, remainingCues);
     } else {

@@ -83,6 +83,19 @@ void PosixArchiveFile::append(std::span<const std::byte> bytes)
     if (m_mode == OpenMode::ReadOnly) {
         throw ArchiveIoError("append on read-only archive " + m_path.string());
     }
+    // Same guard as the POSIX build below: never write into a hole. If
+    // something shortened the file behind us, a write at the length we
+    // remember lands past the real end, NTFS zero-fills the gap, and the
+    // archive keeps its expected length with nothing inside.
+    LARGE_INTEGER current{};
+    if (!GetFileSizeEx(static_cast<HANDLE>(m_handle), &current)) {
+        throwIo("could not stat", m_path);
+    }
+    if (static_cast<std::uint64_t>(current.QuadPart) < m_size) {
+        throw ArchiveIoError("archive " + m_path.string() + " shrank underneath us: expected at least "
+                             + std::to_string(m_size) + " bytes, found " + std::to_string(current.QuadPart)
+                             + " -- something else wrote to it while a backup was running");
+    }
     const char *p = reinterpret_cast<const char *>(bytes.data());
     std::size_t remaining = bytes.size();
     std::uint64_t offset = m_size;

@@ -1,5 +1,7 @@
 #include "infrastructure/rekordbox/rekordbox_settings_writer.hpp"
 
+#include "infrastructure/durable_file_write.hpp"
+
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -63,12 +65,11 @@ bool writeDeviceSettingField(const std::string &pioneerRoot, const std::string &
     data[data.size() - 4] = static_cast<uint8_t>(checksum & 0xFF);
     data[data.size() - 3] = static_cast<uint8_t>((checksum >> 8) & 0xFF);
 
-    std::ofstream ofs(path, std::ofstream::binary | std::ofstream::trunc);
-    if (!ofs.is_open()) {
-        return false;
-    }
-    ofs.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
-    return ofs.good();
+    // Temp file, fsync, rename: the one rekordbox write that used to go
+    // through a truncating ofstream, which a stick pull between the
+    // truncate and the write turned into a 0-byte settings file the
+    // player then discarded.
+    return writeFileDurablyAtomic(path, std::string(reinterpret_cast<const char *>(data.data()), data.size()));
 }
 
 }  // namespace seabass::infrastructure::rekordbox

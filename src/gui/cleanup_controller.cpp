@@ -506,7 +506,11 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
             return result;
         }
 
-        auto resolution = infrastructure::cleanup::resolvePendingDeletions(selected, stickCatalogs.catalogs);
+        const std::string deletionRoot = std::filesystem::path(path.toStdString()).parent_path().string();
+        auto resolution = infrastructure::cleanup::resolvePendingDeletions(selected, stickCatalogs.catalogs, deletionRoot);
+        for (const auto &entry : resolution.notOnThisStick) {
+            log.record("cleanup: pending deletion is not on this stick, left alone -> " + entry.filePath);
+        }
         result.total = static_cast<int>(resolution.safeToDelete.size());
 
         // The actual deletion (the one place in the app that
@@ -515,7 +519,7 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         // and unit-tested there -- this just logs/formats its result.
         reporter->start("Deleting files", resolution.safeToDelete.size());
         auto outcomes = infrastructure::cleanup::applyPendingDeletions(
-            resolution.safeToDelete, manifest, cancel, [&reporter](size_t done) { reporter->tick(done); });
+            resolution.safeToDelete, deletionRoot, manifest, cancel, [&reporter](size_t done) { reporter->tick(done); });
         reporter->finish();
         result.cancelled = cancel.cancelled() && outcomes.size() < resolution.safeToDelete.size();
 

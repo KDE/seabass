@@ -364,6 +364,38 @@ int main()
         std::cout << "case 3 (one catalog failing doesn't stop the other, and succeeded() reflects it) OK\n";
     }
 
+    // The output directory is created and, at the end, removed. One that
+    // already exists with content is therefore refused before anything
+    // is written: a user naming their music folder as the "zip path"
+    // must not get it zipped and deleted.
+    {
+        fs::path outDir = root / "out_existing";
+        fs::create_directories(outDir / "keep");
+        writeFile(outDir / "keep" / "precious.txt", "do not delete");
+        AnonymizeLibrary useCase;
+        AnonymizationOptions options;
+        auto summary = useCase.execute(rekordboxSource.string(), engineSource.string(), outDir.string(), options);
+        assert(!summary.succeeded());
+        assert(!summary.outputError.empty());
+        assert(!summary.rekordboxAttempted && !summary.engineAttempted);
+        assert(fs::exists(outDir / "keep" / "precious.txt"));
+        assert(!fs::exists(root / "out_existing.zip"));
+
+        // Inside the library being read, or swallowing it: refused too.
+        auto inside = useCase.execute(rekordboxSource.string(), std::nullopt, (rekordboxSource / "anon").string(), options);
+        assert(!inside.succeeded() && inside.outputError.find("overlaps") != std::string::npos);
+        assert(!fs::exists(rekordboxSource / "anon"));
+        auto swallowing = useCase.execute(rekordboxSource.string(), std::nullopt, rekordboxSource.parent_path().string(), options);
+        assert(!swallowing.succeeded() && swallowing.outputError.find("overlaps") != std::string::npos);
+
+        // An existing but empty directory is fine.
+        fs::path emptyDir = root / "out_empty";
+        fs::create_directories(emptyDir);
+        auto ok = useCase.execute(rekordboxSource.string(), engineSource.string(), emptyDir.string(), options);
+        assert(ok.outputError.empty());
+        std::cout << "case: an existing non-empty output directory is refused, an empty one accepted OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

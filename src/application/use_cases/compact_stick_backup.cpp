@@ -44,13 +44,20 @@ struct Opened
     std::optional<BackupManifest> manifest;
     std::string error;
 
-    bool open(const fs::path &archivePath)
+    // recover: replay/discard the journal, which truncates the archive to
+    // the last committed length. Only the caller holding the archive lock
+    // may do that; a preflight that runs while another instance appends
+    // would cut its run short and, on Windows, zero-fill the rest of it.
+    bool open(const fs::path &archivePath, bool recover)
     {
         try {
-            archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
-            journal = std::make_unique<PosixArchiveFile>(journal::journalPathFor(archivePath),
-                                                         PosixArchiveFile::OpenMode::ReadWrite);
-            recoverOnOpen(*archive, *journal);
+            archive = std::make_unique<PosixArchiveFile>(archivePath, recover ? PosixArchiveFile::OpenMode::ReadWrite
+                                                                              : PosixArchiveFile::OpenMode::ReadOnly);
+            if (recover) {
+                journal = std::make_unique<PosixArchiveFile>(journal::journalPathFor(archivePath),
+                                                             PosixArchiveFile::OpenMode::ReadWrite);
+                recoverOnOpen(*archive, *journal);
+            }
         } catch (const std::exception &e) {
             error = std::string("could not open the backup archive: ") + e.what();
             return false;
@@ -129,7 +136,7 @@ CompactionPreflight CompactStickBackup::preflight(const fs::path &archivePath, s
 {
     CompactionPreflight result;
     Opened opened;
-    if (!opened.open(archivePath)) {
+    if (!opened.open(archivePath, false)) {
         result.error = opened.error;
         return result;
     }
@@ -165,7 +172,7 @@ CompactionOutcome CompactStickBackup::execute(const CompactStickBackupOptions &o
     fs::remove(tempPath, ec);  // a previous attempt that never finished
 
     Opened opened;
-    if (!opened.open(options.archivePath)) {
+    if (!opened.open(options.archivePath, true)) {
         outcome.message = opened.error;
         return outcome;
     }

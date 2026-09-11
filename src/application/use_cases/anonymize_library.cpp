@@ -231,7 +231,7 @@ bool AnonymizationSummary::succeeded() const
     bool anyAttempted = rekordboxAttempted || engineAttempted;
     bool anyFailed = (rekordboxAttempted && !rekordboxError.empty()) || (engineAttempted && !engineError.empty());
     // A failed verification is a failed export: no zip was written.
-    return anyAttempted && !anyFailed && !verificationFailed;
+    return anyAttempted && !anyFailed && !verificationFailed && outputError.empty();
 }
 
 AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> &rekordboxRoot,
@@ -240,6 +240,47 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
                                                 ProgressReporter &reporter)
 {
     AnonymizationSummary summary;
+
+    // The staging directory is created here and removed at the end, so it
+    // must be ours from the start. A user who typed an existing folder as
+    // the output ("/home/me/Music", with the .zip stripped by the GUI)
+    // would otherwise get that folder zipped and deleted. Refuse anything
+    // that already holds content, anything inside a library being read,
+    // and anything that would swallow one.
+    {
+        std::error_code ec;
+        const auto normalized = [&ec](const fs::path &p) { return fs::absolute(p, ec).lexically_normal().string(); };
+        const auto contains = [](const std::string &outer, const std::string &inner) {
+            if (outer.empty() || inner.size() < outer.size() || inner.compare(0, outer.size(), outer) != 0) {
+                return false;
+            }
+            return inner.size() == outer.size() || inner[outer.size()] == fs::path::preferred_separator
+                   || outer.back() == fs::path::preferred_separator;
+        };
+        const std::string out = normalized(fs::path(outputDir));
+        for (const auto &source : {rekordboxRoot, engineRoot}) {
+            if (!source) {
+                continue;
+            }
+            const std::string catalog = normalized(fs::path(*source));
+            if (contains(catalog, out) || contains(out, catalog)) {
+                summary.outputError = "the output location " + outputDir + " overlaps the library being read (" + *source
+                                      + "); pick a folder of its own";
+                return summary;
+            }
+        }
+        if (fs::exists(out, ec)) {
+            if (!fs::is_directory(out, ec)) {
+                summary.outputError = "the output location " + outputDir + " exists and is not a directory";
+                return summary;
+            }
+            if (!fs::is_empty(out, ec)) {
+                summary.outputError = "the output directory " + outputDir + " already exists and is not empty; refusing to "
+                                      "use it, since it would be removed when the zip is written";
+                return summary;
+            }
+        }
+    }
 
     fs::create_directories(outputDir);
 

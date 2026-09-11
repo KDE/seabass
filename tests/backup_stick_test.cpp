@@ -226,6 +226,18 @@ int main()
         BackupStickOptions other = f.options;
         other.stickIdentifier = "uuid-someone-else";
         assert(BackupStick::preview(other).identifierMismatch);
+        // And execute() refuses outright: an update from another stick
+        // would diff it against this archive and record every file of
+        // the original as removed.
+        {
+            auto namesBefore = f.archiveNames();
+            BackupStickOutcome refusedOther = BackupStick::execute(other);
+            assert(refusedOther.status == BackupOutcomeStatus::Failed
+                   && refusedOther.message.find("different stick") != std::string::npos);
+            assert(f.archiveNames() == namesBefore);
+        }
+        assert(backupStatusFromString("partial-skipped") == BackupStatus::PartialSkipped);
+        assert(toString(BackupStatus::PartialSkipped) == "partial-skipped");
         writeFile(f.stick / "Contents" / "d.mp3", pseudoRandom(10'000, 13), 1'700'100'002);  // something to write
         BackupStickOptions tight = f.options;
         tight.freeSpaceMarginBytes = std::uint64_t{1} << 62;

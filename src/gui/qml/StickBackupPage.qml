@@ -32,6 +32,7 @@ Page {
     readonly property string blockedBy: root.conflictingSoftware.length > 0 ? root.conflictingSoftware : (controller.blockedBy || "")
     readonly property bool canBackUp: !controller.busy && !controller.pendingCancelDecision && root.blockedBy.length === 0
         && since.enoughFreeSpace !== false && !(lastBackup.error && lastBackup.error.length > 0)
+        && lastBackup.identifierMismatch !== true
 
     Component.onCompleted: {
         if (controller.configure) {
@@ -52,6 +53,7 @@ Page {
         case "partial-cancelled": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "The last backup was cancelled and kept; the next run continues from there."};
         case "partial-conflict": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "The database was not captured -- Engine DJ or rekordbox was running, or the database kept changing."};
         case "partial-db-too-large": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "The Engine database is too large for Seabass to back up safely; back it up by hand."};
+        case "partial-skipped": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "Some files could not be read and are not in this backup; see the last run's warnings and back up again."};
         default: return {label: "", color: Theme.textMuted, tip: ""};
         }
     }

@@ -51,6 +51,9 @@ AnonymizeLibraryTaskResult runAnonymizeTask(QString rekordboxPath, QString engin
 
         if (!result.succeeded) {
             QStringList errors;
+            if (!summary.outputError.empty()) {
+                errors << QString::fromStdString(summary.outputError);
+            }
             if (summary.rekordboxAttempted && !summary.rekordboxError.empty()) {
                 errors << "rekordbox: " + QString::fromStdString(summary.rekordboxError);
             }

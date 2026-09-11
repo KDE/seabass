@@ -511,6 +511,16 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         return outcome;
     }
     impl->firstBackup = !opened.existedBefore;
+    // The archive is chosen by label, and two sticks can share one. An
+    // update from a different stick would diff the newcomer against the
+    // archive and record every file of the original as removed, which is
+    // the original's backup gone. Refuse; preview flags the same thing.
+    if (opened.manifest && !options.stickIdentifier.empty() && !opened.manifest->stickIdentifier.empty()
+        && options.stickIdentifier != opened.manifest->stickIdentifier) {
+        outcome.message = "this backup belongs to a different stick (" + opened.manifest->stickLabel
+                          + ", id " + opened.manifest->stickIdentifier + "); back this one up under another name";
+        return outcome;
+    }
 
     BackupProgress progress;
     auto report = [&](BackupProgress::Phase phase) {
@@ -529,6 +539,10 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         return outcome;
     }
     outcome.warnings = plan.walk.skipped;
+    // Deliberate skips (symlinks, excluded folders) are warnings the
+    // walk explains; anything added after this line is a file the
+    // backup meant to capture and could not.
+    const std::size_t walkWarnings = outcome.warnings.size();
     outcome.added = plan.diff.added.size();
     outcome.changed = plan.diff.changed.size();
     outcome.removed = plan.diff.removed.size();
@@ -753,6 +767,14 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         outcome.message = "Engine DJ or rekordbox started during the backup; what was copied is kept, the database was not read";
     }
 
+    // A file that could not be read, or changed while it was, is not in
+    // this backup, and if it was in the previous one it was not carried
+    // either. A record with holes must not present itself as complete:
+    // the restore page would call it VERIFIED and the advisor would
+    // stop asking for a new one.
+    if (status == BackupStatus::Complete && outcome.warnings.size() > walkWarnings) {
+        status = BackupStatus::PartialSkipped;
+    }
     manifest.status = status;
     manifest.createdAtUnix = nowUnix();
     report(BackupProgress::Phase::Writing);

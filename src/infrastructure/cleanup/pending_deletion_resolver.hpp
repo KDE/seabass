@@ -5,6 +5,7 @@
 #include "application/use_cases/find_unreferenced_files.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
+#include "infrastructure/cleanup/stick_containment.hpp"
 
 namespace seabass::infrastructure::cleanup
 {
@@ -23,6 +24,14 @@ struct PendingDeletionResolution
     // fresh scan is the real safety gate (the manifest could be stale --
     // a race, a manual DB edit since the entry was recorded).
     std::vector<PendingDeletion> stillReferenced;
+
+    // Entries whose filePath does not lie under the stick root being
+    // processed. A manifest records absolute paths, and a mount point can
+    // move (a clone with the same label mounts where the original was;
+    // drive letters swap on Windows), after which an entry names a file
+    // on some other drive that the fresh scan of this stick knows nothing
+    // about. Never deleted, never dropped from the manifest.
+    std::vector<PendingDeletion> notOnThisStick;
 };
 
 // Decides which of `pending`'s entries are genuinely safe to delete from
@@ -52,7 +61,12 @@ struct PendingDeletionResolution
 // stillReferenced. "I could not read any catalog" and "nothing
 // references these files" must never be the same answer when the next
 // step is deletion.
+// stickRoot: the mount point of the stick whose catalogs `catalogs` were
+// read from; every entry outside it lands in notOnThisStick.
 PendingDeletionResolution resolvePendingDeletions(const std::vector<PendingDeletion> &pending,
-                                                    const application::CatalogTracks &catalogs);
+                                                    const application::CatalogTracks &catalogs,
+                                                    const std::string &stickRoot);
+
+
 
 }  // namespace seabass::infrastructure::cleanup

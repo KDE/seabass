@@ -12,7 +12,7 @@ matrix.cleanup.durableWritesPerSave 3
 matrix.cleanup.pdbParses 2
 matrix.copyCues.durableWritesPerSave 2
 matrix.deleteOrphan.durableWritesPerSave 1
-matrix.deviceSetting.durableWritesPerSave 1
+matrix.deviceSetting.durableWritesPerSave 2
 matrix.mergeCues.durableWritesPerSave 2
 matrix.repair.durableWritesPerSave 3
 matrix.repair.pdbParses 1

@@ -185,6 +185,13 @@ struct CatalogWriteTargets
 
 CatalogWriteTargets writeTargetsFor(const DuplicateCleanupPlan &plan, const std::string &format);
 
+// The track's row id in `format`: its catalogRows entry for that format
+// on a collapsed file, its own sourceId when it is a row of that format,
+// empty otherwise. A writer must never be handed a track's base sourceId
+// for a format it was not read from: rekordbox and Engine both number
+// rows densely from 1, so a wrong-format id silently hits another track.
+std::string rowIdIn(const Track &track, const std::string &format);
+
 // False when this catalog has rows to remove but no row for the survivor
 // to repoint at. Removing them anyway would drop the doomed rows'
 // playlist entries on the floor, or repoint them at an id this catalog

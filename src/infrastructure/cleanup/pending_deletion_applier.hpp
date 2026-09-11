@@ -40,8 +40,11 @@ struct PendingDeletionOutcome
 // returned outcomes hold only the files reached (the caller reads the
 // token to tell a cancelled run from a short one). `onFileProcessed`
 // (optional) is called after each file with the running count.
+// stickRoot: the mount point of the stick being processed; an entry
+// outside it fails ("not on this stick") and stays in the manifest,
+// whatever list it arrived in.
 std::vector<PendingDeletionOutcome> applyPendingDeletions(
-    const std::vector<PendingDeletion> &safeToDelete, PendingDeletionManifest &manifest,
+    const std::vector<PendingDeletion> &safeToDelete, const std::string &stickRoot, PendingDeletionManifest &manifest,
     const application::CancellationToken &cancel = application::CancellationToken::none(),
     const std::function<void(size_t done)> &onFileProcessed = {});
 

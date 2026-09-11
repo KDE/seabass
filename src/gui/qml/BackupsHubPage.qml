@@ -144,7 +144,10 @@ Page {
             // A newer copy of this stick's library exists: on another
             // mounted stick (copied via its backup) or as the disk backup
             // itself (restored).
-            visible: root.updateSource !== null
+            // An opened folder library has no device path; "update from
+            // the stick" onto it would, in exact mode, delete whatever
+            // that local folder holds that the stick does not.
+            visible: root.updateSource !== null && root.devicePath.length > 0
                 && (!experimental || experimentalFeaturesEnabled)
             enabled: root.updateSource !== null && root.updateSource.enoughSpace !== false
             onClicked: {

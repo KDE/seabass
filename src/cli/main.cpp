@@ -1132,6 +1132,9 @@ int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional
     AnonymizeLibrary useCase;
     auto summary = useCase.execute(resolved.rekordboxPath, resolved.enginePath, *outDir, options, progress);
 
+    if (!summary.outputError.empty()) {
+        Console::error(summary.outputError);
+    }
     if (summary.rekordboxAttempted && !summary.rekordboxError.empty()) {
         Console::error("rekordbox: " + summary.rekordboxError);
     }

@@ -714,7 +714,7 @@ void casePendingDeletion(const DataSet &set, const fs::path &scratch, const Cata
     // manifest still lists it.
     auto staleScan = postRemoval;
     staleScan[0].filePath = doomed.filePath;
-    auto stale = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(staleScan));
+    auto stale = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(staleScan), scratch.string());
     check(stale.safeToDelete.empty(), "a still-referenced path is not offered for deletion");
     if (check(stale.stillReferenced.size() == 1, "the still-referenced path is reported as such")) {
         check(stale.stillReferenced[0].filePath == doomed.filePath, "the right path was protected");
@@ -722,10 +722,10 @@ void casePendingDeletion(const DataSet &set, const fs::path &scratch, const Cata
     check(fs::exists(victim), "the protected file is still on disk");
     pass("case 7b: a stale manifest entry is refused, not acted on");
 
-    auto real = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(postRemoval));
+    auto real = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(postRemoval), scratch.string());
     if (check(real.safeToDelete.size() == 1, "the genuinely orphaned file is offered for deletion")) {
         check(real.stillReferenced.empty(), "nothing else was flagged");
-        auto outcomes = infrastructure::cleanup::applyPendingDeletions(real.safeToDelete, manifest);
+        auto outcomes = infrastructure::cleanup::applyPendingDeletions(real.safeToDelete, scratch.string(), manifest);
         if (check(outcomes.size() == 1, "one deletion was attempted")) {
             check(outcomes[0].status == infrastructure::cleanup::PendingDeletionOutcome::Status::Deleted,
                   "the deletion reported success");

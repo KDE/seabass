@@ -260,6 +260,13 @@ bool FileLibraryEditLockStore::tryAcquire(const LibraryEditLock &lockIn)
         if (existing.status == EditLockStatus::Free) {
             continue;  // vanished between the create and the probe; retry
         }
+        // Compare-and-delete, not check-then-delete: between the probe
+        // and the remove another instance may have replaced the stale
+        // cookie with its own live one. Removing that would let two
+        // instances both believe they hold the lock.
+        if (auto now = readCookie(path); now && existing.holder && now->instanceId != existing.holder->instanceId) {
+            continue;
+        }
         fs::remove(path, ec);
     }
     return false;

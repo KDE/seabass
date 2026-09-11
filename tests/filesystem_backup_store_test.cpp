@@ -494,6 +494,44 @@ int main()
         std::cout << "case 23 (manifest headers are not read back as files to restore) OK\n";
     }
 
+    // Only the store's own records are records. A folder someone put
+    // under Seabass/backups/ used to be listed as an automatic backup
+    // that sorted first, and prune() removed it.
+    {
+        fs::path foreignDir = root / "Seabass2" / "backups";
+        fs::create_directories(foreignDir / "0-my-own-folder");
+        writeFile(foreignDir / "0-my-own-folder" / "precious.txt", "mine");
+        FilesystemBackupStore store(foreignDir.string());
+        fs::path victim = root / "victim.db";
+        writeFile(victim, "v1");
+        store.backup({victim.string()}, "sync");
+        store.backup({victim.string()}, "sync");
+        assert(store.list().size() == 2);
+        store.prune(1);
+        assert(fs::exists(foreignDir / "0-my-own-folder" / "precious.txt"));
+        assert(store.list().size() == 1);
+        std::cout << "case: a directory without a manifest is not a record and survives prune OK\n";
+    }
+
+    // A database restored next to a stale -wal or -journal would have
+    // those frames replayed over it on the next open. Restore removes
+    // the sidecars the archive does not itself contain.
+    {
+        fs::path walDir = root / "Seabass3" / "backups";
+        FilesystemBackupStore store(walDir.string());
+        fs::path db = root / "wal" / "exportLibrary.db";
+        writeFile(db, "generation 1");
+        auto record = store.backup({db.string()}, "sync");
+        writeFile(db, "generation 2");
+        writeFile(root / "wal" / "exportLibrary.db-wal", "frames from generation 2");
+        writeFile(root / "wal" / "exportLibrary.db-shm", std::string(32, '\0'));
+        assert(store.restore(record.id));
+        assert(readFile(db) == "generation 1");
+        assert(!fs::exists(root / "wal" / "exportLibrary.db-wal"));
+        assert(!fs::exists(root / "wal" / "exportLibrary.db-shm"));
+        std::cout << "case: restoring a database removes stale sidecars beside it OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

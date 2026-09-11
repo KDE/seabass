@@ -19,6 +19,7 @@ enum class BackupStatus
     PartialCancelled,   // user stopped it and chose "keep for later"
     PartialConflict,    // Engine DJ / rekordbox appeared mid-run; DB set skipped
     PartialDbTooLarge,  // DB set refused (> 1 GiB); everything else captured
+    PartialSkipped,     // some files could not be read (open failed, changed while read, unwalkable); the rest captured
 };
 
 std::string_view toString(BackupStatus status);

@@ -35,6 +35,11 @@ struct JunkCueIssue
 // track list from the same scan that also feeds
 // LibraryConsistencyChecker, this just looks at cues directly rather
 // than file existence.
+// The one definition of "junk": a memory cue inside the first second,
+// almost always a stray press while the track sat at the start. Shared
+// by the finder and the remover so the two cannot disagree.
+bool isJunkMemoryCue(const CuePoint &cue);
+
 class JunkCueFinder
 {
 public:

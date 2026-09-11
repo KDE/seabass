@@ -111,6 +111,10 @@ struct AnonymizationSummary
     // is the point.
     bool verificationFailed = false;
     std::string verificationReport;
+    // Set when the output location was refused before anything was
+    // written: it already existed with content, or it lies inside a
+    // library being read. Nothing was created or removed.
+    std::string outputError;
 
     bool succeeded() const;
 };

@@ -55,6 +55,7 @@ std::string_view toString(BackupStatus status)
     case BackupStatus::PartialCancelled: return "partial-cancelled";
     case BackupStatus::PartialConflict: return "partial-conflict";
     case BackupStatus::PartialDbTooLarge: return "partial-db-too-large";
+    case BackupStatus::PartialSkipped: return "partial-skipped";
     }
     return "complete";
 }
@@ -62,7 +63,7 @@ std::string_view toString(BackupStatus status)
 std::optional<BackupStatus> backupStatusFromString(std::string_view text)
 {
     for (BackupStatus status : {BackupStatus::Complete, BackupStatus::PartialCancelled, BackupStatus::PartialConflict,
-                                BackupStatus::PartialDbTooLarge}) {
+                                BackupStatus::PartialDbTooLarge, BackupStatus::PartialSkipped}) {
         if (toString(status) == text) {
             return status;
         }

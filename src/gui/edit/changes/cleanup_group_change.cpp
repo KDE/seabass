@@ -262,7 +262,7 @@ std::vector<BackupTarget> CleanupGroupChange::filesToBackup(SaveContext &ctx) co
         }
     };
 
-    declare(m_format.toStdString(), m_plan.survivor.sourceId, m_path);
+    declare(m_format.toStdString(), domain::rowIdIn(m_plan.survivor, m_format.toStdString()), m_path);
 
     // Every OTHER catalog this plan writes, declared here because a save
     // must back up everything it will overwrite before it overwrites any
@@ -350,9 +350,11 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     std::string key = "cleanup:" + m_format.toStdString();
     std::unordered_map<std::string, std::string> oneLibrarySourceIdToPath;
     if (m_format == "onelibrary") {
-        oneLibrarySourceIdToPath[plan.survivor.sourceId] = plan.survivor.filePath;
+        // Keyed by the OneLibrary row id, the id the writes below use --
+        // on a collapsed file that is not the representative row's id.
+        oneLibrarySourceIdToPath[domain::rowIdIn(plan.survivor, "onelibrary")] = plan.survivor.filePath;
         for (const auto &doomed : plan.toRemove) {
-            oneLibrarySourceIdToPath[doomed.sourceId] = doomed.filePath;
+            oneLibrarySourceIdToPath[domain::rowIdIn(doomed, "onelibrary")] = doomed.filePath;
         }
         key += ":" + plan.survivor.sourceId;
     }
@@ -376,12 +378,32 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     application::OperationLog &log = ctx.log();
     const QString &format = m_format;
 
+    // Row ids in the page's own format. A collapsed file's representative
+    // row is whichever catalog was read first (rekordbox before Engine),
+    // so plan.survivor.sourceId can be a rekordbox id while this change
+    // writes Engine; ids are dense from 1 in both, and the wrong one
+    // lands on an unrelated track. Every write below goes through this.
+    const std::string primaryFormat = m_format.toStdString();
+    auto idIn = [&](const std::string &baseSourceId) -> std::string {
+        for (const auto &t : plan.group.tracks) {
+            if (t.sourceId == baseSourceId) {
+                return domain::rowIdIn(t, primaryFormat);
+            }
+        }
+        return {};
+    };
+    const std::string survivorId = domain::rowIdIn(plan.survivor, primaryFormat);
+    if (survivorId.empty()) {
+        return ChangeOutcome::failure(QString("The kept copy has no %1 row to write to; rescan and try again.")
+                                          .arg(m_format));
+    }
+
     // Fallback for anything filesToBackup() did not declare, resolved the
     // same way so it cannot disagree with it -- and so it costs no second
     // export.pdb parse.
     for (const auto &f :
          filesWrittenFor({.cueData = true, .catalogRows = true, .oneLibraryMirror = true},
-                         {m_format.toStdString(), plan.survivor.sourceId}, m_path, ctx)) {
+                         {primaryFormat, survivorId}, m_path, ctx)) {
         ctx.backupOnce(f, "duplicate-file-cleanup");
     }
 
@@ -399,9 +421,9 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     };
 
     if (plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size()) {
-        fc.cueWriter->writeHotCues(plan.survivor.sourceId, plan.mergedCuesForSurvivor);
+        fc.cueWriter->writeHotCues(survivorId, plan.mergedCuesForSurvivor);
         w.session.noteItemApplied();
-        log.record("cleanup: wrote merged cues onto survivor track id=" + plan.survivor.sourceId);
+        log.record("cleanup: wrote merged cues onto survivor track id=" + survivorId);
 
         // Best-effort secondary write, alongside the primary write
         // above, never fatal to this operation. See OneLibraryCueWriter's
@@ -429,24 +451,24 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         if (format == "rekordbox") {
             std::string pdbPath = w.effectiveRoot + "/rekordbox/export.pdb";
             infrastructure::rekordbox::PdbRowWriter fieldWriter(pdbPath);
-            uint32_t survivorId = static_cast<uint32_t>(std::stoul(plan.survivor.sourceId));
+            uint32_t survivorRow = static_cast<uint32_t>(std::stoul(survivorId));
             if (plan.keyForSurvivor) {
-                fieldWriter.copyTrackFieldsIfMissing(static_cast<uint32_t>(std::stoul(plan.keyDonorSourceId)),
-                                                     survivorId, true, false, false);
+                fieldWriter.copyTrackFieldsIfMissing(static_cast<uint32_t>(std::stoul(idIn(plan.keyDonorSourceId))),
+                                                     survivorRow, true, false, false);
             }
             if (plan.bpmForSurvivor) {
-                fieldWriter.copyTrackFieldsIfMissing(static_cast<uint32_t>(std::stoul(plan.bpmDonorSourceId)),
-                                                     survivorId, false, true, false);
+                fieldWriter.copyTrackFieldsIfMissing(static_cast<uint32_t>(std::stoul(idIn(plan.bpmDonorSourceId))),
+                                                     survivorRow, false, true, false);
             }
             if (plan.artworkPathForSurvivor) {
-                fieldWriter.copyTrackFieldsIfMissing(static_cast<uint32_t>(std::stoul(plan.artworkDonorSourceId)),
-                                                     survivorId, false, false, true);
+                fieldWriter.copyTrackFieldsIfMissing(static_cast<uint32_t>(std::stoul(idIn(plan.artworkDonorSourceId))),
+                                                     survivorRow, false, false, true);
             }
             if (!fieldWriter.commit()) {
                 return ChangeOutcome::failure("failed to write " + QString::fromStdString(pdbPath));
             }
             w.session.noteItemApplied();
-            log.record("cleanup: propagated missing bpm/key/artwork onto survivor track id=" + plan.survivor.sourceId);
+            log.record("cleanup: propagated missing bpm/key/artwork onto survivor track id=" + survivorId);
         } else if (format == "engine") {
             // Artwork is deliberately not offered here -- Engine track
             // artwork isn't writable through libdjinterop today, see
@@ -454,9 +476,9 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             // always this concrete type for format == "engine".
             auto *engineCueWriter =
                 static_cast<infrastructure::engine::LibdjinteropEngineCueWriter *>(fc.cueWriter.get());
-            engineCueWriter->propagateMissingFields(plan.survivor.sourceId, plan.bpmForSurvivor, plan.keyForSurvivor);
+            engineCueWriter->propagateMissingFields(survivorId, plan.bpmForSurvivor, plan.keyForSurvivor);
             w.session.noteItemApplied();
-            log.record("cleanup: propagated missing bpm/key onto survivor track id=" + plan.survivor.sourceId);
+            log.record("cleanup: propagated missing bpm/key onto survivor track id=" + survivorId);
         } else if (format == "onelibrary") {
             auto &fieldWriter = sharedOneLibraryWriter(ctx, w.effectiveRoot, w.realStickRootForOneLib);
             if (plan.keyForSurvivor) {
@@ -478,7 +500,7 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                 }
             }
             w.session.noteItemApplied();
-            log.record("cleanup: propagated missing bpm/key/artwork onto survivor track id=" + plan.survivor.sourceId);
+            log.record("cleanup: propagated missing bpm/key/artwork onto survivor track id=" + survivorId);
         }
 
         // Best-effort mirror onto OneLibrary too -- only reachable when
@@ -525,10 +547,17 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             // loop, by recordStrayFilesForDeletion().
             continue;
         }
-        fc.cleanupWriter->removeTrackReplacingWith(doomed.sourceId, plan.survivor.sourceId);
+        const std::string doomedId = domain::rowIdIn(doomed, primaryFormat);
+        if (doomedId.empty()) {
+            // This copy has no row in the page's catalog (it was read from
+            // another one); its own catalog's removal happens in the
+            // per-catalog loop below.
+            continue;
+        }
+        fc.cleanupWriter->removeTrackReplacingWith(doomedId, survivorId);
         w.session.noteItemApplied();
-        log.record("cleanup: removed duplicate track id=" + doomed.sourceId + " (\"" + doomed.title
-                   + "\"), replaced by survivor id=" + plan.survivor.sourceId);
+        log.record("cleanup: removed duplicate track id=" + doomedId + " (\"" + doomed.title
+                   + "\"), replaced by survivor id=" + survivorId);
 
         // Best-effort OneLibrary mirror. Without this, the doomed
         // track's own OneLibrary row is left pointing at a file this
@@ -585,7 +614,10 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         if (secondaryFormat == "onelibrary") {
             secondaryIdToPath[targets.survivorSourceId] = plan.survivor.filePath;
             for (const auto &doomed : plan.toRemove) {
-                secondaryIdToPath[doomed.sourceId] = doomed.filePath;
+                // The same id the removal below is issued with; keyed by
+                // the base sourceId this map never matched on a
+                // collapsed file.
+                secondaryIdToPath[domain::rowIdIn(doomed, "onelibrary")] = doomed.filePath;
             }
             secondaryKey += ":" + targets.survivorSourceId;
         }

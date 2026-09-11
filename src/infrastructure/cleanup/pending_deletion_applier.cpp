@@ -1,5 +1,6 @@
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
 
+#include "infrastructure/cleanup/stick_containment.hpp"
 #include "infrastructure/long_paths.hpp"
 
 #include <filesystem>
@@ -11,6 +12,7 @@ namespace seabass::infrastructure::cleanup
 namespace fs = std::filesystem;
 
 std::vector<PendingDeletionOutcome> applyPendingDeletions(const std::vector<PendingDeletion> &safeToDelete,
+                                                            const std::string &stickRoot,
                                                             PendingDeletionManifest &manifest,
                                                             const application::CancellationToken &cancel,
                                                             const std::function<void(size_t)> &onFileProcessed)
@@ -27,6 +29,20 @@ std::vector<PendingDeletionOutcome> applyPendingDeletions(const std::vector<Pend
         }
         PendingDeletionOutcome outcome;
         outcome.entry = entry;
+
+        // The last line of defence, independent of whoever built the
+        // list: this applier only ever deletes under the stick it was
+        // given. An entry pointing elsewhere (a moved mount point, a
+        // swapped drive letter) fails and stays in the manifest.
+        if (!isUnderStickRoot(entry.filePath, stickRoot)) {
+            outcome.status = PendingDeletionOutcome::Status::Failed;
+            outcome.failureReason = "the file is not on this stick (" + stickRoot + "); nothing deleted";
+            outcomes.push_back(std::move(outcome));
+            if (onFileProcessed) {
+                onFileProcessed(outcomes.size());
+            }
+            continue;
+        }
 
         std::error_code ec;
         // Prefixed: a track under a long artist/album path can sit past

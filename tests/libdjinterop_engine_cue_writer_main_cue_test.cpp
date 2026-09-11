@@ -10,6 +10,7 @@
 // handed it straight back as a memory cue that had just been removed.
 
 #include <cassert>
+#include <sqlite3.h>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -129,6 +130,39 @@ int main()
             assert(!slot.has_value());
         }
         std::cout << "case 3 (an empty set clears the main cue and every hot cue) OK\n";
+    }
+
+    // A track whose loops blob does not decode: the reader would report
+    // no loops, and a cue write built from that would erase every hot
+    // loop. The writer refuses, and the track's cues are untouched.
+    {
+        fs::path root = freshRoot("case4");
+        auto db = djinterop::engine::create_database(root.string());
+        auto track = makeTrack(db);
+        seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(root.string());
+        writer.writeHotCues(std::to_string(track.id()), {hotCue(1, 1000.0), hotCue(2, 2000.0)});
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open((root / "Database2" / "m.db").string().c_str(), &raw) == SQLITE_OK);
+            char *err = nullptr;
+            // One byte: no valid loops blob has that length.
+            assert(sqlite3_exec(raw, ("UPDATE PerformanceData SET loops = X'00' WHERE trackId = "
+                                      + std::to_string(track.id())).c_str(),
+                                nullptr, nullptr, &err) == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        bool refused = false;
+        try {
+            writer.writeHotCues(std::to_string(track.id()), {hotCue(3, 3000.0)});
+        } catch (const std::runtime_error &e) {
+            refused = std::string(e.what()).find("refusing") != std::string::npos;
+        }
+        assert(refused);
+        auto reread = djinterop::engine::load_database(root.string()).track_by_id(track.id());
+        assert(reread.has_value());
+        auto cues = reread->hot_cues();
+        assert(cues.size() >= 2 && cues[0].has_value() && cues[1].has_value() && !cues[2].has_value());
+        std::cout << "case 4 (an unreadable loops blob refuses the write instead of erasing loops) OK\n";
     }
 
     std::cout << "all cases passed\n";

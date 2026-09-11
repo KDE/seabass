@@ -345,7 +345,30 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
         const std::string contents = reader->readEntryToString(*index);
         const fs::path target = resolveRecordedPath(originalPath);
         fs::create_directories(target.parent_path(), ec);
-        anyRestored = writeFileDurablyAtomic(target.string(), contents) || anyRestored;
+        const bool restored = writeFileDurablyAtomic(target.string(), contents);
+        if (restored && target.extension() == ".db") {
+            // A database put back next to a -wal or -journal left by a
+            // crash mid-save would have those frames replayed over it on
+            // the next open: the restore silently undone, or worse, a
+            // mix of two generations. The archive holds the state to go
+            // back to; the sidecars belong to the state being abandoned.
+            for (const char *sidecar : {"-wal", "-shm", "-journal"}) {
+                fs::path side = target;
+                side += sidecar;
+                bool inArchive = false;
+                for (const auto &[otherEntry, otherPath] : entries) {
+                    if (resolveRecordedPath(otherPath) == side) {
+                        inArchive = true;
+                        break;
+                    }
+                }
+                if (!inArchive) {
+                    std::error_code sideEc;
+                    fs::remove(side, sideEc);
+                }
+            }
+        }
+        anyRestored = restored || anyRestored;
     }
     return anyRestored;
 }
@@ -380,6 +403,14 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
 
     for (const auto &entry : fs::directory_iterator(m_baseDirectory, ec)) {
         if (!entry.is_directory()) {
+            continue;
+        }
+        // Only directories this store wrote. Anything else under the
+        // backups folder (a folder the user put there, another tool's
+        // output) used to be listed as an Automatic record and, sorting
+        // first, be the first thing prune() removed.
+        std::error_code manifestEc;
+        if (!fs::is_regular_file(entry.path() / ManifestFileName, manifestEc)) {
             continue;
         }
         BackupRecord record;

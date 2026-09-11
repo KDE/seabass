@@ -129,7 +129,7 @@ int main()
         PendingDeletionManifest manifest(manifestPath.string());
         manifest.append(makeEntry(filePath.string()));
 
-        auto outcomes = applyPendingDeletions(manifest.list(), manifest);
+        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Deleted);
@@ -149,7 +149,7 @@ int main()
         manifest.append(makeEntry(filePath.string()));
         assert(!fs::exists(filePath));  // never created
 
-        auto outcomes = applyPendingDeletions(manifest.list(), manifest);
+        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::AlreadyAbsent);
@@ -173,7 +173,7 @@ int main()
         std::vector<PendingDeletionOutcome> outcomes;
         {
             UndeletableFile blocked(filePath);
-            outcomes = applyPendingDeletions(manifest.list(), manifest);
+            outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
             assert(fs::exists(filePath));  // genuinely untouched, while still blocked
         }
 
@@ -218,7 +218,7 @@ int main()
         PendingDeletionManifest manifest(manifestPath.string());
         manifest.append(makeEntry(filePath.string()));
 
-        auto outcomes = applyPendingDeletions(manifest.list(), manifest);
+        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Deleted);
@@ -243,7 +243,7 @@ int main()
         manifest.append(makeEntry(keepFile.string()));  // simulates an entry NOT passed to applyPendingDeletions
 
         std::vector<PendingDeletion> toDelete = {makeEntry(deletableFile.string())};
-        auto outcomes = applyPendingDeletions(toDelete, manifest);
+        auto outcomes = applyPendingDeletions(toDelete, root.string(), manifest);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Deleted);
@@ -272,7 +272,7 @@ int main()
 
         seabass::application::CancellationToken cancel;
         size_t reported = 0;
-        auto outcomes = applyPendingDeletions(manifest.list(), manifest, cancel, [&](size_t done) {
+        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest, cancel, [&](size_t done) {
             reported = done;
             cancel.cancel();  // the user pressed Cancel while the first file was being deleted
         });
@@ -286,6 +286,35 @@ int main()
         assert(remaining.size() == 1);
         assert(remaining[0].filePath == second.string());
         std::cout << "case 6 (cancel between files: the rest stays on disk and in the manifest) OK\n";
+    }
+
+    // An entry whose path is not under this stick's root is never
+    // deleted, whatever the list says: a mount point that moved (a clone
+    // with the same label took the original's place) makes the manifest
+    // name a file on some other drive. It fails, and stays for review.
+    {
+        fs::remove(manifestPath);
+        fs::path elsewhere = root.parent_path() / "seabass_pending_deletion_applier_test_other" / "victim.mp3";
+        fs::create_directories(elsewhere.parent_path());
+        touch(elsewhere);
+        fs::path own = root / "own.mp3";
+        touch(own);
+        PendingDeletionManifest manifest(manifestPath.string());
+        manifest.append(makeEntry(elsewhere.string()));
+        manifest.append(makeEntry(own.string()));
+
+        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
+
+        assert(outcomes.size() == 2);
+        assert(outcomes[0].status == PendingDeletionOutcome::Status::Failed);
+        assert(outcomes[0].failureReason.find("not on this stick") != std::string::npos);
+        assert(fs::exists(elsewhere));
+        assert(outcomes[1].status == PendingDeletionOutcome::Status::Deleted);
+        assert(!fs::exists(own));
+        auto remaining = manifest.list();
+        assert(remaining.size() == 1 && remaining[0].filePath == elsewhere.string());
+        fs::remove_all(elsewhere.parent_path());
+        std::cout << "case: a path outside the stick root is refused and kept in the manifest OK\n";
     }
 
     std::cout << "all cases passed\n";

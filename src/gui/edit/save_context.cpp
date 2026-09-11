@@ -106,6 +106,20 @@ std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
     }
 }
 
+std::vector<std::string> SaveContext::walSidecarsOf(const std::string &file)
+{
+    std::vector<std::string> sidecars;
+    if (fs::path(file).extension() != ".db") {
+        return sidecars;
+    }
+    std::error_code ec;
+    const std::string wal = file + "-wal";
+    if (fs::is_regular_file(wal, ec) && fs::file_size(wal, ec) > 0 && !ec) {
+        sidecars.push_back(wal);
+    }
+    return sidecars;
+}
+
 void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
 {
     // Grouped by label, in first-seen order, because a save may hold
@@ -121,15 +135,21 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
     std::vector<std::string> labelOrder;
     std::map<std::string, std::vector<std::string>> byLabel;
     std::set<std::string> seen;
+    auto add = [&](const std::string &file, const std::string &label) {
+        if (file.empty() || m_backedUp.contains(application::normalizedPathKey(file))
+            || !seen.insert(application::normalizedPathKey(file)).second) {
+            return;
+        }
+        if (!byLabel.contains(label)) {
+            labelOrder.push_back(label);
+        }
+        byLabel[label].push_back(file);
+    };
     for (const auto &target : targets) {
-        if (target.file.empty() || m_backedUp.contains(application::normalizedPathKey(target.file))
-            || !seen.insert(application::normalizedPathKey(target.file)).second) {
-            continue;
+        for (const std::string &sidecar : walSidecarsOf(target.file)) {
+            add(sidecar, target.label);
         }
-        if (!byLabel.contains(target.label)) {
-            labelOrder.push_back(target.label);
-        }
-        byLabel[target.label].push_back(target.file);
+        add(target.file, target.label);
     }
 
     for (const std::string &label : labelOrder) {
@@ -158,6 +178,13 @@ bool SaveContext::backupOnce(const std::string &file, const std::string &label)
     // its path is recognised under another.
     if (file.empty() || m_backedUp.contains(application::normalizedPathKey(file))) {
         return false;
+    }
+    // A SQLite database in WAL mode keeps committed pages in its -wal
+    // until a checkpoint; a backup of the main file alone would restore
+    // an older state than the one on the stick. Back the sidecar up
+    // first, under the same label, so the record holds the whole set.
+    for (const std::string &sidecar : walSidecarsOf(file)) {
+        backupOnce(sidecar, label);
     }
     auto existing = m_recordByLabel.find(label);
     application::BackupRecord record;

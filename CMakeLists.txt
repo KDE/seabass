@@ -295,6 +295,7 @@ add_library(seabass_core STATIC
     src/infrastructure/backup/stick_write_lock.cpp
     src/infrastructure/cleanup/pending_deletion_manifest.cpp
     src/infrastructure/cleanup/pending_deletion_resolver.cpp
+    src/infrastructure/cleanup/stick_containment.cpp
     src/infrastructure/cleanup/pending_deletion_applier.cpp
     src/infrastructure/compression/zlib_compressor.cpp
     src/infrastructure/logging/file_operation_log.cpp
@@ -1199,6 +1200,8 @@ add_executable(rekordbox_settings_test
     src/infrastructure/rekordbox/rekordbox_settings_fields.cpp
     src/infrastructure/rekordbox/rekordbox_settings_reader.cpp
     src/infrastructure/rekordbox/rekordbox_settings_writer.cpp
+    src/infrastructure/durable_file_write.cpp
+    src/infrastructure/work_counters.cpp
     tests/rekordbox_settings_test.cpp
 )
 target_include_directories(rekordbox_settings_test PRIVATE src)
@@ -1403,7 +1406,7 @@ add_executable(libdjinterop_engine_cue_writer_main_cue_test
     tests/libdjinterop_engine_cue_writer_main_cue_test.cpp
 )
 target_include_directories(libdjinterop_engine_cue_writer_main_cue_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_cue_writer_main_cue_test PRIVATE DjInterop)
+target_link_libraries(libdjinterop_engine_cue_writer_main_cue_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_cue_writer_main_cue_test COMMAND libdjinterop_engine_cue_writer_main_cue_test)
 
 add_executable(pending_deletion_manifest_test
@@ -1415,7 +1418,9 @@ add_test(NAME pending_deletion_manifest_test COMMAND pending_deletion_manifest_t
 
 add_executable(pending_deletion_applier_test
     src/infrastructure/long_paths.cpp
+    src/application/path_key.cpp
     src/infrastructure/cleanup/pending_deletion_manifest.cpp
+    src/infrastructure/cleanup/stick_containment.cpp
     src/infrastructure/cleanup/pending_deletion_applier.cpp
     tests/pending_deletion_applier_test.cpp
 )
@@ -1695,6 +1700,7 @@ add_executable(pending_deletion_resolver_test
     src/application/use_cases/find_unreferenced_files.cpp
     src/infrastructure/stick_layout.cpp
     src/infrastructure/cleanup/pending_deletion_resolver.cpp
+    src/infrastructure/cleanup/stick_containment.cpp
     tests/pending_deletion_resolver_test.cpp
 )
 target_include_directories(pending_deletion_resolver_test PRIVATE src)

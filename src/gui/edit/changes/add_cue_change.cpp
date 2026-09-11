@@ -194,6 +194,12 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
     }
 
     writer->writeHotCues(id, cues);
+    // Right away, not after the save: the next AddCueChange in this save
+    // re-reads the track through the cache, and the cache's freshness
+    // key is the catalog's mtime, which FAT32 keeps in 2-second steps. A
+    // second cue added within those two seconds read the list from before
+    // the first write and wrote it back without that cue.
+    LibraryCatalogCache::instance().invalidateWithOneLibraryMirror(m_format.toStdString(), m_path.toStdString());
     ctx.log().record("add-cue: added " + kind + (m_isLoop ? " loop" : " cue") + " at " + positionText + "ms to track id="
                      + id + " (\"" + track->title + "\")");
 

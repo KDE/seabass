@@ -143,6 +143,18 @@ void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
         }
     }
 
+    // set_loops() writes the whole 8-slot array without reading the old
+    // one. The reader falls back to "no loops" when a track's loop blob
+    // does not decode, so a cue list built from that read would erase
+    // every hot loop on the track here. Refuse instead: a write that
+    // cannot see what it is replacing must not replace it.
+    try {
+        (void)track->loops();
+    } catch (const std::exception &e) {
+        throw std::runtime_error("the hot loops on track id=" + trackSourceId
+                                 + " could not be read (" + e.what()
+                                 + "); refusing to write cues, which would erase them");
+    }
     track->set_hot_cues(slots);
     track->set_loops(loopSlots);
     // `cues` is the complete replacement set, the same contract every
