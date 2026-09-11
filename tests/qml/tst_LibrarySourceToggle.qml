@@ -105,6 +105,70 @@ TestCase {
         compare(toggle.currentValue, "rekordbox");
     }
 
+    // A ComboBox handles arrow keys in C++ and writes currentIndex
+    // itself, which is not a selection: it relabelled the header while
+    // the page went on showing the old catalog, and it would do it for a
+    // catalog the stick does not even have. The keys are routed through
+    // the same path a click takes.
+    function test_arrowKeyAsksThePageRatherThanRelabellingItself() {
+        var toggle = createTemporaryObject(toggleComponent, testCase, {current: "rekordbox"});
+        waitForRendering(toggle);
+        var spy = createTemporaryObject(spyComponent, testCase,
+                                        {target: toggle, signalName: "sourceRequested"});
+        toggle.forceActiveFocus();
+        keyClick(Qt.Key_Down);
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "onelibrary");
+        // Still showing what the page still has: `current` has not come
+        // back changed, so nothing about the display may have moved.
+        compare(toggle.currentValue, "rekordbox");
+        compare(toggle.currentIndex, 1);
+    }
+
+    function test_arrowKeyWalksBackwardsToo() {
+        var toggle = createTemporaryObject(toggleComponent, testCase, {current: "rekordbox"});
+        waitForRendering(toggle);
+        var spy = createTemporaryObject(spyComponent, testCase,
+                                        {target: toggle, signalName: "sourceRequested"});
+        toggle.forceActiveFocus();
+        keyClick(Qt.Key_Up);
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "engine");
+    }
+
+    function test_arrowKeyWillNotLandOnACatalogTheStickLacks() {
+        var toggle = createTemporaryObject(toggleComponent, testCase,
+                                           {current: "rekordbox", hasOneLibrary: false});
+        waitForRendering(toggle);
+        var spy = createTemporaryObject(spyComponent, testCase,
+                                        {target: toggle, signalName: "sourceRequested"});
+        toggle.forceActiveFocus();
+        keyClick(Qt.Key_Down);
+        // Nothing below it is selectable, so nothing is asked for and
+        // nothing is displayed that is not there.
+        compare(spy.count, 0);
+        compare(toggle.currentValue, "rekordbox");
+        compare(toggle.currentIndex, 1);
+    }
+
+    // What taking the keys over actually buys, over routing `activated`:
+    // an arrow STEPS OVER a catalog this export lacks and lands on the
+    // next real one. Left to the ComboBox, Down from Engine OS would
+    // "select" the absent DeviceLibrary, be refused, and do nothing at
+    // all -- a key that visibly does nothing on a picker with another
+    // catalog still to offer.
+    function test_arrowKeyStepsOverAnAbsentCatalogToTheNextRealOne() {
+        var toggle = createTemporaryObject(toggleComponent, testCase,
+                                           {current: "engine", hasRekordbox: false});
+        waitForRendering(toggle);
+        var spy = createTemporaryObject(spyComponent, testCase,
+                                        {target: toggle, signalName: "sourceRequested"});
+        toggle.forceActiveFocus();
+        keyClick(Qt.Key_Down);
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "onelibrary");
+    }
+
     function test_pickingAnUnavailableCatalogAsksNothing() {
         var toggle = createTemporaryObject(toggleComponent, testCase,
                                            {current: "rekordbox", hasOneLibrary: false});
@@ -113,5 +177,7 @@ TestCase {
                                         {target: toggle, signalName: "sourceRequested"});
         toggle.selectEntry(2);
         compare(spy.count, 0);
+        // ...but the list does not stay open pretending nothing happened.
+        compare(toggle.popup.visible, false);
     }
 }

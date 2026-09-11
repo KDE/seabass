@@ -5,7 +5,7 @@ import SeabassGui
 
 // Replaces the old "‹" ToolButton + separate PageTitle pair every
 // section page's header used to duplicate. Up to three segments:
-// "⌂ › [middle] › this page", where ⌂ always jumps straight back
+// "[home] › [middle] › this page", where the house always jumps back
 // to the StackView's very first item in one click (pop(null), not a
 // single pop()) no matter how deep the current page sits -- the middle
 // segment, when present, is one level up (the stick, for a page pushed
@@ -99,22 +99,38 @@ RowLayout {
                 : crumb.hovered ? Theme.rowHover
                 : "transparent"
         }
-        // Set instead of `text` to draw a symbol rather than a word. The
-        // family is the app's monochrome-glyph convention (see
-        // ActionCard.qml's cardIconFont and StickListPage's eject
-        // button): without it the system's color-emoji font gets first
-        // refusal and the crumb comes out full-color.
-        property string glyph: ""
-        contentItem: Label {
-            text: crumb.glyph.length > 0 ? crumb.glyph : crumb.text
-            font.family: crumb.glyph.length > 0 ? "Noto Sans Symbols2" : Theme.titleFamily
-            font.weight: Theme.titleWeight
-            // The glyph keeps the bigger step; the words step down. See
-            // Theme.titleCrumb for why the two part company here.
-            font.pointSize: crumb.glyph.length > 0 ? Theme.titleMedium * 1.1 : Theme.titleCrumb
-            color: Theme.textMuted
-            opacity: crumb.enabled ? 1.0 : 0.5
-            elide: Text.ElideRight
+        // Draws HomeIcon rather than a word. Not a font glyph: a symbol
+        // font that lacks the character silently falls back to whatever
+        // fontconfig picks, or to tofu, and this is the only way back on
+        // the six pages that have no middle segment. See HomeIcon.qml for
+        // why it is a Shape and not the .svg either.
+        property bool showsIcon: false
+        contentItem: Loader {
+            sourceComponent: crumb.showsIcon ? iconContent : textContent
+        }
+
+        Component {
+            id: textContent
+            Label {
+                text: crumb.text
+                font.family: Theme.titleFamily
+                font.weight: Theme.titleWeight
+                // The words step down a size; the icon below keeps the
+                // bigger one. See Theme.titleCrumb for why they part
+                // company here.
+                font.pointSize: Theme.titleCrumb
+                color: Theme.textMuted
+                opacity: crumb.enabled ? 1.0 : 0.5
+                elide: Text.ElideRight
+            }
+        }
+
+        Component {
+            id: iconContent
+            HomeIcon {
+                color: Theme.textMuted
+                opacity: crumb.enabled ? 1.0 : 0.5
+            }
         }
     }
 
@@ -128,11 +144,11 @@ RowLayout {
     // characters of width on every page that has a breadcrumb, and the
     // row it was spending them on is the one whose middle segment --
     // usually the stick's name -- gives way first when the header runs
-    // out of room. U+2302 rather than the 🏠 emoji: it is already in
-    // the UI fonts on every platform this ships to, so it needs no font
-    // fallback to come out flat.
+    // out of room. Breeze's own go-home, so the button a KDE user reaches
+    // for looks like the one they already know.
     Crumb {
-        glyph: "⌂"
+        objectName: "homeCrumb"
+        showsIcon: true
         onClicked: root.homeRequested()
         ToolTip.text: root.backEnabled ? "Back to Home" : root.backDisabledTooltip
     }

@@ -106,17 +106,74 @@ ComboBox {
     // the guard for the moment before it exists.
     currentIndex: count > 0 ? indexOfValue(root.current) : -1
 
-    // Not `activated` on the ComboBox: a disabled entry stays clickable
-    // precisely so its tooltip can say why it is unavailable (see the
-    // delegate), so the delegate decides what counts as a selection.
+    // Every route to a selection ends here, because the page -- not this
+    // control -- owns which catalog is shown. A disabled entry stays
+    // clickable precisely so its tooltip can say why it is unavailable
+    // (see the delegate), which is why the check lives here rather than
+    // in `enabled`.
     function selectEntry(index) {
         const entry = root.entries[index];
+        // Closed even when the answer is no. The entry is deliberately
+        // still live, so without this a click on an unavailable catalog
+        // did nothing whatsoever -- list still open, nothing moved --
+        // which reads as a hung control rather than as a refusal.
+        root.popup.close();
         if (!entry || !entry.selectable) {
             return;
         }
-        root.popup.close();
         if (entry.value !== root.current) {
             root.sourceRequested(entry.value);
+        }
+    }
+
+    // Arrow keys on a closed ComboBox are handled in C++
+    // (incrementCurrentIndex/decrementCurrentIndex): they write
+    // currentIndex directly, never reaching selectEntry(). Left alone,
+    // Down on a picker showing DeviceLibrary relabelled the header
+    // "OneLibrary" -- emitting no sourceRequested, so the page went on
+    // showing DeviceLibrary -- and did it even where OneLibrary is not on
+    // the stick at all. So the keys are taken over here and routed the
+    // same way a click is, skipping catalogs this export does not have.
+    Keys.onPressed: (event) => {
+        if (root.popup.visible) {
+            return;
+        }
+        if (event.key === Qt.Key_Down) {
+            root.stepTo(1);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Up) {
+            root.stepTo(-1);
+            event.accepted = true;
+        }
+    }
+
+    // Return/Enter inside the open popup is the ComboBox's own path, not
+    // the delegate's onClicked, so it needs routing too.
+    onActivated: (index) => root.selectEntry(index)
+
+    function stepTo(delta) {
+        for (var n = 1; n <= root.entries.length; ++n) {
+            const next = root.currentIndex + delta * n;
+            if (next < 0 || next >= root.entries.length) {
+                return;
+            }
+            if (root.entries[next].selectable) {
+                root.selectEntry(next);
+                return;
+            }
+        }
+    }
+
+    // The backstop for anything else that writes currentIndex from C++.
+    // What is displayed mirrors `current` or the control is lying about
+    // which catalog the page is showing.
+    onCurrentIndexChanged: {
+        if (root.count === 0) {
+            return;
+        }
+        const want = root.indexOfValue(root.current);
+        if (want >= 0 && root.currentIndex !== want) {
+            root.currentIndex = want;
         }
     }
 

@@ -38,7 +38,10 @@ TestCase {
         }
     }
 
-    // The middle segment, whichever of the two forms it is currently in.
+    // The middle segment's Label, whichever of the two forms it is in.
+    // Both forms put the name in a Label -- the clickable one inside an
+    // AbstractButton -- so the walk keeps the deepest match, and
+    // middleButton() below is what distinguishes them.
     function middleItem(header) {
         var found = null;
         function walk(item) {
@@ -52,6 +55,35 @@ TestCase {
         }
         walk(header);
         return found;
+    }
+
+    // The clickable form only: an item carrying the name that is also a
+    // button. Matching on `clicked` rather than on the Label means the
+    // "not a link" assertion can actually fail -- a Label has no
+    // `clicked` either, so asserting its absence on the Label proves
+    // nothing about which form is on screen.
+    function middleButton(header) {
+        var found = null;
+        function walk(item) {
+            for (var i = 0; i < item.children.length; ++i) {
+                var child = item.children[i];
+                if (child.visible && child.text === "LONG-STICK-NAME"
+                        && child.clicked !== undefined) {
+                    found = child;
+                }
+                walk(child);
+            }
+        }
+        walk(header);
+        return found;
+    }
+
+    // Every test that narrows the row restores it here instead of on its
+    // last line: a failing verify() aborts the function, and a 380px row
+    // left behind turns one real failure into three confusing ones in the
+    // tests that follow.
+    function cleanup() {
+        testCase.width = 900;
     }
 
     function test_stickNameIsNotAbbreviatedWhenTheRowHasRoom() {
@@ -70,13 +102,12 @@ TestCase {
     // the priority the component was built with, not lost to the fix.
     function test_stickNameStillElidesWhenTheRowIsTooNarrow() {
         var header = createTemporaryObject(rowComponent, testCase);
-        header.parent.width = 380;
+        testCase.width = 380;
         waitForRendering(header);
         var middle = middleItem(header);
         verify(middle !== null, "the middle segment was not found");
         verify(middle.truncated,
                "the middle segment must be the one that gives way when squeezed");
-        header.parent.width = 900;
     }
 
     // Depth 2 means the item under this page is Home, so the middle
@@ -88,11 +119,9 @@ TestCase {
         waitForRendering(header);
         verify(!header.crumb.middleClickable,
                "one below Home, the stick's name must not be a link");
-        var middle = middleItem(header);
-        verify(middle !== null, "the middle segment was not found");
-        // A Label, not the AbstractButton the clickable form is.
-        verify(middle.clicked === undefined,
-               "the context form must not be clickable");
+        verify(middleItem(header) !== null, "the middle segment was not found");
+        verify(middleButton(header) === null,
+               "the context form must not be a button");
     }
 
     function test_stickNameIsAClickWhenItLeadsSomewhereElse() {
@@ -101,9 +130,11 @@ TestCase {
         waitForRendering(header);
         verify(header.crumb.middleClickable,
                "below a hub, the middle segment is a real destination");
+        verify(middleButton(header) !== null,
+               "below a hub, the middle segment must be a button");
     }
 
-    function test_homeIsAGlyphNotTheWord() {
+    function test_homeIsTheBreezeIconNotTheWord() {
         var header = createTemporaryObject(rowComponent, testCase);
         waitForRendering(header);
         var sawWord = false;
@@ -118,5 +149,35 @@ TestCase {
         }
         walk(header);
         verify(!sawWord, "the Home crumb should draw a house, not the word");
+
+        var crumb = null;
+        function findCrumb(item) {
+            for (var j = 0; j < item.children.length; ++j) {
+                if (item.children[j].objectName === "homeCrumb") {
+                    crumb = item.children[j];
+                }
+                findCrumb(item.children[j]);
+            }
+        }
+        findCrumb(header);
+        verify(crumb !== null, "the Home crumb was not found");
+        verify(crumb.showsIcon, "the Home crumb should draw an icon");
+        // And something was actually drawn. The icon is the only way back
+        // on pages with no middle segment, so "it has a size" is not
+        // enough -- an earlier version rendered an empty gap of exactly
+        // the right size when its effect silently produced no pixels.
+        var icon = crumb.contentItem.item;
+        verify(icon !== null, "the Home crumb has no icon item");
+        verify(icon.width > 0 && icon.height > 0, "the Home icon has no size");
+        // Deliberately no assertion that pixels were painted. Two were
+        // tried -- grabbing the icon, and scanning its rect inside a grab
+        // of the header -- and both passed with the icon's color set to
+        // "transparent", i.e. neither could fail. grabImage() of anything
+        // inside a Control's contentItem Loader comes back empty here,
+        // and widening the region picks up the neighbours' pixels. The
+        // screenshot below is what backs the visual claim; look at it.
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(header).save(screenshotDir + "/breadcrumb.png");
+        }
     }
 }

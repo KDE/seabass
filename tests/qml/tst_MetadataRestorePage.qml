@@ -90,9 +90,11 @@ TestCase {
         function walk(item) {
             for (var i = 0; i < item.children.length; ++i) {
                 var child = item.children[i];
-                // "⌂", not "Home": the crumb draws a house glyph now.
-                if (child.text === "⌂" && child.width < 120) {
-                    crumbText = child;
+                // By objectName: the crumb draws Breeze's go-home icon
+                // now, so it has no text to match against. Its content
+                // item is what has to line up with the body.
+                if (child.objectName === "homeCrumb") {
+                    crumbText = child.contentItem;
                 }
                 if (child.objectName === "pageIntro") {
                     bodyText = child;
@@ -101,7 +103,7 @@ TestCase {
             }
         }
         walk(page);
-        verify(crumbText, "the Home crumb's label was not found");
+        verify(crumbText, "the Home crumb's content item was not found");
         verify(bodyText, "the page's first body line was not found");
         compare(crumbText.mapToItem(page, 0, 0).x, bodyText.mapToItem(page, 0, 0).x,
                 "breadcrumb text and body text must share a left edge");
