@@ -73,15 +73,25 @@ int main(int argc, char **argv)
     fs::remove_all(scratch);
     fs::create_directories(scratch);
     seabass::testing::sandboxSeabassHome(scratch / "home");
-    // Redirects the store by path and format rather than by naming the
-    // application: the controller opens QSettings("seabass", "seabass")
-    // exactly as the real app does, and setting organizationName here
-    // would hide a regression back to a default-constructed QSettings
-    // (which resolves elsewhere, because this app sets no organization
-    // or application name at all).
-    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
-                       QString::fromStdString((scratch / "settings").string()));
-    QSettings::setDefaultFormat(QSettings::IniFormat);
+    // Not by naming the application: the controller opens
+    // QSettings("seabass", "seabass") exactly as the real app does, and
+    // setting organizationName here would hide a regression back to a
+    // default-constructed QSettings (which resolves elsewhere, because
+    // this app sets no organization or application name at all). The
+    // environment variable the platform reads is moved instead -- see
+    // sandboxSettings() for why setPath() looked like it did this and
+    // did not.
+    seabass::testing::sandboxSettings(scratch / "config");
+
+    // And proof, before anything is written: if this ever resolves back
+    // to the real store, the assert fires here rather than after the
+    // developer's own settings have been appended to.
+    {
+        const QSettings probe("seabass", "seabass");
+        const std::string where = probe.fileName().toStdString();
+        assert(where.rfind((scratch / "config").string(), 0) == 0
+               && "QSettings must resolve inside the test's scratch tree");
+    }
 
     const fs::path both = scratch / "restored-backup";
     const fs::path rbOnly = scratch / "rekordbox-only";
@@ -257,6 +267,44 @@ int main(int argc, char **argv)
         assert(MediaController::folderLibraryId("/a/b") != MediaController::folderLibraryId("/a/c"));
         assert(MediaController::folderLibraryId("/a/b").rfind("folder-", 0) == 0);
         std::cout << "case 8 (folder library id) OK\n";
+    }
+
+    // A remembered folder whose directory is gone is not shown -- this
+    // is what put 232 dead rows on one developer's first page, every one
+    // of them written by this very test and never taken off again. It
+    // stays in the store, though: a NAS that is off right now must not
+    // silently delete the user's shortcut to it.
+    {
+        const fs::path share = scratch / "pretend-network-share";
+        makeStickShapedFolder(share, true, false);
+        {
+            MediaController opener;
+            assert(opener.openFolder(QString::fromStdString(share.string())).isEmpty());
+        }
+        fs::remove_all(share);  // the whole directory, as an unmounted share looks
+        {
+            MediaController whileAway;
+            assert(rowForMountPoint(*whileAway.sticksModel(), share.string()) < 0);
+            QSettings settings("seabass", "seabass");
+            const int count = settings.beginReadArray(QStringLiteral("openedFolders"));
+            bool stillListed = false;
+            for (int i = 0; i < count; ++i) {
+                settings.setArrayIndex(i);
+                if (settings.value(QStringLiteral("path")).toString().toStdString()
+                    == share.string()) {
+                    stillListed = true;
+                }
+            }
+            settings.endArray();
+            assert(stillListed && "an unreachable folder must be kept, not pruned");
+        }
+        // And it returns by itself when the share does.
+        makeStickShapedFolder(share, true, false);
+        {
+            MediaController back;
+            assert(rowForMountPoint(*back.sticksModel(), share.string()) >= 0);
+        }
+        std::cout << "case 9 (unreachable folder is hidden, kept, and returns) OK\n";
     }
 
     fs::remove_all(scratch);

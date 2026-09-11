@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "application/ports/removable_media_locator.hpp"
@@ -267,6 +268,10 @@ public:
     // the locator every refresh, and these are exactly the rows no
     // locator will ever produce.
     std::vector<application::DetectedStick> m_openedFolders;
+    // Opened folders whose directory was missing at the last detect(), so
+    // that becoming unreachable is announced once rather than on every
+    // refresh for as long as it stays away.
+    std::set<std::string> m_unreachableFolders;
     std::unique_ptr<application::RemovableMediaMonitor> m_monitor;
     QTimer m_debounceTimer;
     QString m_errorMessage;

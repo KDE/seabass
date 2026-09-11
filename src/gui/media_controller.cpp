@@ -249,10 +249,37 @@ void MediaController::detect()
                               QString::fromStdString(folder.label));
         }
     }
+    std::vector<std::string> unreachable;
     for (application::DetectedStick &folder : m_openedFolders) {
         folder.rekordboxPath.reset();
         folder.enginePath.reset();
         infrastructure::media::scanMountedRoot(folder.mountPoint, folder);
+        // A folder whose directory is not there right now is not shown.
+        //
+        // loadOpenedFolders() restores these without checking, on the
+        // stated grounds that "detect() does that for every opened folder
+        // anyway" -- and this is the line that has to exist for that to
+        // be true. Without it a remembered path that has since been
+        // deleted came back on the first page for good, as a card with no
+        // library in it and nothing to do: one developer's config had 232
+        // such rows, all pointing into /tmp directories that had not
+        // existed for weeks.
+        //
+        // Hidden, not forgotten, and deliberately narrower than "has no
+        // library": a folder that IS there and has simply had its library
+        // deleted keeps its row, because that row is how it gets seen and
+        // closed (see case 7 in open_folder_test.cpp -- an older decision
+        // this does not overturn). What is dropped from view is only the
+        // folder nobody can look at, which is also the case
+        // loadOpenedFolders() asks be kept in the store: a share that is
+        // off right now and back in a minute must not lose the user's
+        // shortcut, so the row stays listed and returns by itself.
+        std::error_code dirEc;
+        if (!std::filesystem::is_directory(std::filesystem::path(folder.mountPoint), dirEc)
+            || dirEc) {
+            unreachable.push_back(folder.mountPoint);
+            continue;
+        }
         // Decided from disk every time, not remembered from openBackup():
         // the marker is what makes the cache self-describing, and it is
         // what survives a restart. Only honoured under the browse cache --
@@ -260,6 +287,22 @@ void MediaController::detect()
         folder.isBrowsedBackup = infrastructure::local::isBrowsedBackupRoot(std::filesystem::path(folder.mountPoint));
         sticks.push_back(folder);
     }
+    // Same treatment the coinciding rows above get, and for the same
+    // reason: a row leaving without anyone clicking close has to reach an
+    // edit session holding it, or the edits sit unseen until quit. Only
+    // on the transition, though -- a share that stays off would otherwise
+    // announce itself removed on every single refresh.
+    for (const application::DetectedStick &folder : m_openedFolders) {
+        const bool nowGone = std::find(unreachable.begin(), unreachable.end(), folder.mountPoint)
+                             != unreachable.end();
+        const bool wasGone = m_unreachableFolders.count(folder.mountPoint) > 0;
+        if (nowGone && !wasGone) {
+            emit stickRemoved(QString::fromStdString(folder.identity.libraryId()),
+                              QString::fromStdString(folder.label));
+        }
+    }
+    m_unreachableFolders.clear();
+    m_unreachableFolders.insert(unreachable.begin(), unreachable.end());
     m_model.setSticks(std::move(sticks));
     std::vector<application::StickIdentity> present;
     for (const application::DetectedStick &stick : m_model.sticks()) {

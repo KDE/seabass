@@ -1826,6 +1826,18 @@ foreach(_seabass_test IN LISTS _seabass_all_tests)
         set(_seabass_test_env "")
     endif()
     list(APPEND _seabass_test_env "SEABASS_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}")
+    # And the settings store, which SEABASS_HOME does not cover: QSettings
+    # resolves through the platform's own config location, so a test that
+    # merely constructs a controller wrote into the developer's real
+    # ~/.config/seabass/seabass.conf. That is not hypothetical -- it left
+    # 232 dead opened-folder rows in one, every one of them a card on the
+    # app's first page. Set here as well as in the tests that know they
+    # persist something, because "merely constructs a controller" is most
+    # of them.
+    list(APPEND _seabass_test_env
+        "XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
+    list(APPEND _seabass_test_env
+        "APPDATA=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
     set_tests_properties(${_seabass_test} PROPERTIES ENVIRONMENT "${_seabass_test_env}")
 endforeach()
 
