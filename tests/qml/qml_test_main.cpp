@@ -1,5 +1,6 @@
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QSettings>
 #include <QString>
 #include <QtQuickTest/quicktest.h>
 
@@ -29,6 +30,32 @@ public slots:
     // screenshot dir) is left exactly as it was.
     void applicationAvailable()
     {
+        // AppSettingsController, main.cpp's exportMaterialPalette() and
+        // media_controller.cpp's opened-folders store all construct their
+        // QSettings the same way -- QSettings("seabass", "seabass"),
+        // i.e. QSettings::defaultFormat() at QSettings::UserScope -- and
+        // several QML tests build the real controller rather than a fake
+        // one (see tst_AppSettingsPage.qml's own comment). CMakeLists.txt
+        // sets XDG_CONFIG_HOME to a build-local directory specifically so
+        // those tests read and write there instead of the developer's
+        // real settings, but that redirection is a Linux/XDG convention:
+        // QSettings::NativeFormat (the default) ignores XDG_CONFIG_HOME
+        // entirely on Windows and always resolves to the registry
+        // (HKCU\Software\seabass\seabass) regardless of it. On Windows
+        // this comment's whole reason for existing silently did nothing
+        // -- every run of this binary wrote real test fixture values
+        // (a fake stickBackupDirectory among them) straight into the
+        // real registry, which the real app then read back as if a user
+        // had set them. Forcing IniFormat and pointing UserScope at the
+        // same XDG_CONFIG_HOME directory makes the redirect actually
+        // apply, identically, on every platform -- the registry (or
+        // equivalent) is never touched by a test run again.
+        if (const char *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+            xdgConfigHome != nullptr && *xdgConfigHome != '\0') {
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, QString::fromLocal8Bit(xdgConfigHome));
+        }
+
         const char *dir = std::getenv("SEABASS_SCREENSHOT_DIR");
         if (dir == nullptr || *dir == '\0') {
             return;
