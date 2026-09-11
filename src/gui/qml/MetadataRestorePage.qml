@@ -9,7 +9,7 @@ import SeabassGui
 // The counterpart to Metadata Backup, and deliberately its own page.
 // Reading a stick into the store risks nothing; writing to the stick is
 // a save like every other one in Seabass, so nothing here reaches the
-// stick until Save. Each accepted track is staged into the library's
+// stick until Restore. Each accepted track is staged into the library's
 // edit session, and the save backs up before it touches a file.
 Page {
     id: root
@@ -21,11 +21,8 @@ Page {
     readonly property bool hasStick: root.rekordboxPath.length > 0 || root.enginePath.length > 0
     readonly property string libraryPath: root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath
 
-    // Skip by default, and the asymmetry with a backup is the point: the
-    // stick may have been re-cued since the store was last filled, and
-    // replacing last night's work with last month's is the worst thing
-    // this page could do.
-    property bool overwriteConflicts: false
+    // The row whose detail is showing, or "". One at a time.
+    property string expandedFilename: ""
 
     MetadataRestoreController {
         id: controller
@@ -39,6 +36,10 @@ Page {
         stickLabel: root.stickLabel
         rekordboxPath: root.rekordboxPath
         enginePath: root.enginePath
+        // The one button that writes to the stick says what it does.
+        // "Save" is right on a page where you have been editing; here
+        // the whole page is one verb, and it is this one.
+        saveLabel: "Restore"
     }
 
     MessagePopup { id: messagePopup }
@@ -49,8 +50,7 @@ Page {
         }
     }
 
-    Component.onCompleted: if (root.hasStick) controller.scan(root.libraryPath, root.overwriteConflicts)
-    onOverwriteConflictsChanged: if (root.hasStick) controller.scan(root.libraryPath, root.overwriteConflicts)
+    Component.onCompleted: if (root.hasStick) controller.scan(root.libraryPath)
 
     header: ToolBar {
         // Opaque background override: KDE's Breeze style bleeds the
@@ -72,8 +72,8 @@ Page {
             BackBreadcrumb {
                 middleLabel: root.stickLabel
                 title: "Restore Metadata"
-                onHomeRequested: root.StackView.view.pop(null)
-                onBackRequested: root.StackView.view.pop()
+                onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
+                onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
             }
             Item { Layout.fillWidth: true }
             BusyIndicator {
@@ -90,11 +90,38 @@ Page {
         anchors.margins: Theme.pageMargin
         spacing: Theme.sectionSpacing
 
-        Subtitle {
+        RowLayout {
             Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            text: "Tracks on " + root.stickLabel + " that have lost cues the store still has. "
-                + "Nothing is written until you press Save."
+            spacing: Theme.rowSpacing
+            Label {
+                objectName: "pageIntro"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.text
+                font.pointSize: Theme.fontNormal
+                text: "Restore metadata from your local backup to the USB stick " + root.stickLabel + ". "
+                    + "Nothing is written until you press Restore."
+            }
+            InfoButton {
+                explanationTitle: "Putting stored metadata back"
+                summaryText: "What this computer has backed up, offered to the tracks on "
+                    + root.stickLabel + " that would gain something from it."
+                explanationText: "## How a track is recognised\n\n"
+                    + "On its title, artist and length, the same rule Seabass uses to match tracks "
+                    + "between rekordbox and Engine everywhere else, falling back to the filename when "
+                    + "a catalog has no title and artist to offer.\n\n"
+                    + "Deliberately not on where the file sits. That is what makes a restore flexible: "
+                    + "a backup taken from one stick can go back onto a rebuilt one, onto a stick whose "
+                    + "folders have been reorganised, or onto a fresh copy of a track bought again, "
+                    + "because title and artist travel with the recording and a path does not.\n\n"
+                    + "Length is a guard rather than part of the key: it has to agree within a couple of "
+                    + "seconds, and a track whose length could not be read is not held against it. What "
+                    + "it catches is a radio edit and an extended mix filed under one name.\n\n"
+                    + controller.mergeRuleHelp
+                    + "\n\n## Nothing is written until you press Restore\n\n"
+                    + "Staged tracks are held until then, and the save backs up every file it is about "
+                    + "to change before it changes it."
+            }
         }
 
         ColumnLayout {
@@ -119,50 +146,14 @@ Page {
                     }
                     var line = "Matched " + controller.stickTrackCount + " tracks on the stick against "
                              + controller.storedTrackCount + " in the store.";
-                    if (controller.conflictCount > 0 && !root.overwriteConflicts) {
-                        line += " " + controller.conflictCount
-                             + (controller.conflictCount === 1 ? " track has cues of its own that differ; it is"
-                                                               : " tracks have cues of their own that differ; they are")
+                    if (controller.conflictsLeftAlone > 0) {
+                        line += " " + controller.conflictsLeftAlone
+                             + (controller.conflictsLeftAlone === 1
+                                 ? " track has cues of its own that the stored copy did not beat; it is"
+                                 : " tracks have cues of their own that the stored copy did not beat; they are")
                              + " left alone.";
                     }
                     return line;
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.tightSpacing
-                visible: !controller.busy
-                spacing: Theme.rowSpacing
-
-                Label {
-                    text: "If the stick already has different cues:"
-                    color: Theme.textMuted
-                    font.pointSize: Theme.fontSmall
-                }
-                RadioButton {
-                    objectName: "keepStickRadio"
-                    text: "Keep the stick's"
-                    checked: !root.overwriteConflicts
-                    onToggled: if (checked) root.overwriteConflicts = false
-                    ToolTip.visible: hovered
-                    ToolTip.text: "The safe default: the stick may have been re-cued since the backup."
-                }
-                RadioButton {
-                    objectName: "replaceFromStoreRadio"
-                    text: "Replace them from the store"
-                    checked: root.overwriteConflicts
-                    onToggled: if (checked) root.overwriteConflicts = true
-                    ToolTip.visible: hovered
-                    ToolTip.text: "For a stick whose cues you know are wrong. Save backs the files up first."
-                }
-                Item { Layout.fillWidth: true }
-                Button {
-                    objectName: "stageAllButton"
-                    text: "Stage All"
-                    enabled: proposalList.count > 0 && !controller.busy && !editHost.writing
-                    highlighted: true
-                    onClicked: controller.stageAll()
                 }
             }
 
@@ -215,6 +206,27 @@ Page {
             color: Theme.borderSubtle
         }
 
+        // Below the explanation and above the list, the same shape the
+        // backup page's list has. A proposal list runs to hundreds of
+        // rows on a stick that has lost its cues, which is exactly the
+        // case this page exists for, so it needs filtering as much as
+        // the browse list does.
+        MetadataListToolbar {
+            objectName: "proposalToolbar"
+            Layout.fillWidth: true
+            placeholder: "Search title, artist or filename"
+            selectionEnabled: proposalList.count > 0 && !controller.busy && !editHost.writing
+            summary: controller.selectedCount > 0
+                ? controller.selectedCount + " of " + controller.proposalCount + " selected"
+                : (controller.stagedCount > 0
+                    ? controller.stagedCount + " staged"
+                    : controller.proposalCount + (controller.proposalCount === 1 ? " track" : " tracks")
+                      + " to restore")
+            onSearchChanged: text => controller.search(text)
+            onSelectAllRequested: controller.selectAll()
+            onSelectNoneRequested: controller.selectNone()
+        }
+
         ListView {
             id: proposalList
             objectName: "proposalList"
@@ -225,105 +237,62 @@ Page {
             spacing: 2
             ScrollBar.vertical: BigScrollBar {}
 
-            delegate: Rectangle {
+            delegate: MetadataTrackDelegate {
                 id: proposalRow
-                required property int index
-                required property string title
-                required property string artist
-                required property string filename
-                required property int cueCount
+                // Roles the shared delegate does not already declare a
+                // property for.
                 required property int cuesAdded
                 required property bool fillsAGap
                 required property bool conflict
-                required property int rating
-                required property string comment
+                required property string cueSummary
                 required property bool staged
 
-                width: ListView.view.width
-                implicitHeight: rowLayout.implicitHeight + 2 * Theme.tightSpacing
-                color: rowMouse.containsMouse ? Theme.rowHover
-                     : (proposalRow.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
-                radius: 4
+                // And the ones it does, marked required here so the
+                // model fills them.
+                required index
+                required storedFrom
+                required title
+                required artist
+                required filename
+                required relativePath
+                required durationText
+                required rating
+                required comment
+                required cueCount
+                required selected
 
-                MouseArea {
-                    id: rowMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                }
+                cueTooltip: proposalRow.cueSummary
+                expanded: root.expandedFilename === proposalRow.filename
+                // What this row's badge is counting is not what is on
+                // the track but what a restore would leave on it, and
+                // the two are different numbers whenever it replaces
+                // rather than fills.
+                cueBadgeLabel: proposalRow.conflict
+                    ? "replaces " + (proposalRow.cueCount - proposalRow.cuesAdded)
+                    : proposalRow.cuesAdded + (proposalRow.cuesAdded === 1 ? " cue" : " cues")
+                cueBadgeColor: proposalRow.conflict ? Theme.warnIcon : Theme.good
+                detailNote: proposalRow.conflict
+                    ? "This track has cues of its own. Restoring replaces them with the stored ones."
+                    : (proposalRow.fillsAGap ? "This track has no cues on the stick at all." : "")
 
-                RowLayout {
-                    id: rowLayout
-                    anchors.fill: parent
-                    anchors.margins: Theme.tightSpacing
-                    anchors.leftMargin: 0
-                    spacing: Theme.rowSpacing
+                onSelectionToggled: isSelected => controller.setSelected(proposalRow.index, isSelected)
+                onExpandToggled: root.expandedFilename =
+                    proposalRow.expanded ? "" : proposalRow.filename
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: 0
-                        Label {
-                            Layout.fillWidth: true
-                            text: proposalRow.title.length > 0 ? proposalRow.title : proposalRow.filename
-                            color: Theme.text
-                            elide: Text.ElideRight
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: proposalRow.artist
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontSmall
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    StatusBadge {
-                        visible: proposalRow.conflict
-                        label: "replaces " + proposalRow.cueCount
-                        badgeColor: Theme.warnIcon
-                        tooltipText: "This track has cues of its own. Saving replaces them with the stored ones."
-                    }
-                    Label {
-                        visible: proposalRow.fillsAGap
-                        text: proposalRow.cuesAdded + (proposalRow.cuesAdded === 1 ? " cue" : " cues")
-                            + " to put back"
-                        color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                    }
-                    StarRating {
-                        visible: proposalRow.rating >= 0
-                        value: Math.max(0, proposalRow.rating)
-                        editable: false
-                        // StarRating only tracks hover while it is
-                        // editable, and this one is not, so the hover
-                        // comes from a handler of its own.
-                        ToolTip.visible: ratingHover.hovered
-                        ToolTip.text: "This rating goes back on the track"
-                        HoverHandler { id: ratingHover }
-                    }
-                    Label {
-                        visible: proposalRow.comment.length > 0
-                        text: "comment"
-                        color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                        // A Label is a Text and has no `hovered`; this is
-                        // the only place the whole comment can be read.
-                        ToolTip.visible: commentHover.hovered
-                        ToolTip.text: proposalRow.comment
-                        HoverHandler { id: commentHover }
-                    }
+                actionItems: [
                     Button {
                         objectName: "stageButton"
-                        text: proposalRow.staged ? "Staged" : "Stage"
+                        text: proposalRow.staged ? "Staged" : "Restore"
                         enabled: !editHost.writing
-                        checkable: false
                         onClicked: proposalRow.staged ? controller.unstage(proposalRow.index)
                                                       : controller.stage(proposalRow.index)
                         ToolTip.visible: hovered
-                        ToolTip.text: proposalRow.staged ? "Staged. Press again to take it back off the list."
-                                                         : "Add to this save. Nothing is written until you press Save."
+                        ToolTip.delay: 400
+                        ToolTip.text: proposalRow.staged
+                            ? "Staged. Press again to take it back off the list."
+                            : "Stage this track's metadata for restoring"
                     }
-                }
+                ]
             }
 
             Label {
@@ -335,13 +304,31 @@ Page {
                 color: Theme.textMuted
                 text: controller.storedTrackCount === 0
                     ? "Nothing is stored yet, so there is nothing to put back."
-                    : "Every track on this stick already has the cues the store holds for it."
+                    : "Every track on this stick already has everything the store holds for it."
             }
         }
-    }
 
-    SaveOverlayButton {
-        session: editHost.session
-        label: "Save to " + root.stickLabel
+        // Appears once something is ticked, and stages it. The write
+        // itself is the floating Restore button, which is the same save
+        // button every other editing page has and backs up before it
+        // touches a file.
+        RowLayout {
+            Layout.fillWidth: true
+            visible: controller.selectedCount > 0
+            spacing: Theme.rowSpacing
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "stageSelectedButton"
+                text: "Stage selected for restore"
+                highlighted: true
+                enabled: !editHost.writing
+                onClicked: controller.stageSelected()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: controller.allSelected
+                    ? "Restore metadata to the USB Stick"
+                    : "Restore selected metadata to the USB Stick"
+            }
+        }
     }
 }

@@ -644,7 +644,17 @@ ApplicationWindow {
 
     Component {
         id: metadataBackupPageComponent
-        MetadataBackupPage {}
+        MetadataBackupPage {
+            // The link in the page's first line. Pushed with this same
+            // stick, because "restore to any stick" starts with the one
+            // you are already looking at.
+            onMetadataRestoreRequested: stackView.push(metadataRestorePageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+                libraryId: libraryId,
+            })
+        }
     }
 
     Component {

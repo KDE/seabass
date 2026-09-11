@@ -4,6 +4,7 @@
 #include <QFutureWatcher>
 #include <QObject>
 #include <QQmlEngine>
+#include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -47,6 +48,8 @@ public:
         ArtworkUrlRole,
         StickLabelRole,
         UpdatedAtRole,
+        SelectedRole,
+        StagedForDeletionRole,
     };
 
     explicit StoredTrackListModel(QObject *parent = nullptr);
@@ -58,8 +61,34 @@ public:
     void reset(std::vector<infrastructure::local::StoredTrack> rows);
     void append(const std::vector<infrastructure::local::StoredTrack> &rows);
 
+    // ---- selection ----------------------------------------------------
+    // Kept by row id rather than by row number, so it survives the list
+    // growing a page and the list being rebuilt after a delete. A
+    // selection that silently moved to different tracks when more rows
+    // loaded would be the worst possible bug in a feature whose other
+    // button deletes things.
+    void setSelected(int row, bool selected);
+    void selectAllLoaded();
+    void clearSelection();
+    int selectedCount() const { return static_cast<int>(m_selected.size()); }
+    QList<qint64> selectedIds() const;
+    bool isSelected(qint64 trackId) const { return m_selected.contains(trackId); }
+
+    // ---- staged for deletion ------------------------------------------
+    void setStagedForDeletion(int row, bool staged);
+    void stageSelectedForDeletion();
+    void clearDeletionStaging();
+    int stagedForDeletionCount() const { return static_cast<int>(m_stagedForDeletion.size()); }
+    QList<qint64> stagedForDeletionIds() const;
+
+    qint64 trackIdAt(int row) const;
+
 private:
+    void emitRowChanged(int row, const QList<int> &roles);
+
     std::vector<infrastructure::local::StoredTrack> m_rows;
+    QSet<qint64> m_selected;
+    QSet<qint64> m_stagedForDeletion;
 };
 
 // What one backup run did. Built entirely on a worker thread.
@@ -105,6 +134,14 @@ class MetadataBackupController : public QObject
     Q_PROPERTY(QString storeLocation READ storeLocation CONSTANT)
     Q_PROPERTY(qint64 artworkBytes READ artworkBytes NOTIFY storeChanged)
     Q_PROPERTY(bool canLoadMore READ canLoadMore NOTIFY storeChanged)
+    Q_PROPERTY(int selectedCount READ selectedCount NOTIFY selectionChanged)
+    Q_PROPERTY(int loadedCount READ loadedCount NOTIFY storeChanged)
+    Q_PROPERTY(bool allLoadedSelected READ allLoadedSelected NOTIFY selectionChanged)
+    Q_PROPERTY(int stagedForDeletionCount READ stagedForDeletionCount NOTIFY selectionChanged)
+    // The merge rule as prose, straight from the domain function that
+    // implements it, so the help popup cannot describe a policy the
+    // program no longer follows.
+    Q_PROPERTY(QString mergeRuleHelp READ mergeRuleHelp CONSTANT)
 
 public:
     explicit MetadataBackupController(QObject *parent = nullptr);
@@ -123,13 +160,33 @@ public:
     QString storeLocation() const;
     qint64 artworkBytes() const { return m_artworkBytes; }
     bool canLoadMore() const { return m_browseModel.rowCount() < m_matchCount; }
+    int selectedCount() const { return m_browseModel.selectedCount(); }
+    int loadedCount() const { return m_browseModel.rowCount(); }
+    bool allLoadedSelected() const
+    {
+        return m_browseModel.rowCount() > 0 && m_browseModel.selectedCount() == m_browseModel.rowCount();
+    }
+    int stagedForDeletionCount() const { return m_browseModel.stagedForDeletionCount(); }
+    QString mergeRuleHelp() const;
 
     // libraryPath is any catalog directory on the stick (".../PIONEER",
     // ".../Engine Library"); every catalog on that stick is read,
     // whichever one the caller happened to have.
-    Q_INVOKABLE void backUp(const QString &libraryPath, const QString &libraryId, const QString &stickLabel,
-                             bool overwriteOnConflict);
+    Q_INVOKABLE void backUp(const QString &libraryPath, const QString &libraryId, const QString &stickLabel);
     Q_INVOKABLE void cancel();
+
+    // ---- selection and deletion ---------------------------------------
+    Q_INVOKABLE void setSelected(int row, bool selected);
+    Q_INVOKABLE void selectAll();
+    Q_INVOKABLE void selectNone();
+    // The per-row delete button: marks one row, nothing is removed yet.
+    Q_INVOKABLE void toggleStagedForDeletion(int row);
+    // The button under the list: everything ticked joins whatever the
+    // per-row buttons already marked.
+    Q_INVOKABLE void stageSelectedForDeletion();
+    // Actually deletes. Returns how many rows went, so the page can say
+    // so rather than guess from what it asked for.
+    Q_INVOKABLE int deleteStaged();
 
     // Replaces the browse list with the first page matching `text`.
     Q_INVOKABLE void search(const QString &text);
@@ -139,9 +196,16 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE QVariantList cuesFor(qint64 trackId);
     Q_INVOKABLE QStringList playlistsFor(qint64 trackId);
+    // Every cue on one line each, for the hover tooltip on a row's cue
+    // badge. Called on hover rather than per row: the browse list is
+    // paged precisely so that showing twenty rows costs twenty rows, and
+    // fetching every cue of every row to fill tooltips nobody opens
+    // would undo that.
+    Q_INVOKABLE QString cueSummaryFor(qint64 trackId);
 
 signals:
     void busyChanged();
+    void selectionChanged();
     void progressChanged();
     void currentPhaseChanged();
     void errorMessageChanged();

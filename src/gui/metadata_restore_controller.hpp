@@ -33,13 +33,18 @@ public:
         TitleRole = Qt::UserRole + 1,
         ArtistRole,
         FilenameRole,
+        RelativePathRole,  // where the stored copy last sat on a stick
+        DurationTextRole,
         CueCountRole,      // how many cues the write would leave on the track
         CuesAddedRole,     // how many of those are new
+        CueSummaryRole,    // every offered cue on a line, for the badge's tooltip
         FillsAGapRole,     // the track has no cues at all today
         ConflictRole,      // the track has cues and they differ
         RatingRole,        // the rating this restore would write, -1 for none
         CommentRole,       // the comment it would write, empty for none
+        StoredFromRole,    // the stick this copy was last backed up from
         StagedRole,
+        SelectedRole,
     };
 
     explicit RestoreProposalListModel(QObject *parent = nullptr);
@@ -54,9 +59,45 @@ public:
     void removeAt(int index);
     int indexOfStoredId(const std::string &storedId) const;
 
+    // Selection, parallel to staging and deliberately not the same
+    // thing: ticking a row says "this is one of the ones I mean", and
+    // staging says "this is going into the next save". The bulk button
+    // turns the first into the second.
+    //
+    // Select-all means every proposal, not every visible one. A search
+    // narrows what you are looking at; it must not silently narrow what
+    // a button labelled "Select All" acts on, because the difference is
+    // invisible the moment the search is cleared.
+    void setSelected(int index, bool selected);
+    void selectAll();
+    void clearSelection();
+    int selectedCount() const;
+    bool isSelected(int index) const;
+
+    // ---- the search --------------------------------------------------
+    // Filtered here rather than in the delegate. A ListView still lays
+    // out, spaces and counts a delegate that has hidden itself, so a
+    // search matching three of six hundred rows left hundreds of blank
+    // gaps to scroll through and a count that disagreed with the list.
+    //
+    // Every index above is an index into the full proposal list, not a
+    // row number: the filter must not renumber the things staging and
+    // undo hold on to. sourceIndexOfRow() is the one place the two
+    // numbering schemes meet.
+    void setFilter(const QString &text);
+    int sourceIndexOfRow(int row) const;
+    int rowOfSourceIndex(int sourceIndex) const;
+    int totalCount() const { return static_cast<int>(m_proposals.size()); }
+
 private:
+    void rebuildVisible();
+
     std::vector<domain::MetadataRestoreProposal> m_proposals;
-    std::vector<bool> m_staged;  // parallel to m_proposals
+    std::vector<bool> m_staged;    // parallel to m_proposals
+    std::vector<bool> m_selected;  // likewise
+    // Indices into m_proposals, in order, for the rows this model shows.
+    std::vector<int> m_visible;
+    QString m_filter;
 };
 
 struct MetadataRestoreTaskResult
@@ -64,7 +105,8 @@ struct MetadataRestoreTaskResult
     std::vector<domain::MetadataRestoreProposal> proposals;
     int stickTrackCount = 0;
     int storedTrackCount = 0;
-    int conflictCount = 0;  // tracks whose cues differ, whatever the policy did with them
+    int conflictCount = 0;  // tracks whose cues differ, whichever side the merge rule then chose
+    int conflictsLeftAlone = 0;  // and how many of those the stick kept
     QString errorMessage;
     bool cancelled = false;
 };
@@ -94,11 +136,19 @@ class MetadataRestoreController : public QObject
     Q_PROPERTY(int stickTrackCount READ stickTrackCount NOTIFY analysisChanged)
     Q_PROPERTY(int storedTrackCount READ storedTrackCount NOTIFY analysisChanged)
     Q_PROPERTY(int conflictCount READ conflictCount NOTIFY analysisChanged)
+    Q_PROPERTY(int conflictsLeftAlone READ conflictsLeftAlone NOTIFY analysisChanged)
     Q_PROPERTY(int stagedCount READ stagedCount NOTIFY analysisChanged)
     // Proposals offering a comment that DeviceLibrary alone cannot
     // store. Not a failure and not hidden: the page says so before the
     // save rather than the log saying so after it.
     Q_PROPERTY(int commentsRekordboxCannotTake READ commentsRekordboxCannotTake NOTIFY analysisChanged)
+    Q_PROPERTY(int selectedCount READ selectedCount NOTIFY analysisChanged)
+    Q_PROPERTY(int proposalCount READ proposalCount NOTIFY analysisChanged)
+    Q_PROPERTY(bool allSelected READ allSelected NOTIFY analysisChanged)
+    // The merge rule as prose, from the domain function that implements
+    // it, so this page's help and the backup page's say the same thing
+    // because they are the same string.
+    Q_PROPERTY(QString mergeRuleHelp READ mergeRuleHelp CONSTANT)
 
 public:
     explicit MetadataRestoreController(QObject *parent = nullptr);
@@ -115,20 +165,39 @@ public:
     int stickTrackCount() const { return m_stickTrackCount; }
     int storedTrackCount() const { return m_storedTrackCount; }
     int conflictCount() const { return m_conflictCount; }
+    int conflictsLeftAlone() const { return m_conflictsLeftAlone; }
     int stagedCount() const { return static_cast<int>(m_stagedByStoredId.size()); }
     int commentsRekordboxCannotTake() const { return m_commentsRekordboxCannotTake; }
+    int selectedCount() const { return m_model.selectedCount(); }
+    int proposalCount() const { return static_cast<int>(m_model.proposals().size()); }
+    bool allSelected() const { return proposalCount() > 0 && selectedCount() == proposalCount(); }
+    QString mergeRuleHelp() const;
 
     // libraryPath is any catalog directory on the stick; every catalog
     // on it is read and folded into files first, so one proposal covers
     // a track however many formats list it.
-    Q_INVOKABLE void scan(const QString &libraryPath, bool overwriteConflicts);
+    //
+    // No policy argument: what a restore offers is decided per field by
+    // the shared merge rule, the same one the backup direction uses.
+    Q_INVOKABLE void scan(const QString &libraryPath);
     Q_INVOKABLE void cancelScan();
-    Q_INVOKABLE void stage(int index);
+    // Every index a page passes is a ListView row, which is not a
+    // proposal index whenever a search is narrowing the list. The
+    // translation happens here, at the one boundary where QML and the
+    // proposal list meet, rather than being something each call site has
+    // to remember.
+    Q_INVOKABLE void stage(int row);
+    Q_INVOKABLE void unstage(int row);
+    Q_INVOKABLE void setSelected(int row, bool selected);
+    Q_INVOKABLE void search(const QString &text);
+    Q_INVOKABLE void selectAll();
+    Q_INVOKABLE void selectNone();
+    // Stages every ticked row. The button under the list, and the reason
+    // selection and staging are kept apart.
+    Q_INVOKABLE void stageSelected();
     // stage(), plus what the save is expected to write in total -- see
     // RestoreMetadataChange's own itemCountHint.
     void stageOne(int index, int itemCountHint);
-    Q_INVOKABLE void stageAll();
-    Q_INVOKABLE void unstage(int index);
 
 signals:
     void busyChanged();
@@ -167,6 +236,7 @@ private:
     int m_stickTrackCount = 0;
     int m_storedTrackCount = 0;
     int m_conflictCount = 0;
+    int m_conflictsLeftAlone = 0;
     int m_commentsRekordboxCannotTake = 0;
     QString m_currentPhase;
     QString m_errorMessage;

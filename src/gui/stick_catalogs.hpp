@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -53,6 +54,21 @@ struct StickCatalogRead
 // a superset on this one stick; nothing guarantees that on the next.
 StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, application::ProgressReporter &progress,
                                         const application::CancellationToken &cancel);
+
+// When this stick's catalogs were last written, in seconds since the
+// epoch, newest wins; 0 when none of them can be read.
+//
+// The one date a stick can offer about the DJ's own work. Cues, ratings
+// and comments live in the catalog databases, so editing any of them
+// rewrites the file this reads -- which makes its mtime a real answer to
+// "has this stick been worked on since?", the question the last step of
+// domain::metadata_merge's rule asks. Per stick rather than per track,
+// because nothing finer exists to read.
+//
+// Newest of the catalogs present, not oldest: a DJ who cues in Engine
+// leaves export.pdb untouched for months, and taking the older date
+// would date their work to the last time some other program wrote.
+std::int64_t catalogsLastModified(const std::string &libraryPath);
 
 
 }  // namespace seabass::gui

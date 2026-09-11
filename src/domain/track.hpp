@@ -162,6 +162,20 @@ struct Track
     // depending on which format it came from.
     std::optional<int> playCount;
     std::optional<std::chrono::system_clock::time_point> lastPlayedAt;
+
+    // When the authored fields above were last written, in seconds since
+    // the epoch, 0 when the source cannot say.
+    //
+    // The last step of domain::metadata_merge's rule needs to know which
+    // of two disagreeing copies is the more recent, and no catalog
+    // records a per-track edit time. What a source can offer is the
+    // granularity it actually has: the local metadata store knows
+    // exactly, per row, because it wrote the row; a stick knows only
+    // when its catalog files were last written, which is per stick.
+    // Coarse but honest beats precise and invented. 0 never wins a
+    // comparison, so a source that does not set this cannot overwrite
+    // anything on the strength of a date it does not have.
+    std::int64_t metadataModifiedAt = 0;
 };
 
 }  // namespace seabass::domain

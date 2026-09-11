@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -8,21 +9,6 @@
 
 namespace seabass::domain
 {
-
-// What to do where the stick and the local metadata store disagree about
-// something the DJ authored.
-//
-// Default skip, and the asymmetry with the backup direction is
-// deliberate: a stick may have been re-cued since the backup was taken,
-// and a restore that silently replaced last night's work with last
-// month's would be the worst thing this feature could do.
-//
-// A field the stick does not have is never a conflict. Filling a blank
-// is the whole point, and it happens under both policies.
-enum class MetadataRestorePolicy {
-    SkipConflicts,
-    OverwriteConflicts,
-};
 
 // One stick track and what the store has to offer it.
 //
@@ -39,8 +25,11 @@ struct MetadataRestoreProposal
     // drops what is already there.
     std::vector<CuePoint> cues;
     bool cuesOffered = false;
-    // The stick already has cues and they are not the stored ones. Only
-    // offered under OverwriteConflicts.
+    // The stick already has cues and they are not the stored ones.
+    // Whether the offer was made anyway is cuesOffered: the merge rule
+    // decides, and a conflict the stored side won is both a conflict and
+    // an offer. Kept apart so the row can say "replaces 4" rather than
+    // presenting a replacement as a gap being filled.
     bool cuesConflict = false;
     // The headline case: the stick has no cues at all for this track and
     // the store has some. Unambiguous, and what a re-export leaves
@@ -64,15 +53,24 @@ struct MetadataRestoreProposal
 // restore would put back.
 //
 // Matching is domain::matchTracks() unchanged: artist and title, falling
-// back to filename, guarded by length. The stored side carries
-// stick-relative paths and the stick side absolute ones, so the path
-// branch never fires and never needs to -- two spellings of one path
-// were never going to agree across a rebuilt stick anyway.
+// back to filename, guarded by length. Neither side carries a filePath
+// the other could match -- MetadataStore::readAll leaves it empty on
+// purpose -- so the path branch never fires and never should. The store
+// outlives the stick it was filled from, which is exactly the case a
+// path cannot survive: a re-export renames folders and a track bought
+// again lands somewhere else entirely, while artist and title travel
+// with the recording.
+//
+// What is offered is decided per field by the shared merge rule
+// (domain/metadata_merge.hpp), the same one the backup direction uses,
+// with the two sides swapped. `stickModifiedAt` is when this stick's
+// catalogs were last written, in seconds since the epoch (0 if unknown);
+// the stored side brings its own Track::metadataModifiedAt.
 //
 // Returns only proposals that offer something. A track already carrying
 // everything the store has is not a decision anyone needs to make.
 std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track> &stickTracks,
                                                           const std::vector<Track> &storedTracks,
-                                                          MetadataRestorePolicy policy);
+                                                          std::int64_t stickModifiedAt);
 
 }  // namespace seabass::domain

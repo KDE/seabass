@@ -2,10 +2,13 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <algorithm>
 #include <exception>
 #include <memory>
+#include <stdexcept>
 
 #include "application/use_cases/collapse_catalog_rows.hpp"
+#include "domain/metadata_merge.hpp"
 #include "gui/edit/changes/restore_metadata_change.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -16,7 +19,6 @@
 namespace seabass::gui
 {
 
-using domain::MetadataRestorePolicy;
 using domain::MetadataRestoreProposal;
 using infrastructure::local::MetadataStore;
 
@@ -24,6 +26,42 @@ namespace
 {
 
 namespace fs = std::filesystem;
+
+// Same spelling the backup page's list uses, so one track reads the same
+// on both pages.
+QString proposalDurationText(double seconds)
+{
+    if (seconds <= 0.0) {
+        return QStringLiteral("--:--");
+    }
+    const int total = static_cast<int>(seconds + 0.5);
+    return QStringLiteral("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QLatin1Char('0'));
+}
+
+// Every cue on a line, for the hover tooltip on a row's cue badge. Built
+// from the proposal's own list, which is already in memory, so this
+// costs nothing the scan did not already pay for.
+QString cueSummaryOf(const std::vector<domain::CuePoint> &cues)
+{
+    if (cues.empty()) {
+        return {};
+    }
+    QStringList lines;
+    for (const auto &cue : cues) {
+        QString line = cue.kind == domain::CuePoint::Kind::Hot
+            ? QStringLiteral("Hot cue %1").arg(cue.hotCueNumber)
+            : QStringLiteral("Memory cue");
+        line += QStringLiteral(" at ") + proposalDurationText(cue.positionMs / 1000.0);
+        if (cue.isLoop) {
+            line += QStringLiteral(" (loop)");
+        }
+        if (!cue.comment.empty()) {
+            line += QStringLiteral(": ") + QString::fromStdString(cue.comment);
+        }
+        lines << line;
+    }
+    return lines.join(QLatin1Char('\n'));
+}
 
 // The catalog directory for one format on the stick that `libraryPath`
 // belongs to.
@@ -47,8 +85,7 @@ QString catalogPathForFormat(const QString &libraryPath, const std::string &form
 }
 
 // Runs entirely on a background thread -- no access to the controller.
-MetadataRestoreTaskResult runScanTask(QString libraryPath, bool overwriteConflicts,
-                                       std::shared_ptr<QtProgressReporter> reporter,
+MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtProgressReporter> reporter,
                                        application::CancellationToken cancel)
 {
     MetadataRestoreTaskResult result;
@@ -74,6 +111,10 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, bool overwriteConflic
         reporter->start("Reading the metadata store", 0);
         MetadataStore store;
         const auto storedTracks = store.readAll();
+        // For display only, and fetched here rather than carried on
+        // domain::Track so nothing in the matching or merging can reach
+        // for it.
+        const auto stickLabels = store.stickLabelsByTrackId();
         reporter->finish();
         result.storedTrackCount = static_cast<int>(storedTracks.size());
 
@@ -82,18 +123,35 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, bool overwriteConflic
             return result;
         }
 
-        result.proposals = domain::planMetadataRestore(
-            stickTracks, storedTracks,
-            overwriteConflicts ? MetadataRestorePolicy::OverwriteConflicts : MetadataRestorePolicy::SkipConflicts);
+        // When this stick's catalogs were last written. The merge rule
+        // consults it only where nothing else separates two copies, but
+        // where it does the answer turns on it, so it is read from the
+        // files rather than assumed.
+        result.proposals =
+            domain::planMetadataRestore(stickTracks, storedTracks, catalogsLastModified(libraryPath.toStdString()));
 
-        // Counted from a plan that keeps conflicts, so the number is the
-        // same under both policies and the page can say "N of these were
-        // left alone" without rescanning.
-        const auto everything = domain::planMetadataRestore(stickTracks, storedTracks,
-                                                             MetadataRestorePolicy::OverwriteConflicts);
-        for (const auto &proposal : everything) {
+        // Tracks whose cues genuinely differ from the stored ones,
+        // whichever side the rule then chose. The page says how many
+        // there were and how many it left alone, and both numbers come
+        // from this one pass.
+        for (auto &proposal : result.proposals) {
             if (proposal.cuesConflict) {
                 result.conflictCount++;
+                if (!proposal.cuesOffered) {
+                    result.conflictsLeftAlone++;
+                }
+            }
+            // storedId is the row id as text, which is how the store
+            // spells it on a domain::Track; stoll is safe on anything
+            // readAll() produced and guarded for anything that was not.
+            try {
+                const auto found = stickLabels.find(std::stoll(proposal.storedId));
+                if (found != stickLabels.end()) {
+                    proposal.storedFrom = found->second;
+                }
+            } catch (const std::exception &) {
+                // No label, so the row simply does not say where it came
+                // from. Not worth failing a scan over.
             }
         }
     } catch (const application::OperationCancelled &) {
@@ -112,25 +170,37 @@ RestoreProposalListModel::RestoreProposalListModel(QObject *parent) : QAbstractL
 
 int RestoreProposalListModel::rowCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : static_cast<int>(m_proposals.size());
+    return parent.isValid() ? 0 : static_cast<int>(m_visible.size());
 }
 
 QHash<int, QByteArray> RestoreProposalListModel::roleNames() const
 {
     return {
-        {TitleRole, "title"},         {ArtistRole, "artist"},   {FilenameRole, "filename"},
-        {CueCountRole, "cueCount"},   {CuesAddedRole, "cuesAdded"}, {FillsAGapRole, "fillsAGap"},
-        {ConflictRole, "conflict"},   {StagedRole, "staged"},
-        {RatingRole, "rating"},       {CommentRole, "comment"},
+        {TitleRole, "title"},
+        {ArtistRole, "artist"},
+        {FilenameRole, "filename"},
+        {RelativePathRole, "relativePath"},
+        {DurationTextRole, "durationText"},
+        {CueCountRole, "cueCount"},
+        {CuesAddedRole, "cuesAdded"},
+        {CueSummaryRole, "cueSummary"},
+        {FillsAGapRole, "fillsAGap"},
+        {ConflictRole, "conflict"},
+        {RatingRole, "rating"},
+        {CommentRole, "comment"},
+        {StoredFromRole, "storedFrom"},
+        {StagedRole, "staged"},
+        {SelectedRole, "selected"},
     };
 }
 
 QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) const
 {
-    if (index.row() < 0 || index.row() >= static_cast<int>(m_proposals.size())) {
+    const int source = sourceIndexOfRow(index.row());
+    if (source < 0) {
         return {};
     }
-    const auto &proposal = m_proposals[static_cast<std::size_t>(index.row())];
+    const auto &proposal = m_proposals[static_cast<std::size_t>(source)];
     switch (role) {
     case TitleRole:
         return QString::fromStdString(proposal.stickTrack.title);
@@ -138,6 +208,16 @@ QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) cons
         return QString::fromStdString(proposal.stickTrack.artist);
     case FilenameRole:
         return QString::fromStdString(proposal.stickTrack.filename);
+    case RelativePathRole:
+        return QString::fromStdString(proposal.stickTrack.filePath);
+    case DurationTextRole:
+        return proposalDurationText(proposal.stickTrack.durationSeconds);
+    case CueSummaryRole:
+        return cueSummaryOf(proposal.cues);
+    case StoredFromRole:
+        return QString::fromStdString(proposal.storedFrom);
+    case SelectedRole:
+        return m_selected[static_cast<std::size_t>(source)];
     case CueCountRole:
         return static_cast<int>(proposal.cues.size());
     case CuesAddedRole:
@@ -153,7 +233,7 @@ QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) cons
     case CommentRole:
         return proposal.commentOffered ? QString::fromStdString(proposal.comment) : QString();
     case StagedRole:
-        return m_staged[static_cast<std::size_t>(index.row())];
+        return m_staged[static_cast<std::size_t>(source)];
     default:
         return {};
     }
@@ -164,7 +244,61 @@ void RestoreProposalListModel::setProposals(std::vector<MetadataRestoreProposal>
     beginResetModel();
     m_proposals = std::move(proposals);
     m_staged.assign(m_proposals.size(), false);
+    m_selected.assign(m_proposals.size(), false);
+    rebuildVisible();
     endResetModel();
+}
+
+void RestoreProposalListModel::rebuildVisible()
+{
+    m_visible.clear();
+    m_visible.reserve(m_proposals.size());
+    const QString needle = m_filter.trimmed().toLower();
+    for (std::size_t i = 0; i < m_proposals.size(); ++i) {
+        if (needle.isEmpty()) {
+            m_visible.push_back(static_cast<int>(i));
+            continue;
+        }
+        const auto &track = m_proposals[i].stickTrack;
+        // The same three fields the browse list searches, so one search
+        // term means the same thing on both pages.
+        const QString haystack = (QString::fromStdString(track.title) + QLatin1Char('\n')
+                                  + QString::fromStdString(track.artist) + QLatin1Char('\n')
+                                  + QString::fromStdString(track.filename))
+                                     .toLower();
+        if (haystack.contains(needle)) {
+            m_visible.push_back(static_cast<int>(i));
+        }
+    }
+}
+
+void RestoreProposalListModel::setFilter(const QString &text)
+{
+    if (m_filter == text) {
+        return;
+    }
+    beginResetModel();
+    m_filter = text;
+    rebuildVisible();
+    endResetModel();
+}
+
+int RestoreProposalListModel::sourceIndexOfRow(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(m_visible.size())) {
+        return -1;
+    }
+    return m_visible[static_cast<std::size_t>(row)];
+}
+
+int RestoreProposalListModel::rowOfSourceIndex(int sourceIndex) const
+{
+    for (std::size_t row = 0; row < m_visible.size(); ++row) {
+        if (m_visible[row] == sourceIndex) {
+            return static_cast<int>(row);
+        }
+    }
+    return -1;
 }
 
 void RestoreProposalListModel::setStaged(int index, bool staged)
@@ -173,7 +307,13 @@ void RestoreProposalListModel::setStaged(int index, bool staged)
         return;
     }
     m_staged[static_cast<std::size_t>(index)] = staged;
-    emit dataChanged(this->index(index), this->index(index), {StagedRole});
+    // Nothing to repaint when the row is filtered out, but the flag
+    // still has to be set: the search is a view of the list, not a
+    // different list.
+    const int row = rowOfSourceIndex(index);
+    if (row >= 0) {
+        emit dataChanged(this->index(row), this->index(row), {StagedRole});
+    }
 }
 
 void RestoreProposalListModel::removeAt(int index)
@@ -181,10 +321,62 @@ void RestoreProposalListModel::removeAt(int index)
     if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
         return;
     }
-    beginRemoveRows(QModelIndex(), index, index);
+    // A reset rather than beginRemoveRows: removing one proposal
+    // renumbers every visible index after it, and the mapping is what
+    // this model is for.
+    beginResetModel();
     m_proposals.erase(m_proposals.begin() + index);
     m_staged.erase(m_staged.begin() + index);
-    endRemoveRows();
+    m_selected.erase(m_selected.begin() + index);
+    rebuildVisible();
+    endResetModel();
+}
+
+void RestoreProposalListModel::setSelected(int index, bool selected)
+{
+    if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
+        return;
+    }
+    m_selected[static_cast<std::size_t>(index)] = selected;
+    const int row = rowOfSourceIndex(index);
+    if (row >= 0) {
+        emit dataChanged(this->index(row), this->index(row), {SelectedRole});
+    }
+}
+
+void RestoreProposalListModel::selectAll()
+{
+    if (m_proposals.empty()) {
+        return;
+    }
+    m_selected.assign(m_proposals.size(), true);
+    if (!m_visible.empty()) {
+        emit dataChanged(index(0), index(static_cast<int>(m_visible.size()) - 1), {SelectedRole});
+    }
+}
+
+void RestoreProposalListModel::clearSelection()
+{
+    if (m_proposals.empty()) {
+        return;
+    }
+    m_selected.assign(m_proposals.size(), false);
+    if (!m_visible.empty()) {
+        emit dataChanged(index(0), index(static_cast<int>(m_visible.size()) - 1), {SelectedRole});
+    }
+}
+
+int RestoreProposalListModel::selectedCount() const
+{
+    return static_cast<int>(std::count(m_selected.begin(), m_selected.end(), true));
+}
+
+bool RestoreProposalListModel::isSelected(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(m_selected.size())) {
+        return false;
+    }
+    return m_selected[static_cast<std::size_t>(index)];
 }
 
 int RestoreProposalListModel::indexOfStoredId(const std::string &storedId) const
@@ -218,7 +410,7 @@ bool MetadataRestoreController::writing() const
     return m_session && m_session->state() == QStringLiteral("writing");
 }
 
-void MetadataRestoreController::scan(const QString &libraryPath, bool overwriteConflicts)
+void MetadataRestoreController::scan(const QString &libraryPath)
 {
     if (m_busy) {
         return;
@@ -231,8 +423,7 @@ void MetadataRestoreController::scan(const QString &libraryPath, bool overwriteC
     setCurrentPhase(QStringLiteral("Reading this stick"));
     m_cancel = application::CancellationToken();
     setBusy(true);
-    m_watcher.setFuture(
-        QtConcurrent::run(runScanTask, libraryPath, overwriteConflicts, makeReporter(), m_cancel));
+    m_watcher.setFuture(QtConcurrent::run(runScanTask, libraryPath, makeReporter(), m_cancel));
 }
 
 void MetadataRestoreController::cancelScan()
@@ -257,6 +448,7 @@ void MetadataRestoreController::onScanFinished()
     m_stickTrackCount = result.stickTrackCount;
     m_storedTrackCount = result.storedTrackCount;
     m_conflictCount = result.conflictCount;
+    m_conflictsLeftAlone = result.conflictsLeftAlone;
     // A comment can only be written where a format can grow one, and
     // export.pdb cannot (tests/pdb_rating_write_test.cpp). A track that
     // rekordbox alone catalogues therefore gets its rating back and not
@@ -326,8 +518,18 @@ void MetadataRestoreController::attachSession()
     });
 }
 
-void MetadataRestoreController::stage(int index)
+void MetadataRestoreController::search(const QString &text)
 {
+    m_model.setFilter(text);
+    emit analysisChanged();
+}
+
+void MetadataRestoreController::stage(int row)
+{
+    const int index = m_model.sourceIndexOfRow(row);
+    if (index < 0) {
+        return;
+    }
     // One track staged on its own is one track's worth of writing, and
     // saying otherwise is not the safe direction.
     //
@@ -338,15 +540,15 @@ void MetadataRestoreController::stage(int index)
     // entire m.db to scratch and durably copy it back for one row
     // update, and a whole-file replace can lose the database in a way a
     // page-level write cannot. Staging four hundred tracks one at a time
-    // therefore does not earn the scratch copy. Stage All, which is how
-    // that is actually done, passes the real count and does.
+    // therefore does not earn the scratch copy. Staging a selection,
+    // which is how that is actually done, passes the real count and does.
     stageOne(index, 1);
 }
 
 // itemCountHint is what the save is expected to write in total, which
 // decides whether the catalog is worth copying to local scratch first.
-// Stage All knows that number; a single Stage does not, and does not
-// need to.
+// stageSelected() knows that number; a single row's button does not, and
+// does not need to.
 void MetadataRestoreController::stageOne(int index, int itemCountHint)
 {
     const auto &proposals = m_model.proposals();
@@ -405,38 +607,82 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
     emit analysisChanged();
 }
 
-void MetadataRestoreController::stageAll()
+QString MetadataRestoreController::mergeRuleHelp() const
+{
+    return QString::fromStdString(domain::mergeRuleExplanation());
+}
+
+void MetadataRestoreController::setSelected(int row, bool selected)
+{
+    m_model.setSelected(m_model.sourceIndexOfRow(row), selected);
+    emit analysisChanged();
+}
+
+void MetadataRestoreController::selectAll()
+{
+    m_model.selectAll();
+    emit analysisChanged();
+}
+
+void MetadataRestoreController::selectNone()
+{
+    m_model.clearSelection();
+    emit analysisChanged();
+}
+
+void MetadataRestoreController::stageSelected()
 {
     if (writing()) {
         emit actionFeedback(QStringLiteral("A save is running. Stage more once it has finished."), true);
         return;
     }
-    const int count = static_cast<int>(m_model.proposals().size());
+    const int count = proposalCount();
+    const auto &proposals = m_model.proposals();
+    // The real number about to be staged, which is what decides whether
+    // the save copies a catalog to local scratch first. Counted before
+    // staging anything, because staging removes nothing from the list
+    // but does change what a later pass would count.
+    //
+    // Every selected proposal, not every selected visible one: a search
+    // narrows what is on screen and must not narrow what a selection
+    // made before it means.
+    int toStage = 0;
+    for (int i = 0; i < count; ++i) {
+        if (m_model.isSelected(i) && !m_stagedByStoredId.count(proposals[static_cast<std::size_t>(i)].storedId)) {
+            toStage++;
+        }
+    }
+    if (toStage == 0) {
+        return;
+    }
+
     int staged = 0;
     for (int i = 0; i < count; ++i) {
-        if (m_stagedByStoredId.count(m_model.proposals()[static_cast<std::size_t>(i)].storedId)) {
+        if (!m_model.isSelected(i)) {
             continue;
         }
-        // Every remaining proposal is about to be staged, so this is
-        // the same upper bound arrived at exactly.
-        stageOne(i, count);
+        if (m_stagedByStoredId.count(proposals[static_cast<std::size_t>(i)].storedId)) {
+            continue;
+        }
+        stageOne(i, toStage);
         if (m_session && !m_session->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
         }
         staged++;
     }
     if (staged > 0) {
-        emit actionFeedback(QStringLiteral("Staged %1 track(s). Press Save to write them to the stick.").arg(staged),
+        emit actionFeedback(QStringLiteral("Staged %1 track(s). Press Restore to write them to the stick.").arg(staged),
                             false);
     }
 }
 
-void MetadataRestoreController::unstage(int index)
+void MetadataRestoreController::unstage(int row)
 {
-    const auto &proposals = m_model.proposals();
-    if (index < 0 || static_cast<std::size_t>(index) >= proposals.size()) {
+    const int index = m_model.sourceIndexOfRow(row);
+    if (index < 0) {
         return;
     }
+    const auto &proposals = m_model.proposals();
     auto it = m_stagedByStoredId.find(proposals[static_cast<std::size_t>(index)].storedId);
     if (it == m_stagedByStoredId.end()) {
         return;

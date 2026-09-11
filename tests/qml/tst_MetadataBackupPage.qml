@@ -5,12 +5,11 @@ import SeabassGui
 // Metadata Backup's page, checked for the claims it makes rather than
 // for its layout.
 //
-// Two of them are the ones that would matter if they were wrong. The
-// page promises the stick is not touched, so it has to say where it
-// writes instead; and the conflict choice decides which copy of a DJ's
-// cues survives, so its default has to be the one the plan argues for
-// (docs/metadata-backup-plan.md), not whichever radio button happens to
-// be first in the file.
+// The one that would matter most if it were wrong: the page promises the
+// stick is not touched, so it has to say where it writes instead. The
+// rest guard the controls that can lose data -- a delete that is staged
+// rather than done, and a selection that cannot outlive the rows it was
+// made on.
 //
 // Also saves a screenshot when SEABASS_SCREENSHOT_DIR is set.
 TestCase {
@@ -43,24 +42,28 @@ TestCase {
         return page;
     }
 
-    function test_defaultsToTakingTheSticksVersion() {
+    function test_thereIsNoConflictQuestionToGetWrong() {
         var page = make();
-        // The stick is where the DJ works, so a cue set there since the
-        // last backup is the newer truth. Flipping this default would
-        // quietly preserve stale cues on every run.
-        verify(page.overwriteOnConflict, "the default must be to take the stick's version");
-        var overwrite = findChild(page, "overwriteRadio");
-        var keep = findChild(page, "keepStoredRadio");
-        verify(overwrite && overwrite.checked, "the overwrite radio must show as chosen");
-        verify(keep && !keep.checked, "the keep-stored radio must not");
+        // The pair of radio buttons that used to ask "take the stick's
+        // version or keep what is stored?" is gone, and this is the
+        // guard that it stays gone. The question was unanswerable: one
+        // answer covers 1500 tracks, the stick is newer for some of them
+        // and the store for others, and the machine can see which copy
+        // holds more work while the person cannot. The rule that
+        // replaced it is domain::metadata_merge.
+        verify(!findChild(page, "overwriteRadio"), "the overwrite radio must be gone");
+        verify(!findChild(page, "keepStoredRadio"), "the keep-stored radio must be gone");
     }
 
-    function test_choosingKeepStoredSticks() {
+    function test_theRuleIsExplainedWhereTheQuestionUsedToBe() {
+        // Taking a question away only works if the page says what it
+        // does instead. The help text comes from the domain function
+        // that implements the rule, so the two cannot drift apart.
         var page = make();
-        var keep = findChild(page, "keepStoredRadio");
-        keep.toggle();
-        keep.toggled();
-        verify(!page.overwriteOnConflict, "picking keep-stored must reach the page");
+        verify(page.children.length > 0, "page did not build");
+        var help = findChild(page, "backUpNowButton");
+        verify(help, "the Add button must exist");
+        compare(help.text, "Add", "the button that fills the backup is called Add");
     }
 
     function test_saysWhereItWritesInstead() {
@@ -90,8 +93,38 @@ TestCase {
     function test_backUpNeedsAStick() {
         var page = make({stickLabel: "", rekordboxPath: "", enginePath: ""});
         var button = findChild(page, "backUpNowButton");
-        verify(button, "Back Up Now must exist");
-        verify(!button.enabled, "Back Up Now must be off with no stick to read");
+        verify(button, "the Add button must exist");
+        verify(!button.enabled, "Add must be off with no stick to read");
+    }
+
+    function test_deletingIsStagedAndConfirmed() {
+        // The only destructive thing this page can do. The backup may be
+        // the last copy of cues a reformatted stick no longer has, so a
+        // single click must not be able to reach the database: the row
+        // button stages, a second button acts on what is staged, and a
+        // dialog stands between that and the delete.
+        var page = make();
+        var deleteButton = findChild(page, "deleteStagedButton");
+        // Nothing staged on an empty list, so the button is not offered
+        // at all rather than offered and inert.
+        verify(!deleteButton || !deleteButton.visible, "Delete must not be offered with nothing staged");
+        verify(findChild(page, "confirmDeleteDialog"), "a confirmation dialog must exist");
+    }
+
+    function test_theListHasASearchAndASelection() {
+        var page = make();
+        var toolbar = findChild(page, "browseToolbar");
+        verify(toolbar, "the list toolbar must exist");
+        verify(findChild(toolbar, "selectAllButton"), "Select All must exist");
+        verify(findChild(toolbar, "selectNoneButton"), "Select None must exist");
+        verify(findChild(toolbar, "searchField"), "the search field must exist");
+        // The clear button appears with the text rather than sitting
+        // there permanently as a control that does nothing.
+        var clear = findChild(toolbar, "clearSearchButton");
+        verify(clear, "the clear button must exist");
+        verify(!clear.visible, "and must be hidden while the search is empty");
+        toolbar.searchText = "anything";
+        verify(clear.visible, "and shown once there is something to clear");
     }
 
     function test_emptyStoreNamesTheActionThatFillsIt() {
@@ -120,8 +153,7 @@ TestCase {
                 if (child.text === "Home" && child.width < 120) {
                     crumbText = child;
                 }
-                if (child.text !== undefined && typeof child.text === "string"
-                        && child.text.indexOf("The cues, ratings") === 0) {
+                if (child.objectName === "pageIntro") {
                     bodyText = child;
                 }
                 walk(child);
@@ -145,5 +177,41 @@ TestCase {
         wait(100);
         var image = grabImage(page);
         image.save(screenshotDir + "/MetadataBackupPage.png");
+    }
+
+    // The states a default screenshot cannot show, and the ones most
+    // likely to be wrong: a row opened, a row struck through and dimmed
+    // because it is staged to go, and the bar under the list that only
+    // exists once something is selected. Rendered rather than reasoned
+    // about, because every layout bug in this page so far has been
+    // invisible in the source and obvious in a picture.
+    function test_screenshot_expandedAndStaged() {
+        if (!screenshotDir) {
+            skip("SEABASS_SCREENSHOT_DIR not set");
+        }
+        var page = make();
+        var list = findChild(page, "storedTrackList");
+        verify(list, "the stored track list must exist");
+        if (list.count === 0) {
+            skip("no stored tracks in this run's metadata store");
+        }
+        // Row 0 open, row 1 on its way out, row 2 merely ticked.
+        page.expandedTrackId = 1;
+        var controller = null;
+        for (var i = 0; i < 3 && i < list.count; ++i) {
+            var row = list.itemAtIndex(i);
+            if (!row) {
+                continue;
+            }
+            if (i === 1) {
+                row.actionItems[0].clicked();
+            }
+            if (i === 2) {
+                row.selectionToggled(true);
+            }
+        }
+        wait(200);
+        var image = grabImage(page);
+        image.save(screenshotDir + "/MetadataBackupPage-expanded.png");
     }
 }

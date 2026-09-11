@@ -2,9 +2,10 @@ import QtQuick
 import QtTest
 import SeabassGui
 
-// Restore Metadata's page. Its default is the one claim on it that could
-// do real damage if it were wrong: this page writes to the stick, and
-// the store may be older than what is on there.
+// Restore Metadata's page. This is the half of the feature that writes
+// to a stick, so what is guarded here is that nothing reaches one by
+// accident: staging is a separate act from saving, and the button that
+// does the writing says so.
 //
 // Also saves a screenshot when SEABASS_SCREENSHOT_DIR is set.
 TestCase {
@@ -34,26 +35,49 @@ TestCase {
         return page;
     }
 
-    function test_defaultsToKeepingWhatIsOnTheStick() {
+    function test_thereIsNoConflictQuestionToGetWrong() {
+        // The pair of radio buttons that used to ask whether to keep the
+        // stick's cues or replace them from the store is gone, in favour
+        // of one rule applied per field: a blank is filled, more cues
+        // wins, otherwise the later edit wins. This is the guard that
+        // the question does not come back.
         var page = make();
-        // The opposite default from Metadata Backup, deliberately. A
-        // stick may have been re-cued since the store was filled, and
-        // replacing last night's work with last month's is the worst
-        // thing this page could do.
-        verify(!page.overwriteConflicts, "the default must be to keep the stick's cues");
-        var keep = findChild(page, "keepStickRadio");
-        var replace = findChild(page, "replaceFromStoreRadio");
-        verify(keep && keep.checked, "the keep radio must show as chosen");
-        verify(replace && !replace.checked, "the replace radio must not");
+        verify(!findChild(page, "keepStickRadio"), "the keep radio must be gone");
+        verify(!findChild(page, "replaceFromStoreRadio"), "the replace radio must be gone");
     }
 
-    function test_stageAllIsOffWithNothingToStage() {
+    function test_theSaveButtonSaysRestore() {
+        // The page's one write. Everywhere else in Seabass this button
+        // says "Save", which is right on a page you have been editing;
+        // here the whole page is a single verb and the button is the
+        // moment it happens.
         var page = make();
-        var button = findChild(page, "stageAllButton");
-        verify(button, "Stage All must exist");
+        var host = findChild(page, "saveOverlay");
+        verify(host, "the floating save button must exist");
+        compare(host.label, "Restore", "and must say what it does");
+    }
+
+    function test_bulkStagingIsOffWithNothingSelected() {
+        var page = make();
+        var button = findChild(page, "stageSelectedButton");
         // Nothing scanned against a stick that is not there, so there is
-        // nothing on the list and the button must not invite a press.
-        verify(!button.enabled, "Stage All must be off with an empty list");
+        // nothing to select and the button is not offered at all rather
+        // than offered and inert.
+        verify(!button || !button.visible, "bulk staging must not be offered with an empty list");
+    }
+
+    function test_theListHasASearchAndASelection() {
+        var page = make();
+        var toolbar = findChild(page, "proposalToolbar");
+        verify(toolbar, "the list toolbar must exist");
+        verify(findChild(toolbar, "selectAllButton"), "Select All must exist");
+        verify(findChild(toolbar, "selectNoneButton"), "Select None must exist");
+        verify(findChild(toolbar, "searchField"), "the search field must exist");
+        var clear = findChild(toolbar, "clearSearchButton");
+        verify(clear, "the clear button must exist");
+        verify(!clear.visible, "and must be hidden while the search is empty");
+        toolbar.searchText = "anything";
+        verify(clear.visible, "and shown once there is something to clear");
     }
 
     function test_headerTextLinesUpWithTheBody() {
@@ -66,8 +90,7 @@ TestCase {
                 if (child.text === "Home" && child.width < 120) {
                     crumbText = child;
                 }
-                if (child.text !== undefined && typeof child.text === "string"
-                        && child.text.indexOf("Tracks on ") === 0) {
+                if (child.objectName === "pageIntro") {
                     bodyText = child;
                 }
                 walk(child);

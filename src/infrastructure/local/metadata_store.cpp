@@ -10,6 +10,7 @@
 #include <iterator>
 #include <system_error>
 
+#include "domain/metadata_merge.hpp"
 #include "domain/track_matching.hpp"
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/local/sqlite_statement.hpp"
@@ -27,7 +28,10 @@ namespace
 {
 
 constexpr const char *Context = "metadata store";
-constexpr int SchemaVersion = 1;
+// 2 added fallback_key, so a row first stored under a filename (because
+// the catalog had no artist and title yet) is still found once those
+// arrive, instead of being filed a second time as a new track.
+constexpr int SchemaVersion = 2;
 
 // The shared RAII statement and exec() with this store's error-message
 // context bound in, so call sites stay two arguments.
@@ -71,7 +75,7 @@ std::string stickRelativePath(const std::string &filePath, const fs::path &stick
 
 // What two rows have to agree on to be the same track: artist, title
 // and length, the same rule domain::matchTracks() uses everywhere else
-// in Seabass.
+// in Seabass, with the filename as the fallback matchTracks also uses.
 //
 // Not the file path. A path is the strongest signal when both sides are
 // looking at one stick, and the weakest thing to key a store on: the
@@ -88,13 +92,62 @@ std::string stickRelativePath(const std::string &filePath, const fs::path &stick
 // rows the moment one catalog failed to report a length.
 constexpr double DurationToleranceSeconds = 2.0;
 
-std::string matchKeyFor(const Track &track)
+// "2026-09-11T21:55:00Z" as seconds since the epoch, 0 for anything
+// that is not that shape.
+//
+// Hand-parsed rather than via std::get_time, which needs a locale-bound
+// stream to read a format this store writes itself, and timegm(), which
+// is not portable. The format is fixed at the one call site that
+// produces it (isoTimestampUtc), so there is nothing here to be liberal
+// about.
+std::int64_t epochFromIsoTimestamp(const std::string &text)
+{
+    int year = 0;
+    unsigned month = 0;
+    unsigned day = 0;
+    unsigned hour = 0;
+    unsigned minute = 0;
+    unsigned second = 0;
+    if (std::sscanf(text.c_str(), "%d-%2u-%2uT%2u:%2u:%2uZ", &year, &month, &day, &hour, &minute, &second) != 6) {
+        return 0;
+    }
+    if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31) {
+        return 0;
+    }
+    // Days since 1970-01-01 by Howard Hinnant's days_from_civil, the
+    // standard branch-free form of the calculation std::chrono's own
+    // year_month_day uses. Shifting the year to start in March makes
+    // the leap day the last day of the year, which is what removes
+    // every special case from the arithmetic.
+    const int y = static_cast<int>(year) - (month <= 2 ? 1 : 0);
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153u * (month + (month > 2 ? -3 : 9)) + 2u) / 5u + day - 1u;
+    const unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    const std::int64_t days = static_cast<std::int64_t>(era) * 146097 + static_cast<std::int64_t>(doe) - 719468;
+    return days * 86400 + static_cast<std::int64_t>(hour) * 3600 + static_cast<std::int64_t>(minute) * 60 + second;
+}
+
+// The strong key: normalized artist and title, or empty when the track
+// does not have both.
+std::string titleArtistMatchKey(const Track &track)
 {
     if (auto key = domain::titleArtistKey(track)) {
         return "ta:" + *key;
     }
-    // Missing title or artist: fall back to the filename, exactly as
-    // matchTracks does, rather than dropping the track.
+    return {};
+}
+
+// The weak one, kept alongside rather than instead of the strong one.
+//
+// Storing only whichever key happened to be available was the bug: a
+// track catalogued without an artist got filed under its filename, and
+// when the DJ later fixed the tags the next backup looked it up under
+// "ta:" only, found nothing, and stored a second row -- with the first
+// row still holding the cues. Two keys per row, either of which can
+// find it, is what makes that one track instead of two.
+std::string filenameMatchKey(const Track &track)
+{
     const std::string filename = domain::normalizeFilename(track.filename);
     return filename.empty() ? std::string() : "fn:" + filename;
 }
@@ -204,8 +257,16 @@ void MetadataStore::openAndMigrate()
     // a DJ's work. Renaming costs nothing, leaves the file where a
     // person can find it, and CREATE TABLE IF NOT EXISTS then builds a
     // clean one -- which a single Back Up Now refills from the stick.
+    //
+    // 1 -> 2 is the exception, and the reason the exception exists is
+    // the paragraph above. Moving a version-1 store aside would be
+    // correct and would still lose exactly the cues this feature is for:
+    // a stick that has been reformatted since the backup cannot refill
+    // it. The change is one added column, so it is migrated in place
+    // once the database is open, below.
     const int existing = schemaVersionOf(m_databasePath);
-    if (existing != 0 && existing != SchemaVersion) {
+    const bool migrateInPlace = existing == 1 && SchemaVersion == 2;
+    if (!migrateInPlace && existing != 0 && existing != SchemaVersion) {
         // isoTimestampUtc()'s colons (the "T14:23:45Z" part) are fine as
         // a stored value -- every other call site uses it that way --
         // but not as part of a filename: NTFS reads a colon there as the
@@ -236,10 +297,26 @@ void MetadataStore::openAndMigrate()
     // arrives mid-transaction should wait rather than fail the page.
     sqlite3_busy_timeout(m_db, 5000);
     exec(m_db, "PRAGMA foreign_keys = ON;");
+
+    // In place, before the CREATE TABLEs below: they are all IF NOT
+    // EXISTS, so they would leave a version-1 tracks table exactly as it
+    // is and the added column would never appear.
+    if (migrateInPlace) {
+        exec(m_db, "ALTER TABLE tracks ADD COLUMN fallback_key TEXT NOT NULL DEFAULT '';");
+        // Every version-1 row carries one key, in a column that says
+        // which kind it is. A row keyed by filename already has its
+        // fallback key; it just has it in the other column, and copying
+        // it across is what lets the strong key replace it later
+        // without the row losing the only way it can still be found.
+        exec(m_db, "UPDATE tracks SET fallback_key = match_key WHERE match_key LIKE 'fn:%';");
+        exec(m_db, "UPDATE schema_version SET version = 2;");
+    }
+
     exec(m_db, R"sql(
         CREATE TABLE IF NOT EXISTS tracks (
             id INTEGER PRIMARY KEY,
             match_key TEXT NOT NULL,
+            fallback_key TEXT NOT NULL DEFAULT '',
             relative_path TEXT NOT NULL,
             filename TEXT NOT NULL,
             title TEXT NOT NULL DEFAULT '',
@@ -280,6 +357,7 @@ void MetadataStore::openAndMigrate()
         );
     )sql");
     exec(m_db, "CREATE INDEX IF NOT EXISTS tracks_by_match_key ON tracks(match_key);");
+    exec(m_db, "CREATE INDEX IF NOT EXISTS tracks_by_fallback_key ON tracks(fallback_key);");
     exec(m_db, "CREATE INDEX IF NOT EXISTS cues_by_track ON cues(track_id);");
     exec(m_db, "CREATE INDEX IF NOT EXISTS playlists_by_track ON playlists(track_id);");
     exec(m_db, "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);");
@@ -376,7 +454,7 @@ std::uint64_t MetadataStore::artworkBytesOnDisk() const
 // ---- writing --------------------------------------------------------
 
 MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, const MetadataSource &source,
-                                            ConflictPolicy policy, application::ProgressReporter &progress,
+                                            application::ProgressReporter &progress,
                                             const application::CancellationToken &cancel)
 {
     MetadataBackupSummary summary;
@@ -417,8 +495,9 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             summary.tracksWithoutIdentity++;
             continue;
         }
-        const std::string matchKey = matchKeyFor(track);
-        if (matchKey.empty()) {
+        const std::string matchKey = titleArtistMatchKey(track);
+        const std::string fallbackKey = filenameMatchKey(track);
+        if (matchKey.empty() && fallbackKey.empty()) {
             // No artist and title, and no filename either. There is
             // nothing to recognise this row by later, so storing it
             // would only ever produce a row nothing can match.
@@ -433,14 +512,31 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         std::optional<int> storedPlayCount;
         std::string storedComment;
         std::string storedArtworkSha;
+        std::int64_t storedModifiedAt = 0;
         {
-            // Every row this artist and title could mean, then the first
-            // whose length agrees. Two rows under one key is the real
-            // case this handles: a radio edit and an extended mix.
-            Stmt find(m_db,
-                      "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds "
-                      "FROM tracks WHERE match_key = ? ORDER BY id");
+            // Every row either key could mean, then the first whose
+            // length agrees. Two rows under one key is the real case the
+            // length guard handles: a radio edit and an extended mix.
+            //
+            // Either key, not just the strong one, so a row first stored
+            // under a filename is found again once the DJ fixes the tags
+            // -- and so a row stored with full tags is still found by a
+            // catalog that has since lost them. Both spellings of the
+            // same track reach the same row instead of making a second.
+            // The strong key is tried first and on its own: a filename
+            // is a weak enough key that letting it pull in candidates
+            // while a better one is available would be a way to merge
+            // two genuinely different tracks that share a name.
+            const char *sql =
+                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, updated_at "
+                "FROM tracks WHERE (? <> '' AND match_key = ?) OR (? <> '' AND fallback_key = ?) "
+                "ORDER BY (match_key = ?) DESC, id";
+            Stmt find(m_db, sql);
             find.bind(1, matchKey);
+            find.bind(2, matchKey);
+            find.bind(3, fallbackKey);
+            find.bind(4, fallbackKey);
+            find.bind(5, matchKey);
             while (find.step()) {
                 if (!durationsAgree(find.columnDouble(5), track.durationSeconds)) {
                     continue;
@@ -451,6 +547,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                 storedComment = find.columnText(2);
                 storedPlayCount = find.columnOptionalInt(3);
                 storedArtworkSha = find.columnText(4);
+                storedModifiedAt = epochFromIsoTimestamp(find.columnText(6));
                 break;
             }
         }
@@ -460,9 +557,25 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             storedCues = cuesFor(id);
         }
 
-        // What the policy decides, per authored field group. A group the
-        // destination does not have yet is filled in either way: that is
-        // not a conflict, it is a blank.
+        // The shared merge rule, per authored field group: a blank is
+        // filled, more cues wins, otherwise the later edit wins. The
+        // stick is the incoming side here and the store the existing
+        // one; the restore path runs the same rule with the two the
+        // other way round, which is the whole point of it living in the
+        // domain rather than here.
+        const bool writeCues =
+            domain::takeIncomingCues(track.cues, storedCues, source.catalogModifiedAt, storedModifiedAt);
+        const bool writeRating =
+            domain::takeIncomingRating(track.rating, storedRating, source.catalogModifiedAt, storedModifiedAt);
+        const bool writeComment =
+            domain::takeIncomingComment(track.comment, storedComment, source.catalogModifiedAt, storedModifiedAt);
+        const bool writePlayCount =
+            domain::takeIncomingPlayCount(track.playCount, storedPlayCount, source.catalogModifiedAt,
+                                           storedModifiedAt);
+
+        // A track the rule decided against on at least one group: the
+        // stick offered something, the store already had something else,
+        // and what was stored won.
         const bool cuesConflict = !storedCues.empty() && !track.cues.empty() &&
                                    !domain::cueSetsEqual(storedCues, track.cues);
         const bool ratingConflict = storedRating.has_value() && track.rating.has_value() &&
@@ -471,12 +584,6 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                                       storedComment != track.comment;
         const bool playCountConflict = storedPlayCount.has_value() && track.playCount.has_value() &&
                                         *storedPlayCount != *track.playCount;
-        const bool keepStored = policy == ConflictPolicy::Skip;
-
-        const bool writeCues = !track.cues.empty() && (!cuesConflict || !keepStored);
-        const bool writeRating = track.rating.has_value() && (!ratingConflict || !keepStored);
-        const bool writeComment = !track.comment.empty() && (!commentConflict || !keepStored);
-        const bool writePlayCount = track.playCount.has_value() && (!playCountConflict || !keepStored);
 
         // Artwork is only fetched when the row has none: a cover is not
         // authored data, so a stored one is as good as an incoming one
@@ -507,31 +614,32 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
 
         if (!exists) {
             Stmt insert(m_db, R"sql(
-                INSERT INTO tracks (match_key, relative_path, filename, title, artist,
+                INSERT INTO tracks (match_key, fallback_key, relative_path, filename, title, artist,
                                     duration_seconds, bpm, music_key, rating, comment,
                                     play_count, last_played_at, artwork_sha, artwork_extension,
                                     library_id, stick_label, source_format, first_seen, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             )sql");
             insert.bind(1, matchKey);
-            insert.bind(2, relativePath);
-            insert.bind(3, track.filename);
-            insert.bind(4, track.title);
-            insert.bind(5, track.artist);
-            insert.bind(6, track.durationSeconds);
-            insert.bind(7, track.bpm);
-            insert.bind(8, track.key);
-            insert.bind(9, track.rating);
-            insert.bind(10, track.comment);
-            insert.bind(11, track.playCount);
-            insert.bind(12, lastPlayed);
-            insert.bind(13, artworkIntake.sha);
-            insert.bind(14, artworkIntake.extension);
-            insert.bind(15, source.libraryId);
-            insert.bind(16, source.stickLabel);
-            insert.bind(17, track.format);
-            insert.bind(18, now);
+            insert.bind(2, fallbackKey);
+            insert.bind(3, relativePath);
+            insert.bind(4, track.filename);
+            insert.bind(5, track.title);
+            insert.bind(6, track.artist);
+            insert.bind(7, track.durationSeconds);
+            insert.bind(8, track.bpm);
+            insert.bind(9, track.key);
+            insert.bind(10, track.rating);
+            insert.bind(11, track.comment);
+            insert.bind(12, track.playCount);
+            insert.bind(13, lastPlayed);
+            insert.bind(14, artworkIntake.sha);
+            insert.bind(15, artworkIntake.extension);
+            insert.bind(16, source.libraryId);
+            insert.bind(17, source.stickLabel);
+            insert.bind(18, track.format);
             insert.bind(19, now);
+            insert.bind(20, now);
             insert.run();
             id = sqlite3_last_insert_rowid(m_db);
             summary.tracksAdded++;
@@ -543,27 +651,61 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         // them is the best one.
         if (exists) {
             Stmt update(m_db, R"sql(
-                UPDATE tracks SET match_key = ?, relative_path = ?, filename = ?, title = ?, artist = ?,
-                                  duration_seconds = ?, bpm = ?, music_key = ?,
+                UPDATE tracks SET match_key = CASE WHEN ? <> '' THEN ? ELSE match_key END,
+                                  fallback_key = CASE WHEN ? <> '' THEN ? ELSE fallback_key END,
+                                  relative_path = CASE WHEN ? <> '' THEN ? ELSE relative_path END,
+                                  filename = CASE WHEN ? <> '' THEN ? ELSE filename END,
+                                  title = CASE WHEN ? <> '' THEN ? ELSE title END,
+                                  artist = CASE WHEN ? <> '' THEN ? ELSE artist END,
+                                  duration_seconds = CASE WHEN ? > 0 THEN ? ELSE duration_seconds END,
+                                  bpm = CASE WHEN ? > 0 THEN ? ELSE bpm END,
+                                  music_key = CASE WHEN ? <> '' THEN ? ELSE music_key END,
                                   library_id = ?, stick_label = ?, source_format = ?, updated_at = ?
                 WHERE id = ?
             )sql");
-            // match_key refreshes with the rest: a title corrected on
-            // the stick has to be findable under the corrected spelling,
-            // or the next backup files it as a second track.
+            // Both keys refresh with the rest: a title corrected on the
+            // stick has to be findable under the corrected spelling, or
+            // the next backup files it as a second track.
+            //
+            // Every identity field is guarded the same way, and it is
+            // the same guarantee the merge rule's first step makes about
+            // authored fields: a reading that is empty is not a reading.
+            // A catalog that has lost a track's tags reports no title
+            // and no artist, and writing that straight through would
+            // blank the title on a row that has one and clear the strong
+            // key off it -- leaving the entry findable by filename
+            // alone, or by nothing, and showing as a bare filename in
+            // the list. A zero duration or bpm means unreadable rather
+            // than a zero-length track, so those are guarded on > 0 for
+            // exactly the same reason.
+            //
+            // Where a reading does have a value it still wins outright:
+            // these are what the software wrote rather than what the DJ
+            // authored, so the freshest real reading of them is the best
+            // one, and no date needs consulting.
             update.bind(1, matchKey);
-            update.bind(2, relativePath);
-            update.bind(3, track.filename);
-            update.bind(4, track.title);
-            update.bind(5, track.artist);
-            update.bind(6, track.durationSeconds);
-            update.bind(7, track.bpm);
-            update.bind(8, track.key);
-            update.bind(9, source.libraryId);
-            update.bind(10, source.stickLabel);
-            update.bind(11, track.format);
-            update.bind(12, now);
-            update.bindInt64(13, id);
+            update.bind(2, matchKey);
+            update.bind(3, fallbackKey);
+            update.bind(4, fallbackKey);
+            update.bind(5, relativePath);
+            update.bind(6, relativePath);
+            update.bind(7, track.filename);
+            update.bind(8, track.filename);
+            update.bind(9, track.title);
+            update.bind(10, track.title);
+            update.bind(11, track.artist);
+            update.bind(12, track.artist);
+            update.bind(13, track.durationSeconds);
+            update.bind(14, track.durationSeconds);
+            update.bind(15, track.bpm);
+            update.bind(16, track.bpm);
+            update.bind(17, track.key);
+            update.bind(18, track.key);
+            update.bind(19, source.libraryId);
+            update.bind(20, source.stickLabel);
+            update.bind(21, track.format);
+            update.bind(22, now);
+            update.bindInt64(23, id);
             update.run();
 
             if (writeRating) {
@@ -643,8 +785,8 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             // something old counts as updated: "skipped" reads as
             // "nothing of yours was replaced", and it has to stay true.
             const bool wroteSomething = writeCues || writeRating || writeComment || writePlayCount;
-            const bool keptSomething = keepStored &&
-                (cuesConflict || ratingConflict || commentConflict || playCountConflict);
+            const bool keptSomething = (cuesConflict && !writeCues) || (ratingConflict && !writeRating) ||
+                (commentConflict && !writeComment) || (playCountConflict && !writePlayCount);
             if (wroteSomething) {
                 summary.tracksUpdated++;
             } else if (keptSomething) {
@@ -698,25 +840,76 @@ std::vector<PlaylistMembership> MetadataStore::playlistsFor(std::int64_t trackId
     return playlists;
 }
 
+int MetadataStore::removeTracks(const std::vector<std::int64_t> &trackIds)
+{
+    if (trackIds.empty()) {
+        return 0;
+    }
+    exec(m_db, "BEGIN IMMEDIATE");
+    struct RollbackGuard
+    {
+        sqlite3 *db;
+        bool committed = false;
+        ~RollbackGuard()
+        {
+            if (!committed) {
+                sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+            }
+        }
+    } guard{m_db};
+
+    int removed = 0;
+    for (const std::int64_t id : trackIds) {
+        // The cues and playlist rows go with it: both reference
+        // tracks(id) ON DELETE CASCADE, and PRAGMA foreign_keys is on
+        // for every connection this store opens, so one statement is
+        // genuinely enough. Deleting the track row alone with the
+        // pragma off would leave cues nothing owns.
+        Stmt remove(m_db, "DELETE FROM tracks WHERE id = ?");
+        remove.bindInt64(1, id);
+        remove.run();
+        removed += sqlite3_changes(m_db);
+    }
+    exec(m_db, "COMMIT");
+    guard.committed = true;
+    return removed;
+}
+
+std::map<std::int64_t, std::string> MetadataStore::stickLabelsByTrackId()
+{
+    std::map<std::int64_t, std::string> labels;
+    Stmt stmt(m_db, "SELECT id, stick_label FROM tracks WHERE stick_label <> ''");
+    while (stmt.step()) {
+        labels.emplace(stmt.columnInt64(0), stmt.columnText(1));
+    }
+    return labels;
+}
+
 std::vector<Track> MetadataStore::readAll()
 {
     std::vector<Track> tracks;
     {
         Stmt stmt(m_db, R"sql(
             SELECT id, relative_path, filename, title, artist, duration_seconds, bpm,
-                   music_key, rating, comment, play_count
+                   music_key, rating, comment, play_count, updated_at
             FROM tracks ORDER BY id
         )sql");
         while (stmt.step()) {
             Track track;
             track.sourceId = std::to_string(stmt.columnInt64(0));
             track.format = "metadata-store";
-            // Stick-relative, deliberately: an absolute path from
-            // whichever stick this row was last read off would be a claim
-            // about a file that is not there. matchTracks() treats a
-            // filePath that finds no twin as no signal and falls through
-            // to title+artist, which is exactly right here.
-            track.filePath = stmt.columnText(1);
+            // filePath is left empty on purpose, and the relative path
+            // this row does keep is not put in it.
+            //
+            // matchTracks() treats an exact path match as decisive and
+            // needs no other evidence, which is right when both sides
+            // are reading one stick and wrong here: this store outlives
+            // the stick. A stored path is stick-relative and a stick's
+            // is absolute, so the branch could only ever fire by
+            // accident -- and an accidental decisive match is a worse
+            // failure than no match at all. Empty means the store is
+            // always matched the way it is meant to be: on title, artist
+            // and length.
             track.filename = stmt.columnText(2);
             track.title = stmt.columnText(3);
             track.artist = stmt.columnText(4);
@@ -726,6 +919,10 @@ std::vector<Track> MetadataStore::readAll()
             track.rating = stmt.columnOptionalInt(8);
             track.comment = stmt.columnText(9);
             track.playCount = stmt.columnOptionalInt(10);
+            // Exact, per row, because this store wrote the row. The
+            // stick side of the same comparison has only its catalogs'
+            // mtime to offer.
+            track.metadataModifiedAt = epochFromIsoTimestamp(stmt.columnText(11));
             tracks.push_back(std::move(track));
         }
     }

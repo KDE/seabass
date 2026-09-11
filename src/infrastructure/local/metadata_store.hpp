@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -16,21 +17,6 @@ struct sqlite3;
 namespace seabass::infrastructure::local
 {
 
-// What to do when the stick and the store disagree about a field the DJ
-// authored. One answer per run, applied to every conflict in it -- a
-// per-track prompt over 1500 tracks is a decision nobody finishes.
-//
-// A field the destination does not have yet is never a conflict: filling
-// in a blank is not overwriting, and both directions always fill blanks.
-enum class ConflictPolicy {
-    // Take the incoming value. The default when reading a stick into the
-    // store: the stick is where the DJ works, so it is the newer truth.
-    Overwrite,
-    // Keep what is already stored. The default when writing back to a
-    // stick, which may have been re-cued since the backup.
-    Skip,
-};
-
 // Where a batch of tracks came from, so a stored row can say which stick
 // it was last seen on.
 struct MetadataSource
@@ -38,6 +24,13 @@ struct MetadataSource
     std::filesystem::path stickRoot;  // to reduce absolute paths to stick-relative ones
     std::string libraryId;            // application::StickIdentity::libraryId()
     std::string stickLabel;           // for display only
+    // When this stick's catalogs were last written, in seconds since the
+    // epoch, 0 when it could not be read. The merge rule's last step
+    // needs a date for the incoming side, and a catalog file's mtime is
+    // the only one a stick offers: cues live in the catalog databases,
+    // so editing a cue touches that file and nothing else. Per-stick
+    // rather than per-track, because nothing finer than that exists.
+    std::int64_t catalogModifiedAt = 0;
 };
 
 struct MetadataBackupSummary
@@ -45,8 +38,8 @@ struct MetadataBackupSummary
     int tracksSeen = 0;
     int tracksAdded = 0;
     int tracksUpdated = 0;
-    // At least one authored field differed and the policy said keep the
-    // stored one. Counted per track, not per field.
+    // At least one authored field differed and the merge rule kept the
+    // stored copy. Counted per track, not per field.
     int tracksSkipped = 0;
     // Already stored and nothing incoming was new.
     int tracksUnchanged = 0;
@@ -119,14 +112,31 @@ public:
     // Reads `tracks` into the store. Only ever writes here, never to the
     // stick they came from.
     //
+    // Where a track is already stored and the two copies disagree, the
+    // shared merge rule decides per field (domain::metadata_merge.hpp):
+    // a blank is filled, more cues wins, otherwise the later edit wins.
+    // There is no policy argument, because there is no longer a question
+    // to put to the user.
+    //
     // Tracks with no authored data at all (no cues, no rating, no
     // comment, no play count) are still stored: the browse view is a
     // record of what was on the stick, and a track with nothing on it
     // today may be worth annotating tomorrow. What is skipped is a track
     // with no resolvable file path, which has no key to be found again by.
     MetadataBackupSummary store(const std::vector<domain::Track> &tracks, const MetadataSource &source,
-                                 ConflictPolicy policy, application::ProgressReporter &progress,
+                                 application::ProgressReporter &progress,
                                  const application::CancellationToken &cancel);
+
+    // Removes stored tracks, and the cues, playlist rows and artwork
+    // references that hang off them, by row id. Returns how many rows
+    // actually went.
+    //
+    // The copied cover images are deliberately left on disk: several
+    // rows can share one file under its hash, so deleting alongside a
+    // row would need a reference count this store does not keep, and an
+    // orphaned image costs disk space while a wrongly deleted one costs
+    // a cover on a track that still exists.
+    int removeTracks(const std::vector<std::int64_t> &trackIds);
 
     // ---- browse -------------------------------------------------------
     // `search` matches title, artist or filename, case-insensitively;
@@ -137,6 +147,15 @@ public:
     int trackCount(const std::string &search = "");
     std::vector<domain::CuePoint> cuesFor(std::int64_t trackId);
     std::vector<domain::PlaylistMembership> playlistsFor(std::int64_t trackId);
+
+    // Which stick each stored row was last seen on, by row id.
+    //
+    // A separate query rather than a field on the Track readAll()
+    // returns: "last seen on RV2" is something to show a person, not
+    // something any matching or merging decision may turn on, and
+    // domain::Track is the type those decisions are made against.
+    // Keeping it out of there is what stops it being used for one.
+    std::map<std::int64_t, std::string> stickLabelsByTrackId();
 
     // Total bytes of copied cover art, for the page that has to say what
     // this feature costs on disk.

@@ -37,7 +37,7 @@ library.
 | playlist membership | authored, and cheap to store |
 | title, artist, filename, duration, bpm, key | identity, and what a browse view has to show |
 | cover art | asked for explicitly, and it makes the browse view legible |
-| stick-relative path | the strongest matching key there is |
+| stick-relative path | for display, and to say where a copy was last seen. Nothing is matched on it |
 
 Deliberately **not** stored: waveforms, beat grids, analysis files,
 audio. All of it is derived from the audio file, all of it is large, and
@@ -91,43 +91,92 @@ the stick: a re-export renames folders, a rebuilt library moves
 entirely. Artist and title travel with the recording; the path does not.
 
 The stick-relative path is still stored, for display and for saying where
-a track was last seen. Nothing matches on it.
+a track was last seen. Nothing matches on it -- and `readAll()` leaves
+`Track::filePath` empty rather than putting the relative path there,
+which is the difference between "the path branch does not fire" and "the
+path branch cannot fire". `matchTracks` treats an exact path match as
+decisive and needs no other evidence, so an accidental one would be a
+worse failure than no match at all.
+
+Both keys are stored per row, not just whichever one was available:
+`match_key` for artist + title and `fallback_key` for the filename,
+either of which finds the row. See "Schema (v2)" for the case that
+forced it.
 
 The store is therefore keyed on the recording and not on which stick it
 came from. A track is one row no matter how many sticks carry it; the
 `library_id` and `stick_label` columns record where it was last seen, for
 the browse view and for nothing else.
 
-## Conflict policy
+## The merge rule
 
-Both directions ask the same question and default differently, because
-the safe answer is different.
+Superseded the per-run conflict policy. That policy asked one question
+("take the stick's version" or "keep what is stored?") and applied the
+answer to every track in the run. It was the wrong question in both
+directions: a run covers 1500 tracks, the stick is newer for some of them
+and the store for others, and one answer is wrong for half of them.
+Worse, the only honest way to choose was to know which copy held more
+work -- which is exactly what the program can see and the person cannot.
 
-| | default | reasoning |
+One rule now, in `domain/metadata_merge.hpp`, applied per field group in
+both directions:
+
+1. **Content beats emptiness.** A field only one side has is not a
+   conflict, it is a blank, and a blank is always filled. Nothing ever
+   replaces a value with nothing. This is a guarantee rather than a
+   preference: a catalog that fails to read a comment reports an empty
+   one, and without this line a failed read would erase the comment it
+   failed to read.
+2. **More cues beats fewer.** A cue set is a body of work rather than a
+   single value, so trading four cues for one is a loss however recent
+   the one is. Only decides when the two sets actually differ
+   (`cueSetsEqual`, which ignores order and sub-second drift).
+3. **Otherwise the later modification time wins.**
+
+Ties keep what is already there: two sides that disagree with nothing to
+separate them are a coin toss, and a coin toss that rewrites data on
+every run is worse than one that leaves it alone.
+
+### Where the dates come from
+
+Each side offers the granularity it actually has, and no more:
+
+| side | date | granularity |
 |---|---|---|
-| stick -> store (backup) | **overwrite all** | the stick is where the DJ works. A cue they set last night is newer than whatever is stored. |
-| store -> stick (restore) | **skip all** | the stick may already have been re-cued. Never overwrite a DJ's live work from a backup. |
+| the store | the row's `updated_at` | exact, per row -- the store wrote the row |
+| a stick | the newest mtime among `export.pdb`, `m.db` and `exportLibrary.db` | per stick |
 
-One choice per run, applied to every conflict in it -- "overwrite all" or
-"skip all", not a per-track prompt. A per-track prompt over 1500 tracks
-is not a decision anyone makes; it is a decision nobody finishes.
+A stick has nothing finer. Cues, ratings and comments live in the catalog
+databases, so editing any of them rewrites one of those files, which
+makes the mtime a real answer to "has this stick been worked on since?".
+Coarse but honest beats precise and invented.
 
-A conflict is per field group, not per track: cues, rating, and comment
-each conflict independently, and the policy applies to each. A track
-whose cues differ but whose rating is only present in the store gets its
-cues resolved by the policy and its rating filled in either way -- filling
-an empty field is not a conflict.
+Newest of the catalogs present rather than oldest: a DJ who cues in
+Engine leaves `export.pdb` untouched for months, and the older date would
+say their work is older than it is.
+
+0 means "unknown" and never wins a comparison, so a source that cannot
+date itself can never overwrite work that can.
+
+### What this changed in practice
+
+A second backup run over an unchanged stick used to rewrite every field
+it was handed, deleting and re-inserting every cue of every track,
+because "overwrite" did not ask whether the values differed. The rule's
+first question is whether the two copies disagree at all, so an unchanged
+stick is now read and nothing is written
+(`tests/metadata_store_test.cpp`, case 2).
 
 ## Restore: what it offers, and how it writes
 
 The restore card's headline case, from the request: **tracks on the stick
 that have no cue points at all, for which the store has some.** That is
-the unambiguous case, it is common after a re-export, and it needs no
-conflict policy because there is nothing to overwrite.
+the unambiguous case, it is common after a re-export, and step one of the
+merge rule settles it before any date is consulted.
 
-Beyond it, the same page offers rating and comment, under the skip-all
-default -- but not everywhere, and the difference is measured rather than
-assumed (`tests/pdb_rating_write_test.cpp`):
+Beyond it, the same page offers rating and comment -- but not everywhere,
+and the difference is measured rather than assumed
+(`tests/pdb_rating_write_test.cpp`):
 
 | | rating | comment |
 |---|---|---|
@@ -169,12 +218,27 @@ reading the whole store into memory and filtering in QML. A store that
 has seen a few thousand tracks is small; one that has seen ten sticks
 over a year is not.
 
-## Schema (v1)
+## Schema (v2)
+
+v2 added `fallback_key`. v1 stored whichever key happened to be
+available, which meant a track catalogued without an artist was filed
+under its filename, and when the DJ later fixed the tags the next backup
+looked it up under the strong key only, found nothing, and stored a
+second row -- with the first row still holding the cues. Two keys per
+row, either of which finds it, is what makes that one track instead of
+two.
+
+A version-1 store is migrated in place rather than moved aside, which is
+the one exception to the pre-1.0 no-migrations rule and exists for the
+same reason the move-aside does: this store may hold the only copy of
+cues a reformatted stick no longer has, so "we changed the schema" must
+not cost them. The change is one added column.
 
 ```sql
 CREATE TABLE tracks (
   id INTEGER PRIMARY KEY,
-  match_key TEXT NOT NULL,         -- normalised "artist|title", or "filename" as fallback
+  match_key TEXT NOT NULL,         -- normalised "artist|title", empty if the track has neither
+  fallback_key TEXT NOT NULL,      -- normalised filename; either key finds the row
   relative_path TEXT NOT NULL,     -- where it was last seen, for display only
   filename TEXT NOT NULL,
   title TEXT, artist TEXT,
@@ -241,9 +305,15 @@ save rather than the log saying so after it:
   stick, and a path is a fact about a stick.
 - Writing to the stick outside the edit session. Every other write path
   in Seabass backs up first; this one does not get an exception.
-- A per-track conflict prompt.
+- A per-track conflict prompt, and equally a per-run one. See the merge
+  rule above for why the question itself was wrong.
 - Treating a missing field as a conflict. Filling in a blank is not
   overwriting.
+- Letting an empty reading overwrite a stored value -- of an authored
+  field or of an identity field. A catalog that has lost a track's tags
+  reports no title and no artist, and writing that through would blank
+  the title on a row that has one and strip it of the key it was found
+  by.
 - Letting the browse page read the whole store to show twenty rows.
 
 ## Two writers against one database, and how that was closed

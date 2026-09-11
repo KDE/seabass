@@ -12,7 +12,9 @@ import SeabassGui
 // something has already gone wrong.
 //
 // Nothing here writes to the stick. Putting metadata back is a different
-// card with a different page, because it is a different decision.
+// page, linked from the line at the top, because it is a different
+// decision. The one destructive thing this page can do is forget an
+// entry, and that is staged and confirmed rather than done on a click.
 Page {
     id: root
     required property string stickLabel
@@ -25,13 +27,11 @@ Page {
     // on the stick that one belongs to.
     readonly property string libraryPath: root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath
 
-    // Overwrite by default: the stick is where the DJ works, so a cue
-    // set there last night is newer than whatever is stored here.
-    property bool overwriteOnConflict: true
-
-    // The row whose cues are showing, or -1. One at a time: this is a
+    // The row whose detail is showing, or -1. One at a time: this is a
     // list to scan, not a tree to keep open.
     property var expandedTrackId: -1
+
+    signal metadataRestoreRequested()
 
     function formatBytes(bytes) {
         if (bytes <= 0) return "0 MB";
@@ -76,16 +76,33 @@ Page {
         anchors.margins: Theme.pageMargin
         spacing: Theme.sectionSpacing
 
-        Subtitle {
+        // Body text, not a section heading. It is two sentences of
+        // explanation at normal reading size, and setting it in the
+        // subtitle face made the first thing on the page compete with
+        // the page's own title.
+        Label {
+            objectName: "pageIntro"
             Layout.fillWidth: true
-            // Subtitle is a plain Label, so a sentence longer than the
-            // one-liners the other pages give it clips instead of
-            // wrapping. Set here rather than on the shared component:
-            // every other page's subtitle fits on its line today, and
-            // wrapping is a per-use decision.
             wrapMode: Text.WordWrap
+            color: Theme.text
+            font.pointSize: Theme.fontNormal
+            // A link, so the counterpart is reachable from the page that
+            // explains what it would put back, instead of only from the
+            // stick list two screens away.
+            textFormat: Text.StyledText
+            linkColor: Theme.accent
             text: "The cues, ratings and comments you put on your tracks, kept on this computer. "
-                + "The audio can be re-imported from anywhere. This cannot."
+                + "The audio can be re-imported from anywhere. This cannot. "
+                + "You can restore the locally backed up metadata to any stick "
+                + "<a href=\"restore\">here</a>."
+            onLinkActivated: root.metadataRestoreRequested()
+            // A link that does not say it is one is a link nobody
+            // clicks.
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.NoButton
+                cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+            }
         }
 
         // ---- run a backup -------------------------------------------
@@ -111,8 +128,22 @@ Page {
                     font.pointSize: Theme.fontMedium
                 }
                 Item { Layout.fillWidth: true }
+                Button {
+                    objectName: "backUpNowButton"
+                    text: "Add"
+                    enabled: root.hasStick && !controller.busy
+                    highlighted: true
+                    onClicked: controller.backUp(root.libraryPath, root.libraryId, root.stickLabel)
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 400
+                    ToolTip.text: root.hasStick
+                        ? "Read " + root.stickLabel + " and add what it holds to the backup"
+                        : "Choose a stick first"
+                }
                 InfoButton {
                     explanationTitle: "What a metadata backup stores"
+                    summaryText: "Everything you added to your tracks yourself, kept on this computer so "
+                        + "a reformatted or rebuilt stick does not take it with it."
                     explanationText: "Seabass reads every catalog on the stick (DeviceLibrary, "
                         + "Device Library Plus and Engine) and folds them into one entry per file, so a "
                         + "track all three list is stored once with the union of its cues.\n\n"
@@ -121,8 +152,22 @@ Page {
                         + "again later.\n\n"
                         + "Not stored: waveforms, beat grids, analysis files and audio. All of it is "
                         + "derived from the audio file, all of it is large, and none of it is your work.\n\n"
-                        + "Tracks are matched on their path within the stick, so the same track on a "
-                        + "rebuilt stick lands on the entry it already had."
+                        + "## How a track is recognised\n\n"
+                        + "On its title, artist and length, the same rule Seabass uses to match tracks "
+                        + "between rekordbox and Engine everywhere else, falling back to the filename "
+                        + "when a catalog has no title and artist to offer.\n\n"
+                        + "Deliberately not on where the file sits. A path is the strongest signal while "
+                        + "two catalogs are describing one stick, and the weakest thing to key a backup "
+                        + "on: this store is meant to outlive the stick it came from, and a re-export "
+                        + "renames folders, a rebuilt library moves Contents/ around, and the same track "
+                        + "bought again lands somewhere else entirely. Title and artist travel with the "
+                        + "recording, so a backup taken from one stick can be put back on a different "
+                        + "one.\n\n"
+                        + "Length is a guard rather than part of the key: two readings of one file differ "
+                        + "by a rounding, so it has to agree within a couple of seconds, and a track "
+                        + "whose length could not be read is not held against it. What it catches is a "
+                        + "radio edit and an extended mix filed under one name.\n\n"
+                        + controller.mergeRuleHelp
                 }
             }
 
@@ -134,43 +179,6 @@ Page {
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
                 wrapMode: Text.WordWrap
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                visible: !controller.busy
-                spacing: Theme.rowSpacing
-
-                Label {
-                    text: "If a track is already stored and differs:"
-                    color: Theme.textMuted
-                    font.pointSize: Theme.fontSmall
-                }
-                RadioButton {
-                    objectName: "overwriteRadio"
-                    text: "Take the stick's version"
-                    checked: root.overwriteOnConflict
-                    onToggled: if (checked) root.overwriteOnConflict = true
-                    ToolTip.visible: hovered
-                    ToolTip.text: "The usual case: you have been cueing on the stick since the last backup."
-                }
-                RadioButton {
-                    objectName: "keepStoredRadio"
-                    text: "Keep what is stored"
-                    checked: !root.overwriteOnConflict
-                    onToggled: if (checked) root.overwriteOnConflict = false
-                    ToolTip.visible: hovered
-                    ToolTip.text: "For a stick you suspect has lost cues. Empty fields are still filled in."
-                }
-                Item { Layout.fillWidth: true }
-                Button {
-                    objectName: "backUpNowButton"
-                    text: "Back Up Now"
-                    enabled: root.hasStick && !controller.busy
-                    highlighted: true
-                    onClicked: controller.backUp(root.libraryPath, root.libraryId, root.stickLabel,
-                                                 root.overwriteOnConflict)
-                }
             }
 
             ProgressReport {
@@ -200,29 +208,24 @@ Page {
         }
 
         // ---- what is in the store -----------------------------------
-        RowLayout {
+        MetadataListToolbar {
+            objectName: "browseToolbar"
             Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-
-            TextField {
-                objectName: "searchField"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 110
-                placeholderText: "Search title, artist or filename"
-                onTextChanged: controller.search(text)
-            }
-            Label {
-                Layout.maximumWidth: 320
-                text: controller.storedTrackCount === 0
-                    ? "Nothing stored yet"
+            selectionEnabled: controller.loadedCount > 0 && !controller.busy
+            selectAllTooltip: controller.canLoadMore
+                ? "Select every track loaded so far. Scroll to the end of the list to load the rest."
+                : "Select every track in the list"
+            summary: controller.storedTrackCount === 0
+                ? "Nothing stored yet"
+                : (controller.selectedCount > 0
+                    ? controller.selectedCount + " of " + controller.matchCount + " selected"
                     : (controller.matchCount === controller.storedTrackCount
                         ? controller.storedTrackCount + " tracks stored, "
                           + root.formatBytes(controller.artworkBytes) + " of cover art"
-                        : controller.matchCount + " of " + controller.storedTrackCount + " tracks")
-                color: Theme.textMuted
-                font.pointSize: Theme.fontSmall
-                elide: Text.ElideRight
-            }
+                        : controller.matchCount + " of " + controller.storedTrackCount + " tracks"))
+            onSearchChanged: text => controller.search(text)
+            onSelectAllRequested: controller.selectAll()
+            onSelectNoneRequested: controller.selectNone()
         }
 
         ListView {
@@ -239,159 +242,71 @@ Page {
             // when the user has actually scrolled to the end of this one.
             onAtYEndChanged: if (atYEnd && controller.canLoadMore) controller.loadMore()
 
-            delegate: Rectangle {
+            delegate: MetadataTrackDelegate {
                 id: trackRow
-                required property int index
+                // Roles the shared delegate does not already declare a
+                // property for.
                 required property var trackId
-                required property string title
-                required property string artist
-                required property string filename
-                required property string relativePath
-                required property string durationText
-                required property int rating
-                required property string comment
-                required property int cueCount
                 required property int playlistCount
-                required property string artworkUrl
+                required property string updatedAt
                 required property string stickLabel
+                required property bool stagedForDeletion
 
-                readonly property bool expanded: root.expandedTrackId === trackRow.trackId
-                // Where everything after the thumbnail starts. One
-                // number, so the expanded detail lines up under the
-                // title rather than under the artwork.
-                readonly property real textColumn: Theme.iconSizeNormal + Theme.rowSpacing
+                // And the ones it does, marked required here so the
+                // model fills them.
+                required index
+                required title
+                required artist
+                required filename
+                required relativePath
+                required durationText
+                required rating
+                required comment
+                required cueCount
+                required artworkUrl
+                required selected
 
-                width: ListView.view.width
-                implicitHeight: rowLayout.implicitHeight + 2 * Theme.tightSpacing
-                color: rowMouse.containsMouse ? Theme.rowHover
-                     : (trackRow.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
-                radius: 4
+                storedFrom: trackRow.stickLabel
+                // The stored timestamp is an ISO instant; the date is
+                // the part a person reads, and the rest is noise in a
+                // list.
+                storedAt: trackRow.updatedAt.substring(0, 10)
+                markedForRemoval: trackRow.stagedForDeletion
+                expanded: root.expandedTrackId === trackRow.trackId
+                // Fetched for the row the pointer is over, or the one
+                // that is open, and for no others. The list is paged
+                // precisely so that showing twenty rows costs twenty
+                // rows, and pulling every cue of every row to fill
+                // tooltips nobody opens would undo that.
+                cueTooltip: (trackRow.hovered || trackRow.expanded) && trackRow.cueCount > 0
+                    ? controller.cueSummaryFor(trackRow.trackId) : ""
+                playlistNames: trackRow.expanded && trackRow.playlistCount > 0
+                    ? controller.playlistsFor(trackRow.trackId).join(", ") : ""
+                detailNote: trackRow.stagedForDeletion
+                    ? "Staged for deletion from the metadata backup." : ""
 
-                MouseArea {
-                    id: rowMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: root.expandedTrackId = trackRow.expanded ? -1 : trackRow.trackId
-                }
+                onSelectionToggled: isSelected => controller.setSelected(trackRow.index, isSelected)
+                onExpandToggled: root.expandedTrackId = trackRow.expanded ? -1 : trackRow.trackId
 
-                ColumnLayout {
-                    id: rowLayout
-                    anchors.fill: parent
-                    anchors.margins: Theme.tightSpacing
-                    // The thumbnail's left edge is the row's left edge,
-                    // and the list is already on the page's left line.
-                    anchors.leftMargin: 0
-                    spacing: Theme.tightSpacing
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Theme.rowSpacing
-
-                        Rectangle {
-                            Layout.preferredWidth: Theme.iconSizeNormal
-                            Layout.preferredHeight: Theme.iconSizeNormal
-                            radius: 3
-                            color: Theme.groupBackground
-                            Image {
-                                anchors.fill: parent
-                                source: trackRow.artworkUrl
-                                visible: trackRow.artworkUrl.length > 0
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                                cache: true
-                            }
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            spacing: 0
-                            Label {
-                                Layout.fillWidth: true
-                                text: trackRow.title.length > 0 ? trackRow.title : trackRow.filename
-                                color: Theme.text
-                                elide: Text.ElideRight
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: trackRow.artist.length > 0 ? trackRow.artist : trackRow.relativePath
-                                color: Theme.textMuted
-                                font.pointSize: Theme.fontSmall
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        Label {
-                            text: trackRow.durationText
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontSmall
-                        }
-                        StarRating {
-                            value: Math.max(0, trackRow.rating)
-                            editable: false
-                            visible: trackRow.rating >= 0
-                        }
-                        StatusBadge {
-                            visible: trackRow.cueCount > 0
-                            label: trackRow.cueCount + (trackRow.cueCount === 1 ? " cue" : " cues")
-                            badgeColor: Theme.good
-                        }
-                        Label {
-                            text: trackRow.stickLabel
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontTiny
-                            elide: Text.ElideRight
-                            Layout.maximumWidth: 120
-                        }
+                actionItems: [
+                    ToolButton {
+                        objectName: "stageDeleteButton"
+                        icon.name: trackRow.stagedForDeletion ? "edit-undo" : "edit-delete"
+                        // Icon only, and the text is still set because
+                        // that is what an assistive reader announces.
+                        // Leaving the display at its default drew both:
+                        // Breeze's own trash icon with the emoji next to
+                        // it, two delete symbols on every row.
+                        display: AbstractButton.IconOnly
+                        text: trackRow.stagedForDeletion ? "Keep" : "Delete"
+                        onClicked: controller.toggleStagedForDeletion(trackRow.index)
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 400
+                        ToolTip.text: trackRow.stagedForDeletion
+                            ? "Keep this track in the Metadata Backup after all"
+                            : "Stage for deletion from Metadata Backup"
                     }
-
-                    // ---- the one expanded row ------------------------
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: trackRow.textColumn
-                        Layout.bottomMargin: Theme.tightSpacing
-                        visible: trackRow.expanded
-                        spacing: 0
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: trackRow.relativePath
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontTiny
-                            elide: Text.ElideMiddle
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            visible: trackRow.comment.length > 0
-                            text: "Comment: " + trackRow.comment
-                            color: Theme.text
-                            font.pointSize: Theme.fontSmall
-                            wrapMode: Text.WordWrap
-                        }
-                        Repeater {
-                            model: trackRow.expanded ? controller.cuesFor(trackRow.trackId) : []
-                            Label {
-                                required property var modelData
-                                text: (modelData.kind === "hot"
-                                        ? "Hot cue " + modelData.hotCueNumber
-                                        : "Memory cue")
-                                    + " at " + modelData.positionText
-                                    + (modelData.isLoop ? " (loop)" : "")
-                                    + (modelData.comment.length > 0 ? ": " + modelData.comment : "")
-                                color: Theme.textMuted
-                                font.pointSize: Theme.fontSmall
-                            }
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            visible: trackRow.playlistCount > 0 && trackRow.expanded
-                            text: "Playlists: " + controller.playlistsFor(trackRow.trackId).join(", ")
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontSmall
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-                }
+                ]
             }
 
             Label {
@@ -401,10 +316,77 @@ Page {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 text: controller.storedTrackCount === 0
-                    ? "Nothing has been backed up yet. Back Up Now reads this stick and stores what you added to it."
+                    ? "Nothing has been backed up yet. Add reads this stick and stores what you added to it."
                     : "No stored track matches that search."
                 color: Theme.textMuted
             }
+        }
+
+        // ---- the one destructive action -----------------------------
+        //
+        // Under the list rather than floating over it: this page has no
+        // edit session and writes nothing to the stick, so it must not
+        // borrow the floating Save button's shape, which everywhere else
+        // in Seabass means "write my edits to the stick".
+        RowLayout {
+            Layout.fillWidth: true
+            visible: controller.selectedCount > 0 || controller.stagedForDeletionCount > 0
+            spacing: Theme.rowSpacing
+
+            Label {
+                Layout.fillWidth: true
+                color: Theme.textMuted
+                font.pointSize: Theme.fontSmall
+                wrapMode: Text.WordWrap
+                text: controller.stagedForDeletionCount > 0
+                    ? controller.stagedForDeletionCount + " staged for deletion. Nothing has gone yet."
+                    : controller.selectedCount + " selected."
+            }
+            Button {
+                objectName: "stageSelectedForDeletionButton"
+                visible: controller.selectedCount > 0
+                text: "Stage selected for deletion"
+                onClicked: controller.stageSelectedForDeletion()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: controller.allLoadedSelected
+                    ? "Mark every track in the list for deletion from the Metadata Backup"
+                    : "Mark the selected tracks for deletion from the Metadata Backup"
+            }
+            Button {
+                objectName: "deleteStagedButton"
+                visible: controller.stagedForDeletionCount > 0
+                text: "Delete"
+                onClicked: confirmDeleteDialog.open()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: "Delete the staged tracks from the Metadata Backup on this computer"
+            }
+        }
+    }
+
+    MessagePopup { id: messagePopup }
+
+    // A backup is the one copy of these cues that may still exist, so
+    // forgetting one is confirmed rather than clicked.
+    MessageDialog {
+        id: confirmDeleteDialog
+        objectName: "confirmDeleteDialog"
+        severity: SeabassDialog.Warning
+        title: "Delete from the metadata backup"
+        headline: controller.stagedForDeletionCount === 1
+            ? "Forget the cues, rating and comment stored for this track?"
+            : "Forget the cues, ratings and comments stored for these "
+              + controller.stagedForDeletionCount + " tracks?"
+        detailText: "Nothing on any stick changes. What goes is this computer's copy, which may be the "
+            + "only one left if the stick it came from has been rebuilt since."
+        acceptText: "Delete"
+        rejectText: "Cancel"
+        onAccepted: {
+            var removed = controller.deleteStaged();
+            messagePopup.show(removed === 1 ? "One track removed from the metadata backup."
+                                            : removed + " tracks removed from the metadata backup.",
+                              false);
         }
     }
 
@@ -423,7 +405,7 @@ Page {
             var detail = [];
             if (run.tracksAdded > 0) detail.push(run.tracksAdded + " newly stored");
             if (run.tracksUpdated > 0) detail.push(run.tracksUpdated + " brought up to date");
-            if (run.tracksSkipped > 0) detail.push(run.tracksSkipped + " left as stored");
+            if (run.tracksSkipped > 0) detail.push(run.tracksSkipped + " where the stored copy won");
             if (run.tracksUnchanged > 0) detail.push(run.tracksUnchanged + " already current");
             if (run.tracksWithoutIdentity > 0) detail.push(run.tracksWithoutIdentity + " with too little to go on");
             var lines = [detail.join(", ") + "."];

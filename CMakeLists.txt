@@ -234,6 +234,7 @@ add_library(seabass_core STATIC
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
     src/domain/local_restore.cpp
+    src/domain/metadata_merge.cpp
     src/domain/metadata_restore.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
@@ -1017,12 +1018,21 @@ target_link_libraries(pdb_rating_write_test PRIVATE seabass_core)
 add_test(NAME pdb_rating_write_test COMMAND pdb_rating_write_test)
 
 add_executable(metadata_restore_test
+    src/domain/metadata_merge.cpp
     src/domain/metadata_restore.cpp
     src/domain/track_matching.cpp
     tests/metadata_restore_test.cpp
 )
 target_include_directories(metadata_restore_test PRIVATE src)
 add_test(NAME metadata_restore_test COMMAND metadata_restore_test)
+
+add_executable(metadata_merge_test
+    src/domain/metadata_merge.cpp
+    src/domain/track_matching.cpp
+    tests/metadata_merge_test.cpp
+)
+target_include_directories(metadata_merge_test PRIVATE src)
+add_test(NAME metadata_merge_test COMMAND metadata_merge_test)
 
 add_executable(durable_file_write_test
     src/infrastructure/durable_file_write.cpp

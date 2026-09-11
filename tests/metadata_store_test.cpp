@@ -18,7 +18,6 @@ using seabass::application::NullProgressReporter;
 using seabass::domain::CuePoint;
 using seabass::domain::PlaylistMembership;
 using seabass::domain::Track;
-using seabass::infrastructure::local::ConflictPolicy;
 using seabass::infrastructure::local::MetadataSource;
 using seabass::infrastructure::local::MetadataStore;
 namespace fs = std::filesystem;
@@ -75,21 +74,29 @@ Track sampleTrack(const fs::path &stickRoot, const std::string &relative, const 
     return track;
 }
 
-MetadataSource sourceFor(const fs::path &stickRoot, const std::string &label = "RV2")
+// Two dates for the stick side of the merge rule, either side of the
+// one the store itself stamps on a row (which is "now"). A catalog
+// written in 2033 is more recent than any row this test can write;
+// one from 2023 is older than all of them.
+constexpr std::int64_t CatalogWrittenBeforeAnyRow = 1'700'000'000;   // 2023
+constexpr std::int64_t CatalogWrittenAfterEveryRow = 2'000'000'000;  // 2033
+
+MetadataSource sourceFor(const fs::path &stickRoot, const std::string &label = "RV2",
+                          std::int64_t catalogModifiedAt = CatalogWrittenAfterEveryRow)
 {
     MetadataSource source;
     source.stickRoot = stickRoot;
     source.libraryId = "library-abc";
     source.stickLabel = label;
+    source.catalogModifiedAt = catalogModifiedAt;
     return source;
 }
 
 seabass::infrastructure::local::MetadataBackupSummary store(MetadataStore &store,
                                                              const std::vector<Track> &tracks,
-                                                             const MetadataSource &source,
-                                                             ConflictPolicy policy)
+                                                             const MetadataSource &source)
 {
-    return store.store(tracks, source, policy, NullProgressReporter::instance(), CancellationToken::none());
+    return store.store(tracks, source, NullProgressReporter::instance(), CancellationToken::none());
 }
 
 }  // namespace
@@ -122,7 +129,7 @@ int main()
         Track second = sampleTrack(stick, "Contents/Kalte Nacht/Zweite.mp3", "Zweite");
         second.artworkPath = cover.string();
 
-        const auto summary = store(metadata, {first, second}, sourceFor(stick), ConflictPolicy::Overwrite);
+        const auto summary = store(metadata, {first, second}, sourceFor(stick));
         assert(summary.tracksSeen == 2);
         assert(summary.tracksAdded == 2);
         assert(summary.tracksUpdated == 0);
@@ -158,19 +165,34 @@ int main()
         first.comment = "opener";
         first.artworkPath = cover.string();
 
-        const auto summary = store(metadata, {first}, sourceFor(stick), ConflictPolicy::Overwrite);
+        const auto summary = store(metadata, {first}, sourceFor(stick));
         assert(summary.tracksAdded == 0);
-        assert(summary.tracksUpdated == 1);   // identical values still count as written
+        // Nothing was written, because nothing differed. Under the old
+        // per-run policy an "overwrite" run rewrote every field it was
+        // given whether or not it differed, which meant deleting and
+        // re-inserting every cue of every track on every run. The merge
+        // rule's first question is whether the two copies disagree at
+        // all, and a run over an unchanged stick now answers no.
+        assert(summary.tracksUpdated == 0);
+        assert(summary.tracksUnchanged == 1);
         assert(summary.tracksSkipped == 0);
+        assert(summary.cuesStored == 0);
         // The image was already stored, so nothing is hashed or copied
         // again -- a second run over an unchanged stick must not cost
         // what the first did.
         assert(summary.artworkFilesAdded == 0);
         assert(metadata.trackCount() == 2);
-        std::cout << "case 2 (re-running over an unchanged stick) OK\n";
+        // And the cues it did not rewrite are still there.
+        assert(metadata.browse("Erste", 10, 0)[0].cueCount == 2);
+        std::cout << "case 2 (an unchanged stick is read and nothing is rewritten) OK\n";
     }
 
-    // ---- case 3: conflicts, both policies ---------------------------
+    // ---- case 3: a disagreement the stored copy wins ----------------
+    //
+    // Same number of cues on each side, in different places, and a stick
+    // whose catalogs have not been written since the entry was stored.
+    // Nothing separates the two sets but their dates, so what is stored
+    // stays. The empty incoming comment erases nothing either way.
     {
         MetadataStore metadata(db);
         Track changed = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
@@ -178,9 +200,9 @@ int main()
         changed.rating = 2;
         changed.comment = "";  // nothing incoming: never a conflict
 
-        const auto skipped = store(metadata, {changed}, sourceFor(stick), ConflictPolicy::Skip);
-        assert(skipped.tracksSkipped == 1);
-        assert(skipped.tracksUpdated == 0);
+        const auto kept = store(metadata, {changed}, sourceFor(stick, "RV2", CatalogWrittenBeforeAnyRow));
+        assert(kept.tracksSkipped == 1);
+        assert(kept.tracksUpdated == 0);
         auto rows = metadata.browse("Erste", 10, 0);
         assert(rows.size() == 1);
         assert(*rows[0].rating == 4);
@@ -189,16 +211,50 @@ int main()
         assert(cues.size() == 2);
         assert(cues[1].positionMs == 32000.0);
 
-        const auto overwritten = store(metadata, {changed}, sourceFor(stick), ConflictPolicy::Overwrite);
-        assert(overwritten.tracksUpdated == 1);
-        assert(overwritten.tracksSkipped == 0);
+        // ---- case 3b: the same disagreement, a stick worked on since
+        //
+        // The only thing that changed is which side was written last,
+        // and that is enough to reverse every decision above.
+        const auto taken = store(metadata, {changed}, sourceFor(stick, "RV2", CatalogWrittenAfterEveryRow));
+        assert(taken.tracksUpdated == 1);
+        assert(taken.tracksSkipped == 0);
         rows = metadata.browse("Erste", 10, 0);
         assert(*rows[0].rating == 2);
         assert(rows[0].comment == "opener");  // an empty incoming value erases nothing
         cues = metadata.cuesFor(rows[0].id);
         assert(cues.size() == 2);
         assert(cues[1].positionMs == 48000.0);
-        std::cout << "case 3 (skip keeps, overwrite replaces, blanks erase nothing) OK\n";
+        std::cout << "case 3 (the later edit wins when nothing else separates them) OK\n";
+    }
+
+    // ---- case 3c: more cues beats a more recent edit -----------------
+    //
+    // The case the rule exists for. A re-export leaves one cue where
+    // three used to be, and the catalog it leaves behind is brand new.
+    // The larger stored set survives anyway.
+    {
+        const fs::path cueCountDb = root / "cue-counts" / "metadata.db";
+        MetadataStore metadata(cueCountDb);
+        Track full = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
+        full.cues = {memoryCue(0.0), hotCue(1, 32000.0), hotCue(2, 64000.0)};
+        store(metadata, {full}, sourceFor(stick, "RV2", CatalogWrittenBeforeAnyRow));
+
+        Track reExported = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
+        reExported.cues = {memoryCue(0.0)};
+        const auto summary = store(metadata, {reExported}, sourceFor(stick, "RV2", CatalogWrittenAfterEveryRow));
+        assert(summary.tracksSkipped == 1);
+        assert(summary.tracksUpdated == 0);
+        const auto rows = metadata.browse("Erste", 10, 0);
+        assert(rows[0].cueCount == 3);
+
+        // And the other direction: a stick that has gained cues gives
+        // them to a store that has fewer, however old the catalog is.
+        Track recued = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
+        recued.cues = {memoryCue(0.0), hotCue(1, 32000.0), hotCue(2, 64000.0), hotCue(3, 96000.0)};
+        const auto grew = store(metadata, {recued}, sourceFor(stick, "RV2", CatalogWrittenBeforeAnyRow));
+        assert(grew.tracksUpdated == 1);
+        assert(metadata.browse("Erste", 10, 0)[0].cueCount == 4);
+        std::cout << "case 3c (more cues wins, whichever side was written last) OK\n";
     }
 
     // ---- case 4: filling a blank is not a conflict ------------------
@@ -208,15 +264,16 @@ int main()
         second.cues = {memoryCue(1000.0)};
         second.rating = 5;
 
-        // Skip policy, but the stored row has neither cues nor a rating,
-        // so there is nothing to keep and both land.
-        const auto summary = store(metadata, {second}, sourceFor(stick), ConflictPolicy::Skip);
+        // A stick older than the stored row, so every dated decision
+        // would go the other way. The stored row has neither cues nor a
+        // rating, so there is nothing to keep and both land regardless.
+        const auto summary = store(metadata, {second}, sourceFor(stick, "RV2", CatalogWrittenBeforeAnyRow));
         assert(summary.tracksUpdated == 1);
         assert(summary.tracksSkipped == 0);
         const auto rows = metadata.browse("Zweite", 10, 0);
         assert(rows[0].cueCount == 1);
         assert(*rows[0].rating == 5);
-        std::cout << "case 4 (a blank is filled even under skip) OK\n";
+        std::cout << "case 4 (a blank is filled however old the stick is) OK\n";
     }
 
     // ---- case 5: the same track, a different stick ------------------
@@ -233,7 +290,7 @@ int main()
         Track moved = sampleTrack(otherStick, "Music/2026/erste-remaster.mp3", "Erste");
         moved.rating = 3;
 
-        const auto summary = store(metadata, {moved}, sourceFor(otherStick, "REBUILT"), ConflictPolicy::Overwrite);
+        const auto summary = store(metadata, {moved}, sourceFor(otherStick, "REBUILT"));
         assert(summary.tracksAdded == 0);
         assert(summary.tracksUpdated == 1);
         assert(metadata.trackCount() == 2);  // still two rows, not three
@@ -260,14 +317,14 @@ int main()
         extended.durationSeconds = 480.0;
         extended.cues = {hotCue(1, 9000.0)};
 
-        store(metadata, {radioEdit, extended}, sourceFor(stick), ConflictPolicy::Overwrite);
+        store(metadata, {radioEdit, extended}, sourceFor(stick));
         assert(metadata.trackCount() == 2);
 
         // And a re-read of the shorter one, two seconds out, still finds
         // its own row rather than making a third.
         Track reread = radioEdit;
         reread.durationSeconds = 211.5;
-        const auto again = store(metadata, {reread}, sourceFor(stick), ConflictPolicy::Overwrite);
+        const auto again = store(metadata, {reread}, sourceFor(stick));
         assert(again.tracksAdded == 0);
         assert(metadata.trackCount() == 2);
         std::cout << "case 5b (same title, different length, two tracks) OK\n";
@@ -282,7 +339,7 @@ int main()
         unresolved.format = "engine";
         unresolved.title = "Nowhere";
 
-        const auto summary = store(metadata, {streaming, unresolved}, sourceFor(stick), ConflictPolicy::Overwrite);
+        const auto summary = store(metadata, {streaming, unresolved}, sourceFor(stick));
         assert(summary.tracksSeen == 2);
         assert(summary.tracksWithoutIdentity == 2);
         assert(summary.tracksAdded == 0);
@@ -298,7 +355,7 @@ int main()
         zero.rating = 0;
         Track none = sampleTrack(stick, "Contents/A/none.mp3", "None");
 
-        store(metadata, {zero, none}, sourceFor(stick), ConflictPolicy::Overwrite);
+        store(metadata, {zero, none}, sourceFor(stick));
         const auto rows = metadata.browse("", 10, 0);
         assert(rows.size() == 2);
         // Ordered by title within the one artist.
@@ -327,11 +384,15 @@ int main()
         bool foundCues = false;
         for (const auto &track : tracks) {
             assert(track.format == "metadata-store");
-            // Stick-relative, deliberately: an absolute path here would
-            // be a claim about a file on a stick that may not be here.
-            assert(!track.filePath.empty());
-            assert(track.filePath.find(':') == std::string::npos);
-            assert(track.filePath.rfind('/', 0) != 0);
+            // No path at all, deliberately. matchTracks() treats an
+            // exact path match as decisive and needs no other evidence,
+            // which is right when both sides read one stick and wrong
+            // for a store that outlives it. Empty is what guarantees
+            // the store is always matched on title, artist and length.
+            assert(track.filePath.empty());
+            // And a date, so the merge rule has something to compare
+            // against a stick's catalog mtime.
+            assert(track.metadataModifiedAt > 0);
             if (track.title == "Erste") {
                 assert(track.cues.size() == 2);
                 foundCues = true;
@@ -348,8 +409,8 @@ int main()
         CancellationToken token;
         token.cancel();
         Track track = sampleTrack(stick, "Contents/A/one.mp3", "One");
-        const auto summary = metadata.store({track}, sourceFor(stick), ConflictPolicy::Overwrite,
-                                             NullProgressReporter::instance(), token);
+        const auto summary =
+            metadata.store({track}, sourceFor(stick), NullProgressReporter::instance(), token);
         assert(summary.cancelled);
         assert(summary.tracksSeen == 0);
         assert(metadata.trackCount() == 0);
@@ -381,7 +442,7 @@ int main()
         // A working store, not a thrown error and not a broken one.
         Track track = sampleTrack(stick, "Contents/A/new.mp3", "New");
         track.cues = {memoryCue(0.0)};
-        const auto summary = store(metadata, {track}, sourceFor(stick), ConflictPolicy::Overwrite);
+        const auto summary = store(metadata, {track}, sourceFor(stick));
         assert(summary.tracksAdded == 1);
         assert(metadata.trackCount() == 1);
 
@@ -394,6 +455,155 @@ int main()
         }
         assert(foundSuperseded);
         std::cout << "case 11 (a database from another schema is moved aside, never deleted) OK\n";
+    }
+
+    // ---- case 12: either key finds the row ---------------------------
+    //
+    // A track first catalogued with no artist is filed under its
+    // filename. When the DJ fixes the tags, the next backup must land on
+    // the row it already has -- the one holding the cues -- rather than
+    // start a second one under the new spelling.
+    {
+        const fs::path keyDb = root / "keys" / "metadata.db";
+        MetadataStore metadata(keyDb);
+
+        Track untagged = sampleTrack(stick, "Contents/A/mystery.mp3", "");
+        untagged.title.clear();
+        untagged.artist.clear();
+        untagged.cues = {hotCue(1, 5000.0), hotCue(2, 9000.0)};
+        store(metadata, {untagged}, sourceFor(stick, "RV2", CatalogWrittenBeforeAnyRow));
+        assert(metadata.trackCount() == 1);
+        assert(metadata.browse("", 10, 0)[0].cueCount == 2);
+
+        Track tagged = sampleTrack(stick, "Contents/A/mystery.mp3", "Mystery");
+        tagged.rating = 5;
+        const auto summary = store(metadata, {tagged}, sourceFor(stick, "RV2", CatalogWrittenAfterEveryRow));
+        assert(summary.tracksAdded == 0);
+        assert(summary.tracksUpdated == 1);
+        assert(metadata.trackCount() == 1);  // one track, not two
+        auto rows = metadata.browse("", 10, 0);
+        assert(rows[0].title == "Mystery");
+        assert(rows[0].cueCount == 2);  // the cues it was stored with
+        assert(*rows[0].rating == 5);
+
+        // And back the other way: a catalog that has since lost the tags
+        // still finds the row, and does not strip the strong key off it.
+        Track lostTagsAgain = sampleTrack(stick, "Contents/A/mystery.mp3", "");
+        lostTagsAgain.title.clear();
+        lostTagsAgain.artist.clear();
+        const auto again = store(metadata, {lostTagsAgain}, sourceFor(stick, "RV2", CatalogWrittenBeforeAnyRow));
+        assert(again.tracksAdded == 0);
+        assert(metadata.trackCount() == 1);
+        rows = metadata.browse("", 10, 0);
+        // The title the row already had survives a reading that has none.
+        assert(rows[0].title == "Mystery");
+        std::cout << "case 12 (one row, found by title or by filename) OK\n";
+    }
+
+    // ---- case 13: version 1 is migrated, not moved aside -------------
+    //
+    // The exception to case 11, and the reason for it: a version-1 store
+    // may hold the only copy of cues a reformatted stick no longer has,
+    // and moving it aside would be a correct decision that still lost
+    // them. One added column is worth migrating in place.
+    {
+        const fs::path oldDb = root / "schema-one" / "metadata.db";
+        fs::create_directories(oldDb.parent_path());
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            // Version 1's tracks table, with the one key column it had.
+            sqlite3_exec(raw,
+                         "CREATE TABLE tracks (id INTEGER PRIMARY KEY, match_key TEXT NOT NULL, "
+                         "relative_path TEXT NOT NULL, filename TEXT NOT NULL, "
+                         "title TEXT NOT NULL DEFAULT '', artist TEXT NOT NULL DEFAULT '', "
+                         "duration_seconds REAL NOT NULL DEFAULT 0, bpm REAL NOT NULL DEFAULT 0, "
+                         "music_key TEXT NOT NULL DEFAULT '', rating INTEGER, "
+                         "comment TEXT NOT NULL DEFAULT '', play_count INTEGER, "
+                         "last_played_at TEXT NOT NULL DEFAULT '', artwork_sha TEXT NOT NULL DEFAULT '', "
+                         "artwork_extension TEXT NOT NULL DEFAULT '', library_id TEXT NOT NULL DEFAULT '', "
+                         "stick_label TEXT NOT NULL DEFAULT '', source_format TEXT NOT NULL DEFAULT '', "
+                         "first_seen TEXT NOT NULL, updated_at TEXT NOT NULL)",
+                         nullptr, nullptr, nullptr);
+            sqlite3_exec(raw,
+                         "CREATE TABLE cues (track_id INTEGER NOT NULL, kind TEXT NOT NULL, "
+                         "hot_number INTEGER NOT NULL DEFAULT 0, position_ms REAL NOT NULL DEFAULT 0, "
+                         "color TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', "
+                         "is_loop INTEGER NOT NULL DEFAULT 0, loop_end_ms REAL NOT NULL DEFAULT 0)",
+                         nullptr, nullptr, nullptr);
+            // One row keyed by title and artist, one keyed by filename.
+            sqlite3_exec(raw,
+                         "INSERT INTO tracks (match_key, relative_path, filename, title, artist, "
+                         "duration_seconds, first_seen, updated_at) VALUES "
+                         "('ta:kept|kaltenacht', 'Contents/A/kept.mp3', 'kept.mp3', 'Kept', 'Kalte Nacht', "
+                         "361.5, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                         nullptr, nullptr, nullptr);
+            sqlite3_exec(raw,
+                         "INSERT INTO tracks (match_key, relative_path, filename, title, artist, "
+                         "duration_seconds, first_seen, updated_at) VALUES "
+                         "('fn:weak.mp3', 'Contents/A/weak.mp3', 'weak.mp3', '', '', "
+                         "361.5, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                         nullptr, nullptr, nullptr);
+            sqlite3_exec(raw, "INSERT INTO cues (track_id, kind, position_ms) VALUES (1, 'memory', 4000)", nullptr,
+                         nullptr, nullptr);
+            sqlite3_exec(raw, "CREATE TABLE playlists (track_id INTEGER NOT NULL, name TEXT NOT NULL, "
+                              "position INTEGER NOT NULL DEFAULT -1)",
+                         nullptr, nullptr, nullptr);
+            sqlite3_exec(raw, "CREATE TABLE schema_version (version INTEGER NOT NULL)", nullptr, nullptr, nullptr);
+            sqlite3_exec(raw, "INSERT INTO schema_version (version) VALUES (1)", nullptr, nullptr, nullptr);
+            sqlite3_close(raw);
+        }
+
+        MetadataStore metadata(oldDb);
+        // Everything that was in there is still in there.
+        assert(metadata.trackCount() == 2);
+        const auto rows = metadata.browse("Kept", 10, 0);
+        assert(rows.size() == 1);
+        assert(rows[0].cueCount == 1);
+
+        // Nothing was moved aside: the file itself was migrated.
+        for (const auto &entry : fs::directory_iterator(oldDb.parent_path())) {
+            assert(entry.path().filename().string().find("superseded") == std::string::npos);
+        }
+
+        // And the weak row's key was carried into the new column, so the
+        // strong key can now replace it without the row losing the only
+        // way it could still be found.
+        Track nowTagged = sampleTrack(stick, "Contents/A/weak.mp3", "Weak");
+        const auto summary = store(metadata, {nowTagged}, sourceFor(stick, "RV2", CatalogWrittenAfterEveryRow));
+        assert(summary.tracksAdded == 0);
+        assert(metadata.trackCount() == 2);
+        std::cout << "case 13 (a version-1 store is migrated in place, keeping its cues) OK\n";
+    }
+
+    // ---- case 14: deleting stored tracks ----------------------------
+    {
+        const fs::path deleteDb = root / "deletes" / "metadata.db";
+        MetadataStore metadata(deleteDb);
+        Track first = sampleTrack(stick, "Contents/A/one.mp3", "One");
+        first.cues = {memoryCue(0.0), hotCue(1, 1000.0)};
+        first.playlists = {PlaylistMembership{"Techno", 0}};
+        Track second = sampleTrack(stick, "Contents/A/two.mp3", "Two");
+        second.cues = {memoryCue(0.0)};
+        store(metadata, {first, second}, sourceFor(stick));
+        assert(metadata.trackCount() == 2);
+
+        const auto rows = metadata.browse("One", 10, 0);
+        assert(rows.size() == 1);
+        const std::int64_t goneId = rows[0].id;
+        assert(metadata.removeTracks({goneId}) == 1);
+        assert(metadata.trackCount() == 1);
+        // The cues and playlist rows went with it, rather than being
+        // left owned by nothing.
+        assert(metadata.cuesFor(goneId).empty());
+        assert(metadata.playlistsFor(goneId).empty());
+        // The track that was not asked for is untouched.
+        assert(metadata.browse("Two", 10, 0).size() == 1);
+        assert(metadata.browse("Two", 10, 0)[0].cueCount == 1);
+        // A second delete of the same id removes nothing and says so.
+        assert(metadata.removeTracks({goneId}) == 0);
+        assert(metadata.removeTracks({}) == 0);
+        std::cout << "case 14 (deleting a stored track takes its cues with it) OK\n";
     }
 
     fs::remove_all(root);
