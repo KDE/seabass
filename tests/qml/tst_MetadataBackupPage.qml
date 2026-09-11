@@ -243,6 +243,39 @@ TestCase {
         image.save(screenshotDir + "/MetadataBackupPage.png");
     }
 
+    // The other population, which no amount of reading the source will
+    // show you: a real stick planned against the real store. Needs a
+    // stick (or a stick-shaped fixture directory) in SEABASS_LIVE_STICK,
+    // because planning is the one thing on this page that cannot be
+    // faked -- it reads catalogs.
+    function test_screenshot_theStickList() {
+        if (!screenshotDir || !liveStickRoot) {
+            skip("SEABASS_SCREENSHOT_DIR and SEABASS_LIVE_STICK not both set");
+        }
+        var page = make({
+            stickLabel: "FIXTURE",
+            rekordboxPath: liveStickRoot + "/PIONEER",
+            enginePath: liveStickRoot + "/Engine Library",
+        });
+        var picker = findChild(page, "sourcePicker");
+        verify(picker, "the source picker must exist");
+        // Index 1 is the page's own stick: index 0 is always the store.
+        compare(picker.model.length, 2, "the store and this page's stick");
+        picker.activated(1);
+        // The scan runs on a worker thread. Waiting on the list rather
+        // than on a fixed delay, so a slow machine does not shoot an
+        // empty page and call it a pass.
+        var list = findChild(page, "proposalList");
+        verify(list, "the stick's list must exist");
+        tryVerify(function () { return list.visible; }, 15000,
+                  "the stick's list must become the visible one");
+        tryVerify(function () { return !findChild(page, "sourceSummary").text.startsWith("Reading"); },
+                  15000, "the scan must finish");
+        waitForRendering(page);
+        var image = grabImage(page);
+        image.save(screenshotDir + "/MetadataBackupPage-stick.png");
+    }
+
     // The states a default screenshot cannot show, and the ones most
     // likely to be wrong: a row opened, a row struck through and dimmed
     // because it is staged to go, and the bar under the list that only

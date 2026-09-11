@@ -158,6 +158,21 @@ int main()
         // Both tracks point at the same image file.
         assert(rows[0].artworkPath == rows[1].artworkPath);
         std::cout << "case 1 (first backup, cover art shared) OK\n";
+
+        // readAll() has to hand the cover over too, not just browse().
+        // It is the only side that knows where the copy landed, and a
+        // restore proposal has no other way to draw one: the stick this
+        // page exists for is the stick that lost its artwork. It used to
+        // select every other field and leave this one empty, so every
+        // proposal rendered a blank tile.
+        const auto all = metadata.readAll();
+        assert(all.size() == 2);
+        for (const auto &track : all) {
+            assert(!track.artworkPath.empty());
+            assert(fs::exists(track.artworkPath));
+            assert(track.artworkPath == rows[0].artworkPath);
+        }
+        std::cout << "case 1b (readAll hands over the cover it copied) OK\n";
     }
 
     // ---- case 2: the same stick again, nothing new ------------------
