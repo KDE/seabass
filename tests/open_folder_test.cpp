@@ -82,6 +82,14 @@ int main(int argc, char **argv)
     // sandboxSettings() for why setPath() looked like it did this and
     // did not.
     seabass::testing::sandboxSettings(scratch / "config");
+    // The other belt, and the one that carries Windows: there the native
+    // store is the registry, which no environment variable redirects, so
+    // the format is forced to Ini and given a path. On Linux this pair
+    // alone was measured NOT to redirect -- which is how the real config
+    // came to hold 232 rows -- so neither belt is dropped for the other.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       QString::fromStdString((scratch / "config").string()));
 
     // And proof, before anything is written: if this ever resolves back
     // to the real store, the assert fires here rather than after the
@@ -305,6 +313,44 @@ int main(int argc, char **argv)
             assert(rowForMountPoint(*back.sticksModel(), share.string()) >= 0);
         }
         std::cout << "case 9 (unreachable folder is hidden, kept, and returns) OK\n";
+    }
+
+    // Going away and coming back are announced as a PAIR.
+    //
+    // stickRemoved puts StickRemovedDialog on screen; it is NoAutoClose
+    // and its "Understood" is live only while the session says the stick
+    // is present, which nothing but stickReturned sets back. A folder
+    // that announced itself gone and never announced itself back would
+    // leave a modal whose only working button discards the user's staged
+    // edits -- with the disk already plugged back in.
+    {
+        const fs::path blips = scratch / "share-that-blips";
+        makeStickShapedFolder(blips, true, false);
+        MediaController controller;
+        assert(controller.openFolder(QString::fromStdString(blips.string())).isEmpty());
+
+        int removed = 0;
+        int returned = 0;
+        QObject::connect(&controller, &MediaController::stickRemoved,
+                         [&](const QString &, const QString &) { ++removed; });
+        QObject::connect(&controller, &MediaController::stickReturned,
+                         [&](const QString &, const QString &) { ++returned; });
+
+        fs::remove_all(blips);
+        controller.detect();
+        assert(removed == 1 && returned == 0);
+        // Still away: announced once, not once per refresh.
+        controller.detect();
+        controller.detect();
+        assert(removed == 1);
+
+        makeStickShapedFolder(blips, true, false);
+        controller.detect();
+        assert(returned == 1 && "coming back must be announced, or the dialog cannot be dismissed");
+        assert(rowForMountPoint(*controller.sticksModel(), blips.string()) >= 0);
+        controller.detect();
+        assert(returned == 1);
+        std::cout << "case 10 (going and returning are announced as a pair) OK\n";
     }
 
     fs::remove_all(scratch);

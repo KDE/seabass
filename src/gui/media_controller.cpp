@@ -292,6 +292,18 @@ void MediaController::detect()
     // edit session holding it, or the edits sit unseen until quit. Only
     // on the transition, though -- a share that stays off would otherwise
     // announce itself removed on every single refresh.
+    //
+    // And the way BACK matters as much as the way out. stickRemoved puts
+    // StickRemovedDialog on screen, which is NoAutoClose and whose
+    // "Understood" is enabled only while session.stickPresent -- set true
+    // by nothing but stickReturned. The presence bookkeeping below skips
+    // folder rows entirely (they never enter m_presentIdentities, so they
+    // never turn up in diff.appeared), so a folder that announced itself
+    // removed and never announced itself back would leave that dialog
+    // with exactly one live button: Discard Changes. Plugging the disk
+    // back in -- the recovery the dialog exists to offer -- would not
+    // work, and the user's staged edits would be reachable only by
+    // throwing them away. So the pair is emitted here, both halves.
     for (const application::DetectedStick &folder : m_openedFolders) {
         const bool nowGone = std::find(unreachable.begin(), unreachable.end(), folder.mountPoint)
                              != unreachable.end();
@@ -299,6 +311,12 @@ void MediaController::detect()
         if (nowGone && !wasGone) {
             emit stickRemoved(QString::fromStdString(folder.identity.libraryId()),
                               QString::fromStdString(folder.label));
+        } else if (!nowGone && wasGone) {
+            // A folder's identity is its path, so a folder that is back is
+            // necessarily the same one: Strength::Folder, not a re-match.
+            emit stickReturned(QString::fromStdString(folder.identity.libraryId()),
+                               QString::fromUtf8(application::StickIdentity::strengthName(
+                                   application::StickIdentity::Strength::Folder)));
         }
     }
     m_unreachableFolders.clear();

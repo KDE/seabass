@@ -1834,10 +1834,24 @@ foreach(_seabass_test IN LISTS _seabass_all_tests)
     # app's first page. Set here as well as in the tests that know they
     # persist something, because "merely constructs a controller" is most
     # of them.
-    list(APPEND _seabass_test_env
-        "XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
-    list(APPEND _seabass_test_env
-        "APPDATA=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
+    #
+    # This covers the platforms whose settings store is a file under a
+    # location these variables name. It does NOT cover Windows, where the
+    # native store is the registry: a test that persists anything has to
+    # force QSettings::IniFormat in-process as well (open_folder_test and
+    # tests/qml/qml_test_main.cpp both do).
+    #
+    # Skipped where the test already names its own, rather than appending
+    # a second value and leaving which one wins to CTest's ordering --
+    # seabass_qml_tests sets XDG_CONFIG_HOME above.
+    if(NOT _seabass_test_env MATCHES "XDG_CONFIG_HOME=")
+        list(APPEND _seabass_test_env
+            "XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
+    endif()
+    if(NOT _seabass_test_env MATCHES "APPDATA=")
+        list(APPEND _seabass_test_env
+            "APPDATA=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
+    endif()
     set_tests_properties(${_seabass_test} PROPERTIES ENVIRONMENT "${_seabass_test_env}")
 endforeach()
 

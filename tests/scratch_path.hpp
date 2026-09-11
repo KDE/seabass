@@ -74,13 +74,18 @@ inline void sandboxSeabassHome(const std::filesystem::path &home)
 // dead folder rows in one -- every one of them showing up as a card on
 // the app's first page, pointing at a /tmp path that no longer existed.
 //
-// Redirecting with QSettings::setPath(IniFormat, ...) is what that test
-// tried first and it does not work: the two-argument constructor takes
-// the NATIVE format, which on Unix is a different QSettings::Format enum
-// value than IniFormat even though both write .ini-shaped files, so the
-// path set for IniFormat is never consulted. Moving the environment
-// variable the platform itself reads is what actually redirects it, and
-// it covers every QSettings in the process rather than one format.
+// QSettings::setPath(IniFormat, ...) plus setDefaultFormat(IniFormat) is
+// what that test had, and on Linux it demonstrably does not redirect:
+// straced, the test opens ~/.config/seabass/seabass.conf O_RDWR and
+// never opens the scratch path at all. (Why Qt resolves it that way is
+// not established here; the trace is.) Moving the environment variable
+// the platform itself reads is what does work, and it covers every
+// QSettings in the process rather than one format.
+//
+// It is NOT enough on its own on Windows, where the native store is the
+// registry and reads neither variable, so the caller should ALSO force
+// IniFormat and a path -- see open_folder_test.cpp. Both belts, because
+// each one alone leaves a platform uncovered.
 //
 // Must be called before the first QSettings is constructed -- Qt caches
 // the resolved location per format+scope.
@@ -89,8 +94,8 @@ inline void sandboxSettings(const std::filesystem::path &configHome)
     std::error_code ec;
     std::filesystem::create_directories(configHome, ec);
 #if defined(_WIN32)
-    // QSettings' UserScope on Windows is the registry by default, but a
-    // test process that sets APPDATA and asks for IniFormat writes here.
+    // Only bites once the caller has asked for IniFormat: the Windows
+    // native store is the registry, which ignores this entirely.
     _putenv_s("APPDATA", configHome.string().c_str());
 #else
     setenv("XDG_CONFIG_HOME", configHome.string().c_str(), 1);
