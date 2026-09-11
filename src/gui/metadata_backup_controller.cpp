@@ -4,10 +4,14 @@
 
 #include <algorithm>
 #include <exception>
+#include <map>
+#include <string>
 
 #include "application/use_cases/collapse_catalog_rows.hpp"
+#include "domain/metadata_backup_plan.hpp"
 #include "domain/metadata_merge.hpp"
 #include "gui/local_file_url.hpp"
+#include "gui/metadata_row_text.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 
@@ -26,21 +30,14 @@ namespace
 // one or two, small enough that the first page paints immediately.
 constexpr int PageSize = 200;
 
-QString durationText(double seconds)
-{
-    if (seconds <= 0.0) {
-        return QStringLiteral("--:--");
-    }
-    const int total = static_cast<int>(seconds + 0.5);
-    return QStringLiteral("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QLatin1Char('0'));
-}
 
-// Runs entirely on a background thread -- no access to the controller.
-MetadataBackupTaskResult runBackupTask(QString libraryPath, QString libraryId, QString stickLabel,
-                                        std::shared_ptr<QtProgressReporter> reporter,
-                                        application::CancellationToken cancel)
+// Reads every catalog on the stick, folds them into files, and works out
+// what storing them would change. Runs entirely on a background thread --
+// no access to the controller.
+MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProgressReporter> reporter,
+                                      application::CancellationToken cancel)
 {
-    MetadataBackupTaskResult result;
+    MetadataBackupScanResult result;
     try {
         const auto read = readAllStickCatalogs(libraryPath.toStdString(), *reporter, cancel);
         for (const auto &name : read.catalogs.present()) {
@@ -58,29 +55,104 @@ MetadataBackupTaskResult runBackupTask(QString libraryPath, QString libraryId, Q
 
         // Rows from every catalog, folded into one Track per file: the
         // three formats are one library, so a file they all list is one
-        // stored track holding the union of their cues. Storing each
-        // catalog in turn instead would make the second one's read
-        // conflict with the first one's write over the same row.
+        // proposal holding the union of their cues, not three proposals
+        // that each look like a separate track to back up.
         std::vector<domain::Track> rows;
         for (const auto *catalog : {&read.catalogs.rekordbox, &read.catalogs.oneLibrary, &read.catalogs.engine}) {
             if (*catalog) {
                 rows.insert(rows.end(), (*catalog)->begin(), (*catalog)->end());
             }
         }
-        const auto files = application::collapseCatalogRows(rows);
+        const auto stickTracks = application::collapseCatalogRows(rows);
 
+        // Playlists to filter by, counted off the collapsed files rather
+        // than the raw rows: a track three catalogs list belongs to its
+        // playlist once, not three times. Sorted, because a std::map is,
+        // and a picker whose order changed between scans of the same
+        // stick would be its own small bug.
+        std::map<std::string, int> playlistCounts;
+        for (const auto &track : stickTracks) {
+            for (const auto &member : track.playlists) {
+                playlistCounts[member.name]++;
+            }
+        }
+        for (const auto &[name, count] : playlistCounts) {
+            result.playlistNames << QString::fromStdString(name);
+            result.playlistTrackCounts.insert(QString::fromStdString(name), count);
+        }
+
+        reporter->start("Reading the metadata store", 0);
+        MetadataStore store;
+        const auto storedTracks = store.readAll();
+        // For display only, and fetched separately rather than carried
+        // on domain::Track so nothing in the matching or merging can
+        // reach for it.
+        const auto stickLabels = store.stickLabelsByTrackId();
+        reporter->finish();
+        result.storedTrackCount = static_cast<int>(storedTracks.size());
+
+        if (cancel.cancelled()) {
+            result.cancelled = true;
+            return result;
+        }
+
+        // When this stick's catalogs were last written. The merge rule
+        // consults it only where nothing else separates two copies, but
+        // where it does the answer turns on it, so it is read from the
+        // files rather than assumed.
+        result.plan =
+            domain::planMetadataBackup(stickTracks, storedTracks, catalogsLastModified(libraryPath.toStdString()));
+
+        for (auto &proposal : result.plan.proposals) {
+            if (proposal.storedId.empty()) {
+                continue;
+            }
+            // storedId is the row id as text, which is how the store
+            // spells it on a domain::Track; stoll is safe on anything
+            // readAll() produced and guarded for anything that was not.
+            try {
+                const auto found = stickLabels.find(std::stoll(proposal.storedId));
+                if (found != stickLabels.end()) {
+                    proposal.storedFrom = found->second;
+                }
+            } catch (const std::exception &) {
+                // No label, so the row simply does not say where its
+                // stored copy came from. Not worth failing a scan over.
+            }
+        }
+    } catch (const application::OperationCancelled &) {
+        result.cancelled = true;
+    } catch (const std::exception &e) {
+        result.errorMessage = QString::fromUtf8(e.what());
+    }
+    return result;
+}
+
+// Writes the chosen tracks into the store. Runs entirely on a background
+// thread -- no access to the controller.
+//
+// Takes the tracks rather than re-reading the stick: they were read once
+// by the scan the user has been looking at, and reading again would let
+// the list they ticked and the write they authorised disagree about a
+// stick edited in between.
+MetadataBackupTaskResult runStoreTask(std::vector<domain::Track> tracks, QString libraryPath, QString libraryId,
+                                       QString stickLabel, std::shared_ptr<QtProgressReporter> reporter,
+                                       application::CancellationToken cancel)
+{
+    MetadataBackupTaskResult result;
+    try {
         MetadataSource source;
         source.stickRoot = fs::path(libraryPath.toStdString()).parent_path();
         source.libraryId = libraryId.toStdString();
         source.stickLabel = stickLabel.toStdString();
         // Read from the files, not from the rows: the merge rule's last
         // step needs to know whether this stick has been worked on since
-        // the entry was stored, and a catalog's mtime is the only date a
+        // an entry was stored, and a catalog's mtime is the only date a
         // stick offers.
         source.catalogModifiedAt = catalogsLastModified(libraryPath.toStdString());
 
         MetadataStore store;
-        result.summary = store.store(files, source, *reporter, cancel);
+        result.summary = store.store(tracks, source, *reporter, cancel);
         result.succeeded = true;
     } catch (const application::OperationCancelled &) {
         result.succeeded = true;
@@ -90,7 +162,6 @@ MetadataBackupTaskResult runBackupTask(QString libraryPath, QString libraryId, Q
     }
     return result;
 }
-
 }  // namespace
 
 // ---- model ----------------------------------------------------------
@@ -135,7 +206,7 @@ QVariant StoredTrackListModel::data(const QModelIndex &index, int role) const
     case RelativePathRole:
         return QString::fromStdString(row.relativePath);
     case DurationTextRole:
-        return durationText(row.durationSeconds);
+        return metadataDurationText(row.durationSeconds);
     case BpmRole:
         return row.bpm;
     case MusicKeyRole:
@@ -167,13 +238,23 @@ void StoredTrackListModel::reset(std::vector<StoredTrack> rows)
 {
     beginResetModel();
     m_rows = std::move(rows);
-    // The marks go with the old list. reset() is what a changed search
-    // term and a finished delete both run through, and a mark that
-    // outlived the rows it was made on would be invisible: the user
-    // would tick three rows, type in the search box, press Delete and
-    // lose tracks they could no longer see. Only loadMore()'s append
-    // keeps the marks, and that genuinely is the same list.
-    m_stagedForDeletion.clear();
+    // The marks stay. They are keyed by store row id, so they cannot
+    // land on the wrong track however the list is rebuilt underneath
+    // them.
+    //
+    // They used to be dropped here, on the argument that a mark you
+    // cannot see is a mark you might delete by accident -- true, but the
+    // cure was worse: reset() is what a changed search term runs
+    // through, so typing in the search box silently cleared every tick
+    // while the page went on reporting them as staged, because nothing
+    // told the controller. One search, and the count and the tick boxes
+    // disagreed until you left the page.
+    //
+    // The floating Save button answers the original worry properly: it
+    // carries a live count of everything staged and lists it, so a row
+    // filtered or paged out of sight is still visible in the one place
+    // that decides. clearStagingFor() handles rows that have genuinely
+    // stopped existing.
     endResetModel();
 }
 
@@ -249,26 +330,80 @@ QList<qint64> StoredTrackListModel::stagedForDeletionIds() const
     return QList<qint64>(m_stagedForDeletion.begin(), m_stagedForDeletion.end());
 }
 
+
+void StoredTrackListModel::clearStagingFor(const QList<qint64> &trackIds)
+{
+    for (const qint64 id : trackIds) {
+        m_stagedForDeletion.remove(id);
+    }
+}
+
+QStringList StoredTrackListModel::stagedDescriptions() const
+{
+    QStringList lines;
+    QSet<qint64> described;
+    for (const auto &row : m_rows) {
+        const qint64 id = static_cast<qint64>(row.id);
+        if (!m_stagedForDeletion.contains(id)) {
+            continue;
+        }
+        described.insert(id);
+        QString name = QString::fromStdString(row.title.empty() ? row.filename : row.title);
+        if (!row.artist.empty()) {
+            name = QString::fromStdString(row.artist) + QStringLiteral(" - ") + name;
+        }
+        lines << QStringLiteral("Forget %1").arg(name);
+    }
+    // A row can be staged and then filtered or paged out of the loaded
+    // list. It still gets deleted, so it still has to be accounted for
+    // here -- named where the list can name it, counted where it cannot.
+    const int unnamed = m_stagedForDeletion.size() - described.size();
+    if (unnamed > 0) {
+        lines << QStringLiteral("Forget %1 more not currently listed").arg(unnamed);
+    }
+    return lines;
+}
+
 // ---- controller -----------------------------------------------------
 
 MetadataBackupController::MetadataBackupController(QObject *parent) : QObject(parent)
 {
-    connect(&m_watcher, &QFutureWatcher<MetadataBackupTaskResult>::finished, this,
-            &MetadataBackupController::onBackupFinished);
+    connect(&m_scanWatcher, &QFutureWatcher<MetadataBackupScanResult>::finished, this,
+            &MetadataBackupController::onScanFinished);
+    connect(&m_saveWatcher, &QFutureWatcher<MetadataBackupTaskResult>::finished, this,
+            &MetadataBackupController::onSaveFinished);
     refresh();
 }
 
 MetadataBackupController::~MetadataBackupController()
 {
     m_cancel.cancel();
-    if (m_watcher.isRunning()) {
-        m_watcher.waitForFinished();
+    if (m_scanWatcher.isRunning()) {
+        m_scanWatcher.waitForFinished();
+    }
+    if (m_saveWatcher.isRunning()) {
+        m_saveWatcher.waitForFinished();
     }
 }
 
 QString MetadataBackupController::storeLocation() const
 {
     return QString::fromStdString(MetadataStore::defaultDatabasePath().parent_path().string());
+}
+
+QString MetadataBackupController::state() const
+{
+    // The one string SaveOverlayButton compares against. It disables
+    // itself while a save is in flight and keeps itself visible, which
+    // is exactly the behaviour wanted here.
+    return m_writing ? QStringLiteral("writing") : QStringLiteral("idle");
+}
+
+QStringList MetadataBackupController::pendingDescriptions() const
+{
+    QStringList lines = m_proposalModel.stagedDescriptions();
+    lines << m_browseModel.stagedDescriptions();
+    return lines;
 }
 
 MetadataStore *MetadataBackupController::store()
@@ -296,15 +431,316 @@ void MetadataBackupController::refresh()
         m_artworkBytes = static_cast<qint64>(db->artworkBytesOnDisk());
         m_browseModel.reset(db->browse(m_search.toStdString(), PageSize, 0));
         emit storeChanged();
+        // The marks survive a reset now, so the count that depends on
+        // them has to be re-announced with the list. Leaving this out is
+        // what made a search clear every tick box on screen while the
+        // page went on insisting three tracks were staged.
+        emit selectionChanged();
     } catch (const std::exception &e) {
         setErrorMessage(QString::fromUtf8(e.what()));
     }
 }
 
+// ---- choosing what the list shows ------------------------------------
+
+bool MetadataBackupController::selectStick(const QString &libraryPath, const QString &libraryId,
+                                            const QString &stickLabel)
+{
+    // Same stick, already scanned: nothing to do, and re-scanning would
+    // throw away staging for no reason.
+    if (!m_browsingStore && m_sourceLibraryPath == libraryPath && m_hasScanned) {
+        return true;
+    }
+    if (dirty()) {
+        // The page puts the question; this only refuses. Staging was
+        // decided against numbers a new scan replaces, so carrying it
+        // over would stage a choice made about a different stick.
+        return false;
+    }
+    startScan(libraryPath, libraryId, stickLabel);
+    return true;
+}
+
+void MetadataBackupController::discardStagingAndSelectStick(const QString &libraryPath, const QString &libraryId,
+                                                             const QString &stickLabel)
+{
+    clearAllStaging();
+    startScan(libraryPath, libraryId, stickLabel);
+}
+
+void MetadataBackupController::startScan(const QString &libraryPath, const QString &libraryId,
+                                          const QString &stickLabel)
+{
+    if (m_busy) {
+        return;
+    }
+    setErrorMessage({});
+    m_sourceLibraryPath = libraryPath;
+    m_sourceLibraryId = libraryId;
+    m_sourceStickLabel = stickLabel;
+    m_browsingStore = false;
+    m_hasScanned = false;
+    // The playlist filter belonged to the stick being left. Keeping it
+    // would silently narrow the new stick's list by a playlist that may
+    // not even exist on it.
+    m_playlist.clear();
+    m_playlistNames.clear();
+    m_playlistTrackCounts.clear();
+    m_proposalModel.clear();
+    emit sourceChanged();
+    emit filterChanged();
+    emit analysisChanged();
+    emit selectionChanged();
+
+    m_phaseBaseline = 0;
+    m_currentPhaseTotal = 0;
+    setProgress(0, 0);
+    setCurrentPhase(QStringLiteral("Reading this stick"));
+    m_cancel = application::CancellationToken();
+    setBusy(true);
+    m_scanWatcher.setFuture(QtConcurrent::run(runScanTask, libraryPath, makeReporter(), m_cancel));
+}
+
+bool MetadataBackupController::browseStore()
+{
+    if (m_browsingStore) {
+        return true;
+    }
+    if (dirty()) {
+        return false;
+    }
+    discardStagingAndBrowseStore();
+    return true;
+}
+
+void MetadataBackupController::discardStagingAndBrowseStore()
+{
+    clearAllStaging();
+    m_browsingStore = true;
+    m_hasScanned = false;
+    m_sourceLibraryPath.clear();
+    m_sourceLibraryId.clear();
+    m_sourceStickLabel.clear();
+    m_playlist.clear();
+    m_playlistNames.clear();
+    m_playlistTrackCounts.clear();
+    m_proposalModel.clear();
+    emit sourceChanged();
+    emit filterChanged();
+    emit analysisChanged();
+    refresh();
+}
+
+void MetadataBackupController::cancel()
+{
+    m_cancel.cancel();
+}
+
+void MetadataBackupController::onScanFinished()
+{
+    const MetadataBackupScanResult result = m_scanWatcher.result();
+    setBusy(false);
+    setCurrentPhase({});
+    if (!result.errorMessage.isEmpty()) {
+        setErrorMessage(result.errorMessage);
+        return;
+    }
+    if (result.cancelled) {
+        return;
+    }
+
+    m_storedTrackCount = result.storedTrackCount;
+    m_tracksSeen = result.plan.tracksSeen;
+    m_alreadyCurrent = result.plan.alreadyCurrent;
+    m_withoutIdentity = result.plan.withoutIdentity;
+    m_playlistNames = result.playlistNames;
+    m_playlistTrackCounts = result.playlistTrackCounts;
+    m_proposalModel.setProposals(result.plan.proposals);
+    m_proposalModel.setFilter(m_search, m_playlist);
+    m_hasScanned = true;
+    emit analysisChanged();
+    emit selectionChanged();
+}
+
+// ---- staging ---------------------------------------------------------
+
+void MetadataBackupController::toggleStagedForAdd(int row)
+{
+    const int index = m_proposalModel.sourceIndexOfRow(row);
+    if (index < 0) {
+        return;
+    }
+    m_proposalModel.setStaged(index, !m_proposalModel.isStaged(index));
+    emit selectionChanged();
+}
+
+void MetadataBackupController::stageAllForAdd()
+{
+    m_proposalModel.stageAll();
+    emit selectionChanged();
+}
+
+void MetadataBackupController::unstageAllForAdd()
+{
+    m_proposalModel.unstageAll();
+    emit selectionChanged();
+}
+
+void MetadataBackupController::toggleStagedForDeletion(int row)
+{
+    const qint64 id = m_browseModel.trackIdAt(row);
+    if (id == 0) {
+        return;
+    }
+    m_browseModel.setStagedForDeletion(row, !m_browseModel.isStagedForDeletion(id));
+    emit selectionChanged();
+}
+
+void MetadataBackupController::stageAllForDeletion()
+{
+    m_browseModel.stageAllLoadedForDeletion();
+    emit selectionChanged();
+}
+
+void MetadataBackupController::clearDeletionStaging()
+{
+    m_browseModel.clearDeletionStaging();
+    emit selectionChanged();
+}
+
+void MetadataBackupController::clearAllStaging()
+{
+    m_browseModel.clearDeletionStaging();
+    m_proposalModel.unstageAll();
+    emit selectionChanged();
+}
+
+// ---- committing ------------------------------------------------------
+
+void MetadataBackupController::save()
+{
+    if (m_busy || !dirty()) {
+        return;
+    }
+    setErrorMessage({});
+    m_hasResult = false;
+    m_lastRun.clear();
+    emit resultChanged();
+
+    const std::vector<domain::Track> tracks = m_proposalModel.stagedTracks();
+    if (tracks.empty()) {
+        // Deletions only. No stick to read and nothing to write, so this
+        // is a database delete and does not need a thread or a bar.
+        applyStagedDeletions();
+        return;
+    }
+
+    m_phaseBaseline = 0;
+    m_currentPhaseTotal = 0;
+    setProgress(0, 0);
+    setCurrentPhase(QStringLiteral("Storing"));
+    m_cancel = application::CancellationToken();
+    setBusy(true);
+    setWriting(true);
+    m_saveWatcher.setFuture(QtConcurrent::run(runStoreTask, tracks, m_sourceLibraryPath, m_sourceLibraryId,
+                                               m_sourceStickLabel, makeReporter(), m_cancel));
+}
+
+void MetadataBackupController::onSaveFinished()
+{
+    const MetadataBackupTaskResult result = m_saveWatcher.result();
+    setBusy(false);
+    setWriting(false);
+    setCurrentPhase({});
+    if (!result.succeeded) {
+        setErrorMessage(result.errorMessage);
+        return;
+    }
+
+    const auto &summary = result.summary;
+    m_lastRun = QVariantMap{
+        {"tracksSeen", summary.tracksSeen},
+        {"tracksAdded", summary.tracksAdded},
+        {"tracksUpdated", summary.tracksUpdated},
+        {"tracksSkipped", summary.tracksSkipped},
+        {"tracksUnchanged", summary.tracksUnchanged},
+        {"tracksWithoutIdentity", summary.tracksWithoutIdentity},
+        {"cuesStored", summary.cuesStored},
+        {"artworkFilesAdded", summary.artworkFilesAdded},
+        {"artworkBytesAdded", static_cast<qint64>(summary.artworkBytesAdded)},
+        {"cancelled", summary.cancelled},
+        {"catalogsRead", result.catalogsRead},
+        {"catalogsUnreadable", result.catalogsUnreadable},
+    };
+    m_hasResult = true;
+
+    // Staged additions have landed, so they are no longer staged. The
+    // proposals stay on the list: a row that has just been stored now
+    // matches what the store holds, and saying so on a rescan is more
+    // honest than quietly dropping it the instant it is written.
+    m_proposalModel.unstageAll();
+    // Deletions ride along in the same Save, after the write, so a run
+    // that fails to store does not also forget things.
+    applyStagedDeletions();
+    emit resultChanged();
+}
+
+void MetadataBackupController::applyStagedDeletions()
+{
+    const QList<qint64> ids = m_browseModel.stagedForDeletionIds();
+    if (ids.isEmpty()) {
+        refresh();
+        emit selectionChanged();
+        return;
+    }
+    auto *db = store();
+    if (!db) {
+        return;
+    }
+    int removed = 0;
+    try {
+        removed = db->removeTracks(std::vector<std::int64_t>(ids.begin(), ids.end()));
+    } catch (const std::exception &e) {
+        setErrorMessage(QString::fromUtf8(e.what()));
+        return;
+    }
+    // The rows they referred to are gone, so the marks go with them.
+    // Explicitly, because a reset no longer does it.
+    m_browseModel.clearStagingFor(ids);
+    refresh();
+    emit selectionChanged();
+    emit actionFeedback(removed == 1 ? QStringLiteral("One track removed from the metadata backup.")
+                                     : QStringLiteral("%1 tracks removed from the metadata backup.").arg(removed),
+                        false);
+}
+
+// ---- filtering -------------------------------------------------------
+
 void MetadataBackupController::search(const QString &text)
 {
-    m_search = text.trimmed();
+    const QString trimmed = text.trimmed();
+    if (m_search == trimmed) {
+        return;
+    }
+    m_search = trimmed;
+    // Both populations, because either may be the one showing and the
+    // field is the same field. The proposal list filters in memory; the
+    // browse list re-queries, which is what refresh() does.
+    m_proposalModel.setFilter(m_search, m_playlist);
+    emit analysisChanged();
+    emit filterChanged();
     refresh();
+}
+
+void MetadataBackupController::setPlaylist(const QString &name)
+{
+    if (m_playlist == name) {
+        return;
+    }
+    m_playlist = name;
+    m_proposalModel.setFilter(m_search, m_playlist);
+    emit analysisChanged();
+    emit filterChanged();
 }
 
 void MetadataBackupController::loadMore()
@@ -333,7 +769,7 @@ QVariantList MetadataBackupController::cuesFor(qint64 trackId)
         entry["kind"] = cue.kind == domain::CuePoint::Kind::Hot ? "hot" : "memory";
         entry["hotCueNumber"] = cue.hotCueNumber;
         entry["positionMs"] = cue.positionMs;
-        entry["positionText"] = durationText(cue.positionMs / 1000.0);
+        entry["positionText"] = metadataDurationText(cue.positionMs / 1000.0);
         entry["color"] = QString::fromStdString(cue.color);
         entry["comment"] = QString::fromStdString(cue.comment);
         entry["isLoop"] = cue.isLoop;
@@ -368,57 +804,6 @@ QString MetadataBackupController::cueSummaryFor(qint64 trackId)
     return lines.join(QLatin1Char('\n'));
 }
 
-QString MetadataBackupController::mergeRuleHelp() const
-{
-    return QString::fromStdString(domain::mergeRuleExplanation());
-}
-
-void MetadataBackupController::toggleStagedForDeletion(int row)
-{
-    const qint64 id = m_browseModel.trackIdAt(row);
-    if (id == 0) {
-        return;
-    }
-    m_browseModel.setStagedForDeletion(row, !m_browseModel.isStagedForDeletion(id));
-    emit selectionChanged();
-}
-
-void MetadataBackupController::stageAllForDeletion()
-{
-    m_browseModel.stageAllLoadedForDeletion();
-    emit selectionChanged();
-}
-
-void MetadataBackupController::clearDeletionStaging()
-{
-    m_browseModel.clearDeletionStaging();
-    emit selectionChanged();
-}
-
-int MetadataBackupController::deleteStaged()
-{
-    auto *db = store();
-    if (!db) {
-        return 0;
-    }
-    const QList<qint64> ids = m_browseModel.stagedForDeletionIds();
-    if (ids.isEmpty()) {
-        return 0;
-    }
-    int removed = 0;
-    try {
-        removed = db->removeTracks(std::vector<std::int64_t>(ids.begin(), ids.end()));
-    } catch (const std::exception &e) {
-        setErrorMessage(QString::fromUtf8(e.what()));
-        return 0;
-    }
-    // refresh() resets the model, which clears the marks: the rows they
-    // referred to are gone.
-    refresh();
-    emit selectionChanged();
-    return removed;
-}
-
 QStringList MetadataBackupController::playlistsFor(qint64 trackId)
 {
     QStringList names;
@@ -432,60 +817,12 @@ QStringList MetadataBackupController::playlistsFor(qint64 trackId)
     return names;
 }
 
-void MetadataBackupController::backUp(const QString &libraryPath, const QString &libraryId,
-                                       const QString &stickLabel)
+QString MetadataBackupController::mergeRuleHelp() const
 {
-    if (m_busy) {
-        return;
-    }
-    setErrorMessage({});
-    m_hasResult = false;
-    m_lastRun.clear();
-    emit resultChanged();
-    m_phaseBaseline = 0;
-    m_currentPhaseTotal = 0;
-    setProgress(0, 0);
-    setCurrentPhase(QStringLiteral("Reading this stick"));
-    m_cancel = application::CancellationToken();
-    setBusy(true);
-    m_watcher.setFuture(
-        QtConcurrent::run(runBackupTask, libraryPath, libraryId, stickLabel, makeReporter(), m_cancel));
+    return QString::fromStdString(domain::mergeRuleExplanation());
 }
 
-void MetadataBackupController::cancel()
-{
-    m_cancel.cancel();
-}
-
-void MetadataBackupController::onBackupFinished()
-{
-    const MetadataBackupTaskResult result = m_watcher.result();
-    setBusy(false);
-    setCurrentPhase({});
-    if (!result.succeeded) {
-        setErrorMessage(result.errorMessage);
-        return;
-    }
-
-    const auto &summary = result.summary;
-    m_lastRun = QVariantMap{
-        {"tracksSeen", summary.tracksSeen},
-        {"tracksAdded", summary.tracksAdded},
-        {"tracksUpdated", summary.tracksUpdated},
-        {"tracksSkipped", summary.tracksSkipped},
-        {"tracksUnchanged", summary.tracksUnchanged},
-        {"tracksWithoutIdentity", summary.tracksWithoutIdentity},
-        {"cuesStored", summary.cuesStored},
-        {"artworkFilesAdded", summary.artworkFilesAdded},
-        {"artworkBytesAdded", static_cast<qint64>(summary.artworkBytesAdded)},
-        {"cancelled", summary.cancelled},
-        {"catalogsRead", result.catalogsRead},
-        {"catalogsUnreadable", result.catalogsUnreadable},
-    };
-    m_hasResult = true;
-    emit resultChanged();
-    refresh();
-}
+// ---- progress and state ----------------------------------------------
 
 std::shared_ptr<QtProgressReporter> MetadataBackupController::makeReporter()
 {
@@ -511,6 +848,18 @@ void MetadataBackupController::setBusy(bool busy)
         return;
     }
     m_busy = busy;
+    emit busyChanged();
+}
+
+void MetadataBackupController::setWriting(bool writing)
+{
+    if (m_writing == writing) {
+        return;
+    }
+    m_writing = writing;
+    // state() is what SaveOverlayButton watches, and it hangs off
+    // busyChanged -- the same signal, so the button and the progress bar
+    // cannot disagree about whether a write is in flight.
     emit busyChanged();
 }
 

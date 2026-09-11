@@ -45,6 +45,7 @@ public:
         RatingRole,        // the rating this restore would write, -1 for none
         CommentRole,       // the comment it would write, empty for none
         StoredFromRole,    // the stick this copy was last backed up from
+        ArtworkUrlRole,    // the cover the store copied, as a file:// URL
         StagedRole,
     };
 

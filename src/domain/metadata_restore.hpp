@@ -19,6 +19,11 @@ struct MetadataRestoreProposal
     Track stickTrack;
     std::string storedId;   // the store row this came from
     std::string storedFrom; // the stick label the store last saw it on, for display
+    // The cover the store copied for this track, absolute, on this
+    // computer. From the stored side rather than the stick's, because
+    // this row is showing what the store is offering -- and because the
+    // case the whole page exists for is a stick that has lost the lot.
+    std::string artworkPath;
 
     // The complete cue list to write, never a diff: every cue writer in
     // Seabass replaces a track's whole set, so anything less silently

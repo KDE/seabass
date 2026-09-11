@@ -26,6 +26,7 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
         MetadataRestoreProposal proposal;
         proposal.stickTrack = *stick;
         proposal.storedId = stored->sourceId;
+        proposal.artworkPath = stored->artworkPath;
 
         // The store is the incoming side here and the stick the existing
         // one, the mirror image of what MetadataStore::store() does with

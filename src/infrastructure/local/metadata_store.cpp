@@ -1034,7 +1034,8 @@ std::vector<Track> MetadataStore::readAll()
     {
         Stmt stmt(m_db, R"sql(
             SELECT id, relative_path, filename, title, artist, duration_seconds, bpm,
-                   music_key, rating, comment, play_count, authored_at, updated_at
+                   music_key, rating, comment, play_count, authored_at, updated_at,
+                   artwork_sha, artwork_extension
             FROM tracks ORDER BY id
         )sql");
         while (stmt.step()) {
@@ -1074,6 +1075,21 @@ std::vector<Track> MetadataStore::readAll()
             const std::string authored = stmt.columnText(11);
             track.metadataModifiedAt =
                 epochFromIsoTimestamp(authored.empty() ? stmt.columnText(12) : authored);
+            // The cover this store copied when it read the track, as an
+            // absolute path to a file on this computer. Unlike the
+            // relative path above, this one IS safe to hand out: it
+            // points into artworkDir() here, not at anything on a stick
+            // that may since have been reformatted -- which is the whole
+            // reason the image was copied in the first place.
+            //
+            // Left empty before, which is why a restore proposal had no
+            // cover to draw: the page asked the store for the track and
+            // the store answered without the one field it alone could
+            // supply.
+            const std::string artworkSha = stmt.columnText(13);
+            if (!artworkSha.empty()) {
+                track.artworkPath = (artworkDir() / (artworkSha + stmt.columnText(14))).string();
+            }
             tracks.push_back(std::move(track));
         }
     }

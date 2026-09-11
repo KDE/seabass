@@ -159,7 +159,9 @@ set(SEABASS_GUI_SOURCES
     local_cue_controller.hpp
     local_cue_controller.cpp
     metadata_backup_controller.hpp
+    metadata_backup_proposal_model.hpp
     metadata_backup_controller.cpp
+    metadata_backup_proposal_model.cpp
     metadata_restore_controller.hpp
     metadata_restore_controller.cpp
     playback_controller.hpp

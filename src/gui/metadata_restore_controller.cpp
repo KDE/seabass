@@ -12,6 +12,8 @@
 #include "gui/edit/changes/restore_metadata_change.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/local_file_url.hpp"
+#include "gui/metadata_row_text.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/local/metadata_store.hpp"
@@ -26,42 +28,6 @@ namespace
 {
 
 namespace fs = std::filesystem;
-
-// Same spelling the backup page's list uses, so one track reads the same
-// on both pages.
-QString proposalDurationText(double seconds)
-{
-    if (seconds <= 0.0) {
-        return QStringLiteral("--:--");
-    }
-    const int total = static_cast<int>(seconds + 0.5);
-    return QStringLiteral("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QLatin1Char('0'));
-}
-
-// Every cue on a line, for the hover tooltip on a row's cue badge. Built
-// from the proposal's own list, which is already in memory, so this
-// costs nothing the scan did not already pay for.
-QString cueSummaryOf(const std::vector<domain::CuePoint> &cues)
-{
-    if (cues.empty()) {
-        return {};
-    }
-    QStringList lines;
-    for (const auto &cue : cues) {
-        QString line = cue.kind == domain::CuePoint::Kind::Hot
-            ? QStringLiteral("Hot cue %1").arg(cue.hotCueNumber)
-            : QStringLiteral("Memory cue");
-        line += QStringLiteral(" at ") + proposalDurationText(cue.positionMs / 1000.0);
-        if (cue.isLoop) {
-            line += QStringLiteral(" (loop)");
-        }
-        if (!cue.comment.empty()) {
-            line += QStringLiteral(": ") + QString::fromStdString(cue.comment);
-        }
-        lines << line;
-    }
-    return lines.join(QLatin1Char('\n'));
-}
 
 // The catalog directory for one format on the stick that `libraryPath`
 // belongs to.
@@ -191,6 +157,7 @@ QHash<int, QByteArray> RestoreProposalListModel::roleNames() const
         {RatingRole, "rating"},
         {CommentRole, "comment"},
         {StoredFromRole, "storedFrom"},
+        {ArtworkUrlRole, "artworkUrl"},
         {StagedRole, "staged"},
     };
 }
@@ -216,11 +183,16 @@ QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) cons
         // "File" rather than anything promising a relative one.
         return QString::fromStdString(proposal.stickTrack.filePath);
     case DurationTextRole:
-        return proposalDurationText(proposal.stickTrack.durationSeconds);
+        return metadataDurationText(proposal.stickTrack.durationSeconds);
     case CueSummaryRole:
-        return cueSummaryOf(proposal.cues);
+        return metadataCueSummary(proposal.cues);
     case StoredFromRole:
         return QString::fromStdString(proposal.storedFrom);
+    case ArtworkUrlRole:
+        // The store's own copy of the cover, not the stick's. On the
+        // stick this page is aimed at -- one that has lost its metadata
+        // -- the stick's copy is exactly what is missing.
+        return toLocalFileUrl(proposal.artworkPath);
     case CueCountRole:
         return static_cast<int>(proposal.cues.size());
     case CuesAddedRole:

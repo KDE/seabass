@@ -268,6 +268,7 @@ Page {
                 required rating
                 required comment
                 required cueCount
+                required artworkUrl
 
                 // Ticking a row IS staging it. There is no second
                 // selection to keep in step with this one, and so no way
