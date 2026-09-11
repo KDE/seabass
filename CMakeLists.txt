@@ -220,6 +220,17 @@ target_link_libraries(rekordbox_format PUBLIC kaitai_cpp_stl_runtime)
 # --- seabass_core: domain -> application -> infrastructure, shared by ---
 # --- both the CLI (src/cli/) and the Qt GUI (src/gui/) composition roots ---
 
+# Standalone drive-measurement library, no Qt and nothing else from this
+# tree: src/storageprobe/README.md says how to lift it into another
+# project. seabass_core links it; the DJ workload lives in domain/.
+add_library(storageprobe STATIC
+    src/storageprobe/read_probe.cpp
+    src/storageprobe/write_probe.cpp
+    src/storageprobe/workload.cpp
+)
+target_include_directories(storageprobe PUBLIC src)
+target_compile_features(storageprobe PUBLIC cxx_std_17)
+
 add_library(seabass_core STATIC
     src/domain/camelot_key.cpp
     src/domain/cross_source_sync_conflict.cpp
@@ -330,7 +341,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/metadata_store.cpp
 )
 target_include_directories(seabass_core PUBLIC src)
-target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB)
+target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
 
 if(WIN32)
     # See the SYSTEM_SQLITE note above - same bundled amalgamation
@@ -1198,6 +1209,7 @@ add_executable(stick_performance_test
     tests/stick_performance_test.cpp
 )
 target_include_directories(stick_performance_test PRIVATE src)
+target_link_libraries(stick_performance_test PRIVATE storageprobe)
 add_test(NAME stick_performance_test COMMAND stick_performance_test)
 
 add_executable(stick_performance_probe_test
@@ -1207,6 +1219,7 @@ add_executable(stick_performance_probe_test
     tests/stick_performance_probe_test.cpp
 )
 target_include_directories(stick_performance_probe_test PRIVATE src)
+target_link_libraries(stick_performance_probe_test PRIVATE storageprobe)
 add_test(NAME stick_performance_probe_test COMMAND stick_performance_probe_test)
 
 # Both probes against a real stick; skips itself unless SEABASS_LIVE_STICK
@@ -1218,6 +1231,7 @@ add_executable(stick_performance_live_test
     tests/stick_performance_live_test.cpp
 )
 target_include_directories(stick_performance_live_test PRIVATE src)
+target_link_libraries(stick_performance_live_test PRIVATE storageprobe)
 add_test(NAME stick_performance_live_test COMMAND stick_performance_live_test)
 
 add_executable(local_cue_store_test

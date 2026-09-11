@@ -4,89 +4,54 @@
 #include <string>
 #include <vector>
 
+#include "storageprobe/measurement.hpp"
+#include "storageprobe/workload.hpp"
+
 namespace seabass::domain
 {
 
-// What a probe measured on one stick, in the three ways a DJ player
-// actually reads it (see docs/design/stick-performance-mockups): long
-// sequential reads of audio, small random reads (rekordbox's export.pdb
-// is a file of 4 KiB pages read on demand; OneLibrary and Engine OS are
-// SQLite files queried in place), and opening one small analysis file
-// per track load. Zero means "not measured" for every field; the score
-// below treats an unmeasured dimension as absent rather than as infinitely
-// slow.
-struct StickPerformanceMeasurement
-{
-    double streamingBytesPerSecond = 0.0;
-
-    double randomReadMedianMs = 0.0;
-    double randomReadP95Ms = 0.0;
-    int randomReads = 0;
-
-    double smallFileOpensPerSecond = 0.0;
-    double smallFileMedianMs = 0.0;
-    int smallFilesRead = 0;
-
-    // Size of the catalog database(s) a player reads at insertion,
-    // export.pdb plus m.db; feeds the modelled mount time only.
-    std::uint64_t databaseBytes = 0;
-};
+// Seabass's DJ workload on top of storageprobe (src/storageprobe/README.md):
+// the library measures a drive and models sessions; this file says what a
+// DJ set looks like as a session, what a stick has to be for nobody to
+// notice, and what each player generation does with the result. The
+// measurement types are the library's own, under this project's names.
+using StickPerformanceMeasurement = storageprobe::ReadMeasurement;
+using StickWriteMeasurement = storageprobe::WriteMeasurement;
+using Verdict = storageprobe::Verdict;
+using SpeedClass = storageprobe::SpeedClass;
+using storageprobe::speedClassFor;
+using storageprobe::speedClassLabel;
+using storageprobe::verdictLabel;
 
 // A two-hour set, as a stick sees it. Playback itself is not modelled:
 // streaming a track needs well under 1 MB/s, which even a bad stick
 // manages without the DJ noticing. What the DJ waits on is the mount at
-// insertion, every browse/search action (a burst of database page
-// reads), and every track load (a few small analysis files plus the
-// first stretch of audio pre-buffered before play).
+// insertion, every browse/search action (a burst of database page reads;
+// rekordbox's export.pdb is a paged file read on demand, OneLibrary and
+// Engine OS are SQLite queried in place), and every track load (a few
+// small analysis files plus the first stretch of audio pre-buffered
+// before play). Thresholds are per occurrence and perceptual: "fine" is
+// below what a person notices as a pause on a button press, with the
+// browse budget tighter because a scroll fires many actions in a row.
+// Provisional: calibrated against two healthy sticks, not yet a known-
+// slow one.
 struct DjWorkloadModel
 {
-    int browseActions = 200;
-    int pageReadsPerBrowseAction = 20;
-    int trackLoads = 40;
-    int smallFilesPerTrackLoad = 3;
-    std::uint64_t streamedBytesPerTrackLoad = 2u * 1024u * 1024u;
-    int pageReadsAtMount = 500;
+    storageprobe::Action browse{"browsing", 200, 20, 0, 0, false, 0.040, 0.120};
+    storageprobe::Action trackLoad{"track load", 40, 0, 3, 2u * 1024u * 1024u, false, 0.100, 0.300};
+    storageprobe::Action mount{"plugging in", 1, 500, 0, 0, true, 2.0, 10.0};
+
+    storageprobe::Session session() const { return {{browse, trackLoad, mount}}; }
 };
 
 // The stick every score is relative to: a current USB 3 flash stick on a
 // USB 2.0 port, which is what every DJ player offers. Streaming is capped
 // by the port, the other two by a modern controller. Score 100 means
-// "waits exactly as long as that stick would"; more is possible on the
-// computer's USB 3 port, less is the normal case for older sticks.
+// "waits exactly as long as that stick would".
 struct ReferenceStick
 {
-    double streamingBytesPerSecond = 40.0 * 1000 * 1000;
-    double randomReadMs = 0.3;
-    double smallFileMs = 0.4;
+    storageprobe::ReferenceDrive drive{40.0 * 1000 * 1000, 0.3, 0.4};
 };
-
-enum class Verdict
-{
-    Unknown,   // the measurement this verdict needs was not taken
-    Fine,      // no wait a DJ would notice
-    Slower,    // noticeable pauses
-    Sluggish,  // waiting is part of using this stick
-};
-
-std::string verdictLabel(Verdict verdict);
-
-// The stick rated by today's standards, from its score against the
-// reference stick: "Fast" is what a current USB 3 stick does, "Very fast"
-// beats it (an SSD, or a USB 3 port on the computer), the rest is how far
-// behind an older stick has fallen. Independent of the verdicts, which
-// say whether anyone would notice.
-enum class SpeedClass
-{
-    Unknown,
-    VeryFast,  // score >= 120
-    Fast,      // 80 .. 119
-    Average,   // 45 .. 79
-    Slow,      // 20 .. 44
-    VerySlow,  // < 20
-};
-
-SpeedClass speedClassFor(int score);
-std::string speedClassLabel(SpeedClass speedClass);
 
 struct DjWorkloadScore
 {
@@ -133,30 +98,14 @@ std::vector<PlayerAdvisory> advisePlayers(const StickPerformanceMeasurement &mea
 // and what the reference stick would have waited.
 std::string describeSetWait(const DjWorkloadScore &score);
 
-// What the optional write test measured. Writes happen on the computer,
-// never in the booth: saving cue points rewrites one small analysis file
-// per track and updates a few database pages in place, and a library
-// export from rekordbox or Engine DJ streams one audio file per track
-// plus its analysis files. Zero means "not measured".
-struct StickWriteMeasurement
-{
-    double streamingWriteBytesPerSecond = 0.0;  // large sequential writes, fsync'd
-    double smallFileWritesPerSecond = 0.0;      // create + write 16 KiB + fsync + close
-    double smallFileWriteMedianMs = 0.0;
-    int smallFilesWritten = 0;
-    double inPlaceUpdateMedianMs = 0.0;  // 4 KiB overwrite at a random offset + fsync
-    int inPlaceUpdates = 0;
-    std::uint64_t bytesWritten = 0;  // everything the test wrote, for the page to own up to
-};
-
+// The two write workloads a stick sees from the computer: saving cue
+// points (two analysis files rewritten, a few database pages updated in
+// place) and a library export from rekordbox or Engine DJ (the audio
+// file plus three analysis files plus its database rows, per track).
 struct WriteWorkloadEstimate
 {
-    // Saving cue points on one track: two analysis files rewritten and a
-    // handful of database pages updated in place.
     double cueSaveSeconds = 0.0;
     Verdict cueSaveVerdict = Verdict::Unknown;
-    // Exporting one track from rekordbox or Engine DJ: the audio file plus
-    // three analysis files plus its database rows; and a hundred of them.
     double exportTrackSeconds = 0.0;
     double exportHundredTracksSeconds = 0.0;
     Verdict exportVerdict = Verdict::Unknown;  // against Engine OS's documented 6 MB/s write floor

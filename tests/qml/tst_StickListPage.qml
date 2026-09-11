@@ -194,6 +194,25 @@ TestCase {
         compare(page.backupAdvisor.calls.indexOf("assess:/media/SPARE") >= 0, true);
     }
 
+    // USB Stick Performance needs no library: an empty mounted stick gets
+    // the card, and it carries the mount point the page measures at.
+    function test_emptyStickCanBeMeasured() {
+        var spare = makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1",
+                               hasRekordbox: false, hasEngine: false, rekordboxPath: "", enginePath: ""});
+        var advice = {};
+        advice["/media/SPARE"] = makeAdvice({state: "no-backups"});
+        var page = makePage([spare], advice);
+        var card = findCard(page, "/media/SPARE", "USB Stick Performance");
+        verify(card !== null);
+        compare(card.visible, true);
+        compare(card.enabled, true);
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "stickPerformanceRequested"});
+        card.clicked();
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "SPARE");
+        compare(spy.signalArguments[0][3], "/media/SPARE");
+    }
+
     function test_emptyStickOffersCloneFromThePeer() {
         var spare = makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1",
                                hasRekordbox: false, hasEngine: false, rekordboxPath: "", enginePath: ""});

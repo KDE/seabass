@@ -60,7 +60,7 @@ int main()
         assert(m.smallFilesRead == 20);
         assert(m.smallFileMedianMs > 0.0);
         assert(m.smallFileOpensPerSecond > 0.0);
-        assert(m.databaseBytes == 64 * 1024);
+        assert(m.catalogBytes == 64 * 1024);
         std::cout << "case 1 (real files measured on all three dimensions) OK\n";
     }
 
@@ -73,7 +73,7 @@ int main()
                                             {(root / "missing.DAT").string()}, {(root / "missing.pdb").string()});
         assert(m.streamingBytesPerSecond > 0.0);
         assert(m.smallFilesRead == 0 && m.smallFileOpensPerSecond == 0.0);
-        assert(m.databaseBytes == 0);
+        assert(m.catalogBytes == 0);
         auto none = StickPerformanceProbe::run({}, {}, {});
         assert(none.streamingBytesPerSecond == 0.0 && none.randomReads == 0 && none.smallFilesRead == 0);
         std::cout << "case 2 (missing files skipped, empty input is zero) OK\n";
@@ -138,6 +138,40 @@ int main()
         }
         assert(refused);
         std::cout << "case 5 (cancelled write test cleans up; missing root refused) OK\n";
+    }
+
+    // Case 6: asked to keep its files, the write test leaves them for the
+    // read probe (a blank stick has nothing else to read), and
+    // removeScratch() takes them away afterwards.
+    {
+        fs::path stick = root / "blank";
+        fs::create_directories(stick);
+        WriteProbeOptions options;
+        options.streamingFiles = 2;
+        options.streamingBytesPerFile = 256 * 1024;
+        options.smallFiles = 8;
+        options.inPlaceUpdates = 4;
+        options.inPlaceFileBytes = 64 * 1024;
+        options.minimumFreeBytes = 1;
+        ScratchFiles files;
+        auto w = StickWriteProbe::run(stick.string(), seabass::application::CancellationToken::none(), options, &files);
+        assert(w.smallFilesWritten == 8);
+        assert(files.streamFiles.size() == 2);
+        assert(files.smallFiles.size() == 8);
+        assert(fs::exists(files.folder));
+        for (const auto &f : files.streamFiles) {
+            assert(fs::file_size(f) == 256 * 1024);
+        }
+        ProbeOptions readOptions;
+        readOptions.randomReads = 20;
+        auto m = StickPerformanceProbe::run(files.streamFiles, files.smallFiles, {},
+                                            seabass::application::CancellationToken::none(), readOptions);
+        assert(m.streamingBytesPerSecond > 0.0);
+        assert(m.randomReads == 20);
+        assert(m.smallFilesRead == 8);
+        StickWriteProbe::removeScratch(stick.string());
+        assert(!fs::exists(stick / StickWriteProbe::kScratchFolderName));
+        std::cout << "case 6 (kept scratch files are readable, then removed) OK\n";
     }
 
     fs::remove_all(root);

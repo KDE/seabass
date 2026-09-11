@@ -11,7 +11,7 @@ namespace
 
 StickPerformanceMeasurement referenceLike()
 {
-    ReferenceStick ref;
+    const auto ref = ReferenceStick{}.drive;
     StickPerformanceMeasurement m;
     m.streamingBytesPerSecond = ref.streamingBytesPerSecond;
     m.randomReadMedianMs = ref.randomReadMs;
@@ -20,7 +20,7 @@ StickPerformanceMeasurement referenceLike()
     m.smallFileMedianMs = ref.smallFileMs;
     m.smallFileOpensPerSecond = 1000.0 / ref.smallFileMs;
     m.smallFilesRead = 150;
-    m.databaseBytes = 1437696;
+    m.catalogBytes = 1437696;
     return m;
 }
 
@@ -36,7 +36,7 @@ StickPerformanceMeasurement healthyOldStick()
     m.smallFileMedianMs = 1.11;
     m.smallFileOpensPerSecond = 858;
     m.smallFilesRead = 150;
-    m.databaseBytes = 1437696 + 3571712;
+    m.catalogBytes = 1437696 + 3571712;
     return m;
 }
 
@@ -50,7 +50,7 @@ StickPerformanceMeasurement wornStick()
     m.smallFileMedianMs = 18.0;
     m.smallFileOpensPerSecond = 55;
     m.smallFilesRead = 150;
-    m.databaseBytes = 9800000;
+    m.catalogBytes = 9800000;
     return m;
 }
 

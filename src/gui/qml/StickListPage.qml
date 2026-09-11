@@ -160,7 +160,7 @@ Page {
     signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
-    signal stickPerformanceRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal stickPerformanceRequested(string stickLabel, string rekordboxPath, string enginePath, string mountPoint)
     signal engineLibraryCreatorRequested(string stickLabel, string rekordboxPath)
     signal settingsRequested(string stickLabel, string pioneerRoot)
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
@@ -798,12 +798,15 @@ Page {
                             // nobody has run against real hardware yet.
                             experimental: true
                             experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
-                            // Reads only, but a browsed backup is a folder
-                            // on this computer and measuring it would say
+                            // Needs no library: a stick with any files on
+                            // it is measured on those, a blank one on
+                            // throwaway files the page writes and removes.
+                            // A browsed backup or an opened folder is on
+                            // this computer, and measuring it would say
                             // nothing about any stick.
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.stickPerformanceRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
+                            visible: delegateRoot.mounted && !delegateRoot.isBrowsedBackup && !delegateRoot.isFolder
+                            onClicked: root.stickPerformanceRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                      delegateRoot.enginePath, delegateRoot.mountPoint)
                         }
                         ActionCard {
                             cardTitle: "Metadata Backup"

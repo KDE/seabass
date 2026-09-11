@@ -15,6 +15,9 @@ Page {
     required property string stickLabel
     required property string rekordboxPath
     required property string enginePath
+    // The stick root. Empty is tolerated when a catalog path is given
+    // (the root is then its parent); a stick without a library needs it.
+    property string mountPoint: ""
 
     // Overridable so a test can hand in a fake with known numbers; the
     // real app never sets it.
@@ -63,7 +66,7 @@ Page {
     readonly property bool hasResults: Object.keys(controller.score).length > 0
     readonly property bool hasWriteResults: Object.keys(controller.writeEstimate).length > 0
 
-    Component.onCompleted: controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath)
+    Component.onCompleted: controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
 
     header: ToolBar {
         // See StickStatisticsPage.qml's header comment: every side zeroed
@@ -132,6 +135,44 @@ Page {
                 color: Theme.danger
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
+            }
+
+            // -- Nothing to read: offer the throwaway-file measurement ------
+            Rectangle {
+                objectName: "scratchNotice"
+                visible: controller.needsScratchFiles && !controller.busy
+                Layout.fillWidth: true
+                implicitHeight: scratchRow.implicitHeight + Theme.cardPadding
+                color: Theme.warnBg
+                border.color: Theme.warnBorder
+                radius: 4
+
+                RowLayout {
+                    id: scratchRow
+                    anchors.fill: parent
+                    anchors.margins: Theme.cardPadding / 2
+                    spacing: Theme.rowSpacing
+                    Label {
+                        text: "⚠"
+                        font.family: "Noto Sans Symbols2"
+                        font.pointSize: Theme.fontMedium
+                        color: Theme.warnIcon
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.warnText
+                        text: "There is nothing on this stick to read. Measuring it means writing about 22 MiB of "
+                            + "throwaway files into a hidden folder, reading them back, and removing them; that also "
+                            + "gives the write results below."
+                    }
+                    Button {
+                        objectName: "scratchMeasureButton"
+                        text: "Measure With Throwaway Files"
+                        enabled: !controller.busy && !controller.writeBusy
+                        onClicked: controller.measureWithScratchFiles(root.stickLabel, root.mountPoint)
+                    }
+                }
             }
 
             // -- DJ Workload Score ---------------------------------------
@@ -216,8 +257,10 @@ Page {
                         Button {
                             objectName: "measureButton"
                             text: root.hasResults ? "Measure Again" : "Measure"
-                            enabled: !controller.busy
-                            onClicked: controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath)
+                            enabled: !controller.busy && !controller.writeBusy
+                            onClicked: controller.facts.sampleKind === "scratch"
+                                ? controller.measureWithScratchFiles(root.stickLabel, root.mountPoint)
+                                : controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
                         }
                         Label {
                             Layout.fillWidth: true
@@ -225,7 +268,9 @@ Page {
                             color: Theme.textMuted
                             font.pointSize: Theme.fontSmall
                             text: (root.hasResults ? "Measured " + controller.measuredAt + " · " : "")
-                                + "Reads real files already on the stick, never writes."
+                                + (controller.facts.sampleKind === "scratch"
+                                   ? "Measured on throwaway files written for the purpose and removed again."
+                                   : "Reads real files already on the stick, never writes.")
                         }
                     }
                 }
@@ -263,8 +308,9 @@ Page {
                             value: controller.measurement.smallFilesRead > 0
                                 ? Math.round(controller.measurement.smallFileOpensPerSecond) : "n/a"
                             unit: "files/s"
-                            note: controller.measurement.smallFilesRead > 0
-                                ? "Analysis files, like a track load" : "No analysis files found on this stick"
+                            note: controller.measurement.smallFilesRead === 0 ? "No small files found on this stick"
+                                : controller.facts.sampleKind === "library" ? "Analysis files, like a track load"
+                                : "Small files, like a track load's analysis file"
                         }
                         StatTile {
                             label: "Link to this computer"
@@ -282,9 +328,14 @@ Page {
                         font.pointSize: Theme.fontSmall
                         text: (controller.filesystemInfo.displayName || "Unknown filesystem")
                             + (controller.facts.clusterBytes > 0 ? ", " + Theme.humanBytes(controller.facts.clusterBytes) + " clusters" : "")
-                            + " · " + Number(controller.facts.analysisFiles).toLocaleString(Qt.locale(), "f", 0) + " analysis files in "
-                            + Number(controller.facts.analysisFolders).toLocaleString(Qt.locale(), "f", 0) + " folders"
-                            + " · " + Number(controller.facts.audioFiles).toLocaleString(Qt.locale(), "f", 0) + " audio files"
+                            + (controller.facts.sampleKind === "library"
+                               ? " · " + Number(controller.facts.analysisFiles).toLocaleString(Qt.locale(), "f", 0) + " analysis files in "
+                                 + Number(controller.facts.analysisFolders).toLocaleString(Qt.locale(), "f", 0) + " folders"
+                                 + " · " + Number(controller.facts.audioFiles).toLocaleString(Qt.locale(), "f", 0) + " audio files"
+                               : controller.facts.sampleKind === "files"
+                               ? " · no DJ library; sampled " + Number(controller.facts.audioFiles).toLocaleString(Qt.locale(), "f", 0)
+                                 + " larger and " + Number(controller.facts.analysisFiles).toLocaleString(Qt.locale(), "f", 0) + " small files on the stick"
+                               : " · no files on the stick; measured on throwaway files")
                     }
                 }
             }
@@ -388,7 +439,7 @@ Page {
                             objectName: "writeTestButton"
                             text: controller.writeBusy ? "Writing..." : (root.hasWriteResults ? "Run Write Test Again" : "Run Write Test")
                             enabled: !controller.writeBusy && !controller.busy
-                            onClicked: controller.measureWrites(root.rekordboxPath, root.enginePath)
+                            onClicked: controller.measureWrites(root.rekordboxPath, root.enginePath, root.mountPoint)
                         }
                         BusyIndicator {
                             running: controller.writeBusy

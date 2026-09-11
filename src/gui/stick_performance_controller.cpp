@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <random>
 #include <set>
 #include <stdexcept>
@@ -52,7 +53,7 @@ QVariantMap toVariant(const domain::StickPerformanceMeasurement &m)
     v["smallFileOpensPerSecond"] = m.smallFileOpensPerSecond;
     v["smallFileMedianMs"] = m.smallFileMedianMs;
     v["smallFilesRead"] = m.smallFilesRead;
-    v["databaseBytes"] = QVariant::fromValue<qulonglong>(m.databaseBytes);
+    v["catalogBytes"] = QVariant::fromValue<qulonglong>(m.catalogBytes);
     return v;
 }
 
@@ -107,151 +108,6 @@ QVariantList toVariant(const std::vector<domain::PlayerAdvisory> &rows)
     return list;
 }
 
-std::string stickRootFromPaths(const QString &rekordboxPath, const QString &enginePath)
-{
-    if (!rekordboxPath.isEmpty()) {
-        return fs::path(rekordboxPath.toStdString()).parent_path().string();
-    }
-    if (!enginePath.isEmpty()) {
-        return fs::path(enginePath.toStdString()).parent_path().string();
-    }
-    return "";
-}
-
-// Every regular file under dir whose name passes `accept`, plus the folder
-// count; best-effort, skipping anything that errors, like Library
-// Statistics' own directory-size walk.
-struct WalkResult
-{
-    std::vector<std::string> files;
-    std::uint64_t folders = 0;
-};
-
-template <typename Accept>
-WalkResult walk(const fs::path &dir, Accept accept, const application::CancellationToken &cancel)
-{
-    WalkResult result;
-    std::error_code ec;
-    if (dir.empty() || !fs::exists(dir, ec) || ec) {
-        return result;
-    }
-    std::uint64_t entries = 0;
-    auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
-    auto end = fs::recursive_directory_iterator();
-    for (; !ec && it != end; it.increment(ec)) {
-        if ((++entries & 0xFF) == 0) {
-            cancel.throwIfCancelled();
-        }
-        std::error_code entryEc;
-        if (it->is_directory(entryEc) && !entryEc) {
-            ++result.folders;
-        } else if (it->is_regular_file(entryEc) && !entryEc && accept(it->path())) {
-            result.files.push_back(it->path().string());
-        }
-    }
-    return result;
-}
-
-// Every Nth of a sorted list, so the sample spreads over the whole
-// library rather than clustering on one artist.
-std::vector<std::string> spread(std::vector<std::string> files, std::size_t count)
-{
-    std::sort(files.begin(), files.end());
-    if (files.size() <= count) {
-        return files;
-    }
-    std::vector<std::string> out;
-    std::size_t step = files.size() / count;
-    for (std::size_t i = 0; i < files.size() && out.size() < count; i += step) {
-        out.push_back(files[i]);
-    }
-    return out;
-}
-
-// Runs entirely on a background thread, no access to the controller.
-StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath, QString enginePath,
-                                      application::CancellationToken cancel)
-{
-    StickPerformanceResult result;
-    auto &noProgress = application::NullProgressReporter::instance();
-    try {
-        std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath);
-        auto hwInfo = infrastructure::system::readStickHardwareInfo(stickRoot, stickLabel.toStdString());
-        auto compat = domain::FilesystemCompatibility::lookup(hwInfo.filesystem);
-        result.filesystemInfo = toVariant(hwInfo, compat);
-
-        // Audio sample: 20 real files spread through the catalog(s), the
-        // same choice Library Statistics' old benchmark made.
-        std::vector<std::string> audioFiles;
-        std::set<std::string> seen;
-        std::vector<std::string> databaseFiles;
-        auto &catalogCache = LibraryCatalogCache::instance();
-        auto collect = [&](const char *format, const QString &path) {
-            auto tracks = catalogCache.tracksFor(format, path.toStdString(), noProgress, cancel);
-            for (const auto &t : tracks) {
-                if (!t.streamingSource.empty() || t.filePath.empty()) {
-                    continue;
-                }
-                if (seen.insert(t.filePath).second) {
-                    audioFiles.push_back(t.filePath);
-                }
-            }
-        };
-        if (!rekordboxPath.isEmpty()) {
-            collect("rekordbox", rekordboxPath);
-            databaseFiles.push_back(rekordboxPath.toStdString() + "/rekordbox/export.pdb");
-        }
-        if (!enginePath.isEmpty()) {
-            collect("engine", enginePath);
-            databaseFiles.push_back((fs::path(enginePath.toStdString()) / "Database2" / "m.db").string());
-        }
-        const std::size_t audioCount = audioFiles.size();
-        audioFiles = spread(std::move(audioFiles), 20);
-
-        // Small files: rekordbox's per-track analysis files, or Engine's
-        // overview data when there is no rekordbox export. Their count
-        // and folder count are the facts line's "analysis files".
-        WalkResult analysis;
-        if (!rekordboxPath.isEmpty()) {
-            analysis = walk(fs::path(rekordboxPath.toStdString()) / "USBANLZ",
-                            [](const fs::path &p) { return p.filename() == "ANLZ0000.DAT"; }, cancel);
-        }
-        if (analysis.files.empty() && !enginePath.isEmpty()) {
-            analysis = walk(fs::path(enginePath.toStdString()) / "Database2" / "OverviewData",
-                            [](const fs::path &) { return true; }, cancel);
-        }
-        const std::size_t analysisCount = analysis.files.size();
-        // Shuffled with a fixed seed rather than spread: analysis folders
-        // are named by hash, so neighbours in sorted order say nothing,
-        // and a fixed seed keeps two runs comparable.
-        std::vector<std::string> smallFiles = analysis.files;
-        std::shuffle(smallFiles.begin(), smallFiles.end(), std::mt19937(0x5EABA55u));
-        if (smallFiles.size() > 150) {
-            smallFiles.resize(150);
-        }
-
-        auto measurement = infrastructure::benchmark::StickPerformanceProbe::run(audioFiles, smallFiles, databaseFiles, cancel);
-        auto score = domain::scoreDjWorkload(measurement);
-        result.measurement = toVariant(measurement);
-        result.score = toVariant(score);
-        result.advisories = toVariant(domain::advisePlayers(measurement, score));
-
-        QVariantMap facts;
-        facts["clusterBytes"] = QVariant::fromValue<qulonglong>(hwInfo.clusterBytes);
-        facts["analysisFiles"] = QVariant::fromValue<qulonglong>(analysisCount);
-        facts["analysisFolders"] = QVariant::fromValue<qulonglong>(analysis.folders);
-        facts["audioFiles"] = QVariant::fromValue<qulonglong>(audioCount);
-        result.facts = facts;
-
-        StickPerformanceCache::instance().store(hwInfo.stickIdentifier, measurement);
-    } catch (const application::OperationCancelled &) {
-        result.cancelled = true;
-    } catch (const std::exception &e) {
-        result.errorMessage = QString::fromStdString(e.what());
-    }
-    return result;
-}
-
 QVariantMap toVariant(const domain::StickWriteMeasurement &m)
 {
     QVariantMap v;
@@ -278,6 +134,230 @@ QVariantMap toVariant(const domain::WriteWorkloadEstimate &e)
     return v;
 }
 
+std::string stickRootFromPaths(const QString &rekordboxPath, const QString &enginePath, const QString &mountPoint)
+{
+    if (!mountPoint.isEmpty()) {
+        return mountPoint.toStdString();
+    }
+    if (!rekordboxPath.isEmpty()) {
+        return fs::path(rekordboxPath.toStdString()).parent_path().string();
+    }
+    if (!enginePath.isEmpty()) {
+        return fs::path(enginePath.toStdString()).parent_path().string();
+    }
+    return "";
+}
+
+// Every regular file under dir that `accept` likes, plus the folder
+// count; best-effort, skipping anything that errors, like Library
+// Statistics' own directory-size walk. With skipHidden, dot-folders
+// (this app's own backups, the write test's scratch folder) and
+// Windows' System Volume Information are left alone.
+struct WalkResult
+{
+    std::vector<std::string> files;
+    std::uint64_t folders = 0;
+};
+
+template <typename Accept>
+WalkResult walk(const fs::path &dir, Accept accept, const application::CancellationToken &cancel,
+                bool skipHidden = false)
+{
+    WalkResult result;
+    std::error_code ec;
+    if (dir.empty() || !fs::exists(dir, ec) || ec) {
+        return result;
+    }
+    std::uint64_t entries = 0;
+    auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
+    auto end = fs::recursive_directory_iterator();
+    for (; !ec && it != end; it.increment(ec)) {
+        if ((++entries & 0xFF) == 0) {
+            cancel.throwIfCancelled();
+        }
+        std::error_code entryEc;
+        if (it->is_directory(entryEc) && !entryEc) {
+            const std::string name = it->path().filename().string();
+            if (skipHidden && (name.rfind('.', 0) == 0 || name == "System Volume Information")) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            ++result.folders;
+        } else if (it->is_regular_file(entryEc) && !entryEc && accept(*it)) {
+            result.files.push_back(it->path().string());
+        }
+    }
+    return result;
+}
+
+std::uint64_t sizeOf(const fs::directory_entry &entry)
+{
+    std::error_code ec;
+    auto size = entry.file_size(ec);
+    return ec ? 0 : size;
+}
+
+// Removes the scratch folder on every exit path of a throwaway-file
+// measurement, including the one where the read probe threw.
+struct ScratchGuard
+{
+    std::string root;
+    ~ScratchGuard() { infrastructure::benchmark::StickWriteProbe::removeScratch(root); }
+};
+
+// Every Nth of a sorted list, so the sample spreads over the whole
+// library rather than clustering on one artist.
+std::vector<std::string> spread(std::vector<std::string> files, std::size_t count)
+{
+    std::sort(files.begin(), files.end());
+    if (files.size() <= count) {
+        return files;
+    }
+    std::vector<std::string> out;
+    std::size_t step = files.size() / count;
+    for (std::size_t i = 0; i < files.size() && out.size() < count; i += step) {
+        out.push_back(files[i]);
+    }
+    return out;
+}
+
+// Runs entirely on a background thread, no access to the controller.
+StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath, QString enginePath,
+                                      QString mountPoint, bool useScratchFiles,
+                                      application::CancellationToken cancel)
+{
+    StickPerformanceResult result;
+    auto &noProgress = application::NullProgressReporter::instance();
+    try {
+        std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
+        auto hwInfo = infrastructure::system::readStickHardwareInfo(stickRoot, stickLabel.toStdString());
+        auto compat = domain::FilesystemCompatibility::lookup(hwInfo.filesystem);
+        result.filesystemInfo = toVariant(hwInfo, compat);
+
+        std::vector<std::string> audioFiles;
+        std::vector<std::string> smallFiles;
+        std::vector<std::string> databaseFiles;
+        std::size_t audioCount = 0;
+        std::size_t smallCount = 0;
+        std::uint64_t smallFolders = 0;
+        QString sampleKind;
+        std::optional<domain::StickWriteMeasurement> writeMeasurement;
+        std::optional<ScratchGuard> scratchGuard;
+
+        if (useScratchFiles) {
+            // A blank stick: the write test's own files are what gets
+            // read back. Written and measured first, read second, removed
+            // whatever happens in between.
+            infrastructure::benchmark::ScratchFiles files;
+            scratchGuard.emplace(ScratchGuard{stickRoot});
+            writeMeasurement = infrastructure::benchmark::StickWriteProbe::run(stickRoot, cancel, {}, &files);
+            audioFiles = files.streamFiles;
+            smallFiles = files.smallFiles;
+            audioCount = audioFiles.size();
+            smallCount = smallFiles.size();
+            sampleKind = QStringLiteral("scratch");
+        } else {
+            // Audio sample: 20 real files spread through the catalog(s),
+            // the same choice Library Statistics' old benchmark made.
+            std::set<std::string> seen;
+            auto &catalogCache = LibraryCatalogCache::instance();
+            auto collect = [&](const char *format, const QString &path) {
+                auto tracks = catalogCache.tracksFor(format, path.toStdString(), noProgress, cancel);
+                for (const auto &t : tracks) {
+                    if (!t.streamingSource.empty() || t.filePath.empty()) {
+                        continue;
+                    }
+                    if (seen.insert(t.filePath).second) {
+                        audioFiles.push_back(t.filePath);
+                    }
+                }
+            };
+            if (!rekordboxPath.isEmpty()) {
+                collect("rekordbox", rekordboxPath);
+                databaseFiles.push_back(rekordboxPath.toStdString() + "/rekordbox/export.pdb");
+            }
+            if (!enginePath.isEmpty()) {
+                collect("engine", enginePath);
+                databaseFiles.push_back((fs::path(enginePath.toStdString()) / "Database2" / "m.db").string());
+            }
+
+            // Small files: rekordbox's per-track analysis files, or
+            // Engine's overview data when there is no rekordbox export.
+            WalkResult analysis;
+            if (!rekordboxPath.isEmpty()) {
+                analysis = walk(fs::path(rekordboxPath.toStdString()) / "USBANLZ",
+                                [](const fs::directory_entry &e) { return e.path().filename() == "ANLZ0000.DAT"; }, cancel);
+            }
+            if (analysis.files.empty() && !enginePath.isEmpty()) {
+                analysis = walk(fs::path(enginePath.toStdString()) / "Database2" / "OverviewData",
+                                [](const fs::directory_entry &) { return true; }, cancel);
+            }
+            sampleKind = QStringLiteral("library");
+
+            if (audioFiles.empty()) {
+                // No library, or one with no local files: any file on the
+                // stick big enough to stream from and seek in will do, and
+                // any small one stands in for an analysis file.
+                auto big = walk(fs::path(stickRoot),
+                                [](const fs::directory_entry &e) { return sizeOf(e) >= 64 * 1024; }, cancel, true);
+                audioFiles = big.files;
+                if (!audioFiles.empty()) {
+                    analysis = walk(fs::path(stickRoot),
+                                    [](const fs::directory_entry &e) {
+                                        auto size = sizeOf(e);
+                                        return size >= 4 * 1024 && size < 64 * 1024;
+                                    },
+                                    cancel, true);
+                    sampleKind = QStringLiteral("files");
+                }
+            }
+            if (audioFiles.empty()) {
+                result.needsScratchFiles = true;
+                return result;
+            }
+
+            audioCount = audioFiles.size();
+            audioFiles = spread(std::move(audioFiles), 20);
+            smallCount = analysis.files.size();
+            smallFolders = analysis.folders;
+            // Shuffled with a fixed seed rather than spread: analysis
+            // folders are named by hash, so neighbours in sorted order say
+            // nothing, and a fixed seed keeps two runs comparable.
+            smallFiles = analysis.files;
+            std::shuffle(smallFiles.begin(), smallFiles.end(), std::mt19937(0x5EABA55u));
+            if (smallFiles.size() > 150) {
+                smallFiles.resize(150);
+            }
+        }
+
+        auto measurement = infrastructure::benchmark::StickPerformanceProbe::run(audioFiles, smallFiles, databaseFiles, cancel);
+        auto score = domain::scoreDjWorkload(measurement);
+        result.measurement = toVariant(measurement);
+        result.score = toVariant(score);
+        result.advisories = toVariant(domain::advisePlayers(measurement, score));
+
+        QVariantMap facts;
+        facts["clusterBytes"] = QVariant::fromValue<qulonglong>(hwInfo.clusterBytes);
+        facts["analysisFiles"] = QVariant::fromValue<qulonglong>(smallCount);
+        facts["analysisFolders"] = QVariant::fromValue<qulonglong>(smallFolders);
+        facts["audioFiles"] = QVariant::fromValue<qulonglong>(audioCount);
+        facts["sampleKind"] = sampleKind;
+        result.facts = facts;
+
+        if (writeMeasurement) {
+            result.writeMeasurement = toVariant(*writeMeasurement);
+            result.writeEstimate = toVariant(domain::estimateWriteWorkloads(*writeMeasurement));
+        }
+
+        StickPerformanceCache::instance().store(hwInfo.stickIdentifier, measurement);
+    } catch (const application::OperationCancelled &) {
+        result.cancelled = true;
+    } catch (const std::exception &e) {
+        result.errorMessage = QString::fromStdString(e.what());
+    }
+    return result;
+}
+
 StickWriteResult runWriteTask(std::string stickRoot)
 {
     StickWriteResult result;
@@ -301,12 +381,13 @@ StickPerformanceController::StickPerformanceController(QObject *parent) : QObjec
             &StickPerformanceController::onWriteFinished);
 }
 
-void StickPerformanceController::measureWrites(const QString &rekordboxPath, const QString &enginePath)
+void StickPerformanceController::measureWrites(const QString &rekordboxPath, const QString &enginePath,
+                                               const QString &mountPoint)
 {
-    if (m_writeBusy) {
+    if (m_writeBusy || m_busy) {
         return;
     }
-    std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath);
+    std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
     if (stickRoot.empty()) {
         setWriteErrorMessage(QStringLiteral("No stick to write a test onto."));
         return;
@@ -354,19 +435,42 @@ void StickPerformanceController::setWriteErrorMessage(const QString &message)
 }
 
 void StickPerformanceController::measure(const QString &stickLabel, const QString &rekordboxPath,
-                                         const QString &enginePath)
+                                         const QString &enginePath, const QString &mountPoint)
 {
-    if (m_busy) {
+    if (rekordboxPath.isEmpty() && enginePath.isEmpty() && mountPoint.isEmpty()) {
+        setErrorMessage(QStringLiteral("No stick to measure."));
         return;
     }
-    if (rekordboxPath.isEmpty() && enginePath.isEmpty()) {
-        setErrorMessage(QStringLiteral("No library on this stick to measure against."));
+    startMeasure(stickLabel, rekordboxPath, enginePath, mountPoint, false);
+}
+
+void StickPerformanceController::measureWithScratchFiles(const QString &stickLabel, const QString &mountPoint)
+{
+    if (mountPoint.isEmpty()) {
+        setErrorMessage(QStringLiteral("No stick to write a test onto."));
+        return;
+    }
+    std::string running = infrastructure::system::conflictingDjSoftwareName();
+    if (!running.empty()) {
+        setErrorMessage(QStringLiteral("Close %1 before measuring with throwaway files; it may be writing this stick too.")
+                            .arg(QString::fromStdString(running)));
+        return;
+    }
+    startMeasure(stickLabel, {}, {}, mountPoint, true);
+}
+
+void StickPerformanceController::startMeasure(const QString &stickLabel, const QString &rekordboxPath,
+                                              const QString &enginePath, const QString &mountPoint,
+                                              bool useScratchFiles)
+{
+    if (m_busy || m_writeBusy) {
         return;
     }
     setErrorMessage({});
     setBusy(true);
     m_cancel = application::CancellationToken();
-    m_watcher.setFuture(QtConcurrent::run(runMeasureTask, stickLabel, rekordboxPath, enginePath, m_cancel));
+    m_watcher.setFuture(
+        QtConcurrent::run(runMeasureTask, stickLabel, rekordboxPath, enginePath, mountPoint, useScratchFiles, m_cancel));
 }
 
 void StickPerformanceController::cancel()
@@ -389,12 +493,23 @@ void StickPerformanceController::onFinished()
         return;
     }
     m_filesystemInfo = result.filesystemInfo;
+    m_needsScratchFiles = result.needsScratchFiles;
+    if (result.needsScratchFiles) {
+        emit resultsChanged();
+        return;
+    }
     m_measurement = result.measurement;
     m_score = result.score;
     m_advisories = result.advisories;
     m_facts = result.facts;
     m_measuredAt = QDateTime::currentDateTime().toString(QStringLiteral("d MMM yyyy, HH:mm"));
     emit resultsChanged();
+    if (!result.writeEstimate.isEmpty()) {
+        m_writeMeasurement = result.writeMeasurement;
+        m_writeEstimate = result.writeEstimate;
+        setWriteErrorMessage({});
+        emit writeResultsChanged();
+    }
 }
 
 void StickPerformanceController::setBusy(bool busy)

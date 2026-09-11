@@ -446,10 +446,11 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
-            onStickPerformanceRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(stickPerformancePageComponent, {
+            onStickPerformanceRequested: (stickLabel, rekordboxPath, enginePath, mountPoint) => stackView.push(stickPerformancePageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
+                mountPoint: mountPoint,
             })
             onMetadataBackupRequested: (stickLabel, rekordboxPath, enginePath, libraryId) => stackView.push(metadataBackupPageComponent, {
                 stickLabel: stickLabel,

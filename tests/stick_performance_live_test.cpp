@@ -123,7 +123,7 @@ int main()
               << m.randomReads << " reads)\n"
               << "  small file open+read  " << m.smallFileOpensPerSecond << " files/s, " << m.smallFileMedianMs
               << " ms median (" << m.smallFilesRead << " files)\n"
-              << "  database bytes        " << m.databaseBytes << "\n";
+              << "  database bytes        " << m.catalogBytes << "\n";
     std::cout << "\nDJ Workload Score " << s.score << " (" << domain::speedClassLabel(s.speedClass) << ")\n"
               << "  browsing " << s.browseScore << " " << verdict(s.browseVerdict) << ", track loads " << s.trackLoadScore
               << " " << verdict(s.trackLoadVerdict) << ", plugging in " << s.mountScore << " " << verdict(s.mountVerdict)

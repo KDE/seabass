@@ -23,11 +23,12 @@ TestCase {
     function fakeController(withResults, withWrites) {
         var c = {
             busy: false, errorMessage: "", measuredAt: "11 Sep 2026, 16:52", calls: [],
-            writeBusy: false, writeErrorMessage: "",
+            writeBusy: false, writeErrorMessage: "", needsScratchFiles: false,
             filesystemInfo: {}, measurement: {}, score: {}, advisories: [], facts: {},
             writeMeasurement: {}, writeEstimate: {},
-            measure: function(label, rb, en) { this.calls.push("measure:" + label); },
-            measureWrites: function(rb, en) { this.calls.push("writes:" + rb); },
+            measure: function(label, rb, en, mp) { this.calls.push("measure:" + label + ":" + mp); },
+            measureWithScratchFiles: function(label, mp) { this.calls.push("scratch:" + label + ":" + mp); },
+            measureWrites: function(rb, en, mp) { this.calls.push("writes:" + mp); },
             cancel: function() { this.calls.push("cancel"); },
         };
         if (withResults) {
@@ -36,7 +37,7 @@ TestCase {
                                 usbSpeedLabel: "480 Mbps (USB 2.0 High-Speed)", usbSpeedMbps: 480, stickIdentifier: "x"};
             c.measurement = {streamingBytesPerSecond: 40.0e6, randomReadMedianMs: 1.08, randomReadP95Ms: 1.43,
                              randomReads: 300, smallFileOpensPerSecond: 858, smallFileMedianMs: 1.11,
-                             smallFilesRead: 150, databaseBytes: 5009408};
+                             smallFilesRead: 150, catalogBytes: 5009408};
             c.score = {score: 49, speedClass: "Average", browseScore: 28, trackLoadScore: 96, mountScore: 30,
                        browseActionSeconds: 0.0216, trackLoadSeconds: 0.0557, mountSeconds: 0.665,
                        setWaitSeconds: 7.2, referenceSetWaitSeconds: 3.5,
@@ -53,7 +54,7 @@ TestCase {
                  verdict: "slower", verdictLabel: "SLOWER",
                  summary: "Same SQLite-on-the-stick model. Browsing at 1.1 ms per read is noticeably behind a current stick."},
             ];
-            c.facts = {clusterBytes: 32768, analysisFiles: 12312, analysisFolders: 2204, audioFiles: 2100};
+            c.facts = {clusterBytes: 32768, analysisFiles: 12312, analysisFolders: 2204, audioFiles: 2100, sampleKind: "library"};
         }
         if (withWrites) {
             c.writeMeasurement = {streamingWriteBytesPerSecond: 12.5e6, smallFileWritesPerSecond: 60,
@@ -69,7 +70,7 @@ TestCase {
     function makePage(controller) {
         var page = createTemporaryObject(pageComponent, testCase, {
             stickLabel: "WHALESHARK2", rekordboxPath: "/media/WHALESHARK2/PIONEER",
-            enginePath: "/media/WHALESHARK2/Engine Library", controller: controller,
+            enginePath: "/media/WHALESHARK2/Engine Library", mountPoint: "/media/WHALESHARK2", controller: controller,
         });
         verify(page !== null);
         waitForRendering(page);
@@ -103,7 +104,8 @@ TestCase {
         var c = fakeController(false, false);
         var page = makePage(c);
         compare(page.controller.calls.length, 1);
-        compare(page.controller.calls[0], "measure:WHALESHARK2");
+        compare(page.controller.calls[0], "measure:WHALESHARK2:/media/WHALESHARK2");
+        compare(findOne(page, "scratchNotice").visible, false);
         compare(findOne(page, "speedClass").text, "Not measured yet");
         compare(findOne(page, "measureButton").text, "Measure");
     }
@@ -126,13 +128,27 @@ TestCase {
         compare(button.text, "Run Write Test");
         button.clicked();
         var calls = page.controller.calls;
-        compare(calls[calls.length - 1], "writes:/media/WHALESHARK2/PIONEER");
+        compare(calls[calls.length - 1], "writes:/media/WHALESHARK2");
 
         var withWrites = fakeController(true, true);
         var page2 = makePage(withWrites);
         compare(findOne(page2, "writeTestButton").text, "Run Write Test Again");
         verify(findOne(page2, "cueSaveEstimate").text.indexOf("0.07 s") >= 0);
         verify(findOne(page2, "exportEstimate").text.indexOf("71 s") >= 0);
+    }
+
+    // A blank stick: the page says there is nothing to read and offers the
+    // throwaway-file measurement, which asks the controller for exactly
+    // that with the mount point.
+    function test_blankStickOffersThrowawayFiles() {
+        var c = fakeController(false, false);
+        c.needsScratchFiles = true;
+        var page = makePage(c);
+        var notice = findOne(page, "scratchNotice");
+        compare(notice.visible, true);
+        findOne(page, "scratchMeasureButton").clicked();
+        var calls = page.controller.calls;
+        compare(calls[calls.length - 1], "scratch:WHALESHARK2:/media/WHALESHARK2");
     }
 
     function test_screenshot() {

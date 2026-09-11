@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <sstream>
 
 namespace seabass::domain
@@ -10,32 +11,10 @@ namespace seabass::domain
 namespace
 {
 
-// Perceptual thresholds per action, seconds. "Fine" is below what a
-// person notices as a pause on a button press (about 100 ms), with the
-// browse budget tighter because a scroll fires many actions in a row.
-// Provisional: calibrated against one healthy 2012 stick and the
-// numbers in the design note, not yet against a known-bad stick.
-constexpr double kBrowseFineSeconds = 0.040;
-constexpr double kBrowseSlowerSeconds = 0.120;
-constexpr double kTrackLoadFineSeconds = 0.100;
-constexpr double kTrackLoadSlowerSeconds = 0.300;
-constexpr double kMountFineSeconds = 2.0;
-constexpr double kMountSlowerSeconds = 10.0;
 // Denon's published minimum for Engine OS media is 20 MB/s read; below
 // 8 MB/s the on-player migration and every export drags.
 constexpr double kStreamingFineBytesPerSecond = 20.0 * 1000 * 1000;
 constexpr double kStreamingSlowerBytesPerSecond = 8.0 * 1000 * 1000;
-
-Verdict verdictFor(double value, double fine, double slower)
-{
-    if (value <= fine) {
-        return Verdict::Fine;
-    }
-    if (value <= slower) {
-        return Verdict::Slower;
-    }
-    return Verdict::Sluggish;
-}
 
 Verdict worst(Verdict a, Verdict b)
 {
@@ -46,19 +25,6 @@ Verdict worst(Verdict a, Verdict b)
         return a;
     }
     return std::max(a, b);
-}
-
-int relativeScore(double referenceSeconds, double measuredSeconds)
-{
-    if (measuredSeconds <= 0.0 || referenceSeconds <= 0.0) {
-        return 0;
-    }
-    return static_cast<int>(std::lround(100.0 * referenceSeconds / measuredSeconds));
-}
-
-double streamSeconds(std::uint64_t bytes, double bytesPerSecond)
-{
-    return bytesPerSecond > 0.0 ? static_cast<double>(bytes) / bytesPerSecond : 0.0;
 }
 
 std::string roundedSeconds(double seconds)
@@ -77,118 +43,32 @@ std::string roundedSeconds(double seconds)
 
 }  // namespace
 
-std::string verdictLabel(Verdict verdict)
-{
-    switch (verdict) {
-    case Verdict::Fine:
-        return "FINE";
-    case Verdict::Slower:
-        return "SLOWER";
-    case Verdict::Sluggish:
-        return "SLUGGISH";
-    case Verdict::Unknown:
-        break;
-    }
-    return "NOT MEASURED";
-}
-
-SpeedClass speedClassFor(int score)
-{
-    if (score <= 0) {
-        return SpeedClass::Unknown;
-    }
-    if (score >= 120) {
-        return SpeedClass::VeryFast;
-    }
-    if (score >= 80) {
-        return SpeedClass::Fast;
-    }
-    if (score >= 45) {
-        return SpeedClass::Average;
-    }
-    if (score >= 20) {
-        return SpeedClass::Slow;
-    }
-    return SpeedClass::VerySlow;
-}
-
-std::string speedClassLabel(SpeedClass speedClass)
-{
-    switch (speedClass) {
-    case SpeedClass::VeryFast:
-        return "Very fast";
-    case SpeedClass::Fast:
-        return "Fast";
-    case SpeedClass::Average:
-        return "Average";
-    case SpeedClass::Slow:
-        return "Slow";
-    case SpeedClass::VerySlow:
-        return "Very slow";
-    case SpeedClass::Unknown:
-        break;
-    }
-    return "Not measured";
-}
-
 DjWorkloadScore scoreDjWorkload(const StickPerformanceMeasurement &m, const DjWorkloadModel &model,
                                 const ReferenceStick &reference)
 {
+    auto session = storageprobe::estimate(m, model.session(), reference.drive);
+    const auto &browse = session.actions[0];
+    const auto &load = session.actions[1];
+    const auto &mount = session.actions[2];
+
     DjWorkloadScore s;
-    const bool haveRandom = m.randomReads > 0 && m.randomReadMedianMs > 0.0;
-    const bool haveSmall = m.smallFilesRead > 0 && m.smallFileMedianMs > 0.0;
-    const bool haveStreaming = m.streamingBytesPerSecond > 0.0;
-
-    // Per-action waits on this stick and on the reference stick. A
-    // dimension that was not measured contributes nothing on either side,
-    // so the score compares like with like instead of punishing a probe
-    // that could not run one part.
-    double browse = 0.0, refBrowse = 0.0;
-    if (haveRandom) {
-        browse = model.pageReadsPerBrowseAction * m.randomReadMedianMs / 1000.0;
-        refBrowse = model.pageReadsPerBrowseAction * reference.randomReadMs / 1000.0;
-        s.browseVerdict = verdictFor(browse, kBrowseFineSeconds, kBrowseSlowerSeconds);
+    s.score = session.score;
+    s.speedClass = session.speedClass;
+    s.browseScore = browse.score;
+    s.trackLoadScore = load.score;
+    s.mountScore = mount.score;
+    s.browseActionSeconds = browse.seconds;
+    s.trackLoadSeconds = load.seconds;
+    s.mountSeconds = mount.seconds;
+    s.setWaitSeconds = session.seconds;
+    s.referenceSetWaitSeconds = session.referenceSeconds;
+    s.browseVerdict = browse.verdict;
+    s.trackLoadVerdict = load.verdict;
+    s.mountVerdict = mount.verdict;
+    if (m.streamingBytesPerSecond > 0.0) {
+        s.streamingVerdict = storageprobe::verdictFor(-m.streamingBytesPerSecond, -kStreamingFineBytesPerSecond,
+                                                      -kStreamingSlowerBytesPerSecond);
     }
-
-    double load = 0.0, refLoad = 0.0;
-    if (haveSmall) {
-        load += model.smallFilesPerTrackLoad * m.smallFileMedianMs / 1000.0;
-        refLoad += model.smallFilesPerTrackLoad * reference.smallFileMs / 1000.0;
-    }
-    if (haveStreaming) {
-        load += streamSeconds(model.streamedBytesPerTrackLoad, m.streamingBytesPerSecond);
-        refLoad += streamSeconds(model.streamedBytesPerTrackLoad, reference.streamingBytesPerSecond);
-        s.streamingVerdict = verdictFor(-m.streamingBytesPerSecond, -kStreamingFineBytesPerSecond,
-                                        -kStreamingSlowerBytesPerSecond);
-    }
-    if (haveSmall || haveStreaming) {
-        s.trackLoadVerdict = verdictFor(load, kTrackLoadFineSeconds, kTrackLoadSlowerSeconds);
-    }
-
-    double mount = 0.0, refMount = 0.0;
-    if (haveRandom) {
-        mount += model.pageReadsAtMount * m.randomReadMedianMs / 1000.0;
-        refMount += model.pageReadsAtMount * reference.randomReadMs / 1000.0;
-    }
-    if (haveStreaming && m.databaseBytes > 0) {
-        mount += streamSeconds(m.databaseBytes, m.streamingBytesPerSecond);
-        refMount += streamSeconds(m.databaseBytes, reference.streamingBytesPerSecond);
-    }
-    if (haveRandom || (haveStreaming && m.databaseBytes > 0)) {
-        s.mountVerdict = verdictFor(mount, kMountFineSeconds, kMountSlowerSeconds);
-    }
-
-    s.browseActionSeconds = browse;
-    s.trackLoadSeconds = load;
-    s.mountSeconds = mount;
-    s.setWaitSeconds = model.browseActions * browse + model.trackLoads * load + mount;
-    s.referenceSetWaitSeconds = model.browseActions * refBrowse + model.trackLoads * refLoad + refMount;
-
-    s.browseScore = relativeScore(refBrowse, browse);
-    s.trackLoadScore = relativeScore(refLoad, load);
-    s.mountScore = relativeScore(refMount, mount);
-    s.score = relativeScore(s.referenceSetWaitSeconds, s.setWaitSeconds);
-    s.speedClass = speedClassFor(s.score);
     return s;
 }
 
@@ -310,25 +190,27 @@ std::vector<PlayerAdvisory> advisePlayers(const StickPerformanceMeasurement &m, 
 
 WriteWorkloadEstimate estimateWriteWorkloads(const StickWriteMeasurement &m)
 {
-    WriteWorkloadEstimate e;
-    const bool haveSmall = m.smallFilesWritten > 0 && m.smallFileWriteMedianMs > 0.0;
-    const bool haveInPlace = m.inPlaceUpdates > 0 && m.inPlaceUpdateMedianMs > 0.0;
-    const bool haveStreaming = m.streamingWriteBytesPerSecond > 0.0;
+    // A save that takes longer than a third of a second is a pause a
+    // person notices on the button; past a second it is a wait.
+    storageprobe::WriteAction cueSave{"cue save", 2, 4, 0, 0.3, 1.0};
+    // Denon's published floor for Engine OS media is 6 MB/s write; under
+    // 10 MB/s an evening's export is a coffee break. Judged on the
+    // streaming rate alone, so the thresholds are what an 8 MB track
+    // costs at those two rates.
+    constexpr std::uint64_t kTrackBytes = 8u * 1000u * 1000u;
+    storageprobe::WriteAction exportTrack{"export one track", 3, 2, kTrackBytes, 0.0, 0.0};
 
-    if (haveSmall || haveInPlace) {
-        e.cueSaveSeconds = 2 * m.smallFileWriteMedianMs / 1000.0 + 4 * m.inPlaceUpdateMedianMs / 1000.0;
-        // A save that takes longer than a third of a second is a pause a
-        // person notices on the button; past a second it is a wait.
-        e.cueSaveVerdict = verdictFor(e.cueSaveSeconds, 0.3, 1.0);
+    WriteWorkloadEstimate e;
+    auto save = storageprobe::estimateWrite(m, cueSave);
+    if (save.measured) {
+        e.cueSaveSeconds = save.seconds;
+        e.cueSaveVerdict = save.verdict;
     }
-    if (haveStreaming) {
-        constexpr std::uint64_t kTrackBytes = 8u * 1000u * 1000u;
-        e.exportTrackSeconds = streamSeconds(kTrackBytes, m.streamingWriteBytesPerSecond) +
-                               3 * m.smallFileWriteMedianMs / 1000.0 + 2 * m.inPlaceUpdateMedianMs / 1000.0;
-        e.exportHundredTracksSeconds = 100 * e.exportTrackSeconds;
-        // Denon's published floor for Engine OS media is 6 MB/s write;
-        // under 10 MB/s an evening's export is a coffee break.
-        e.exportVerdict = verdictFor(-m.streamingWriteBytesPerSecond, -10.0 * 1000 * 1000, -6.0 * 1000 * 1000);
+    if (m.streamingWriteBytesPerSecond > 0.0) {
+        auto track = storageprobe::estimateWrite(m, exportTrack);
+        e.exportTrackSeconds = track.seconds;
+        e.exportHundredTracksSeconds = 100 * track.seconds;
+        e.exportVerdict = storageprobe::verdictFor(-m.streamingWriteBytesPerSecond, -10.0 * 1000 * 1000, -6.0 * 1000 * 1000);
     }
     return e;
 }
