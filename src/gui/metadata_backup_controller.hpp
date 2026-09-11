@@ -187,6 +187,9 @@ class MetadataBackupController : public QObject
     // itself; false means the stick named by sourceStickLabel.
     Q_PROPERTY(bool browsingStore READ browsingStore NOTIFY sourceChanged)
     Q_PROPERTY(QString sourceStickLabel READ sourceStickLabel NOTIFY sourceChanged)
+    // The catalog path the plan was made against. What the source picker
+    // matches on: a label is not unique across two sticks and this is.
+    Q_PROPERTY(QString sourceLibraryPath READ sourceLibraryPath NOTIFY sourceChanged)
     Q_PROPERTY(bool hasScanned READ hasScanned NOTIFY analysisChanged)
     Q_PROPERTY(int proposalCount READ proposalCount NOTIFY analysisChanged)
     Q_PROPERTY(int visibleProposalCount READ visibleProposalCount NOTIFY analysisChanged)
@@ -195,6 +198,13 @@ class MetadataBackupController : public QObject
     Q_PROPERTY(int tracksSeen READ tracksSeen NOTIFY analysisChanged)
     Q_PROPERTY(int alreadyCurrent READ alreadyCurrent NOTIFY analysisChanged)
     Q_PROPERTY(int withoutIdentity READ withoutIdentity NOTIFY analysisChanged)
+    // A scan that was cancelled (or failed) left no plan. The page has
+    // to say so rather than sit on "Reading..." with an empty list.
+    Q_PROPERTY(bool scanCancelled READ scanCancelled NOTIFY analysisChanged)
+    // Catalogs present on the stick that could not be read. Whatever
+    // only they held is missing from the plan, so this is said before
+    // the save rather than discovered after it.
+    Q_PROPERTY(QStringList catalogsUnreadable READ catalogsUnreadable NOTIFY analysisChanged)
     // Index 0 is "All tracks", the same convention every other playlist
     // picker in Seabass follows.
     Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY analysisChanged)
@@ -242,6 +252,7 @@ public:
     BackupProposalListModel *proposals() { return &m_proposalModel; }
     bool browsingStore() const { return m_browsingStore; }
     QString sourceStickLabel() const { return m_sourceStickLabel; }
+    QString sourceLibraryPath() const { return m_sourceLibraryPath; }
     bool hasScanned() const { return m_hasScanned; }
     int proposalCount() const { return m_proposalModel.totalCount(); }
     int visibleProposalCount() const { return m_proposalModel.rowCount(); }
@@ -253,6 +264,8 @@ public:
     int tracksSeen() const { return m_tracksSeen; }
     int alreadyCurrent() const { return m_alreadyCurrent; }
     int withoutIdentity() const { return m_withoutIdentity; }
+    bool scanCancelled() const { return m_scanCancelled; }
+    QStringList catalogsUnreadable() const { return m_catalogsUnreadable; }
     QStringList playlistNames() const { return m_playlistNames; }
     QVariantMap playlistTrackCounts() const { return m_playlistTrackCounts; }
     QString selectedPlaylist() const { return m_playlist; }
@@ -346,6 +359,11 @@ signals:
     // Raised by save() when something is staged for deletion. The page
     // puts the question and calls saveConfirmed() on a yes.
     void deletionConfirmationRequired();
+    // A save that actually finished its work. Not emitted for a
+    // cancelled or failed one, and not for a save() that stopped to ask
+    // about deletions -- so a page waiting to leave once its changes are
+    // safe can wait on exactly this and nothing else.
+    void saveCompleted();
 
 private:
     void startScan(const QString &libraryPath, const QString &libraryId, const QString &stickLabel);
@@ -374,6 +392,7 @@ private:
     bool m_writing = false;
     bool m_hasResult = false;
     bool m_hasScanned = false;
+    bool m_scanCancelled = false;
     // The store is the starting population: a page that opens on a stick
     // it has not scanned would show an empty list and look broken.
     bool m_browsingStore = true;
@@ -395,6 +414,7 @@ private:
     QString m_errorMessage;
     QVariantMap m_lastRun;
     QStringList m_playlistNames;
+    QStringList m_catalogsUnreadable;
     QVariantMap m_playlistTrackCounts;
 
     // The stick the proposal list was planned against, kept so a save

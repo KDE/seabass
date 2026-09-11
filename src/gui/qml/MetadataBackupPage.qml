@@ -68,6 +68,7 @@ Page {
         var list = [{
             name: "Everything stored",
             isStore: true,
+            catalogPath: "",
             rekordboxPath: "",
             enginePath: "",
             libraryId: "",
@@ -85,6 +86,7 @@ Page {
                 list.push({
                     name: stick.label,
                     isStore: false,
+                    catalogPath: path,
                     rekordboxPath: stick.rekordboxPath,
                     enginePath: stick.enginePath,
                     libraryId: stick.libraryId,
@@ -99,6 +101,7 @@ Page {
             list.push({
                 name: root.stickLabel,
                 isStore: false,
+                catalogPath: root.libraryPath,
                 rekordboxPath: root.rekordboxPath,
                 enginePath: root.enginePath,
                 libraryId: root.libraryId,
@@ -122,8 +125,13 @@ Page {
         if (controller.browsingStore) {
             return 0;
         }
+        // Matched on the catalog path, not the label. Two sticks called
+        // NO NAME or REKORDBOX is the ordinary case, not a corner one,
+        // and matching on the label highlighted whichever of them came
+        // first while the scan -- which is keyed on the path -- was
+        // reading the other.
         for (var i = 1; i < root.sourceModel.length; i++) {
-            if (root.sourceModel[i].name === controller.sourceStickLabel) {
+            if (root.sourceModel[i].catalogPath === controller.sourceLibraryPath) {
                 return i;
             }
         }
@@ -132,6 +140,15 @@ Page {
 
     // ---- leaving with something staged --------------------------------
     property var pendingLeave: null
+    // Set when the user answered the leave dialog with "Back Up". The
+    // leaving then waits for saveCompleted rather than happening beside
+    // the save: popping this page destroys the controller, whose
+    // destructor cancels the write and waits for the thread, so leaving
+    // and saving at the same moment wrote a partial backup and showed no
+    // summary. And when deletions are staged, save() does not save at
+    // all -- it stops to ask -- so leaving straight away threw every
+    // staged change away with the dialog still on its way up.
+    property bool leaveAfterSave: false
 
     function requestLeave(leaveFn) {
         if (controller.busy) {
@@ -148,9 +165,18 @@ Page {
     function runPendingLeave() {
         var fn = root.pendingLeave;
         root.pendingLeave = null;
+        root.leaveAfterSave = false;
         if (fn) {
             fn();
         }
+    }
+
+    // Whoever was leaving is no longer leaving: the save was cancelled,
+    // refused at the delete confirmation, or failed. Staying put with
+    // the staging intact is the right answer to all three.
+    function abandonPendingLeave() {
+        root.pendingLeave = null;
+        root.leaveAfterSave = false;
     }
 
     MetadataBackupController {
@@ -166,6 +192,13 @@ Page {
         // forget something asks first.
         function onDeletionConfirmationRequired() {
             confirmDeleteDialog.open();
+        }
+        // The save is done and everything staged is safe. Only now is it
+        // right to leave, if leaving is what started it.
+        function onSaveCompleted() {
+            if (root.leaveAfterSave) {
+                root.runPendingLeave();
+            }
         }
     }
 
@@ -256,8 +289,15 @@ Page {
                 objectName: "sourcePicker"
                 Layout.preferredWidth: Math.max(180, Math.min(300, root.width * 0.3))
                 enabled: !controller.busy
+                id: sourcePicker
                 model: root.sourceModel
                 textRole: "name"
+                // A ComboBox assigns its own currentIndex when activated,
+                // which breaks this binding. Every path that does not end
+                // in a source change therefore puts it back by hand --
+                // otherwise refusing a switch left the combo displaying a
+                // stick the list was never showing, which is the exact
+                // failure the derived index exists to prevent.
                 currentIndex: root.currentSourceIndex
                 onActivated: index => {
                     var entry = root.sourceModel[index];
@@ -277,6 +317,10 @@ Page {
                         switchSourceDialog.pendingEntry = entry;
                         switchSourceDialog.open();
                     }
+                    // Whether it was accepted or not, the truth is the
+                    // controller's, so re-read it rather than leave the
+                    // combo showing what was merely clicked.
+                    sourcePicker.currentIndex = Qt.binding(() => root.currentSourceIndex);
                 }
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
@@ -378,6 +422,10 @@ Page {
                         return "Nothing on any stick is changed or at risk. This only ever writes here: "
                              + controller.storeLocation;
                     }
+                    if (controller.scanCancelled) {
+                        return "Reading " + controller.sourceStickLabel
+                             + " was stopped, so there is no list to show. Pick a source again to retry.";
+                    }
                     if (!controller.hasScanned) {
                         return "Reading " + controller.sourceStickLabel + "...";
                     }
@@ -413,6 +461,27 @@ Page {
                 unitName: "tracks"
                 cancellable: true
                 onCancelRequested: controller.cancel()
+            }
+        }
+
+        // Said before the save, not discovered in the log afterwards.
+        // What the unreadable catalog alone held is missing from this
+        // plan, and a DJ who believes their Engine cues were just backed
+        // up when Engine was never opened has been misled.
+        Label {
+            objectName: "unreadableCatalogsLabel"
+            Layout.fillWidth: true
+            visible: controller.catalogsUnreadable.length > 0 && !controller.busy
+            wrapMode: Text.WordWrap
+            color: Theme.warnText
+            font.pointSize: Theme.fontSmall
+            text: {
+                var names = controller.catalogsUnreadable.join(", ");
+                return (controller.catalogsUnreadable.length === 1
+                         ? "One catalog on this stick could not be read: "
+                         : "Some catalogs on this stick could not be read: ")
+                     + names + ". Tracks only " + (controller.catalogsUnreadable.length === 1 ? "it" : "they")
+                     + " listed are missing from the list below, and backing up will not store them.";
             }
         }
 
@@ -558,13 +627,16 @@ Page {
             Label {
                 anchors.centerIn: parent
                 width: parent.width * 0.7
-                visible: proposalList.count === 0 && !controller.busy && controller.hasScanned
+                visible: proposalList.count === 0 && !controller.busy
+                         && (controller.hasScanned || controller.scanCancelled)
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 color: Theme.textMuted
-                text: controller.proposalCount === 0
-                    ? "Everything on this stick is already in the backup, and up to date."
-                    : "No track on this stick matches that search."
+                text: controller.scanCancelled
+                    ? "Nothing was read, so nothing is listed."
+                    : (controller.proposalCount === 0
+                        ? "Everything on this stick is already in the backup, and up to date."
+                        : "No track on this stick matches that search.")
             }
         }
 
@@ -717,6 +789,7 @@ Page {
         objectName: "saveOverlay"
         session: controller
         label: "Back Up"
+        destinationPhrase: "stored on this computer"
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 24
@@ -736,13 +809,16 @@ Page {
             ? controller.pendingCount + " change(s) are staged and not in the backup yet." : ""
         saveText: "Back Up"
         onSaveRequested: {
+            // Not followed by runPendingLeave(): onSaveCompleted does
+            // that, once there is actually something to leave behind.
+            root.leaveAfterSave = true;
             controller.save();
-            root.runPendingLeave();
         }
         onDiscardRequested: {
             controller.clearAllStaging();
             root.runPendingLeave();
         }
+        onRejected: root.abandonPendingLeave()
     }
 
     // Changing source throws the staging away, because it was decided
@@ -800,6 +876,9 @@ Page {
         acceptText: "Delete"
         rejectText: "Cancel"
         onAccepted: controller.saveConfirmed()
+        // Backing out of the confirmation backs out of the save, and so
+        // out of any leaving that save was for.
+        onRejected: root.abandonPendingLeave()
     }
 
     // ---- what the run did ---------------------------------------------

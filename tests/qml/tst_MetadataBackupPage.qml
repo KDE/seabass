@@ -224,6 +224,74 @@ TestCase {
         verify(dialog.visible, "changing source with staging must ask first");
     }
 
+    // The review finding that would have cost data: answering the leave
+    // dialog with "Back Up" used to leave the page in the same
+    // statement, which destroys the controller -- cancelling its write
+    // half-done -- and, when anything was staged for deletion, left
+    // before save() had even saved, because that path stops to ask
+    // first. Leaving now waits for saveCompleted.
+    function test_savingOnTheWayOutWaitsForTheSave() {
+        var page = make();
+        var list = findChild(page, "storedTrackList");
+        verify(list, "the stored track list must exist");
+        if (list.count === 0) {
+            skip("no stored tracks in this run's metadata store");
+        }
+        list.itemAtIndex(0).selectionToggled(true);
+
+        var left = 0;
+        page.requestLeave(function () { left++; });
+        var dialog = findChild(page, "unsavedDialog");
+        verify(dialog.visible, "the dialog must be up");
+
+        dialog.saveRequested();
+        // A deletion is staged, so save() stops to ask rather than
+        // saving. Leaving must not have happened.
+        compare(left, 0, "leaving must wait for the save to actually finish");
+        verify(page.leaveAfterSave, "and must be remembered as pending");
+        verify(findChild(page, "confirmDeleteDialog").visible,
+               "the delete confirmation must be what came up");
+
+        // Backing out of the confirmation backs out of the leaving too.
+        findChild(page, "confirmDeleteDialog").rejected();
+        compare(left, 0, "refusing the confirmation must not leave");
+        verify(!page.leaveAfterSave, "and must forget the pending leave");
+    }
+
+    function test_aCancelledScanSaysSoRatherThanLookingHung() {
+        // Without this the page sat on "Reading X..." with an empty
+        // list, no busy indicator and the empty-state label suppressed,
+        // because everything keyed off hasScanned and a cancelled scan
+        // never sets it.
+        var page = make();
+        var summary = findChild(page, "sourceSummary");
+        verify(summary, "the source summary must exist");
+        // Browsing the store: no scan has been asked for, so nothing
+        // claims to be reading.
+        verify(summary.text.indexOf("Reading") < 0,
+               "the store population must not claim to be reading a stick");
+    }
+
+    function test_anUnreadableCatalogIsSaidBeforeTheSave() {
+        // Collected by the scan and, before the review, dropped on the
+        // floor: a stick whose Engine database will not open plans
+        // without its tracks, and said nothing.
+        var page = make();
+        var label = findChild(page, "unreadableCatalogsLabel");
+        verify(label, "the unreadable-catalog warning must exist on the page");
+        verify(!label.visible, "and stay out of the way when every catalog read");
+    }
+
+    function test_theSaveTooltipDoesNotPromiseTheStick() {
+        // The one string on this page that still said "written to the
+        // stick", on a page whose whole premise is that it never writes
+        // to one.
+        var page = make();
+        var overlay = findChild(page, "saveOverlay");
+        compare(overlay.destinationPhrase, "stored on this computer",
+                "the save button must say where this page's save actually lands");
+    }
+
     function test_theListHasASearchAndMarking() {
         var page = make();
         var toolbar = findChild(page, "browseToolbar");

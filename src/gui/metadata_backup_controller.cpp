@@ -480,6 +480,8 @@ void MetadataBackupController::startScan(const QString &libraryPath, const QStri
     m_sourceStickLabel = stickLabel;
     m_browsingStore = false;
     m_hasScanned = false;
+    m_scanCancelled = false;
+    m_catalogsUnreadable.clear();
     // The playlist filter belonged to the stick being left. Keeping it
     // would silently narrow the new stick's list by a playlist that may
     // not even exist on it.
@@ -518,6 +520,8 @@ void MetadataBackupController::discardStagingAndBrowseStore()
     clearAllStaging();
     m_browsingStore = true;
     m_hasScanned = false;
+    m_scanCancelled = false;
+    m_catalogsUnreadable.clear();
     m_sourceLibraryPath.clear();
     m_sourceLibraryId.clear();
     m_sourceStickLabel.clear();
@@ -543,12 +547,28 @@ void MetadataBackupController::onScanFinished()
     setCurrentPhase({});
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
+        m_scanCancelled = true;  // there is no plan, and the page must not pretend one is coming
+        emit analysisChanged();
         return;
     }
     if (result.cancelled) {
+        // Cancelling left no plan. Saying so is the whole fix: without
+        // it hasScanned stayed false with the stick still selected, so
+        // the page sat on "Reading X..." with an empty list and no busy
+        // indicator, looking hung, and the empty-state label stayed
+        // suppressed because it waits for hasScanned.
+        m_scanCancelled = true;
+        emit analysisChanged();
         return;
     }
 
+    // Catalogs that are on the stick but could not be read. Not an error
+    // -- what was read is still worth storing -- but the tracks only the
+    // unreadable one held are silently missing from this plan, and a
+    // user who believes their Engine cues were just backed up when
+    // Engine was never opened has been misled.
+    m_catalogsUnreadable = result.catalogsUnreadable;
+    m_scanCancelled = false;
     m_storedTrackCount = result.storedTrackCount;
     m_tracksSeen = result.plan.tracksSeen;
     m_alreadyCurrent = result.plan.alreadyCurrent;
@@ -689,10 +709,22 @@ void MetadataBackupController::onSaveFinished()
         {"artworkFilesAdded", summary.artworkFilesAdded},
         {"artworkBytesAdded", static_cast<qint64>(summary.artworkBytesAdded)},
         {"cancelled", summary.cancelled},
-        {"catalogsRead", result.catalogsRead},
-        {"catalogsUnreadable", result.catalogsUnreadable},
+        // No catalog lists here. A save reads no catalogs -- the scan
+        // did that, and the tracks came with it -- so reporting the
+        // empty ones would be answering a question this run never
+        // asked. The scan's own lists live on catalogsUnreadable.
     };
     m_hasResult = true;
+
+    if (summary.cancelled) {
+        // Stopped part way. What is still staged is the best description
+        // of what is left to do, so it stays -- and the deletions do NOT
+        // happen: the user pressed Cancel, and taking that as consent to
+        // permanently forget the rows this page warns may be the last
+        // copy of anything would be the worst thing on the page.
+        emit resultChanged();
+        return;
+    }
 
     // Staged additions have landed, so they are no longer staged.
     m_proposalModel.unstageAll();
@@ -700,6 +732,7 @@ void MetadataBackupController::onSaveFinished()
     // that fails to store does not also forget things.
     applyStagedDeletions();
     emit resultChanged();
+    emit saveCompleted();
 
     // And the plan is now stale by exactly the amount that was just
     // written. Leaving it up meant a list still headed "1469 tracks to
@@ -708,9 +741,10 @@ void MetadataBackupController::onSaveFinished()
     // in front of it. Cheap to redo: the catalogs this re-reads are the
     // ones LibraryCatalogCache is still holding.
     //
-    // Not after a cancelled run, which stopped part way and whose
-    // staging is still the best description of what is left to do.
-    if (!summary.cancelled && !m_browsingStore && !m_sourceLibraryPath.isEmpty()) {
+    // A cancelled run never reaches here: it returned above with its
+    // staging intact, because that staging is still the best
+    // description of what is left to do.
+    if (!m_browsingStore && !m_sourceLibraryPath.isEmpty()) {
         // Kept across the rescan. startScan() drops the playlist filter
         // because it is normally switching to a different stick, whose
         // playlists are not this one's -- but this is the same stick,
@@ -735,6 +769,13 @@ void MetadataBackupController::applyStagedDeletions()
     }
     auto *db = store();
     if (!db) {
+        // store() has already set the error message. The marks stay --
+        // nothing was deleted, so nothing should look as though it was
+        // -- and the page is told, because the caller may have just
+        // reported a successful run whose delete half never ran.
+        emit selectionChanged();
+        emit actionFeedback(QStringLiteral("The metadata backup could not be opened; nothing was deleted."),
+                            true);
         return;
     }
     int removed = 0;
@@ -742,6 +783,8 @@ void MetadataBackupController::applyStagedDeletions()
         removed = db->removeTracks(std::vector<std::int64_t>(ids.begin(), ids.end()));
     } catch (const std::exception &e) {
         setErrorMessage(QString::fromUtf8(e.what()));
+        emit selectionChanged();
+        emit actionFeedback(QStringLiteral("Nothing was deleted: %1").arg(QString::fromUtf8(e.what())), true);
         return;
     }
     // The rows they referred to are gone, so the marks go with them.
@@ -749,6 +792,7 @@ void MetadataBackupController::applyStagedDeletions()
     m_browseModel.clearStagingFor(ids);
     refresh();
     emit selectionChanged();
+    emit saveCompleted();
     emit actionFeedback(removed == 1 ? QStringLiteral("One track removed from the metadata backup.")
                                      : QStringLiteral("%1 tracks removed from the metadata backup.").arg(removed),
                         false);

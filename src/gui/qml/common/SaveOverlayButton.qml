@@ -11,6 +11,11 @@ Item {
     id: root
     required property var session
     property string label: "Save"
+    // Where this button's save actually lands. Every edit page writes to
+    // the stick and takes the default; Metadata Backup writes to this
+    // computer and never touches a stick, and its tooltip was the one
+    // string on the page still saying otherwise.
+    property string destinationPhrase: "written to the stick"
 
     readonly property bool hasSession: root.session !== null && root.session !== undefined
     readonly property int pendingCount: root.hasSession ? root.session.pendingCount : 0
@@ -91,7 +96,8 @@ Item {
             if (root.pendingCount > shown) {
                 lines.push("- and " + (root.pendingCount - shown) + " more");
             }
-            return root.label + ": " + root.pendingCount + " change(s) written to the stick\n" + lines.join("\n");
+            return root.label + ": " + root.pendingCount + " change(s) " + root.destinationPhrase + "\n"
+                 + lines.join("\n");
         }
     }
 }
