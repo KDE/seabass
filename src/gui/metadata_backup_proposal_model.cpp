@@ -46,6 +46,20 @@ QString changeSummaryOf(const MetadataBackupProposal &proposal)
     if (proposal.commentOffered) {
         parts << QStringLiteral("comment");
     }
+    if (proposal.playlistsOffered) {
+        parts << QStringLiteral("playlists");
+    }
+    if (proposal.playCountOffered) {
+        parts << QStringLiteral("play count");
+    }
+    if (proposal.artworkOffered) {
+        parts << QStringLiteral("cover");
+    }
+    if (proposal.identityRefresh) {
+        // Last, and one word: it is the least interesting reason a row
+        // is here, and the commonest one to be here alongside.
+        parts << QStringLiteral("details");
+    }
     return parts.join(QStringLiteral(", "));
 }
 

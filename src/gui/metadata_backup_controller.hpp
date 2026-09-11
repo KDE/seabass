@@ -370,7 +370,9 @@ private:
     void beginSave();
     void onScanFinished();
     void onSaveFinished();
-    void applyStagedDeletions();
+    // False when the store could not be opened or the delete threw,
+    // in which case the marks are deliberately left standing.
+    bool applyStagedDeletions();
     void setBusy(bool busy);
     void setWriting(bool writing);
     void setProgress(int current, int total);

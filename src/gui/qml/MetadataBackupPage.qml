@@ -98,6 +98,7 @@ Page {
         // Without this the picker could open on a page whose own stick
         // was not among its options.
         if (root.hasStick && !seen[root.libraryPath]) {
+            seen[root.libraryPath] = true;
             list.push({
                 name: root.stickLabel,
                 isStore: false,
@@ -105,6 +106,24 @@ Page {
                 rekordboxPath: root.rekordboxPath,
                 enginePath: root.enginePath,
                 libraryId: root.libraryId,
+            });
+        }
+        // And the stick the list is actually showing, if it has gone
+        // away since it was scanned. Without this the picker fell back
+        // to "Everything stored" while the proposal list went on showing
+        // that stick's tracks -- the picker contradicting the list,
+        // which is exactly what the derived index exists to prevent. The
+        // proposals are still real and still worth staging: they were
+        // read before the stick left, and they write to this computer.
+        if (!controller.browsingStore && controller.sourceLibraryPath.length > 0
+            && !seen[controller.sourceLibraryPath]) {
+            list.push({
+                name: controller.sourceStickLabel + " (not connected)",
+                isStore: false,
+                catalogPath: controller.sourceLibraryPath,
+                rekordboxPath: controller.sourceLibraryPath,
+                enginePath: "",
+                libraryId: "",
             });
         }
         root.sourceModel = list;
@@ -115,6 +134,11 @@ Page {
     Connections {
         target: root.mediaController && root.mediaController.sticks ? root.mediaController.sticks : null
         function onCountsChanged() { root.rebuildSourceModel(); }
+    }
+
+    Connections {
+        target: controller
+        function onSourceChanged() { root.rebuildSourceModel(); }
     }
 
     // Which entry the combo should be showing, derived from the
@@ -152,6 +176,11 @@ Page {
 
     function requestLeave(leaveFn) {
         if (controller.busy) {
+            // Silently doing nothing reads as a broken button. The scan
+            // is cancellable and the bar beside it says so, so this
+            // points at that rather than inventing a second way out.
+            messagePopup.show("Still reading " + controller.sourceStickLabel
+                              + ". Cancel it first, or wait for it to finish.", false);
             return;
         }
         if (controller.dirty) {

@@ -55,12 +55,47 @@ struct MetadataBackupProposal
     bool commentOffered = false;
     bool commentConflict = false;
 
+    // ---- the rest of what a backup keeps current ---------------------
+    // MetadataStore::store() does more than the three groups above, and
+    // a plan that ignored the difference quietly stopped the store being
+    // brought up to date at all: a track whose only change was a new
+    // playlist counted as "already current", was never listed, was never
+    // staged, and so was never handed to store(). Before this page
+    // staged anything the whole collapsed list went in on every run, and
+    // all of this stayed fresh for free.
+    bool playCountOffered = false;
+    // Membership is a set, not a conflict: store() replaces it whenever
+    // the incoming reading has any, because the freshest reading is the
+    // right one and there is no case where a stale membership is worth
+    // keeping.
+    bool playlistsOffered = false;
+    // Only when the store has no cover at all. A cover is not authored
+    // data, so a stored one is as good as an incoming one, and store()
+    // deliberately does not re-hash images it already has.
+    bool artworkOffered = false;
+    // Title, artist, filename, length, bpm, key: what the software
+    // wrote rather than what the DJ authored, which store() always
+    // refreshes from the freshest reading. Offered when one of them
+    // would actually change, so a title the DJ corrected on the stick
+    // reaches the store that has to find the track by it later.
+    //
+    // Deliberately NOT the row's stick label or relative path, which
+    // store() also refreshes. Those are bookkeeping -- where this copy
+    // was last seen -- and they differ for every single track the moment
+    // you back up from a different stick than last time, which would put
+    // the whole library on a list whose entire purpose is to be short.
+    bool identityRefresh = false;
+
     // A track the store would keep as it is: every field either matches
     // or lost to the stored copy. Kept out of the list the page shows,
     // because a backup that would do nothing to it is not a decision
     // anyone needs to make -- but counted, so the page can say how many
     // were already current rather than leaving them unexplained.
-    bool offersAnything() const { return isNew || cuesOffered || ratingOffered || commentOffered; }
+    bool offersAnything() const
+    {
+        return isNew || cuesOffered || ratingOffered || commentOffered || playCountOffered || playlistsOffered
+            || artworkOffered || identityRefresh;
+    }
 
     // How many cues storing would add, for a sentence a person reads.
     // Zero when the stored set wins, and zero rather than negative when

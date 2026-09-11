@@ -1096,6 +1096,29 @@ std::vector<Track> MetadataStore::readAll()
     for (auto &track : tracks) {
         track.cues = cuesFor(std::stoll(track.sourceId));
     }
+
+    // Playlist membership, in one query rather than one per track.
+    //
+    // store() replaces a row's playlists whenever the incoming reading
+    // has any, so a caller working out what a backup would change has to
+    // be able to see them -- and asking per track would have turned one
+    // query into fifteen hundred.
+    {
+        std::map<std::int64_t, std::vector<domain::PlaylistMembership>> byTrack;
+        Stmt stmt(m_db, "SELECT track_id, name, position FROM playlists ORDER BY track_id, position");
+        while (stmt.step()) {
+            domain::PlaylistMembership member;
+            member.name = stmt.columnText(1);
+            member.position = stmt.columnInt(2);
+            byTrack[stmt.columnInt64(0)].push_back(std::move(member));
+        }
+        for (auto &track : tracks) {
+            const auto found = byTrack.find(std::stoll(track.sourceId));
+            if (found != byTrack.end()) {
+                track.playlists = std::move(found->second);
+            }
+        }
+    }
     return tracks;
 }
 

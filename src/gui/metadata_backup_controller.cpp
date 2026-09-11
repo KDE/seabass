@@ -580,6 +580,11 @@ void MetadataBackupController::onScanFinished()
     m_hasScanned = true;
     emit analysisChanged();
     emit selectionChanged();
+    // storedTrackCount's NOTIFY is storeChanged, not analysisChanged.
+    // The browse summary and the stored list's empty state both read it,
+    // and without this they kept the previous number until something
+    // else happened to emit it.
+    emit storeChanged();
 }
 
 // ---- staging ---------------------------------------------------------
@@ -671,7 +676,9 @@ void MetadataBackupController::beginSave()
     if (tracks.empty()) {
         // Deletions only. No stick to read and nothing to write, so this
         // is a database delete and does not need a thread or a bar.
-        applyStagedDeletions();
+        if (applyStagedDeletions()) {
+            emit saveCompleted();
+        }
         return;
     }
 
@@ -730,9 +737,8 @@ void MetadataBackupController::onSaveFinished()
     m_proposalModel.unstageAll();
     // Deletions ride along in the same Save, after the write, so a run
     // that fails to store does not also forget things.
-    applyStagedDeletions();
+    const bool deletionsDone = applyStagedDeletions();
     emit resultChanged();
-    emit saveCompleted();
 
     // And the plan is now stale by exactly the amount that was just
     // written. Leaving it up meant a list still headed "1469 tracks to
@@ -757,15 +763,30 @@ void MetadataBackupController::onSaveFinished()
         m_playlist = playlist;
         emit filterChanged();
     }
+
+    // Last, and after the rescan rather than before it. A page waiting
+    // to leave pops itself in this handler, which destroys this object;
+    // starting a fresh scan afterwards would launch a thread on a
+    // controller already scheduled for deletion and then block the UI
+    // thread in ~MetadataBackupController waiting for it to notice the
+    // cancel.
+    //
+    // Only when the whole save did what it said. A delete half that
+    // failed left its marks in place on purpose, and calling that
+    // "completed" would carry the user off the page, away from both the
+    // message and the staging that is still sitting there.
+    if (deletionsDone) {
+        emit saveCompleted();
+    }
 }
 
-void MetadataBackupController::applyStagedDeletions()
+bool MetadataBackupController::applyStagedDeletions()
 {
     const QList<qint64> ids = m_browseModel.stagedForDeletionIds();
     if (ids.isEmpty()) {
         refresh();
         emit selectionChanged();
-        return;
+        return true;
     }
     auto *db = store();
     if (!db) {
@@ -776,7 +797,7 @@ void MetadataBackupController::applyStagedDeletions()
         emit selectionChanged();
         emit actionFeedback(QStringLiteral("The metadata backup could not be opened; nothing was deleted."),
                             true);
-        return;
+        return false;
     }
     int removed = 0;
     try {
@@ -785,17 +806,17 @@ void MetadataBackupController::applyStagedDeletions()
         setErrorMessage(QString::fromUtf8(e.what()));
         emit selectionChanged();
         emit actionFeedback(QStringLiteral("Nothing was deleted: %1").arg(QString::fromUtf8(e.what())), true);
-        return;
+        return false;
     }
     // The rows they referred to are gone, so the marks go with them.
     // Explicitly, because a reset no longer does it.
     m_browseModel.clearStagingFor(ids);
     refresh();
     emit selectionChanged();
-    emit saveCompleted();
     emit actionFeedback(removed == 1 ? QStringLiteral("One track removed from the metadata backup.")
                                      : QStringLiteral("%1 tracks removed from the metadata backup.").arg(removed),
                         false);
+    return true;
 }
 
 // ---- filtering -------------------------------------------------------

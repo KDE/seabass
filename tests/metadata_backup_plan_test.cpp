@@ -252,6 +252,113 @@ int main()
         std::cout << "case 10 (proposals come back in the stick's own order) OK\n";
     }
 
+    // ---- everything else store() keeps current -----------------------
+    //
+    // The regression these guard: offersAnything() once asked only about
+    // cues, rating and comment, so a track differing in nothing else was
+    // counted alreadyCurrent, never listed, never staged and therefore
+    // never handed to MetadataStore::store() -- which would have merged
+    // every one of the fields below. The store simply stopped being
+    // brought up to date.
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.playlists = {{"Techno/Peak Time", 0}, {"Warmup", 3}};
+        Track stored = storedTrack("Zwielicht");  // stored under no playlist at all
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenLongAgo);
+        const auto &p = only(plan);
+        assert(p.playlistsOffered);
+        assert(p.offersAnything());
+        std::cout << "case 11 (a new playlist is a reason to back the track up) OK\n";
+    }
+
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.playlists = {{"Warmup", 3}, {"Techno/Peak Time", 0}};
+        Track stored = storedTrack("Zwielicht");
+        // Same set, listed in the other order and at other positions.
+        stored.playlists = {{"Techno/Peak Time", 7}, {"Warmup", 1}};
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenLongAgo);
+        // Order is not meaningful, so a reshuffle is not a change -- and
+        // if it were, every track on the stick would be on this list.
+        assert(plan.proposals.empty());
+        assert(plan.alreadyCurrent == 1);
+        std::cout << "case 12 (the same playlists in another order are not a change) OK\n";
+    }
+
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.playCount = 41;
+        Track stored = storedTrack("Zwielicht");
+        stored.playCount = 12;
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenRecently);
+        assert(only(plan).playCountOffered);
+        std::cout << "case 13 (a play count that moved on is worth storing) OK\n";
+    }
+
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.artworkPath = "/media/RV2/Contents/cover.jpg";
+        Track stored = storedTrack("Zwielicht");  // no cover copied yet
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenLongAgo);
+        assert(only(plan).artworkOffered);
+
+        // And not once the store has one: a cover is not authored data,
+        // so a stored one is as good as an incoming one and store()
+        // deliberately does not re-hash it.
+        stored.artworkPath = "/home/dj/Seabass/metadata/artwork/abc.jpg";
+        const auto second = planMetadataBackup({stick}, {stored}, StickWrittenLongAgo);
+        assert(second.proposals.empty());
+        assert(second.alreadyCurrent == 1);
+        std::cout << "case 14 (a cover fills a gap, and only a gap) OK\n";
+    }
+
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.title = "Zwielicht (Remastered)";  // the DJ fixed the tag
+        Track stored = storedTrack("Zwielicht");
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenLongAgo);
+        assert(only(plan).identityRefresh);
+        std::cout << "case 15 (a corrected title reaches the store that has to find it later) OK\n";
+    }
+
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.bpm = 128.0;
+        stick.durationSeconds = 361.5;
+        Track stored = storedTrack("Zwielicht");
+        // The same readings, off by the rounding two catalogs differ by.
+        stored.bpm = 128.02;
+        stored.durationSeconds = 360.4;
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenLongAgo);
+        // Within tolerance on both, so nothing to do -- otherwise every
+        // track on the stick would be on a list whose whole purpose is
+        // to be short.
+        assert(plan.proposals.empty());
+        assert(plan.alreadyCurrent == 1);
+        std::cout << "case 16 (a rounding in a tempo or a length is not a change) OK\n";
+    }
+
+    {
+        Track stick = stickTrack("Zwielicht");
+        stick.title.clear();
+        stick.artist.clear();  // a catalog that could not read the tags
+        Track stored = storedTrack("Zwielicht");
+
+        const auto plan = planMetadataBackup({stick}, {stored}, StickWrittenLongAgo);
+        // store() writes CASE WHEN ? <> '' THEN ? ELSE title END, so a
+        // failed reading cannot blank the stored value -- and must not
+        // be reported as though it would.
+        assert(plan.proposals.empty());
+        assert(plan.alreadyCurrent == 1);
+        std::cout << "case 17 (a tag nobody could read never counts as a change) OK\n";
+    }
+
     std::cout << "metadata_backup_plan_test: all cases passed\n";
     return 0;
 }

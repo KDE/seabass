@@ -1,6 +1,10 @@
 #include "domain/metadata_backup_plan.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "domain/metadata_merge.hpp"
 #include "domain/track_matching.hpp"
@@ -22,6 +26,54 @@ bool hasStorableIdentity(const Track &track)
         return false;
     }
     return titleArtistKey(track).has_value() || !normalizeFilename(track.filename).empty();
+}
+
+// Membership as a set of names. Order is not meaningful -- two catalogs
+// list the same playlists in whatever order they walk them -- so this
+// sorts before comparing rather than treating a reshuffle as a change
+// and putting the whole library on the list.
+bool playlistNamesEqual(const Track &a, const Track &b)
+{
+    std::vector<std::string> left;
+    std::vector<std::string> right;
+    left.reserve(a.playlists.size());
+    right.reserve(b.playlists.size());
+    for (const auto &member : a.playlists) {
+        left.push_back(member.name);
+    }
+    for (const auto &member : b.playlists) {
+        right.push_back(member.name);
+    }
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+    return left == right;
+}
+
+// Would storing this track change any of the fields store() refreshes
+// from the freshest reading?
+//
+// Each one only counts when the incoming value is non-empty, because
+// that is exactly the condition store()'s own UPDATE applies: it writes
+// `CASE WHEN ? <> '' THEN ? ELSE <column> END`, so a catalog that failed
+// to read a title cannot blank the stored one and must not be reported
+// as though it would.
+bool identityWouldChange(const Track &stick, const Track &stored)
+{
+    const auto textChanges = [](const std::string &incoming, const std::string &existing) {
+        return !incoming.empty() && incoming != existing;
+    };
+    if (textChanges(stick.title, stored.title) || textChanges(stick.artist, stored.artist)
+        || textChanges(stick.filename, stored.filename) || textChanges(stick.key, stored.key)) {
+        return true;
+    }
+    // Numbers use the same "only a real reading counts" rule, with a
+    // tolerance so a rounding in one catalog's reading of a length or a
+    // tempo does not list every track on the stick.
+    const auto numberChanges = [](double incoming, double existing, double tolerance) {
+        return incoming > 0.0 && std::abs(incoming - existing) > tolerance;
+    };
+    return numberChanges(stick.durationSeconds, stored.durationSeconds, 2.0)
+        || numberChanges(stick.bpm, stored.bpm, 0.05);
 }
 
 }  // namespace
@@ -78,6 +130,9 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
             proposal.cuesFillAGap = proposal.cuesOffered;
             proposal.ratingOffered = stick.rating.has_value();
             proposal.commentOffered = !stick.comment.empty();
+            proposal.playCountOffered = stick.playCount.has_value();
+            proposal.playlistsOffered = !stick.playlists.empty();
+            proposal.artworkOffered = !stick.artworkPath.empty();
             plan.proposals.push_back(std::move(proposal));
             continue;
         }
@@ -106,6 +161,24 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         proposal.commentConflict =
             !stick.comment.empty() && !stored->comment.empty() && stick.comment != stored->comment;
         proposal.commentOffered = takeIncomingComment(stick.comment, stored->comment, stickModifiedAt, storedAt);
+
+        // ---- play count ----
+        proposal.playCountOffered =
+            takeIncomingPlayCount(stick.playCount, stored->playCount, stickModifiedAt, storedAt);
+
+        // ---- playlist membership ----
+        // Compared as a set of names, which is what store() writes and
+        // all the store shows. Position within a playlist rides along
+        // and is not worth listing a track for on its own.
+        proposal.playlistsOffered = !stick.playlists.empty() && !playlistNamesEqual(stick, *stored);
+
+        // ---- cover art ----
+        // Only into a gap, mirroring store(), which does not re-hash an
+        // image it already has.
+        proposal.artworkOffered = stored->artworkPath.empty() && !stick.artworkPath.empty();
+
+        // ---- the fields the software wrote ----
+        proposal.identityRefresh = identityWouldChange(stick, *stored);
 
         if (proposal.offersAnything()) {
             plan.proposals.push_back(std::move(proposal));
