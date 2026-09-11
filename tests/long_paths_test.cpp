@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Covers the three things that break on Windows once a path passes the
 // classic MAX_PATH of 260 characters. Every case builds a tree ~300
 // characters deep with each individual component well under NAME_MAX, so

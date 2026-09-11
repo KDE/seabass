@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Shared by the live tests in this directory (see docs/testing.md,
 // "Live tests against a real stick"). Plain JS: TestCase functions are
 // not shareable across tst_*.qml files.

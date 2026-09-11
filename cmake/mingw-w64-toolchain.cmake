@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
 # Cross-compile Seabass (CLI and, when Qt6-for-mingw is available via
 # CMAKE_PREFIX_PATH + QT_HOST_PATH, the GUI too) for 64-bit Windows using
 # mingw-w64.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Manual verification tool: reads a real ANLZ file at the raw-section
 // level and rewrites it unmodified, to prove the section-boundary walk in
 // AnlzFile is exact (no gaps, no overlaps, no misread lengths) before any

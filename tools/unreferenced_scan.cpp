@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Standalone investigation tool: lists every audio file on a stick that
 // no catalog references, using the project's own walker, readers and
 // decision logic -- so the numbers match what Seabass itself would

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // normalizedPathKey() is the comparison three destructive decisions rest
 // on: whether a file on disk is referenced by any catalog
 // (findUnreferencedFiles), whether a file queued for deletion is still

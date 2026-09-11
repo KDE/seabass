@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // writeHotCues() takes the COMPLETE replacement set of cues, the same
 // contract every CueWriter has. That has to hold for Engine's single
 // memory-style cue too: if the incoming set has no memory cue, the track

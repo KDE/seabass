@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Converting every save workflow to backup-first, batched writes
 
 ## Why

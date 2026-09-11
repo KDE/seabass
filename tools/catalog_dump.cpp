@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Standalone investigation tool: dumps every track both catalogs on a
 // stick know about, as TSV, using the project's own readers (so the
 // numbers match what Seabass itself sees -- not a re-derivation from a

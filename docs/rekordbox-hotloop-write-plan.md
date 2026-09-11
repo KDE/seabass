@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Reverse-engineering plan: writing hot loops to rekordbox's ANLZ format
 
 > **Status 2026-09-11.** Two things changed since this plan was written.

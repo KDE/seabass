@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
 
 #include "infrastructure/anonymization_export_layout.hpp"

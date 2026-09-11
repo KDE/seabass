@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Are we still thinking in two libraries anywhere?
 
 Seabass began with two catalogs and grew a third (OneLibrary /

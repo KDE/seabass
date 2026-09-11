@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Ideas for features
 
 Here are some ideas which could be implememted in Seabass. No guarantees, this is NOT a roadmap, just a record of brainstorming.

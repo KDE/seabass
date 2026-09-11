@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Ratings + comments (experimental) -- feature request & verification plan
 
 Branch: `feature/master-db-ratings-comments`, branched from

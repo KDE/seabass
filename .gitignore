@@ -29,3 +29,6 @@
 # .gitmodules itself: KDE Invent's commit audit rejects any pushed
 # commit containing a file with that exact name.
 /.gitmodules
+
+# Kate swap files
+.*.kate-swp

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
 qt_add_executable(seabass
     WIN32
     main.cpp

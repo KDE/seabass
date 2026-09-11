@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // What a cleanup would really free, measured on disk rather than believed
 // from a catalog. The catalogs cannot answer this: rekordbox and Engine
 // record no file size at all, so every figure derived from them was zero.

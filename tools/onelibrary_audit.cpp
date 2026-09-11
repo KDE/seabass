@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Standalone debug tool: dumps a real exportLibrary.db's `content` table
 // schema and, for every column, how many rows actually have a non-null/
 // non-empty/non-zero value. Useful whenever a real-hardware audit is

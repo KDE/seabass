@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // RestoreMetadataChange: the write half of Restore Metadata, driven
 // against a real (SQLCipher-encrypted) OneLibrary database rather than a
 // mock, because the thing worth pinning here is what actually lands in

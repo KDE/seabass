@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Exercises TagLibMetadataProbe against MP3s built byte by byte (see
 // tests/mp3_fixture.hpp) rather than checked-in fixtures: the
 // interesting cases are precisely the ones a normal encoder never

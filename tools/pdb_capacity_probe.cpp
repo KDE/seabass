@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Standalone investigation tool: reports how much room an export.pdb has
 // left, how many of its rows are deleted rather than absent, and how far
 // it has drifted from the OneLibrary sitting beside it.

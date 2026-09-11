@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Rekordbox OneLibrary / Device Library Plus format notes
 
 Seabass reads and writes `<PIONEER root>/rekordbox/exportLibrary.db`

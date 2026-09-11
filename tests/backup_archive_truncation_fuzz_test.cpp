@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The load-bearing test of the crash-safety design: after ANY crash
 // during an incremental update -- the file cut at any byte, or writes
 // after the last durable barrier lost or reordered -- running recovery

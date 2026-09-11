@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Standalone benchmark: where does a staged Save actually spend its time on
 // a real USB stick, and what would the three candidate write strategies cost
 // instead?

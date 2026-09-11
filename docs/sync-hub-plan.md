@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Sync Hub: Cue Points + Ratings & Comments
 
 A new first-level page, **Sync Hub**, with today's "Sync

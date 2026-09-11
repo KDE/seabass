@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 #include "gui/local_file_url.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "restore_stick_backup_controller.hpp"

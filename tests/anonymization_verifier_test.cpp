@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The verifier is the last thing between a DJ's real library metadata and
 // a zip they upload to a stranger. Until now the only thing exercising it
 // was the `verify_anonymized_export` tool pointed at the committed

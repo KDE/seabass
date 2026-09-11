@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The unreferenced-file scan against a real stick, with the project's
 // own readers, walker, probe and cache -- the run
 // docs/unreferenced-file-cleanup-plan.md's step 7 asks for.

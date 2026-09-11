@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Confirms sync_controller.cpp's whole-file-replace path (build a
 // scratch copy of m.db, apply the same per-item writeHotCues() loop
 // against it, then durably+atomically swap it back onto the real file)

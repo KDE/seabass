@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Building Seabass on Windows
 
 Seabass builds **natively** on Windows via MSYS2's UCRT64 mingw-w64

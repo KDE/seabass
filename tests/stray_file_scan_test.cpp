@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The unreferenced-file half of a Clean Up scan, end to end and without
 // Qt: real audio files in a temp stick, real catalog Tracks to subtract
 // them from, the real walk, probe and metadata cache, then the same

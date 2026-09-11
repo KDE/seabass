@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // One-off generator for tests/fixtures/duplicate_engine_library/ -- a small
 // synthetic Engine Library with one track duplicated (same filename,
 // duration): one copy has hot cues, the other doesn't. Used to exercise the

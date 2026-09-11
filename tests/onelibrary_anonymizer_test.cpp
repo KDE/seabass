@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The OneLibrary scrubber had no test at all, and a miss here ships a
 // DJ's real metadata inside an encrypted database nobody eyeballs.
 //

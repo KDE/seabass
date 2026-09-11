@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // An archive-level write lock so a restore, a clone (backup+restore) and
 // a compaction cannot write the same archive a backup is still writing,
 // regardless of thread, process or the CLI/GUI boundary -- named as

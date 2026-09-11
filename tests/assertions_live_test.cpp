@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The suite is built out of assert(): 2100-odd of them across nearly
 // every test file, none guarded. Three of CMake's four standard build
 // types put -DNDEBUG in CMAKE_CXX_FLAGS_<CONFIG>, which turns all of

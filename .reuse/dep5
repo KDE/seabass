@@ -1,0 +1,78 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Seabass
+Upstream-Contact: Sebastian Kügler <sebas@kde.org>
+Source: https://invent.kde.org/sebas/seabass
+
+# Files that cannot carry an SPDX header -- because they are binary, because
+# they are vendored and must stay byte-identical to upstream, or because
+# there are several thousand of them.
+
+# --- Test fixtures -------------------------------------------------------
+# An anonymized export of a real DJ library: rekordbox and Engine catalogs
+# plus their analysis files. What survives anonymization is measurement --
+# beatgrids, waveform previews, cue positions, durations, keys -- with every
+# title, artist, album and path replaced by a placeholder. Facts about audio
+# rather than anything authored, so CC0 rather than a claim of copyright.
+Files: tests/fixtures/*
+Copyright: NONE
+License: CC0-1.0
+
+# --- Vendored zlib -------------------------------------------------------
+# Annotated here rather than with headers so the tree stays byte-identical
+# to upstream and can be diffed against a release tarball.
+Files: third_party/zlib/*
+Copyright: 1995-2026 Jean-loup Gailly and Mark Adler
+License: Zlib
+
+# --- Patch against libdjinterop ------------------------------------------
+# A diff, so it carries lines of the file it patches; it takes that file's
+# licence rather than this project's.
+Files: third_party/patches/*
+Copyright: 2026 Sebastian Kügler <sebas@kde.org>
+License: LGPL-3.0-or-later
+
+# --- Kaitai Struct specs, and the parser generated from them -------------
+# Vendored unmodified from Deep-Symmetry/crate-digger, so no headers: the
+# files must stay comparable to upstream.
+#
+# PROVISIONAL. The .ksy files declare "license: EPL-1.0" in their own meta:
+# block while crate-digger's LICENSE is EPL-2.0 with Secondary Licenses of
+# MPL-2.0 or LGPL-3.0. The LICENSE file is taken as authoritative and the
+# meta: field as stale -- reported upstream as
+# https://github.com/Deep-Symmetry/crate-digger/issues/49.
+#
+# Whether the generated parser is a derivative of the specs, and whether the
+# secondary-licence election reaches it, is asked in
+# https://github.com/Deep-Symmetry/crate-digger/issues/50. If the election
+# does reach it, this becomes "EPL-2.0 OR MPL-2.0 OR LGPL-3.0-only" and
+# Seabass elects LGPL-3.0, which is what makes it combinable with the GPL.
+# Revisit both entries when that issue is answered.
+Files: specs/rekordbox_pdb.ksy
+ specs/rekordbox_anlz.ksy
+ src/infrastructure/rekordbox/generated/*
+Copyright: Deep Symmetry, LLC and the crate-digger contributors
+License: EPL-2.0
+
+# --- Artwork and binaries ------------------------------------------------
+Files: src/gui/qml/icons/seabass_soundbass.svg
+ src/gui/win/app_icon.ico
+Copyright: 2026 Sebastian Kügler <sebas@kde.org>
+License: CC-BY-SA-4.0
+
+# --- Configuration with no comment syntax we can rely on -----------------
+Files: .gitignore
+ .gitlab-ci.yml
+ docs/design/stick-backup-mockups/canvas.json
+Copyright: 2026 Sebastian Kügler <sebas@kde.org>
+License: CC0-1.0
+
+# --- PENDING A DECISION --------------------------------------------------
+# A 5.9 MB phone photo at the repository root, referenced by no code or
+# document, and carrying a full GPS IFD (latitude, longitude, altitude and
+# timestamp) in its EXIF. Annotated so `reuse lint` is not blocked on it,
+# but the open question is whether it should be in the repository at all --
+# and it is already public on both hosts, so removing it here does not
+# remove it from history.
+Files: prime4display.jpg
+Copyright: 2026 Sebastian Kügler <sebas@kde.org>
+License: CC-BY-SA-4.0

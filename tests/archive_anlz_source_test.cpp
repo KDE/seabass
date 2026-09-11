@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Browsing a stick backup in place: the cues a library reports must be
 // identical whether its analysis files come off a real PIONEER folder or
 // out of the ZIP, with nothing extracted.

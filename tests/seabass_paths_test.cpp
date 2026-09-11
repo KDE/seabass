@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The layout itself. Every location Seabass writes to is decided here, so
 // a change to any of them should have to be deliberate rather than a
 // side effect -- these assertions are the record of what was chosen.

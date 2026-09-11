@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // The save loop every LibraryEditSession runs: applies staged changes in
 // order, stops between them on cancel or failure, runs the finish hooks
 // regardless, and reports exactly which changes landed.

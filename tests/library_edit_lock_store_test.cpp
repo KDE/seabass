@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // FileLibraryEditLockStore: the local edit-lock cookie every instance
 // consults before editing a library. Liveness and clock are injected so
 // "the owner is dead" and "the foreign heartbeat is old" are exact;

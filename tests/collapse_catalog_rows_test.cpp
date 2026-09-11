@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // A file is what duplicates; a catalog row is one catalog's record of
 // one. Everything here is a case where confusing the two would have made
 // a real stick's cleanup wrong.

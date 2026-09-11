@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Part C of the save-cost investigation: what one OneLibrary cue write
 // actually costs on a real stick, split into the two things it does per
 // item -- opening the encrypted database (SQLCipher derives the key from a

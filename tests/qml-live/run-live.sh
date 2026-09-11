@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 # Drives the live edit-mode tests in this directory against a real
 # (scratch!) stick: the plain flows, then the three orchestrated
 # scenarios that need something to happen outside the test process (a

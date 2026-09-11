@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 # Deploys seabass.exe as a standalone Windows build: runs windeployqt,
 # then copies the *full* transitive DLL closure (Qt's own non-Qt deps, the
 # mingw-w64 runtime, and every plugin's own dependencies -- notably the

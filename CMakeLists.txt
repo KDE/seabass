@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
 cmake_minimum_required(VERSION 3.16)
 # C, not just CXX - libdjinterop's bundled SQLite/date fallback (used
 # when cross-compiling, see the WIN32 branch below) is plain C

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Opens archives written by Zip64Writer with implementations that share
 // no code with ours -- Python's zipfile (always, when python3 exists),
 // Info-ZIP's unzip and 7-Zip (when installed). Our own reader must never

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Confirms LibdjinteropEngineCueWriter's new hot-loop write path
 // (set_loops(), alongside set_hot_cues()) round-trips correctly through
 // a real (scratch) Engine library via libdjinterop, and that a slot

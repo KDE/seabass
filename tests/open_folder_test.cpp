@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // MediaController::openFolder(): opening an ordinary directory as a
 // library, the entry point that makes a restored stick backup (or any
 // copy of a library that is not on removable media) reachable from the

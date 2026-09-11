@@ -17,3 +17,15 @@ variables:
   SECRET_DETECTION_ENABLED: 'true'
 secret_detection:
   stage: secret-detection
+
+# REUSE 3.0 compliance, as the KDE licensing policy requires: every file
+# carries copyright and an SPDX licence identifier, and every licence used
+# has its text in LICENSES/. Runs on the official FSFE image so the check
+# is the same one reuse.software publishes.
+reuse:
+  stage: test
+  image:
+    name: fsfe/reuse:latest
+    entrypoint: [""]
+  script:
+  - reuse lint

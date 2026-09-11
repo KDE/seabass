@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Kaitai Struct specs for rekordbox formats
 
 `rekordbox_pdb.ksy` and `rekordbox_anlz.ksy` are vendored, unmodified, from

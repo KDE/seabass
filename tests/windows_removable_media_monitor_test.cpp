@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // WindowsRemovableMediaMonitor::stop() used to only return once run()'s
 // sleep_for(2s) poll happened to wake up on its own. MediaController and
 // FormatUsbController are both root-level QML_ELEMENTs (see Main.qml), so
