@@ -632,6 +632,35 @@ TestCase {
                + " vs implicit " + label.implicitWidth + ")");
     }
 
+    // What the card says once a stick is unmounted. "(not mounted)"
+    // describes the kernel's state; the question the reader actually has
+    // at that moment, having just pressed eject, is whether they may pull
+    // the stick out.
+    function test_anUnmountedStickSaysItIsSafeToUnplug() {
+        var page = makePage([makeStick({label: "MAIN", mounted: false})], {});
+        var label = findByName(page, "unmountedLabel");
+        verify(label !== null, "the unmounted label must exist");
+        compare(label.text, "OK to unplug");
+    }
+
+    function test_aMountedStickSaysNothingAboutUnplugging() {
+        var page = makePage([makeStick({label: "MAIN", mounted: true})], {});
+        var label = findByName(page, "unmountedLabel");
+        verify(label !== null, "the unmounted label must exist");
+        compare(label.text, "");
+    }
+
+    // The other half of the one above, and the half that was wrong: a
+    // path the card has room for must be shown whole.
+    function test_aShortMountPointIsNotElided() {
+        var page = makePage([makeStick({label: "MAIN", mountPoint: "/media/MAIN"})], {});
+        var label = findByName(page, "stickPathLabel");
+        verify(label !== null, "the stick path label must exist");
+        verify(!label.truncated,
+               "a path with room to spare must not be abbreviated (width " + label.width
+               + " vs implicit " + label.implicitWidth + ")");
+    }
+
     Component {
         id: spyComponent
         SignalSpy {}

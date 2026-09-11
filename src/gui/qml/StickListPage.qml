@@ -563,8 +563,21 @@ Page {
                                         text: delegateRoot.label
                                         color: Theme.text
                                     }
+                                    // "OK to unplug", not "(not mounted)".
+                                    // The state is the same either way --
+                                    // nothing of ours is holding the
+                                    // device open -- but the reader asks
+                                    // this question right after pressing
+                                    // eject, and what they want to know
+                                    // is whether they may pull the stick
+                                    // out, not what the kernel calls the
+                                    // state it is now in. True for a
+                                    // stick that was never mounted too:
+                                    // an unmounted device is safe to pull
+                                    // however it got that way.
                                     Label {
-                                        text: delegateRoot.mounted ? "" : "(not mounted)"
+                                        objectName: "unmountedLabel"
+                                        text: delegateRoot.mounted ? "" : "OK to unplug"
                                         color: Theme.textMuted
                                     }
                                     Item { Layout.fillWidth: true }
