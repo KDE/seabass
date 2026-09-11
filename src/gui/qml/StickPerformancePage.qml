@@ -83,6 +83,9 @@ Page {
 
     // One column width for the player-group names and one for the badges,
     // shared by every row, so the three columns line up down the page.
+    // The badge width is a minimum, not a fixed width: the verdict badges
+    // all fit in it, and a longer one ("NO SIGN OF WEAR") grows rather
+    // than spilling its text past its own border.
     readonly property real advisoryGroupWidth: 250
     readonly property real badgeWidth: 96
 
@@ -117,6 +120,7 @@ Page {
     }
 
     PageScrollView {
+        objectName: "scroller"
         anchors.fill: parent
         padding: Theme.pageMargin
 
@@ -483,7 +487,7 @@ Page {
                                         }
                                     }
                                     StatusBadge {
-                                        Layout.preferredWidth: root.badgeWidth
+                                        Layout.minimumWidth: root.badgeWidth
                                         Layout.alignment: Qt.AlignVCenter
                                         label: advisoryRow.modelData.verdictLabel
                                         badgeColor: root.verdictColor(advisoryRow.modelData.verdict)
@@ -573,7 +577,7 @@ Page {
                         spacing: Theme.rowSpacing
                         StatusBadge {
                             objectName: "wearBadge"
-                            Layout.preferredWidth: root.badgeWidth
+                            Layout.minimumWidth: root.badgeWidth
                             Layout.alignment: Qt.AlignTop
                             label: (controller.wearAssessment.label || "").toUpperCase()
                             badgeColor: root.wearColor(controller.wearAssessment.state)
@@ -707,7 +711,7 @@ Page {
                             Layout.fillWidth: true
                             spacing: Theme.rowSpacing
                             StatusBadge {
-                                Layout.preferredWidth: root.badgeWidth
+                                Layout.minimumWidth: root.badgeWidth
                                 label: root.verdictText(controller.writeEstimate.cueSaveVerdict)
                                 badgeColor: root.verdictColor(controller.writeEstimate.cueSaveVerdict)
                             }
@@ -723,7 +727,7 @@ Page {
                             Layout.fillWidth: true
                             spacing: Theme.rowSpacing
                             StatusBadge {
-                                Layout.preferredWidth: root.badgeWidth
+                                Layout.minimumWidth: root.badgeWidth
                                 label: root.verdictText(controller.writeEstimate.exportVerdict)
                                 badgeColor: root.verdictColor(controller.writeEstimate.exportVerdict)
                             }

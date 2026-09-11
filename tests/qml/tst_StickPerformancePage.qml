@@ -175,7 +175,11 @@ TestCase {
                                summary: "1 of 7529 files read at under a tenth of this stick's own rate."};
         var page2 = makePage(done);
         compare(findOne(page2, "wearButton").text, "Check for Wear Again");
-        compare(findOne(page2, "wearBadge").label, "WATCH THIS STICK");
+        var badge = findOne(page2, "wearBadge");
+        compare(badge.label, "WATCH THIS STICK");
+        // A long label grows the badge; it must never spill past its
+        // border (seen on a real screenshot with "NO SIGN OF WEAR").
+        verify(badge.width >= badge.implicitWidth, "wear badge narrower than its label: " + badge.width + " < " + badge.implicitWidth);
         verify(findOne(page2, "wearSummary").text.indexOf("1 of 7529") >= 0);
     }
 
@@ -230,5 +234,13 @@ TestCase {
                             summary: "Every one of 7529 files read in full at a normal rate, and the small-read tail is flat."};
         var page = makePage(c);
         grabImage(page).save(screenshotDir + "/stick-performance-page.png");
+        // A second grab of the end of the page: shrink the page so it
+        // scrolls, then scroll it to the wear and write sections.
+        page.height = 700;
+        var scroller = findOne(page, "scroller");
+        waitForRendering(page);
+        scroller.contentY = Math.max(0, scroller.contentHeight - scroller.height);
+        waitForRendering(page);
+        grabImage(page).save(screenshotDir + "/stick-performance-page-bottom.png");
     }
 }
