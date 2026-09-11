@@ -54,40 +54,42 @@
     .bar > span{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:#3daee9}
   </style>
 </helmet>
-<div class="page" style="width:1040px;height:1010px">
+<div class="page" style="width:1040px;height:1180px">
   <div class="toolbar">
     <div class="crumbs">
       <span class="crumb">Home</span><span class="sep">›</span>
       <span class="crumb">WHALESHARK2</span><span class="sep">›</span>
-      <span class="title">Library Statistics</span>
+      <span class="title">USB Stick Performance</span>
     </div>
   </div>
   <div class="body">
 
     <div class="group">
-      <div class="subtitle">Filesystem</div>
+      <div class="subtitle">DJ Workload Score</div>
       <div class="frame">
-        <div class="row">
-          <span style="font-weight:700;font-size:18.7px">FAT32</span>
-          <span class="badge b-warn">Good for DJ hardware</span>
-          <span class="grow"></span>
-          <span class="muted">480 Mbps (USB 2.0 High-Speed)</span>
+        <div class="row" style="gap:16px;align-items:center">
+          <span class="mono" style="font-size:42px;font-weight:500;line-height:1">50</span>
+          <div class="col grow">
+            <span style="font-family:Manrope,system-ui,sans-serif;font-weight:600;font-size:18.7px">Average by today's standards</span>
+            <span class="muted">About 7.2 s of waiting across a two-hour set; a current stick on the same port would wait 3.6 s.</span>
+          </div>
         </div>
-        <div class="muted">Max file size: 4 GiB minus 1 byte per file</div>
+        <div class="tiles" style="grid-template-columns:repeat(3, minmax(0, 1fr))">
+          <div class="tile"><div class="stat" style="color:#8fce8f">28</div><div class="eyebrow">Browsing</div><div class="sub">per search or scroll: 0.02 s</div></div>
+          <div class="tile"><div class="stat" style="color:#8fce8f">96</div><div class="eyebrow">Track loads</div><div class="sub">per load: 0.06 s</div></div>
+          <div class="tile"><div class="stat" style="color:#8fce8f">30</div><div class="eyebrow">Plugging in</div><div class="sub">until the library shows: 0.7 s</div></div>
+        </div>
+        <div class="muted small">100 is a current USB 3 stick on the USB 2.0 port every player has: it models a two-hour set (200 searches and scrolls, 40 track loads, one plug-in) and compares the waiting. The colours say whether anyone would notice: green is under what a person perceives as a pause.</div>
         <div class="row">
-          <div class="bar grow"><span style="width:24.5%"></span></div>
-          <span class="muted small">28.7 GiB used of 117.2 GiB</span>
+          <span class="btn">Measure Again</span>
+          <span class="muted small">Measured 11 Sep 2026, 16:52 · Reads real files already on the stick, never writes.</span>
         </div>
       </div>
     </div>
 
     <div class="group">
-      <div class="subtitle">USB Stick Performance</div>
+      <div class="subtitle">What was measured</div>
       <div class="frame">
-        <div class="row">
-          <span class="btn">Measure Again</span>
-          <span class="muted small">Measured 11 Sep 2026, 16:52 · reads real files already on the stick, never writes</span>
-        </div>
 
         <div class="tiles" style="margin-top:4px">
           <div class="tile">
@@ -119,10 +121,13 @@
           <span>Fragmentation: not readable without administrator rights on Linux</span>
         </div>
 
-        <div class="row" style="margin-top:6px">
-          <span class="h">On a player</span>
-          <span class="muted small">Each generation stresses the stick differently. Rows are judged on the measurement that matters for it.</span>
-        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="subtitle">On a player</div>
+      <div class="frame">
+        <div class="muted small">Players are grouped by the database they read, because that decides which measurement matters. Each row is judged on the measurement that matters for it.</div>
         <div class="advice">
           <div class="arow odd">
             <div class="col"><span class="aname">Device Library players</span><span class="ayears">CDJ-2000 · NXS · NXS2 · XDJ-1000MK2 · XDJ-XZ · XDJ-RX3 · CDJ-3000</span></div>
@@ -139,22 +144,24 @@
             <span class="badge b-good">FINE</span>
             <span class="small">Reads its SQLite database in place, like OneLibrary. Denon asks for at least 20 MB/s streaming and this stick reads at twice that. A library from an older Engine DJ is migrated on the player at the stick's own speed.</span>
           </div>
-          <div class="arow">
-            <div class="col"><span class="aname">This computer</span><span class="ayears">Seabass, rekordbox, Engine DJ</span></div>
-            <span class="badge b-info">USB 2.0 PORT</span>
-            <span class="small">The stick is on a USB 2.0 port and is already using all of it. A full stick backup of 28.7 GiB takes about 12 minutes here; a USB 3 port would only help if the stick is USB 3 as well.</span>
-          </div>
         </div>
 
-        <div class="row" style="margin-top:8px">
-          <span class="h">History for this stick</span>
-          <span class="muted small">3 measurements on this computer</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="subtitle">Write Test</div>
+      <div class="frame">
+        <div class="muted small">Optional. Writes about 22 MiB of throwaway files into a hidden folder on the stick and removes them again; nothing in the library is touched. It answers two questions: how long saving cue points takes, and how long a library export from rekordbox or Engine DJ takes. Skipped by default because every write wears a stick a little.</div>
+        <div class="row"><span class="btn">Run Write Test Again</span></div>
+        <div class="tiles" style="grid-template-columns:repeat(3, minmax(0, 1fr))">
+          <div class="tile"><div class="stat">12 <span class="unit">MB/s</span></div><div class="eyebrow">Streaming write</div><div class="sub">Copying audio onto the stick</div></div>
+          <div class="tile"><div class="stat">15 <span class="unit">ms</span></div><div class="eyebrow">Small file write</div><div class="sub">16 KiB file written and flushed, like an analysis file</div></div>
+          <div class="tile"><div class="stat">9.8 <span class="unit">ms</span></div><div class="eyebrow">In-place update</div><div class="sub">4 KiB overwritten and flushed, like a database page</div></div>
         </div>
-        <div class="hist">
-          <div class="hrow"><span class="muted small" style="width:150px">Sep 11, 2026 4:52 PM</span><span class="mono">40 MB/s</span><span class="mono">1.1 ms</span><span class="mono">860 files/s</span><span class="muted small">USB 2.0</span><span class="grow"></span><span class="badge b-good">FINE EVERYWHERE</span></div>
-          <div class="hrow"><span class="muted small" style="width:150px">Sep 4, 2026 8:39 PM</span><span class="mono">39 MB/s</span><span class="mono">1.2 ms</span><span class="mono">790 files/s</span><span class="muted small">USB 2.0</span><span class="grow"></span><span class="badge b-good">FINE EVERYWHERE</span></div>
-          <div class="hrow"><span class="muted small" style="width:150px">Aug 28, 2026 1:17 PM</span><span class="mono">18 MB/s</span><span class="mono">1.3 ms</span><span class="mono">410 files/s</span><span class="muted small">USB 2.0, via hub</span><span class="grow"></span><span class="badge b-warn">SLOW ON THIS PORT</span></div>
-        </div>
+        <div class="row"><span class="badge b-good" style="width:84px;justify-content:center">FINE</span><span class="small">Saving cue points on one track: about 0.07 s (two analysis files rewritten, a few database pages updated).</span></div>
+        <div class="row"><span class="badge b-good" style="width:84px;justify-content:center">FINE</span><span class="small">Exporting 100 tracks from rekordbox or Engine DJ: about 71 s (0.71 s per 8 MB track).</span></div>
+        <div class="muted small">Wrote 22.0 MiB of throwaway files and removed them again.</div>
       </div>
     </div>
 
