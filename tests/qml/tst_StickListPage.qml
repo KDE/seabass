@@ -24,7 +24,7 @@ TestCase {
             label: "MAIN", mountPoint: "/media/MAIN", devicePath: "/dev/sdb1", mounted: true,
             hasRekordbox: true, hasEngine: true, rekordboxPath: "/media/MAIN/PIONEER",
             enginePath: "/media/MAIN/Engine Library", isSdCard: false, isFolder: false,
-            isBrowsedBackup: false, libraryId: "lib-main",
+            isBrowsedBackup: false, libraryId: "lib-main", safeToUnplug: false,
         };
         for (var key in overrides) {
             s[key] = overrides[key];
@@ -637,10 +637,21 @@ TestCase {
     // at that moment, having just pressed eject, is whether they may pull
     // the stick out.
     function test_anUnmountedStickSaysItIsSafeToUnplug() {
-        var page = makePage([makeStick({label: "MAIN", mounted: false})], {});
+        var page = makePage([makeStick({label: "MAIN", mounted: false, safeToUnplug: true})], {});
         var label = findByName(page, "unmountedLabel");
         verify(label !== null, "the unmounted label must exist");
         compare(label.text, "OK to unplug");
+    }
+
+    // The claim is about the DEVICE, not this row's partition. A stick
+    // whose other partition is still mounted (and possibly being written)
+    // must not invite the user to pull it out; the model works that out
+    // across every row, and the card only repeats a proven answer.
+    function test_anUnmountedPartitionOfABusyDeviceDoesNotSaySoIsSafe() {
+        var page = makePage([makeStick({label: "MAIN", mounted: false, safeToUnplug: false})], {});
+        var label = findByName(page, "unmountedLabel");
+        verify(label !== null, "the unmounted label must exist");
+        compare(label.text, "(not mounted)");
     }
 
     function test_aMountedStickSaysNothingAboutUnplugging() {

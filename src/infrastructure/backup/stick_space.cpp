@@ -1,10 +1,6 @@
 #include "infrastructure/backup/stick_space.hpp"
 
 #include <algorithm>
-#include <map>
-#include <mutex>
-#include <string>
-#include <system_error>
 
 namespace seabass::infrastructure::backup
 {
@@ -102,71 +98,6 @@ StickSpace measureStickSpace(const fs::path &stickRoot)
         }
     }
     measured.worstCaseBackupBytes += catalogBytes(stickRoot);
-    return measured;
-}
-
-namespace
-{
-
-struct AnalysisSizeCacheEntry
-{
-    std::uintmax_t worstCaseBackupBytes = 0;
-    std::filesystem::file_time_type analysisMtime{};
-    bool analysisPresent = false;
-};
-
-std::mutex g_analysisCacheMutex;
-std::map<std::string, AnalysisSizeCacheEntry> g_analysisCache;
-
-}  // namespace
-
-StickSpace measureStickSpaceCached(const fs::path &stickRoot)
-{
-    StickSpace measured;
-    std::error_code ec;
-    if (stickRoot.empty() || !fs::is_directory(stickRoot, ec)) {
-        return measured;
-    }
-    // Never cached: free space is what the warning is about, and a
-    // remembered figure would go stale the moment anything was written.
-    const auto space = fs::space(stickRoot, ec);
-    if (ec) {
-        return measured;
-    }
-    measured.capacityBytes = space.capacity;
-    measured.freeBytes = space.available;
-
-    const fs::path analysisRoot = stickRoot / "PIONEER" / "USBANLZ";
-    std::error_code stampEc;
-    const bool present = fs::is_directory(analysisRoot, stampEc);
-    fs::file_time_type stamp{};
-    if (present) {
-        stamp = fs::last_write_time(analysisRoot, stampEc);
-        if (stampEc) {
-            // No usable stamp means no way to tell a stale entry from a
-            // fresh one, so this walks rather than trusts.
-            measured.worstCaseBackupBytes = measureStickSpace(stickRoot).worstCaseBackupBytes;
-            return measured;
-        }
-    }
-
-    const std::string key = stickRoot.string();
-    {
-        const std::lock_guard<std::mutex> lock(g_analysisCacheMutex);
-        const auto it = g_analysisCache.find(key);
-        if (it != g_analysisCache.end() && it->second.analysisPresent == present
-            && it->second.analysisMtime == stamp) {
-            measured.worstCaseBackupBytes = it->second.worstCaseBackupBytes;
-            return measured;
-        }
-    }
-
-    const std::uintmax_t walked = measureStickSpace(stickRoot).worstCaseBackupBytes;
-    {
-        const std::lock_guard<std::mutex> lock(g_analysisCacheMutex);
-        g_analysisCache[key] = AnalysisSizeCacheEntry{walked, stamp, present};
-    }
-    measured.worstCaseBackupBytes = walked;
     return measured;
 }
 

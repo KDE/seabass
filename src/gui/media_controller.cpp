@@ -97,6 +97,27 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
         return QString::fromLatin1(application::StickIdentity::strengthName(stick.identity.strength()));
     case CapacityBytesRole:
         return QVariant::fromValue(static_cast<qulonglong>(stick.capacityBytes));
+    case SafeToUnplugRole: {
+        if (stick.mounted) {
+            return false;
+        }
+        // A folder library is not a device and nothing can be pulled.
+        if (stick.isFolder) {
+            return false;
+        }
+        // Without a device to compare against there is no way to prove no
+        // sibling is mounted, and an unproven safety claim is not one
+        // worth making: the row falls back to describing its own state.
+        if (stick.wholeDiskPath.empty()) {
+            return false;
+        }
+        for (const application::DetectedStick &other : m_sticks) {
+            if (other.mounted && other.wholeDiskPath == stick.wholeDiskPath) {
+                return false;
+            }
+        }
+        return true;
+    }
     default:
         return {};
     }
@@ -120,6 +141,7 @@ QHash<int, QByteArray> DetectedStickListModel::roleNames() const
         {LibraryIdRole, "libraryId"},
         {HardwareSerialRole, "hardwareSerial"},
         {IdentityStrengthRole, "identityStrength"},
+        {SafeToUnplugRole, "safeToUnplug"},
     };
 }
 

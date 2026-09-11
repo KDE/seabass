@@ -1,5 +1,6 @@
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/future_result.hpp"
 
 #include <QtConcurrent>
 
@@ -76,7 +77,13 @@ LibraryEditSession::LibraryEditSession(EditSessionRegistry *registry, QString li
 {
     connect(&m_watcher, &QFutureWatcher<SaveLoopResult>::finished, this, &LibraryEditSession::onSaveFinished);
     connect(&m_stickSpaceWatcher, &QFutureWatcherBase::finished, this, [this] {
-        m_stickSpace = m_stickSpaceWatcher.result();
+        // takeResult(), not result(): an exception from the pool thread
+        // rethrown in a slot reaches nobody and terminates the process.
+        // gui/future_result.hpp exists because that already happened once
+        // here, from a real crash dump. A measurement that threw reports
+        // zeros, which every reader of these numbers already treats as
+        // "not measured" and stays silent about.
+        m_stickSpace = gui::takeResult(m_stickSpaceWatcher);
         emit stickSpaceChanged();
     });
 }
@@ -147,7 +154,7 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
         const std::filesystem::path root =
             infrastructure::backup::stickRootForCatalogPath(any.toStdString());
         m_stickSpaceWatcher.setFuture(QtConcurrent::run(
-            infrastructure::backup::measureStickSpaceCached, root));
+            infrastructure::backup::measureStickSpace, root));
     }
 }
 

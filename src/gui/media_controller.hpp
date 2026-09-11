@@ -67,6 +67,14 @@ public:
         // the Format feature, so showing it costs no extra I/O in a model
         // refresh that runs on every replug.
         CapacityBytesRole,
+        // Whether pulling the DEVICE out now is safe -- not merely
+        // whether this row's own partition is unmounted. Computed across
+        // the model because a stick can carry more than one partition
+        // (the locator emits a row per partition, utility partitions
+        // included) and the card makes an affirmative safety claim: with
+        // a sibling partition still mounted and being written, "OK to
+        // unplug" on this row would be a lie that costs a save.
+        SafeToUnplugRole,
     };
 
     explicit DetectedStickListModel(QObject *parent = nullptr);

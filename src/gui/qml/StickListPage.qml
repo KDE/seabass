@@ -449,6 +449,13 @@ Page {
                 required property bool hasEngine
                 required property string rekordboxPath
                 required property string enginePath
+                // Required, unlike capacityBytes above, because this one
+                // has to carry a real answer: a model role only reaches a
+                // delegate that declares it required, so a defaulted
+                // version would read false forever and the card would
+                // never say anything. Every fake stick in the tests
+                // supplies it for that reason.
+                required property bool safeToUnplug
                 required property bool isSdCard
                 required property bool isFolder
                 required property bool isBrowsedBackup
@@ -563,7 +570,8 @@ Page {
                                         text: delegateRoot.label
                                         color: Theme.text
                                     }
-                                    // "OK to unplug", not "(not mounted)".
+                                    // "OK to unplug" where that is provably true,
+                                    // and the old description where it is not.
                                     // The state is the same either way --
                                     // nothing of ours is holding the
                                     // device open -- but the reader asks
@@ -577,7 +585,9 @@ Page {
                                     // however it got that way.
                                     Label {
                                         objectName: "unmountedLabel"
-                                        text: delegateRoot.mounted ? "" : "OK to unplug"
+                                        text: delegateRoot.mounted ? ""
+                                            : (delegateRoot.safeToUnplug ? "OK to unplug"
+                                                                         : "(not mounted)")
                                         color: Theme.textMuted
                                     }
                                     Item { Layout.fillWidth: true }
