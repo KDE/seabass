@@ -4,9 +4,9 @@ qt_add_executable(seabass
 )
 if(WIN32)
     # App icon (.exe icon + taskbar/Alt-Tab), generated from the same
-    # seabass_soundbass.svg the QML UI itself uses. Regenerate with:
-    #   magick -background none qml/icons/seabass_soundbass.svg \
-    #       -define icon:auto-resize=256,128,64,48,32,16 win/app_icon.ico
+    # geometry as the seabass_soundbass.svg the QML UI itself uses.
+    # Regenerate both, from the repository root, with:
+    #   python3 tools/flatten_logo.py
     target_sources(seabass PRIVATE win/app_icon.rc)
 endif()
 
