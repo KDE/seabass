@@ -171,6 +171,59 @@ TestCase {
                "marking and deleting must not be two separate buttons");
     }
 
+    // Item nine of the polish list, and the reason it was on it: this
+    // page can now hold staged work, and work you cannot see is work you
+    // walk away from. The guard is the page's own, not EditSessionHost's
+    // -- there is no edit session here, because nothing on a stick is
+    // being changed.
+    function test_leavingWithSomethingStagedAsks() {
+        var page = make();
+        var list = findChild(page, "storedTrackList");
+        verify(list, "the stored track list must exist");
+        if (list.count === 0) {
+            skip("no stored tracks in this run's metadata store");
+        }
+        var dialog = findChild(page, "unsavedDialog");
+        verify(dialog, "the unsaved-changes dialog must exist");
+        verify(!dialog.visible, "it must not be up before anything is staged");
+
+        // Nothing staged: leaving just leaves.
+        var left = 0;
+        page.requestLeave(function () { left++; });
+        compare(left, 1, "with nothing staged, leaving must not be interrupted");
+        verify(!dialog.visible, "and must not raise the dialog");
+
+        // Stage one row, and the same request stops to ask.
+        var row = list.itemAtIndex(0);
+        verify(row, "row 0 must exist");
+        row.selectionToggled(true);
+        page.requestLeave(function () { left++; });
+        compare(left, 1, "with something staged, leaving must be held");
+        verify(dialog.visible, "and the dialog must be up");
+    }
+
+    function test_changingSourceWithSomethingStagedAsks() {
+        // Staging is decided against numbers the next scan replaces, so
+        // switching source throws it away -- which is a thing to be told
+        // about rather than to discover afterwards.
+        var page = make();
+        var list = findChild(page, "storedTrackList");
+        verify(list, "the stored track list must exist");
+        if (list.count === 0) {
+            skip("no stored tracks in this run's metadata store");
+        }
+        var dialog = findChild(page, "switchSourceDialog");
+        verify(dialog, "the change-source dialog must exist");
+        verify(!dialog.visible, "it must not be up before anything is staged");
+
+        list.itemAtIndex(0).selectionToggled(true);
+        var picker = findChild(page, "sourcePicker");
+        // Index 1 is the page's own stick; index 0 is the store it is
+        // already showing, which is not a change at all.
+        picker.activated(1);
+        verify(dialog.visible, "changing source with staging must ask first");
+    }
+
     function test_theListHasASearchAndMarking() {
         var page = make();
         var toolbar = findChild(page, "browseToolbar");
