@@ -139,17 +139,35 @@ every run is worse than one that leaves it alone.
 
 ### Where the dates come from
 
-Each side offers the granularity it actually has, and no more:
+Both sides of every comparison are a **stick's catalog mtime**, and that
+is the point.
 
-| side | date | granularity |
-|---|---|---|
-| the store | the row's `updated_at` | exact, per row -- the store wrote the row |
-| a stick | the newest mtime among `export.pdb`, `m.db` and `exportLibrary.db` | per stick |
+A stored value is dated with the mtime of the stick it was read from --
+`authored_at`, carried forward -- not with the clock at the moment
+Seabass read it. Stamping the clock would date everything a backup run
+learned to today, so reading an old stick would make its months-old cues
+beat a newer stick's purely by being the one plugged in second. Carrying
+the source's date forward keeps the question "which stick was written
+later?", which is a question about the DJ's work rather than about the
+order they happened to plug things in.
 
-A stick has nothing finer. Cues, ratings and comments live in the catalog
-databases, so editing any of them rewrites one of those files, which
-makes the mtime a real answer to "has this stick been worked on since?".
-Coarse but honest beats precise and invented.
+`authored_at` is deliberately not `updated_at`. `updated_at` moves every
+time a run touches a row, including runs that write nothing;
+`authored_at` moves only when a cue, rating, comment or play count
+actually changed. Conflating them meant a routine re-run over an
+untouched stick dated the store later than work done elsewhere in
+between, and the rule then preferred the store to that work -- silently,
+and in the direction that loses the newer cues. Cover art does not count
+as authored: it is not the DJ's work, and a cover arriving from a stick
+must not re-date that row's cues.
+
+A stick's own date is the newest mtime among its catalog databases, via
+`stick_backup::libraryCatalogModifiedAt()` plus Device Library Plus.
+**Engine's `m.db-wal` is part of that and must stay part of it:** SQLite
+in WAL mode writes commits to the sidecar and only folds them back on a
+checkpoint, so a track re-cued in Engine last night can leave `m.db`'s
+own mtime weeks old. A rule resting on the stale date would refuse to
+back the new cues up *and* offer to overwrite them on a restore.
 
 Newest of the catalogs present rather than oldest: a DJ who cues in
 Engine leaves `export.pdb` untouched for months, and the older date would
@@ -220,7 +238,8 @@ over a year is not.
 
 ## Schema (v2)
 
-v2 added `fallback_key`. v1 stored whichever key happened to be
+v2 added `fallback_key` and `authored_at`. On the second, see "Where the
+dates come from" above. On the first: v1 stored whichever key happened to be
 available, which meant a track catalogued without an artist was filed
 under its filename, and when the DJ later fixed the tags the next backup
 looked it up under the strong key only, found nothing, and stored a
@@ -250,7 +269,9 @@ CREATE TABLE tracks (
   artwork_extension TEXT,
   library_id TEXT, stick_label TEXT,
   source_format TEXT,
-  first_seen TEXT NOT NULL, updated_at TEXT NOT NULL
+  first_seen TEXT NOT NULL,
+  authored_at TEXT NOT NULL,       -- when a cue/rating/comment last changed, from the SOURCE stick
+  updated_at TEXT NOT NULL
 );
 CREATE TABLE cues (
   track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -309,6 +330,14 @@ save rather than the log saying so after it:
   rule above for why the question itself was wrong.
 - Treating a missing field as a conflict. Filling in a blank is not
   overwriting.
+- Keying the merge rule on when Seabass looked at a row rather than on
+  when the DJ changed it. See `authored_at`.
+- A second list of catalog files to stat. `m.db-wal` is the whole
+  difficulty; one place should know about it.
+- Letting a filename fall back onto another track's row. A strong-key hit
+  is decisive even when it ends in no match: artist and title naming a
+  row that is then rejected on length means "different mix, new row", not
+  "go and look by filename".
 - Letting an empty reading overwrite a stored value -- of an authored
   field or of an identity field. A catalog that has lost a track's tags
   reports no title and no artist, and writing that through would blank

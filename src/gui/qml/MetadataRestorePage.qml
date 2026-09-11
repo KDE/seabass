@@ -22,7 +22,14 @@ Page {
     readonly property string libraryPath: root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath
 
     // The row whose detail is showing, or "". One at a time.
-    property string expandedFilename: ""
+    //
+    // Keyed on the store's row id rather than the filename. A filename
+    // is not unique -- two folders on a rebuilt stick routinely hold the
+    // same basename, and those rows opened and closed together -- and
+    // the empty starting value matched any proposal whose stick track
+    // had no filename at all, rendering it expanded before anyone
+    // touched it.
+    property string expandedStoredId: ""
 
     MetadataRestoreController {
         id: controller
@@ -216,15 +223,14 @@ Page {
             Layout.fillWidth: true
             placeholder: "Search title, artist or filename"
             selectionEnabled: proposalList.count > 0 && !controller.busy && !editHost.writing
-            summary: controller.selectedCount > 0
-                ? controller.selectedCount + " of " + controller.proposalCount + " selected"
-                : (controller.stagedCount > 0
-                    ? controller.stagedCount + " staged"
-                    : controller.proposalCount + (controller.proposalCount === 1 ? " track" : " tracks")
-                      + " to restore")
+            selectAllTooltip: "Stage every track on the list for restoring"
+            summary: controller.stagedCount > 0
+                ? controller.stagedCount + " of " + controller.proposalCount + " staged"
+                : controller.proposalCount + (controller.proposalCount === 1 ? " track" : " tracks")
+                  + " to restore"
             onSearchChanged: text => controller.search(text)
-            onSelectAllRequested: controller.selectAll()
-            onSelectNoneRequested: controller.selectNone()
+            onSelectAllRequested: controller.stageAll()
+            onSelectNoneRequested: controller.unstageAll()
         }
 
         ListView {
@@ -244,8 +250,10 @@ Page {
                 required property int cuesAdded
                 required property bool fillsAGap
                 required property bool conflict
+                required property bool cuesOffered
                 required property string cueSummary
                 required property bool staged
+                required property string storedId
 
                 // And the ones it does, marked required here so the
                 // model fills them.
@@ -259,10 +267,13 @@ Page {
                 required rating
                 required comment
                 required cueCount
-                required selected
 
+                // Ticking a row IS staging it. There is no second
+                // selection to keep in step with this one, and so no way
+                // for the two to disagree.
+                selected: proposalRow.staged
                 cueTooltip: proposalRow.cueSummary
-                expanded: root.expandedFilename === proposalRow.filename
+                expanded: root.expandedStoredId === proposalRow.storedId
                 // What this row's badge is counting is not what is on
                 // the track but what a restore would leave on it, and
                 // the two are different numbers whenever it replaces
@@ -271,13 +282,22 @@ Page {
                     ? "replaces " + (proposalRow.cueCount - proposalRow.cuesAdded)
                     : proposalRow.cuesAdded + (proposalRow.cuesAdded === 1 ? " cue" : " cues")
                 cueBadgeColor: proposalRow.conflict ? Theme.warnIcon : Theme.good
-                detailNote: proposalRow.conflict
+                // Only when the cues are actually on offer. A conflict
+                // the stored copy lost still reaches this list whenever
+                // the rating or comment is offered, and the row used to
+                // promise a cue replacement that was never going to
+                // happen -- with no badge beside it to contradict the
+                // claim, because an unoffered cue set has no count.
+                detailNote: proposalRow.conflict && proposalRow.cuesOffered
                     ? "This track has cues of its own. Restoring replaces them with the stored ones."
-                    : (proposalRow.fillsAGap ? "This track has no cues on the stick at all." : "")
+                    : (proposalRow.conflict
+                        ? "This track's own cues are staying: the stored ones did not beat them."
+                        : (proposalRow.fillsAGap ? "This track has no cues on the stick at all." : ""))
 
-                onSelectionToggled: isSelected => controller.setSelected(proposalRow.index, isSelected)
-                onExpandToggled: root.expandedFilename =
-                    proposalRow.expanded ? "" : proposalRow.filename
+                onSelectionToggled: stage => stage ? controller.stage(proposalRow.index)
+                                                   : controller.unstage(proposalRow.index)
+                onExpandToggled: root.expandedStoredId =
+                    proposalRow.expanded ? "" : proposalRow.storedId
 
                 actionItems: [
                     Button {
@@ -308,27 +328,5 @@ Page {
             }
         }
 
-        // Appears once something is ticked, and stages it. The write
-        // itself is the floating Restore button, which is the same save
-        // button every other editing page has and backs up before it
-        // touches a file.
-        RowLayout {
-            Layout.fillWidth: true
-            visible: controller.selectedCount > 0
-            spacing: Theme.rowSpacing
-            Item { Layout.fillWidth: true }
-            Button {
-                objectName: "stageSelectedButton"
-                text: "Stage selected for restore"
-                highlighted: true
-                enabled: !editHost.writing
-                onClicked: controller.stageSelected()
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                ToolTip.text: controller.allSelected
-                    ? "Restore metadata to the USB Stick"
-                    : "Restore selected metadata to the USB Stick"
-            }
-        }
     }
 }

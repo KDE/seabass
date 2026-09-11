@@ -70,6 +70,11 @@ Rectangle {
     // ---- state -------------------------------------------------------
     property bool selectable: true
     property bool selected: false
+    // What ticking this row does, which is not the same on both pages:
+    // on one it stages a restore and on the other it marks an entry to
+    // be forgotten. A tick box that does something destructive has to
+    // say so before it is clicked, not after.
+    property string selectTooltip: "Select this track"
     property bool expanded: false
     // Struck through and dimmed: this row is marked for something
     // destructive that has not happened yet.
@@ -140,7 +145,7 @@ Rectangle {
                 onToggled: delegate.selectionToggled(checked)
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
-                ToolTip.text: "Select this track"
+                ToolTip.text: delegate.selectTooltip
             }
 
             Rectangle {

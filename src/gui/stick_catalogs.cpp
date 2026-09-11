@@ -7,6 +7,8 @@
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/stick_backup/library_catalog_mtime.hpp"
+#include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "infrastructure/stick_layout.hpp"
 
 namespace seabass::gui
@@ -55,34 +57,33 @@ std::int64_t catalogsLastModified(const std::string &libraryPath)
         return 0;
     }
     const fs::path root = fs::path(libraryPath).parent_path();
-    const fs::path pioneerRoot = root / "PIONEER";
 
-    // The same three catalogs readAllStickCatalogs() consults, named by
-    // the file each one actually stores cues in. exportExt.pdb is
-    // deliberately not among them: it holds the extended tags rekordbox
-    // writes alongside export.pdb, and nothing this rule weighs.
-    const fs::path candidates[] = {
-        pioneerRoot / "rekordbox" / "export.pdb",
-        infrastructure::engine::engineMainDatabasePath(root),
-        pioneerRoot / "rekordbox" / "exportLibrary.db",
-    };
+    // stick_backup's helper does the hard part, and the hard part is
+    // Engine's write-ahead log.
+    //
+    // This function was originally a second, hand-rolled list of catalog
+    // files that stat'ed m.db and stopped there. SQLite in WAL mode
+    // writes commits to the -wal sidecar and only folds them back on a
+    // checkpoint, so a track re-cued in Engine last night can leave
+    // m.db's own mtime weeks old. The merge rule would then read that
+    // stale date, decide the stick was older than the store, and both
+    // refuse to back the new cues up and offer to overwrite them on a
+    // restore -- the exact failure the rule exists to prevent, caused by
+    // the date it rests on.
+    std::int64_t newest = infrastructure::stick_backup::libraryCatalogModifiedAt(root);
 
-    std::int64_t newest = 0;
-    for (const auto &path : candidates) {
+    // Plus Device Library Plus, which that helper does not consult
+    // because a stick backup does not need it and this does: it is a
+    // third catalog a DJ's cues can live in, so a cue edit that lands
+    // only there still has to date the stick.
+    const fs::path oneLibrary = root / "PIONEER" / "rekordbox" / "exportLibrary.db";
+    for (const fs::path &candidate : {oneLibrary, fs::path(oneLibrary.string() + "-wal")}) {
         std::error_code ec;
-        const auto written = fs::last_write_time(path, ec);
+        const fs::file_time_type written = fs::last_write_time(candidate, ec);
         if (ec) {
             continue;  // absent, or unreadable: not a date, so not an answer
         }
-        // file_clock to system_clock. clock_cast is the correct
-        // conversion and libstdc++ has not had it for file_clock for
-        // long enough to rely on across the platforms Seabass builds
-        // for; file_clock::to_sys is the portable spelling that has
-        // been there since C++20 landed.
-        const auto asSystemTime = std::chrono::file_clock::to_sys(written);
-        const auto seconds =
-            std::chrono::duration_cast<std::chrono::seconds>(asSystemTime.time_since_epoch()).count();
-        newest = std::max<std::int64_t>(newest, static_cast<std::int64_t>(seconds));
+        newest = std::max(newest, infrastructure::stick_backup::toUnixSeconds(written));
     }
     return newest;
 }

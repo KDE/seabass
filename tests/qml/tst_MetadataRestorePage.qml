@@ -57,16 +57,19 @@ TestCase {
         compare(host.label, "Restore", "and must say what it does");
     }
 
-    function test_bulkStagingIsOffWithNothingSelected() {
+    function test_thereIsOnlyTheStandardSaveButton() {
+        // One button on this page, and it is the one every other editing
+        // page has. There was briefly a second, under the list, that
+        // turned a selection into staged changes -- two ways to say the
+        // same thing, and a tooltip that had to explain which of them it
+        // did. Ticking a row stages it; the standard button writes.
         var page = make();
-        var button = findChild(page, "stageSelectedButton");
-        // Nothing scanned against a stick that is not there, so there is
-        // nothing to select and the button is not offered at all rather
-        // than offered and inert.
-        verify(!button || !button.visible, "bulk staging must not be offered with an empty list");
+        verify(!findChild(page, "stageSelectedButton"),
+               "staging must not have a button of its own beside the save button");
+        verify(findChild(page, "saveOverlay"), "the standard save button must be the one that writes");
     }
 
-    function test_theListHasASearchAndASelection() {
+    function test_theListHasASearchAndMarking() {
         var page = make();
         var toolbar = findChild(page, "proposalToolbar");
         verify(toolbar, "the list toolbar must exist");

@@ -213,19 +213,19 @@ Page {
             Layout.fillWidth: true
             selectionEnabled: controller.loadedCount > 0 && !controller.busy
             selectAllTooltip: controller.canLoadMore
-                ? "Select every track loaded so far. Scroll to the end of the list to load the rest."
-                : "Select every track in the list"
+                ? "Mark every track loaded so far for deletion. Scroll to the end of the list to load the rest."
+                : "Mark every track in the list for deletion from the Metadata Backup"
             summary: controller.storedTrackCount === 0
                 ? "Nothing stored yet"
-                : (controller.selectedCount > 0
-                    ? controller.selectedCount + " of " + controller.matchCount + " selected"
+                : (controller.stagedForDeletionCount > 0
+                    ? controller.stagedForDeletionCount + " of " + controller.matchCount + " staged"
                     : (controller.matchCount === controller.storedTrackCount
                         ? controller.storedTrackCount + " tracks stored, "
                           + root.formatBytes(controller.artworkBytes) + " of cover art"
                         : controller.matchCount + " of " + controller.storedTrackCount + " tracks"))
             onSearchChanged: text => controller.search(text)
-            onSelectAllRequested: controller.selectAll()
-            onSelectNoneRequested: controller.selectNone()
+            onSelectAllRequested: controller.stageAllForDeletion()
+            onSelectNoneRequested: controller.clearDeletionStaging()
         }
 
         ListView {
@@ -264,8 +264,13 @@ Page {
                 required comment
                 required cueCount
                 required artworkUrl
-                required selected
 
+                // Ticking a row marks it, exactly as the button on the
+                // end of it does. One state, so the two cannot disagree
+                // and there is no second button to turn one into the
+                // other.
+                selected: trackRow.stagedForDeletion
+                selectTooltip: "Mark this track for deletion from the Metadata Backup"
                 storedFrom: trackRow.stickLabel
                 // The stored timestamp is an ISO instant; the date is
                 // the part a person reads, and the rest is noise in a
@@ -285,7 +290,7 @@ Page {
                 detailNote: trackRow.stagedForDeletion
                     ? "Staged for deletion from the metadata backup." : ""
 
-                onSelectionToggled: isSelected => controller.setSelected(trackRow.index, isSelected)
+                onSelectionToggled: controller.toggleStagedForDeletion(trackRow.index)
                 onExpandToggled: root.expandedTrackId = trackRow.expanded ? -1 : trackRow.trackId
 
                 actionItems: [
@@ -330,7 +335,7 @@ Page {
         // in Seabass means "write my edits to the stick".
         RowLayout {
             Layout.fillWidth: true
-            visible: controller.selectedCount > 0 || controller.stagedForDeletionCount > 0
+            visible: controller.stagedForDeletionCount > 0
             spacing: Theme.rowSpacing
 
             Label {
@@ -338,29 +343,17 @@ Page {
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
                 wrapMode: Text.WordWrap
-                text: controller.stagedForDeletionCount > 0
-                    ? controller.stagedForDeletionCount + " staged for deletion. Nothing has gone yet."
-                    : controller.selectedCount + " selected."
-            }
-            Button {
-                objectName: "stageSelectedForDeletionButton"
-                visible: controller.selectedCount > 0
-                text: "Stage selected for deletion"
-                onClicked: controller.stageSelectedForDeletion()
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                ToolTip.text: controller.allLoadedSelected
-                    ? "Mark every track in the list for deletion from the Metadata Backup"
-                    : "Mark the selected tracks for deletion from the Metadata Backup"
+                text: controller.stagedForDeletionCount + " marked for deletion. Nothing has gone yet."
             }
             Button {
                 objectName: "deleteStagedButton"
-                visible: controller.stagedForDeletionCount > 0
                 text: "Delete"
                 onClicked: confirmDeleteDialog.open()
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
-                ToolTip.text: "Delete the staged tracks from the Metadata Backup on this computer"
+                ToolTip.text: controller.allLoadedStaged
+                    ? "Delete every track in the list from the Metadata Backup on this computer"
+                    : "Delete the marked tracks from the Metadata Backup on this computer"
             }
         }
     }

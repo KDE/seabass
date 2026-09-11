@@ -97,21 +97,27 @@ TestCase {
         verify(!button.enabled, "Add must be off with no stick to read");
     }
 
-    function test_deletingIsStagedAndConfirmed() {
+    function test_deletingIsMarkedAndConfirmed() {
         // The only destructive thing this page can do. The backup may be
         // the last copy of cues a reformatted stick no longer has, so a
-        // single click must not be able to reach the database: the row
-        // button stages, a second button acts on what is staged, and a
-        // dialog stands between that and the delete.
+        // single click must not be able to reach the database: a row is
+        // marked first, one button acts on what is marked, and a dialog
+        // stands between that and the delete.
         var page = make();
         var deleteButton = findChild(page, "deleteStagedButton");
-        // Nothing staged on an empty list, so the button is not offered
+        // Nothing marked on an empty list, so the button is not offered
         // at all rather than offered and inert.
-        verify(!deleteButton || !deleteButton.visible, "Delete must not be offered with nothing staged");
+        verify(!deleteButton || !deleteButton.visible, "Delete must not be offered with nothing marked");
         verify(findChild(page, "confirmDeleteDialog"), "a confirmation dialog must exist");
+        // And there is exactly one button down there. A second one that
+        // turned a selection into a set of marks was the shape this page
+        // had briefly, and two buttons for one decision is how a user
+        // ends up pressing the wrong one.
+        verify(!findChild(page, "stageSelectedForDeletionButton"),
+               "marking and deleting must not be two separate buttons");
     }
 
-    function test_theListHasASearchAndASelection() {
+    function test_theListHasASearchAndMarking() {
         var page = make();
         var toolbar = findChild(page, "browseToolbar");
         verify(toolbar, "the list toolbar must exist");

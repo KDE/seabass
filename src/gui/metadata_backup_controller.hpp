@@ -48,7 +48,6 @@ public:
         ArtworkUrlRole,
         StickLabelRole,
         UpdatedAtRole,
-        SelectedRole,
         StagedForDeletionRole,
     };
 
@@ -61,22 +60,13 @@ public:
     void reset(std::vector<infrastructure::local::StoredTrack> rows);
     void append(const std::vector<infrastructure::local::StoredTrack> &rows);
 
-    // ---- selection ----------------------------------------------------
-    // Kept by row id rather than by row number, so it survives the list
-    // growing a page and the list being rebuilt after a delete. A
-    // selection that silently moved to different tracks when more rows
-    // loaded would be the worst possible bug in a feature whose other
-    // button deletes things.
-    void setSelected(int row, bool selected);
-    void selectAllLoaded();
-    void clearSelection();
-    int selectedCount() const { return static_cast<int>(m_selected.size()); }
-    QList<qint64> selectedIds() const;
-    bool isSelected(qint64 trackId) const { return m_selected.contains(trackId); }
-
     // ---- staged for deletion ------------------------------------------
+    // Kept by row id rather than by row number, so it survives the list
+    // growing a page. A mark that silently moved to a different track
+    // when more rows loaded would be the worst possible bug in a feature
+    // whose button deletes things.
     void setStagedForDeletion(int row, bool staged);
-    void stageSelectedForDeletion();
+    void stageAllLoadedForDeletion();
     void clearDeletionStaging();
     int stagedForDeletionCount() const { return static_cast<int>(m_stagedForDeletion.size()); }
     QList<qint64> stagedForDeletionIds() const;
@@ -88,7 +78,6 @@ private:
     void emitRowChanged(int row, const QList<int> &roles);
 
     std::vector<infrastructure::local::StoredTrack> m_rows;
-    QSet<qint64> m_selected;
     QSet<qint64> m_stagedForDeletion;
 };
 
@@ -135,10 +124,9 @@ class MetadataBackupController : public QObject
     Q_PROPERTY(QString storeLocation READ storeLocation CONSTANT)
     Q_PROPERTY(qint64 artworkBytes READ artworkBytes NOTIFY storeChanged)
     Q_PROPERTY(bool canLoadMore READ canLoadMore NOTIFY storeChanged)
-    Q_PROPERTY(int selectedCount READ selectedCount NOTIFY selectionChanged)
     Q_PROPERTY(int loadedCount READ loadedCount NOTIFY storeChanged)
-    Q_PROPERTY(bool allLoadedSelected READ allLoadedSelected NOTIFY selectionChanged)
     Q_PROPERTY(int stagedForDeletionCount READ stagedForDeletionCount NOTIFY selectionChanged)
+    Q_PROPERTY(bool allLoadedStaged READ allLoadedStaged NOTIFY selectionChanged)
     // The merge rule as prose, straight from the domain function that
     // implements it, so the help popup cannot describe a policy the
     // program no longer follows.
@@ -161,13 +149,12 @@ public:
     QString storeLocation() const;
     qint64 artworkBytes() const { return m_artworkBytes; }
     bool canLoadMore() const { return m_browseModel.rowCount() < m_matchCount; }
-    int selectedCount() const { return m_browseModel.selectedCount(); }
     int loadedCount() const { return m_browseModel.rowCount(); }
-    bool allLoadedSelected() const
-    {
-        return m_browseModel.rowCount() > 0 && m_browseModel.selectedCount() == m_browseModel.rowCount();
-    }
     int stagedForDeletionCount() const { return m_browseModel.stagedForDeletionCount(); }
+    bool allLoadedStaged() const
+    {
+        return m_browseModel.rowCount() > 0 && m_browseModel.stagedForDeletionCount() == m_browseModel.rowCount();
+    }
     QString mergeRuleHelp() const;
 
     // libraryPath is any catalog directory on the stick (".../PIONEER",
@@ -176,15 +163,14 @@ public:
     Q_INVOKABLE void backUp(const QString &libraryPath, const QString &libraryId, const QString &stickLabel);
     Q_INVOKABLE void cancel();
 
-    // ---- selection and deletion ---------------------------------------
-    Q_INVOKABLE void setSelected(int row, bool selected);
-    Q_INVOKABLE void selectAll();
-    Q_INVOKABLE void selectNone();
-    // The per-row delete button: marks one row, nothing is removed yet.
+    // ---- marking for deletion -----------------------------------------
+    // Ticking a row and pressing its delete button are one state, not
+    // two: there is no separate selection to keep in step with the
+    // marks, and so no way for the two to disagree and no second button
+    // to turn one into the other.
     Q_INVOKABLE void toggleStagedForDeletion(int row);
-    // The button under the list: everything ticked joins whatever the
-    // per-row buttons already marked.
-    Q_INVOKABLE void stageSelectedForDeletion();
+    Q_INVOKABLE void stageAllForDeletion();
+    Q_INVOKABLE void clearDeletionStaging();
     // Actually deletes. Returns how many rows went, so the page can say
     // so rather than guess from what it asked for.
     Q_INVOKABLE int deleteStaged();

@@ -28,9 +28,11 @@ namespace
 {
 
 constexpr const char *Context = "metadata store";
-// 2 added fallback_key, so a row first stored under a filename (because
-// the catalog had no artist and title yet) is still found once those
-// arrive, instead of being filed a second time as a new track.
+// 2 added two columns. fallback_key, so a row first stored under a
+// filename (because the catalog had no artist and title yet) is still
+// found once those arrive, instead of being filed a second time as a new
+// track. authored_at, so the merge rule can ask when the DJ last changed
+// a field rather than when a backup run last looked at the row.
 constexpr int SchemaVersion = 2;
 
 // The shared RAII statement and exec() with this store's error-message
@@ -126,6 +128,22 @@ std::int64_t epochFromIsoTimestamp(const std::string &text)
     const unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
     const std::int64_t days = static_cast<std::int64_t>(era) * 146097 + static_cast<std::int64_t>(doe) - 719468;
     return days * 86400 + static_cast<std::int64_t>(hour) * 3600 + static_cast<std::int64_t>(minute) * 60 + second;
+}
+
+// The inverse of epochFromIsoTimestamp, for writing a date that came
+// from a file's mtime rather than from the clock.
+std::string isoTimestampFromEpoch(std::int64_t seconds)
+{
+    const std::time_t asTime = static_cast<std::time_t>(seconds);
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &asTime);
+#else
+    gmtime_r(&asTime, &tm);
+#endif
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buffer;
 }
 
 // The strong key: normalized artist and title, or empty when the track
@@ -300,16 +318,46 @@ void MetadataStore::openAndMigrate()
 
     // In place, before the CREATE TABLEs below: they are all IF NOT
     // EXISTS, so they would leave a version-1 tracks table exactly as it
-    // is and the added column would never appear.
+    // is and the added columns would never appear.
+    //
+    // In one transaction, and the reason is that ALTER TABLE ADD COLUMN
+    // is not idempotent. Run as three autocommitted statements, a
+    // process killed between the ALTER and the version bump would leave
+    // a database that still reads as version 1 and now has the column:
+    // the next launch re-enters this branch, the ALTER throws "duplicate
+    // column name" out of the constructor, and because the move-aside
+    // path deliberately skips version 1 there is nothing to recover it.
+    // The store this feature exists to protect would be unopenable, for
+    // good. A transaction makes the whole step happen or none of it.
     if (migrateInPlace) {
+        exec(m_db, "BEGIN IMMEDIATE");
+        struct RollbackGuard
+        {
+            sqlite3 *db;
+            bool committed = false;
+            ~RollbackGuard()
+            {
+                if (!committed) {
+                    sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+                }
+            }
+        } guard{m_db};
         exec(m_db, "ALTER TABLE tracks ADD COLUMN fallback_key TEXT NOT NULL DEFAULT '';");
+        exec(m_db, "ALTER TABLE tracks ADD COLUMN authored_at TEXT NOT NULL DEFAULT '';");
         // Every version-1 row carries one key, in a column that says
         // which kind it is. A row keyed by filename already has its
         // fallback key; it just has it in the other column, and copying
         // it across is what lets the strong key replace it later
         // without the row losing the only way it can still be found.
         exec(m_db, "UPDATE tracks SET fallback_key = match_key WHERE match_key LIKE 'fn:%';");
+        // The best guess available for rows written before the two dates
+        // were told apart. It is an upper bound on when the authored
+        // fields were really written, which is the direction that makes
+        // an old backup lose to a stick rather than beat it.
+        exec(m_db, "UPDATE tracks SET authored_at = updated_at;");
         exec(m_db, "UPDATE schema_version SET version = 2;");
+        exec(m_db, "COMMIT");
+        guard.committed = true;
     }
 
     exec(m_db, R"sql(
@@ -334,7 +382,17 @@ void MetadataStore::openAndMigrate()
             stick_label TEXT NOT NULL DEFAULT '',
             source_format TEXT NOT NULL DEFAULT '',
             first_seen TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            -- When an authored field was last actually written, which is
+            -- not the same fact as updated_at and must not be confused
+            -- with it. updated_at moves every time a backup run touches
+            -- the row, including runs that decided nothing; this moves
+            -- only when a cue, rating, comment or play count changed.
+            -- The merge rule's last step compares this against a stick's
+            -- catalog mtime, and using updated_at for it meant a routine
+            -- re-run over an untouched stick silently dated the store
+            -- later than work done elsewhere in between.
+            authored_at TEXT NOT NULL DEFAULT ''
         );
     )sql");
     exec(m_db, R"sql(
@@ -459,6 +517,23 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
 {
     MetadataBackupSummary summary;
     const std::string now = isoTimestampUtc();
+    // What an authored field written by this run is dated with, and it
+    // is NOT "now".
+    //
+    // authored_at answers "when did the DJ last change this?", and the
+    // answer travels with the value rather than with the run that
+    // copied it. Stamping the clock would date everything this backup
+    // learned to today: read stick A today and its months-old cues
+    // would then beat stick B's, written last week, purely because A was
+    // the one plugged in. Carrying the source stick's catalog mtime
+    // forward keeps the comparison stick-date against stick-date.
+    //
+    // Falls back to the clock only for a stick whose catalogs could not
+    // be dated at all, which means a stick we read tracks out of but
+    // could not stat -- and then "when we saw it" is genuinely the only
+    // date there is.
+    const std::string authoredNow =
+        source.catalogModifiedAt > 0 ? isoTimestampFromEpoch(source.catalogModifiedAt) : now;
     const fs::path artwork = artworkDir();
 
     progress.start("Storing metadata", tracks.size());
@@ -514,41 +589,68 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         std::string storedArtworkSha;
         std::int64_t storedModifiedAt = 0;
         {
-            // Every row either key could mean, then the first whose
-            // length agrees. Two rows under one key is the real case the
-            // length guard handles: a radio edit and an extended mix.
+            // Two keys, so a row first stored under a filename is found
+            // again once the DJ fixes the tags -- and a row stored with
+            // full tags is still found by a catalog that has since lost
+            // them. Both spellings of one track reach one row.
             //
-            // Either key, not just the strong one, so a row first stored
-            // under a filename is found again once the DJ fixes the tags
-            // -- and so a row stored with full tags is still found by a
-            // catalog that has since lost them. Both spellings of the
-            // same track reach the same row instead of making a second.
-            // The strong key is tried first and on its own: a filename
-            // is a weak enough key that letting it pull in candidates
-            // while a better one is available would be a way to merge
-            // two genuinely different tracks that share a name.
-            const char *sql =
-                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, updated_at "
-                "FROM tracks WHERE (? <> '' AND match_key = ?) OR (? <> '' AND fallback_key = ?) "
-                "ORDER BY (match_key = ?) DESC, id";
-            Stmt find(m_db, sql);
-            find.bind(1, matchKey);
-            find.bind(2, matchKey);
-            find.bind(3, fallbackKey);
-            find.bind(4, fallbackKey);
-            find.bind(5, matchKey);
-            while (find.step()) {
-                if (!durationsAgree(find.columnDouble(5), track.durationSeconds)) {
-                    continue;
+            // The strong key is asked first, and the filename is only
+            // consulted when artist and title recognised NOTHING -- not
+            // merely when they failed to produce a length-compatible
+            // row. The distinction is the whole safety of the fallback.
+            //
+            // Say the store holds a radio edit of "One Track" and some
+            // unrelated recording that happens to share the basename
+            // mix.mp3, and the extended mix of "One Track" arrives. The
+            // strong key finds the radio edit and rejects it on length,
+            // correctly: this is a different mix and wants a row of its
+            // own. If that counted as "found nothing", the filename pass
+            // would then run, land on the unrelated recording whose
+            // length happens to agree, and the UPDATE below would stamp
+            // that row with this track's title and artist -- another
+            // track's cues, silently relabelled. A strong-key hit is
+            // therefore decisive even when it ends in no match.
+            static constexpr const char *ByMatchKey =
+                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at "
+                "FROM tracks WHERE match_key = ? ORDER BY id";
+            static constexpr const char *ByFallbackKey =
+                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at "
+                "FROM tracks WHERE fallback_key = ? ORDER BY id";
+
+            // Returns whether the key named any row at all, and sets the
+            // stored-row variables above when one of them also agreed on
+            // length.
+            const auto lookUp = [&](const char *sql, const std::string &key) {
+                bool named = false;
+                if (key.empty()) {
+                    return named;
                 }
-                exists = true;
-                id = find.columnInt64(0);
-                storedRating = find.columnOptionalInt(1);
-                storedComment = find.columnText(2);
-                storedPlayCount = find.columnOptionalInt(3);
-                storedArtworkSha = find.columnText(4);
-                storedModifiedAt = epochFromIsoTimestamp(find.columnText(6));
-                break;
+                Stmt find(m_db, sql);
+                find.bind(1, key);
+                while (find.step()) {
+                    named = true;
+                    if (!durationsAgree(find.columnDouble(5), track.durationSeconds)) {
+                        continue;
+                    }
+                    exists = true;
+                    id = find.columnInt64(0);
+                    storedRating = find.columnOptionalInt(1);
+                    storedComment = find.columnText(2);
+                    storedPlayCount = find.columnOptionalInt(3);
+                    storedArtworkSha = find.columnText(4);
+                    // authored_at, falling back to updated_at for a row
+                    // migrated from version 1, which did not tell the
+                    // two apart.
+                    const std::string authored = find.columnText(6);
+                    storedModifiedAt = epochFromIsoTimestamp(authored.empty() ? find.columnText(7) : authored);
+                    break;
+                }
+                return named;
+            };
+
+            const bool strongKeyNamedARow = lookUp(ByMatchKey, matchKey);
+            if (!exists && !strongKeyNamedARow) {
+                lookUp(ByFallbackKey, fallbackKey);
             }
         }
 
@@ -617,8 +719,9 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                 INSERT INTO tracks (match_key, fallback_key, relative_path, filename, title, artist,
                                     duration_seconds, bpm, music_key, rating, comment,
                                     play_count, last_played_at, artwork_sha, artwork_extension,
-                                    library_id, stick_label, source_format, first_seen, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                    library_id, stick_label, source_format, first_seen, updated_at,
+                                    authored_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             )sql");
             insert.bind(1, matchKey);
             insert.bind(2, fallbackKey);
@@ -640,6 +743,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             insert.bind(18, track.format);
             insert.bind(19, now);
             insert.bind(20, now);
+            insert.bind(21, authoredNow);
             insert.run();
             id = sqlite3_last_insert_rowid(m_db);
             summary.tracksAdded++;
@@ -732,6 +836,20 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                 set.bind(1, artworkIntake.sha);
                 set.bind(2, artworkIntake.extension);
                 set.bindInt64(3, id);
+                set.run();
+            }
+
+            // Only when an authored field actually moved, which is the
+            // whole point of keeping this apart from updated_at.
+            //
+            // Cover art is not in the list: it is not the DJ's work, and
+            // a cover arriving from a stick must not date the row's cues
+            // to today. Neither is anything in the UPDATE above, which
+            // is what the software wrote rather than what a person did.
+            if (writeRating || writeComment || writePlayCount || writeCues) {
+                Stmt set(m_db, "UPDATE tracks SET authored_at = ? WHERE id = ?");
+                set.bind(1, authoredNow);
+                set.bindInt64(2, id);
                 set.run();
             }
         }
@@ -891,7 +1009,7 @@ std::vector<Track> MetadataStore::readAll()
     {
         Stmt stmt(m_db, R"sql(
             SELECT id, relative_path, filename, title, artist, duration_seconds, bpm,
-                   music_key, rating, comment, play_count, updated_at
+                   music_key, rating, comment, play_count, authored_at, updated_at
             FROM tracks ORDER BY id
         )sql");
         while (stmt.step()) {
@@ -919,10 +1037,18 @@ std::vector<Track> MetadataStore::readAll()
             track.rating = stmt.columnOptionalInt(8);
             track.comment = stmt.columnText(9);
             track.playCount = stmt.columnOptionalInt(10);
-            // Exact, per row, because this store wrote the row. The
-            // stick side of the same comparison has only its catalogs'
-            // mtime to offer.
-            track.metadataModifiedAt = epochFromIsoTimestamp(stmt.columnText(11));
+            // authored_at, not updated_at: when a cue, rating, comment
+            // or play count last changed, rather than when a backup run
+            // last looked at the row. Using the latter meant a routine
+            // re-run over an untouched stick dated the store later than
+            // work someone had done elsewhere in the meantime, and the
+            // merge rule then preferred the store to that work.
+            //
+            // Falls back to updated_at for a row migrated from version
+            // 1, which did not tell the two apart.
+            const std::string authored = stmt.columnText(11);
+            track.metadataModifiedAt =
+                epochFromIsoTimestamp(authored.empty() ? stmt.columnText(12) : authored);
             tracks.push_back(std::move(track));
         }
     }

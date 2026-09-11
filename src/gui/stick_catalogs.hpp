@@ -68,6 +68,11 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
 // Newest of the catalogs present, not oldest: a DJ who cues in Engine
 // leaves export.pdb untouched for months, and taking the older date
 // would date their work to the last time some other program wrote.
+//
+// stick_backup::libraryCatalogModifiedAt() does the work, plus Device
+// Library Plus, which that one has no reason to consult and this one
+// does. Not a second list of catalog files: the write-ahead log is the
+// whole difficulty here, and one place should know about it.
 std::int64_t catalogsLastModified(const std::string &libraryPath);
 
 

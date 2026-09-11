@@ -112,7 +112,7 @@ QHash<int, QByteArray> StoredTrackListModel::roleNames() const
         {RatingRole, "rating"},           {CommentRole, "comment"},
         {CueCountRole, "cueCount"},       {PlaylistCountRole, "playlistCount"},
         {ArtworkUrlRole, "artworkUrl"},   {StickLabelRole, "stickLabel"},
-        {UpdatedAtRole, "updatedAt"},     {SelectedRole, "selected"},
+        {UpdatedAtRole, "updatedAt"},
         {StagedForDeletionRole, "stagedForDeletion"},
     };
 }
@@ -156,8 +156,6 @@ QVariant StoredTrackListModel::data(const QModelIndex &index, int role) const
         return QString::fromStdString(row.stickLabel);
     case UpdatedAtRole:
         return QString::fromStdString(row.updatedAt);
-    case SelectedRole:
-        return m_selected.contains(static_cast<qint64>(row.id));
     case StagedForDeletionRole:
         return m_stagedForDeletion.contains(static_cast<qint64>(row.id));
     default:
@@ -169,13 +167,12 @@ void StoredTrackListModel::reset(std::vector<StoredTrack> rows)
 {
     beginResetModel();
     m_rows = std::move(rows);
-    // Both sets go with the old list. reset() is what a changed search
-    // term and a finished delete both run through, and a selection that
+    // The marks go with the old list. reset() is what a changed search
+    // term and a finished delete both run through, and a mark that
     // outlived the rows it was made on would be invisible: the user
     // would tick three rows, type in the search box, press Delete and
     // lose tracks they could no longer see. Only loadMore()'s append
-    // keeps a selection, and that genuinely is the same list.
-    m_selected.clear();
+    // keeps the marks, and that genuinely is the same list.
     m_stagedForDeletion.clear();
     endResetModel();
 }
@@ -207,56 +204,6 @@ void StoredTrackListModel::emitRowChanged(int row, const QList<int> &roles)
     emit dataChanged(at, at, roles);
 }
 
-void StoredTrackListModel::setSelected(int row, bool selected)
-{
-    const qint64 id = trackIdAt(row);
-    if (id == 0) {
-        return;
-    }
-    if (selected) {
-        m_selected.insert(id);
-    } else {
-        m_selected.remove(id);
-    }
-    emitRowChanged(row, {SelectedRole});
-}
-
-void StoredTrackListModel::selectAllLoaded()
-{
-    if (m_rows.empty()) {
-        return;
-    }
-    for (const auto &row : m_rows) {
-        m_selected.insert(static_cast<qint64>(row.id));
-    }
-    emit dataChanged(index(0), index(static_cast<int>(m_rows.size()) - 1), {SelectedRole});
-}
-
-void StoredTrackListModel::clearSelection()
-{
-    if (m_selected.isEmpty()) {
-        return;
-    }
-    m_selected.clear();
-    if (!m_rows.empty()) {
-        emit dataChanged(index(0), index(static_cast<int>(m_rows.size()) - 1), {SelectedRole});
-    }
-}
-
-QList<qint64> StoredTrackListModel::selectedIds() const
-{
-    // In list order, not hash order, so a message naming the first few
-    // names the ones at the top of the list.
-    QList<qint64> ids;
-    for (const auto &row : m_rows) {
-        const auto id = static_cast<qint64>(row.id);
-        if (m_selected.contains(id)) {
-            ids << id;
-        }
-    }
-    return ids;
-}
-
 void StoredTrackListModel::setStagedForDeletion(int row, bool staged)
 {
     const qint64 id = trackIdAt(row);
@@ -271,12 +218,14 @@ void StoredTrackListModel::setStagedForDeletion(int row, bool staged)
     emitRowChanged(row, {StagedForDeletionRole});
 }
 
-void StoredTrackListModel::stageSelectedForDeletion()
+void StoredTrackListModel::stageAllLoadedForDeletion()
 {
-    if (m_selected.isEmpty() || m_rows.empty()) {
+    if (m_rows.empty()) {
         return;
     }
-    m_stagedForDeletion.unite(m_selected);
+    for (const auto &row : m_rows) {
+        m_stagedForDeletion.insert(static_cast<qint64>(row.id));
+    }
     emit dataChanged(index(0), index(static_cast<int>(m_rows.size()) - 1), {StagedForDeletionRole});
 }
 
@@ -424,24 +373,6 @@ QString MetadataBackupController::mergeRuleHelp() const
     return QString::fromStdString(domain::mergeRuleExplanation());
 }
 
-void MetadataBackupController::setSelected(int row, bool selected)
-{
-    m_browseModel.setSelected(row, selected);
-    emit selectionChanged();
-}
-
-void MetadataBackupController::selectAll()
-{
-    m_browseModel.selectAllLoaded();
-    emit selectionChanged();
-}
-
-void MetadataBackupController::selectNone()
-{
-    m_browseModel.clearSelection();
-    emit selectionChanged();
-}
-
 void MetadataBackupController::toggleStagedForDeletion(int row)
 {
     const qint64 id = m_browseModel.trackIdAt(row);
@@ -452,9 +383,15 @@ void MetadataBackupController::toggleStagedForDeletion(int row)
     emit selectionChanged();
 }
 
-void MetadataBackupController::stageSelectedForDeletion()
+void MetadataBackupController::stageAllForDeletion()
 {
-    m_browseModel.stageSelectedForDeletion();
+    m_browseModel.stageAllLoadedForDeletion();
+    emit selectionChanged();
+}
+
+void MetadataBackupController::clearDeletionStaging()
+{
+    m_browseModel.clearDeletionStaging();
     emit selectionChanged();
 }
 
@@ -475,8 +412,8 @@ int MetadataBackupController::deleteStaged()
         setErrorMessage(QString::fromUtf8(e.what()));
         return 0;
     }
-    // refresh() resets the model, which clears both the selection and
-    // the deletion staging: the rows they referred to are gone.
+    // refresh() resets the model, which clears the marks: the rows they
+    // referred to are gone.
     refresh();
     emit selectionChanged();
     return removed;

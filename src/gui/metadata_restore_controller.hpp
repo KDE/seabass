@@ -33,18 +33,19 @@ public:
         TitleRole = Qt::UserRole + 1,
         ArtistRole,
         FilenameRole,
-        RelativePathRole,  // where the stored copy last sat on a stick
+        RelativePathRole,  // where the file sits on THIS stick, absolute
         DurationTextRole,
         CueCountRole,      // how many cues the write would leave on the track
         CuesAddedRole,     // how many of those are new
         CueSummaryRole,    // every offered cue on a line, for the badge's tooltip
         FillsAGapRole,     // the track has no cues at all today
         ConflictRole,      // the track has cues and they differ
+        CuesOfferedRole,   // and whether the merge rule then chose the stored set
+        StoredIdRole,      // the store row this came from; unique, unlike a filename
         RatingRole,        // the rating this restore would write, -1 for none
         CommentRole,       // the comment it would write, empty for none
         StoredFromRole,    // the stick this copy was last backed up from
         StagedRole,
-        SelectedRole,
     };
 
     explicit RestoreProposalListModel(QObject *parent = nullptr);
@@ -59,20 +60,7 @@ public:
     void removeAt(int index);
     int indexOfStoredId(const std::string &storedId) const;
 
-    // Selection, parallel to staging and deliberately not the same
-    // thing: ticking a row says "this is one of the ones I mean", and
-    // staging says "this is going into the next save". The bulk button
-    // turns the first into the second.
-    //
-    // Select-all means every proposal, not every visible one. A search
-    // narrows what you are looking at; it must not silently narrow what
-    // a button labelled "Select All" acts on, because the difference is
-    // invisible the moment the search is cleared.
-    void setSelected(int index, bool selected);
-    void selectAll();
-    void clearSelection();
-    int selectedCount() const;
-    bool isSelected(int index) const;
+    bool isStaged(int index) const;
 
     // ---- the search --------------------------------------------------
     // Filtered here rather than in the delegate. A ListView still lays
@@ -93,8 +81,7 @@ private:
     void rebuildVisible();
 
     std::vector<domain::MetadataRestoreProposal> m_proposals;
-    std::vector<bool> m_staged;    // parallel to m_proposals
-    std::vector<bool> m_selected;  // likewise
+    std::vector<bool> m_staged;  // parallel to m_proposals
     // Indices into m_proposals, in order, for the rows this model shows.
     std::vector<int> m_visible;
     QString m_filter;
@@ -142,9 +129,8 @@ class MetadataRestoreController : public QObject
     // store. Not a failure and not hidden: the page says so before the
     // save rather than the log saying so after it.
     Q_PROPERTY(int commentsRekordboxCannotTake READ commentsRekordboxCannotTake NOTIFY analysisChanged)
-    Q_PROPERTY(int selectedCount READ selectedCount NOTIFY analysisChanged)
     Q_PROPERTY(int proposalCount READ proposalCount NOTIFY analysisChanged)
-    Q_PROPERTY(bool allSelected READ allSelected NOTIFY analysisChanged)
+    Q_PROPERTY(bool allStaged READ allStaged NOTIFY analysisChanged)
     // The merge rule as prose, from the domain function that implements
     // it, so this page's help and the backup page's say the same thing
     // because they are the same string.
@@ -168,9 +154,8 @@ public:
     int conflictsLeftAlone() const { return m_conflictsLeftAlone; }
     int stagedCount() const { return static_cast<int>(m_stagedByStoredId.size()); }
     int commentsRekordboxCannotTake() const { return m_commentsRekordboxCannotTake; }
-    int selectedCount() const { return m_model.selectedCount(); }
     int proposalCount() const { return static_cast<int>(m_model.proposals().size()); }
-    bool allSelected() const { return proposalCount() > 0 && selectedCount() == proposalCount(); }
+    bool allStaged() const { return proposalCount() > 0 && stagedCount() == proposalCount(); }
     QString mergeRuleHelp() const;
 
     // libraryPath is any catalog directory on the stick; every catalog
@@ -186,15 +171,24 @@ public:
     // translation happens here, at the one boundary where QML and the
     // proposal list meet, rather than being something each call site has
     // to remember.
+    // Ticking a row stages it, and that is the whole of the selection
+    // model on this page. There was briefly a selection parallel to
+    // staging, with a button to turn one into the other; it meant two
+    // ways to say the same thing and a button whose tooltip had to
+    // explain which of them it did. One page, one verb, one button: the
+    // standard floating Save, labelled Restore.
     Q_INVOKABLE void stage(int row);
     Q_INVOKABLE void unstage(int row);
-    Q_INVOKABLE void setSelected(int row, bool selected);
     Q_INVOKABLE void search(const QString &text);
-    Q_INVOKABLE void selectAll();
-    Q_INVOKABLE void selectNone();
-    // Stages every ticked row. The button under the list, and the reason
-    // selection and staging are kept apart.
-    Q_INVOKABLE void stageSelected();
+    // Every proposal, not every visible one: a search narrows what you
+    // are looking at, and must not silently narrow what a button called
+    // "Select All" acts on, because the difference is invisible the
+    // moment the search is cleared.
+    Q_INVOKABLE void stageAll();
+    Q_INVOKABLE void unstageAll();
+    // Both row-taking entry points above funnel here, so a bulk unstage
+    // cannot drift from what one row's button does.
+    void unstageAt(int index);
     // stage(), plus what the save is expected to write in total -- see
     // RestoreMetadataChange's own itemCountHint.
     void stageOne(int index, int itemCountHint);

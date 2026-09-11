@@ -186,11 +186,12 @@ QHash<int, QByteArray> RestoreProposalListModel::roleNames() const
         {CueSummaryRole, "cueSummary"},
         {FillsAGapRole, "fillsAGap"},
         {ConflictRole, "conflict"},
+        {CuesOfferedRole, "cuesOffered"},
+        {StoredIdRole, "storedId"},
         {RatingRole, "rating"},
         {CommentRole, "comment"},
         {StoredFromRole, "storedFrom"},
         {StagedRole, "staged"},
-        {SelectedRole, "selected"},
     };
 }
 
@@ -209,6 +210,10 @@ QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) cons
     case FilenameRole:
         return QString::fromStdString(proposal.stickTrack.filename);
     case RelativePathRole:
+        // The stick's own path, which is absolute, and the only one a
+        // proposal has: the stored side deliberately carries no path at
+        // all (MetadataStore::readAll). The row this fills is labelled
+        // "File" rather than anything promising a relative one.
         return QString::fromStdString(proposal.stickTrack.filePath);
     case DurationTextRole:
         return proposalDurationText(proposal.stickTrack.durationSeconds);
@@ -216,8 +221,6 @@ QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) cons
         return cueSummaryOf(proposal.cues);
     case StoredFromRole:
         return QString::fromStdString(proposal.storedFrom);
-    case SelectedRole:
-        return m_selected[static_cast<std::size_t>(source)];
     case CueCountRole:
         return static_cast<int>(proposal.cues.size());
     case CuesAddedRole:
@@ -226,6 +229,10 @@ QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) cons
         return proposal.cuesFillAGap;
     case ConflictRole:
         return proposal.cuesConflict;
+    case CuesOfferedRole:
+        return proposal.cuesOffered;
+    case StoredIdRole:
+        return QString::fromStdString(proposal.storedId);
     case RatingRole:
         // -1 when this restore offers no rating, so a row can tell "no
         // rating on offer" from "zero stars on offer".
@@ -244,7 +251,6 @@ void RestoreProposalListModel::setProposals(std::vector<MetadataRestoreProposal>
     beginResetModel();
     m_proposals = std::move(proposals);
     m_staged.assign(m_proposals.size(), false);
-    m_selected.assign(m_proposals.size(), false);
     rebuildVisible();
     endResetModel();
 }
@@ -327,56 +333,16 @@ void RestoreProposalListModel::removeAt(int index)
     beginResetModel();
     m_proposals.erase(m_proposals.begin() + index);
     m_staged.erase(m_staged.begin() + index);
-    m_selected.erase(m_selected.begin() + index);
     rebuildVisible();
     endResetModel();
 }
 
-void RestoreProposalListModel::setSelected(int index, bool selected)
+bool RestoreProposalListModel::isStaged(int index) const
 {
-    if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
-        return;
-    }
-    m_selected[static_cast<std::size_t>(index)] = selected;
-    const int row = rowOfSourceIndex(index);
-    if (row >= 0) {
-        emit dataChanged(this->index(row), this->index(row), {SelectedRole});
-    }
-}
-
-void RestoreProposalListModel::selectAll()
-{
-    if (m_proposals.empty()) {
-        return;
-    }
-    m_selected.assign(m_proposals.size(), true);
-    if (!m_visible.empty()) {
-        emit dataChanged(index(0), index(static_cast<int>(m_visible.size()) - 1), {SelectedRole});
-    }
-}
-
-void RestoreProposalListModel::clearSelection()
-{
-    if (m_proposals.empty()) {
-        return;
-    }
-    m_selected.assign(m_proposals.size(), false);
-    if (!m_visible.empty()) {
-        emit dataChanged(index(0), index(static_cast<int>(m_visible.size()) - 1), {SelectedRole});
-    }
-}
-
-int RestoreProposalListModel::selectedCount() const
-{
-    return static_cast<int>(std::count(m_selected.begin(), m_selected.end(), true));
-}
-
-bool RestoreProposalListModel::isSelected(int index) const
-{
-    if (index < 0 || index >= static_cast<int>(m_selected.size())) {
+    if (index < 0 || index >= static_cast<int>(m_staged.size())) {
         return false;
     }
-    return m_selected[static_cast<std::size_t>(index)];
+    return m_staged[static_cast<std::size_t>(index)];
 }
 
 int RestoreProposalListModel::indexOfStoredId(const std::string &storedId) const
@@ -547,7 +513,7 @@ void MetadataRestoreController::stage(int row)
 
 // itemCountHint is what the save is expected to write in total, which
 // decides whether the catalog is worth copying to local scratch first.
-// stageSelected() knows that number; a single row's button does not, and
+// stageAll() knows that number; a single row's button does not, and
 // does not need to.
 void MetadataRestoreController::stageOne(int index, int itemCountHint)
 {
@@ -612,25 +578,7 @@ QString MetadataRestoreController::mergeRuleHelp() const
     return QString::fromStdString(domain::mergeRuleExplanation());
 }
 
-void MetadataRestoreController::setSelected(int row, bool selected)
-{
-    m_model.setSelected(m_model.sourceIndexOfRow(row), selected);
-    emit analysisChanged();
-}
-
-void MetadataRestoreController::selectAll()
-{
-    m_model.selectAll();
-    emit analysisChanged();
-}
-
-void MetadataRestoreController::selectNone()
-{
-    m_model.clearSelection();
-    emit analysisChanged();
-}
-
-void MetadataRestoreController::stageSelected()
+void MetadataRestoreController::stageAll()
 {
     if (writing()) {
         emit actionFeedback(QStringLiteral("A save is running. Stage more once it has finished."), true);
@@ -642,13 +590,9 @@ void MetadataRestoreController::stageSelected()
     // the save copies a catalog to local scratch first. Counted before
     // staging anything, because staging removes nothing from the list
     // but does change what a later pass would count.
-    //
-    // Every selected proposal, not every selected visible one: a search
-    // narrows what is on screen and must not narrow what a selection
-    // made before it means.
     int toStage = 0;
     for (int i = 0; i < count; ++i) {
-        if (m_model.isSelected(i) && !m_stagedByStoredId.count(proposals[static_cast<std::size_t>(i)].storedId)) {
+        if (!m_stagedByStoredId.count(proposals[static_cast<std::size_t>(i)].storedId)) {
             toStage++;
         }
     }
@@ -658,9 +602,6 @@ void MetadataRestoreController::stageSelected()
 
     int staged = 0;
     for (int i = 0; i < count; ++i) {
-        if (!m_model.isSelected(i)) {
-            continue;
-        }
         if (m_stagedByStoredId.count(proposals[static_cast<std::size_t>(i)].storedId)) {
             continue;
         }
@@ -671,18 +612,36 @@ void MetadataRestoreController::stageSelected()
         staged++;
     }
     if (staged > 0) {
-        emit actionFeedback(QStringLiteral("Staged %1 track(s). Press Restore to write them to the stick.").arg(staged),
-                            false);
+        emit actionFeedback(
+            QStringLiteral("Staged %1 track(s). Press Restore to write them to the stick.").arg(staged), false);
+    }
+}
+
+void MetadataRestoreController::unstageAll()
+{
+    // By row, so this goes through the same path a single row's button
+    // does and cannot drift from it. Backwards, because unstaging can
+    // remove nothing from the list but the map it walks is the one
+    // unstageAt mutates.
+    for (int index = proposalCount() - 1; index >= 0; --index) {
+        unstageAt(index);
     }
 }
 
 void MetadataRestoreController::unstage(int row)
 {
-    const int index = m_model.sourceIndexOfRow(row);
+    unstageAt(m_model.sourceIndexOfRow(row));
+}
+
+void MetadataRestoreController::unstageAt(int index)
+{
     if (index < 0) {
         return;
     }
     const auto &proposals = m_model.proposals();
+    if (static_cast<std::size_t>(index) >= proposals.size()) {
+        return;
+    }
     auto it = m_stagedByStoredId.find(proposals[static_cast<std::size_t>(index)].storedId);
     if (it == m_stagedByStoredId.end()) {
         return;
