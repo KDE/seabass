@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <set>
+#include <functional>
 #include <string>
 
 namespace seabass::infrastructure::rekordbox
@@ -107,6 +108,28 @@ public:
     // to change. Returns false if no track with this id exists.
     bool overwriteTrackText(uint32_t trackId, const TrackTextOverride &text);
 
+    // The track row's other free-text slots. Kept apart from
+    // TrackTextOverride because those four are the ones a caller
+    // normally wants to set, while these exist only to be emptied --
+    // adding them to that struct would silently blank them for every
+    // existing caller.
+    //
+    // mix_name in particular held "Extended Mix", "Original Mix" and the
+    // like on every track of a real 1,161-track export that had been
+    // through every other scrub in this class.
+    struct TrackExtraTextOverride
+    {
+        std::string isrc;
+        std::string texter;
+        std::string message;
+        std::string mixName;
+    };
+
+    // Same byte-length-preserving overwrite as overwriteTrackText(), on
+    // ofs_strings slots 0, 1, 5 and 12. Returns false if no track with
+    // this id exists.
+    bool overwriteTrackExtraText(uint32_t trackId, const TrackExtraTextOverride &text);
+
     // Overwrites an artist_row's name field the same way (near/far
     // offset per specs/rekordbox_pdb.ksy's artist_row -- see the .cpp).
     // Returns false if no artist with this id exists.
@@ -115,6 +138,34 @@ public:
     // Overwrites a playlist_tree_row's name field the same way. Returns
     // false if no playlist/folder with this id exists.
     bool overwritePlaylistName(uint32_t playlistId, const std::string &text);
+
+    // The pdb's other name tables. Tracks, artists and playlists have a
+    // method each above because a caller picks which one by id; these
+    // three have no such caller -- every row in them is a name and every
+    // one of them has to go -- so one method covers all three.
+    //
+    // They existed unscrubbed for as long as this writer has: a rekordbox
+    // export anonymized by every method above still shipped the album
+    // title, genre and record label of all 1,161 tracks, because nothing
+    // here could reach them and the reader-based checks only ever sampled
+    // title, artist and path. Found by the byte sweep in
+    // anonymization_byte_sweep.hpp.
+    //
+    // keys and colors are deliberately not here: "Am" and "Red" say
+    // nothing about whose library this is.
+    enum class NameTable
+    {
+        Genres,
+        Albums,
+        Labels,
+    };
+
+    // Replaces the name in every present row of `table` with
+    // placeholder(index), and returns how many rows were rewritten.
+    // Like the overwrites above this preserves each field's on-disk byte
+    // length, so a placeholder longer than the name it replaces is
+    // truncated to fit.
+    int overwriteAllNames(NameTable table, const std::function<std::string(size_t index)> &placeholder);
 
     // For every playlist_entry row currently pointing at oldTrackId:
     // if that same playlist already has an entry for newTrackId,

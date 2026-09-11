@@ -83,6 +83,13 @@ constexpr size_t TrackRatingOffset = 89;
 constexpr size_t TrackOfsStringsOffset = 94;
 // Indices into ofs_strings -- see specs/rekordbox_pdb.ksy's track_row
 // `instances`, which names each of the 21 entries in this exact order.
+// The other free-text slots on a track row, per specs/rekordbox_pdb.ksy.
+// isrc names the exact commercial recording; texter and message are free
+// text; mix_name is "Extended Mix" and friends. None were ever scrubbed.
+constexpr int TrackStringIndexIsrc = 0;
+constexpr int TrackStringIndexTexter = 1;
+constexpr int TrackStringIndexMessage = 5;
+constexpr int TrackStringIndexMixName = 12;
 constexpr int TrackStringIndexComment = 16;
 constexpr int TrackStringIndexTitle = 17;
 constexpr int TrackStringIndexFilename = 19;
@@ -96,6 +103,19 @@ constexpr size_t ArtistSubtypeOffset = 0;
 constexpr size_t ArtistNameOffsetNear = 9;
 constexpr size_t ArtistNameOffsetFar = 10;
 constexpr uint16_t ArtistSubtypeFarNameFlag = 0x04;
+
+// album_row has the same near/far name indirection artist_row does, at
+// different offsets: subtype(u2) at 0, ofs_name_near(u1) at 0x15, and
+// ofs_name_far(u2) at 0x16 when subtype's 0x04 bit is set -- see
+// specs/rekordbox_pdb.ksy's album_row.
+constexpr size_t AlbumSubtypeOffset = 0;
+constexpr size_t AlbumNameOffsetNear = 0x15;
+constexpr size_t AlbumNameOffsetFar = 0x16;
+constexpr uint16_t AlbumSubtypeFarNameFlag = 0x04;
+
+// genre_row and label_row are the simple case: id(u4) and then the name
+// immediately after it, no indirection at all.
+constexpr size_t SimpleNameRowNameOffset = 4;
 
 // playlist_tree_row: parent_id(u4) + unnamed(u4) + sort_order(u4) +
 // id(u4) + raw_is_folder(u4) = name starts right at byte 20, no
@@ -177,6 +197,15 @@ size_t trackStringAbsOffset(const std::string &buffer, size_t rowBodyOffset, int
 {
     size_t ofsFieldOffset = rowBodyOffset + TrackOfsStringsOffset + static_cast<size_t>(stringIndex) * 2;
     uint16_t relOffset = readU16LE(buffer, ofsFieldOffset);
+    return rowBodyOffset + relOffset;
+}
+
+size_t albumNameAbsOffset(const std::string &buffer, size_t rowBodyOffset)
+{
+    uint16_t subtype = readU16LE(buffer, rowBodyOffset + AlbumSubtypeOffset);
+    uint16_t relOffset = (subtype & AlbumSubtypeFarNameFlag)
+                              ? readU16LE(buffer, rowBodyOffset + AlbumNameOffsetFar)
+                              : static_cast<uint8_t>(buffer.at(rowBodyOffset + AlbumNameOffsetNear));
     return rowBodyOffset + relOffset;
 }
 
@@ -526,6 +555,27 @@ bool PdbRowWriter::overwriteTrackText(uint32_t trackId, const TrackTextOverride 
     return true;
 }
 
+bool PdbRowWriter::overwriteTrackExtraText(uint32_t trackId, const TrackExtraTextOverride &text)
+{
+    auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!found) {
+        return false;
+    }
+    overwriteDeviceSqlStringInPlace(
+        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexIsrc), text.isrc);
+    overwriteDeviceSqlStringInPlace(
+        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexTexter), text.texter);
+    overwriteDeviceSqlStringInPlace(
+        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexMessage), text.message);
+    overwriteDeviceSqlStringInPlace(
+        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexMixName), text.mixName);
+    m_editedPageIndices.insert(found->pageIndex);
+    return true;
+}
+
 bool PdbRowWriter::overwriteArtistName(uint32_t artistId, const std::string &text)
 {
     auto found = findRow(m_buffer, Pdb::PAGE_TYPE_ARTISTS, [&](kaitai::kstruct *body) {
@@ -552,6 +602,63 @@ bool PdbRowWriter::overwritePlaylistName(uint32_t playlistId, const std::string 
     overwriteDeviceSqlStringInPlace(m_buffer, found->rowBodyOffset + PlaylistTreeNameOffset, text);
     m_editedPageIndices.insert(found->pageIndex);
     return true;
+}
+
+int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::string(size_t)> &placeholder)
+{
+    Pdb::page_type_t pageType = Pdb::PAGE_TYPE_GENRES;
+    switch (table) {
+    case NameTable::Genres:
+        pageType = Pdb::PAGE_TYPE_GENRES;
+        break;
+    case NameTable::Albums:
+        pageType = Pdb::PAGE_TYPE_ALBUMS;
+        break;
+    case NameTable::Labels:
+        pageType = Pdb::PAGE_TYPE_LABELS;
+        break;
+    }
+
+    // Collect every row first and only then write. Overwriting mutates
+    // m_buffer, which is the very thing the parser below is reading, and
+    // a name whose replacement shifts nothing still invalidates the
+    // kaitai objects holding offsets into it.
+    std::vector<FoundRow> rows;
+    {
+        std::istringstream iss(m_buffer);
+        kaitai::kstream ks(&iss);
+        Pdb pdb(false, &ks);
+        for (const auto &t : *pdb.tables()) {
+            if (t->type() != pageType) {
+                continue;
+            }
+            forEachDataPage(*t, [&](Pdb::page_t *page) {
+                for (const auto &group : *page->row_groups()) {
+                    for (const auto &row : *group->rows()) {
+                        if (!row->present()) {
+                            continue;
+                        }
+                        FoundRow found;
+                        found.pageIndex = page->page_index();
+                        found.rowBodyOffset = static_cast<size_t>(pdb.len_page()) * page->page_index()
+                            + static_cast<size_t>(row->row_base());
+                        rows.push_back(found);
+                    }
+                }
+            });
+        }
+    }
+
+    int replaced = 0;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const size_t nameAt = table == NameTable::Albums
+            ? albumNameAbsOffset(m_buffer, rows[i].rowBodyOffset)
+            : rows[i].rowBodyOffset + SimpleNameRowNameOffset;
+        overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i));
+        m_editedPageIndices.insert(rows[i].pageIndex);
+        ++replaced;
+    }
+    return replaced;
 }
 
 bool PdbRowWriter::repointPlaylistEntry(uint32_t playlistId, uint32_t oldTrackId, uint32_t newTrackId)

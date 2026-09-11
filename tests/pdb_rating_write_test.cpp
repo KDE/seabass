@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -211,6 +212,64 @@ int main()
             }
         }
         std::cout << "case 4 (a rekordbox comment fits its existing span or not at all) OK\n";
+    }
+
+    // The pdb's other name tables. Genres, albums and labels had no
+    // writer at all until the byte sweep found a real export shipping
+    // every album title and record label in the library, so this asserts
+    // the new one reaches all three and that the file still parses after.
+    {
+        const fs::path pioneer = freshPioneerCopy(scratch);
+        const fs::path pdb = pioneer / "rekordbox" / "export.pdb";
+
+        auto namesIn = [&](const fs::path &file) {
+            std::ifstream in(file, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        };
+        const std::string before = namesIn(pdb);
+
+        int albums = 0;
+        int genres = 0;
+        int labels = 0;
+        {
+            PdbRowWriter writer(pdb.string());
+            albums = writer.overwriteAllNames(PdbRowWriter::NameTable::Albums,
+                                              [](size_t i) { return "Album " + std::to_string(i); });
+            genres = writer.overwriteAllNames(PdbRowWriter::NameTable::Genres,
+                                              [](size_t i) { return "Genre " + std::to_string(i); });
+            labels = writer.overwriteAllNames(PdbRowWriter::NameTable::Labels,
+                                              [](size_t i) { return "Label " + std::to_string(i); });
+            assert(writer.commit());
+        }
+        // The fixture really does have rows in all three tables; a silent
+        // zero here would make the whole case vacuous.
+        assert(albums > 0);
+        assert(genres > 0);
+        assert(labels > 0);
+
+        const std::string after = namesIn(pdb);
+        assert(after.size() == before.size());  // never resized, like every other edit
+        assert(after != before);
+        // Each placeholder is written into the exact byte span the real
+        // name occupied, so what survives depends on how long that name
+        // was. Album and genre names here are long enough to hold the
+        // index; the label names are not, and truncate to "Label" -- the
+        // same behaviour every other overwrite in this class has, not a
+        // wrong offset. Labels share both the code path and the offset
+        // constant with genres, which is checked with its index intact.
+        assert(after.find("Album 0") != std::string::npos);
+        assert(after.find("Genre 0") != std::string::npos);
+        assert(after.find("Label") != std::string::npos);
+
+        // And the catalog still reads back intact -- a name written at a
+        // wrong offset corrupts the row it lands in, which shows up here
+        // rather than as a wrong name.
+        KaitaiRekordboxReader reader(pioneer.string());
+        const auto tracks = reader.readAll();
+        assert(tracks.size() > 1000);
+
+        std::cout << "case 5 (albums/genres/labels are all scrubbed: " << albums << "/" << genres << "/" << labels
+                  << ", and the catalog still reads) OK\n";
     }
 
     fs::remove_all(scratch);

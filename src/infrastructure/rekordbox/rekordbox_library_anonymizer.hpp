@@ -19,6 +19,11 @@ struct RekordboxAnonymizationResult
     int tracksKept = 0;
     int tracksDropped = 0;  // only nonzero when maxTracks was set and exceeded
     int artistsRenamed = 0;
+    // The pdb's other name tables, scrubbed wholesale rather than per
+    // referenced id -- see the call site for why.
+    int albumsRenamed = 0;
+    int genresRenamed = 0;
+    int labelsRenamed = 0;
     int playlistsRenamed = 0;
     // Analysis files removed because no kept track pointed at them, when
     // pruneUnreferencedAnalysisFiles was asked for.

@@ -503,6 +503,12 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             text.filename = obfuscatedFilename;
             text.filePath = "/Contents/" + obfuscatedFilename;
             writer.overwriteTrackText(t.id, text);
+
+            // The row's other free-text slots. Emptied rather than given
+            // placeholders: nothing in this project reads them, and a
+            // mix name or an ISRC says what the real recording was.
+            PdbRowWriter::TrackExtraTextOverride extra;
+            writer.overwriteTrackExtraText(t.id, extra);
             ++trackIndex;
             reporter.tick(trackIndex);
         }
@@ -527,8 +533,25 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             }
         }
 
+        // The three name tables nothing above reaches. Every row in each
+        // is a name and all of them are real, so they go wholesale rather
+        // than per-id like artists: the export shipped every album title,
+        // genre and record label until the byte sweep found them.
+        //
+        // Unlike artists these are not pruned to what kept tracks
+        // reference. A dropped track's album row stays in the file, so
+        // scrubbing only the referenced ones would leave the rest
+        // readable.
+        result.albumsRenamed = writer.overwriteAllNames(
+            PdbRowWriter::NameTable::Albums, [](size_t i) { return placeholder("Album", i); });
+        result.genresRenamed = writer.overwriteAllNames(
+            PdbRowWriter::NameTable::Genres, [](size_t i) { return placeholder("Genre", i); });
+        result.labelsRenamed = writer.overwriteAllNames(
+            PdbRowWriter::NameTable::Labels, [](size_t i) { return placeholder("Label", i); });
+
         bool anyEditAttempted = !kept.empty() || !dropped.empty() || !sortedArtistIds.empty() ||
-                                 !enumerated.playlistIds.empty();
+                                 !enumerated.playlistIds.empty() || result.albumsRenamed > 0 ||
+                                 result.genresRenamed > 0 || result.labelsRenamed > 0;
         if (anyEditAttempted && !writer.commit()) {
             result.errorMessage = "failed to commit anonymized export.pdb (see PdbRowWriter::commit())";
             return result;

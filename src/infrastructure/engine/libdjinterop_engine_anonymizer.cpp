@@ -64,6 +64,34 @@ int emptyEngineWaveformColumn(const std::string &dbPath)
     return changed;
 }
 
+// Compacts the database so that no value any earlier step overwrote is
+// still legible in the file.
+//
+// SQLite overwrites a row by writing the new cell and leaving the old
+// bytes where they were, in a freeblock or on a page the freelist has
+// released. Every scrub in this file works by UPDATE, so until the file
+// is rebuilt every original title, artist, album and filename is still
+// sitting in it -- invisible to any reader, perfectly visible to strings.
+//
+// This has to run after the LAST writer. It used to happen inside
+// emptyEngineWaveformColumn(), which runs before libdjinterop's own
+// updates and before scrubFilenameColumn(), so the file was compacted and
+// then refilled with the very values the compaction was meant to remove.
+// A regenerated export still carried 317 real strings, and the reader
+// checks could not see any of them because the live rows were correct.
+void compactDatabase(const std::string &dbPath)
+{
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
+        sqlite3_close(db);
+        return;
+    }
+    char *error = nullptr;
+    sqlite3_exec(db, "VACUUM;", nullptr, nullptr, &error);
+    sqlite3_free(error);
+    sqlite3_close(db);
+}
+
 int scrubFilenameColumn(const std::string &destinationRoot)
 {
     const std::string dbPath = (std::filesystem::path(destinationRoot) / "Database2" / "m.db").string();
@@ -345,6 +373,8 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
     }
     if (result.errorMessage.empty()) {
         result.filenameColumnRows = scrubFilenameColumn(destinationRoot);
+        // Last thing, after every writer above: see compactDatabase().
+        compactDatabase((std::filesystem::path(destinationRoot) / "Database2" / "m.db").string());
     }
     return result;
 }
