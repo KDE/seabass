@@ -147,6 +147,21 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
     }
     fs::path root(rootPath);
     std::error_code ec;
+    // fs::space() alone does not refuse a missing root on Windows: unlike
+    // Linux's statvfs (ENOENT for a path that does not exist),
+    // GetDiskFreeSpaceExW resolves whatever volume a path's drive letter
+    // names and reports its free space with no regard for whether the
+    // exact leaf directory is there. A path under a real, mounted drive
+    // but a directory that was never created (case 5's "does-not-exist")
+    // read back the real volume's free space, ec clear, and this went on
+    // to create the missing directory itself via create_directories()
+    // below rather than refusing it -- confirmed directly: fs::space() on
+    // a nonexistent path here returns ec=0 and the volume's real
+    // available bytes.
+    if (!fs::exists(root, ec)) {
+        throw std::runtime_error("no such drive or folder: " + rootPath);
+    }
+    ec.clear();
     auto space = fs::space(root, ec);
     if (ec) {
         throw std::runtime_error("cannot read free space on " + rootPath + ": " + ec.message());
