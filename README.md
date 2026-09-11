@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Seabass
 
 Seabass's home is on [KDE Invent](https://invent.kde.org/sebas/seabass);
@@ -34,6 +40,10 @@ See [`docs/testing.md`](docs/testing.md) for the test suite (including the commi
 real-library integration fixture) and how to submit your own library to help test
 against hardware Sebas doesn't have.
 
+## AI-assisted
+
+Seabass development is assisted by AI tools. 
+
 ## Building
 
 Just run `cmake` as usual (`cmake -B build && cmake --build build`) --
@@ -67,9 +77,18 @@ path yet. Full bidirectional sync between rekordbox and Engine works via
 
 ## License
 
-Seabass's own code is licensed under the **GNU General Public License,
-version 2 or (at your option) any later version** (GPL-2.0-or-later). See
-[`LICENSE`](LICENSE) for the full GPLv2 text.
+Seabass's own code is licensed under **GPL-2.0-only OR GPL-3.0-only OR
+LicenseRef-KDE-Accepted-GPL** -- the GNU General Public License version 2
+or 3, or any later version accepted by the membership of KDE e.V., which
+acts as a proxy under section 14 of GPLv3. That is the form KDE's
+licensing policy expects of an application.
+
+Every file carries an SPDX tag and the full licence texts are in
+[`LICENSES/`](LICENSES/), following [REUSE 3.0](https://reuse.software/)
+as the policy requires. Files that cannot hold a header -- the binary test
+fixtures, vendored sources that must stay byte-identical to upstream --
+are covered by [`.reuse/dep5`](.reuse/dep5). `reuse lint` checks the lot
+and runs in CI.
 
 ### Third-party components
 
@@ -81,21 +100,28 @@ and `specs/README.md` for exact sources):
 |---|---|---|
 | `libdjinterop` | `third_party/libdjinterop/` (git submodule) | LGPL-3.0-or-later |
 | `kaitai_struct_cpp_stl_runtime` | `third_party/kaitai_struct_cpp_stl_runtime/` (git submodule) | MIT |
-| rekordbox PDB/ANLZ format specs, and the C++ parser generated from them | `specs/*.ksy`, `src/infrastructure/rekordbox/generated/` | EPL-1.0 (from [Deep-Symmetry/crate-digger](https://github.com/Deep-Symmetry/crate-digger)) |
+| rekordbox PDB/ANLZ format specs, and the C++ parser generated from them | `specs/*.ksy`, `src/infrastructure/rekordbox/generated/` | EPL-2.0, provisionally (from [Deep-Symmetry/crate-digger](https://github.com/Deep-Symmetry/crate-digger)) |
 
-**A known, unresolved licensing consideration:** the FSF does not consider
-the Eclipse Public License (EPL) 1.0 compatible with the GPL for combined
-works -- EPL-covered code can't straightforwardly be redistributed as part
-of a GPL-licensed combined binary. The rekordbox format specs (and the
-parser code Kaitai Struct generates from them, committed under
-`src/infrastructure/rekordbox/generated/`) are EPL-1.0 and unmodified from
-their upstream source; they retain that license rather than being
-relicensed, but their inclusion in a GPL-2.0-or-later project is a genuine
-gray area, not a resolved one. Worth revisiting if this project is ever
-distributed more broadly (e.g. by re-implementing that parser
-independently, or seeking clarification/relicensing from the specs'
-authors) -- flagged here rather than glossed over.
+**An open licensing question, narrower than it once looked.** The two
+`.ksy` specs declare `license: EPL-1.0` in their own `meta:` block, and
+the FSF does not consider EPL-1.0 compatible with the GPL for combined
+works. Read on that alone, this project could not ship them.
 
-`libdjinterop`'s LGPL-3.0 has no such issue once the GPL side is
-"-or-later": GPLv2-or-later permits combining with LGPLv3 code under
-GPLv3's terms.
+But crate-digger's actual `LICENSE` is **EPL-2.0**, with Secondary
+Licenses of MPL-2.0 or LGPL-3.0 -- the `meta:` field simply predates the
+move and was never updated. Taking the `LICENSE` as authoritative and
+electing LGPL-3.0 under the secondary-licence clause, the specs combine
+with this project on exactly the footing `libdjinterop` already does.
+
+Two things are being confirmed upstream rather than assumed:
+[crate-digger#49](https://github.com/Deep-Symmetry/crate-digger/issues/49)
+reports the stale `meta:` field, and
+[#50](https://github.com/Deep-Symmetry/crate-digger/issues/50) asks
+whether the election reaches the parser Kaitai generates from the specs.
+Until #50 is answered, [`.reuse/dep5`](.reuse/dep5) marks both the specs
+and the generated parser EPL-2.0 provisionally, and says so at the point
+where the answer would change something.
+
+`libdjinterop`'s LGPL-3.0 combines cleanly either way: the disjunction
+above offers GPL-3.0-only, and a GPLv3 combined work takes LGPLv3 code
+without difficulty.
