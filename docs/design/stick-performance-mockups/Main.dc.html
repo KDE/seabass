@@ -1,0 +1,165 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans:wght@400;700&display=swap">
+  <style>
+    body{margin:0;background:#14181c;color:#e8ecef;font-family:"Noto Sans",system-ui,sans-serif;font-size:13.3px;line-height:1.35}
+    a{color:#3daee9}a:hover{color:#6cc4f0}
+    .page{display:flex;flex-direction:column;background:#14181c;overflow:hidden}
+    .toolbar{display:flex;align-items:center;gap:12px;padding:0 16px 8px 16px;background:#1a1f24;flex-shrink:0;height:56px}
+    .crumbs{display:flex;align-items:center;gap:4px}
+    .crumb{font-family:Manrope,system-ui,sans-serif;font-weight:500;font-size:22.7px;color:#898d90;padding:4px 8px;border-radius:4px}
+    .sep{font-size:22.7px;color:#898d90}
+    .title{font-family:Manrope,system-ui,sans-serif;font-weight:500;font-size:22.7px;color:#e8ecef;padding:4px 8px}
+    .body{display:flex;flex-direction:column;gap:16px;padding:16px;flex-grow:1}
+    .group{display:flex;flex-direction:column;gap:6px}
+    .subtitle{font-family:Manrope,system-ui,sans-serif;font-weight:500;font-size:17.3px;color:#e8ecef}
+    .frame{display:flex;flex-direction:column;gap:10px;padding:12px;background:#1a1f24;border:1px solid #333a40;border-radius:4px}
+    .row{display:flex;align-items:center;gap:12px}
+    .col{display:flex;flex-direction:column;gap:2px}
+    .grow{flex-grow:1}
+    .h{font-weight:700}
+    .muted{color:#898d90}
+    .small{font-size:12.3px}
+    .tiny{font-size:11.3px}
+    .mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 14px;border-radius:3px;background:#252b31;border:1px solid #333a40;color:#e8ecef;font-size:13.3px;white-space:nowrap}
+    .badge{display:inline-flex;align-items:center;padding:3px 6px;border-radius:3px;border:1px solid;font-size:11.3px;font-weight:700;white-space:nowrap}
+    .b-good{color:#8fce8f;border-color:#8fce8f;background:rgba(143,206,143,.15)}
+    .b-warn{color:#f0d080;border-color:#c99a2e;background:#4a3510}
+    .b-info{color:#8ab4f8;border-color:#8ab4f8;background:rgba(138,180,248,.15)}
+    .b-muted{color:#898d90;border-color:#333a40;background:transparent}
+    .tiles{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:16px}
+    .tile{display:flex;flex-direction:column;gap:2px}
+    .stat{font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:500;font-size:24px;line-height:1.15}
+    .stat .unit{font-size:14px;color:#898d90;font-weight:400}
+    .eyebrow{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.3px;letter-spacing:.6px;text-transform:uppercase;color:#898d90}
+    .sub{font-size:12.3px;color:#898d90}
+    .facts{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+    .dot{color:#898d90}
+    .advice{display:flex;flex-direction:column;gap:0}
+    .arow{display:grid;grid-template-columns:250px 96px 1fr;gap:12px;align-items:center;padding:8px 8px;border-radius:3px}
+    .arow.odd{background:#1f2429}
+    .aname{font-weight:700}
+    .ayears{font-size:11.3px;color:#898d90;font-weight:400}
+    .hist{display:flex;flex-direction:column;gap:6px}
+    .hrow{display:flex;align-items:center;gap:12px;padding:8px 12px;background:#1a1f24;border:1px solid #333a40;border-radius:4px}
+    .bar{position:relative;height:18px;border-radius:4px;background:#171b20;border:1px solid #2c3238;overflow:hidden}
+    .bar > span{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:#3daee9}
+  </style>
+</helmet>
+<div class="page" style="width:1040px;height:1010px">
+  <div class="toolbar">
+    <div class="crumbs">
+      <span class="crumb">Home</span><span class="sep">›</span>
+      <span class="crumb">WHALESHARK2</span><span class="sep">›</span>
+      <span class="title">Library Statistics</span>
+    </div>
+  </div>
+  <div class="body">
+
+    <div class="group">
+      <div class="subtitle">Filesystem</div>
+      <div class="frame">
+        <div class="row">
+          <span style="font-weight:700;font-size:18.7px">FAT32</span>
+          <span class="badge b-warn">Good for DJ hardware</span>
+          <span class="grow"></span>
+          <span class="muted">480 Mbps (USB 2.0 High-Speed)</span>
+        </div>
+        <div class="muted">Max file size: 4 GiB minus 1 byte per file</div>
+        <div class="row">
+          <div class="bar grow"><span style="width:24.5%"></span></div>
+          <span class="muted small">28.7 GiB used of 117.2 GiB</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="subtitle">USB Stick Performance</div>
+      <div class="frame">
+        <div class="row">
+          <span class="btn">Measure Again</span>
+          <span class="muted small">Measured 11 Sep 2026, 16:52 · reads real files already on the stick, never writes</span>
+        </div>
+
+        <div class="tiles" style="margin-top:4px">
+          <div class="tile">
+            <div class="stat">40 <span class="unit">MB/s</span></div>
+            <div class="eyebrow">Streaming read</div>
+            <div class="sub">Long reads of audio files</div>
+          </div>
+          <div class="tile">
+            <div class="stat">1.1 <span class="unit">ms</span></div>
+            <div class="eyebrow">Small random read</div>
+            <div class="sub">4 KiB from a random spot, median</div>
+          </div>
+          <div class="tile">
+            <div class="stat">860 <span class="unit">files/s</span></div>
+            <div class="eyebrow">Small file open + read</div>
+            <div class="sub">Analysis files, like a track load</div>
+          </div>
+          <div class="tile">
+            <div class="stat">USB 2.0</div>
+            <div class="eyebrow">Link to this computer</div>
+            <div class="sub">480 Mb/s, about 40 MB/s in practice</div>
+          </div>
+        </div>
+
+        <div class="facts small muted" style="margin-top:2px">
+          <span>FAT32, <span class="mono">32 KiB</span> clusters</span><span class="dot">·</span>
+          <span><span class="mono">12,312</span> analysis files in <span class="mono">2,204</span> folders</span><span class="dot">·</span>
+          <span><span class="mono">2,100</span> audio files</span><span class="dot">·</span>
+          <span>Fragmentation: not readable without administrator rights on Linux</span>
+        </div>
+
+        <div class="row" style="margin-top:6px">
+          <span class="h">On a player</span>
+          <span class="muted small">Each generation stresses the stick differently. Rows are judged on the measurement that matters for it.</span>
+        </div>
+        <div class="advice">
+          <div class="arow odd">
+            <div class="col"><span class="aname">Device Library players</span><span class="ayears">CDJ-2000 · NXS · NXS2 · XDJ-1000MK2 · XDJ-XZ · XDJ-RX3 · CDJ-3000</span></div>
+            <span class="badge b-good">FINE</span>
+            <span class="small">Reads the database in 4 KiB pages straight off the stick as you browse, the same size as the small random read above, and one analysis file per track load. About 1 ms a page keeps up with the jog wheel.</span>
+          </div>
+          <div class="arow">
+            <div class="col"><span class="aname">OneLibrary players</span><span class="ayears">CDJ-3000X · OPUS-QUAD · OMNIS-DUO · XDJ-AZ · rekordbox 7</span></div>
+            <span class="badge b-good">FINE</span>
+            <span class="small">Runs every list, sort and search as a SQLite query on the stick. Small random reads decide how snappy that feels; this stick answers in about 1 ms.</span>
+          </div>
+          <div class="arow odd">
+            <div class="col"><span class="aname">Engine OS players</span><span class="ayears">SC5000 · SC6000 · Prime 4 / 4+ · Prime 2 · Prime GO · SC Live</span></div>
+            <span class="badge b-good">FINE</span>
+            <span class="small">Reads its SQLite database in place, like OneLibrary. Denon asks for at least 20 MB/s streaming and this stick reads at twice that. A library from an older Engine DJ is migrated on the player at the stick's own speed.</span>
+          </div>
+          <div class="arow">
+            <div class="col"><span class="aname">This computer</span><span class="ayears">Seabass, rekordbox, Engine DJ</span></div>
+            <span class="badge b-info">USB 2.0 PORT</span>
+            <span class="small">The stick is on a USB 2.0 port and is already using all of it. A full stick backup of 28.7 GiB takes about 12 minutes here; a USB 3 port would only help if the stick is USB 3 as well.</span>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:8px">
+          <span class="h">History for this stick</span>
+          <span class="muted small">3 measurements on this computer</span>
+        </div>
+        <div class="hist">
+          <div class="hrow"><span class="muted small" style="width:150px">Sep 11, 2026 4:52 PM</span><span class="mono">40 MB/s</span><span class="mono">1.1 ms</span><span class="mono">860 files/s</span><span class="muted small">USB 2.0</span><span class="grow"></span><span class="badge b-good">FINE EVERYWHERE</span></div>
+          <div class="hrow"><span class="muted small" style="width:150px">Sep 4, 2026 8:39 PM</span><span class="mono">39 MB/s</span><span class="mono">1.2 ms</span><span class="mono">790 files/s</span><span class="muted small">USB 2.0</span><span class="grow"></span><span class="badge b-good">FINE EVERYWHERE</span></div>
+          <div class="hrow"><span class="muted small" style="width:150px">Aug 28, 2026 1:17 PM</span><span class="mono">18 MB/s</span><span class="mono">1.3 ms</span><span class="mono">410 files/s</span><span class="muted small">USB 2.0, via hub</span><span class="grow"></span><span class="badge b-warn">SLOW ON THIS PORT</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

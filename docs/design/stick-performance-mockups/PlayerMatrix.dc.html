@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans:wght@400;700&display=swap">
+  <style>
+    body{margin:0;background:#14181c;color:#e8ecef;font-family:"Noto Sans",system-ui,sans-serif;font-size:13.3px;line-height:1.4}
+    a{color:#3daee9}a:hover{color:#6cc4f0}
+    .page{display:flex;flex-direction:column;gap:12px;padding:24px 28px;background:#14181c;box-sizing:border-box}
+    h2{font-family:Manrope,system-ui,sans-serif;font-weight:500;font-size:19px;margin:0}
+    .lede{color:#898d90;max-width:86ch;margin:0}
+    table{border-collapse:collapse;width:100%;table-layout:fixed}
+    th{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.3px;letter-spacing:.6px;text-transform:uppercase;color:#898d90;font-weight:400;text-align:left;padding:6px 10px;border-bottom:1px solid #333a40;vertical-align:bottom}
+    td{padding:9px 10px;border-bottom:1px solid #2c3238;vertical-align:top}
+    tr:nth-child(even) td{background:#1a1f24}
+    .b{font-weight:700}
+    .muted{color:#898d90}
+    .tiny{font-size:11.3px}
+    .mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+    .tag{display:inline-flex;padding:1px 5px;border-radius:3px;border:1px solid;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;vertical-align:1px}
+    .t-doc{color:#8fce8f;border-color:rgba(143,206,143,.4)}
+    .t-com{color:#f0d080;border-color:rgba(201,154,46,.6)}
+    .t-unk{color:#898d90;border-color:#333a40}
+    .key{display:flex;gap:14px;align-items:center;color:#898d90;font-size:12.3px}
+  </style>
+</helmet>
+<div class="page" style="width:1200px;height:1160px">
+  <h2>What each player generation does to a stick</h2>
+  <p class="lede">The advisory rows on the statistics page come from this table. Players are grouped by the database they read, because that decides which measurement matters. Media-port USB versions are mostly undocumented by the manufacturers; where one is stated it is USB 2.0, except OPUS-QUAD's rear USB 3.2 port meant for SSDs. Nothing here uses UASP.</p>
+  <div class="key"><span>Source of each claim:</span><span class="tag t-doc">manufacturer</span><span class="tag t-com">community</span><span class="tag t-unk">unknown</span></div>
+  <table>
+    <tr>
+      <th style="width:210px">Players</th>
+      <th style="width:150px">Media port · filesystems</th>
+      <th>At insertion</th>
+      <th>Loading a track</th>
+      <th>Browsing and search</th>
+      <th style="width:150px">Decides the verdict</th>
+    </tr>
+    <tr>
+      <td><span class="b">Device Library players</span><br><span class="muted tiny">CDJ-2000 · CDJ-2000NXS · CDJ-2000NXS2 · XDJ-1000MK2 · XDJ-XZ · XDJ-RX3 · CDJ-3000</span></td>
+      <td>CDJ-2000: USB 2.0 <span class="tag t-doc">manufacturer</span>; the rest <span class="tag t-unk">unknown</span>, assumed 2.0 <span class="tag t-com">community</span><br>FAT32, HFS+; exFAT only on XZ, RX3, CDJ-3000 with newer firmware <span class="tag t-doc">manufacturer</span></td>
+      <td>Opens export.pdb, a file of 4 KiB pages in linked lists, built so a low-power device can read it on demand. Manuals only say reading "takes time" with many files; whether pages stay cached in RAM is undocumented. <span class="tag t-unk">unknown</span> Firmware notes for NXS 1.13, NXS2 1.10 and CDJ-3000 2.02 all "improved browsing / search speed", so browsing does touch the stick. <span class="tag t-doc">manufacturer</span></td>
+      <td>One ANLZ .DAT per track (beat grid, cues, waveform), plus .EXT on NXS2 and later, plus .2EX on CDJ-3000. Then audio streams.</td>
+      <td>Page reads from the stick as you scroll and search: 4 KiB random reads, exactly the second measurement. A 50k-track stick mounted in under 9 s on FAT32 and about 60 s on HFS+. <span class="tag t-com">community</span></td>
+      <td>Small random read, then small file open</td>
+    </tr>
+    <tr>
+      <td><span class="b">OneLibrary players</span><br><span class="muted tiny">CDJ-3000X · OPUS-QUAD · OMNIS-DUO · XDJ-AZ · rekordbox 7 exports</span></td>
+      <td>OPUS-QUAD: 2× USB 2.0 top, 1× USB 3.2 rear "for SSDs" <span class="tag t-doc">manufacturer</span>; the rest <span class="tag t-unk">unknown</span><br>FAT32, exFAT, HFS+ <span class="tag t-doc">manufacturer</span></td>
+      <td>Opens exportLibrary.db, a SQLite database, in place on the stick. These players read only OneLibrary: a classic Device Library stick shows no playlists. CDJ-3000 had OneLibrary support withdrawn in firmware 3.30. <span class="tag t-doc">manufacturer</span></td>
+      <td>Same ANLZ files as the row above.</td>
+      <td>Every list, sort and search is a SQLite query on the stick. AlphaTheta sells its own SanDisk DJ flash drive and staff recommend fast USB 3 sticks. <span class="tag t-doc">manufacturer</span></td>
+      <td>Small random read, then small file open</td>
+    </tr>
+    <tr>
+      <td><span class="b">Engine OS players</span><br><span class="muted tiny">SC5000 · SC6000 · Prime 4 / 4+ · Prime 2 · Prime GO · SC Live 2 / 4</span></td>
+      <td>SC Live: USB 2.0 <span class="tag t-doc">manufacturer</span>; SC5000/6000 rear port "for USB 3.0 devices" is a power note <span class="tag t-doc">manufacturer</span>; the rest <span class="tag t-unk">unknown</span><br>exFAT, FAT32, MBR only <span class="tag t-doc">manufacturer</span></td>
+      <td>Opens Engine Library/Database2/m.db, SQLite, in place. A library from an older Engine DJ is migrated on the player, writing to the stick, at about 20 s per 1,000 tracks and "depending on media read/write speeds". <span class="tag t-doc">manufacturer</span></td>
+      <td>Waveform and cues come out of the same database (overview from OverviewData files), then audio streams.</td>
+      <td>SQLite queries on the stick. Denon's floor: 20 MB/s read, 6 MB/s write; tested to 50,000 tracks, SSD recommended above that. OS 4.0 fixed slow search filters. <span class="tag t-doc">manufacturer</span></td>
+      <td>Small random read, then streaming against Denon's 20 MB/s floor</td>
+    </tr>
+    <tr>
+      <td><span class="b">This computer</span><br><span class="muted tiny">Seabass, rekordbox, Engine DJ</span></td>
+      <td>Whatever the port negotiates: USB 2.0 tops out near 40 MB/s, USB 3 at 250–300 MB/s without UASP</td>
+      <td>Seabass' scan stats every track file and walks the analysis folders: thousands of small operations, slow on a cold cache.</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Streaming for backups and exports, small random read for scans</td>
+    </tr>
+  </table>
+  <p class="lede" style="font-size:12.3px">Reference points for the small random read, 4 KiB at queue depth 1: a 2012-era USB 2.0 stick (SanDisk Cruzer Blade) about 0.9 ms; a current USB 3 stick 0.2–0.3 ms; a portable SSD about 0.2 ms. Sticks differ 4–5× on this and 15–30× on streaming.</p>
+</div>
+</x-dc>
+</body>
+</html>

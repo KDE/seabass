@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans:wght@400;700&display=swap">
+  <style>
+    body{margin:0;background:#14181c;color:#e8ecef;font-family:"Noto Sans",system-ui,sans-serif;font-size:14px;line-height:1.55}
+    a{color:#3daee9}a:hover{color:#6cc4f0}
+    .doc{display:flex;flex-direction:column;gap:22px;padding:40px 44px 48px 44px;background:#14181c;box-sizing:border-box}
+    .eyebrow{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:#5be0c0}
+    h1{font-family:Manrope,system-ui,sans-serif;font-weight:500;font-size:30px;margin:0;letter-spacing:-.005em}
+    h2{font-family:Manrope,system-ui,sans-serif;font-weight:500;font-size:19px;margin:0}
+    p{margin:0;max-width:66ch}
+    .lede{color:#898d90;font-size:15px;max-width:66ch}
+    .sec{display:flex;flex-direction:column;gap:10px}
+    .muted{color:#898d90}
+    .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.92em}
+    table{border-collapse:collapse;width:100%;font-size:13.3px}
+    th{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.3px;letter-spacing:.6px;text-transform:uppercase;color:#898d90;font-weight:400;text-align:left;padding:6px 10px;border-bottom:1px solid #333a40}
+    td{padding:8px 10px;border-bottom:1px solid #2c3238;vertical-align:top}
+    tr:nth-child(even) td{background:#1a1f24}
+    .b{font-weight:700}
+    .good{color:#8fce8f}.warn{color:#f0d080}.bad{color:#ff8080}
+    ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:70ch}
+    .kv{display:grid;grid-template-columns:200px 1fr;gap:6px 18px;font-size:13.3px;max-width:760px}
+    .kv .k{color:#898d90}
+  </style>
+</helmet>
+<div class="doc" style="width:820px">
+  <div class="sec" style="gap:8px">
+    <span class="eyebrow">Design note · 11 Sep 2026</span>
+    <h1>USB Stick Performance</h1>
+    <p class="lede">Replaces the Read-Speed Benchmark on the Library Statistics page. The old benchmark measured one thing (sequential MB/s) and reduced it to an invented score. A DJ player does three different things to a stick, and a stick can be good at one and terrible at another, so this measures the three separately and says what each one means on the player generations people actually own.</p>
+  </div>
+
+  <div class="sec">
+    <h2>What a player does to a stick</h2>
+    <ul>
+      <li><span class="b">Streaming</span>: reading an audio file front to back. Even a bad stick manages several MB/s, and a WAV deck needs 0.2 MB/s, so this almost never causes dropouts. It bounds loads of long files and every copy or backup from a computer.</li>
+      <li><span class="b">Small random reads</span>: a database page here, a waveform block there. This is what browsing feels like on every player: rekordbox's export.pdb is a file of 4 KiB pages built for on-demand reads by low-power devices, and OneLibrary and Engine OS are SQLite files read in place. Old flash controllers are 4–5× slower here than current sticks, and a worn one far worse, while looking similar on streaming.</li>
+      <li><span class="b">Small file open + read</span>: one analysis file per track load, thousands of tiny files in a full scan. Directory lookup on FAT32 is a linear search of the folder's entries, so libraries with very large folders pay extra.</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>The four numbers</h2>
+    <table>
+      <tr><th style="width:170px">Shown as</th><th style="width:260px">How it is measured</th><th>Notes</th></tr>
+      <tr><td class="b">Streaming read<br><span class="muted mono">40 MB/s</span></td><td>Existing measurement, kept: 20 audio files spread through the library, page cache dropped per file, 4 MiB read from the front of each.</td><td>Decimal MB/s, matching how sticks are sold. Saturates at ~40 MB/s on a USB 2.0 port whatever the stick can do.</td></tr>
+      <tr><td class="b">Small random read<br><span class="muted mono">1.1 ms</span></td><td>300 reads of 4 KiB at random 4 KiB-aligned offsets across the same audio files, opened with O_DIRECT (Linux) / FILE_FLAG_NO_BUFFERING (Windows) so the page cache is bypassed. Report the median; keep p95 for the tooltip.</td><td>O_DIRECT works on vfat and exfat. Needs a 4 KiB-aligned buffer. Falls back to fadvise-then-read where O_DIRECT is refused.</td></tr>
+      <tr><td class="b">Small file open + read<br><span class="muted mono">860 files/s</span></td><td>150 analysis files chosen at random (PIONEER/USBANLZ/*/*/ANLZ0000.DAT, or Engine OverviewData files when there is no rekordbox export), cache dropped, then open + read 16 KiB + close, timed as a group.</td><td>Honest caveat: the kernel's directory cache cannot be dropped without root, so after the first scan this measures data latency, not directory search. Say so in the tooltip rather than pretend.</td></tr>
+      <tr><td class="b">Link<br><span class="muted mono">USB 2.0</span></td><td>Existing udev sysfs speed attribute (Linux). Windows still unknown.</td><td>Shown as a plain fact, not a verdict: every player in the matrix is a USB 2.0 host, so a USB 3 stick only pays off on the computer.</td></tr>
+    </table>
+    <p class="muted" style="font-size:13px">Facts line under the tiles: filesystem and cluster size (statvfs f_bsize is the cluster on vfat), analysis-file and folder counts (free, the statistics scan already walks them), audio file count, and the dirty flag / fragmentation where the OS lets an unprivileged process read them (Windows: FSCTL_GET_RETRIEVAL_POINTERS on export.pdb; Linux: neither without root, so say "not readable").</p>
+  </div>
+
+  <div class="sec">
+    <h2>Verdicts</h2>
+    <p>One badge per player generation, computed from the measurement that generation depends on. Thresholds below are provisional and should be calibrated against a known-bad stick and a known-good one before they ship. The "this computer" row uses the link speed and streaming rate to estimate backup and export times, which the Full Stick Backup page already does from the old benchmark.</p>
+    <table>
+      <tr><th>Measurement</th><th class="good">Fine</th><th class="warn">Slower</th><th class="bad">Sluggish</th></tr>
+      <tr><td>Streaming read</td><td>≥ 20 MB/s (Denon's own floor for Engine OS media)</td><td>8 – 20 MB/s</td><td>&lt; 8 MB/s</td></tr>
+      <tr><td>Small random read (median)</td><td>≤ 2 ms (a 2012 stick does ~0.9, a current one ~0.2)</td><td>2 – 8 ms</td><td>&gt; 8 ms</td></tr>
+      <tr><td>Small file open + read</td><td>≥ 300 files/s</td><td>100 – 300 files/s</td><td>&lt; 100 files/s</td></tr>
+    </table>
+    <div class="kv" style="margin-top:4px">
+      <span class="k">Device Library players</span><span>Small random read (4 KiB database pages as you browse), then small file open for every track load. Worst of the two.</span>
+      <span class="k">OneLibrary players</span><span>Small random read (SQLite queries on the stick), then small file open.</span>
+      <span class="k">Engine OS</span><span>Small random read (SQLite on the stick for every list), then streaming against Denon's 20 MB/s floor, which also paces the on-player migration.</span>
+      <span class="k">This computer</span><span>Streaming read for backups and exports; small random read for scans. Estimated times, not a badge colour.</span>
+    </div>
+  </div>
+
+  <div class="sec">
+    <h2>What changes in the code</h2>
+    <ul>
+      <li><span class="mono">StickSpeedBenchmark</span> grows two measurements and loses <span class="mono">score</span>. The comparative score never meant anything to a DJ; the per-generation verdict replaces it.</li>
+      <li><span class="mono">BenchmarkRecord</span> and the local history table gain the two columns. Pre-1.0, so the table is recreated rather than migrated.</li>
+      <li>A new domain type, <span class="mono">PlayerAdvisory</span>, holds the generation table and the thresholds, so the QML only renders rows. Testable without a stick.</li>
+      <li>The statistics scan's per-track <span class="mono">file_size</span> calls in both readers can use the size the database already stores and only stat when it is zero. Not part of this feature, but it is the biggest read-side cost on a cold stick and was found while looking at this.</li>
+      <li>Everything stays read-only. Opening a SQLite export in WAL mode touches its -shm file; the reader should open with <span class="mono">immutable=1</span> so a "never writes" claim is actually true.</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Found on WHALESHARK2 today</h2>
+    <div class="kv">
+      <span class="k">Link</span><span>USB 2.0, directly on a root port at 16:40. At 12:35 it was behind a hub next to a webcam that reset itself; that is the likeliest cause of the slow statistics page, not the stick.</span>
+      <span class="k">Streaming</span><span>40 MB/s, the USB 2.0 ceiling. The stick could be faster on a USB 3 port; unknown until tried.</span>
+      <span class="k">Small random read</span><span>1.08 ms median, 1.43 ms p95. Healthy.</span>
+      <span class="k">Small file open + read</span><span>858 files/s on ANLZ .DAT files of 4–11 KiB.</span>
+      <span class="k">Filesystem</span><span>FAT32, 32 KiB clusters, 117.2 GiB, 28.7 GiB used. The kernel logged "not properly unmounted" at mount time, so the dirty flag is set.</span>
+      <span class="k">Fragmentation</span><span>Not measurable without root on Linux. With 32 KiB clusters and a 1.4 MB export.pdb, even the worst case is 45 extents, which is a few ms.</span>
+    </div>
+  </div>
+
+  <div class="sec">
+    <h2>Sources behind the player matrix</h2>
+    <ul style="font-size:12.5px">
+      <li>export.pdb page structure: Deep Symmetry, <a href="https://djl-analysis.deepsymmetry.org/rekordbox-export-analysis/exports.html">rekordbox export analysis</a>.</li>
+      <li>CDJ-2000 media port is USB 2.0: AlphaTheta, CDJ-2000 firmware change history 4.33. Browsing-speed fixes: CDJ-2000NXS 1.13, CDJ-2000NXS2 1.10, CDJ-3000 2.02 change histories.</li>
+      <li>OneLibrary-only players and the CDJ-3000 3.30 withdrawal: <a href="https://alphatheta.com/en/information/important-notice-for-customers-using-usb-devices-with-our-dj-equipment/">AlphaTheta notice</a>, <a href="https://www.pioneerdj.com/en/news/2026/cdj-3000-firmware-ver330-important-notice/">CDJ-3000 3.30 notice</a>.</li>
+      <li>OPUS-QUAD USB 3.2 rear port: <a href="https://www.pioneerdj.com/en/product/all-in-one-system/opus-quad/black/specifications/">specifications</a>. exFAT firmware gates: AlphaTheta support articles 4408364513817 (XZ), 4409195984281 (RX3), 4406135001625 (CDJ-3000).</li>
+      <li>Engine OS: <a href="https://support.enginedj.com/support/solutions/articles/69000809366">Prime 4 FAQ</a> (20 MB/s read, 6 MB/s write, exFAT/FAT32, MBR), <a href="https://enginedj.com/news/articles/engine-dj-v2-0-faq">Engine DJ 2.0 FAQ</a> (on-player migration, ~20 s per 1,000 tracks), SC Live 4 product page (USB 2.0 ports).</li>
+      <li>USB 2.0 bulk-only throughput 30–42 MB/s and the BOT/UASP gap: USB-IF mass storage bulk-only spec, Tom's Hardware UASP review. 4 KiB latency reference points: UserBenchmark (Cruzer Blade), ssd-tester.com (BAR Plus, DataTraveler Max, T7).</li>
+      <li>Community claims (50k-track CDJ-3000 mount times, 1,000-playlist ceilings) come from forums.pioneerdj.com and community.enginedj.com threads and are marked as such.</li>
+    </ul>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

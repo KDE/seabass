@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans:wght@400;700&display=swap">
+  <style>
+    body{margin:0;background:#14181c;color:#e8ecef;font-family:"Noto Sans",system-ui,sans-serif;font-size:13.3px;line-height:1.35}
+    a{color:#3daee9}a:hover{color:#6cc4f0}
+    .page{display:flex;flex-direction:column;background:#14181c;overflow:hidden}
+    .body{display:flex;flex-direction:column;gap:16px;padding:16px;flex-grow:1}
+    .group{display:flex;flex-direction:column;gap:6px}
+    .subtitle{font-family:Manrope,system-ui,sans-serif;font-weight:500;font-size:17.3px;color:#e8ecef}
+    .frame{display:flex;flex-direction:column;gap:10px;padding:12px;background:#1a1f24;border:1px solid #333a40;border-radius:4px}
+    .row{display:flex;align-items:center;gap:12px}
+    .col{display:flex;flex-direction:column;gap:2px}
+    .grow{flex-grow:1}
+    .h{font-weight:700}
+    .muted{color:#898d90}
+    .small{font-size:12.3px}
+    .mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 14px;border-radius:3px;background:#252b31;border:1px solid #333a40;color:#e8ecef;font-size:13.3px;white-space:nowrap}
+    .badge{display:inline-flex;align-items:center;padding:3px 6px;border-radius:3px;border:1px solid;font-size:11.3px;font-weight:700;white-space:nowrap}
+    .b-good{color:#8fce8f;border-color:#8fce8f;background:rgba(143,206,143,.15)}
+    .b-warn{color:#f0d080;border-color:#c99a2e;background:#4a3510}
+    .b-danger{color:#ffffff;border-color:#e74c3c;background:#5c1a1a}
+    .b-info{color:#8ab4f8;border-color:#8ab4f8;background:rgba(138,180,248,.15)}
+    .tiles{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:16px}
+    .tile{display:flex;flex-direction:column;gap:2px}
+    .stat{font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:500;font-size:24px;line-height:1.15}
+    .stat .unit{font-size:14px;color:#898d90;font-weight:400}
+    .stat.warn{color:#f0c040}
+    .stat.bad{color:#ff8080}
+    .eyebrow{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.3px;letter-spacing:.6px;text-transform:uppercase;color:#898d90}
+    .sub{font-size:12.3px;color:#898d90}
+    .facts{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+    .dot{color:#898d90}
+    .notice{display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:4px;background:#4a3510;border:1px solid #c99a2e;color:#f0d080}
+    .notice .glyph{color:#f0c040;font-size:15.3px;line-height:1.2}
+    .advice{display:flex;flex-direction:column;gap:0}
+    .arow{display:grid;grid-template-columns:250px 96px 1fr;gap:12px;align-items:center;padding:8px 8px;border-radius:3px}
+    .arow.odd{background:#1f2429}
+    .aname{font-weight:700}
+    .ayears{font-size:11.3px;color:#898d90;font-weight:400}
+  </style>
+</helmet>
+<div class="page" style="width:1040px;height:640px">
+  <div class="body">
+
+    <div class="group">
+      <div class="subtitle">USB Stick Performance</div>
+      <div class="frame">
+        <div class="row">
+          <span class="btn">Measure Again</span>
+          <span class="muted small">Measured 11 Sep 2026, 17:10 · reads real files already on the stick, never writes</span>
+        </div>
+
+        <div class="tiles" style="margin-top:4px">
+          <div class="tile">
+            <div class="stat warn">9.4 <span class="unit">MB/s</span></div>
+            <div class="eyebrow">Streaming read</div>
+            <div class="sub">Long reads of audio files</div>
+          </div>
+          <div class="tile">
+            <div class="stat bad">14 <span class="unit">ms</span></div>
+            <div class="eyebrow">Small random read</div>
+            <div class="sub">4 KiB from a random spot, median</div>
+          </div>
+          <div class="tile">
+            <div class="stat bad">55 <span class="unit">files/s</span></div>
+            <div class="eyebrow">Small file open + read</div>
+            <div class="sub">Analysis files, like a track load</div>
+          </div>
+          <div class="tile">
+            <div class="stat">USB 2.0</div>
+            <div class="eyebrow">Link to this computer</div>
+            <div class="sub">480 Mb/s, about 40 MB/s in practice</div>
+          </div>
+        </div>
+
+        <div class="facts small muted" style="margin-top:2px">
+          <span>FAT32, <span class="mono">4 KiB</span> clusters</span><span class="dot">·</span>
+          <span><span class="mono">41,880</span> analysis files in <span class="mono">7,530</span> folders</span><span class="dot">·</span>
+          <span><span class="mono">7,144</span> audio files</span><span class="dot">·</span>
+          <span>Not cleanly ejected last time</span>
+        </div>
+
+        <div class="notice">
+          <span class="glyph">⚠</span>
+          <span>This stick is slow at exactly the thing a player does most: many small reads. Streaming is fine, so playback will not stutter, but loading and browsing will drag. Copying the library to a newer stick is the fix; reformatting this one will not change its controller.</span>
+        </div>
+
+        <div class="row" style="margin-top:2px">
+          <span class="h">On a player</span>
+          <span class="muted small">Each generation stresses the stick differently. Rows are judged on the measurement that matters for it.</span>
+        </div>
+        <div class="advice">
+          <div class="arow odd">
+            <div class="col"><span class="aname">Device Library players</span><span class="ayears">CDJ-2000 · NXS · NXS2 · XDJ-1000MK2 · XDJ-XZ · XDJ-RX3 · CDJ-3000</span></div>
+            <span class="badge b-warn">SLOW BROWSE</span>
+            <span class="small">Every page of the database is a 14 ms wait, and a folder of thousands of tracks is hundreds of pages. Expect a long "Loading" at insertion, browsing that lags the jog wheel, and a pause before each waveform appears.</span>
+          </div>
+          <div class="arow">
+            <div class="col"><span class="aname">OneLibrary players</span><span class="ayears">CDJ-3000X · OPUS-QUAD · OMNIS-DUO · XDJ-AZ · rekordbox 7</span></div>
+            <span class="badge b-danger">SLUGGISH</span>
+            <span class="small">Search and sort run as SQLite queries on the stick as you type. At 14 ms per read every keystroke and every scroll waits on the stick; this is the generation that suffers most.</span>
+          </div>
+          <div class="arow odd">
+            <div class="col"><span class="aname">Engine OS players</span><span class="ayears">SC5000 · SC6000 · Prime 4 / 4+ · Prime 2 · Prime GO · SC Live</span></div>
+            <span class="badge b-danger">SLUGGISH</span>
+            <span class="small">Same SQLite-on-the-stick model, and streaming is under Denon's 20 MB/s minimum for Engine OS media. The one-time migration of an older library runs at the stick's speed: minutes for 7,000 tracks.</span>
+          </div>
+          <div class="arow">
+            <div class="col"><span class="aname">This computer</span><span class="ayears">Seabass, rekordbox, Engine DJ</span></div>
+            <span class="badge b-warn">SLOW</span>
+            <span class="small">Exports and full backups are bound by the 9.4 MB/s streaming rate: a 60 GiB backup takes close to 2 hours. Library scans are bound by the small reads and take minutes, not seconds.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
