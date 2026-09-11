@@ -225,6 +225,7 @@ target_link_libraries(rekordbox_format PUBLIC kaitai_cpp_stl_runtime)
 # project. seabass_core links it; the DJ workload lives in domain/.
 add_library(storageprobe STATIC
     src/storageprobe/read_probe.cpp
+    src/storageprobe/surface_check.cpp
     src/storageprobe/write_probe.cpp
     src/storageprobe/workload.cpp
 )
@@ -257,7 +258,9 @@ add_library(seabass_core STATIC
     src/application/ports/progress_reporter.cpp
     src/application/use_cases/anonymize_library.cpp
     src/infrastructure/benchmark/stick_performance_probe.cpp
+    src/infrastructure/benchmark/stick_surface_check.cpp
     src/infrastructure/benchmark/stick_write_probe.cpp
+    src/infrastructure/local/stick_performance_history.cpp
     src/infrastructure/bulk_write_strategy.cpp
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/rekordbox/anlz_byte_source.cpp
@@ -1214,7 +1217,11 @@ add_test(NAME stick_performance_test COMMAND stick_performance_test)
 
 add_executable(stick_performance_probe_test
     src/infrastructure/benchmark/stick_performance_probe.cpp
+    src/infrastructure/benchmark/stick_surface_check.cpp
     src/infrastructure/benchmark/stick_write_probe.cpp
+    src/infrastructure/local/stick_performance_history.cpp
+    src/infrastructure/local/app_data_directory.cpp
+    src/infrastructure/paths/seabass_paths.cpp
     src/domain/stick_performance.cpp
     tests/stick_performance_probe_test.cpp
 )
@@ -1226,6 +1233,7 @@ add_test(NAME stick_performance_probe_test COMMAND stick_performance_probe_test)
 # (and, for the write half, SEABASS_LIVE_WRITE=1) is set.
 add_executable(stick_performance_live_test
     src/infrastructure/benchmark/stick_performance_probe.cpp
+    src/infrastructure/benchmark/stick_surface_check.cpp
     src/infrastructure/benchmark/stick_write_probe.cpp
     src/domain/stick_performance.cpp
     tests/stick_performance_live_test.cpp

@@ -1,6 +1,7 @@
 #include "stick_performance_controller.hpp"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -15,7 +16,9 @@
 #include "gui/library_catalog_cache.hpp"
 #include "gui/stick_performance_cache.hpp"
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
+#include "infrastructure/benchmark/stick_surface_check.hpp"
 #include "infrastructure/benchmark/stick_write_probe.hpp"
+#include "infrastructure/local/stick_performance_history.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 
@@ -50,6 +53,8 @@ QVariantMap toVariant(const domain::StickPerformanceMeasurement &m)
     v["randomReadMedianMs"] = m.randomReadMedianMs;
     v["randomReadP95Ms"] = m.randomReadP95Ms;
     v["randomReads"] = m.randomReads;
+    v["randomReadOutliers"] = m.randomReadOutliers;
+    v["smallFileOutliers"] = m.smallFileOutliers;
     v["smallFileOpensPerSecond"] = m.smallFileOpensPerSecond;
     v["smallFileMedianMs"] = m.smallFileMedianMs;
     v["smallFilesRead"] = m.smallFilesRead;
@@ -77,6 +82,23 @@ QVariantMap toVariant(const domain::DjWorkloadScore &s)
     QVariantMap v;
     v["score"] = s.score;
     v["speedClass"] = QString::fromStdString(domain::speedClassLabel(s.speedClass));
+    v["speedClassKey"] = [&] {
+        switch (s.speedClass) {
+        case domain::SpeedClass::VeryFast:
+            return QStringLiteral("veryfast");
+        case domain::SpeedClass::Fast:
+            return QStringLiteral("fast");
+        case domain::SpeedClass::Average:
+            return QStringLiteral("average");
+        case domain::SpeedClass::Slow:
+            return QStringLiteral("slow");
+        case domain::SpeedClass::VerySlow:
+            return QStringLiteral("veryslow");
+        case domain::SpeedClass::Unknown:
+            break;
+        }
+        return QStringLiteral("unknown");
+    }();
     v["browseScore"] = s.browseScore;
     v["trackLoadScore"] = s.trackLoadScore;
     v["mountScore"] = s.mountScore;
@@ -350,6 +372,137 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
         }
 
         StickPerformanceCache::instance().store(hwInfo.stickIdentifier, measurement);
+
+        // The trend: everything measured before on this computer, then
+        // this run appended. A history that cannot be read or written
+        // costs the trend line, never the measurement.
+        try {
+            infrastructure::local::StickPerformanceHistory history;
+            std::vector<domain::TrendPoint> earlier;
+            for (const auto &r : history.forStick(hwInfo.stickIdentifier)) {
+                earlier.push_back({r.measuredAtUtc, r.score, r.randomReadMedianMs, r.outliers, r.wearState});
+            }
+            auto trend = domain::assessTrend(score.score, measurement.randomReadMedianMs,
+                                             measurement.randomReadOutliers + measurement.smallFileOutliers, earlier);
+            QVariantMap t;
+            t["state"] = [&] {
+                switch (trend.state) {
+                case domain::TrendState::Steady:
+                    return QStringLiteral("steady");
+                case domain::TrendState::Slowing:
+                    return QStringLiteral("slowing");
+                case domain::TrendState::Worsened:
+                    return QStringLiteral("worsened");
+                case domain::TrendState::Unknown:
+                    break;
+                }
+                return QStringLiteral("unknown");
+            }();
+            t["summary"] = QString::fromStdString(trend.summary);
+            t["earlierCount"] = trend.earlierCount;
+            t["bestEarlierScore"] = trend.bestEarlierScore;
+            result.trend = t;
+
+            infrastructure::local::StickPerformanceRecord record;
+            record.measuredAtUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString();
+            record.stickIdentifier = hwInfo.stickIdentifier;
+            record.stickLabel = stickLabel.toStdString();
+            record.score = score.score;
+            record.streamingBytesPerSecond = measurement.streamingBytesPerSecond;
+            record.randomReadMedianMs = measurement.randomReadMedianMs;
+            record.smallFileMedianMs = measurement.smallFileMedianMs;
+            record.outliers = measurement.randomReadOutliers + measurement.smallFileOutliers;
+            history.append(record);
+        } catch (const std::exception &) {
+            // No trend this time.
+        }
+    } catch (const application::OperationCancelled &) {
+        result.cancelled = true;
+    } catch (const std::exception &e) {
+        result.errorMessage = QString::fromStdString(e.what());
+    }
+    return result;
+}
+
+QString wearStateKey(domain::WearState state)
+{
+    switch (state) {
+    case domain::WearState::Healthy:
+        return QStringLiteral("healthy");
+    case domain::WearState::Watch:
+        return QStringLiteral("watch");
+    case domain::WearState::Failing:
+        return QStringLiteral("failing");
+    case domain::WearState::Unknown:
+        break;
+    }
+    return QStringLiteral("unknown");
+}
+
+// Runs on a worker thread; progress goes back to the controller through
+// queued calls, the same way StickBackupController's backup does.
+StickWearResult runWearTask(std::string stickRoot, std::string stickIdentifier,
+                            domain::StickPerformanceMeasurement probe, application::CancellationToken cancel,
+                            StickPerformanceController *controller)
+{
+    StickWearResult result;
+    try {
+        QElapsedTimer sinceLast;
+        sinceLast.start();
+        auto progress = [&](std::uint64_t bytesDone, std::uint64_t bytesTotal, std::uint64_t filesDone,
+                            std::uint64_t filesTotal) {
+            // At most a few updates a second: a small-file walk would
+            // otherwise flood the event loop.
+            if (sinceLast.elapsed() < 200 && filesDone != filesTotal) {
+                return;
+            }
+            sinceLast.restart();
+            QMetaObject::invokeMethod(
+                controller,
+                [controller, bytesDone, bytesTotal, filesDone, filesTotal] {
+                    controller->applyWearProgress(static_cast<qlonglong>(bytesDone), static_cast<qlonglong>(bytesTotal),
+                                                  static_cast<qlonglong>(filesDone), static_cast<qlonglong>(filesTotal));
+                },
+                Qt::QueuedConnection);
+        };
+        auto check = infrastructure::benchmark::StickSurfaceCheck::run(stickRoot, progress, cancel);
+        auto assessment = domain::assessWear(check, probe);
+
+        QVariantMap c;
+        c["filesRead"] = QVariant::fromValue<qulonglong>(check.filesRead);
+        c["bytesRead"] = QVariant::fromValue<qulonglong>(check.bytesRead);
+        c["medianBytesPerSecond"] = check.medianBytesPerSecond;
+        c["seconds"] = check.seconds;
+        QVariantList unreadable;
+        for (const auto &path : check.unreadable) {
+            unreadable << QString::fromStdString(path);
+        }
+        c["unreadable"] = unreadable;
+        QVariantList slow;
+        for (const auto &f : check.slow) {
+            QVariantMap m;
+            m["path"] = QString::fromStdString(f.path);
+            m["bytesPerSecond"] = f.bytesPerSecond;
+            slow << m;
+        }
+        c["slow"] = slow;
+        result.check = c;
+
+        QVariantMap a;
+        a["state"] = wearStateKey(assessment.state);
+        a["label"] = QString::fromStdString(assessment.label);
+        a["summary"] = QString::fromStdString(assessment.summary);
+        result.assessment = a;
+
+        // Remembered with the latest measurement of this stick, so the
+        // next trend can say "was healthy in June".
+        if (!stickIdentifier.empty()) {
+            try {
+                infrastructure::local::StickPerformanceHistory history;
+                history.setLatestWearState(stickIdentifier, wearStateKey(assessment.state).toStdString());
+            } catch (const std::exception &) {
+            }
+        }
     } catch (const application::OperationCancelled &) {
         result.cancelled = true;
     } catch (const std::exception &e) {
@@ -379,6 +532,87 @@ StickPerformanceController::StickPerformanceController(QObject *parent) : QObjec
             &StickPerformanceController::onFinished);
     connect(&m_writeWatcher, &QFutureWatcher<StickWriteResult>::finished, this,
             &StickPerformanceController::onWriteFinished);
+    connect(&m_wearWatcher, &QFutureWatcher<StickWearResult>::finished, this,
+            &StickPerformanceController::onWearFinished);
+}
+
+void StickPerformanceController::checkWear(const QString &rekordboxPath, const QString &enginePath,
+                                           const QString &mountPoint)
+{
+    if (m_wearBusy || m_busy) {
+        return;
+    }
+    std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
+    if (stickRoot.empty()) {
+        setWearErrorMessage(QStringLiteral("No stick to check."));
+        return;
+    }
+    // The probe's tail counts feed the assessment when they exist; an
+    // unmeasured stick is judged on the surface check alone.
+    domain::StickPerformanceMeasurement probe;
+    probe.randomReads = m_measurement.value("randomReads").toInt();
+    probe.smallFilesRead = m_measurement.value("smallFilesRead").toInt();
+    probe.randomReadOutliers = m_measurement.value("randomReadOutliers").toInt();
+    probe.smallFileOutliers = m_measurement.value("smallFileOutliers").toInt();
+    setWearErrorMessage({});
+    m_wearBytesDone = m_wearBytesTotal = m_wearFilesDone = m_wearFilesTotal = 0;
+    emit wearProgressChanged();
+    setWearBusy(true);
+    m_wearCancel = application::CancellationToken();
+    m_wearWatcher.setFuture(QtConcurrent::run(runWearTask, stickRoot,
+                                              m_filesystemInfo.value("stickIdentifier").toString().toStdString(), probe,
+                                              m_wearCancel, this));
+}
+
+void StickPerformanceController::cancelWearCheck()
+{
+    if (m_wearBusy) {
+        m_wearCancel.cancel();
+    }
+}
+
+void StickPerformanceController::applyWearProgress(qlonglong bytesDone, qlonglong bytesTotal, qlonglong filesDone,
+                                                   qlonglong filesTotal)
+{
+    m_wearBytesDone = bytesDone;
+    m_wearBytesTotal = bytesTotal;
+    m_wearFilesDone = filesDone;
+    m_wearFilesTotal = filesTotal;
+    emit wearProgressChanged();
+}
+
+void StickPerformanceController::onWearFinished()
+{
+    StickWearResult result = m_wearWatcher.result();
+    setWearBusy(false);
+    if (result.cancelled) {
+        return;
+    }
+    if (!result.errorMessage.isEmpty()) {
+        setWearErrorMessage(result.errorMessage);
+        return;
+    }
+    m_wearCheck = result.check;
+    m_wearAssessment = result.assessment;
+    emit wearResultsChanged();
+}
+
+void StickPerformanceController::setWearBusy(bool busy)
+{
+    if (m_wearBusy == busy) {
+        return;
+    }
+    m_wearBusy = busy;
+    emit wearBusyChanged();
+}
+
+void StickPerformanceController::setWearErrorMessage(const QString &message)
+{
+    if (m_wearErrorMessage == message) {
+        return;
+    }
+    m_wearErrorMessage = message;
+    emit wearErrorMessageChanged();
 }
 
 void StickPerformanceController::measureWrites(const QString &rekordboxPath, const QString &enginePath,
@@ -502,6 +736,7 @@ void StickPerformanceController::onFinished()
     m_score = result.score;
     m_advisories = result.advisories;
     m_facts = result.facts;
+    m_trend = result.trend;
     m_measuredAt = QDateTime::currentDateTime().toString(QStringLiteral("d MMM yyyy, HH:mm"));
     emit resultsChanged();
     if (!result.writeEstimate.isEmpty()) {

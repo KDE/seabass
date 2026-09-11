@@ -215,4 +215,102 @@ WriteWorkloadEstimate estimateWriteWorkloads(const StickWriteMeasurement &m)
     return e;
 }
 
+WearAssessment assessWear(const StickSurfaceCheck &check, const StickPerformanceMeasurement &probe)
+{
+    WearAssessment w;
+    if (check.filesRead == 0) {
+        w.state = WearState::Unknown;
+        w.label = "Not checked";
+        w.summary = "Nothing was read.";
+        return w;
+    }
+    std::ostringstream out;
+    if (!check.unreadable.empty()) {
+        w.state = WearState::Failing;
+        w.label = "Failing";
+        out << check.unreadable.size() << " of " << check.filesRead
+            << " files could not be read in full. Copy what this stick still gives up and retire it; a stick that has "
+               "started to lose blocks does not recover.";
+    } else if (!check.slow.empty()) {
+        w.state = WearState::Watch;
+        w.label = "Watch this stick";
+        out << check.slow.size() << " of " << check.filesRead
+            << " files read at under a tenth of this stick's own rate, which is what a controller retrying weak cells "
+               "looks like. Everything is still readable. Keep a backup current and check again in a few months.";
+    } else {
+        w.state = WearState::Healthy;
+        w.label = "No sign of wear";
+        out << "Every one of " << check.filesRead << " files read in full at a normal rate";
+        const int tail = probe.randomReadOutliers + probe.smallFileOutliers;
+        if (probe.randomReads > 0 || probe.smallFilesRead > 0) {
+            if (tail == 0) {
+                out << ", and the small-read tail is flat.";
+            } else if (tail == 1) {
+                out << ", though one small read was unusually slow.";
+            } else {
+                out << ", though " << tail << " small reads were unusually slow.";
+            }
+        } else {
+            out << ".";
+        }
+    }
+    w.summary = out.str();
+    return w;
+}
+
+TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int currentOutliers,
+                            const std::vector<TrendPoint> &earlier)
+{
+    TrendAssessment t;
+    t.earlierCount = static_cast<int>(earlier.size());
+    if (earlier.empty() || currentScore <= 0) {
+        t.state = TrendState::Unknown;
+        t.summary = "First measurement of this stick on this computer; the next one will show whether it is changing.";
+        return t;
+    }
+    std::string lastWear;
+    for (const auto &p : earlier) {
+        t.bestEarlierScore = std::max(t.bestEarlierScore, p.score);
+        if (!p.wearState.empty()) {
+            lastWear = p.wearState;
+        }
+    }
+    std::ostringstream out;
+    out << "Measured " << (earlier.size() + 1) << " times since " << earlier.front().measuredAtUtc.substr(0, 10) << ": ";
+    for (const auto &p : earlier) {
+        out << p.score << ", ";
+    }
+    out << currentScore << ".";
+
+    // A quarter slower than its own best is beyond port-to-port and
+    // day-to-day noise on the same computer; so is the random-read
+    // median doubling, which is the wear symptom, not the port one.
+    double bestRandom = 0.0;
+    for (const auto &p : earlier) {
+        if (p.randomReadMedianMs > 0.0 && (bestRandom == 0.0 || p.randomReadMedianMs < bestRandom)) {
+            bestRandom = p.randomReadMedianMs;
+        }
+    }
+    const bool scoreDropped = t.bestEarlierScore > 0 && currentScore * 4 < t.bestEarlierScore * 3;
+    const bool randomDoubled = bestRandom > 0.0 && currentRandomReadMs > 2.0 * bestRandom;
+    if (scoreDropped || randomDoubled) {
+        t.state = TrendState::Slowing;
+        out << " Slower than it used to be";
+        if (randomDoubled) {
+            out << ": small reads take " << std::fixed;
+            out.precision(1);
+            out << currentRandomReadMs << " ms against " << bestRandom << " ms before, which is what wear looks like";
+        } else {
+            out << "; if it is on the same kind of port as before, run the wear check";
+        }
+        out << ".";
+    } else {
+        t.state = TrendState::Steady;
+        out << " Steady.";
+    }
+    (void)currentOutliers;
+    t.summary = out.str();
+    return t;
+}
+
 }  // namespace seabass::domain

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "storageprobe/measurement.hpp"
+#include "storageprobe/surface_check.hpp"
 #include "storageprobe/workload.hpp"
 
 namespace seabass::domain
@@ -112,5 +113,60 @@ struct WriteWorkloadEstimate
 };
 
 WriteWorkloadEstimate estimateWriteWorkloads(const StickWriteMeasurement &measurement);
+
+// What the wear check concluded. A stick cannot be asked how worn it is
+// (no SMART over USB mass storage), so this is read from symptoms: reads
+// that fail, and reads that take far longer than the rest because the
+// controller is retrying error correction on weak cells.
+using StickSurfaceCheck = storageprobe::SurfaceCheckResult;
+
+enum class WearState
+{
+    Unknown,  // not checked
+    Healthy,  // every file read at a normal rate
+    Watch,    // some files read abnormally slowly: weak blocks, back this stick up and watch it
+    Failing,  // files could not be read
+};
+
+struct WearAssessment
+{
+    WearState state = WearState::Unknown;
+    std::string label;    // "No sign of wear"
+    std::string summary;  // one or two sentences, ending in a full stop
+};
+
+WearAssessment assessWear(const StickSurfaceCheck &check, const StickPerformanceMeasurement &probe);
+
+// A stick over time. Each earlier measurement is one point; the trend
+// compares today's with the best of the earlier ones, because a stick
+// only ever gets slower and a port change can only make it look faster
+// than it is, never slower.
+struct TrendPoint
+{
+    std::string measuredAtUtc;
+    int score = 0;
+    double randomReadMedianMs = 0.0;
+    int outliers = 0;
+    std::string wearState;
+};
+
+enum class TrendState
+{
+    Unknown,   // first measurement, nothing to compare with
+    Steady,    // within noise of the earlier measurements
+    Slowing,   // clearly slower than it used to be: wear, or a slower port
+    Worsened,  // the wear check has gone from healthy to watch/failing
+};
+
+struct TrendAssessment
+{
+    TrendState state = TrendState::Unknown;
+    std::string summary;  // "Measured 4 times since June: 85, 84, 83, 83. Steady."
+    int bestEarlierScore = 0;
+    int earlierCount = 0;
+};
+
+TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int currentOutliers,
+                            const std::vector<TrendPoint> &earlier);
 
 }  // namespace seabass::domain

@@ -24,7 +24,11 @@ TestCase {
         var c = {
             busy: false, errorMessage: "", measuredAt: "11 Sep 2026, 16:52", calls: [],
             writeBusy: false, writeErrorMessage: "", needsScratchFiles: false,
-            filesystemInfo: {}, measurement: {}, score: {}, advisories: [], facts: {},
+            wearBusy: false, wearErrorMessage: "", wearBytesDone: 0, wearBytesTotal: 0, wearFilesDone: 0, wearFilesTotal: 0,
+            wearCheck: {}, wearAssessment: {},
+            checkWear: function(rb, en, mp) { this.calls.push("wear:" + mp); },
+            cancelWearCheck: function() { this.calls.push("cancelWear"); },
+            filesystemInfo: {}, measurement: {}, score: {}, advisories: [], facts: {}, trend: {},
             writeMeasurement: {}, writeEstimate: {},
             measure: function(label, rb, en, mp) { this.calls.push("measure:" + label + ":" + mp); },
             measureWithScratchFiles: function(label, mp) { this.calls.push("scratch:" + label + ":" + mp); },
@@ -37,8 +41,8 @@ TestCase {
                                 usbSpeedLabel: "480 Mbps (USB 2.0 High-Speed)", usbSpeedMbps: 480, stickIdentifier: "x"};
             c.measurement = {streamingBytesPerSecond: 40.0e6, randomReadMedianMs: 1.08, randomReadP95Ms: 1.43,
                              randomReads: 300, smallFileOpensPerSecond: 858, smallFileMedianMs: 1.11,
-                             smallFilesRead: 150, catalogBytes: 5009408};
-            c.score = {score: 49, speedClass: "Average", browseScore: 28, trackLoadScore: 96, mountScore: 30,
+                             smallFilesRead: 150, randomReadOutliers: 0, smallFileOutliers: 0, catalogBytes: 5009408};
+            c.score = {score: 49, speedClass: "Average", speedClassKey: "average", browseScore: 28, trackLoadScore: 96, mountScore: 30,
                        browseActionSeconds: 0.0216, trackLoadSeconds: 0.0557, mountSeconds: 0.665,
                        setWaitSeconds: 7.2, referenceSetWaitSeconds: 3.5,
                        setWaitText: "About 7.2 s of waiting across a two-hour set; a current stick on the same port would wait 3.5 s.",
@@ -55,6 +59,7 @@ TestCase {
                  summary: "Same SQLite-on-the-stick model. Browsing at 1.1 ms per read is noticeably behind a current stick."},
             ];
             c.facts = {clusterBytes: 32768, analysisFiles: 12312, analysisFolders: 2204, audioFiles: 2100, sampleKind: "library"};
+            c.trend = {state: "steady", summary: "Measured 3 times since 2026-06-01: 51, 50, 49. Steady.", earlierCount: 2, bestEarlierScore: 51};
         }
         if (withWrites) {
             c.writeMeasurement = {streamingWriteBytesPerSecond: 12.5e6, smallFileWritesPerSecond: 60,
@@ -116,6 +121,7 @@ TestCase {
         compare(findOne(page, "scoreValue").text, "49");
         compare(findOne(page, "speedClass").text, "Average by today's standards");
         verify(findOne(page, "setWaitText").text.indexOf("7.2 s") >= 0);
+        verify(findOne(page, "trendLine").text.indexOf("Steady") >= 0);
         compare(findOne(page, "measureButton").text, "Measure Again");
         var rows = findAll(page, "advisoryRow");
         compare(rows.length, 3);
@@ -151,11 +157,36 @@ TestCase {
         compare(calls[calls.length - 1], "scratch:WHALESHARK2:/media/WHALESHARK2");
     }
 
+    function test_wearCheckRequestsAndRenders() {
+        var c = fakeController(true, false);
+        var page = makePage(c);
+        verify(findOne(page, "tailLine").text.indexOf("tail is flat") >= 0);
+        var button = findOne(page, "wearButton");
+        compare(button.text, "Check for Wear");
+        button.clicked();
+        var calls = page.controller.calls;
+        compare(calls[calls.length - 1], "wear:/media/WHALESHARK2");
+
+        var done = fakeController(true, false);
+        done.wearCheck = {filesRead: 7529, bytesRead: 21000000000, medianBytesPerSecond: 138e6, seconds: 152,
+                          unreadable: [], slow: [{path: "/media/CORSAIR/Contents/x.mp3", bytesPerSecond: 4e6}]};
+        done.wearAssessment = {state: "watch", label: "Watch this stick",
+                               summary: "1 of 7529 files read at under a tenth of this stick's own rate."};
+        var page2 = makePage(done);
+        compare(findOne(page2, "wearButton").text, "Check for Wear Again");
+        compare(findOne(page2, "wearBadge").label, "WATCH THIS STICK");
+        verify(findOne(page2, "wearSummary").text.indexOf("1 of 7529") >= 0);
+    }
+
     function test_screenshot() {
         if (!screenshotDir || screenshotDir.length === 0) {
             skip("SEABASS_SCREENSHOT_DIR not set");
         }
-        var page = makePage(fakeController(true, true));
+        var c = fakeController(true, true);
+        c.wearCheck = {filesRead: 7529, bytesRead: 21000000000, medianBytesPerSecond: 138e6, seconds: 152, unreadable: [], slow: []};
+        c.wearAssessment = {state: "healthy", label: "No sign of wear",
+                            summary: "Every one of 7529 files read in full at a normal rate, and the small-read tail is flat."};
+        var page = makePage(c);
         grabImage(page).save(screenshotDir + "/stick-performance-page.png");
     }
 }

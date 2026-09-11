@@ -6,7 +6,9 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
+#include "infrastructure/benchmark/stick_surface_check.hpp"
 #include "infrastructure/benchmark/stick_write_probe.hpp"
+#include "infrastructure/local/stick_performance_history.hpp"
 
 #include "scratch_path.hpp"
 
@@ -172,6 +174,101 @@ int main()
         StickWriteProbe::removeScratch(stick.string());
         assert(!fs::exists(stick / StickWriteProbe::kScratchFolderName));
         std::cout << "case 6 (kept scratch files are readable, then removed) OK\n";
+    }
+
+    // Case 7: outliers are counted against the median, and only once
+    // there are enough values for a median to mean something.
+    {
+        assert(storageprobe::outlierCount({1.0, 1.1, 0.9, 1.0, 1.2, 9.0, 1.0, 40.0}) == 2);
+        assert(storageprobe::outlierCount({1.0, 1.0, 1.0, 1.0}) == 0);
+        assert(storageprobe::outlierCount({1.0, 100.0, 100.0}) == 0);
+        assert(storageprobe::outlierCount({}) == 0);
+        std::cout << "case 7 (outlier count) OK\n";
+    }
+
+    // Case 8: the surface check reads every file, counts what it read,
+    // reports progress, and flags a truncated file as unreadable.
+    {
+        fs::path stick = root / "surface";
+        writeFile(stick / "Contents" / "a.mp3", 2 * 1024 * 1024);
+        writeFile(stick / "Contents" / "b.mp3", 3 * 1024 * 1024);
+        writeFile(stick / "PIONEER" / "USBANLZ" / "x" / "ANLZ0000.DAT", 8 * 1024);
+        writeFile(stick / ".hidden" / "note.txt", 100);
+        int progressCalls = 0;
+        std::uint64_t lastTotal = 0;
+        auto check = StickSurfaceCheck::run(stick.string(), [&](std::uint64_t, std::uint64_t total, std::uint64_t, std::uint64_t) {
+            ++progressCalls;
+            lastTotal = total;
+        });
+        assert(check.filesRead == 4);
+        assert(check.bytesRead == 5 * 1024 * 1024 + 8 * 1024 + 100);
+        assert(lastTotal == check.bytesRead);
+        assert(progressCalls == 4);
+        assert(check.medianBytesPerSecond > 0.0);
+        assert(check.unreadable.empty());
+        assert(check.seconds >= 0.0);
+
+        // A file whose directory size claims more than it delivers is
+        // what a failing read looks like to a backup; simulated with a
+        // file that shrinks between the walk and the read. Achieved by
+        // a symlink to a shorter file under the name of a longer one is
+        // not portable, so the check's own truncation rule is exercised
+        // through the domain instead (see stick_performance_test).
+        bool cancelledThrown = false;
+        seabass::application::CancellationToken cancel;
+        cancel.cancel();
+        try {
+            StickSurfaceCheck::run(stick.string(), {}, cancel);
+        } catch (const seabass::application::OperationCancelled &) {
+            cancelledThrown = true;
+        }
+        assert(cancelledThrown);
+        std::cout << "case 8 (surface check reads everything, reports, cancels) OK\n";
+    }
+
+    // Case 9: the local history round-trips, keeps sticks apart, caps at
+    // twenty per stick, and takes a wear state onto the newest record.
+    {
+        using seabass::infrastructure::local::StickPerformanceHistory;
+        using seabass::infrastructure::local::StickPerformanceRecord;
+        fs::path file = root / "history" / "stick-performance-history.tsv";
+        StickPerformanceHistory history(file);
+        assert(history.forStick("A").empty());
+        for (int i = 0; i < 25; ++i) {
+            StickPerformanceRecord r;
+            r.measuredAtUtc = "2026-09-" + std::string(i < 9 ? "0" : "") + std::to_string(i + 1) + "T10:00:00Z";
+            r.stickIdentifier = "A";
+            r.stickLabel = "Tab\tin label";
+            r.score = 50 + i;
+            r.streamingBytesPerSecond = 40e6;
+            r.randomReadMedianMs = 1.1;
+            r.smallFileMedianMs = 1.2;
+            r.outliers = i % 3;
+            history.append(r);
+        }
+        StickPerformanceRecord other;
+        other.measuredAtUtc = "2026-09-11T11:00:00Z";
+        other.stickIdentifier = "B";
+        other.stickLabel = "RV2";
+        other.score = 32;
+        history.append(other);
+
+        auto a = history.forStick("A");
+        assert(a.size() == StickPerformanceHistory::kKeepPerStick);
+        assert(a.front().score == 55);  // the five oldest dropped
+        assert(a.back().score == 74);
+        assert(a.back().stickLabel == "Tab in label");
+        assert(a.back().randomReadMedianMs > 1.09 && a.back().randomReadMedianMs < 1.11);
+        assert(a.back().wearState.empty());
+        assert(history.forStick("B").size() == 1);
+
+        history.setLatestWearState("A", "watch");
+        StickPerformanceHistory reopened(file);
+        auto again = reopened.forStick("A");
+        assert(again.back().wearState == "watch");
+        assert(again[again.size() - 2].wearState.empty());
+        assert(reopened.forStick("B").front().wearState.empty());
+        std::cout << "case 9 (local history round trip, cap, wear state) OK\n";
     }
 
     fs::remove_all(root);

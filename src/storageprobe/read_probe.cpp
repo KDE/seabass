@@ -58,6 +58,29 @@ double median(std::vector<double> values)
     return values[values.size() / 2];
 }
 
+}  // namespace
+
+int outlierCount(std::vector<double> values, double factor)
+{
+    if (values.size() < 4) {
+        return 0;
+    }
+    double m = median(values);
+    if (m <= 0.0) {
+        return 0;
+    }
+    int count = 0;
+    for (double v : values) {
+        if (v > factor * m) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+namespace
+{
+
 double percentile95(std::vector<double> values)
 {
     if (values.empty()) {
@@ -264,6 +287,7 @@ void measureRandomReads(const std::vector<std::string> &files, int reads, const 
     out.randomReads = static_cast<int>(latencies.size());
     out.randomReadMedianMs = median(latencies);
     out.randomReadP95Ms = percentile95(latencies);
+    out.randomReadOutliers = outlierCount(latencies);
 }
 
 void measureSmallFiles(const std::vector<std::string> &files, std::uint64_t readBytes,
@@ -295,6 +319,7 @@ void measureSmallFiles(const std::vector<std::string> &files, std::uint64_t read
     double seconds = std::chrono::duration<double>(Clock::now() - groupStart).count();
     out.smallFilesRead = static_cast<int>(latencies.size());
     out.smallFileMedianMs = median(latencies);
+    out.smallFileOutliers = outlierCount(latencies);
     out.smallFileOpensPerSecond = (seconds > 0.0 && !latencies.empty()) ? latencies.size() / seconds : 0.0;
 }
 

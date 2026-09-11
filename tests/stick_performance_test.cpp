@@ -206,6 +206,65 @@ int main()
         std::cout << "case 8 (write workload estimates) OK\n";
     }
 
+    // Case 9: wear is read from symptoms. Nothing failing, nothing slow:
+    // healthy; slow files: watch; unreadable files: failing.
+    {
+        StickSurfaceCheck clean;
+        clean.filesRead = 1200;
+        clean.bytesRead = 20'000'000'000;
+        clean.medianBytesPerSecond = 40e6;
+        auto probe = healthyOldStick();
+        auto healthy = assessWear(clean, probe);
+        assert(healthy.state == WearState::Healthy);
+        assert(healthy.summary.find("tail is flat") != std::string::npos);
+
+        probe.randomReadOutliers = 3;
+        auto flagged = assessWear(clean, probe);
+        assert(flagged.state == WearState::Healthy);
+        assert(flagged.summary.find("3 small reads") != std::string::npos);
+
+        StickSurfaceCheck slow = clean;
+        slow.slow.push_back({"/media/X/Contents/a.mp3", 2e6});
+        auto watch = assessWear(slow, probe);
+        assert(watch.state == WearState::Watch);
+        assert(watch.summary.find("1 of 1200") != std::string::npos);
+
+        StickSurfaceCheck failing = slow;
+        failing.unreadable.push_back("/media/X/Contents/b.mp3");
+        auto fail = assessWear(failing, probe);
+        assert(fail.state == WearState::Failing);
+        assert(fail.label == "Failing");
+
+        auto none = assessWear(StickSurfaceCheck{}, probe);
+        assert(none.state == WearState::Unknown);
+        std::cout << "case 9 (wear from symptoms) OK\n";
+    }
+
+    // Case 10: the trend. First run says so; steady runs are steady; a
+    // quarter drop in score or a doubled random-read median is slowing.
+    {
+        auto first = assessTrend(83, 0.8, 0, {});
+        assert(first.state == TrendState::Unknown);
+        assert(first.earlierCount == 0);
+
+        std::vector<TrendPoint> earlier = {{"2026-06-01T10:00:00Z", 85, 0.78, 0, "healthy"},
+                                           {"2026-07-15T10:00:00Z", 84, 0.80, 0, ""}};
+        auto steady = assessTrend(83, 0.81, 0, earlier);
+        assert(steady.state == TrendState::Steady);
+        assert(steady.bestEarlierScore == 85);
+        assert(steady.summary.find("3 times since 2026-06-01") != std::string::npos);
+        assert(steady.summary.find("85, 84, 83") != std::string::npos);
+
+        auto dropped = assessTrend(60, 0.9, 0, earlier);
+        assert(dropped.state == TrendState::Slowing);
+        assert(dropped.summary.find("Slower than it used to be") != std::string::npos);
+
+        auto doubled = assessTrend(80, 1.7, 2, earlier);
+        assert(doubled.state == TrendState::Slowing);
+        assert(doubled.summary.find("what wear looks like") != std::string::npos);
+        std::cout << "case 10 (trend over earlier measurements) OK\n";
+    }
+
     std::cout << "All stick_performance tests passed.\n";
     return 0;
 }

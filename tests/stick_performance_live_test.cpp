@@ -5,7 +5,10 @@
 // writes (and removes) about 22 MiB on the stick. Under ctest neither is
 // set and this passes without touching anything.
 //
-//   SEABASS_LIVE_STICK=/media/you/STICK SEABASS_LIVE_WRITE=1 ./stick_performance_live_test
+// SEABASS_LIVE_WEAR=1 adds the surface check, which reads every file on
+// the stick once (minutes on a big stick).
+//
+//   SEABASS_LIVE_STICK=/media/you/STICK SEABASS_LIVE_WRITE=1 SEABASS_LIVE_WEAR=1 ./stick_performance_live_test
 
 #include <algorithm>
 #include <cassert>
@@ -20,6 +23,7 @@
 #include "application/ports/cancellation_token.hpp"
 #include "domain/stick_performance.hpp"
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
+#include "infrastructure/benchmark/stick_surface_check.hpp"
 #include "infrastructure/benchmark/stick_write_probe.hpp"
 
 namespace fs = std::filesystem;
@@ -123,6 +127,8 @@ int main()
               << m.randomReads << " reads)\n"
               << "  small file open+read  " << m.smallFileOpensPerSecond << " files/s, " << m.smallFileMedianMs
               << " ms median (" << m.smallFilesRead << " files)\n"
+              << "  slow-tail outliers    " << m.randomReadOutliers << " random reads, " << m.smallFileOutliers
+              << " small files over " << storageprobe::kOutlierFactor << "x the median\n"
               << "  database bytes        " << m.catalogBytes << "\n";
     std::cout << "\nDJ Workload Score " << s.score << " (" << domain::speedClassLabel(s.speedClass) << ")\n"
               << "  browsing " << s.browseScore << " " << verdict(s.browseVerdict) << ", track loads " << s.trackLoadScore
@@ -133,6 +139,35 @@ int main()
     }
     assert(m.streamingBytesPerSecond > 0.0);
     assert(m.randomReads > 0);
+
+    const char *wearEnv = std::getenv("SEABASS_LIVE_WEAR");
+    if (wearEnv != nullptr && std::string(wearEnv) == "1") {
+        std::uint64_t lastFiles = 0;
+        auto check = infrastructure::benchmark::StickSurfaceCheck::run(root.string(),
+            [&](std::uint64_t bytesDone, std::uint64_t bytesTotal, std::uint64_t filesDone, std::uint64_t filesTotal) {
+                if (filesDone - lastFiles >= 500 || filesDone == filesTotal) {
+                    lastFiles = filesDone;
+                    std::cout << "  surface " << filesDone << "/" << filesTotal << " files, "
+                              << bytesDone / (1024.0 * 1024.0) << " of " << bytesTotal / (1024.0 * 1024.0) << " MiB\r"
+                              << std::flush;
+                }
+            });
+        auto wear = domain::assessWear(check, m);
+        std::cout << "\nwear check\n"
+                  << "  read " << check.filesRead << " files, " << check.bytesRead / (1024.0 * 1024.0) << " MiB in "
+                  << check.seconds << " s, median " << check.medianBytesPerSecond / 1e6 << " MB/s per file\n"
+                  << "  unreadable " << check.unreadable.size() << ", slow " << check.slow.size() << "\n"
+                  << "  " << wear.label << ": " << wear.summary << "\n";
+        for (const auto &f : check.slow) {
+            std::cout << "    slow " << f.bytesPerSecond / 1e6 << " MB/s  " << f.path << "\n";
+        }
+        for (const auto &f : check.unreadable) {
+            std::cout << "    unreadable " << f << "\n";
+        }
+        assert(check.filesRead > 0);
+    } else {
+        std::cout << "\nSEABASS_LIVE_WEAR is not 1; skipping the surface check\n";
+    }
 
     const char *writeEnv = std::getenv("SEABASS_LIVE_WRITE");
     if (writeEnv == nullptr || std::string(writeEnv) != "1") {

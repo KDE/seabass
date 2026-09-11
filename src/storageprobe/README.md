@@ -4,7 +4,7 @@ Measures a removable drive (USB stick, SD card, portable SSD) the way an
 application actually uses it, and turns the numbers into a workload
 estimate. Standalone on purpose: plain C++17, no Qt, no dependency on
 the rest of this repository. Copy the folder into another project and
-add the four `.cpp` files to a target; nothing else is needed.
+add the `.cpp` files to a target; nothing else is needed.
 
 Three read measurements, on files already on the drive:
 
@@ -23,6 +23,14 @@ and removes:
 - **small file write**, 16 KiB files each written, flushed and closed;
 - **in-place update**, 4 KiB overwrites at random offsets of one file,
   each flushed.
+
+`surface_check.hpp` reads every file on the drive once, the way a backup
+would, and reports files that could not be read and files that read at
+under a tenth of the drive's own median rate. Flash does not expose
+wear counters over USB mass storage; what it does show, months before a
+block fails, is the controller retrying error correction on weak cells,
+which makes those reads abnormally slow. The read probe counts the same
+symptom in its own tail: reads over five times the median.
 
 `workload.hpp` models a session as a list of actions (so many random
 reads, so many small opens, so many bytes streamed, so many times), sums

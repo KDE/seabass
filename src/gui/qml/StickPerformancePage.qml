@@ -56,6 +56,24 @@ Page {
         return Theme.textMuted;
     }
 
+    // The score is relative to a current stick, so its colour follows the
+    // speed class rather than the verdicts: a slow-but-fine stick reads
+    // amber here and green in the rows below, which is the whole point.
+    function speedClassColor(key) {
+        if (key === "veryfast" || key === "fast") return Theme.good;
+        if (key === "average") return Theme.info;
+        if (key === "slow") return Theme.warnIcon;
+        if (key === "veryslow") return Theme.danger;
+        return Theme.textMuted;
+    }
+
+    function wearColor(state) {
+        if (state === "healthy") return Theme.good;
+        if (state === "watch") return Theme.warnIcon;
+        if (state === "failing") return Theme.danger;
+        return Theme.textMuted;
+    }
+
     function verdictText(key) {
         if (key === "fine") return "FINE";
         if (key === "slower") return "SLOWER";
@@ -65,6 +83,7 @@ Page {
 
     readonly property bool hasResults: Object.keys(controller.score).length > 0
     readonly property bool hasWriteResults: Object.keys(controller.writeEstimate).length > 0
+    readonly property bool hasWearResults: Object.keys(controller.wearAssessment).length > 0
 
     Component.onCompleted: controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
 
@@ -193,7 +212,7 @@ Page {
                             font.family: Theme.dataFamily
                             font.weight: Font.Medium
                             font.pointSize: Theme.titleLarge
-                            color: Theme.text
+                            color: root.hasResults ? root.speedClassColor(controller.score.speedClassKey) : Theme.textMuted
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -211,6 +230,16 @@ Page {
                                 wrapMode: Text.WordWrap
                                 color: Theme.textMuted
                                 text: root.hasResults ? controller.score.setWaitText : ""
+                            }
+                            Label {
+                                objectName: "trendLine"
+                                Layout.fillWidth: true
+                                visible: root.hasResults && (controller.trend.summary || "").length > 0
+                                wrapMode: Text.WordWrap
+                                color: controller.trend.state === "slowing" || controller.trend.state === "worsened"
+                                    ? Theme.warnText : Theme.textMuted
+                                font.pointSize: Theme.fontSmall
+                                text: controller.trend.summary || ""
                             }
                         }
                     }
@@ -337,6 +366,20 @@ Page {
                                  + " larger and " + Number(controller.facts.analysisFiles).toLocaleString(Qt.locale(), "f", 0) + " small files on the stick"
                                : " · no files on the stick; measured on throwaway files")
                     }
+                    Label {
+                        objectName: "tailLine"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: (controller.measurement.randomReadOutliers + controller.measurement.smallFileOutliers) > 0
+                            ? Theme.warnText : Theme.textMuted
+                        font.pointSize: Theme.fontSmall
+                        text: (controller.measurement.randomReadOutliers + controller.measurement.smallFileOutliers) === 0
+                            ? "Small-read tail is flat: none of the " + (controller.measurement.randomReads + controller.measurement.smallFilesRead)
+                              + " small reads took over five times the median, which is what healthy flash looks like."
+                            : (controller.measurement.randomReadOutliers + controller.measurement.smallFileOutliers) + " of "
+                              + (controller.measurement.randomReads + controller.measurement.smallFilesRead)
+                              + " small reads took over five times the median. Weak cells being retried look like this; run the wear check below."
+                    }
                 }
             }
 
@@ -405,6 +448,119 @@ Page {
                                         wrapMode: Text.WordWrap
                                         font.pointSize: Theme.fontSmall
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // -- Wear check ------------------------------------------------
+            GroupBox {
+                label: Subtitle { text: "Wear" }
+                Layout.fillWidth: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: Theme.rowSpacing
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textMuted
+                        font.pointSize: Theme.fontSmall
+                        text: "A stick cannot report how worn it is, but worn flash gives itself away: the controller "
+                            + "retries weak cells, so some files read far slower than the rest, and later some do not read "
+                            + "at all. This reads every file on the stick once, the way a backup would, and looks for both. "
+                            + "Read-only; a few minutes on a big stick."
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.rowSpacing
+                        Button {
+                            objectName: "wearButton"
+                            text: controller.wearBusy ? "Cancel" : (root.hasWearResults ? "Check for Wear Again" : "Check for Wear")
+                            enabled: !controller.busy
+                            onClicked: controller.wearBusy
+                                ? controller.cancelWearCheck()
+                                : controller.checkWear(root.rekordboxPath, root.enginePath, root.mountPoint)
+                        }
+                        ProgressBar {
+                            visible: controller.wearBusy
+                            Layout.fillWidth: true
+                            from: 0
+                            to: Math.max(1, controller.wearBytesTotal)
+                            value: controller.wearBytesDone
+                            indeterminate: controller.wearBytesTotal === 0
+                        }
+                        Label {
+                            visible: controller.wearBusy
+                            color: Theme.textMuted
+                            font.pointSize: Theme.fontSmall
+                            text: controller.wearBytesTotal > 0
+                                ? Theme.humanBytes(controller.wearBytesDone) + " of " + Theme.humanBytes(controller.wearBytesTotal)
+                                  + ", " + controller.wearFilesDone + " of " + controller.wearFilesTotal + " files"
+                                : "Counting files..."
+                        }
+                        Label {
+                            objectName: "wearErrorMessage"
+                            Layout.fillWidth: true
+                            visible: controller.wearErrorMessage.length > 0
+                            text: controller.wearErrorMessage
+                            color: Theme.danger
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    RowLayout {
+                        visible: root.hasWearResults
+                        Layout.fillWidth: true
+                        spacing: Theme.rowSpacing
+                        StatusBadge {
+                            objectName: "wearBadge"
+                            Layout.alignment: Qt.AlignTop
+                            label: (controller.wearAssessment.label || "").toUpperCase()
+                            badgeColor: root.wearColor(controller.wearAssessment.state)
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.tightSpacing
+                            Label {
+                                objectName: "wearSummary"
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: controller.wearAssessment.summary || ""
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: Theme.textMuted
+                                font.pointSize: Theme.fontSmall
+                                text: "Read " + Theme.humanBytes(controller.wearCheck.bytesRead) + " in "
+                                    + root.seconds(controller.wearCheck.seconds) + " at a median of "
+                                    + root.megabytesPerSecond(controller.wearCheck.medianBytesPerSecond) + " MB/s per file."
+                            }
+                            Repeater {
+                                model: (controller.wearCheck.unreadable || []).slice(0, 10)
+                                delegate: Label {
+                                    required property string modelData
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideMiddle
+                                    color: Theme.danger
+                                    font.pointSize: Theme.fontSmall
+                                    text: "Could not read: " + modelData
+                                }
+                            }
+                            Repeater {
+                                model: (controller.wearCheck.slow || []).slice(0, 10)
+                                delegate: Label {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideMiddle
+                                    color: Theme.warnText
+                                    font.pointSize: Theme.fontSmall
+                                    text: root.megabytesPerSecond(modelData.bytesPerSecond) + " MB/s: " + modelData.path
                                 }
                             }
                         }

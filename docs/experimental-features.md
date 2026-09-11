@@ -24,8 +24,12 @@ from day one.
   opens), turns that into a DJ Workload Score with a verdict per player
   generation, and offers an optional write test that writes throwaway
   files into a hidden `.seabass-write-test` folder and removes them
-  again. The read measurement is harmless; the write test is a write
-  path. It has run once on real hardware (a 32 GB exFAT stick on a USB
+  again, and a "Check for Wear" that reads every file once and reports
+  unreadable and abnormally slow ones. Every measurement is appended to
+  `~/Seabass/metadata/stick-performance-history.tsv` (this computer,
+  never the stick; twenty lines per stick) so the page can say whether
+  a stick is getting slower. The read measurements are harmless; the
+  write test is a write path. It has run once on real hardware (a 32 GB exFAT stick on a USB
   2.0 port, Linux, 2026-09-11, via `stick_performance_live_test` with
   `SEABASS_LIVE_STICK` and `SEABASS_LIVE_WRITE=1`): the scratch folder
   came and went, free space was unchanged. Promote once it has also run
