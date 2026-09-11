@@ -536,7 +536,11 @@ Page {
                                 ? controller.cancelWearCheck()
                                 : controller.checkWear(root.rekordboxPath, root.enginePath, root.mountPoint)
                         }
-                        ProgressBar {
+                        // ProgressTrack, not a bare ProgressBar: Breeze's
+                        // own delegate reads its background's edges before
+                        // the background exists and logs a TypeError per
+                        // frame while indeterminate.
+                        ProgressTrack {
                             visible: controller.wearBusy
                             Layout.fillWidth: true
                             from: 0
