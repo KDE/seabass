@@ -263,42 +263,50 @@ int main()
     // Case 10: the trend. First run says so; steady runs are steady; a
     // quarter drop in score or a doubled random-read median is slowing.
     {
-        auto first = assessTrend(83, 0.8, 0, "", {});
+        auto first = assessTrend(83, 0.8, 0, "", 480.0, {});
         assert(first.state == TrendState::Unknown);
         assert(first.earlierCount == 0);
 
-        std::vector<TrendPoint> earlier = {{"2026-06-01T10:00:00Z", 85, 0.78, 0, "healthy"},
-                                           {"2026-07-15T10:00:00Z", 84, 0.80, 0, ""}};
-        auto steady = assessTrend(83, 0.81, 0, "", earlier);
+        std::vector<TrendPoint> earlier = {{"2026-06-01T10:00:00Z", 85, 0.78, 0, "healthy", 480.0},
+                                           {"2026-07-15T10:00:00Z", 84, 0.80, 0, "", 480.0}};
+        auto steady = assessTrend(83, 0.81, 0, "", 480.0, earlier);
         assert(steady.state == TrendState::Steady);
         assert(steady.bestEarlierScore == 85);
         assert(steady.summary.find("3 times since 2026-06-01") != std::string::npos);
         assert(steady.summary.find("85, 84, 83") != std::string::npos);
 
-        auto dropped = assessTrend(60, 0.9, 0, "", earlier);
+        auto dropped = assessTrend(60, 0.9, 0, "", 480.0, earlier);
         assert(dropped.state == TrendState::Slowing);
         assert(dropped.summary.find("Slower than it used to be") != std::string::npos);
 
-        auto doubled = assessTrend(80, 1.7, 2, "", earlier);
+        auto doubled = assessTrend(80, 1.7, 2, "", 480.0, earlier);
         assert(doubled.state == TrendState::Slowing);
         assert(doubled.summary.find("what wear looks like") != std::string::npos);
 
         // A tail that was flat before and stalls now is slowing too.
-        auto stalls = assessTrend(84, 0.8, 6, "", earlier);
+        auto stalls = assessTrend(84, 0.8, 6, "", 480.0, earlier);
         assert(stalls.state == TrendState::Slowing);
         assert(stalls.summary.find("stalled where none did before") != std::string::npos);
 
         // An earlier healthy wear check and a bad one now: worsened, even
         // with the medians steady.
-        auto worsened = assessTrend(84, 0.8, 0, "watch", earlier);
+        auto worsened = assessTrend(84, 0.8, 0, "watch", 480.0, earlier);
         assert(worsened.state == TrendState::Worsened);
         assert(worsened.summary.find("abnormally slow files") != std::string::npos);
-        auto failing = assessTrend(84, 0.8, 0, "failing", earlier);
+        auto failing = assessTrend(84, 0.8, 0, "failing", 480.0, earlier);
         assert(failing.state == TrendState::Worsened);
         // Healthy now, or no earlier check to compare with: not worsened.
-        assert(assessTrend(84, 0.8, 0, "healthy", earlier).state == TrendState::Steady);
-        std::vector<TrendPoint> unchecked = {{"2026-06-01T10:00:00Z", 85, 0.78, 0, ""}};
-        assert(assessTrend(84, 0.8, 0, "watch", unchecked).state == TrendState::Steady);
+        assert(assessTrend(84, 0.8, 0, "healthy", 480.0, earlier).state == TrendState::Steady);
+        std::vector<TrendPoint> unchecked = {{"2026-06-01T10:00:00Z", 85, 0.78, 0, "", 480.0}};
+        assert(assessTrend(84, 0.8, 0, "watch", 480.0, unchecked).state == TrendState::Steady);
+        // A run on a USB 3 port is not compared with runs on USB 2.0: the
+        // streaming term makes the same stick score far higher there, so
+        // the USB 2.0 run after it would read as wear.
+        std::vector<TrendPoint> fastPort = {{"2026-06-01T10:00:00Z", 160, 0.78, 0, "", 5000.0}};
+        auto afterPortChange = assessTrend(84, 0.8, 0, "", 480.0, fastPort);
+        assert(afterPortChange.state == TrendState::Unknown);
+        assert(afterPortChange.summary.find("different port") != std::string::npos);
+        assert(assessTrend(84, 0.8, 0, "", 0.0, fastPort).state == TrendState::Slowing);  // unknown link: compared
         std::cout << "case 10 (trend over earlier measurements) OK\n";
     }
 

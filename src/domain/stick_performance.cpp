@@ -233,18 +233,24 @@ WearAssessment assessWear(const StickSurfaceCheck &check, const StickPerformance
         return w;
     }
     std::ostringstream out;
+    const std::string unopenableNote = check.unopenable.empty()
+        ? std::string()
+        : " " + std::to_string(check.unopenable.size())
+              + (check.unopenable.size() == 1 ? " file could not be opened" : " files could not be opened")
+              + " and was skipped; that says nothing about the flash.";
     if (!check.unreadable.empty()) {
         w.state = WearState::Failing;
         w.label = "Failing";
         out << check.unreadable.size() << " of " << check.filesRead
             << " files could not be read in full. Copy what this stick still gives up and retire it; a stick that has "
-               "started to lose blocks does not recover.";
+               "started to lose blocks does not recover." << unopenableNote;
     } else if (!check.slow.empty()) {
         w.state = WearState::Watch;
         w.label = "Watch this stick";
         out << check.slow.size() << " of " << check.filesRead
             << " files read at under a tenth of this stick's own rate, which is what a controller retrying weak cells "
-               "looks like. Everything is still readable. Keep a backup current and check again in a few months.";
+               "looks like. Everything is still readable. Keep a backup current and check again in a few months."
+            << unopenableNote;
     } else {
         w.state = WearState::Healthy;
         w.label = "No sign of wear";
@@ -261,19 +267,42 @@ WearAssessment assessWear(const StickSurfaceCheck &check, const StickPerformance
         } else {
             out << ".";
         }
+        out << unopenableNote;
     }
     w.summary = out.str();
     return w;
 }
 
+namespace
+{
+// USB 2.0 and everything slower on one side, SuperSpeed on the other.
+bool sameLinkClass(double a, double b)
+{
+    if (a <= 0.0 || b <= 0.0) {
+        return true;  // unknown: compare rather than discard
+    }
+    return (a >= 5000.0) == (b >= 5000.0);
+}
+}  // namespace
+
 TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int currentOutliers,
-                            const std::string &currentWearState, const std::vector<TrendPoint> &earlier)
+                            const std::string &currentWearState, double currentUsbSpeedMbps,
+                            const std::vector<TrendPoint> &allEarlier)
 {
     TrendAssessment t;
+    std::vector<TrendPoint> earlier;
+    for (const auto &p : allEarlier) {
+        if (sameLinkClass(p.usbSpeedMbps, currentUsbSpeedMbps)) {
+            earlier.push_back(p);
+        }
+    }
     t.earlierCount = static_cast<int>(earlier.size());
     if (earlier.empty() || currentScore <= 0) {
         t.state = TrendState::Unknown;
-        t.summary = "First measurement of this stick on this computer; the next one will show whether it is changing.";
+        t.summary = allEarlier.empty()
+            ? "First measurement of this stick on this computer; the next one will show whether it is changing."
+            : "First measurement of this stick on this kind of USB port; earlier ones were on a different port and "
+              "are not comparable.";
         return t;
     }
     bool wasHealthy = false;

@@ -21,6 +21,7 @@ struct StickPerformanceResult
     QVariantList advisories;     // [{group, players, verdict, summary}]
     QVariantMap facts;           // clusterBytes, analysisFiles, analysisFolders, audioFiles, sampleKind
     QVariantMap trend;           // state, summary, earlierCount, bestEarlierScore; from the local history
+    QString recordedAtUtc;       // the history line this run appended, if it appended one
     // Filled only when the measurement had to write its own files first
     // (measureWithScratchFiles): the write probe ran as part of it.
     QVariantMap writeMeasurement;
@@ -140,6 +141,13 @@ public:
     // given, in which case the root is the catalog's parent.
     Q_INVOKABLE void measure(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
                              const QString &mountPoint);
+    // The measurement the page makes when it opens: identical, except
+    // that it is recorded in the history only when the stick has no
+    // record from the last day. Twenty casual page opens would otherwise
+    // evict the long-term baseline the trend exists to keep; the button
+    // always records.
+    Q_INVOKABLE void measureOnOpen(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
+                                   const QString &mountPoint);
     // For a stick with nothing to read: runs the write test, keeps its
     // files long enough to read them back, removes them. Both the read
     // and the write results come out of it. Same refusal as
@@ -176,7 +184,10 @@ private:
     void setWearBusy(bool busy);
     void setWearErrorMessage(const QString &message);
     void startMeasure(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
-                      const QString &mountPoint, bool useScratchFiles);
+                      const QString &mountPoint, bool useScratchFiles, bool alwaysRecord);
+    // Refuses a browsed backup (a folder on this computer), like every
+    // other write path; empty when the root is fine.
+    static QString refuseBrowsedBackup(const std::string &stickRoot, const QString &stickLabel);
     void setBusy(bool busy);
     void setErrorMessage(const QString &message);
     void setWriteBusy(bool busy);
@@ -199,6 +210,8 @@ private:
     QString m_measuredAt;
     bool m_needsScratchFiles = false;
     QVariantMap m_trend;
+    QString m_lastRecordedAtUtc;  // the history line the last measurement appended, for the wear check to stamp
+    double m_usbSpeedMbps = 0.0;
 
     bool m_writeBusy = false;
     QString m_writeErrorMessage;

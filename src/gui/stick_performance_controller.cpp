@@ -19,7 +19,9 @@
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
 #include "infrastructure/benchmark/stick_surface_check.hpp"
 #include "infrastructure/benchmark/stick_write_probe.hpp"
+#include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/local/stick_performance_history.hpp"
+#include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/scratch_dir_guard.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
@@ -200,15 +202,24 @@ WalkResult walk(const fs::path &dir, Accept accept, const application::Cancellat
             cancel.throwIfCancelled();
         }
         std::error_code entryEc;
+        // The same exclusions Full Stick Backup applies (the recycle bin,
+        // System Volume Information, this app's own backups and locks),
+        // so a no-library measurement never samples deleted files or
+        // backup archives as "audio".
+        const std::string relative = it->path().lexically_relative(dir).generic_string();
         if (it->is_directory(entryEc) && !entryEc) {
-            const std::string name = it->path().filename().string();
-            if (skipHidden && (name.rfind('.', 0) == 0 || name == "System Volume Information")) {
+            if (skipHidden && infrastructure::stick_backup::isExcludedFromBackup(relative, true)) {
                 it.disable_recursion_pending();
                 continue;
             }
             ++result.folders;
-        } else if (it->is_regular_file(entryEc) && !entryEc && accept(*it)) {
-            result.files.push_back(it->path().string());
+        } else if (it->is_regular_file(entryEc) && !entryEc) {
+            if (skipHidden && infrastructure::stick_backup::isExcludedFromBackup(relative, false)) {
+                continue;
+            }
+            if (accept(*it)) {
+                result.files.push_back(it->path().string());
+            }
         }
     }
     return result;
@@ -251,7 +262,7 @@ std::vector<domain::TrendPoint> earlierPoints(const infrastructure::local::Stick
 {
     std::vector<domain::TrendPoint> earlier;
     for (const auto &r : history.forStick(stickIdentifier)) {
-        earlier.push_back({r.measuredAtUtc, r.score, r.randomReadMedianMs, r.outliers, r.wearState});
+        earlier.push_back({r.measuredAtUtc, r.score, r.randomReadMedianMs, r.outliers, r.wearState, r.usbSpeedMbps});
     }
     return earlier;
 }
@@ -274,7 +285,7 @@ std::vector<std::string> spread(std::vector<std::string> files, std::size_t coun
 
 // Runs entirely on a background thread, no access to the controller.
 StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath, QString enginePath,
-                                      QString mountPoint, bool useScratchFiles,
+                                      QString mountPoint, bool useScratchFiles, bool alwaysRecord,
                                       application::CancellationToken cancel)
 {
     StickPerformanceResult result;
@@ -358,16 +369,18 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
                 // No library, or one with no local files: any file on the
                 // stick big enough to stream from and seek in will do, and
                 // any small one stands in for an analysis file.
-                auto big = walk(fs::path(stickRoot),
-                                [](const fs::directory_entry &e) { return sizeOf(e) >= 64 * 1024; }, cancel, true);
-                audioFiles = big.files;
+                auto everything = walk(fs::path(stickRoot),
+                                       [](const fs::directory_entry &e) { return sizeOf(e) >= 4 * 1024; }, cancel, true);
+                analysis.folders = everything.folders;
+                for (const auto &path : everything.files) {
+                    std::error_code sizeEc;
+                    const auto size = fs::file_size(path, sizeEc);
+                    if (sizeEc) {
+                        continue;
+                    }
+                    (size >= 64 * 1024 ? audioFiles : analysis.files).push_back(path);
+                }
                 if (!audioFiles.empty()) {
-                    analysis = walk(fs::path(stickRoot),
-                                    [](const fs::directory_entry &e) {
-                                        auto size = sizeOf(e);
-                                        return size >= 4 * 1024 && size < 64 * 1024;
-                                    },
-                                    cancel, true);
                     sampleKind = QStringLiteral("files");
                 }
             }
@@ -410,27 +423,48 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
         }
 
         // The trend: everything measured before on this computer, then
-        // this run appended. A history that cannot be read or written
-        // costs the trend line, never the measurement.
+        // this run appended, unless it is the page's own opening
+        // measurement and the stick was recorded within the last day.
         try {
             infrastructure::local::StickPerformanceHistory history;
             auto earlier = earlierPoints(history, hwInfo.stickIdentifier);
             result.trend = toVariant(domain::assessTrend(score.score, measurement.randomReadMedianMs,
                                                          measurement.randomReadOutliers + measurement.smallFileOutliers,
-                                                         {}, earlier));
+                                                         {}, hwInfo.usbSpeedMbps, earlier));
 
-            infrastructure::local::StickPerformanceRecord record;
-            record.measuredAtUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString();
-            record.stickIdentifier = hwInfo.stickIdentifier;
-            record.stickLabel = stickLabel.toStdString();
-            record.score = score.score;
-            record.streamingBytesPerSecond = measurement.streamingBytesPerSecond;
-            record.randomReadMedianMs = measurement.randomReadMedianMs;
-            record.smallFileMedianMs = measurement.smallFileMedianMs;
-            record.outliers = measurement.randomReadOutliers + measurement.smallFileOutliers;
-            history.append(record);
-        } catch (const std::exception &) {
-            // No trend this time.
+            const QDateTime now = QDateTime::currentDateTimeUtc();
+            bool record = alwaysRecord;
+            if (!record) {
+                record = earlier.empty();
+                if (!earlier.empty()) {
+                    const QDateTime newest = QDateTime::fromString(QString::fromStdString(earlier.back().measuredAtUtc), Qt::ISODate);
+                    record = !newest.isValid() || newest.secsTo(now) > 24 * 60 * 60;
+                }
+            }
+            if (record) {
+                infrastructure::local::StickPerformanceRecord line;
+                line.measuredAtUtc = now.toString(Qt::ISODate).toStdString();
+                line.stickIdentifier = hwInfo.stickIdentifier;
+                line.stickLabel = stickLabel.toStdString();
+                line.score = score.score;
+                line.streamingBytesPerSecond = measurement.streamingBytesPerSecond;
+                line.randomReadMedianMs = measurement.randomReadMedianMs;
+                line.smallFileMedianMs = measurement.smallFileMedianMs;
+                line.outliers = measurement.randomReadOutliers + measurement.smallFileOutliers;
+                line.usbSpeedMbps = hwInfo.usbSpeedMbps;
+                history.append(line);
+                result.recordedAtUtc = QString::fromStdString(line.measuredAtUtc);
+            }
+        } catch (const std::exception &e) {
+            // Not fatal to the measurement, but not silent either: with
+            // no record there is no trend and no backup time estimate.
+            QVariantMap t;
+            t["state"] = QStringLiteral("unavailable");
+            t["summary"] = QStringLiteral("The measurement could not be recorded on this computer: %1")
+                               .arg(QString::fromStdString(e.what()));
+            t["earlierCount"] = 0;
+            t["bestEarlierScore"] = 0;
+            result.trend = t;
         }
     } catch (const application::OperationCancelled &) {
         result.cancelled = true;
@@ -458,7 +492,8 @@ QString wearStateKey(domain::WearState state)
 // Runs on a worker thread; progress goes back to the controller through
 // queued calls, the same way StickBackupController's backup does.
 StickWearResult runWearTask(std::string stickRoot, std::string stickLabel, std::string stickIdentifier,
-                            domain::StickPerformanceMeasurement probe, application::CancellationToken cancel,
+                            std::string sessionRecordedAtUtc, domain::StickPerformanceMeasurement probe,
+                            int currentScore, double usbSpeedMbps, application::CancellationToken cancel,
                             StickPerformanceController *controller)
 {
     StickWearResult result;
@@ -515,25 +550,51 @@ StickWearResult runWearTask(std::string stickRoot, std::string stickLabel, std::
         a["summary"] = QString::fromStdString(assessment.summary);
         result.assessment = a;
 
-        // Remembered with the latest measurement of this stick, and the
-        // trend recomputed against the earlier ones, which is the only
-        // way "was healthy in June, not now" can ever be said.
+        // Remembered with this session's measurement of the stick when
+        // there is one; otherwise as a line of its own. Stamping whatever
+        // record happened to be newest would attach today's finding to a
+        // month-old measurement. The trend is recomputed either way, so
+        // "was healthy in June, not now" can be said.
         if (!stickIdentifier.empty()) {
             try {
                 infrastructure::local::StickPerformanceHistory history;
+                const std::string wear = wearStateKey(assessment.state).toStdString();
                 auto records = history.forStick(stickIdentifier);
+                if (!records.empty() && !sessionRecordedAtUtc.empty() && records.back().measuredAtUtc == sessionRecordedAtUtc) {
+                    history.setLatestWearState(stickIdentifier, wear);
+                } else {
+                    infrastructure::local::StickPerformanceRecord line;
+                    line.measuredAtUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString();
+                    line.stickIdentifier = stickIdentifier;
+                    line.stickLabel = stickLabel;
+                    line.score = currentScore;
+                    line.randomReadMedianMs = probe.randomReadMedianMs;
+                    line.smallFileMedianMs = probe.smallFileMedianMs;
+                    line.streamingBytesPerSecond = probe.streamingBytesPerSecond;
+                    line.outliers = probe.randomReadOutliers + probe.smallFileOutliers;
+                    line.wearState = wear;
+                    line.usbSpeedMbps = usbSpeedMbps;
+                    history.append(line);
+                    records = history.forStick(stickIdentifier);
+                }
                 if (!records.empty()) {
                     const auto &latest = records.back();
                     std::vector<domain::TrendPoint> earlier;
                     for (std::size_t i = 0; i + 1 < records.size(); ++i) {
                         earlier.push_back({records[i].measuredAtUtc, records[i].score, records[i].randomReadMedianMs,
-                                           records[i].outliers, records[i].wearState});
+                                           records[i].outliers, records[i].wearState, records[i].usbSpeedMbps});
                     }
                     result.trend = toVariant(domain::assessTrend(latest.score, latest.randomReadMedianMs, latest.outliers,
-                                                                 wearStateKey(assessment.state).toStdString(), earlier));
+                                                                 wear, latest.usbSpeedMbps, earlier));
                 }
-                history.setLatestWearState(stickIdentifier, wearStateKey(assessment.state).toStdString());
-            } catch (const std::exception &) {
+            } catch (const std::exception &e) {
+                QVariantMap t;
+                t["state"] = QStringLiteral("unavailable");
+                t["summary"] = QStringLiteral("The wear result could not be recorded on this computer: %1")
+                                   .arg(QString::fromStdString(e.what()));
+                t["earlierCount"] = 0;
+                t["bestEarlierScore"] = 0;
+                result.trend = t;
             }
         }
     } catch (const application::OperationCancelled &) {
@@ -582,6 +643,10 @@ void StickPerformanceController::checkWear(const QString &stickLabel, const QStr
         setWearErrorMessage(QStringLiteral("No stick to check."));
         return;
     }
+    if (QString refusal = refuseBrowsedBackup(stickRoot, stickLabel); !refusal.isEmpty()) {
+        setWearErrorMessage(refusal);
+        return;
+    }
     // The probe's tail counts feed the assessment when they exist; an
     // unmeasured stick is judged on the surface check alone.
     domain::StickPerformanceMeasurement probe;
@@ -589,14 +654,18 @@ void StickPerformanceController::checkWear(const QString &stickLabel, const QStr
     probe.smallFilesRead = m_measurement.value("smallFilesRead").toInt();
     probe.randomReadOutliers = m_measurement.value("randomReadOutliers").toInt();
     probe.smallFileOutliers = m_measurement.value("smallFileOutliers").toInt();
+    probe.randomReadMedianMs = m_measurement.value("randomReadMedianMs").toDouble();
+    probe.smallFileMedianMs = m_measurement.value("smallFileMedianMs").toDouble();
+    probe.streamingBytesPerSecond = m_measurement.value("streamingBytesPerSecond").toDouble();
     setWearErrorMessage({});
     m_wearBytesDone = m_wearBytesTotal = m_wearFilesDone = m_wearFilesTotal = 0;
     emit wearProgressChanged();
     setWearBusy(true);
     m_wearCancel = application::CancellationToken();
     m_wearWatcher.setFuture(QtConcurrent::run(runWearTask, stickRoot, stickLabel.toStdString(),
-                                              m_filesystemInfo.value("stickIdentifier").toString().toStdString(), probe,
-                                              m_wearCancel, this));
+                                              m_filesystemInfo.value("stickIdentifier").toString().toStdString(),
+                                              m_lastRecordedAtUtc.toStdString(), probe, m_score.value("score").toInt(),
+                                              m_usbSpeedMbps, m_wearCancel, this));
 }
 
 void StickPerformanceController::cancelWearCheck()
@@ -676,6 +745,10 @@ void StickPerformanceController::measureWrites(const QString &rekordboxPath, con
         setWriteErrorMessage(QStringLiteral("No stick to write a test onto."));
         return;
     }
+    if (QString refusal = refuseBrowsedBackup(stickRoot, QString()); !refusal.isEmpty()) {
+        setWriteErrorMessage(refusal);
+        return;
+    }
     if (QString refusal = refuseIfDjSoftwareRunning(); !refusal.isEmpty()) {
         setWriteErrorMessage(refusal);
         return;
@@ -735,7 +808,25 @@ void StickPerformanceController::measure(const QString &stickLabel, const QStrin
         setErrorMessage(QStringLiteral("No stick to measure."));
         return;
     }
-    startMeasure(stickLabel, rekordboxPath, enginePath, mountPoint, false);
+    startMeasure(stickLabel, rekordboxPath, enginePath, mountPoint, false, true);
+}
+
+void StickPerformanceController::measureOnOpen(const QString &stickLabel, const QString &rekordboxPath,
+                                               const QString &enginePath, const QString &mountPoint)
+{
+    if (rekordboxPath.isEmpty() && enginePath.isEmpty() && mountPoint.isEmpty()) {
+        setErrorMessage(QStringLiteral("No stick to measure."));
+        return;
+    }
+    startMeasure(stickLabel, rekordboxPath, enginePath, mountPoint, false, false);
+}
+
+QString StickPerformanceController::refuseBrowsedBackup(const std::string &stickRoot, const QString &stickLabel)
+{
+    if (!stickRoot.empty() && infrastructure::local::isBrowsedBackupRoot(stickRoot)) {
+        return QString::fromStdString(infrastructure::local::browsedBackupRefusal(stickLabel.toStdString()));
+    }
+    return {};
 }
 
 void StickPerformanceController::measureWithScratchFiles(const QString &stickLabel, const QString &mountPoint)
@@ -748,21 +839,26 @@ void StickPerformanceController::measureWithScratchFiles(const QString &stickLab
         setErrorMessage(refusal);
         return;
     }
-    startMeasure(stickLabel, {}, {}, mountPoint, true);
+    startMeasure(stickLabel, {}, {}, mountPoint, true, true);
 }
 
 void StickPerformanceController::startMeasure(const QString &stickLabel, const QString &rekordboxPath,
                                               const QString &enginePath, const QString &mountPoint,
-                                              bool useScratchFiles)
+                                              bool useScratchFiles, bool alwaysRecord)
 {
     if (anyBusy()) {
+        return;
+    }
+    if (QString refusal = refuseBrowsedBackup(stickRootFromPaths(rekordboxPath, enginePath, mountPoint), stickLabel);
+        !refusal.isEmpty()) {
+        setErrorMessage(refusal);
         return;
     }
     setErrorMessage({});
     setBusy(true);
     m_cancel = application::CancellationToken();
-    m_watcher.setFuture(
-        QtConcurrent::run(runMeasureTask, stickLabel, rekordboxPath, enginePath, mountPoint, useScratchFiles, m_cancel));
+    m_watcher.setFuture(QtConcurrent::run(runMeasureTask, stickLabel, rekordboxPath, enginePath, mountPoint,
+                                          useScratchFiles, alwaysRecord, m_cancel));
 }
 
 void StickPerformanceController::cancel()
@@ -795,6 +891,10 @@ void StickPerformanceController::onFinished()
     m_advisories = result.advisories;
     m_facts = result.facts;
     m_trend = result.trend;
+    if (!result.recordedAtUtc.isEmpty()) {
+        m_lastRecordedAtUtc = result.recordedAtUtc;
+    }
+    m_usbSpeedMbps = result.filesystemInfo.value("usbSpeedMbps").toDouble();
     m_measuredAt = QDateTime::currentDateTime().toString(QStringLiteral("d MMM yyyy, HH:mm"));
     emit resultsChanged();
     if (!result.writeEstimate.isEmpty()) {

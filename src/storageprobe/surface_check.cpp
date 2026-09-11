@@ -82,9 +82,27 @@ SurfaceCheckResult SurfaceCheck::run(const std::string &root, const SurfaceProgr
         dropCacheFor(entry.path);
         auto fileStart = Clock::now();
         std::ifstream in(entry.path, std::ios::binary);
+        if (!in) {
+            // Could not be opened: nothing read, nothing learned about
+            // the media. Counted apart from files that failed mid-read.
+            result.unopenable.push_back(entry.path);
+            ++filesDone;
+            result.filesRead = filesDone;
+            if (progress) {
+                progress(bytesDone, totalBytes, filesDone, entries.size());
+            }
+            continue;
+        }
         std::uint64_t got = 0;
-        bool failed = !in;
+        bool failed = false;
+        std::size_t chunks = 0;
         while (in) {
+            // Inside the file too, not only between files: a single
+            // gigabyte-sized file would otherwise hold a cancel (and the
+            // page that waits on it) for as long as it takes to read.
+            if ((++chunks & 0x7) == 0 && cancelled()) {
+                throw Cancelled();
+            }
             in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
             if (in.bad()) {
                 failed = true;

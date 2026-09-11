@@ -61,8 +61,14 @@ struct SurfaceCheckResult
     std::uint64_t bytesRead = 0;
     double medianBytesPerSecond = 0.0;  // over files of at least kSurfaceRateMinBytes
     double seconds = 0.0;
-    // Files that returned a read error: the drive has started to fail.
+    // Files that returned a read error or ended short of their size: the
+    // drive has started to fail.
     std::vector<std::string> unreadable;
+    // Files that could not be opened at all (permissions, a file another
+    // program renamed or deleted mid-walk, a name the runtime cannot
+    // open). Nothing was read, so nothing is known about the flash under
+    // them; reported, never counted as failing media.
+    std::vector<std::string> unopenable;
     // Files that read at less than a tenth of the median rate: weak
     // blocks being retried. Each entry is "path" and its rate.
     struct SlowFile

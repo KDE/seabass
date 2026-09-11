@@ -84,6 +84,7 @@ std::vector<StickPerformanceRecord> StickPerformanceHistory::readAll() const
             r.smallFileMedianMs = parseNumber<double>(fields[6]);
             r.outliers = parseNumber<int>(fields[7]);
             r.wearState = fields.size() > 8 ? fields[8] : "";
+            r.usbSpeedMbps = fields.size() > 9 && !fields[9].empty() ? parseNumber<double>(fields[9]) : 0.0;
             records.push_back(r);
         } catch (const std::exception &) {
             // A malformed number: skip the line rather than lose the file.
@@ -97,11 +98,12 @@ void StickPerformanceHistory::writeAll(const std::vector<StickPerformanceRecord>
     std::ostringstream out;
     out.imbue(std::locale::classic());
     out << "# Seabass stick performance history: measured-at, stick id, label, score, streaming B/s, "
-           "random read ms, small file ms, tail outliers, wear state\n";
+           "random read ms, small file ms, tail outliers, wear state, usb link mbps\n";
     for (const auto &r : records) {
         out << field(r.measuredAtUtc) << '\t' << field(r.stickIdentifier) << '\t' << field(r.stickLabel) << '\t'
             << r.score << '\t' << r.streamingBytesPerSecond << '\t' << r.randomReadMedianMs << '\t'
-            << r.smallFileMedianMs << '\t' << r.outliers << '\t' << field(r.wearState) << '\n';
+            << r.smallFileMedianMs << '\t' << r.outliers << '\t' << field(r.wearState) << '\t' << r.usbSpeedMbps
+            << '\n';
     }
     std::error_code ec;
     fs::create_directories(m_path.parent_path(), ec);

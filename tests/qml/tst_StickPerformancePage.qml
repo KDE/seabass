@@ -32,6 +32,7 @@ TestCase {
             filesystemInfo: {}, measurement: {}, score: {}, advisories: [], facts: {}, trend: {},
             writeMeasurement: {}, writeEstimate: {},
             measure: function(label, rb, en, mp) { this.calls.push("measure:" + label + ":" + mp); },
+            measureOnOpen: function(label, rb, en, mp) { this.calls.push("open:" + label + ":" + mp); },
             measureWithScratchFiles: function(label, mp) { this.calls.push("scratch:" + label + ":" + mp); },
             measureWrites: function(rb, en, mp) { this.calls.push("writes:" + mp); },
             cancel: function() { this.calls.push("cancel"); },
@@ -110,7 +111,7 @@ TestCase {
         var c = fakeController(false, false);
         var page = makePage(c);
         compare(page.controller.calls.length, 1);
-        compare(page.controller.calls[0], "measure:WHALESHARK2:/media/WHALESHARK2");
+        compare(page.controller.calls[0], "open:WHALESHARK2:/media/WHALESHARK2");
         compare(findOne(page, "scratchNotice").visible, false);
         compare(findOne(page, "speedClass").text, "Not measured yet");
         compare(findOne(page, "measureButton").text, "Measure");

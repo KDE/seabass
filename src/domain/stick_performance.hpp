@@ -148,6 +148,7 @@ struct TrendPoint
     double randomReadMedianMs = 0.0;
     int outliers = 0;
     std::string wearState;
+    double usbSpeedMbps = 0.0;  // the link the measurement ran on; 0 when unknown
 };
 
 enum class TrendState
@@ -169,7 +170,13 @@ struct TrendAssessment
 // currentWearState: the wear check's result for this measurement when it
 // has run ("healthy", "watch", "failing"), else empty. Worsened means an
 // earlier check said healthy and this one does not.
+// currentUsbSpeedMbps: the link this measurement ran on. Scores are only
+// compared with earlier points on the same class of link (USB 2.0 versus
+// USB 3): the streaming term dominates the score, and the same stick is
+// far faster on a USB 3 port, so a port change would otherwise read as
+// wear in one direction and hide it in the other.
 TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int currentOutliers,
-                            const std::string &currentWearState, const std::vector<TrendPoint> &earlier);
+                            const std::string &currentWearState, double currentUsbSpeedMbps,
+                            const std::vector<TrendPoint> &earlier);
 
 }  // namespace seabass::domain

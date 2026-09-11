@@ -3,6 +3,9 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #include "application/ports/cancellation_token.hpp"
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
@@ -206,7 +209,26 @@ int main()
         assert(progressCalls == 4);
         assert(check.medianBytesPerSecond > 0.0);
         assert(check.unreadable.empty());
+        assert(check.unopenable.empty());
         assert(check.seconds >= 0.0);
+
+#if !defined(_WIN32)
+        // A file that cannot be opened is skipped and reported apart from
+        // media failures: nothing was read, so nothing is known about
+        // the flash under it. (Root can open anything; skip there.)
+        if (::geteuid() != 0) {
+            fs::path locked = stick / "Contents" / "locked.mp3";
+            writeFile(locked, 4096);
+            fs::permissions(locked, fs::perms::none);
+            auto again = StickSurfaceCheck::run(stick.string());
+            fs::permissions(locked, fs::perms::owner_all);
+            assert(again.unopenable.size() == 1 && again.unopenable[0] == locked.string());
+            assert(again.unreadable.empty());
+            auto wear = seabass::domain::assessWear(again, seabass::domain::StickPerformanceMeasurement{});
+            assert(wear.state == seabass::domain::WearState::Healthy);
+            assert(wear.summary.find("could not be opened") != std::string::npos);
+        }
+#endif
 
         // A file whose directory size claims more than it delivers is
         // what a failing read looks like to a backup; simulated with a
@@ -244,6 +266,7 @@ int main()
             r.randomReadMedianMs = 1.1;
             r.smallFileMedianMs = 1.2;
             r.outliers = i % 3;
+            r.usbSpeedMbps = 480.0;
             history.append(r);
         }
         StickPerformanceRecord other;
@@ -260,6 +283,7 @@ int main()
         assert(a.back().stickLabel == "Tab in label");
         assert(a.back().randomReadMedianMs > 1.09 && a.back().randomReadMedianMs < 1.11);
         assert(a.back().wearState.empty());
+        assert(a.back().usbSpeedMbps == 480.0);
         assert(history.forStick("B").size() == 1);
 
         history.setLatestWearState("A", "watch");

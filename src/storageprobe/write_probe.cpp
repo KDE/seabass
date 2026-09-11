@@ -204,6 +204,9 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
             }
             files.streamFiles.push_back(path.string());
             for (std::uint64_t offset = 0; offset < options.streamingBytesPerFile; offset += chunk.size()) {
+                if (cancelled()) {
+                    throw Cancelled();  // per MiB, so a cancel never waits on a whole file
+                }
                 std::uint64_t bytes = std::min<std::uint64_t>(chunk.size(), options.streamingBytesPerFile - offset);
                 if (!file.writeAt(offset, chunk.data(), bytes)) {
                     throw std::runtime_error("write failed in " + scratch.string());

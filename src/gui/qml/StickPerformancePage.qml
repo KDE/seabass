@@ -87,7 +87,7 @@ Page {
     readonly property bool hasWriteResults: Object.keys(controller.writeEstimate).length > 0
     readonly property bool hasWearResults: Object.keys(controller.wearAssessment).length > 0
 
-    Component.onCompleted: controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
+    Component.onCompleted: controller.measureOnOpen(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
 
     header: ToolBar {
         // See StickStatisticsPage.qml's header comment: every side zeroed
@@ -105,6 +105,11 @@ Page {
                 stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "USB Stick Performance"
+                // Leaving mid-operation waits for the current file; the
+                // probes now stop within a megabyte, but the page says so
+                // rather than letting the window freeze on a click.
+                backEnabled: !controller.anyBusy
+                backDisabledTooltip: "Cancel or wait for the measurement to finish before leaving this page"
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()
             }
@@ -256,6 +261,7 @@ Page {
                                 visible: root.hasResults && (controller.trend.summary || "").length > 0
                                 wrapMode: Text.WordWrap
                                 color: controller.trend.state === "slowing" || controller.trend.state === "worsened"
+                                    || controller.trend.state === "unavailable"
                                     ? Theme.warnText : Theme.textMuted
                                 font.pointSize: Theme.fontSmall
                                 text: controller.trend.summary || ""

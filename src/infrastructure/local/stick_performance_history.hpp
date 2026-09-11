@@ -24,6 +24,7 @@ struct StickPerformanceRecord
     double smallFileMedianMs = 0.0;
     int outliers = 0;  // random-read plus small-file tail outliers
     std::string wearState;  // "healthy", "watch", "failing", or "" when the wear check did not run
+    double usbSpeedMbps = 0.0;  // the negotiated link of that run; 0 when unknown
 };
 
 // A plain text file, one record per line, tab-separated, under the app
