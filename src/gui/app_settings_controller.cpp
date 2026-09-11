@@ -1,4 +1,5 @@
 #include "gui/local_file_url.hpp"
+#include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "app_settings_controller.hpp"
 
@@ -14,7 +15,7 @@ QString AppSettingsController::defaultStickBackupDirectory()
 }
 
 AppSettingsController::AppSettingsController(QObject *parent)
-    : QObject(parent), m_settings("seabass", "seabass")
+    : QObject(parent), m_settings(openSeabassSettings())
 {
     m_useSystemTheme = m_settings.value("useSystemTheme", false).toBool();
     m_preferredFormat = m_settings.value("preferredFormat", "rekordbox").toString();

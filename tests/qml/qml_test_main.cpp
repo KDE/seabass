@@ -5,6 +5,7 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include "../scratch_path.hpp"
+#include "gui/seabass_settings.hpp"
 #include <QSettings>
 #include <QString>
 #include <QtQuickTest/quicktest.h>
@@ -112,8 +113,18 @@ public slots:
         // would agree with itself whatever it pointed at. What has to be
         // true is that nothing lands under the user's own config
         // directory; the sandbox lives in the temp tree, so it cannot.
+        //
+        // Probed via openSeabassSettings(), the same call production
+        // code makes: a bare QSettings("seabass","seabass") here would
+        // check a different, uninteresting thing on Windows, where that
+        // two-argument constructor keeps resolving to NativeFormat (the
+        // registry) regardless of the setDefaultFormat()/setPath() calls
+        // above -- confirmed directly, not merely suspected -- so the
+        // probe would find nothing wrong while AppSettingsController's
+        // real four-argument-constructed QSettings still opened the
+        // registry underneath it.
         {
-            const QSettings probe("seabass", "seabass");
+            QSettings probe = seabass::gui::openSeabassSettings();
             const QString realConfigRoot = QDir::homePath() + QStringLiteral("/.config");
             if (probe.fileName().startsWith(realConfigRoot)
                 || !probe.fileName().startsWith(sandbox.path())) {

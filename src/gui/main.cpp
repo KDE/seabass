@@ -5,6 +5,8 @@
 #include <QStyleHints>
 #include <QThreadPool>
 
+#include "gui/seabass_settings.hpp"
+
 namespace
 {
 
@@ -54,7 +56,7 @@ bool exportMaterialPalette()
     // this read always fell through to the default, pinning
     // useSystemTheme to false forever and making the Settings toggle a
     // no-op for everything driven from here.
-    QSettings settings("seabass", "seabass");
+    QSettings settings = seabass::gui::openSeabassSettings();
     const bool useSystemTheme = settings.value("useSystemTheme", false).toBool();
 
     // "Current"/"Abyss" -- this app's own brand colors (see Theme.qml),

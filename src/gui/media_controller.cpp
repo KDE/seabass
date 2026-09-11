@@ -14,6 +14,7 @@
 
 #include "application/stick_presence_diff.hpp"
 #include "application/use_cases/open_stick_backup.hpp"
+#include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
@@ -522,7 +523,7 @@ void MediaController::loadOpenedFolders()
     // store than every other setting here, and opened folders would
     // silently fail to persist. Same construction as main.cpp and
     // AppSettingsController.
-    QSettings settings("seabass", "seabass");
+    QSettings settings = openSeabassSettings();
     // One array, one entry per row, path and label together -- so a row is
     // either whole or absent. (Two parallel lists would let an index
     // drift give row N row N+1's label, and on a browsed backup the label
@@ -555,7 +556,7 @@ void MediaController::loadOpenedFolders()
 
 void MediaController::saveOpenedFolders()
 {
-    QSettings settings("seabass", "seabass");  // see loadOpenedFolders()
+    QSettings settings = openSeabassSettings();  // see loadOpenedFolders()
     settings.beginWriteArray(QStringLiteral("openedFolders"), static_cast<int>(m_openedFolders.size()));
     for (std::size_t i = 0; i < m_openedFolders.size(); ++i) {
         settings.setArrayIndex(static_cast<int>(i));
