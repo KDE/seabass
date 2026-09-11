@@ -115,6 +115,7 @@ Page {
             anchors.fill: parent
             anchors.margins: Theme.pageMargin
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: "Browse Library"
                 title: root.track ? (root.track.title + " - " + root.track.artist) : "Track"
                 onHomeRequested: root.StackView.view.pop(null)

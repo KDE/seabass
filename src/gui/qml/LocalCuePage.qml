@@ -133,6 +133,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: "Backups"
                 title: "Local Cue Backup"
                 backEnabled: !localCueController.writing

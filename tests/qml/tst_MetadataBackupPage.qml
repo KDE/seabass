@@ -143,7 +143,8 @@ TestCase {
     // The breadcrumb's own text has to start on the same vertical line
     // as the page body under it. It did not: the style gives ToolBar 4px
     // of padding of its own, and the crumb is a hover pill with another
-    // 8.8 inside that, so "Home" sat 4px right of every line beneath it.
+    // 8.8 inside that, so the Home crumb sat 4px right of every line
+    // beneath it.
     //
     // Asserted on measured positions rather than on the properties that
     // produce them, because the properties were all individually
@@ -156,7 +157,8 @@ TestCase {
         function walk(item) {
             for (var i = 0; i < item.children.length; ++i) {
                 var child = item.children[i];
-                if (child.text === "Home" && child.width < 120) {
+                // "⌂", not "Home": the crumb draws a house glyph now.
+                if (child.text === "⌂" && child.width < 120) {
                     crumbText = child;
                 }
                 if (child.objectName === "pageIntro") {

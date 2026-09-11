@@ -117,6 +117,7 @@ Page {
                 Layout.fillWidth: true
                 spacing: 12
                 BackBreadcrumb {
+                    stack: root.StackView.view
                     middleLabel: "Housekeeping"
                     title: "Match Duplicate Cues"
                     backEnabled: !duplicatesController.writing

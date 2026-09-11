@@ -83,6 +83,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: "Housekeeping"
                 title: "Clean Up Stray Cues"
                 backEnabled: !consistencyController.writing

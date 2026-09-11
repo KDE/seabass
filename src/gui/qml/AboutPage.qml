@@ -70,7 +70,7 @@ Page {
                     Layout.alignment: Qt.AlignHCenter
                 }
                 Label {
-                    text: "DJ USB Stick Management"
+                    text: "Your DJ Toolbox"
                     font.pointSize: Theme.baseFontPointSize * 1.3
                     color: Qt.lighter(Theme.accent, 1.3)
                     Layout.alignment: Qt.AlignHCenter

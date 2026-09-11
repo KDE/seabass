@@ -107,6 +107,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Library Health"
                 backEnabled: !consistencyController.writing

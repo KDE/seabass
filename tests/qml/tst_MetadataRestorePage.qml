@@ -90,7 +90,8 @@ TestCase {
         function walk(item) {
             for (var i = 0; i < item.children.length; ++i) {
                 var child = item.children[i];
-                if (child.text === "Home" && child.width < 120) {
+                // "⌂", not "Home": the crumb draws a house glyph now.
+                if (child.text === "⌂" && child.width < 120) {
                     crumbText = child;
                 }
                 if (child.objectName === "pageIntro") {

@@ -84,6 +84,7 @@ Page {
             anchors.fill: parent
             anchors.margins: Theme.pageMargin
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: "Backups"
                 title: "Manage Backups"
                 backEnabled: !backupsController.busy

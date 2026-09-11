@@ -41,6 +41,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Create Engine Library"
                 backEnabled: !controller.busy

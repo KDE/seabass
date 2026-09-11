@@ -372,6 +372,14 @@ QtObject {
     readonly property int titleWeight: Font.Medium
     readonly property real titleMedium: baseFontPointSize * 2.0
     readonly property real titleLarge: baseFontPointSize * 2.6
+    // The breadcrumb row, a step down from titleMedium. That row carries
+    // three pieces of text where the rest of a header carries one, and at
+    // title size the three of them were what pushed the stick's name into
+    // an ellipsis on a window nobody would call narrow. The house glyph
+    // that starts the row is deliberately NOT on this step -- an icon
+    // reads smaller than text of the same nominal size, and it is the one
+    // thing in the row a reader aims a click at.
+    readonly property real titleCrumb: baseFontPointSize * 1.7
 
     // ---- Rest of the type system -- see docs/design/type-scale.html.
     // Subtitle/card title share the title family, just smaller than a

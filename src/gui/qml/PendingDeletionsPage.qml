@@ -57,6 +57,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: "Housekeeping"
                 title: "Delete Orphaned Files"
                 backEnabled: !cleanupController.writing

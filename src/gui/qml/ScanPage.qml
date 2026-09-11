@@ -236,6 +236,7 @@ Page {
                 Layout.fillWidth: true
                 spacing: 12
                 BackBreadcrumb {
+                    stack: root.StackView.view
                     middleLabel: root.stickLabel
                     title: "Library"
                     backEnabled: !editHost.writing
@@ -672,7 +673,14 @@ Page {
                             Layout.preferredWidth: 50
                         }
                         ToolButton {
-                            text: "🔗"
+                            // Monochrome, like every other glyph the app draws:
+                            // the family forces the flat outline instead of the
+                            // system's color-emoji fallback. U+26D3 rather than
+                            // the 🔗 this used to be because Noto Sans Symbols2
+                            // has no glyph for that one, so it would fall back to
+                            // color anyway -- same chain-link reading either way.
+                            text: "⛓"
+                            font.family: "Noto Sans Symbols2"
                             Layout.preferredWidth: Theme.iconSizeSmall
                             enabled: root.format !== "onelibrary" && trackDelegate.streamingSource.length === 0
                             ToolTip.visible: hovered
@@ -687,6 +695,7 @@ Page {
                             id: editButton
                             visible: root.matchingEnabled
                             text: "🔍"
+                            font.family: "Noto Sans Symbols2"
                             Layout.preferredWidth: Theme.iconSizeSmall
                             ToolTip.visible: hovered
                             ToolTip.text: "Find matching tracks"

@@ -49,6 +49,7 @@ Page {
             anchors.fill: parent
             anchors.margins: Theme.pageMargin
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Device Profile"
                 backEnabled: !settingsController.busy && !editHost.writing

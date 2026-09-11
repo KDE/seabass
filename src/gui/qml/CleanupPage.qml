@@ -110,6 +110,7 @@ Page {
                 Layout.fillWidth: true
                 spacing: 12
                 BackBreadcrumb {
+                    stack: root.StackView.view
                     middleLabel: "Housekeeping"
                     title: "Clean Up Duplicates"
                     backEnabled: !cleanupController.writing

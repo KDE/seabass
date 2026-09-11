@@ -62,6 +62,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: Theme.rowSpacing
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Metadata Backup"
                 onHomeRequested: root.StackView.view.pop(null)

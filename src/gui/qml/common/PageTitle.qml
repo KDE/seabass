@@ -10,10 +10,12 @@ import SeabassGui
 // chevron.
 Label {
     id: root
-    property string level: "section"  // "page" | "section"
+    property string level: "section"  // "page" | "section" | "crumb"
 
     font.family: Theme.titleFamily
     font.weight: Theme.titleWeight
-    font.pointSize: root.level === "page" ? Theme.titleLarge : Theme.titleMedium
+    font.pointSize: root.level === "page" ? Theme.titleLarge
+        : root.level === "crumb" ? Theme.titleCrumb
+        : Theme.titleMedium
     elide: Text.ElideRight
 }

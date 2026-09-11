@@ -77,6 +77,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: Theme.rowSpacing
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Restore Metadata"
                 onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))

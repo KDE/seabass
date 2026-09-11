@@ -95,6 +95,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Backups"
                 onHomeRequested: root.StackView.view.pop(null)

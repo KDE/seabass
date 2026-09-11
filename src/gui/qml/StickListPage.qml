@@ -145,7 +145,7 @@ Page {
                                string targetMountPoint, string targetLabel, bool targetHasLibrary)
 
     // A subtle brand watermark in the corner of the very first page shown --
-    // same "Seabass / DJ USB Stick Management" text as AboutPage.qml, just
+    // same "Seabass / Your DJ Toolbox" text as AboutPage.qml, just
     // bigger and dimmer, since here it's sitting in the background behind
     // real content rather than being the page's own subject. Declared
     // before the ColumnLayout below (and given no width/height of its own)
@@ -164,7 +164,7 @@ Page {
             font.pointSize: Theme.baseFontPointSize * 3.2
         }
         Label {
-            text: "DJ USB Stick Management"
+            text: "Your DJ Toolbox"
             font.pointSize: Theme.baseFontPointSize * 1.6
             color: Qt.lighter(Theme.accent, 1.3)
         }

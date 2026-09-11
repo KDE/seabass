@@ -132,6 +132,7 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: Theme.rowSpacing
             BackBreadcrumb {
+                stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Library Health"
                 onHomeRequested: root.StackView.view.pop(null)
