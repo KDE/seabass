@@ -19,12 +19,23 @@ namespace seabass::infrastructure
 // failure can refuse to produce the file at all rather than describing a
 // leak that already exists on disk.
 //
-// What it will not do is prove anonymity in general. It checks structure:
-// that only the intended files are present, and that every value it
-// samples has the shape of a placeholder rather than of real text. A
-// scrubber that wrote a convincing-looking constant would pass. It is a
-// tripwire for the failure this project has actually had -- a field or a
-// file nobody remembered to scrub -- not a proof.
+// It works two ways. It reads the catalogs back through this project's
+// own readers and checks every value has the shape of a placeholder; and
+// it sweeps the raw bytes of every exported file for readable text that
+// cannot be accounted for. The second exists because the first is blind
+// by construction: a reader returns live rows, which are exactly the rows
+// the anonymizer just overwrote, so it can never see a value still legible
+// in a SQLite freeblock, in a page on the freelist, or in the slack
+// DeviceSQL leaves when a row is removed. The 0.6-era fixture committed to
+// this repository passed the reader checks with 52 real artist names in
+// engine/Database2/m.db and 403 in rekordbox/export.pdb.
+//
+// What it will not do is prove anonymity in general. A scrubber that wrote
+// a convincing-looking constant would pass the first check, and a leak
+// made entirely of schema words would pass the second. It is a tripwire
+// for the failures this project has actually had -- a field or a file
+// nobody remembered to scrub, and a scrubbed row whose original was still
+// sitting in the same file -- not a proof.
 struct AnonymizationVerification
 {
     bool ok = false;
@@ -41,6 +52,9 @@ struct AnonymizationVerification
     // which scans both catalogs and checks their counts.
     std::vector<std::string> warnings;
     int analysisFilesChecked = 0;
+    // Files whose raw bytes were swept for readable text the catalog
+    // readers cannot reach.
+    int filesSwept = 0;
     // Entries in files.tsv whose name was confirmed to be a placeholder.
     int audioFilesChecked = 0;
     int rekordboxTracksSampled = 0;
@@ -68,7 +82,14 @@ struct AnonymizationVerification
 // sweeping everything is 1.58 s against 1.60 s.
 //
 // The parameter stays so tests can force a small sample and show the
-// difference.
+// difference. It caps only the reader-based sampling; the byte sweep
+// always reads every file in full, because a cap on it would reintroduce
+// exactly the gap it was added to close.
+//
+// The sweep is what this now mostly costs: on the committed 30 MB fixture
+// (6,680 files) the whole check is 4.5 s against the 1.6 s it was before.
+// That is a one-off on export, against the alternative of shipping a real
+// library, so it buys its seconds.
 AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, int trackSampleSize = 0);
 
 // True when `value` could be a placeholder of `kind` produced by

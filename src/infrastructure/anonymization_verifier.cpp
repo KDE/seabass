@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "application/use_cases/scan_library.hpp"
+#include "infrastructure/anonymization_byte_sweep.hpp"
 #include "infrastructure/anonymization_export_layout.hpp"
 #include "infrastructure/anonymization_placeholder.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
@@ -103,6 +104,7 @@ bool isHarnessFile(const std::string &name)
     return name == "SET-EXPECTATIONS.txt" || name == "REFUSAL-BASELINE.txt";
 }
 
+
 }  // namespace
 
 bool looksLikeHashPlaceholder(const std::string &value, const std::string &kind)
@@ -177,6 +179,7 @@ std::string AnonymizationVerification::describe() const
     std::ostringstream out;
     out << (ok ? "Anonymization verified." : "ANONYMIZATION CHECK FAILED -- do not share this export.") << "\n";
     out << "Analysis files checked: " << analysisFilesChecked << "\n";
+    out << "Files swept for readable bytes: " << filesSwept << "\n";
     if (audioFilesChecked > 0) {
         out << "Audio files listed and checked: " << audioFilesChecked << "\n";
     }
@@ -414,6 +417,40 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         } catch (const std::exception &e) {
             warn(std::string("could not read the Engine catalog back, so its fields were not sampled: ")
                  + e.what());
+        }
+    }
+
+    // --- Raw bytes: everything the readers above structurally cannot see. ---
+    for (const auto &entry : fs::recursive_directory_iterator(root, ec)) {
+        if (!entry.is_regular_file(ec)) {
+            continue;
+        }
+        const std::string relative = fs::relative(entry.path(), root, ec).string();
+        const std::string name = entry.path().filename().string();
+        // MANIFEST.txt is prose on purpose -- it is the page explaining to
+        // the contributor what was kept and what was replaced, including
+        // any hardware and notes they chose to type in themselves. Sweeping
+        // it reports the explanation as the leak.
+        if (isHarnessFile(name) || name == "MANIFEST.txt") {
+            continue;
+        }
+        const auto unaccounted = readableTextInRawBytes(entry.path());
+        ++result.filesSwept;
+        if (!unaccounted.empty()) {
+            // A leak is never one string, and a failure listing 1,584 of
+            // them helps nobody; enough to recognise it, and the count.
+            constexpr size_t MaxReported = 5;
+            std::ostringstream message;
+            message << relative
+                    << " still has readable text in its raw bytes, which the catalog readers cannot see -- "
+                    << unaccounted.size() << " distinct: ";
+            for (size_t i = 0; i < unaccounted.size() && i < MaxReported; ++i) {
+                message << (i > 0 ? ", " : "") << '"' << unaccounted[i] << '"';
+            }
+            if (unaccounted.size() > MaxReported) {
+                message << ", ...";
+            }
+            fail(message.str());
         }
     }
 
