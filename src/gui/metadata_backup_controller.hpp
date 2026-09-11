@@ -80,6 +80,7 @@ public:
     void clearDeletionStaging();
     int stagedForDeletionCount() const { return static_cast<int>(m_stagedForDeletion.size()); }
     QList<qint64> stagedForDeletionIds() const;
+    bool isStagedForDeletion(qint64 trackId) const { return m_stagedForDeletion.contains(trackId); }
 
     qint64 trackIdAt(int row) const;
 

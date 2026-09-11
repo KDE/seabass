@@ -448,8 +448,7 @@ void MetadataBackupController::toggleStagedForDeletion(int row)
     if (id == 0) {
         return;
     }
-    const bool staged = m_browseModel.stagedForDeletionIds().contains(id);
-    m_browseModel.setStagedForDeletion(row, !staged);
+    m_browseModel.setStagedForDeletion(row, !m_browseModel.isStagedForDeletion(id));
     emit selectionChanged();
 }
 

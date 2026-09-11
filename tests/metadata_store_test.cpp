@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -103,6 +104,16 @@ seabass::infrastructure::local::MetadataBackupSummary store(MetadataStore &store
 
 int main()
 {
+    // Every dated case below assumes the rows this test writes -- which
+    // the store stamps with the wall clock -- fall between these two.
+    // Said out loud rather than left to be discovered in 2033, when the
+    // upper bound passes and half these assertions start failing for a
+    // reason that has nothing to do with the code under test.
+    {
+        const auto now = static_cast<std::int64_t>(std::time(nullptr));
+        assert(now > CatalogWrittenBeforeAnyRow && now < CatalogWrittenAfterEveryRow);
+    }
+
     const fs::path root = scratchRoot();
     fs::remove_all(root);
     const fs::path stick = root / "stick";
