@@ -510,6 +510,11 @@ int main()
         store.prune(1);
         assert(fs::exists(foreignDir / "0-my-own-folder" / "precious.txt"));
         assert(store.list().size() == 1);
+        // A record from before the manifest existed still carries the
+        // archive, and stays listed: data already on sticks stays readable.
+        fs::create_directories(foreignDir / "1-legacy-record");
+        writeFile(foreignDir / "1-legacy-record" / "backup.zip", "not really a zip, but the store's own file name");
+        assert(store.list().size() == 2);
         std::cout << "case: a directory without a manifest is not a record and survives prune OK\n";
     }
 

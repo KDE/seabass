@@ -274,7 +274,8 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
             }
             if (!fs::is_empty(out, ec)) {
                 summary.outputError = "the output directory " + outputDir + " already exists and is not empty; refusing to "
-                                      "use it, since it would be removed when the zip is written";
+                                      "use it, since it would be removed when the zip is written. If it is the leftover "
+                                      "of an earlier run that did not finish, delete it or choose another name";
                 return summary;
             }
         }

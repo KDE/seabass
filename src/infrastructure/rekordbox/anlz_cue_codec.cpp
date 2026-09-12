@@ -95,6 +95,12 @@ std::string AnlzCueCodec::encodeHotCues(const std::vector<RawHotCueEntry> &cues,
             if (cue.rawBytes.size() < NoCommentEntrySize || readU32BE(cue.rawBytes, 8) != cue.rawBytes.size()) {
                 throw std::runtime_error("AnlzCueCodec: a carried-over cue entry is not self-consistent");
             }
+            // Verbatim, the 2-byte field at 30..31 included: real entries
+            // carry values there (0x01a8 in the captured coloured entry)
+            // that are not a 1-based sequence, so this codec's counter is
+            // a shape match for fresh entries, not a rule the file keeps.
+            // Rewriting a captured value to fit the guess would be the
+            // one edit here made without real data behind it.
             ++orderCounter;
             body += cue.rawBytes;
             continue;

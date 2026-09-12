@@ -408,8 +408,9 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
         // output) used to be listed as an Automatic record and, sorting
         // first, be the first thing prune() removed.
         std::error_code manifestEc;
-        if (!fs::is_regular_file(entry.path() / ManifestFileName, manifestEc)) {
-            continue;
+        if (!fs::is_regular_file(entry.path() / ManifestFileName, manifestEc)
+            && !fs::is_regular_file(entry.path() / ArchiveFileName, manifestEc)) {
+            continue;  // a record carries at least one of these; a user's folder carries neither
         }
         BackupRecord record;
         record.id = entry.path().filename().string();

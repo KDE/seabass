@@ -569,6 +569,11 @@ StickWearResult runWearTask(std::string stickRoot, std::string stickLabel, std::
                 auto records = history.forStick(stickIdentifier);
                 if (!records.empty() && !sessionRecordedAtUtc.empty() && records.back().measuredAtUtc == sessionRecordedAtUtc) {
                     history.setLatestWearState(stickIdentifier, wear);
+                } else if (currentScore <= 0) {
+                    // No measurement ran this session: a line with a zero
+                    // score would sit in the trend as "85, 84, 0". The
+                    // finding stays on the page; the history keeps to
+                    // lines that were measured.
                 } else {
                     infrastructure::local::StickPerformanceRecord line;
                     line.measuredAtUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString();

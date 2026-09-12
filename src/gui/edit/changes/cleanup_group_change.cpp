@@ -366,6 +366,16 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         }
         return {};
     };
+    // A field donor with no row in this format (a copy read from another
+    // catalog, or a stray whose sourceId is a file path) cannot be read
+    // by this format's writer. Refuse up front rather than let a
+    // std::stoul("") abort the change after the cues were already merged.
+    for (const std::string *donor : {&plan.keyDonorSourceId, &plan.bpmDonorSourceId, &plan.artworkDonorSourceId}) {
+        if (!donor->empty() && idIn(*donor).empty()) {
+            return ChangeOutcome::failure(QString("A copy this group would take fields from has no %1 row; rescan and try again.")
+                                              .arg(m_format));
+        }
+    }
 
     std::string key = "cleanup:" + primaryFormat;
     std::unordered_map<std::string, std::string> oneLibrarySourceIdToPath;

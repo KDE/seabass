@@ -107,24 +107,38 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
         std::vector<RawHotCueEntry> entries;
         for (const auto &section : file.sections) {
             if (isCueListSection(section, listType)) {
-                entries = AnlzCueCodec::decodeHotCues(section.rawBytes, listType);
+                try {
+                    entries = AnlzCueCodec::decodeHotCues(section.rawBytes, listType);
+                } catch (const std::exception &) {
+                    // A damaged list on the stick: nothing to carry over.
+                    // The rewrite below replaces the section wholesale,
+                    // which is what every write did before carry-over
+                    // existed and how such damage gets repaired.
+                    entries.clear();
+                }
                 break;
             }
         }
         return entries;
     };
-    const std::vector<RawHotCueEntry> existingHot = existing(CueListTypeHot);
-    const std::vector<RawHotCueEntry> existingMemory = existing(CueListTypeMemory);
-    auto carryOver = [](const RawHotCueEntry &wanted, const std::vector<RawHotCueEntry> &from) -> std::optional<RawHotCueEntry> {
-        for (const auto &have : from) {
+    std::vector<RawHotCueEntry> existingHot = existing(CueListTypeHot);
+    std::vector<RawHotCueEntry> existingMemory = existing(CueListTypeMemory);
+    // Each raw entry is handed out once (two memory cues at one position
+    // must not both inherit the same bytes), and a cue whose colour is
+    // new, or set where the file had none, is encoded fresh so the
+    // colour reaches the file.
+    auto carryOver = [](const RawHotCueEntry &wanted, std::vector<RawHotCueEntry> &from) -> std::optional<RawHotCueEntry> {
+        for (auto &have : from) {
             if (have.rawBytes.empty() || have.hotCueNumber != wanted.hotCueNumber || have.timeMs != wanted.timeMs
                 || have.isLoop != wanted.isLoop || (have.isLoop && have.loopEndMs != wanted.loopEndMs)) {
                 continue;
             }
-            if (wanted.color && have.color && *wanted.color != *have.color) {
+            if (wanted.color && (!have.color || *wanted.color != *have.color)) {
                 continue;  // a genuinely new colour: encode it fresh
             }
-            return have;
+            RawHotCueEntry taken = have;
+            have.rawBytes.clear();  // consumed
+            return taken;
         }
         return std::nullopt;
     };
