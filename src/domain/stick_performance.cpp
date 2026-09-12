@@ -281,7 +281,7 @@ bool sameLinkClass(double a, double b)
     if (a <= 0.0 || b <= 0.0) {
         return true;  // unknown: compare rather than discard
     }
-    return (a >= 5000.0) == (b >= 5000.0);
+    return (a >= kSuperSpeedMbps) == (b >= kSuperSpeedMbps);
 }
 }  // namespace
 

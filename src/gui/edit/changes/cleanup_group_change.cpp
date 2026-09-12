@@ -347,16 +347,35 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         return ChangeOutcome::success();
     }
 
-    std::string key = "cleanup:" + m_format.toStdString();
+    // Row ids in the page's own format. A collapsed file's representative
+    // row is whichever catalog was read first (rekordbox before Engine),
+    // so plan.survivor.sourceId can be a rekordbox id while this change
+    // writes Engine; ids are dense from 1 in both, and the wrong one
+    // lands on an unrelated track. Every write below goes through this.
+    const std::string primaryFormat = m_format.toStdString();
+    const std::string survivorId = domain::rowIdIn(plan.survivor, primaryFormat);
+    if (survivorId.empty()) {
+        return ChangeOutcome::failure(QString("The kept copy has no %1 row to write to; rescan and try again.")
+                                          .arg(m_format));
+    }
+    auto idIn = [&](const std::string &baseSourceId) -> std::string {
+        for (const auto &t : plan.group.tracks) {
+            if (t.sourceId == baseSourceId) {
+                return domain::rowIdIn(t, primaryFormat);
+            }
+        }
+        return {};
+    };
+
+    std::string key = "cleanup:" + primaryFormat;
     std::unordered_map<std::string, std::string> oneLibrarySourceIdToPath;
     if (m_format == "onelibrary") {
-        // Keyed by the OneLibrary row id, the id the writes below use --
-        // on a collapsed file that is not the representative row's id.
-        oneLibrarySourceIdToPath[domain::rowIdIn(plan.survivor, "onelibrary")] = plan.survivor.filePath;
+        // Keyed by the ids the writes below use.
+        oneLibrarySourceIdToPath[survivorId] = plan.survivor.filePath;
         for (const auto &doomed : plan.toRemove) {
-            oneLibrarySourceIdToPath[domain::rowIdIn(doomed, "onelibrary")] = doomed.filePath;
+            oneLibrarySourceIdToPath[domain::rowIdIn(doomed, primaryFormat)] = doomed.filePath;
         }
-        key += ":" + plan.survivor.sourceId;
+        key += ":" + survivorId;
     }
     CleanupWriterContext &w = ctx.shared<CleanupWriterContext>(key, [&]() {
         return std::make_unique<CleanupWriterContext>(m_format, m_path, m_itemCountHint, ctx,
@@ -377,26 +396,6 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                     [](const std::pair<std::string, QString> &entry) { return entry.first == "onelibrary"; });
     application::OperationLog &log = ctx.log();
     const QString &format = m_format;
-
-    // Row ids in the page's own format. A collapsed file's representative
-    // row is whichever catalog was read first (rekordbox before Engine),
-    // so plan.survivor.sourceId can be a rekordbox id while this change
-    // writes Engine; ids are dense from 1 in both, and the wrong one
-    // lands on an unrelated track. Every write below goes through this.
-    const std::string primaryFormat = m_format.toStdString();
-    auto idIn = [&](const std::string &baseSourceId) -> std::string {
-        for (const auto &t : plan.group.tracks) {
-            if (t.sourceId == baseSourceId) {
-                return domain::rowIdIn(t, primaryFormat);
-            }
-        }
-        return {};
-    };
-    const std::string survivorId = domain::rowIdIn(plan.survivor, primaryFormat);
-    if (survivorId.empty()) {
-        return ChangeOutcome::failure(QString("The kept copy has no %1 row to write to; rescan and try again.")
-                                          .arg(m_format));
-    }
 
     // Fallback for anything filesToBackup() did not declare, resolved the
     // same way so it cannot disagree with it -- and so it costs no second

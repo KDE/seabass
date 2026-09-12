@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <set>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -331,6 +332,10 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
         return false;  // damaged archive: say so rather than restore a prefix
     }
 
+    std::set<fs::path> inArchive;
+    for (const auto &[entryName, originalPath] : entries) {
+        inArchive.insert(resolveRecordedPath(originalPath));
+    }
     bool anyRestored = false;
     for (const auto &[entryName, originalPath] : entries) {
         auto index = reader->findEntry(entryName);
@@ -355,14 +360,7 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
             for (const char *sidecar : {"-wal", "-shm", "-journal"}) {
                 fs::path side = target;
                 side += sidecar;
-                bool inArchive = false;
-                for (const auto &[otherEntry, otherPath] : entries) {
-                    if (resolveRecordedPath(otherPath) == side) {
-                        inArchive = true;
-                        break;
-                    }
-                }
-                if (!inArchive) {
+                if (!inArchive.contains(side)) {
                     std::error_code sideEc;
                     fs::remove(side, sideEc);
                 }

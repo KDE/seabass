@@ -1,4 +1,6 @@
 #include "application/use_cases/anonymize_library.hpp"
+
+#include "application/stick_path_match.hpp"
 #include <algorithm>
 #include "infrastructure/anonymization_placeholder.hpp"
 #include "infrastructure/cleanup/audio_file_walk.hpp"
@@ -251,11 +253,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         std::error_code ec;
         const auto normalized = [&ec](const fs::path &p) { return fs::absolute(p, ec).lexically_normal().string(); };
         const auto contains = [](const std::string &outer, const std::string &inner) {
-            if (outer.empty() || inner.size() < outer.size() || inner.compare(0, outer.size(), outer) != 0) {
-                return false;
-            }
-            return inner.size() == outer.size() || inner[outer.size()] == fs::path::preferred_separator
-                   || outer.back() == fs::path::preferred_separator;
+            return outer == inner || pathIsUnder(inner, outer);
         };
         const std::string out = normalized(fs::path(outputDir));
         for (const auto &source : {rekordboxRoot, engineRoot}) {

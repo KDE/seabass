@@ -119,9 +119,9 @@ public:
     std::vector<UndoableBackup> takeBackups();
 
 private:
-    // The -wal beside a SQLite database, when it exists and holds frames:
-    // backed up with the main file so a restore cannot go back to an
-    // older state than the stick actually had.
+    // The -wal / -journal beside a SQLite database, when they exist and
+    // hold bytes: backed up with the main file so a restore cannot go
+    // back to an older state than the stick actually had.
     static std::vector<std::string> walSidecarsOf(const std::string &file);
 
     application::CancellationToken m_cancel;

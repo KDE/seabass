@@ -139,15 +139,12 @@ public:
     // stick, same convention as every other controller in this app.
     // mountPoint: the stick root; may be empty when a catalog path is
     // given, in which case the root is the catalog's parent.
+    // alwaysRecord: the button's measurement is always recorded in the
+    // history; the page's opening measurement passes false and is recorded
+    // only when the stick has no line from the last day, so twenty casual
+    // page opens cannot evict the long-term baseline the trend keeps.
     Q_INVOKABLE void measure(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
-                             const QString &mountPoint);
-    // The measurement the page makes when it opens: identical, except
-    // that it is recorded in the history only when the stick has no
-    // record from the last day. Twenty casual page opens would otherwise
-    // evict the long-term baseline the trend exists to keep; the button
-    // always records.
-    Q_INVOKABLE void measureOnOpen(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
-                                   const QString &mountPoint);
+                             const QString &mountPoint, bool alwaysRecord = true);
     // For a stick with nothing to read: runs the write test, keeps its
     // files long enough to read them back, removes them. Both the read
     // and the write results come out of it. Same refusal as

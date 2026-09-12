@@ -268,13 +268,6 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
     return result;
 }
 
-namespace
-{
-
-// A track's row id in one specific catalog, empty if it has none there.
-
-}  // namespace
-
 std::string rowIdIn(const Track &track, const std::string &format)
 {
     for (const auto &row : track.catalogRows) {
@@ -291,7 +284,6 @@ std::string rowIdIn(const Track &track, const std::string &format)
     }
     return {};
 }
-
 
 CatalogWriteTargets writeTargetsFor(const DuplicateCleanupPlan &plan, const std::string &format)
 {

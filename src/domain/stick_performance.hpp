@@ -24,6 +24,11 @@ using storageprobe::speedClassFor;
 using storageprobe::speedClassLabel;
 using storageprobe::verdictLabel;
 
+// The negotiated link speed, in Mbps, from which a port counts as
+// SuperSpeed (USB 3.x) rather than USB 2.0. The hardware label and the
+// trend's like-with-like comparison both use it.
+constexpr double kSuperSpeedMbps = 4500.0;
+
 // A two-hour set, as a stick sees it. Playback itself is not modelled:
 // streaming a track needs well under 1 MB/s, which even a bad stick
 // manages without the DJ noticing. What the DJ waits on is the mount at

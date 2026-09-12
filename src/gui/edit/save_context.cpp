@@ -1,5 +1,7 @@
 #include "gui/edit/save_context.hpp"
 
+#include "infrastructure/stick_backup/sqlite_db_set.hpp"
+
 #include "infrastructure/backup/stick_write_lock.hpp"
 
 #include "infrastructure/backup/stick_space.hpp"
@@ -108,14 +110,17 @@ std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
 
 std::vector<std::string> SaveContext::walSidecarsOf(const std::string &file)
 {
+    // The same definition of "the database's set" Full Stick Backup
+    // uses: the main file plus whichever of -wal / -journal exist.
     std::vector<std::string> sidecars;
     if (fs::path(file).extension() != ".db") {
         return sidecars;
     }
-    std::error_code ec;
-    const std::string wal = file + "-wal";
-    if (fs::is_regular_file(wal, ec) && fs::file_size(wal, ec) > 0 && !ec) {
-        sidecars.push_back(wal);
+    for (const fs::path &member : infrastructure::stick_backup::dbSetMembers(fs::path(file))) {
+        std::error_code ec;
+        if (member != fs::path(file) && fs::is_regular_file(member, ec) && fs::file_size(member, ec) > 0 && !ec) {
+            sidecars.push_back(member.string());
+        }
     }
     return sidecars;
 }

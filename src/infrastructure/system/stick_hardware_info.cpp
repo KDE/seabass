@@ -1,5 +1,7 @@
 #include "infrastructure/system/stick_hardware_info.hpp"
 
+#include "domain/stick_performance.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -38,7 +40,7 @@ std::string classifySpeed(double mbps)
         label << "20 Gbps (USB 3.2 Gen2x2 SuperSpeed+)";
     } else if (mbps >= 9000) {
         label << "10 Gbps (USB 3.1/3.2 Gen2 SuperSpeed+)";
-    } else if (mbps >= 4500) {
+    } else if (mbps >= domain::kSuperSpeedMbps) {
         label << "5 Gbps (USB 3.0/3.1 Gen1 SuperSpeed)";
     } else if (mbps >= 400) {
         label << "480 Mbps (USB 2.0 High-Speed)";

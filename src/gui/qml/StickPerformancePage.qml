@@ -87,7 +87,7 @@ Page {
     readonly property bool hasWriteResults: Object.keys(controller.writeEstimate).length > 0
     readonly property bool hasWearResults: Object.keys(controller.wearAssessment).length > 0
 
-    Component.onCompleted: controller.measureOnOpen(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint)
+    Component.onCompleted: controller.measure(root.stickLabel, root.rekordboxPath, root.enginePath, root.mountPoint, false)
 
     header: ToolBar {
         // See StickStatisticsPage.qml's header comment: every side zeroed

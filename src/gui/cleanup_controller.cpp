@@ -506,7 +506,7 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
             return result;
         }
 
-        const std::string deletionRoot = std::filesystem::path(path.toStdString()).parent_path().string();
+        const std::string deletionRoot = infrastructure::paths::stickRootForCatalogPath(path.toStdString());
         auto resolution = infrastructure::cleanup::resolvePendingDeletions(selected, stickCatalogs.catalogs, deletionRoot);
         for (const auto &entry : resolution.notOnThisStick) {
             log.record("cleanup: pending deletion is not on this stick, left alone -> " + entry.filePath);
