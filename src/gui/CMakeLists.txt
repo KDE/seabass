@@ -62,6 +62,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/DjSoftwareRunningDialog.qml
     qml/common/SaveOverlayButton.qml
     qml/common/UnsavedChangesDialog.qml
+    qml/common/WatermarkLayer.qml
     qml/common/WriteProgressDialog.qml
     qml/common/OperationSummaryDialog.qml
     qml/common/LockedLibraryDialog.qml

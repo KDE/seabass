@@ -298,74 +298,9 @@ ApplicationWindow {
     // Sits on top of the content (so it's visible regardless of which
     // page's opaque background is underneath) but at low opacity and
     // with no mouse handling of its own, so it never competes with or
-    // blocks the real UI.
-    // Two identically-positioned layers, alternating which is "front."
-    // A plain source swap on a single Image is an instantaneous pixel
-    // replacement, fading that single layer out and back in just reads
-    // as a dip-to-black between old and new art, not a blend of the two.
-    // Crossfading needs the old image to still be on screen, fading out,
-    // while the new one fades in on top of it simultaneously; that needs
-    // two separate Image/MultiEffect stacks.
-    component WatermarkLayer: Item {
-        id: layer
-        property alias source: img.source
-        property bool isArtwork: false
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: -width * 0.08
-        width: Math.min(window.width, window.height) * 0.75
-        height: width
-        opacity: 0
-
-        Behavior on opacity {
-            NumberAnimation { duration: 400; easing.type: Easing.InOutQuad }
-        }
-
-        Image {
-            id: img
-            // Only ever used as MultiEffect's pixel source below, never
-            // rendered directly. Qt Quick still grabs a hidden item's
-            // texture for an effect source, same as layer.enabled does.
-            visible: false
-            anchors.fill: parent
-            fillMode: Image.PreserveAspectFit
-            smooth: true
-            // Without this, the vector brand SVG still gets rasterized
-            // once at whatever small default size the source reports
-            // (not "crisp at any size" as the comment above assumes),
-            // then that raster is upscaled to ~0.75x the window's
-            // shorter side -- soft/blurry despite being vector source.
-            // Binding sourceSize to the actual on-screen size makes Qt's
-            // SVG renderer rasterize at target resolution instead.
-            // Harmless for the artwork-cover-art case too: that path
-            // already relies on MultiEffect's blur, not sharpness.
-            sourceSize: Qt.size(layer.width, layer.height)
-        }
-
-        // Cover art is a small source image (a rekordbox/Engine
-        // thumbnail, often well under 300px) stretched to ~0.75x the
-        // window's shorter side. Upscaled that far, its own pixel grid
-        // becomes visible ("scaled up a lot... shows artifacts").
-        // Blurred here rather than just relying on Image.smooth's
-        // bilinear filtering, which softens edges slightly but doesn't
-        // hide a real resolution mismatch at this scale factor. The
-        // brand SVG watermark is vector, crisp at any size, so blur
-        // only actually applies when this layer is showing real artwork.
-        MultiEffect {
-            // Fills this layer (its actual parent). Anchoring straight
-            // to the Image sibling-of-a-different-item instead is not a
-            // legal QML anchor target (only parent/sibling) and was
-            // silently resolving to a zero-size effect in an earlier
-            // version of this watermark, which is why it disappeared
-            // entirely for a while.
-            anchors.fill: parent
-            source: img
-            blurEnabled: layer.isArtwork
-            blur: 1.0
-            blurMax: 64
-        }
-    }
-
+    // blocks the real UI. Two identically-positioned layers alternate
+    // which is "front" so a source change crossfades; see
+    // common/WatermarkLayer.qml for why that needs two of them.
     WatermarkLayer { id: watermarkLayerA }
     WatermarkLayer { id: watermarkLayerB }
     property bool watermarkFrontIsA: true
