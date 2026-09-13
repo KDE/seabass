@@ -94,6 +94,9 @@ Frame {
 
             RowLayout {
                 Layout.fillWidth: true
+                // Room for the close button in the corner above it, so it
+                // never covers the time.
+                Layout.rightMargin: closeButton.width
                 Label {
                     text: root.controller.title + (root.controller.artist.length > 0 ? "  - " + root.controller.artist : "")
                     font.bold: true
@@ -101,6 +104,7 @@ Frame {
                     Layout.fillWidth: true
                 }
                 Label {
+                    objectName: "playerTime"
                     text: root.formatTime(root.controller.position) + " / " + root.formatTime(root.controller.duration)
                     color: Theme.textMuted
                 }

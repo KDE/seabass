@@ -97,6 +97,10 @@ TestCase {
         var row = findChild(panel, "artistTrackRow");
         verify(row !== null, "the artist's other track must be listed");
         compare(row.tooltipText, "In Peaktime, Warm-up");
+        // The row's own popup, which the key badge's tooltip cannot take over.
+        var tip = findChild(row, "artistTrackTip");
+        verify(tip !== null, "the row must carry its own tooltip");
+        compare(tip.text, "In Peaktime, Warm-up");
         compare(findChild(row, "artistTrackDuration").text, "6:12", "to the second, not rounded");
         verify(findChild(row, "artistTrackArtwork") !== null, "each row has room for its cover art");
         verify(row.clicked === undefined, "the row must not be a button");

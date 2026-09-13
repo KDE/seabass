@@ -42,6 +42,12 @@ TestCase {
         var corner = close.mapToItem(bar, close.width, 0);
         compare(Math.round(corner.x), Math.round(bar.width), "flush with the right edge");
         compare(Math.round(corner.y), 0, "flush with the top edge");
+        // And clear of the time beside it.
+        var time = findChild(bar, "playerTime");
+        verify(time !== null);
+        var timeRight = time.mapToItem(bar, time.width, 0).x;
+        var closeLeft = close.mapToItem(bar, 0, 0).x;
+        verify(timeRight <= closeLeft, "the close button must not cover the time (" + timeRight + " vs " + closeLeft + ")");
 
         mouseClick(close);
         verify(bar.controller.calls.indexOf("stop") >= 0, "closing must stop playback");

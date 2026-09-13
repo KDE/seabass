@@ -676,9 +676,16 @@ Pane {
                         ? "In " + playlists.join(", ")
                         : "Not in any playlist"
                     HoverHandler { id: artistTrackHover }
-                    ToolTip.visible: artistTrackHover.hovered
-                    ToolTip.delay: 400
-                    ToolTip.text: artistTrackRow.tooltipText
+                    // Its own ToolTip rather than the attached one: attached
+                    // ToolTips share a single popup per window, so the key
+                    // badge's tooltip inside the row took it over, and the
+                    // playlists did not come back until the pointer left.
+                    ToolTip {
+                        objectName: "artistTrackTip"
+                        visible: artistTrackHover.hovered
+                        delay: 400
+                        text: artistTrackRow.tooltipText
+                    }
 
                     RowLayout {
                         id: artistTrackContent
@@ -698,7 +705,9 @@ Pane {
                                 fillMode: Image.PreserveAspectCrop
                                 sourceSize.width: 64
                                 sourceSize.height: 64
-                                asynchronous: false
+                                // In the background: one row per track by the
+                                // artist, rebuilt on every track shown.
+                                asynchronous: true
                             }
                         }
                         Label {

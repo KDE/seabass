@@ -226,6 +226,11 @@ TestCase {
             verify(glyphInk.top >= 0 && capitalInk.top >= 0, values[i] + ": nothing was painted");
             verify(Math.abs(glyphInk.centre - capitalInk.centre) <= 1.0,
                    values[i] + ": the glyph's centre is " + (glyphInk.centre - capitalInk.centre) + " px off the name's");
+            // And the name stays centred in the box: lining the two up by
+            // their baseline lifted the whole text about 2 px.
+            var boxCentre = origin.y + (toggle.height - 1) / 2;
+            verify(Math.abs(capitalInk.centre - boxCentre) <= 1.5,
+                   values[i] + ": the name sits " + (capitalInk.centre - boxCentre) + " px off the box's centre");
         }
     }
 

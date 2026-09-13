@@ -100,22 +100,28 @@ ComboBox {
             + "cues to it directly.";
     }
 
-    // A catalog's glyph beside its name, on the name's baseline and moved
-    // so the glyph's ink is centred on the name's capitals. The glyphs
-    // come from Noto Sans Symbols2, whose metrics are not the UI font's:
-    // centring the two text boxes left every glyph 1.5 to 2.5 px above the
-    // name (measured in tst_LibrarySourceToggle.qml).
+    // A catalog's glyph beside its name, both centred in the row as the
+    // name always was, and the glyph then moved so its ink is centred on
+    // the name's capitals. The glyphs come from Noto Sans Symbols2, whose
+    // metrics are not the UI font's: centring the two text boxes left every
+    // glyph 1.5 to 2.5 px above the name, and sitting both on one baseline
+    // instead lifted the whole text about 2 px in the box (both measured in
+    // tst_LibrarySourceToggle.qml).
     component CatalogGlyph: Label {
         id: glyphLabel
-        required property font nameFont
+        required property Item nameLabel
         font.family: "Noto Sans Symbols2"
         color: Theme.text
-        Layout.alignment: Qt.AlignBaseline
+        Layout.alignment: Qt.AlignVCenter
         TextMetrics { id: glyphInk; font: glyphLabel.font; text: glyphLabel.text }
-        TextMetrics { id: capitalInk; font: glyphLabel.nameFont; text: "H" }
+        TextMetrics { id: capitalInk; font: glyphLabel.nameLabel.font; text: "H" }
+        // A transform, not a position: it moves the ink without asking the
+        // layout for anything, so this cannot feed back into the y it reads.
         transform: Translate {
-            y: (capitalInk.tightBoundingRect.y + capitalInk.tightBoundingRect.height / 2)
-               - (glyphInk.tightBoundingRect.y + glyphInk.tightBoundingRect.height / 2)
+            y: (glyphLabel.nameLabel.y + glyphLabel.nameLabel.baselineOffset
+                + capitalInk.tightBoundingRect.y + capitalInk.tightBoundingRect.height / 2)
+               - (glyphLabel.y + glyphLabel.baselineOffset
+                  + glyphInk.tightBoundingRect.y + glyphInk.tightBoundingRect.height / 2)
         }
     }
 
@@ -214,13 +220,12 @@ ComboBox {
                 const entry = root.entries[root.currentIndex];
                 return entry ? entry.glyph : "";
             }
-            nameFont: currentName.font
+            nameLabel: currentName
             leftPadding: 8
         }
         Label {
             id: currentName
             objectName: "catalogName"
-            Layout.alignment: Qt.AlignBaseline
             text: {
                 const entry = root.entries[root.currentIndex];
                 return entry ? entry.label : "";
@@ -282,11 +287,10 @@ ComboBox {
             spacing: 4
             CatalogGlyph {
                 text: entryDelegate.modelData.glyph
-                nameFont: entryName.font
+                nameLabel: entryName
             }
             Label {
                 id: entryName
-                Layout.alignment: Qt.AlignBaseline
                 text: entryDelegate.modelData.label
                 color: Theme.text
                 elide: Text.ElideRight
