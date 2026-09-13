@@ -616,7 +616,15 @@ Page {
                                         // stretching; the minimum is what
                                         // lets a long one shorten.
                                         Layout.minimumWidth: 0
-                                        Layout.maximumWidth: implicitWidth
+                                        // Whole pixels, with one to spare. A layout
+                                        // hands out whole pixels, and a Text given
+                                        // a fraction less than its natural width
+                                        // elides: /media/sebas/WHALESHARK2 measures
+                                        // 208.03 and got 208, abbreviated on a card
+                                        // with hundreds of pixels left over. Same
+                                        // fix as BackBreadcrumb's crumbs.
+                                        Layout.preferredWidth: Math.ceil(implicitWidth) + 1
+                                        Layout.maximumWidth: Math.ceil(implicitWidth) + 1
                                         Layout.fillWidth: true
                                     }
                                     // The stick's size, beside the path. Hidden

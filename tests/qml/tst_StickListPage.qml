@@ -665,6 +665,24 @@ TestCase {
         compare(label.text, "");
     }
 
+    // The path this card really showed abbreviated. Its natural width is
+    // fractional (208.03 at the default font), the layout hands out whole
+    // pixels, and a Text a fraction short of its width elides. The short
+    // path below happens to measure a whole number of pixels, so it never
+    // could catch this.
+    function test_aRealMountPointWithAFractionalWidthIsNotElided() {
+        var page = makePage([makeStick({label: "WHALESHARK2", mountPoint: "/media/sebas/WHALESHARK2",
+                                        devicePath: "/dev/sdb1"})], {});
+        var label = findByName(page, "stickPathLabel");
+        verify(label !== null, "the stick path label must exist");
+        if (Math.floor(label.implicitWidth) === label.implicitWidth) {
+            skip("this font measures the path in whole pixels, so this case proves nothing here");
+        }
+        verify(!label.truncated,
+               "a path with room to spare must not be abbreviated (width " + label.width
+               + " vs implicit " + label.implicitWidth + ")");
+    }
+
     // The other half of the one above, and the half that was wrong: a
     // path the card has room for must be shown whole.
     function test_aShortMountPointIsNotElided() {
