@@ -173,6 +173,17 @@ void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
                             : std::nullopt);
 }
 
+void LibdjinteropEngineCueWriter::setLastPlayedAt(const std::string &trackSourceId,
+                                                  std::chrono::system_clock::time_point when)
+{
+    auto &db = database();
+    auto track = db.track_by_id(std::stoll(trackSourceId));
+    if (!track) {
+        throw std::runtime_error("no Engine track with id=" + trackSourceId);
+    }
+    track->set_last_played_at(when);
+}
+
 void LibdjinteropEngineCueWriter::propagateMissingFields(const std::string &trackSourceId,
                                                            std::optional<double> bpm, std::optional<std::string> key)
 {

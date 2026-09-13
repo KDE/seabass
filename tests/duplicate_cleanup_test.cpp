@@ -183,6 +183,55 @@ int main()
         std::cout << "case 9 (neither copy has bpm/key/artwork -- nothing propagates) OK\n";
     }
 
+    // Play counts are added up onto the survivor: each copy was played in
+    // its own right. A difference is merged, never a warning.
+    {
+        Track a = makeTrack("a", 200.0, 320, 8'000'000);
+        a.playCount = 7;
+        Track b = makeTrack("b", 200.0, 128, 3'000'000);
+        b.playCount = 5;
+        Track c = makeTrack("c", 200.0, 128, 3'000'000);
+        DuplicateGroup group{{a, b, c}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "a");
+        assert(plan.playCountForSurvivor.has_value() && *plan.playCountForSurvivor == 12);
+        assert(!plan.hasUnpreservableDataAtRisk);
+        std::cout << "case 9b (play counts are added up onto the survivor, with no warning) OK\n";
+    }
+
+    // Only the survivor was played: nothing to add, nothing to write.
+    {
+        Track a = makeTrack("a", 200.0, 320, 8'000'000);
+        a.playCount = 7;
+        Track b = makeTrack("b", 200.0, 128, 3'000'000);
+        DuplicateGroup group{{a, b}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "a");
+        assert(!plan.playCountForSurvivor.has_value());
+        std::cout << "case 9c (nothing to add when only the survivor was played) OK\n";
+    }
+
+    // Last played: the latest of any copy, and only when later than the
+    // survivor's own.
+    {
+        using namespace std::chrono;
+        const auto t0 = system_clock::time_point(seconds(1'700'000'000));
+        Track a = makeTrack("a", 200.0, 320, 8'000'000);
+        a.lastPlayedAt = t0;
+        Track b = makeTrack("b", 200.0, 128, 3'000'000);
+        b.lastPlayedAt = t0 + hours(48);
+        Track c = makeTrack("c", 200.0, 128, 3'000'000);
+        c.lastPlayedAt = t0 + hours(24);
+        auto plan = DuplicateCleanupPlanner::plan(DuplicateGroup{{a, b, c}});
+        assert(plan.survivor.sourceId == "a");
+        assert(plan.lastPlayedAtForSurvivor.has_value() && *plan.lastPlayedAtForSurvivor == t0 + hours(48));
+        Track d = makeTrack("d", 200.0, 128, 3'000'000);
+        d.lastPlayedAt = t0 - hours(1);
+        auto older = DuplicateCleanupPlanner::plan(DuplicateGroup{{a, d}});
+        assert(!older.lastPlayedAtForSurvivor.has_value());
+        std::cout << "case 9d (last played is the latest of any copy) OK\n";
+    }
+
     // hasUnpreservableDataAtRisk: two copies with genuinely different
     // ratings -- real data that would be silently lost, distinct from
     // (and independent of) `differs`.

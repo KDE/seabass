@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <string>
 
@@ -44,6 +45,10 @@ public:
     // doesn't exist.
     void propagateMissingFields(const std::string &trackSourceId, std::optional<double> bpm,
                                  std::optional<std::string> key);
+
+    // Sets a track's last-played time. Clean Up's survivor gets the latest
+    // of its duplicate copies' times; Engine keeps no play count, only this.
+    void setLastPlayedAt(const std::string &trackSourceId, std::chrono::system_clock::time_point when);
 
 private:
     // The open library, kept rather than reopened per call.

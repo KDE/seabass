@@ -130,6 +130,11 @@ public:
     void writeAnnotationForPath(const std::string &filePath, const std::optional<int> &stars,
                                  const std::optional<std::string> &comment);
 
+    // Sets a content row's play count (djPlayCount). Clean Up's survivor
+    // gets its duplicate copies' counts added up. Read back before it is
+    // trusted, like the annotation above.
+    void writePlayCountForPath(const std::string &filePath, int playCount);
+
     // Fills in a Clean Up survivor's missing bpm/key/artwork from
     // another copy in its duplicate group (see domain::
     // DuplicateCleanupPlan). Copies the donor row's own already-valid

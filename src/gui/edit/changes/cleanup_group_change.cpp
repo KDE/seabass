@@ -234,7 +234,8 @@ bool writesToCatalog(const domain::DuplicateCleanupPlan &plan)
     if (plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size()) {
         return true;
     }
-    if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.artworkPathForSurvivor) {
+    if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.artworkPathForSurvivor || plan.playCountForSurvivor
+        || plan.lastPlayedAtForSurvivor) {
         return true;
     }
     return std::any_of(plan.toRemove.begin(), plan.toRemove.end(),
@@ -460,7 +461,8 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     // Primary-format writes here are NOT best-effort: a failure fails
     // this change. Only the OneLibrary *mirror* of a rekordbox write,
     // below, is best-effort, same as the merged-cues mirror.
-    if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.artworkPathForSurvivor) {
+    if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.artworkPathForSurvivor || plan.playCountForSurvivor
+        || plan.lastPlayedAtForSurvivor) {
         if (format == "rekordbox") {
             std::string pdbPath = w.effectiveRoot + "/rekordbox/export.pdb";
             infrastructure::rekordbox::PdbRowWriter fieldWriter(pdbPath);
@@ -477,6 +479,11 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                 fieldWriter.copyTrackFieldsIfMissing(static_cast<uint32_t>(std::stoul(idIn(plan.artworkDonorSourceId))),
                                                      survivorRow, false, false, true);
             }
+            // Merged, not filled: the copies' counts added up. See
+            // DuplicateCleanupPlan::playCountForSurvivor.
+            if (plan.playCountForSurvivor) {
+                fieldWriter.setTrackPlayCount(survivorRow, *plan.playCountForSurvivor);
+            }
             if (!fieldWriter.commit()) {
                 return ChangeOutcome::failure("failed to write " + QString::fromStdString(pdbPath));
             }
@@ -490,6 +497,10 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             auto *engineCueWriter =
                 static_cast<infrastructure::engine::LibdjinteropEngineCueWriter *>(fc.cueWriter.get());
             engineCueWriter->propagateMissingFields(survivorId, plan.bpmForSurvivor, plan.keyForSurvivor);
+            // Engine keeps no play count, only when a track was last played.
+            if (plan.lastPlayedAtForSurvivor) {
+                engineCueWriter->setLastPlayedAt(survivorId, *plan.lastPlayedAtForSurvivor);
+            }
             w.session.noteItemApplied();
             log.record("cleanup: propagated missing bpm/key onto survivor track id=" + survivorId);
         } else if (format == "onelibrary") {
@@ -511,6 +522,9 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                 if (!donorPath.empty() && !plan.survivor.filePath.empty()) {
                     fieldWriter.propagateMissingFieldsForPath(donorPath, plan.survivor.filePath, false, false, true);
                 }
+            }
+            if (plan.playCountForSurvivor && !plan.survivor.filePath.empty()) {
+                fieldWriter.writePlayCountForPath(plan.survivor.filePath, *plan.playCountForSurvivor);
             }
             w.session.noteItemApplied();
             log.record("cleanup: propagated missing bpm/key/artwork onto survivor track id=" + survivorId);
@@ -543,6 +557,9 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                         oneLibFieldWriter.propagateMissingFieldsForPath(donorPath, plan.survivor.filePath, false, false,
                                                                         true);
                     }
+                }
+                if (plan.playCountForSurvivor) {
+                    oneLibFieldWriter.writePlayCountForPath(plan.survivor.filePath, *plan.playCountForSurvivor);
                 }
                 log.record("cleanup: also propagated missing bpm/key/artwork into OneLibrary (id="
                            + plan.survivor.sourceId + ")");

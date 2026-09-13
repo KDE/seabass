@@ -742,6 +742,32 @@ int main()
         std::cout << "case: loops round-trip and a kept cue keeps its colour index OK\n";
     }
 
+    // Case: writePlayCountForPath sets djPlayCount, read back through an
+    // independent connection rather than trusted from the write.
+    {
+        fs::path scratch = freshScratch();
+        fs::path pioneerRoot = scratch / "PIONEER";
+        createFixture(pioneerRoot.string());
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot.string()), /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            // The real schema's column, which the minimal fixture leaves out.
+            db.exec("ALTER TABLE content ADD COLUMN djPlayCount integer;");
+            db.exec("UPDATE content SET djPlayCount = 3 WHERE content_id = 1;");
+        }
+        {
+            OneLibraryCueWriter writer(pioneerRoot.string());
+            writer.writePlayCountForPath((scratch / "Contents" / "Test Track.mp3").string(), 12);
+        }
+        SqlCipherLibrary lib;
+        SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot.string()), /*readOnly=*/true);
+        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        SqlCipherStatement check(db, "SELECT djPlayCount FROM content WHERE content_id = 1");
+        assert(check.step() && check.columnInt64(0) == 12);
+        std::cout << "case: writePlayCountForPath sets djPlayCount OK\n";
+    }
+
     std::cout << "All onelibrary_cue_writer_test cases passed.\n";
     return 0;
 }

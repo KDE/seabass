@@ -131,6 +131,48 @@ int main()
         std::cout << "case 2 (zero clears the rating; the format cannot say \"zero stars\") OK\n";
     }
 
+    // ---- case 2b: a play count lands in its own u2 --------------------
+    {
+        // A track the fixture has played, so the new count replaces a real
+        // one rather than filling a zero.
+        std::string playedId;
+        for (const auto &track : before) {
+            if (track.playCount && *track.playCount > 0) {
+                playedId = track.sourceId;
+                break;
+            }
+        }
+        assert(!playedId.empty());
+        const auto playedRow = static_cast<uint32_t>(std::stoul(playedId));
+        {
+            PdbRowWriter writer(pdb.string());
+            assert(writer.setTrackPlayCount(playedRow, 1234));
+            assert(writer.commit());
+        }
+        KaitaiRekordboxReader after(pioneer.string());
+        const auto afterById = byId(after.readAll());
+        assert(afterById.at(playedId).playCount.has_value() && *afterById.at(playedId).playCount == 1234);
+        // Nobody else's count, and none of the fields either side of it.
+        for (const auto &[id, track] : beforeById) {
+            const auto &now = afterById.at(id);
+            if (id != playedId) {
+                assert(track.playCount == now.playCount);
+            }
+            assert(track.durationSeconds == now.durationSeconds && track.bpm == now.bpm);
+        }
+        // Clamped to the field rather than wrapped round to a small number.
+        {
+            PdbRowWriter writer(pdb.string());
+            assert(writer.setTrackPlayCount(playedRow, 70000));
+            assert(writer.commit());
+        }
+        KaitaiRekordboxReader clamped(pioneer.string());
+        assert(*byId(clamped.readAll()).at(playedId).playCount == 65535);
+        PdbRowWriter missing(pdb.string());
+        assert(!missing.setTrackPlayCount(4294967295u, 3));  // no such track
+        std::cout << "case 2b (a play count lands, clamped to its u2, and no other count moves) OK\n";
+    }
+
     // ---- case 3: refusals -------------------------------------------
     {
         PdbRowWriter writer(pdb.string());

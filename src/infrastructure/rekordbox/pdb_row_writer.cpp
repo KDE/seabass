@@ -4,6 +4,7 @@
 
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include <algorithm>
 #include <zlib.h>
 
 #include <filesystem>
@@ -69,6 +70,9 @@ constexpr size_t TrackTempoOffset = 56;
 // ofs_strings below, which land on 28, 32, 56 and 94 exactly as this
 // file already had them.
 constexpr size_t TrackRatingOffset = 89;
+// track_row.play_count, a u2, from the same count: id(4) ends at 76 and
+// disc_number(2) takes 76 and 77.
+constexpr size_t TrackPlayCountOffset = 78;
 
 // track_row's ofs_strings array: 21 x u2, each the byte offset (relative
 // to row_base) of one device_sql_string field. Continuing the same
@@ -620,6 +624,21 @@ bool PdbRowWriter::setTrackRating(uint32_t trackId, int rating)
     // One byte, already there, in a row that is neither resized nor
     // moved -- the same shape as every other edit in this class.
     m_buffer.at(found->rowBodyOffset + TrackRatingOffset) = static_cast<char>(rating);
+    m_editedPageIndices.insert(found->pageIndex);
+    return true;
+}
+
+bool PdbRowWriter::setTrackPlayCount(uint32_t trackId, int playCount)
+{
+    auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!found) {
+        return false;
+    }
+    const int clamped = std::clamp(playCount, 0, 65535);
+    writeU16LE(m_buffer, found->rowBodyOffset + TrackPlayCountOffset, static_cast<uint16_t>(clamped));
     m_editedPageIndices.insert(found->pageIndex);
     return true;
 }

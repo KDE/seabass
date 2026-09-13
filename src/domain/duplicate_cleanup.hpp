@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <vector>
 #include <string>
@@ -49,6 +50,15 @@ struct DuplicateCleanupPlan
     std::string keyDonorSourceId;
     std::optional<std::string> artworkPathForSurvivor;
     std::string artworkDonorSourceId;
+
+    // Play history is merged rather than filled: every copy was played in
+    // its own right, so the survivor gets the copies' play counts added
+    // up. Set only when some copy other than the survivor has a count, so
+    // a group with nothing to add writes nothing. The last-played time is
+    // the latest of any copy's, set only when that is later than the
+    // survivor's own. Neither is ever a reason to hold a group back.
+    std::optional<int> playCountForSurvivor;
+    std::optional<std::chrono::system_clock::time_point> lastPlayedAtForSurvivor;
 
     // True when picking by quality (bitrate) and picking by length
     // (duration) disagree on which copy is "best" -- e.g. the

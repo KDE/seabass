@@ -82,6 +82,13 @@ public:
     // exists; throws if the rating is outside 0..5.
     bool setTrackRating(uint32_t trackId, int rating);
 
+    // Overwrites a track row's play count in place: a u2 in the row's
+    // fixed part, the same one-field overwrite as setTrackRating. Clamped
+    // to the field's 0..65535 rather than wrapped, so a large merged count
+    // reads as large rather than as small. Returns false if no track row
+    // with this id exists.
+    bool setTrackPlayCount(uint32_t trackId, int playCount);
+
     // A track's free-text fields, to be written into the row's existing
     // device_sql_string spans in place -- see overwriteTrackText()'s own
     // doc comment for how each is fit into its field's fixed byte budget.

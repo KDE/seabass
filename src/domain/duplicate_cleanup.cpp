@@ -188,6 +188,32 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
         }
     }
 
+    // Play history is merged, not filled: see playCountForSurvivor.
+    {
+        int otherPlays = 0;
+        bool anotherCopyWasPlayed = false;
+        std::optional<std::chrono::system_clock::time_point> latestOther;
+        for (size_t i = 0; i < group.tracks.size(); ++i) {
+            if (i == survivorIndex) {
+                continue;
+            }
+            const Track &other = group.tracks[i];
+            if (other.playCount && *other.playCount > 0) {
+                otherPlays += *other.playCount;
+                anotherCopyWasPlayed = true;
+            }
+            if (other.lastPlayedAt && (!latestOther || *other.lastPlayedAt > *latestOther)) {
+                latestOther = other.lastPlayedAt;
+            }
+        }
+        if (anotherCopyWasPlayed) {
+            result.playCountForSurvivor = result.survivor.playCount.value_or(0) + otherPlays;
+        }
+        if (latestOther && (!result.survivor.lastPlayedAt || *latestOther > *result.survivor.lastPlayedAt)) {
+            result.lastPlayedAtForSurvivor = latestOther;
+        }
+    }
+
     // Real, currently-unpreservable per-copy data: rating/comment/
     // playCount/lastPlayedAt are never propagated by this planner or any
     // writer, unlike bpm/key/artwork above -- so a genuine disagreement
@@ -210,15 +236,9 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
     // different things, so "they disagree" was being read off a
     // comparison that never had meaning.
     //
-    // A play count belongs to the application that kept it. Merging one
-    // across library types is not a thing that can be done correctly, and
-    // it is not valuable enough to hold a cleanup hostage over. Within a
-    // single library type the honest answer would be to add the counts
-    // up, which is a real intent -- but no writer in this project can
-    // write a play count into any of the three formats today, so that is
-    // a follow-up needing a write path, not something to pretend at here.
-    // The Clean Up page says so in as many words rather than leaving it
-    // to be discovered.
+    // Nor is anything lost by a difference in them: the survivor gets the
+    // copies' play counts added up and the latest last-played time (see
+    // playCountForSurvivor), so it is merged rather than discarded.
     //
     // rating and comment stay: both are the DJ's own deliberate input,
     // both mean the same thing in every format, and losing one silently

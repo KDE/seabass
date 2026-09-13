@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -115,6 +116,28 @@ int main()
         }
         assert(threw);
         std::cout << "case 4 (propagateMissingFields: unknown track id throws) OK\n";
+    }
+
+    // setLastPlayedAt: a Clean Up survivor gets its copies' latest play.
+    {
+        fs::path root = freshRoot("case5");
+        auto db = djinterop::engine::create_database(root.string());
+        djinterop::track_snapshot snapshot;
+        snapshot.title = "Played";
+        snapshot.relative_path = "played.mp3";
+        auto track = db.create_track(snapshot);
+        assert(!track.last_played_at().has_value());
+        const auto when = std::chrono::system_clock::time_point(std::chrono::seconds(1'700'000'000));
+
+        LibdjinteropEngineCueWriter writer(root.string());
+        writer.setLastPlayedAt(std::to_string(track.id()), when);
+
+        auto dbAfter = djinterop::engine::load_database(root.string());
+        auto after = dbAfter.track_by_id(track.id());
+        assert(after.has_value() && after->last_played_at().has_value());
+        assert(std::chrono::duration_cast<std::chrono::seconds>(after->last_played_at()->time_since_epoch()).count()
+               == 1'700'000'000);
+        std::cout << "case 5 (setLastPlayedAt sets the track's last played time) OK\n";
     }
 
     std::cout << "All libdjinterop_engine_cue_writer_propagate_test cases passed.\n";

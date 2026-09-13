@@ -185,16 +185,12 @@ Page {
                         + "## What is kept\n"
                         + "- **Cues** are merged, never lost -- the survivor gets every copy's cues\n"
                         + "- **Playlist membership** is preserved in every catalog\n"
-                        + "- **Missing bpm, key and artwork** are filled in from whichever copy has them\n\n"
+                        + "- **Missing bpm, key and artwork** are filled in from whichever copy has them\n"
+                        + "- **Play counts** are added up, and the latest last-played date is kept\n\n"
                         + "Use *what's conserved* on any group to see exactly what the surviving copy "
                         + "would end up with.\n\n"
                         + "## What is not kept\n"
-                        + "**Play counts.** Each application counts for itself -- rekordbox keeps a "
-                        + "running total, Engine remembers only when you last played a track -- so "
-                        + "there is no honest way to combine them across libraries. Within one "
-                        + "library adding them up would be right, but no format Seabass writes lets "
-                        + "it set a play count.\n\n"
-                        + "**Ratings and comments are different**: those are never discarded without "
+                        + "**Ratings and comments** are never discarded without "
                         + "asking. A group whose copies disagree on either is left unchecked for you "
                         + "to decide, as is one where the copies differ in a way that might be "
                         + "deliberate.\n"
@@ -523,7 +519,8 @@ Page {
                                 // a reader cannot act on either way.
                                 tooltipText: "Kept: cues (merged), playlist membership, and any missing BPM"
                                     + (root.format === "engine" ? " or key." : ", key or artwork.")
-                                    + "\nLost: rating, comment, play count, last played."
+                                    + "\nMerged: play counts (added up), last played (the latest)."
+                                    + "\nLost: rating, comment."
                             }
                             StatusBadge {
                                 visible: delegateRoot.differs
@@ -557,7 +554,7 @@ Page {
                                 visible: delegateRoot.hasUnpreservableDataAtRisk
                                 label: "⚠ data would be lost"
                                 badgeColor: Theme.conflictText
-                                tooltipText: "Rating, comment, play count and last played differ and are not kept. "
+                                tooltipText: "The copies' ratings or comments differ, and only one can be kept. "
                                     + "Excluded by default; tick to include."
                             }
                             Item { Layout.fillWidth: true }

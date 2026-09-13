@@ -553,6 +553,52 @@ void OneLibraryCueWriter::writeAnnotationForPath(const std::string &filePath, co
     refreshStalenessBaseline();
 }
 
+void OneLibraryCueWriter::writePlayCountForPath(const std::string &filePath, int playCount)
+{
+    checkNotStale();
+
+    const std::string contentPath = toContentPath(m_stickRoot, filePath);
+    SqlCipherDb &db = writeConnection();
+
+    int64_t contentId = -1;
+    {
+        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
+        find.bindText(1, contentPath);
+        if (!find.step()) {
+            throw std::runtime_error("onelibrary: no content row for path " + contentPath);
+        }
+        contentId = find.columnInt64(0);
+    }
+
+    const int64_t count = std::max(0, playCount);
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        SqlCipherStatement set(db, "UPDATE content SET djPlayCount = ? WHERE content_id = ?");
+        set.bindInt64(1, count);
+        set.bindInt64(2, contentId);
+        set.run();
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+
+    // Read back through the verify connection before the staleness
+    // baseline moves, for the reason writeAnnotationForPath gives.
+    SqlCipherStatement verify(verifyConnection(), "SELECT djPlayCount FROM content WHERE content_id = ?");
+    verify.bindInt64(1, contentId);
+    verify.step();
+    if (verify.columnIsNull(0) || verify.columnInt64(0) != count) {
+        throw std::runtime_error("onelibrary: post-write verification failed, play count did not land for "
+                                 + contentPath);
+    }
+
+    refreshStalenessBaseline();
+}
+
 void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donorFilePath,
                                                           const std::string &targetFilePath, bool copyBpm,
                                                           bool copyKey, bool copyArtwork)
