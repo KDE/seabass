@@ -27,7 +27,26 @@ if (-not (Test-Path $exePath)) {
 }
 
 Write-Output "=== windeployqt ==="
+# $ErrorActionPreference = "Stop" (above) makes PowerShell treat ANY stderr
+# line from a native command as a terminating NativeCommandError, exit code
+# irrelevant -- and windeployqt always writes one here ("Warning:
+# Translations will not be available..."; no Qt Linguist tools in this
+# MSYS2 setup, which is expected and harmless). That silently killed this
+# script right after windeployqt, every run, before the DLL closure walk
+# below -- the actual point of this script, and the one thing windeployqt
+# itself does not do -- ever executed. Confirmed directly: seabass.exe
+# built with taglib support (see docs/windows-build.md) crashed on launch
+# from an installed build with "libtag-2.dll niet is gevonden" even though
+# the closure walk's own logic would have found and copied it fine, because
+# the walk never ran at all. Relaxed to Continue for just this one call,
+# with the exit code checked explicitly instead -- a real windeployqt
+# failure should still stop the script, a stderr warning must not.
+$ErrorActionPreference = "Continue"
 & windeployqt.exe --qmldir (Join-Path $RepoRoot "src\gui\qml") $exePath
+if ($LASTEXITCODE -ne 0) {
+    throw "windeployqt.exe failed with exit code $LASTEXITCODE"
+}
+$ErrorActionPreference = "Stop"
 
 Write-Output "`n=== walking full transitive DLL closure ==="
 # Virtual API sets Windows itself resolves (never real files to copy) plus
@@ -89,6 +108,31 @@ $sqlcipherDst = Join-Path $BuildPath "libsqlcipher-0.dll"
 if ((Test-Path $sqlcipherSrc) -and -not (Test-Path $sqlcipherDst)) {
     Copy-Item $sqlcipherSrc $sqlcipherDst -Force
     Write-Output "`nAlso copied libsqlcipher-0.dll (runtime-loaded, never appears in any import table)."
+}
+
+# Without this, seabass.exe silently fails to load ANY QML at all once
+# copied off this machine: QQmlApplicationEngine reported "module
+# 'QtQuick' is not installed" (and every other Qt-provided QML module)
+# even though windeployqt --qmldir already copied the whole qml\ tree
+# right beside the exe. This build's Qt is not a relocatable install, so
+# QLibraryInfo::path(QmlImportsPath) resolves to the *compile-time*
+# absolute path (this machine's own C:\msys64\ucrt64\qml) instead of
+# anything relative to the exe -- which is exactly why this went
+# unnoticed: testing always happened on the machine MSYS2 is installed
+# on, where that hardcoded path is also a real, valid answer, by
+# accident, and the local qml\ copy next to the exe was never actually
+# consulted. Confirmed directly: the app runs correctly once this
+# qt.conf exists, and windeployqt does not write one on its own here.
+$qtConfPath = Join-Path $BuildPath "qt.conf"
+if (-not (Test-Path $qtConfPath)) {
+    @"
+[Paths]
+Prefix = .
+Plugins = .
+Qml2Imports = qml
+QmlImports = qml
+"@ | Set-Content -Path $qtConfPath -Encoding ASCII
+    Write-Output "`nAlso wrote qt.conf (without it, QML modules resolve to this machine's own MSYS2 install, not the bundled copy)."
 }
 
 Write-Output "`nDone. $exePath should now run standalone on a machine without MSYS2 installed."

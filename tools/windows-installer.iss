@@ -10,8 +10,16 @@
 ; Only the runtime files deploy-windows.ps1 actually produces are listed
 ; explicitly below (exes, DLLs, Qt plugin dirs) -- build-win\ also contains
 ; CMake/Ninja intermediates and ~20 unit-test .exe files that must NOT ship.
-; (windeployqt does not write a qt.conf here: our plugin layout is Qt's
-; standard relative structure next to the exe, so none is needed.)
+;
+; qt.conf (deploy-windows.ps1 writes one) IS needed, contrary to what this
+; comment used to say: without it, seabass.exe resolves its QML imports to
+; this Qt install's own compile-time path (C:\msys64\ucrt64\qml) instead of
+; the qml\ copy sitting right beside it, which happened to still work on
+; every machine this was tested on before because that path is also a
+; real, correct answer *there* -- MSYS2 is what built the exe in the first
+; place. Installed on a machine that never had MSYS2 at that exact path,
+; every "module ... is not installed" QML import fails and the app never
+; gets past QQmlApplicationEngine::load(). Confirmed directly.
 
 #define MyAppName "Seabass"
 #define MyAppVersion "0.1.0-d1d8379"
@@ -52,6 +60,11 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; Executables
 Source: "{#BuildDir}\seabass.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\seabass-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+; Tells the deployed seabass.exe to resolve its QML/plugin imports
+; relative to itself rather than to this machine's own Qt install -- see
+; this file's header comment.
+Source: "{#BuildDir}\qt.conf"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Runtime DLLs (mingw runtime, Qt, ffmpeg codec graph, sqlcipher, etc. --
 ; the full closure deploy-windows.ps1 already resolved)
