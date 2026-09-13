@@ -36,10 +36,6 @@ Pane {
     property string keyNotation: "camelot"
 
     signal closeRequested()
-    // The row to open instead, by sourceId. The panel does not know how
-    // the list is sorted or filtered, so it names the track and lets
-    // ScanPage find and select it.
-    signal jumpToTrackRequested(string sourceId)
     // Supplied by ScanPage so the artist list can be built. Optional:
     // without it the section simply does not appear, which is what the
     // page-instantiation test hands it.
@@ -120,14 +116,6 @@ Pane {
     // track changes rather than bound to a function call, so it is not
     // re-run on every unrelated property change in the panel.
     property var artistTracks: []
-    // Said out loud when a jump cannot land: the artist list searches the
-    // whole library while the list behind it may be showing one playlist
-    // or a search, so the track really can be absent from the view.
-    property string jumpMissMessage: ""
-    function reportJumpMiss() {
-        panel.jumpMissMessage = "That track is not in the current view. Clear the playlist or search filter to reach it.";
-    }
-
     function refreshArtistTracks() {
         if (panel.scanController === null || typeof panel.scanController.tracksByArtist !== "function"
                 || panel.trackArtist.length === 0) {
@@ -136,14 +124,11 @@ Pane {
         }
         panel.artistTracks = panel.scanController.tracksByArtist(panel.trackArtist, panel.trackSourceId);
     }
-    // One handler: QML allows a signal only one, and both of these have
-    // to happen when the shown track changes.
-    // Only the message here. The artist list is refreshed at the END of
-    // showFor() instead: trackSourceId is assigned first, so a refresh
-    // driven off its change ran while trackArtist still held the
-    // PREVIOUS track's name, and the panel listed that artist's tracks
-    // under this one's heading.
-    onTrackSourceIdChanged: panel.jumpMissMessage = ""
+    // The artist list is refreshed at the END of showFor(), not off
+    // trackSourceIdChanged: trackSourceId is assigned first, so a refresh
+    // driven off its change ran while trackArtist still held the PREVIOUS
+    // track's name, and the panel listed that artist's tracks under this
+    // one's heading.
 
     // Cues staged for this track and not on the stick yet (see
     // AddCueController: adding stages, the floating Save writes).
@@ -270,6 +255,7 @@ Pane {
             }
 
                 GridLayout {
+                    objectName: "trackFacts"
                     columns: 2
                     columnSpacing: 12
                     rowSpacing: 4
@@ -310,13 +296,6 @@ Pane {
                     FactLabel { visible: panel.trackBpm > 0; text: "BPM" }
                     FactValue { visible: panel.trackBpm > 0; text: panel.trackBpm.toFixed(1) }
 
-                    FactLabel { visible: panel.trackKey.length > 0; text: "Key" }
-                    KeyBadge {
-                        visible: panel.trackKey.length > 0
-                        keyName: panel.trackKey
-                        notation: panel.keyNotation
-                    }
-
                     FactLabel { visible: panel.trackBitrate > 0; text: "Bitrate" }
                     RowLayout {
                         visible: panel.trackBitrate > 0
@@ -356,8 +335,20 @@ Pane {
                 }
             }
 
+            // The key beside the sleeve rather than in the facts: it is the
+            // fact a DJ picks the next track by, and a label next to the
+            // artwork is found at a glance.
+            KeyBadge {
+                objectName: "trackKeyBadge"
+                visible: panel.trackKey.length > 0
+                Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                keyName: panel.trackKey
+                notation: panel.keyNotation
+            }
+
             Item {
                 id: artwork
+                objectName: "trackArtwork"
                 // 1.6x the original 96: big enough to recognise a sleeve
                 // at a glance, which is what artwork is for here.
                 Layout.preferredWidth: 154
@@ -658,48 +649,73 @@ Pane {
             Layout.fillWidth: true
             spacing: 4
 
-            Label {
+            Subtitle {
+                objectName: "artistTracksHeading"
                 text: panel.artistTracks.length === 1
                     ? "1 more track by " + panel.trackArtist
                     : panel.artistTracks.length + " more tracks by " + panel.trackArtist
-                color: Theme.textMuted
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
 
-            Label {
-                visible: panel.jumpMissMessage.length > 0
-                text: panel.jumpMissMessage
-                color: Theme.warnText
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-            }
-
+            // To read, not to click: the list behind the panel may be
+            // filtered to a playlist or a search, so a click could not
+            // promise to land on the track. Where it can be found is what
+            // the tooltip says instead.
             Repeater {
                 model: panel.artistTracks
-                delegate: ItemDelegate {
+                delegate: Item {
+                    id: artistTrackRow
                     required property var modelData
+                    objectName: "artistTrackRow"
                     Layout.fillWidth: true
-                    padding: 6
-                    onClicked: panel.jumpToTrackRequested(modelData.sourceId)
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Open this track"
-                    contentItem: RowLayout {
+                    implicitHeight: artistTrackContent.implicitHeight
+
+                    readonly property var playlists: modelData.playlistNames || []
+                    readonly property string tooltipText: playlists.length > 0
+                        ? "In " + playlists.join(", ")
+                        : "Not in any playlist"
+                    HoverHandler { id: artistTrackHover }
+                    ToolTip.visible: artistTrackHover.hovered
+                    ToolTip.delay: 400
+                    ToolTip.text: artistTrackRow.tooltipText
+
+                    RowLayout {
+                        id: artistTrackContent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
                         spacing: 8
+                        Rectangle {
+                            Layout.preferredWidth: Theme.iconSizeSmall
+                            Layout.preferredHeight: Theme.iconSizeSmall
+                            color: Theme.surface
+                            radius: 2
+                            Image {
+                                objectName: "artistTrackArtwork"
+                                anchors.fill: parent
+                                source: artistTrackRow.modelData.artworkPath || ""
+                                visible: source.toString().length > 0
+                                fillMode: Image.PreserveAspectCrop
+                                sourceSize.width: 64
+                                sourceSize.height: 64
+                                asynchronous: false
+                            }
+                        }
                         Label {
-                            text: modelData.title
+                            text: artistTrackRow.modelData.title
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                         }
-                        Label {
-                            visible: modelData.key.length > 0
-                            text: modelData.key
-                            color: Theme.textMuted
-                            font.family: Theme.dataFamily
+                        KeyBadge {
+                            visible: artistTrackRow.modelData.key.length > 0
+                            keyName: artistTrackRow.modelData.key
+                            notation: panel.keyNotation
                         }
+                        // m:ss, to the second, like the track's own length.
                         Label {
-                            visible: modelData.durationSeconds > 0
-                            text: Theme.humanDuration(modelData.durationSeconds)
+                            objectName: "artistTrackDuration"
+                            visible: artistTrackRow.modelData.durationSeconds > 0
+                            text: panel.formatDuration(artistTrackRow.modelData.durationSeconds)
                             color: Theme.textMuted
                             font.family: Theme.dataFamily
                         }

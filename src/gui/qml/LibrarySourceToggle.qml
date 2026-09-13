@@ -100,6 +100,25 @@ ComboBox {
             + "cues to it directly.";
     }
 
+    // A catalog's glyph beside its name, on the name's baseline and moved
+    // so the glyph's ink is centred on the name's capitals. The glyphs
+    // come from Noto Sans Symbols2, whose metrics are not the UI font's:
+    // centring the two text boxes left every glyph 1.5 to 2.5 px above the
+    // name (measured in tst_LibrarySourceToggle.qml).
+    component CatalogGlyph: Label {
+        id: glyphLabel
+        required property font nameFont
+        font.family: "Noto Sans Symbols2"
+        color: Theme.text
+        Layout.alignment: Qt.AlignBaseline
+        TextMetrics { id: glyphInk; font: glyphLabel.font; text: glyphLabel.text }
+        TextMetrics { id: capitalInk; font: glyphLabel.nameFont; text: "H" }
+        transform: Translate {
+            y: (capitalInk.tightBoundingRect.y + capitalInk.tightBoundingRect.height / 2)
+               - (glyphInk.tightBoundingRect.y + glyphInk.tightBoundingRect.height / 2)
+        }
+    }
+
     model: entries
     textRole: "label"
     valueRole: "value"
@@ -189,16 +208,19 @@ ComboBox {
 
     contentItem: RowLayout {
         spacing: 4
-        Label {
+        CatalogGlyph {
+            objectName: "catalogGlyph"
             text: {
                 const entry = root.entries[root.currentIndex];
                 return entry ? entry.glyph : "";
             }
-            font.family: "Noto Sans Symbols2"
-            color: Theme.text
+            nameFont: currentName.font
             leftPadding: 8
         }
         Label {
+            id: currentName
+            objectName: "catalogName"
+            Layout.alignment: Qt.AlignBaseline
             text: {
                 const entry = root.entries[root.currentIndex];
                 return entry ? entry.label : "";
@@ -258,12 +280,13 @@ ComboBox {
 
         contentItem: RowLayout {
             spacing: 4
-            Label {
+            CatalogGlyph {
                 text: entryDelegate.modelData.glyph
-                font.family: "Noto Sans Symbols2"
-                color: Theme.text
+                nameFont: entryName.font
             }
             Label {
+                id: entryName
+                Layout.alignment: Qt.AlignBaseline
                 text: entryDelegate.modelData.label
                 color: Theme.text
                 elide: Text.ElideRight

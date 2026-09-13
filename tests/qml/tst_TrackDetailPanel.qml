@@ -62,7 +62,7 @@ TestCase {
             tracksByArtist: function (artist, excludeSourceId) {
                 asked.push(artist);
                 return [{sourceId: "99", title: "Another One", durationSeconds: 300, bpm: 124, key: "8A",
-                         cueCount: 0}];
+                         cueCount: 0, artworkPath: "", playlistNames: []}];
             }
         };
 
@@ -77,6 +77,45 @@ TestCase {
         panel.showFor(second);
         compare(asked[asked.length - 1], "Someone Else");
         compare(panel.artistTracks.length, 1);
+    }
+
+    // The artist's other tracks are there to read, not to click: each
+    // names its key and its length to the second, and says on hover where
+    // it can be found.
+    function test_artistTracksAreInformativeRows() {
+        var panel = makePanel();
+        panel.scanController = {
+            tracksByArtist: function () {
+                return [{sourceId: "99", title: "Another One", durationSeconds: 372, bpm: 124, key: "8A",
+                         cueCount: 0, artworkPath: "", playlistNames: ["Peaktime", "Warm-up"]}];
+            }
+        };
+        panel.showFor(makeDelegate());
+        var heading = findChild(panel, "artistTracksHeading");
+        verify(heading !== null, "the list must have its subheader");
+        compare(heading.text, "1 more track by " + panel.trackArtist);
+        var row = findChild(panel, "artistTrackRow");
+        verify(row !== null, "the artist's other track must be listed");
+        compare(row.tooltipText, "In Peaktime, Warm-up");
+        compare(findChild(row, "artistTrackDuration").text, "6:12", "to the second, not rounded");
+        verify(findChild(row, "artistTrackArtwork") !== null, "each row has room for its cover art");
+        verify(row.clicked === undefined, "the row must not be a button");
+    }
+
+    // The key is a label beside the sleeve, not a row of the facts table.
+    function test_keyIsBesideTheArtworkNotInTheFacts() {
+        var panel = makePanel();
+        panel.showFor(makeDelegate());
+        var badge = findChild(panel, "trackKeyBadge");
+        verify(badge !== null, "the key label must exist");
+        compare(badge.visible, panel.trackKey.length > 0);
+        verify(panel.trackKey.length > 0, "the test delegate must carry a key");
+        var facts = findChild(panel, "trackFacts");
+        verify(facts !== null);
+        for (var p = badge.parent; p; p = p.parent) {
+            verify(p !== facts, "the key must not sit in the facts table");
+        }
+        compare(badge.parent, findChild(panel, "trackArtwork").parent, "the key sits beside the artwork");
     }
 
     function test_showForFillsThePanel() {

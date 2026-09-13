@@ -184,4 +184,49 @@ TestCase {
         // ...but the list does not stay open pretending nothing happened.
         compare(toggle.popup.visible, false);
     }
+
+    // Rows where anything differs from the background, inside a band of
+    // columns.
+    function inkRows(image, background, x0, x1, y0, y1) {
+        var top = -1, bottom = -1;
+        for (var y = y0; y < y1; ++y) {
+            for (var x = x0; x < x1; ++x) {
+                var c = image.pixel(x, y);
+                if (Math.abs(c.r - background.r) + Math.abs(c.g - background.g) + Math.abs(c.b - background.b) > 0.15) {
+                    if (top < 0) top = y;
+                    bottom = y;
+                    break;
+                }
+            }
+        }
+        return {top: top, bottom: bottom, centre: (top + bottom) / 2};
+    }
+
+    // Each catalog's glyph is centred on its name, by the ink rather than
+    // by the text boxes: the glyph font's metrics differ from the name's,
+    // and centring the boxes put the glyph a couple of pixels high.
+    function test_glyphIsCentredOnTheName() {
+        var toggle = createTemporaryObject(toggleComponent, testCase, {width: 220});
+        verify(toggle !== null);
+        var values = ["engine", "rekordbox", "onelibrary"];
+        for (var i = 0; i < values.length; ++i) {
+            toggle.current = values[i];
+            waitForRendering(toggle);
+            var glyph = findChild(toggle.contentItem, "catalogGlyph");
+            var name = findChild(toggle.contentItem, "catalogName");
+            verify(glyph !== null && name !== null);
+            var image = grabImage(testCase);
+            var origin = toggle.mapToItem(testCase, 0, 0);
+            var background = image.pixel(Math.round(origin.x + toggle.width / 2), Math.round(origin.y + 3));
+            var y0 = Math.floor(origin.y + 3), y1 = Math.ceil(origin.y + toggle.height - 3);
+            var gp = glyph.mapToItem(testCase, 0, 0), np = name.mapToItem(testCase, 0, 0);
+            var glyphInk = inkRows(image, background, Math.floor(gp.x + glyph.leftPadding), Math.ceil(gp.x + glyph.width), y0, y1);
+            // The name's first letter only: a capital, no descender.
+            var capitalInk = inkRows(image, background, Math.floor(np.x), Math.floor(np.x) + 7, y0, y1);
+            verify(glyphInk.top >= 0 && capitalInk.top >= 0, values[i] + ": nothing was painted");
+            verify(Math.abs(glyphInk.centre - capitalInk.centre) <= 1.0,
+                   values[i] + ": the glyph's centre is " + (glyphInk.centre - capitalInk.centre) + " px off the name's");
+        }
+    }
+
 }

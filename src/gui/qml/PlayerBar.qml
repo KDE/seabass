@@ -12,6 +12,9 @@ Frame {
     id: root
     required property var controller
 
+    // Over the player, so the close button can show itself only then.
+    HoverHandler { id: playerHover }
+
     function formatTime(ms) {
         var totalSec = Math.max(0, Math.floor(ms / 1000));
         var m = Math.floor(totalSec / 60);
@@ -121,5 +124,30 @@ Frame {
                 onSeekRequested: (ratio) => root.controller.seek(ratio * root.controller.duration)
             }
         }
+    }
+
+    // Closing is one click, in the top right corner, shown while the
+    // pointer is over the player. Stopping unloads the track, and the bar
+    // goes with it: Main.qml shows it only while one is loaded.
+    ToolButton {
+        id: closeButton
+        objectName: "closePlayerButton"
+        // The Frame's own corner, not its content's: declared children go
+        // into the contentItem, inside the padding.
+        parent: root
+        anchors.top: parent.top
+        anchors.right: parent.right
+        z: 1
+        implicitWidth: Theme.iconSizeSmall * 0.75
+        implicitHeight: Theme.iconSizeSmall * 0.75
+        padding: 0
+        flat: true
+        text: "✕"
+        opacity: playerHover.hovered || hovered ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        ToolTip.visible: hovered
+        ToolTip.text: "Close the player"
+        onClicked: root.controller.stop()
     }
 }

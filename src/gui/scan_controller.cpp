@@ -367,6 +367,13 @@ QVariantList ScanController::tracksByArtist(const QString &artist, const QString
         m["bpm"] = track.bpm;
         m["key"] = QString::fromStdString(track.key);
         m["cueCount"] = static_cast<int>(track.cues.size());
+        m["artworkPath"] = toLocalFileUrl(track.artworkPath);
+        // Where the track can be found, for the row's tooltip.
+        QStringList playlists;
+        for (const auto &membership : track.playlists) {
+            playlists << QString::fromStdString(membership.name);
+        }
+        m["playlistNames"] = playlists;
         result.append(m);
     }
     // By title, so the same artist reads the same way every time. The

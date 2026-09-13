@@ -272,6 +272,7 @@ Page {
                 }
                 TextField {
                     id: searchField
+                    objectName: "searchField"
                     Layout.preferredWidth: 260
                     // Also filters the playlist list below (see its own
                     // model binding) -- one search field instead of two,
@@ -315,11 +316,20 @@ Page {
                     ]
                     onActivated: scanController.setSort(currentValue, sortDirectionButton.checked)
                 }
+                // The direction as an icon, named in its tooltip: the words
+                // cost the header a column of width for what the arrow
+                // already says at a glance.
                 ToolButton {
                     id: sortDirectionButton
+                    objectName: "sortDirectionButton"
                     checkable: true
                     checked: true
-                    text: checked ? "▲ Ascending" : "▼ Descending"
+                    display: AbstractButton.IconOnly
+                    icon.name: checked ? "view-sort-ascending" : "view-sort-descending"
+                    text: checked ? "Ascending" : "Descending"
+                    ToolTip.visible: hovered
+                    ToolTip.text: checked ? "Sorted ascending -- click to sort descending"
+                                          : "Sorted descending -- click to sort ascending"
                     onCheckedChanged: scanController.setSort(sortCombo.currentValue, checked)
                 }
             }
@@ -340,6 +350,10 @@ Page {
     RowLayout {
         anchors.fill: parent
         anchors.topMargin: scanController.errorMessage.length > 0 ? 40 : 0
+        // The header's inset, so the list starts on the same left line
+        // as the breadcrumb and the search field above it.
+        anchors.leftMargin: Theme.pageMargin
+        anchors.rightMargin: Theme.pageMargin
         spacing: 0
 
         // Left pane: playlists -- only when Matching (Experimental)
@@ -347,6 +361,7 @@ Page {
         // SplitView pane instead (see the SplitView below), freeing this
         // column for the new panel.
         Pane {
+            objectName: "playlistPane"
             visible: !root.matchingEnabled
             Layout.preferredWidth: 220
             Layout.fillHeight: true
@@ -445,6 +460,7 @@ Page {
                 // Room to scroll the last row clear of the Save overlay (bottom right).
                 bottomMargin: 80
                 id: trackListView
+                objectName: "trackListView"
                 // Not draggable when everything already fits.
                 interactive: contentHeight > height
                 Layout.fillWidth: true
@@ -988,30 +1004,6 @@ Page {
             keyNotation: root.appSettingsController.keyNotation
             onCloseRequested: root.trackPanelOpen = false
             onRescanRequested: root.rescan()
-            // Jumping to another track by the same artist. The panel names
-            // the track; finding it is this page's job, because only the
-            // page knows the current sort and filter.
-            //
-            // The wanted track may not be in view at all -- the list can
-            // be narrowed to one playlist or a search while the artist
-            // list deliberately searches the whole library -- so a miss
-            // says so rather than doing nothing, which would read as a
-            // dead click.
-            onJumpToTrackRequested: (sourceId) => {
-                for (var i = 0; i < trackListView.count; ++i) {
-                    var candidate = scanController.tracks.trackAt(i);
-                    if (candidate && candidate.sourceId === sourceId) {
-                        trackListView.currentIndex = i;
-                        trackListView.positionViewAtIndex(i, ListView.Contain);
-                        var item = trackListView.itemAtIndex(i);
-                        if (item) {
-                            trackDetailPanel.showFor(item);
-                        }
-                        return;
-                    }
-                }
-                trackDetailPanel.reportJumpMiss();
-            }
         }
 
         MatchingPage {
