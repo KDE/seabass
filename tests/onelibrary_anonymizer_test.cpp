@@ -298,6 +298,15 @@ int main(int argc, char **argv)
             assert(orphans.step());
             assert(orphans.columnInt64(0) == orphanedBankRowsBefore);
         }
+        // And the database no longer states the real library's size.
+        {
+            const auto columns = columnsOf(handle.db, "property");
+            if (std::find(columns.begin(), columns.end(), "numberOfContents") != columns.end()) {
+                SqlCipherStatement stated(handle.db, "SELECT numberOfContents FROM property");
+                assert(stated.step());
+                assert(stated.columnInt64(0) == contentBefore - 1);
+            }
+        }
         std::cout << "case 5 (only tracks outside the keep list go, with everything that refers to them) OK\n";
     }
 

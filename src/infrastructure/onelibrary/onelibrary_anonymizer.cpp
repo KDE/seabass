@@ -191,6 +191,13 @@ OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbP
                 ++result.tracksDropped;
             }
             tracks = std::move(keptTracks);
+
+            // The database also states its own size. Left alone, a pruned
+            // export still said how many tracks the donor's real library
+            // holds -- the very thing pruning is there to stop saying.
+            if (tableExists(db, "property") && columnsOf(db, "property").count("numberOfContents")) {
+                db.exec("UPDATE property SET numberOfContents = (SELECT count(*) FROM content)");
+            }
         }
 
         for (const auto &[id, path, fileName] : tracks) {
