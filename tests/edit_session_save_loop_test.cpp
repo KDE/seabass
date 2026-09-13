@@ -22,6 +22,7 @@
 #include "gui/edit/pending_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include "scratch_path.hpp"
 
@@ -252,6 +253,54 @@ int main()
         assert(result.error == "commit failed");
         assert(laterRan);
         std::cout << "case 7 (finish hook failure) OK\n";
+    }
+
+    // 8. The system is kept awake for the whole save, and let go after it --
+    //    failed or not. A suspend halfway through leaves a stick half-written.
+    {
+        struct Counts
+        {
+            int acquires = 0;
+            int releases = 0;
+            bool held = false;
+        };
+        class FakeSleep : public SleepInhibitor::Backend
+        {
+        public:
+            explicit FakeSleep(std::shared_ptr<Counts> counts) : m_counts(std::move(counts)) {}
+            bool acquire(const QString &) override
+            {
+                ++m_counts->acquires;
+                m_counts->held = true;
+                return true;
+            }
+            void release() override
+            {
+                ++m_counts->releases;
+                m_counts->held = false;
+            }
+
+        private:
+            std::shared_ptr<Counts> m_counts;
+        };
+        auto counts = std::make_shared<Counts>();
+        SleepInhibitor::setBackendForTesting(std::make_unique<FakeSleep>(counts));
+
+        Log log;
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, rb, {});
+        bool heldDuringApply = false;
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<FakeChange>("a", Behavior::Ok, log, [&](SaveContext &) { heldDuringApply = counts->held; }),
+            std::make_shared<FakeChange>("b", Behavior::Fail, log),
+        };
+        runSaveLoop(changes, ctx);
+        assert(heldDuringApply && "the system must be kept awake while a change is applied");
+        assert(counts->acquires == 1 && counts->releases == 1);
+        assert(!counts->held && "and let go once the save is over");
+        assert(SleepInhibitor::activeHolds() == 0);
+        SleepInhibitor::setBackendForTesting(nullptr);
+        std::cout << "case 8 (kept awake for the save, let go after) OK\n";
     }
 
     fs::remove_all(root);

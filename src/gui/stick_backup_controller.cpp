@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "stick_backup_controller.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include "domain/library_fingerprint.hpp"
 #include "gui/library_fingerprint_reader.hpp"
@@ -326,7 +327,9 @@ void StickBackupController::backUp()
     };
     const QString rekordboxPath = m_rekordboxPath;
     const QString enginePath = m_enginePath;
-    m_runWatcher.setFuture(QtConcurrent::run([options, rekordboxPath, enginePath]() mutable {
+    // Awake for the whole backup: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Backing up a USB stick"));
+    m_runWatcher.setFuture(QtConcurrent::run([keepAwake, options, rekordboxPath, enginePath]() mutable {
         auto result = std::make_shared<RunResult>();
         result->activity = QStringLiteral("backup");
         result->refusal = refuseIfDjSoftwareRunning();
@@ -360,7 +363,9 @@ void StickBackupController::keepPartial()
     }
     setActivity(QStringLiteral("decide"));
     application::PendingBackup *pending = m_pending.get();
-    m_runWatcher.setFuture(QtConcurrent::run([pending]() {
+    // Awake while the archive is committed or rolled back: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Finishing a stick backup"));
+    m_runWatcher.setFuture(QtConcurrent::run([keepAwake, pending]() {
         auto result = std::make_shared<RunResult>();
         result->activity = QStringLiteral("keep");
         result->backup = std::make_shared<BackupStickOutcome>(pending->keep());
@@ -378,7 +383,9 @@ void StickBackupController::discardPartial()
     }
     setActivity(QStringLiteral("decide"));
     application::PendingBackup *pending = m_pending.get();
-    m_runWatcher.setFuture(QtConcurrent::run([pending]() {
+    // Awake while the archive is committed or rolled back: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Discarding a partial stick backup"));
+    m_runWatcher.setFuture(QtConcurrent::run([keepAwake, pending]() {
         auto result = std::make_shared<RunResult>();
         result->activity = QStringLiteral("discard");
         result->backup = std::make_shared<BackupStickOutcome>(pending->discard());
@@ -473,7 +480,9 @@ void StickBackupController::compact()
             },
             Qt::QueuedConnection);
     };
-    m_runWatcher.setFuture(QtConcurrent::run([options]() {
+    // Awake while the archive is rewritten: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Compacting a stick backup"));
+    m_runWatcher.setFuture(QtConcurrent::run([keepAwake, options]() {
         auto result = std::make_shared<RunResult>();
         result->activity = QStringLiteral("compact");
         result->compaction = CompactStickBackup::execute(options);

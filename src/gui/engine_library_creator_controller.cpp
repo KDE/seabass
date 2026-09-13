@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "engine_library_creator_controller.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -141,7 +142,12 @@ void EngineLibraryCreatorController::create(const QString &rekordboxPath, int sc
     m_cancel = application::CancellationToken();
     setBusy(true);
     emit cancellableChanged();
-    m_watcher.setFuture(QtConcurrent::run(runCreateTask, rekordboxPath, schemaGeneration, makeReporter(), m_cancel));
+    // Awake while the library is written: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Creating an Engine library on a USB stick"));
+    m_watcher.setFuture(QtConcurrent::run(
+        [keepAwake, rekordboxPath, schemaGeneration, reporter = makeReporter(), cancel = m_cancel]() {
+            return runCreateTask(rekordboxPath, schemaGeneration, reporter, cancel);
+        }));
 }
 
 void EngineLibraryCreatorController::onCreateFinished()

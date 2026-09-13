@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "format_usb_controller.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -187,7 +188,11 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
     setBusy(true);
 
     auto reporter = std::make_shared<QtProgressReporter>();
-    m_watcher.setFuture(QtConcurrent::run(runFormatTask, wholeDiskPath, filesystem, volumeLabel, reporter));
+    // Awake for the whole format: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Formatting a USB stick"));
+    m_watcher.setFuture(QtConcurrent::run([keepAwake, wholeDiskPath, filesystem, volumeLabel, reporter]() {
+        return runFormatTask(wholeDiskPath, filesystem, volumeLabel, reporter);
+    }));
 }
 
 void FormatUsbController::onFormatFinished()

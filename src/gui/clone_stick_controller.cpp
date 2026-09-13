@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/library_catalog_cache.hpp"
+#include "gui/sleep_inhibitor.hpp"
 #include "clone_stick_controller.hpp"
 
 #include <QPointer>
@@ -317,7 +318,10 @@ void CloneStickController::start(bool exact)
     const QString sourceRoot = m_sourceRoot;
     const QString rekordboxPath = m_sourceRekordboxPath;
     const QString enginePath = m_sourceEnginePath;
-    m_runWatcher.setFuture(QtConcurrent::run([options, sourceLabel, sourceRoot, rekordboxPath, enginePath]() mutable {
+    // Awake for the whole copy: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Copying a DJ library to a USB stick"));
+    m_runWatcher.setFuture(
+        QtConcurrent::run([keepAwake, options, sourceLabel, sourceRoot, rekordboxPath, enginePath]() mutable {
         auto result = std::make_shared<RunResult>();
         result->refusal = refuseIfDjSoftwareRunning();
         if (!result->refusal.isEmpty()) {

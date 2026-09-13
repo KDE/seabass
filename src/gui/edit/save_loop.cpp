@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/edit/save_loop.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include <exception>
 #include <utility>
@@ -14,6 +15,9 @@ namespace seabass::gui
 SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &changes, SaveContext &ctx)
 {
     SaveLoopResult result;
+    // Awake from the first backup to the last finish hook: a suspend halfway
+    // through a save leaves the stick half-written. See SleepInhibitor.
+    const auto keepAwake = SleepInhibitor::hold(QStringLiteral("Saving changes to a DJ library"));
 
     // Everything that can say what it will overwrite is backed up before
     // anything is applied, in one pass. Two reasons, and the ordering one

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "local_cue_controller.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include <QStringList>
 #include <QVariantMap>
@@ -279,8 +280,13 @@ void LocalCueController::backupToComputer(const QString &stickLabel, const QStri
     // caller has confirmed exportLibrary.db actually exists there (see
     // OneLibraryCueWriter::existsFor()) -- runBackupTask() only backs it
     // up when this is non-empty.
-    m_backupWatcher.setFuture(QtConcurrent::run(runBackupTask, stickLabel, description, rekordboxPath, enginePath,
-                                                 oneLibraryPath, makeReporter()));
+    // Awake for the whole backup: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Backing up cue points to this computer"));
+    auto reporter = makeReporter();
+    m_backupWatcher.setFuture(QtConcurrent::run(
+        [keepAwake, stickLabel, description, rekordboxPath, enginePath, oneLibraryPath, reporter]() {
+            return runBackupTask(stickLabel, description, rekordboxPath, enginePath, oneLibraryPath, reporter);
+        }));
 }
 
 void LocalCueController::onBackupFinished()

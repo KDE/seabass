@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "gui/sleep_inhibitor.hpp"
 #include "cleanup_controller.hpp"
 
 #include <QStringList>
@@ -1243,8 +1244,13 @@ void CleanupController::deleteSelectedPendingFiles()
     setBusy(true);
     setWriting(true);
 
-    m_pendingWriteWatcher.setFuture(QtConcurrent::run(runDeletePendingTask, m_format, m_path, std::move(selected),
-                                                      makeReporter(), m_pendingDeleteCancel));
+    // Awake while files are deleted from the stick: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Deleting files from a USB stick"));
+    m_pendingWriteWatcher.setFuture(QtConcurrent::run(
+        [keepAwake, format = m_format, path = m_path, selected = std::move(selected), reporter = makeReporter(),
+         cancel = m_pendingDeleteCancel]() mutable {
+            return runDeletePendingTask(format, path, std::move(selected), reporter, cancel);
+        }));
 }
 
 void CleanupController::cancelWrite()

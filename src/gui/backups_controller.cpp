@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "gui/sleep_inhibitor.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "backups_controller.hpp"
 
@@ -310,8 +311,16 @@ void BackupsController::startTask(BackupsAction action, int keepCount, const QSt
     setWriteProgress(0, 0);
     setBusy(true);
     std::string dir = backupDirFor(m_rekordboxPath, m_enginePath);
-    m_watcher.setFuture(QtConcurrent::run(runBackupsTask, action, QString::fromStdString(dir), keepCount, id, description,
-                                          m_cancel, makeReporter()));
+    // Awake while a backup is made or old ones are removed, not for a
+    // listing: see SleepInhibitor.
+    auto keepAwake = mutating ? SleepInhibitor::hold(QStringLiteral("Working on a USB stick's backups"))
+                              : SleepInhibitor::Token();
+    const QString dirPath = QString::fromStdString(dir);
+    application::CancellationToken cancel = m_cancel;
+    auto reporter = makeReporter();
+    m_watcher.setFuture(QtConcurrent::run([keepAwake, action, dirPath, keepCount, id, description, cancel, reporter]() {
+        return runBackupsTask(action, dirPath, keepCount, id, description, cancel, reporter);
+    }));
 }
 
 void BackupsController::onTaskFinished()

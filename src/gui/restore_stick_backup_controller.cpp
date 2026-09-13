@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/local_file_url.hpp"
+#include "gui/sleep_inhibitor.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "restore_stick_backup_controller.hpp"
 
@@ -417,7 +418,9 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
             },
             Qt::QueuedConnection);
     };
-    m_restoreWatcher.setFuture(QtConcurrent::run([options]() {
+    // Awake for the whole restore: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Restoring a stick backup"));
+    m_restoreWatcher.setFuture(QtConcurrent::run([keepAwake, options]() {
         auto result = std::make_shared<RestoreResult>();
         result->refusal = refuseIfDjSoftwareRunning();
         if (!result->refusal.isEmpty()) {

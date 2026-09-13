@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "metadata_backup_controller.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -693,8 +694,13 @@ void MetadataBackupController::beginSave()
     m_cancel = application::CancellationToken();
     setBusy(true);
     setWriting(true);
-    m_saveWatcher.setFuture(QtConcurrent::run(runStoreTask, tracks, m_sourceLibraryPath, m_sourceLibraryId,
-                                               m_sourceStickLabel, makeReporter(), m_cancel));
+    // Awake for the whole backup: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Backing up metadata to this computer"));
+    m_saveWatcher.setFuture(QtConcurrent::run(
+        [keepAwake, tracks, libraryPath = m_sourceLibraryPath, libraryId = m_sourceLibraryId,
+         stickLabel = m_sourceStickLabel, reporter = makeReporter(), cancel = m_cancel]() {
+            return runStoreTask(tracks, libraryPath, libraryId, stickLabel, reporter, cancel);
+        }));
 }
 
 void MetadataBackupController::onSaveFinished()

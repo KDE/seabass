@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "stick_performance_controller.hpp"
+#include "gui/sleep_inhibitor.hpp"
 
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -766,7 +767,11 @@ void StickPerformanceController::measureWrites(const QString &rekordboxPath, con
     setWriteErrorMessage({});
     setWriteBusy(true);
     m_writeCancel = application::CancellationToken();
-    m_writeWatcher.setFuture(QtConcurrent::run(runWriteTask, stickRoot, m_writeCancel));
+    // Awake for the write test: see SleepInhibitor.
+    auto keepAwake = SleepInhibitor::hold(QStringLiteral("Testing a USB stick's write speed"));
+    m_writeWatcher.setFuture(QtConcurrent::run([keepAwake, stickRoot, cancel = m_writeCancel]() {
+        return runWriteTask(stickRoot, cancel);
+    }));
 }
 
 void StickPerformanceController::cancelWrites()

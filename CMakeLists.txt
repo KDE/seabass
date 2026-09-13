@@ -533,6 +533,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
     # could not be driven from a test at all (docs/real-data-testing.md).
     # Qt Core is the whole Qt dependency -- no widgets, no QML, no event
     # loop -- so a plain C++ test links this and stages real work.
+    # Keeping the system awake while a stick is written (gui/sleep_inhibitor)
+    # asks logind over D-Bus on Linux. Windows uses a power request, which
+    # needs nothing beyond kernel32.
+    if(UNIX AND NOT APPLE)
+        find_package(Qt6 REQUIRED COMPONENTS DBus)
+    endif()
+
     add_library(seabass_edit STATIC
         src/gui/library_catalog_cache.hpp
         src/gui/library_catalog_cache.cpp
@@ -542,6 +549,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/save_context.cpp
         src/gui/edit/save_loop.hpp
         src/gui/edit/save_loop.cpp
+        src/gui/sleep_inhibitor.hpp
+        src/gui/sleep_inhibitor.cpp
         src/gui/edit/format_write_session.hpp
         src/gui/edit/format_write_session.cpp
         src/gui/edit/changes/change_helpers.hpp
@@ -569,6 +578,9 @@ if(SEABASS_GUI AND Qt6_FOUND)
     )
     target_include_directories(seabass_edit PUBLIC src)
     target_link_libraries(seabass_edit PUBLIC seabass_core Qt6::Core)
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(seabass_edit PUBLIC Qt6::DBus)
+    endif()
 
     # Times a real staged save against a real stick -- the wall-clock half
     # of the write-path work, which the corpus runner's counts cannot
@@ -1157,10 +1169,14 @@ if(TARGET Qt6::Core)
     add_executable(edit_session_save_loop_test
         src/gui/edit/save_context.cpp
         src/gui/edit/save_loop.cpp
+        src/gui/sleep_inhibitor.cpp
         tests/edit_session_save_loop_test.cpp
     )
     target_include_directories(edit_session_save_loop_test PRIVATE src)
     target_link_libraries(edit_session_save_loop_test PRIVATE seabass_core Qt6::Core)
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(edit_session_save_loop_test PRIVATE Qt6::DBus)
+    endif()
     add_test(NAME edit_session_save_loop_test COMMAND edit_session_save_loop_test)
 
     # Links media_controller.cpp directly, the way every other GUI-class
@@ -1183,6 +1199,21 @@ if(TARGET Qt6::Core)
     target_compile_definitions(edit_session_decline_wiring_test PRIVATE
         SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME edit_session_decline_wiring_test COMMAND edit_session_decline_wiring_test)
+
+    # SleepInhibitor: one system inhibitor however many operations overlap,
+    # and, on a machine with logind, the real one listed while it is held.
+    add_executable(sleep_inhibitor_test tests/sleep_inhibitor_test.cpp)
+    target_include_directories(sleep_inhibitor_test PRIVATE src)
+    target_link_libraries(sleep_inhibitor_test PRIVATE seabass_edit Qt6::Core)
+    add_test(NAME sleep_inhibitor_test COMMAND sleep_inhibitor_test)
+
+    # Every task that writes a stick or makes a backup keeps the system
+    # awake. Read from the controller sources, like the decline test above:
+    # the controllers live in the GUI executable, with no library to test.
+    add_executable(sleep_inhibit_wiring_test tests/sleep_inhibit_wiring_test.cpp)
+    target_compile_definitions(sleep_inhibit_wiring_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME sleep_inhibit_wiring_test COMMAND sleep_inhibit_wiring_test)
 
     # Drives one staged change against a real encrypted OneLibrary
     # database, which is the point of seabass_edit being its own target.
