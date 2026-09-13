@@ -186,7 +186,12 @@ std::string sqliteReadOnlyUri(const fs::path &file)
 {
     std::error_code ec;
     const fs::path absolute = fs::absolute(file, ec);
-    const std::string path = (ec ? file : absolute).generic_string();
+    // UTF-8 whatever the platform: SQLite reads a URI as UTF-8, and on
+    // Windows generic_string() is the ANSI code page instead -- a folder
+    // named "Jürgen" came through as bytes SQLite could not open, and a name
+    // the code page cannot represent made it throw outright.
+    const auto u8 = (ec ? file : absolute).generic_u8string();
+    const std::string path(reinterpret_cast<const char *>(u8.data()), u8.size());
     static const char *const hex = "0123456789ABCDEF";
     std::string escaped;
     escaped.reserve(path.size());
@@ -200,10 +205,15 @@ std::string sqliteReadOnlyUri(const fs::path &file)
             escaped += c;
         }
     }
-    // "file:/abs/path" on POSIX; a Windows drive letter needs the empty
-    // authority form, "file:///C:/path".
+    // "file:/abs/path" on POSIX. A Windows drive letter needs the empty
+    // authority form, "file:///C:/path". So does a network share:
+    // "//server/share" straight after "file:" reads as authority "server",
+    // and SQLite refuses any authority but an empty one or localhost -- so
+    // the share path goes after an empty one, "file:////server/share".
     const bool windowsDrive = escaped.size() > 1 && escaped[1] == ':';
-    return std::string("file:") + (windowsDrive ? "///" : "") + escaped + "?mode=ro&immutable=1";
+    const bool networkShare = escaped.rfind("//", 0) == 0;
+    return std::string("file:") + ((windowsDrive || networkShare) ? "//" : "") + (windowsDrive ? "/" : "")
+        + escaped + "?mode=ro&immutable=1";
 }
 
 // Every identifier the database itself declares -- table and column
