@@ -34,6 +34,7 @@ TestCase {
             property bool dirty: false
             property bool writing: false
             property int pendingCount: 0
+            property string editorOwner: ""
             // What LibraryEditSession reports after measuring the stick.
             property bool backupGoesLocal: false
             property real stickBytesFree: 0
@@ -452,6 +453,68 @@ TestCase {
 
         stack.pop(StackView.Immediate);
         tryCompare(host, "visible", true);
+        tryCompare(dialog, "opened", true);
+    }
+
+    // The session is shared by every page on the library, so what is staged
+    // can be another page's. Declining must not discard it, and must leave
+    // without stopping to offer to save it.
+    function test_decliningLeavesAnotherPagesStagedChangesAlone() {
+        var session = createTemporaryObject(sessionComponent, testCase, {
+            backupGoesLocal: true,
+            dirty: true,
+            pendingCount: 3,
+            editorOwner: "addcue",
+            stickBytesCapacity: 30 * testCase.gb,
+            stickBytesFree: 1.2 * testCase.gb,
+            backupBytesWorstCase: 812 * testCase.mb
+        });
+        var registry = createTemporaryObject(registryComponent, testCase, {session: session});
+        var host = createTemporaryObject(hostComponent, testCase,
+                                         {registry: registry, libraryId: "EB9F-F032",
+                                          stickLabel: "WHALESHARK", feature: "sync"});
+        waitForRendering(host);
+        var dialog = findByObjectName(host, "lowSpaceDialog");
+        tryCompare(dialog, "opened", true);
+        compare(dialog.rejectText, "Cancel", "another page's changes are not this page's to discard");
+        var left = false;
+        host.backupLocationDeclined.connect(function() {
+            host.requestLeave(function() { left = true; });
+        });
+        findByObjectName(dialog.footer, "rejectButton").clicked();
+        compare(session.discardCalls, 0);
+        compare(session.saveCalls, 0);
+        compare(left, true, "declining leaves without asking about changes this page does not own");
+        compare(findByObjectName(host, "unsavedDialog").visible, false);
+    }
+
+    // Asked while the page was showing, then covered -- a push that began
+    // before the answer landed and finished after. The question must not
+    // stay up over the new top page; it goes away, without that counting
+    // as a decline, and comes back when its page does.
+    function test_questionGoesAwayIfItsPageIsCoveredWhileItIsUp() {
+        var session = createTemporaryObject(sessionComponent, testCase, {
+            backupGoesLocal: true,
+            stickBytesCapacity: 30 * testCase.gb,
+            stickBytesFree: 1.2 * testCase.gb,
+            backupBytesWorstCase: 812 * testCase.mb
+        });
+        var registry = createTemporaryObject(registryComponent, testCase, {session: session});
+        var stack = createTemporaryObject(stackComponent, testCase);
+        var host = stack.push(hostComponent, {registry: registry, libraryId: "EB9F-F032",
+                                              stickLabel: "WHALESHARK"}, StackView.Immediate);
+        verify(host !== null);
+        var dialog = findByObjectName(host, "lowSpaceDialog");
+        tryCompare(dialog, "opened", true);
+        var spy = createTemporaryObject(declineSpyComponent, testCase,
+                                        {target: host, signalName: "backupLocationDeclined"});
+
+        stack.push(coverComponent, {}, StackView.Immediate);
+        tryCompare(host, "visible", false);
+        tryCompare(dialog, "visible", false);
+        compare(spy.count, 0, "putting the question away is not declining it");
+
+        stack.pop(StackView.Immediate);
         tryCompare(dialog, "opened", true);
     }
 }

@@ -47,6 +47,12 @@ Item {
     readonly property bool blockedByOtherPage: host.feature.length > 0 && host.editorOwner.length > 0
         && host.editorOwner !== host.feature
     readonly property bool dirty: internal.session !== null && internal.session.dirty === true
+    // Staged changes this page may discard. The session is one per library,
+    // shared by every page that opens it, so "dirty" can be another page's
+    // work -- a stick-pulled flow returns to Home past requestLeave(), and a
+    // dirty session outlives its page. Those are not this page's to save or
+    // discard; the app's own rule is "Save or discard them there".
+    readonly property bool ownsStagedChanges: host.dirty && host.editorOwner === host.feature
     readonly property bool writing: internal.session !== null && internal.session.writing === true
 
     // --- Where this session's backups will go -----------------------------
@@ -93,6 +99,8 @@ Item {
         property var pendingLeave: null
         property bool leaveAfterSave: false
         property bool lowSpaceAsked: false
+        // True only while a decline is being acted on. See requestLeave().
+        property bool decliningLowSpace: false
 
         function askAboutLowSpace() {
             // Not while this page is under another one. The answer arrives
@@ -138,7 +146,20 @@ Item {
     // same session), and a question the user already answered must not
     // be put to them again.
     onBackupWouldGoLocalChanged: internal.askAboutLowSpace()
-    onVisibleChanged: internal.askAboutLowSpace()
+    onVisibleChanged: {
+        // Hidden while the question is up. askAboutLowSpace() will not open
+        // it over a hidden page, but a page that is still sliding out under
+        // a push is visible until the transition ends -- an answer landing
+        // in that window opens the dialog, then the page is hidden, and a
+        // Popup does not close with its parent. It would sit over the new
+        // top page, and declining would leave that page. So it is put away
+        // (which is not a decline) and asked again when this page is showing.
+        if (!host.visible && lowSpaceDialog.visible) {
+            lowSpaceDialog.close();
+            internal.lowSpaceAsked = false;
+        }
+        internal.askAboutLowSpace();
+    }
 
     // Bytes as the user reads them, for the one place that needs it.
     function humanSize(bytes) {
@@ -159,7 +180,12 @@ Item {
         if (host.writing) {
             return;
         }
-        if (host.dirty) {
+        // Not when leaving because the low-space question was declined:
+        // whatever is still staged then belongs to another page (this
+        // page's own was just discarded), and the unsaved-changes dialog
+        // would offer to save it -- someone else's work, through the very
+        // backup that was just declined.
+        if (host.dirty && !internal.decliningLowSpace) {
             internal.pendingLeave = leaveFn;
             unsavedDialog.open();
             return;
@@ -237,24 +263,27 @@ Item {
             + host.humanSize(host.stickBytesFree) + " free."
         detailText: "The backup will be written to this computer instead. Undo will then work only "
             + "here, not from another machine with the stick."
-            + (host.dirty && host.session
+            + (host.ownsStagedChanges && host.session
                ? " The " + host.session.pendingCount + " change" + (host.session.pendingCount === 1 ? "" : "s")
                  + " already staged can only be saved with that backup."
                : "")
         acceptText: "Back up here and edit"
-        // With nothing staged, declining costs nothing and says so. With
-        // something staged it cannot: those changes only save with the
-        // backup this is asking about. A plain Cancel used to send the user
-        // through the unsaved-changes dialog, whose default is Save --
+        // With nothing of this page's staged, declining costs nothing and
+        // says so. With this page's changes staged it cannot: they only save
+        // with the backup being asked about. A plain Cancel used to send the
+        // user through the unsaved-changes dialog, whose default is Save --
         // writing exactly the local backup they had just declined. So the
-        // choice is named for what it does, and it does that.
-        rejectText: host.dirty ? "Discard changes and leave" : "Cancel"
+        // choice is named for what it does, and it does that. Another page's
+        // staged changes are left alone either way.
+        rejectText: host.ownsStagedChanges ? "Discard changes and leave" : "Cancel"
         onAccepted: host.backupLocationAccepted()
         onRejected: {
-            if (host.dirty && host.session) {
+            if (host.ownsStagedChanges && host.session) {
                 host.session.discard();
             }
+            internal.decliningLowSpace = true;
             host.backupLocationDeclined();
+            internal.decliningLowSpace = false;
         }
     }
 
