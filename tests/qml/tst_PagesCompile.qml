@@ -144,10 +144,12 @@ TestCase {
     // whose header carries a second row, 8 px more than the 11 it had.
     //
     // Pixels measured from the breadcrumb itself, whose height is the
-    // style's, so only under the style the suite runs in.
+    // style's, so only under the default style ctest runs: skipped when
+    // QT_QUICK_CONTROLS_STYLE picks another, as the screenshot mode and a
+    // run under the desktop's own style both do.
     function test_theBreadcrumbHasRoomUnderIt() {
-        if (typeof screenshotDir !== "undefined" && screenshotDir.length > 0) {
-            skip("measured against the default style, not the screenshot style");
+        if (controlsStyleForced) {
+            skip("measured against the suite's default style, and this run picked another");
         }
         var backups = createTemporaryObject(Qt.createComponent(qmlDir + "BackupsPage.qml"), testCase, stickProps({}));
         verify(backups !== null);

@@ -156,6 +156,11 @@ public slots:
         const char *dir = std::getenv("SEABASS_SCREENSHOT_DIR");
         engine->rootContext()->setContextProperty(QStringLiteral("screenshotDir"),
                                                   dir != nullptr ? QString::fromLocal8Bit(dir) : QString());
+        // Whether this run picked a Qt Quick Controls style of its own:
+        // the screenshot mode does, and so does a run under the desktop's
+        // style. Tests that measure pixels skip themselves then.
+        engine->rootContext()->setContextProperty(QStringLiteral("controlsStyleForced"),
+                                                  qEnvironmentVariableIsSet("QT_QUICK_CONTROLS_STYLE"));
         // tests/qml-live/: the mount point of a real (scratch) stick to
         // drive the real pages and controllers against. Empty under
         // ctest, and every live test skips itself then.

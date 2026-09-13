@@ -524,20 +524,23 @@ TestCase {
 
         var menu = findChild(page, "homeMenu");
         verify(menu !== null, "the button must carry the menu");
-        button.clicked();
+        mouseClick(button);
         tryCompare(menu, "opened", true);
         var full = findChild(page, "browseFullBackupItem");
         var meta = findChild(page, "browseMetadataBackupsItem");
         var folder = findChild(page, "openFolderItem");
         verify(full !== null && meta !== null && folder !== null, "all three entries must be in the menu");
         compare(folder.text, "Open a Library From a Folder…");
+        // And the button closes what it opened: a press on it no longer
+        // closes the menu only for the click to open it again.
+        mouseClick(button);
+        tryCompare(menu, "visible", false);
         // Off, not missing, while there is nothing to browse; and wired
         // to the page's request when there is.
         compare(meta.enabled, page.homeBackupsMetadataCount > 0);
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "metadataBackupRequested"});
         meta.triggered();
         compare(spy.count, 1);
-        menu.close();
     }
 
     // Finds the first descendant with `objectName`, anywhere on the page.
@@ -694,6 +697,18 @@ TestCase {
         compare(findByName(page, "oneLibraryBadge").visible, true);
         compare(findByName(page, "oneLibraryBadge").label, "OneLibrary");
         compare(findByName(page, "engineBadge").visible, false);
+    }
+
+    // A mounted stick with no catalog says so in that row, rather than
+    // leaving an empty line where the labels would be.
+    function test_aStickWithNoLibrarySaysSo() {
+        var page = makePage([makeStick({mounted: true, hasRekordbox: false, hasEngine: false, hasOneLibrary: false})], {});
+        var label = findByName(page, "noLibraryLabel");
+        verify(label !== null, "the no-library label must exist");
+        compare(label.visible, true);
+        compare(label.text, "No library");
+        compare(findByName(makePage([makeStick({})], {}), "noLibraryLabel").visible, false,
+                "and a stick with a catalog shows its labels instead");
     }
 
     // Ejecting swaps the labels for "OK to unplug" in the same row, at the

@@ -83,10 +83,9 @@ Page {
         return count;
     }
 
-    // The two store counts, readable by a test that wants to check a
-    // button's enabled state against the thing that decides it rather
-    // than against a hardcoded expectation of what the machine holds.
-    readonly property int homeBackupsFullCount: homeBackups.fullBackupCount
+    // The metadata store's count, readable by a test that wants to check
+    // the menu entry's enabled state against the thing that decides it
+    // rather than against a hardcoded expectation of what the machine holds.
     readonly property int homeBackupsMetadataCount: homeBackups.metadataTrackCount
 
     function isLockedByOther(libraryId) {
@@ -102,7 +101,7 @@ Page {
         root.backupAdvisor.reassessAll();
         root.refreshLocks();
         // Coming back from having made a backup, or deleted the last
-        // one: the two buttons under the list are stale until asked.
+        // one: the menu's Browse Metadata Backups entry is stale until asked.
         homeBackups.refresh();
     }
     // Another instance taking or dropping a lock shows up within 2 s
@@ -172,7 +171,7 @@ Page {
             wrapMode: Text.WordWrap
         }
     }
-    // The two counts the row under the stick list needs, and nothing
+    // The counts behind the menu's backup entries, and nothing
     // else. Both are probes that open nothing and create nothing -- see
     // HomeBackupsController.
     HomeBackupsController {
@@ -294,6 +293,10 @@ Page {
                 Menu {
                     id: homeMenu
                     objectName: "homeMenu"
+                    // A press on the button itself does not close the menu,
+                    // so its click can: otherwise the press closed it and the
+                    // click opened it again, under every style but KDE's.
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
                     // Opens down and to the left, so it stays in the window
                     // from a button near the right edge.
                     x: homeMenuButton.width - width
@@ -431,9 +434,7 @@ Page {
         // Shown only while no stick is plugged in. With one in, the
         // sticks are what this page is about and these two cards sit
         // above them taking the top of the screen for the case that is
-        // not happening. They are still reachable from the row under the
-        // list, which is where someone looks for them once there is a
-        // stick to compare against.
+        // not happening.
         //
         // removableCount, not the row count: a folder someone opened is
         // not a stick, and should not make the no-stick tools vanish.
@@ -705,6 +706,15 @@ Page {
                                         objectName: "unmountedLabel"
                                         visible: !delegateRoot.mounted
                                         text: delegateRoot.safeToUnplug ? "OK to unplug" : "(not mounted)"
+                                        color: Theme.textMuted
+                                    }
+                                    // Said, not left as an empty line, for a
+                                    // mounted stick with no catalog on it.
+                                    Label {
+                                        objectName: "noLibraryLabel"
+                                        visible: delegateRoot.mounted && !delegateRoot.hasRekordbox
+                                                 && !delegateRoot.hasEngine && !delegateRoot.hasOneLibrary
+                                        text: "No library"
                                         color: Theme.textMuted
                                     }
                                     StatusBadge {
