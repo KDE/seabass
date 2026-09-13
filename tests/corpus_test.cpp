@@ -28,6 +28,7 @@
 // library the same one, which is what catches a reader regression against
 // data nobody has looked at by hand.
 
+#include <functional>
 #include <set>
 #include <chrono>
 #include <cmath>
@@ -2379,6 +2380,162 @@ void caseCleanUpAcrossCatalogs(const DataSet &set, const fs::path &scratch)
     fs::remove_all(stick);
 }
 
+// Matrix: Clean Up merges play history, in every catalog that keeps it.
+//
+// Run against rekordbox and its OneLibrary mirror, which list the same
+// files, so a save on the rekordbox page writes OneLibrary as a catalog of
+// its own. Two saves, each built so it cannot pass by accident:
+//
+//  - a group whose only difference is a later last-played time on the
+//    removed copy. rekordbox has no field for it, and the save used to
+//    open a pdb writer with nothing to write, whose commit() refused --
+//    failing a cleanup that had always worked.
+//  - a group whose copies were played 3 and 5 times. Both export.pdb and
+//    OneLibrary must hold 8 afterwards; OneLibrary used to keep its old
+//    count, because only a best-effort mirror wrote it and that mirror is
+//    skipped when OneLibrary is written as a catalog.
+//
+// The counts and times are set on the scanned tracks before planning, so
+// the test does not depend on what the fixture's library happens to hold.
+void caseCleanUpMergesPlayHistory(const DataSet &set, const fs::path &scratch)
+{
+    if (!set.rekordboxRoot || !infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*set.rekordboxRoot)) {
+        std::cout << "    skipped matrix/play-history cleanup: no rekordbox catalog with a OneLibrary mirror\n";
+        return;
+    }
+
+    auto freshStick = [&](const std::string &name) {
+        const fs::path stick = scratch / name;
+        fs::remove_all(stick);
+        fs::create_directories(stick);
+        fs::copy(*set.rekordboxRoot, stick / "PIONEER", fs::copy_options::recursive);
+        return stick;
+    };
+    auto scanBoth = [](const fs::path &pioneer) {
+        std::vector<domain::Track> rows = rescanRekordbox(pioneer);
+        infrastructure::onelibrary::OneLibraryReader reader(pioneer.string());
+        auto oneLibraryRows = reader.readAll();
+        rows.insert(rows.end(), oneLibraryRows.begin(), oneLibraryRows.end());
+        return application::collapseCatalogRows(rows);
+    };
+    auto listedByBoth = [](const domain::Track &file) {
+        bool rekordbox = false, oneLibrary = false;
+        for (const auto &row : file.catalogRows) {
+            rekordbox = rekordbox || row.format == "rekordbox";
+            oneLibrary = oneLibrary || row.format == "onelibrary";
+        }
+        return rekordbox && oneLibrary;
+    };
+    // The first pair the shaping turns into a plan that satisfies `wanted`.
+    auto findPlan = [&](const std::vector<domain::Track> &files,
+                        const std::function<void(domain::DuplicateGroup &, const std::string &survivorId)> &shape,
+                        const std::function<bool(const domain::DuplicateCleanupPlan &)> &wanted)
+        -> std::optional<domain::DuplicateCleanupPlan> {
+        std::vector<const domain::Track *> both;
+        for (const auto &file : files) {
+            if (listedByBoth(file)) {
+                both.push_back(&file);
+            }
+        }
+        const std::size_t limit = std::min<std::size_t>(both.size(), 60);
+        for (std::size_t i = 0; i < limit; ++i) {
+            for (std::size_t j = 0; j < limit; ++j) {
+                if (i == j) {
+                    continue;
+                }
+                domain::DuplicateGroup group;
+                group.tracks = {*both[i], *both[j]};
+                for (auto &track : group.tracks) {
+                    track.playCount.reset();
+                    track.lastPlayedAt.reset();
+                }
+                const auto unshaped = domain::DuplicateCleanupPlanner::plan(group);
+                shape(group, unshaped.survivor.sourceId);
+                auto candidate = domain::DuplicateCleanupPlanner::plan(group);
+                if (!candidate.wouldStrandAFormat && !candidate.toRemove.empty()
+                    && !candidate.toRemove[0].isUnreferenced && wanted(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        return std::nullopt;
+    };
+
+    // ---- a later last-played time and nothing else to write ----
+    {
+        const fs::path stick = freshStick("matrix-plays-lastplayed");
+        const fs::path pioneer = stick / "PIONEER";
+        const auto files = scanBoth(pioneer);
+        const auto later = std::chrono::system_clock::time_point(std::chrono::seconds(1'700'000'000));
+        auto plan = findPlan(
+            files,
+            [&](domain::DuplicateGroup &group, const std::string &survivorId) {
+                for (auto &track : group.tracks) {
+                    if (track.sourceId != survivorId) {
+                        track.lastPlayedAt = later;
+                    }
+                }
+            },
+            [](const domain::DuplicateCleanupPlan &p) {
+                return p.lastPlayedAtForSurvivor && !p.playCountForSurvivor && !p.bpmForSurvivor
+                       && !p.keyForSurvivor && !p.artworkPathForSurvivor
+                       && p.mergedCuesForSurvivor.size() == p.survivor.cues.size();
+            });
+        if (!plan) {
+            std::cout << "    (no play-history cleanup to check: no pair listed by rekordbox and OneLibrary "
+                         "with nothing else to fill in)\n";
+        } else {
+            auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
+                                                                    *plan, 1);
+            auto result = runChanges({change}, pioneer, {});
+            check(result.error.isEmpty(),
+                  "a cleanup whose only merge is a last-played time saves: " + result.error.toStdString());
+        }
+        fs::remove_all(stick);
+    }
+
+    // ---- play counts 3 and 5 land as 8 in both catalogs ----
+    {
+        const fs::path stick = freshStick("matrix-plays-count");
+        const fs::path pioneer = stick / "PIONEER";
+        const auto files = scanBoth(pioneer);
+        auto plan = findPlan(
+            files,
+            [](domain::DuplicateGroup &group, const std::string &) {
+                group.tracks[0].playCount = 3;
+                group.tracks[1].playCount = 5;
+            },
+            [](const domain::DuplicateCleanupPlan &p) {
+                return p.playCountForSurvivor && *p.playCountForSurvivor == 8;
+            });
+        if (!check(plan.has_value(), "a pair listed by rekordbox and OneLibrary to merge play counts for")) {
+            fs::remove_all(stick);
+            return;
+        }
+        const std::string survivorRekordboxId = domain::rowIdIn(plan->survivor, "rekordbox");
+        const std::string survivorOneLibraryId = domain::rowIdIn(plan->survivor, "onelibrary");
+        auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
+                                                                *plan, 1);
+        auto result = runChanges({change}, pioneer, {});
+        if (check(result.error.isEmpty(), "the play-count cleanup saves: " + result.error.toStdString())) {
+            auto rekordboxAfter = rescanRekordbox(pioneer);
+            const domain::Track *kept = findTrack(rekordboxAfter, survivorRekordboxId);
+            if (check(kept != nullptr, "the kept rekordbox row is still there")) {
+                check(kept->playCount && *kept->playCount == 8, "export.pdb holds the added-up play count");
+            }
+            infrastructure::onelibrary::OneLibraryReader reader(pioneer.string());
+            auto oneLibraryAfter = reader.readAll();
+            const domain::Track *keptMirror = findTrack(oneLibraryAfter, survivorOneLibraryId);
+            if (check(keptMirror != nullptr, "the kept OneLibrary row is still there")) {
+                check(keptMirror->playCount && *keptMirror->playCount == 8,
+                      "OneLibrary holds the same added-up play count, not its old one");
+            }
+        }
+        fs::remove_all(stick);
+    }
+    pass("matrix: Clean Up merges play history into every catalog that keeps it");
+}
+
 // Matrix: Clean Up duplicates. The survivor ends up with the union of the
 // group's cues, every removed row is gone from a fresh scan, and each
 // removed copy is named in the pending-deletion manifest rather than
@@ -2545,6 +2702,7 @@ void runMatrix(const DataSet &set, const fs::path &scratch, const Catalogs &cata
     caseNoPaddedStringsFromRekordbox(set, catalogs);
     caseCollapseGroupsAcrossFormats(set, catalogs);
     caseCleanUpAcrossCatalogs(set, scratch);
+    caseCleanUpMergesPlayHistory(set, scratch);
     caseBackupPathResolver(set, scratch, catalogs);
     caseBackupCoversEveryChangedFile(set, scratch, catalogs);
     caseSync(set, scratch, catalogs, expected);

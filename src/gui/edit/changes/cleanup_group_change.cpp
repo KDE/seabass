@@ -461,8 +461,16 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     // Primary-format writes here are NOT best-effort: a failure fails
     // this change. Only the OneLibrary *mirror* of a rekordbox write,
     // below, is best-effort, same as the merged-cues mirror.
-    if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.artworkPathForSurvivor || plan.playCountForSurvivor
-        || plan.lastPlayedAtForSurvivor) {
+    // Play history goes to the page's own catalog only in a form that
+    // catalog keeps: a play count in rekordbox and OneLibrary, a
+    // last-played time in Engine. Entering the rekordbox branch for a
+    // last-played time alone opened a pdb writer with nothing to write,
+    // and its commit() refuses that -- failing a save that had worked.
+    // The other catalogs get theirs in the per-catalog loop below.
+    const bool primaryTakesPlayCount = plan.playCountForSurvivor.has_value() && format != "engine";
+    const bool primaryTakesLastPlayed = plan.lastPlayedAtForSurvivor.has_value() && format == "engine";
+    if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.artworkPathForSurvivor || primaryTakesPlayCount
+        || primaryTakesLastPlayed) {
         if (format == "rekordbox") {
             std::string pdbPath = w.effectiveRoot + "/rekordbox/export.pdb";
             infrastructure::rekordbox::PdbRowWriter fieldWriter(pdbPath);
@@ -481,8 +489,8 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             }
             // Merged, not filled: the copies' counts added up. See
             // DuplicateCleanupPlan::playCountForSurvivor.
-            if (plan.playCountForSurvivor) {
-                fieldWriter.setTrackPlayCount(survivorRow, *plan.playCountForSurvivor);
+            if (plan.playCountForSurvivor && !fieldWriter.setTrackPlayCount(survivorRow, *plan.playCountForSurvivor)) {
+                log.record("cleanup: no rekordbox row id=" + survivorId + " to merge the play count onto");
             }
             if (!fieldWriter.commit()) {
                 return ChangeOutcome::failure("failed to write " + QString::fromStdString(pdbPath));
@@ -671,6 +679,40 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             sw.session.noteItemApplied();
             log.record("cleanup: wrote merged cues onto the " + secondaryFormat + " survivor row id="
                        + targets.survivorSourceId);
+        }
+
+        // Play history onto this catalog's survivor row as well, in the form
+        // this catalog keeps: the count in rekordbox and OneLibrary, the
+        // last-played time in Engine. Written per catalog, not only on the
+        // page's own: a count merged on the Engine page (which has nowhere
+        // to keep one) was otherwise lost, and OneLibrary kept its old count
+        // beside rekordbox's new one.
+        if (!targets.survivorSourceId.empty()) {
+            if (secondaryFormat == "rekordbox" && plan.playCountForSurvivor) {
+                infrastructure::rekordbox::PdbRowWriter playWriter(sw.effectiveRoot + "/rekordbox/export.pdb");
+                if (!playWriter.setTrackPlayCount(static_cast<uint32_t>(std::stoul(targets.survivorSourceId)),
+                                                  *plan.playCountForSurvivor)
+                    || !playWriter.commit()) {
+                    return ChangeOutcome::failure("failed to merge the play count into "
+                                                  + QString::fromStdString(sw.effectiveRoot + "/rekordbox/export.pdb"));
+                }
+                sw.session.noteItemApplied();
+                log.record("cleanup: merged the play count onto the rekordbox survivor row id="
+                           + targets.survivorSourceId);
+            } else if (secondaryFormat == "onelibrary" && plan.playCountForSurvivor && !plan.survivor.filePath.empty()) {
+                sharedOneLibraryWriter(ctx, sw.effectiveRoot, sw.realStickRootForOneLib)
+                    .writePlayCountForPath(plan.survivor.filePath, *plan.playCountForSurvivor);
+                sw.session.noteItemApplied();
+                log.record("cleanup: merged the play count onto the OneLibrary survivor row id="
+                           + targets.survivorSourceId);
+            } else if (secondaryFormat == "engine" && plan.lastPlayedAtForSurvivor) {
+                // cueWriter is always this concrete type for Engine, as on the primary path.
+                static_cast<infrastructure::engine::LibdjinteropEngineCueWriter *>(sw.context.cueWriter.get())
+                    ->setLastPlayedAt(targets.survivorSourceId, *plan.lastPlayedAtForSurvivor);
+                sw.session.noteItemApplied();
+                log.record("cleanup: set the latest last-played time on the Engine survivor row id="
+                           + targets.survivorSourceId);
+            }
         }
 
         for (const auto &doomedId : targets.doomedSourceIds) {

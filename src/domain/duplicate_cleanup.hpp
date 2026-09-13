@@ -78,11 +78,10 @@ struct DuplicateCleanupPlan
     // other copies would silently and permanently lose whichever value
     // didn't happen to land on the survivor.
     //
-    // Play counts and last-played timestamps are deliberately excluded,
-    // see the comment at the assignment in duplicate_cleanup.cpp: they
-    // are per-application counters that do not mean the same thing in
-    // two different DJ applications, and including them made this flag
-    // fire on 36 groups where 2 was the honest number. A group where only the survivor has a value
+    // Play counts and last-played timestamps are not part of this: they
+    // are merged onto the survivor (playCountForSurvivor), so nothing is
+    // lost when they differ, and counting them made this flag fire on 36
+    // groups where 2 was the honest number. A group where only the survivor has a value
     // (nothing to lose) or every copy already agrees is NOT flagged --
     // this is specifically "real, differing, unpreservable data is
     // about to be discarded", not "some copy has more metadata than

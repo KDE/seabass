@@ -84,17 +84,15 @@ wrong signal of the two and a better starting point.
 catalog present, so the divergence cannot cost anyone a file. That was
 the urgent part and it is done.
 
-## Play counts (decided, partly deferred)
+## Play counts (decided)
 
-Decided: a play count belongs to the application that kept it. rekordbox
-keeps a running total, Engine keeps only a last-played timestamp; they
-are not the same measurement and combining them across library types is
-not a thing that can be done correctly. Cleanup no longer treats a
-play-count disagreement as data at risk, and the Clean Up page explains
-that it does not carry them over.
+A play count belongs to the application that kept it. rekordbox keeps a
+running total, Engine keeps only a last-played timestamp; they are not the
+same measurement, so a play-count disagreement is not treated as data at
+risk.
 
-Deferred: **within one library type, merging copies should add the
-counts up.** That is the right answer and is not implemented, because no
-writer in this project can write a play count into any of the three
-formats. It needs a write path first. Until then the counts go with the
-copies that are removed, which the page says out loud.
+Merging copies keeps the history all the same: Clean Up adds the copies'
+play counts up onto the kept copy in rekordbox (export.pdb's play_count)
+and OneLibrary (djPlayCount), and gives Engine's kept row the latest
+last-played time of any copy -- in every catalog that lists the file, not
+only the one the page is showing.

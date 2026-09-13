@@ -214,11 +214,11 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
         }
     }
 
-    // Real, currently-unpreservable per-copy data: rating/comment/
-    // playCount/lastPlayedAt are never propagated by this planner or any
-    // writer, unlike bpm/key/artwork above -- so a genuine disagreement
-    // here means removing the other copies really would discard one of
-    // these values with no way to keep it.
+    // Real, currently-unpreservable per-copy data: rating and comment are
+    // never propagated by this planner or any writer, unlike bpm/key/
+    // artwork and play history above -- so a genuine disagreement here
+    // means removing the other copies really would discard one of these
+    // values with no way to keep it.
     bool ratingLoses = losesDataFromRemoval(result.survivor, result.toRemove,
                                              [](const Track &t) -> std::optional<int> { return t.rating; });
     bool commentLoses =
