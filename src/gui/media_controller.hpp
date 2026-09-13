@@ -16,7 +16,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 
 #include "application/ports/removable_media_locator.hpp"
@@ -166,6 +165,8 @@ public:
     // over; it is converted with QUrl::toLocalFile, never by stripping the
     // scheme, so a Windows path ("file:///C:/...") and a name with '#' or
     // '%' in it both survive.
+    //
+    // One folder at a time: opening another replaces it.
     Q_INVOKABLE QString openFolder(const QString &path);
 
     // openFolder() with the row's name given rather than taken from the
@@ -173,7 +174,7 @@ public:
     // not the hash its cache directory is named after.
     QString openFolder(const QString &path, const QString &label);
 
-    // Forgets a folder opened with openFolder(). Nothing on disk is
+    // Forgets the folder opened with openFolder(). Nothing on disk is
     // touched; the folder is only dropped from the list, and the shared
     // open archive (a browsed backup) is released. The unsaved-changes
     // check lives in StickListPage.qml, which holds the edit registry.
@@ -292,24 +293,26 @@ public:
     void onTaskFinished();
     void queueAutoMounts();
 
-    // Opened folders survive a restart: they are the only libraries in
-    // the list that nothing re-detects, so forgetting them on quit would
-    // make the feature useless for the case it exists for (coming back to
-    // a restored backup tomorrow).
-    void loadOpenedFolders();
-    void saveOpenedFolders();
+    // The opened folder survives a restart: nothing re-detects it, so
+    // forgetting it on quit would mean opening a backup again every time.
+    void loadOpenedFolder();
+    void saveOpenedFolder();
+    // stickRemoved/stickReturned for the opened folder's row, so an edit
+    // session holding it hears about it the way it would for a stick.
+    void announceOpenedFolder(const application::DetectedStick &folder, bool listed);
+    // Releases the shared open archive behind a browsed backup's folder.
+    static void releaseBrowsedBackup(const std::string &folderPath);
     static std::string folderLabelFor(const std::filesystem::path &dir, const QString &given);
 
 
     DetectedStickListModel m_model;
-    // Kept separately from the model because detect() rebuilds that from
-    // the locator every refresh, and these are exactly the rows no
-    // locator will ever produce.
-    std::vector<application::DetectedStick> m_openedFolders;
-    // Opened folders whose directory was missing at the last detect(), so
-    // that becoming unreachable is announced once rather than on every
-    // refresh for as long as it stays away.
-    std::set<std::string> m_unreachableFolders;
+    // One folder at most: a local copy of a library, looked into now and
+    // then. Kept apart from the model because detect() rebuilds that from
+    // the locator, and no locator produces this row.
+    std::optional<application::DetectedStick> m_openedFolder;
+    // Whether the last detect() listed it, so leaving and coming back are
+    // each announced once.
+    bool m_openedFolderListed = false;
     std::unique_ptr<application::RemovableMediaMonitor> m_monitor;
     QTimer m_debounceTimer;
     QString m_errorMessage;

@@ -14,6 +14,7 @@
 // machine with sticks and a machine with none both pass.
 #include <QCoreApplication>
 #include <QSettings>
+#include <QStringList>
 #include <QStandardPaths>
 
 #include <cassert>
@@ -192,19 +193,21 @@ int main(int argc, char **argv)
         std::cout << "case 5 (re-opening does not duplicate) OK\n";
     }
 
-    // Opened folders survive a restart: that is the whole point for a
-    // restored backup someone comes back to tomorrow.
+    // One folder is remembered, not a list: opening another replaces it,
+    // in this session and after a restart. Closing it forgets it.
     {
         {
             MediaController controller;
             assert(controller.openFolder(QString::fromStdString(both.string())).isEmpty());
             assert(controller.openFolder(QString::fromStdString(rbOnly.string())).isEmpty());
+            assert(rowForMountPoint(*controller.sticksModel(), both.string()) < 0);
+            assert(rowForMountPoint(*controller.sticksModel(), rbOnly.string()) >= 0);
         }
         MediaController restarted;
-        assert(rowForMountPoint(*restarted.sticksModel(), both.string()) >= 0);
+        assert(rowForMountPoint(*restarted.sticksModel(), both.string()) < 0);
         assert(rowForMountPoint(*restarted.sticksModel(), rbOnly.string()) >= 0);
 
-        // ...and closing one drops it, on disk too, without touching the
+        // ...and closing it drops it, on disk too, without touching the
         // folder itself.
         restarted.closeFolder(QString::fromStdString(rbOnly.string()));
         assert(rowForMountPoint(*restarted.sticksModel(), rbOnly.string()) < 0);
@@ -212,24 +215,23 @@ int main(int argc, char **argv)
 
         MediaController afterClose;
         assert(rowForMountPoint(*afterClose.sticksModel(), rbOnly.string()) < 0);
-        assert(rowForMountPoint(*afterClose.sticksModel(), both.string()) >= 0);
-        std::cout << "case 6 (persisted across restarts, closable) OK\n";
+        std::cout << "case 6 (one folder remembered across restarts, closable) OK\n";
     }
 
-    // A folder whose library was deleted since it was opened stays listed
-    // with no library, rather than silently vanishing: it can then be
-    // seen and closed.
+    // A folder whose library is gone is not listed: a card with nothing in
+    // it is clutter. It is still remembered, and comes back with its library.
     {
         const fs::path vanishing = scratch / "goes-away";
         makeStickShapedFolder(vanishing, true, false);
         MediaController controller;
         assert(controller.openFolder(QString::fromStdString(vanishing.string())).isEmpty());
-        fs::remove_all(vanishing / "PIONEER");
+        fs::rename(vanishing / "PIONEER", scratch / "goes-away-PIONEER");
         controller.detect();
-        const int row = rowForMountPoint(*controller.sticksModel(), vanishing.string());
-        assert(row >= 0);
-        assert(!controller.sticksModel()->sticks()[static_cast<size_t>(row)].rekordboxPath.has_value());
-        std::cout << "case 7 (emptied folder stays listed) OK\n";
+        assert(rowForMountPoint(*controller.sticksModel(), vanishing.string()) < 0);
+        fs::rename(scratch / "goes-away-PIONEER", vanishing / "PIONEER");
+        controller.detect();
+        assert(rowForMountPoint(*controller.sticksModel(), vanishing.string()) >= 0);
+        std::cout << "case 7 (folder without a library is not listed, and returns with it) OK\n";
     }
 
     // A QML FolderDialog hands over a file:// URL, and that is what the
@@ -312,11 +314,8 @@ int main(int argc, char **argv)
         std::cout << "case 8 (folder library id) OK\n";
     }
 
-    // A remembered folder whose directory is gone is not shown -- this
-    // is what put 232 dead rows on one developer's first page, every one
-    // of them written by this very test and never taken off again. It
-    // stays in the store, though: a NAS that is off right now must not
-    // silently delete the user's shortcut to it.
+    // A remembered folder whose directory is gone is not listed, but not
+    // forgotten either: a share that is off right now comes back.
     {
         const fs::path share = scratch / "pretend-network-share";
         makeStickShapedFolder(share, true, false);
@@ -329,25 +328,12 @@ int main(int argc, char **argv)
             MediaController whileAway;
             assert(rowForMountPoint(*whileAway.sticksModel(), share.string()) < 0);
             // openSeabassSettings(), not a bare QSettings("seabass",
-            // "seabass") -- the same Windows quirk documented at its
-            // definition (the two-argument constructor ignores
-            // setDefaultFormat()) meant this probe read the real
-            // registry while MediaController's own writes went to the
-            // sandbox, so it never found the row it was checking for.
+            // "seabass"): on Windows the two-argument constructor ignores
+            // setDefaultFormat() and would read the real registry.
             QSettings settings = seabass::gui::openSeabassSettings();
-            const int count = settings.beginReadArray(QStringLiteral("openedFolders"));
-            bool stillListed = false;
-            for (int i = 0; i < count; ++i) {
-                settings.setArrayIndex(i);
-                if (settings.value(QStringLiteral("path")).toString().toStdString()
-                    == share.string()) {
-                    stillListed = true;
-                }
-            }
-            settings.endArray();
-            assert(stillListed && "an unreachable folder must be kept, not pruned");
+            assert(settings.value(QStringLiteral("openedFolder/path")).toString().toStdString() == share.string()
+                   && "an unreachable folder must be kept, not forgotten");
         }
-        // And it returns by itself when the share does.
         makeStickShapedFolder(share, true, false);
         {
             MediaController back;
@@ -392,6 +378,25 @@ int main(int argc, char **argv)
         controller.detect();
         assert(returned == 1);
         std::cout << "case 10 (going and returning are announced as a pair) OK\n";
+    }
+
+    // Opening another folder takes the first out of the list the way a
+    // pulled stick leaves it: a session still holding it has to hear so.
+    {
+        const fs::path first = scratch / "first-copy";
+        const fs::path second = scratch / "second-copy";
+        makeStickShapedFolder(first, true, false);
+        makeStickShapedFolder(second, false, true);
+        MediaController controller;
+        assert(controller.openFolder(QString::fromStdString(first.string())).isEmpty());
+        QStringList removedIds;
+        QObject::connect(&controller, &MediaController::stickRemoved,
+                         [&](const QString &id, const QString &) { removedIds << id; });
+        assert(controller.openFolder(QString::fromStdString(second.string())).isEmpty());
+        assert(rowForMountPoint(*controller.sticksModel(), first.string()) < 0);
+        assert(rowForMountPoint(*controller.sticksModel(), second.string()) >= 0);
+        assert(removedIds == QStringList{QString::fromStdString(MediaController::folderLibraryId(first.string()))});
+        std::cout << "case 11 (a replaced folder is announced gone) OK\n";
     }
 
     fs::remove_all(scratch);
