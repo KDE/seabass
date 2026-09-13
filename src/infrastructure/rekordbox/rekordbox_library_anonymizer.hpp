@@ -46,6 +46,7 @@ struct RekordboxAnonymizationResult
     // Rows scrubbed in the Device Library Plus mirror that lives beside
     // export.pdb, and why it could not be scrubbed if it could not.
     int oneLibraryTracksScrubbed = 0;
+    int oneLibraryTracksDropped = 0;  // pruned to match --max-tracks
     std::string oneLibraryError;
     std::string errorMessage;  // empty on success
 };

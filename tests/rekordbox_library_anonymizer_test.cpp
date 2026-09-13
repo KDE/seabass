@@ -20,6 +20,8 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_library_anonymizer.hpp"
 
+#include "infrastructure/onelibrary/onelibrary_key.hpp"
+#include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -545,6 +547,62 @@ int main()
         assert(artistNameById(dest2Pdb, 5) != "Real Artist A");
         assert(artistNameById(dest2Pdb, 6) != "Real Artist B");
         std::cout << "case 9 (a pdb with only artist names is still written) OK\n";
+    }
+
+    // --max-tracks reaches OneLibrary too. The synthetic library's three
+    // tracks are real100/101/102.mp3; three rows of a real OneLibrary
+    // database are given those names, the export keeps two tracks, and the
+    // third must be gone from exportLibrary.db as well as from export.pdb --
+    // matched by real filename, the key all three catalogs share.
+    {
+        using namespace seabass::infrastructure::onelibrary;
+        struct OneLibraryDb
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb db;
+            explicit OneLibraryDb(const fs::path &path) : db(lib, path.string(), false)
+            {
+                db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            }
+        };
+        auto contentCount = [](const fs::path &path) {
+            OneLibraryDb handle(path);
+            SqlCipherStatement stmt(handle.db, "SELECT count(*) FROM content");
+            assert(stmt.step());
+            return stmt.columnInt64(0);
+        };
+
+        const fs::path source3 = root / "onelibrary-source";
+        const fs::path dest3 = root / "onelibrary-dest";
+        writeFile(source3 / "rekordbox" / "export.pdb", buildSyntheticPdb());
+        for (int n = 1; n <= 3; ++n) {
+            writeSyntheticAnlz(source3 / "USBANLZ" / "P001" / ("0000000" + std::to_string(n)) / "ANLZ0000.DAT");
+        }
+        const fs::path oneLibrary = source3 / "rekordbox" / "exportLibrary.db";
+        fs::copy_file(fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox"
+                          / "rekordbox" / "exportLibrary.db",
+                      oneLibrary, fs::copy_options::overwrite_existing);
+        {
+            OneLibraryDb handle(oneLibrary);
+            for (int k = 0; k < 3; ++k) {
+                const std::string name = "real" + std::to_string(100 + k) + ".mp3";
+                SqlCipherStatement rename(handle.db,
+                    "UPDATE content SET fileName = ?, path = ? WHERE content_id = "
+                    "(SELECT content_id FROM content ORDER BY content_id LIMIT 1 OFFSET " + std::to_string(k) + ")");
+                rename.bindText(1, name);
+                rename.bindText(2, "/Contents/" + name);
+                rename.run();
+            }
+        }
+        const auto before = contentCount(oneLibrary);
+
+        auto oneLibraryResult = anonymizeRekordboxLibrary(source3.string(), dest3.string(), 2);
+        assert(oneLibraryResult.errorMessage.empty());
+        assert(oneLibraryResult.oneLibraryError.empty());
+        assert(oneLibraryResult.tracksDropped == 1);
+        assert(oneLibraryResult.oneLibraryTracksDropped == 1);
+        assert(contentCount(dest3 / "rekordbox" / "exportLibrary.db") == before - 1);
+        std::cout << "case 10 (--max-tracks prunes OneLibrary to the same tracks as export.pdb) OK\n";
     }
 
     std::cout << "all cases passed\n";

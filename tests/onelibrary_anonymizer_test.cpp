@@ -13,6 +13,7 @@
 // "comment", which this schema does not have (it is "djComment"), so it
 // ran happily and scrubbed nothing.
 #include <cassert>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -196,6 +197,77 @@ int main(int argc, char **argv)
             assert(known);
         }
         std::cout << "case 4 (every column of content is either scrubbed or knowingly benign) OK\n";
+    }
+
+    // --max-tracks: a track the other two catalogs dropped is removed from
+    // this one too, with every row that refers to it -- not scrubbed and
+    // kept, which is how a slim export carried 40 tracks in two catalogs and
+    // 1644 in the third.
+    {
+        const fs::path pruned = root / "exportLibrary-pruned.db";
+        fs::copy_file(fixture, pruned, fs::copy_options::overwrite_existing, ec);
+        assert(!ec);
+
+        int64_t victimId = 0;
+        std::string victimFilename;
+        int64_t contentBefore = 0;
+        int64_t orphanedBankRowsBefore = -1;
+        {
+            Db handle(pruned, true);
+            // A track whose filename is unique and which carries cues, so the
+            // cleanup of what depends on it is really exercised.
+            SqlCipherStatement pick(handle.db,
+                "SELECT c.content_id, c.fileName FROM content c "
+                "WHERE c.fileName IN (SELECT fileName FROM content GROUP BY fileName HAVING count(*) = 1) "
+                "AND EXISTS (SELECT 1 FROM cue WHERE cue.content_id = c.content_id) LIMIT 1");
+            assert(pick.step());
+            victimId = pick.columnInt64(0);
+            victimFilename = pick.columnText(1);
+            SqlCipherStatement count(handle.db, "SELECT count(*) FROM content");
+            assert(count.step());
+            contentBefore = count.columnInt64(0);
+            const auto tables = tablesOf(handle.db);
+            if (std::find(tables.begin(), tables.end(), "hotCueBankList_cue") != tables.end()) {
+                SqlCipherStatement orphans(handle.db,
+                    "SELECT count(*) FROM hotCueBankList_cue WHERE cue_id NOT IN (SELECT cue_id FROM cue)");
+                assert(orphans.step());
+                orphanedBankRowsBefore = orphans.columnInt64(0);
+            }
+        }
+        assert(victimId != 0 && !victimFilename.empty());
+
+        const auto prunedResult = anonymizeOneLibraryDatabase(pruned.string(), {victimFilename});
+        assert(prunedResult.errorMessage.empty());
+        assert(prunedResult.tracksDropped == 1);
+
+        Db handle(pruned, true);
+        {
+            SqlCipherStatement count(handle.db, "SELECT count(*) FROM content");
+            assert(count.step());
+            assert(count.columnInt64(0) == contentBefore - 1);
+        }
+        // Nothing that names a content_id still names this one.
+        for (const auto &table : tablesOf(handle.db)) {
+            const auto columns = columnsOf(handle.db, table);
+            if (std::find(columns.begin(), columns.end(), "content_id") == columns.end()) {
+                continue;
+            }
+            SqlCipherStatement refs(handle.db, "SELECT count(*) FROM \"" + table + "\" WHERE content_id = ?");
+            refs.bindInt64(1, victimId);
+            assert(refs.step());
+            if (refs.columnInt64(0) != 0) {
+                std::cerr << table << " still refers to dropped content_id " << victimId << "\n";
+            }
+            assert(refs.columnInt64(0) == 0);
+        }
+        // And the cue bank gained no rows pointing at cues that are gone.
+        if (orphanedBankRowsBefore >= 0) {
+            SqlCipherStatement orphans(handle.db,
+                "SELECT count(*) FROM hotCueBankList_cue WHERE cue_id NOT IN (SELECT cue_id FROM cue)");
+            assert(orphans.step());
+            assert(orphans.columnInt64(0) == orphanedBankRowsBefore);
+        }
+        std::cout << "case 5 (a track --max-tracks dropped goes, with everything that refers to it) OK\n";
     }
 
     fs::remove_all(root, ec);

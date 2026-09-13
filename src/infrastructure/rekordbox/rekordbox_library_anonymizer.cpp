@@ -396,37 +396,6 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                 result.removedUnanonymizableFiles.push_back(path.filename().string());
             }
         }
-        // exportLibrary.db is the Device Library Plus mirror: the complete
-        // real library, encrypted with a key this project's own source
-        // derives, so anyone with the app can read it straight out. It
-        // used to ship verbatim, then it was dropped outright, which was
-        // safe but left the OneLibrary write path with no real-data
-        // coverage at all. Now it is scrubbed and kept. A failure removes
-        // it rather than shipping it: this file is the worst one to get
-        // wrong.
-        {
-            const fs::path oneLibrary = fs::path(destinationRoot) / "rekordbox" / "exportLibrary.db";
-            std::error_code existsEc;
-            if (fs::is_regular_file(oneLibrary, existsEc)) {
-                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(oneLibrary.string());
-                result.oneLibraryTracksScrubbed = oneLibraryResult.tracksScrubbed;
-                result.oneLibraryError = oneLibraryResult.errorMessage;
-                if (!oneLibraryResult.errorMessage.empty()) {
-                    std::error_code removeEc;
-                    fs::remove(oneLibrary, removeEc);
-                }
-            }
-            // Only now: SQLite recreates its -shm and -wal side files the
-            // moment the database is opened, so removing them before the
-            // scrub above just means they come back holding whatever the
-            // scrub itself wrote. They are removed last, and the VACUUM
-            // the anonymizer ends with has already folded everything into
-            // the database file proper.
-            for (const char *sideFile : {"exportLibrary.db-shm", "exportLibrary.db-wal"}) {
-                std::error_code removeEc;
-                fs::remove(fs::path(destinationRoot) / "rekordbox" / sideFile, removeEc);
-            }
-        }
         copyTreeIfPresent(fs::path(sourceRoot) / "USBANLZ", fs::path(destinationRoot) / "USBANLZ");
         // Device Profile reads these and nothing else does. They hold
         // player preferences (LCD brightness, quantize, jog feel), not
@@ -469,6 +438,46 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             kept.resize(*maxTracks);
         }
 
+        // OneLibrary is anonymized here, once the pruning decision exists,
+        // rather than before it as it used to be -- so it can be pruned to the
+        // same tracks. --max-tracks cut rekordbox and Engine to N and left
+        // this database holding every track of the real library.
+        std::set<std::string> droppedFilenames;
+        for (const auto &t : dropped) {
+            droppedFilenames.insert(t.filename);
+        }
+        // exportLibrary.db is the Device Library Plus mirror: the complete
+        // real library, encrypted with a key this project's own source
+        // derives, so anyone with the app can read it straight out. It
+        // used to ship verbatim, then it was dropped outright, which was
+        // safe but left the OneLibrary write path with no real-data
+        // coverage at all. Now it is scrubbed and kept. A failure removes
+        // it rather than shipping it: this file is the worst one to get
+        // wrong.
+        {
+            const fs::path oneLibrary = fs::path(destinationRoot) / "rekordbox" / "exportLibrary.db";
+            std::error_code existsEc;
+            if (fs::is_regular_file(oneLibrary, existsEc)) {
+                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(oneLibrary.string(), droppedFilenames);
+                result.oneLibraryTracksScrubbed = oneLibraryResult.tracksScrubbed;
+                result.oneLibraryTracksDropped = oneLibraryResult.tracksDropped;
+                result.oneLibraryError = oneLibraryResult.errorMessage;
+                if (!oneLibraryResult.errorMessage.empty()) {
+                    std::error_code removeEc;
+                    fs::remove(oneLibrary, removeEc);
+                }
+            }
+            // Only now: SQLite recreates its -shm and -wal side files the
+            // moment the database is opened, so removing them before the
+            // scrub above just means they come back holding whatever the
+            // scrub itself wrote. They are removed last, and the VACUUM
+            // the anonymizer ends with has already folded everything into
+            // the database file proper.
+            for (const char *sideFile : {"exportLibrary.db-shm", "exportLibrary.db-wal"}) {
+                std::error_code removeEc;
+                fs::remove(fs::path(destinationRoot) / "rekordbox" / sideFile, removeEc);
+            }
+        }
         PdbRowWriter writer(pdbPath);
 
         std::set<uint32_t> droppedIds;

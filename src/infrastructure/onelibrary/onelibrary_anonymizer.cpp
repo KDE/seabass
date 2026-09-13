@@ -99,7 +99,8 @@ int renameDistinctValues(const SqlCipherDb &db, const std::string &table, const 
 
 }  // namespace
 
-OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbPath)
+OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbPath,
+                                                         const std::set<std::string> &droppedFilenames)
 {
     OneLibraryAnonymizationResult result;
     std::error_code ec;
@@ -126,6 +127,57 @@ OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbP
                 tracks.emplace_back(stmt.columnInt64(0), stmt.columnText(1), stmt.columnText(2));
             }
         }
+        // --- tracks --max-tracks dropped from the other two catalogs ---
+        //
+        // The rekordbox and Engine anonymizers prune to the first N tracks;
+        // this database used to keep every one, so a slim export carried 40
+        // tracks in two catalogs and 1644 in the third. Same shared key as
+        // the scrub below -- the real filename -- and the same delete order
+        // OneLibraryCueWriter::removeTrackByPath() follows (see
+        // docs/onelibrary-format.md): nothing enforces a foreign key in this
+        // schema, so dependents go first or they are left behind pointing at
+        // nothing. Every table carrying a content_id is cleared, not a fixed
+        // list, so a link table this project has not met is not the one
+        // that keeps a dropped track's rows.
+        if (!droppedFilenames.empty()) {
+            std::vector<std::string> linkTables;
+            {
+                SqlCipherStatement stmt(db, "SELECT name FROM sqlite_master WHERE type='table'");
+                while (stmt.step()) {
+                    const std::string table = stmt.columnText(0);
+                    if (table != "content" && columnsOf(db, table).count("content_id")) {
+                        linkTables.push_back(table);
+                    }
+                }
+            }
+            const bool hasCueBank = tableExists(db, "hotCueBankList_cue") && tableExists(db, "cue");
+            std::vector<std::tuple<int64_t, std::string, std::string>> keptTracks;
+            for (const auto &track : tracks) {
+                const auto &[id, path, fileName] = track;
+                const std::string realFilename = fileName.empty() ? basenameOf(path) : fileName;
+                if (droppedFilenames.count(realFilename) == 0) {
+                    keptTracks.push_back(track);
+                    continue;
+                }
+                if (hasCueBank) {
+                    SqlCipherStatement del(db, "DELETE FROM hotCueBankList_cue WHERE cue_id IN "
+                                               "(SELECT cue_id FROM cue WHERE content_id = ?)");
+                    del.bindInt64(1, id);
+                    del.run();
+                }
+                for (const auto &table : linkTables) {
+                    SqlCipherStatement del(db, "DELETE FROM \"" + table + "\" WHERE content_id = ?");
+                    del.bindInt64(1, id);
+                    del.run();
+                }
+                SqlCipherStatement delContent(db, "DELETE FROM content WHERE content_id = ?");
+                delContent.bindInt64(1, id);
+                delContent.run();
+                ++result.tracksDropped;
+            }
+            tracks = std::move(keptTracks);
+        }
+
         for (const auto &[id, path, fileName] : tracks) {
             // The real filename is the shared key across all three
             // catalogs. Prefer the stored filename, fall back to the
