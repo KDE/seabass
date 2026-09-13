@@ -429,7 +429,14 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         if (!entry.is_regular_file(ec)) {
             continue;
         }
-        const std::string relative = fs::relative(entry.path(), root, ec).string();
+        // generic_string(), not string(): this path becomes part of a
+        // problem message compared against a hardcoded, forward-slash
+        // known-baseline list (tests/anonymization_verifier_test.cpp's
+        // knownDirtyFixtureFiles) and shown to a contributor -- a native
+        // backslash path on Windows matched neither, and the test's own
+        // "clean copy, beyond the known baseline" case saw the two
+        // already-documented leaks as new ones on every Windows run.
+        const std::string relative = fs::relative(entry.path(), root, ec).generic_string();
         const std::string name = entry.path().filename().string();
         // MANIFEST.txt is prose on purpose -- it is the page explaining to
         // the contributor what was kept and what was replaced, including
