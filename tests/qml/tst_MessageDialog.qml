@@ -46,8 +46,11 @@ TestCase {
             property string state: "idle"
             signal saveFinished(var summary)
             signal lockRefused(var holder)
-            function save() {}
-            function discard() {}
+            // Counted, so a test can tell which way a decline went.
+            property int saveCalls: 0
+            property int discardCalls: 0
+            function save() { saveCalls += 1; }
+            function discard() { discardCalls += 1; dirty = false; pendingCount = 0; }
         }
     }
 
@@ -347,5 +350,108 @@ TestCase {
         findByObjectName(dialog.footer, "rejectButton").clicked();
         tryCompare(spy, "count", 1);
         compare(host.dirty, false);
+    }
+
+    // --- declining, and when the question may be put ---------------------
+
+    Component {
+        id: declineSpyComponent
+        SignalSpy {}
+    }
+
+    Component {
+        id: stackComponent
+        StackView { width: 800; height: 600 }
+    }
+
+    Component {
+        id: coverComponent
+        Rectangle { color: "black" }
+    }
+
+    // Declining with nothing staged costs nothing: no discard, no save, and
+    // the page is asked to leave.
+    function test_decliningWithNothingStagedJustLeaves() {
+        var host = makeHost({
+            backupGoesLocal: true,
+            stickBytesCapacity: 30 * testCase.gb,
+            stickBytesFree: 1.2 * testCase.gb,
+            backupBytesWorstCase: 812 * testCase.mb
+        });
+        var session = host.registry.session;
+        var dialog = findByObjectName(host, "lowSpaceDialog");
+        tryCompare(dialog, "opened", true);
+        compare(dialog.rejectText, "Cancel");
+        var spy = createTemporaryObject(declineSpyComponent, testCase,
+                                        {target: host, signalName: "backupLocationDeclined"});
+        findByObjectName(dialog.footer, "rejectButton").clicked();
+        compare(spy.count, 1);
+        compare(session.discardCalls, 0);
+        compare(session.saveCalls, 0);
+    }
+
+    // The answer can land after a cue was staged. Then declining cannot be
+    // free: those changes only save with the backup being declined. It used
+    // to send the user to the unsaved-changes dialog, whose default is Save
+    // -- the very backup they had just said no to. Now it is named for what
+    // it does, it discards, and it never saves.
+    function test_decliningWithStagedChangesDiscardsInsteadOfSaving() {
+        var host = makeHost({
+            backupGoesLocal: true,
+            dirty: true,
+            pendingCount: 2,
+            stickBytesCapacity: 30 * testCase.gb,
+            stickBytesFree: 1.2 * testCase.gb,
+            backupBytesWorstCase: 812 * testCase.mb
+        });
+        var session = host.registry.session;
+        var dialog = findByObjectName(host, "lowSpaceDialog");
+        tryCompare(dialog, "opened", true);
+        compare(dialog.rejectText, "Discard changes and leave");
+        verify(dialog.detailText.indexOf("2 changes already staged") >= 0);
+        var spy = createTemporaryObject(declineSpyComponent, testCase,
+                                        {target: host, signalName: "backupLocationDeclined"});
+        findByObjectName(dialog.footer, "rejectButton").clicked();
+        compare(session.discardCalls, 1);
+        compare(session.saveCalls, 0);
+        compare(spy.count, 1);
+        // Discarded before the page is asked to leave, so its requestLeave()
+        // finds nothing unsaved to put a Save button in front of.
+        compare(host.dirty, false);
+    }
+
+    // The answer arrives from a worker thread, so it can land while another
+    // page covers this one -- a track's details over Browse Library. The
+    // question belongs to the page that owns the session; asked over the
+    // other page, its decline would leave the wrong one.
+    function test_waitsWhileItsPageIsCoveredByAnother() {
+        var session = createTemporaryObject(sessionComponent, testCase, {
+            backupGoesLocal: false,
+            stickBytesCapacity: 30 * testCase.gb,
+            stickBytesFree: 1.2 * testCase.gb,
+            backupBytesWorstCase: 812 * testCase.mb
+        });
+        var registry = createTemporaryObject(registryComponent, testCase, {session: session});
+        var stack = createTemporaryObject(stackComponent, testCase);
+        var host = stack.push(hostComponent, {registry: registry, libraryId: "EB9F-F032",
+                                              stickLabel: "WHALESHARK"}, StackView.Immediate);
+        verify(host !== null);
+        stack.push(coverComponent, {}, StackView.Immediate);
+        // The premise the host relies on: StackView hides what is underneath.
+        tryCompare(host, "visible", false);
+
+        var dialog = findByObjectName(host, "lowSpaceDialog");
+        session.backupGoesLocal = true;  // the worker's answer, landing while covered
+        // visible, not just opened: opened only turns true once the enter
+        // transition has finished, so checking it after a short wait passes
+        // even for a dialog that is already on its way up. And long enough
+        // for that transition to have run, had it started.
+        wait(400);
+        compare(dialog.visible, false, "no question over a page that is not showing");
+        compare(dialog.opened, false, "no question over a page that is not showing");
+
+        stack.pop(StackView.Immediate);
+        tryCompare(host, "visible", true);
+        tryCompare(dialog, "opened", true);
     }
 }

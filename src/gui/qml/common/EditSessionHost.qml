@@ -95,7 +95,15 @@ Item {
         property bool lowSpaceAsked: false
 
         function askAboutLowSpace() {
-            if (!host.backupWouldGoLocal || internal.lowSpaceAsked) {
+            // Not while this page is under another one. The answer arrives
+            // from a worker thread, so it can land after the user has pushed
+            // a page on top -- a track's details over Browse Library -- and
+            // the question belongs to the page that owns the session.
+            // StackView hides every page below the top, so host.visible says
+            // exactly that: the question waits, and is put when the page is
+            // showing again (onVisibleChanged below). A decline then leaves
+            // this page, not whichever one happened to be on top.
+            if (!host.backupWouldGoLocal || internal.lowSpaceAsked || !host.visible) {
                 return;
             }
             internal.lowSpaceAsked = true;
@@ -130,6 +138,7 @@ Item {
     // same session), and a question the user already answered must not
     // be put to them again.
     onBackupWouldGoLocalChanged: internal.askAboutLowSpace()
+    onVisibleChanged: internal.askAboutLowSpace()
 
     // Bytes as the user reads them, for the one place that needs it.
     function humanSize(bytes) {
@@ -209,11 +218,13 @@ Item {
     }
 
     // The first user of MessageDialog, asked at page open rather than at
-    // save time so that Cancel usually costs the user nothing. Usually,
-    // not always: the measurement behind it runs on a worker thread and
-    // can land after a first cue was already staged. That is why Cancel
-    // leaves through requestLeave() -- staged work still gets the
-    // unsaved-changes question instead of being dropped with the page.
+    // save time so that declining usually costs the user nothing. Usually,
+    // not always: the measurement behind it runs on a worker thread and can
+    // land after a first cue was already staged. Then the decline is named
+    // "Discard changes and leave" and discards before the page leaves, so the
+    // page's requestLeave() finds nothing unsaved to ask about -- the
+    // unsaved-changes dialog would otherwise offer Save, and saving is the
+    // one thing the user just declined.
     MessageDialog {
         id: lowSpaceDialog
         objectName: "lowSpaceDialog"
@@ -226,10 +237,25 @@ Item {
             + host.humanSize(host.stickBytesFree) + " free."
         detailText: "The backup will be written to this computer instead. Undo will then work only "
             + "here, not from another machine with the stick."
+            + (host.dirty && host.session
+               ? " The " + host.session.pendingCount + " change" + (host.session.pendingCount === 1 ? "" : "s")
+                 + " already staged can only be saved with that backup."
+               : "")
         acceptText: "Back up here and edit"
-        rejectText: "Cancel"
+        // With nothing staged, declining costs nothing and says so. With
+        // something staged it cannot: those changes only save with the
+        // backup this is asking about. A plain Cancel used to send the user
+        // through the unsaved-changes dialog, whose default is Save --
+        // writing exactly the local backup they had just declined. So the
+        // choice is named for what it does, and it does that.
+        rejectText: host.dirty ? "Discard changes and leave" : "Cancel"
         onAccepted: host.backupLocationAccepted()
-        onRejected: host.backupLocationDeclined()
+        onRejected: {
+            if (host.dirty && host.session) {
+                host.session.discard();
+            }
+            host.backupLocationDeclined();
+        }
     }
 
     // A second page tried to stage into a library another page is already
