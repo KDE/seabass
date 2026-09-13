@@ -15,7 +15,6 @@
 #include "infrastructure/anonymization_placeholder.hpp"
 #include "infrastructure/anonymization_export_layout.hpp"
 #include "infrastructure/onelibrary/onelibrary_anonymizer.hpp"
-#include "infrastructure/long_paths.hpp"
 #include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_anlz.h"
@@ -34,7 +33,7 @@ namespace
 {
 
 // Everything the enumeration pass below needs about one present track
-// row -- ids for the writer/pruning steps above, analyzePath to locate
+// row -- ids for the writer steps below, analyzePath to locate
 // its ANLZ files, and the real filename (read here, before it's
 // overwritten) used only as the anonymizationPlaceholder() correlation
 // key -- see that header's own comment for why the obfuscated filename
@@ -48,12 +47,6 @@ struct TrackRowInfo
     std::string filename;
 };
 
-struct PlaylistEntryInfo
-{
-    uint32_t playlistId = 0;
-    uint32_t trackId = 0;
-};
-
 // One raw, read-only pass over the (already-copied) export.pdb --
 // separate from PdbRowWriter, which only supports single-id lookups,
 // not enumeration. Mirrors KaitaiRekordboxReader's own table-walking
@@ -64,7 +57,6 @@ struct EnumerationResult
     std::vector<TrackRowInfo> tracksInDiskOrder;
     std::vector<uint32_t> artistIds;
     std::vector<uint32_t> playlistIds;  // playlist_tree rows, folders and playlists alike
-    std::vector<PlaylistEntryInfo> playlistEntries;
 };
 
 EnumerationResult enumeratePdb(const std::string &pdbPath)
@@ -116,19 +108,6 @@ EnumerationResult enumeratePdb(const std::string &pdbPath)
                         }
                         if (auto *p = dynamic_cast<Pdb::playlist_tree_row_t *>(row->body())) {
                             result.playlistIds.push_back(p->id());
-                        }
-                    }
-                }
-            });
-        } else if (table->type() == Pdb::PAGE_TYPE_PLAYLIST_ENTRIES) {
-            forEachDataPage(*table, [&](Pdb::page_t *page) {
-                for (const auto &group : *page->row_groups()) {
-                    for (const auto &row : *group->rows()) {
-                        if (!row->present()) {
-                            continue;
-                        }
-                        if (auto *e = dynamic_cast<Pdb::playlist_entry_row_t *>(row->body())) {
-                            result.playlistEntries.push_back(PlaylistEntryInfo{e->playlist_id(), e->track_id()});
                         }
                     }
                 }
@@ -350,7 +329,6 @@ void copyTreeIfPresent(const fs::path &from, const fs::path &to)
 }  // namespace
 
 RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &sourceRoot, const std::string &destinationRoot,
-                                                         std::optional<size_t> maxTracks,
                                                          bool slimForTesting,
                                                          application::ProgressReporter &reporter)
 {
@@ -430,27 +408,8 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
 
         reporter.start("Anonymizing rekordbox library", enumerated.tracksInDiskOrder.size());
 
-        std::vector<TrackRowInfo> kept = enumerated.tracksInDiskOrder;
-        std::vector<TrackRowInfo> dropped;
-        if (maxTracks && kept.size() > *maxTracks) {
-            auto splitPoint = kept.begin() + static_cast<std::vector<TrackRowInfo>::difference_type>(*maxTracks);
-            dropped.assign(splitPoint, kept.end());
-            kept.resize(*maxTracks);
-        }
+        const std::vector<TrackRowInfo> &tracks = enumerated.tracksInDiskOrder;
 
-        // OneLibrary is anonymized here, once the pruning decision exists,
-        // rather than before it as it used to be -- so it can be pruned to the
-        // same tracks. --max-tracks cut rekordbox and Engine to N and left
-        // this database holding every track of the real library.
-        // Only when something was dropped: without --max-tracks, or under
-        // its limit, OneLibrary is scrubbed and nothing in it is pruned.
-        std::optional<std::set<std::string>> keptFilenames;
-        if (!dropped.empty()) {
-            keptFilenames.emplace();
-            for (const auto &t : kept) {
-                keptFilenames->insert(t.filename);
-            }
-        }
         // exportLibrary.db is the Device Library Plus mirror: the complete
         // real library, encrypted with a key this project's own source
         // derives, so anyone with the app can read it straight out. It
@@ -463,9 +422,8 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             const fs::path oneLibrary = fs::path(destinationRoot) / "rekordbox" / "exportLibrary.db";
             std::error_code existsEc;
             if (fs::is_regular_file(oneLibrary, existsEc)) {
-                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(oneLibrary.string(), keptFilenames);
+                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(oneLibrary.string());
                 result.oneLibraryTracksScrubbed = oneLibraryResult.tracksScrubbed;
-                result.oneLibraryTracksDropped = oneLibraryResult.tracksDropped;
                 result.oneLibraryError = oneLibraryResult.errorMessage;
                 if (!oneLibraryResult.errorMessage.empty()) {
                     std::error_code removeEc;
@@ -485,23 +443,10 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         }
         PdbRowWriter writer(pdbPath);
 
-        std::set<uint32_t> droppedIds;
-        for (const auto &t : dropped) {
-            droppedIds.insert(t.id);
-        }
-        for (const auto &t : dropped) {
-            writer.removeTrack(t.id);
-        }
-        for (const auto &e : enumerated.playlistEntries) {
-            if (droppedIds.count(e.trackId)) {
-                writer.removePlaylistEntry(e.playlistId, e.trackId);
-            }
-        }
-
-        std::unordered_set<uint32_t> keptArtistIds;
+        std::unordered_set<uint32_t> artistIds;
         size_t trackIndex = 0;
-        for (const auto &t : kept) {
-            keptArtistIds.insert(t.artistId);
+        for (const auto &t : tracks) {
+            artistIds.insert(t.artistId);
             // Filename keyed off the real filename via
             // anonymizationFilenamePlaceholder() (not a per-run
             // sequential index) so the same real track gets the same
@@ -527,10 +472,10 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             reporter.tick(trackIndex);
         }
 
-        // Rename every distinct artist referenced by a kept track --
+        // Rename every distinct artist referenced by a track --
         // once per artist, not once per track, since real libraries
         // routinely have many tracks sharing one artist.
-        std::vector<uint32_t> sortedArtistIds(keptArtistIds.begin(), keptArtistIds.end());
+        std::vector<uint32_t> sortedArtistIds(artistIds.begin(), artistIds.end());
         std::sort(sortedArtistIds.begin(), sortedArtistIds.end());
         for (size_t i = 0; i < sortedArtistIds.size(); ++i) {
             if (writer.overwriteArtistName(sortedArtistIds[i], placeholder("Artist", i))) {
@@ -538,9 +483,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             }
         }
 
-        // Playlist/folder *structure* is never pruned (see this file's
-        // header comment) -- every playlist_tree row gets renamed
-        // regardless of whether any of its member tracks survived.
+        // Every playlist/folder row gets renamed, whatever it holds.
         for (size_t i = 0; i < enumerated.playlistIds.size(); ++i) {
             if (writer.overwritePlaylistName(enumerated.playlistIds[i], placeholder("Playlist", i))) {
                 ++result.playlistsRenamed;
@@ -552,10 +495,9 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // than per-id like artists: the export shipped every album title,
         // genre and record label until the byte sweep found them.
         //
-        // Unlike artists these are not pruned to what kept tracks
-        // reference. A dropped track's album row stays in the file, so
-        // scrubbing only the referenced ones would leave the rest
-        // readable.
+        // Unlike artists these are not limited to what tracks reference:
+        // rows nothing refers to any more stay in the file, so scrubbing
+        // only the referenced ones would leave the rest readable.
         result.albumsRenamed = writer.overwriteAllNames(
             PdbRowWriter::NameTable::Albums, [](size_t i) { return placeholder("Album", i); });
         result.genresRenamed = writer.overwriteAllNames(
@@ -564,7 +506,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             PdbRowWriter::NameTable::Labels, [](size_t i) { return placeholder("Label", i); });
 
         // And then artists and playlists wholesale, over the top of the
-        // per-id passes above. Those rename what a kept track refers to;
+        // per-id passes above. Those rename what a track refers to;
         // an artist row nothing refers to any more, or a playlist row
         // outside the enumerated tree, is never reached by them and kept
         // its real name -- 15 artists and 2 playlists of a real library
@@ -590,7 +532,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // track rows but real playlist names, or freed text, was never
         // committed, and the copy went out exactly as rekordbox left it --
         // which the byte sweep then refused with nothing to say why.
-        bool anyEditAttempted = !kept.empty() || !dropped.empty() || !sortedArtistIds.empty() ||
+        bool anyEditAttempted = !tracks.empty() || !sortedArtistIds.empty() ||
                                  !enumerated.playlistIds.empty() || result.albumsRenamed > 0 ||
                                  result.genresRenamed > 0 || result.labelsRenamed > 0 ||
                                  result.artistsRenamed > 0 || result.playlistsRenamed > 0 ||
@@ -601,7 +543,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         }
 
         size_t nextCueCommentIndex = 0;
-        for (const auto &t : kept) {
+        for (const auto &t : tracks) {
             if (t.analyzePath.empty()) {
                 continue;
             }
@@ -613,21 +555,8 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             visitedAnlz.insert(twoExAnlzPath(destinationRoot, t.analyzePath));
         }
 
-        for (const auto &t : dropped) {
-            if (t.analyzePath.empty()) {
-                continue;
-            }
-            fs::path anlzDir = fs::path(datAnlzPath(destinationRoot, t.analyzePath)).parent_path();
-            // Not fs::remove_all: this path comes from the library's own
-            // analysis paths under a caller-supplied root, so it can be
-            // past MAX_PATH, where remove_all spins forever instead of
-            // failing. See infrastructure/long_paths.hpp.
-            removeTreeDeepestFirst(anlzDir);
-        }
-
         reporter.finish();
-        result.tracksKept = static_cast<int>(kept.size());
-        result.tracksDropped = static_cast<int>(dropped.size());
+        result.tracksAnonymized = static_cast<int>(tracks.size());
         // A stick accumulates analysis files for tracks that were later
         // deleted from the library: rekordbox leaves them behind, and the
         // copy above brings them along. They are not reachable from any

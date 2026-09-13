@@ -555,22 +555,6 @@ bool PdbRowWriter::removeTrack(uint32_t trackId)
     return true;
 }
 
-bool PdbRowWriter::removePlaylistEntry(uint32_t playlistId, uint32_t trackId)
-{
-    auto found = findRow(m_buffer, Pdb::PAGE_TYPE_PLAYLIST_ENTRIES, [&](kaitai::kstruct *body) {
-        auto *e = dynamic_cast<Pdb::playlist_entry_row_t *>(body);
-        return e != nullptr && e->playlist_id() == playlistId && e->track_id() == trackId;
-    });
-    if (!found) {
-        return false;
-    }
-    uint16_t flags = readU16LE(m_buffer, found->presentFlagsOffset);
-    flags &= static_cast<uint16_t>(~(static_cast<uint16_t>(1) << found->rowIndexBit));
-    writeU16LE(m_buffer, found->presentFlagsOffset, flags);
-    m_editedPageIndices.insert(found->pageIndex);
-    return true;
-}
-
 size_t PdbRowWriter::copyTrackFieldsIfMissing(uint32_t donorTrackId, uint32_t targetTrackId, bool copyKey,
                                                bool copyTempo, bool copyArtwork)
 {

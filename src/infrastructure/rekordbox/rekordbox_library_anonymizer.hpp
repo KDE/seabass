@@ -5,7 +5,6 @@
 #pragma once
 
 #include <cstddef>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,8 +15,7 @@ namespace seabass::infrastructure::rekordbox
 
 struct RekordboxAnonymizationResult
 {
-    int tracksKept = 0;
-    int tracksDropped = 0;  // only nonzero when maxTracks was set and exceeded
+    int tracksAnonymized = 0;
     int artistsRenamed = 0;
     // The pdb's other name tables, scrubbed wholesale rather than per
     // referenced id -- see the call site for why.
@@ -28,8 +26,8 @@ struct RekordboxAnonymizationResult
     // has.
     int freeBytesZeroed = 0;
     int playlistsRenamed = 0;
-    // Analysis files removed because no kept track pointed at them, when
-    // pruneUnreferencedAnalysisFiles was asked for.
+    // Analysis files removed because no track pointed at them, when
+    // slimForTesting was asked for.
     int orphanedAnalysisFilesRemoved = 0;
     // Files found in the catalog directory that no anonymizer knows how
     // to scrub, and were therefore dropped rather than shipped. Reported
@@ -46,7 +44,6 @@ struct RekordboxAnonymizationResult
     // Rows scrubbed in the Device Library Plus mirror that lives beside
     // export.pdb, and why it could not be scrubbed if it could not.
     int oneLibraryTracksScrubbed = 0;
-    int oneLibraryTracksDropped = 0;  // pruned to match --max-tracks
     std::string oneLibraryError;
     std::string errorMessage;  // empty on success
 };
@@ -61,18 +58,12 @@ struct RekordboxAnonymizationResult
 //    TrashBox/, extracted/), which aren't read by any of this app's
 //    library code and (djprofile.nxs especially) can carry
 //    device-identifying content this has no reason to include.
-//  - if maxTracks is set and the library has more real tracks than
-//    that, prunes down to the first maxTracks (in on-disk order) via
-//    PdbRowWriter::removeTrack/removePlaylistEntry -- the format's own
-//    presence-bit deletion, so no structural rewrite -- and deletes the
-//    corresponding dropped tracks' USBANLZ/<hash>/ subtrees entirely.
-//    Otherwise every real track is kept.
-//  - overwrites every *kept* track's title/comment/filename/file_path,
+//  - overwrites every track's title/comment/filename/file_path,
 //    every artist's name (once per distinct artist, since many tracks
 //    typically share one), and every playlist/folder's name, in place
 //    via PdbRowWriter -- byte-length-preserving, see its own doc
 //    comment for why this never resizes or reflows a row.
-//  - for every kept track's ANLZ .DAT/.EXT/.2EX files, strips every
+//  - for every track's ANLZ .DAT/.EXT/.2EX files, strips every
 //    large waveform-detail section this app's own reader never touches
 //    (WAVE_SCROLL/WAVE_COLOR_PREVIEW/WAVE_COLOR_SCROLL/WAVE_3BAND_
 //    PREVIEW/WAVE_3BAND_SCROLL -- see rekordbox_library_anonymizer.cpp's
@@ -89,9 +80,9 @@ struct RekordboxAnonymizationResult
 // directory directly containing rekordbox/ and USBANLZ/, matching
 // KaitaiRekordboxReader's own convention (see its header comment).
 RekordboxAnonymizationResult anonymizeRekordboxLibrary(
-    const std::string &sourceRoot, const std::string &destinationRoot, std::optional<size_t> maxTracks,
+    const std::string &sourceRoot, const std::string &destinationRoot,
     // See AnonymizationOptions::slimForTesting: removes the analysis
-    // files no kept track points at rather than scrubbing and shipping
+    // files no track points at rather than scrubbing and shipping
     // them.
     bool slimForTesting = false,
     application::ProgressReporter &reporter = application::NullProgressReporter::instance());

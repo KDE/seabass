@@ -284,24 +284,6 @@ int main()
         std::cout << "case 2 (removeTrack: clears one track, sequence bump correct) OK\n";
     }
 
-    // removePlaylistEntry: clears exactly the targeted (playlist, track)
-    // pair, leaves the others (including a same-playlist, different-track
-    // entry) untouched.
-    {
-        writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
-        bool removedEntry = writer.removePlaylistEntry(1, 200);
-        assert(removedEntry);
-        assert(writer.commit());
-
-        auto rb = readBack(pdbPath);
-        assert(rb.presentTrackIds.size() == 2);  // tracks page untouched
-        assert(!containsEntry(rb.presentEntries, 1, 200));
-        assert(containsEntry(rb.presentEntries, 1, 100));
-        assert(containsEntry(rb.presentEntries, 2, 101));
-        std::cout << "case 3 (removePlaylistEntry: clears exactly the targeted entry) OK\n";
-    }
-
     // repointPlaylistEntry: rewrites track_id in place; entry_index and
     // playlist_id (and every other row) are untouched.
     {
@@ -374,7 +356,6 @@ int main()
         writeFile(pdbPath, pristine);
         PdbRowWriter writer(pdbPath.string());
         assert(!writer.removeTrack(999999));
-        assert(!writer.removePlaylistEntry(1, 999999));
         assert(!writer.repointPlaylistEntry(1, 999999, 1));
         // Nothing was ever successfully edited -- commit() must refuse,
         // and the real file on disk must never have been touched.

@@ -57,7 +57,6 @@ Page {
             root.outputPath = root.proposedOutputPath();
         }
     }
-    property int maxTracks: 0  // 0 = unlimited, see controller.run()'s own doc comment
     property var selectedHardware: ({})  // label -> true, for checked entries
     property string otherHardware: ""
 
@@ -315,23 +314,6 @@ Page {
 
                     RowLayout {
                         spacing: 8
-                        Label { text: "Max tracks:" }
-                        SpinBox {
-                            id: maxTracksSpin
-                            from: 0
-                            to: 999900
-                            stepSize: 100
-                            value: root.maxTracks
-                            enabled: !controller.busy
-                            onValueModified: root.maxTracks = value
-                            textFromValue: (value) => value === 0 ? "Unlimited" : value.toString()
-                            valueFromText: (text) => text === "Unlimited" ? 0 : parseInt(text)
-                        }
-                        Label {
-                            text: "0 means every real track is included"
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontSmall
-                        }
                         InfoButton {
                             explanationTitle: "What's kept, replaced, and removed"
                             summaryText: "Everything that identifies your music is replaced or "
@@ -439,7 +421,7 @@ Page {
                     onClicked: controller.run(
                         root.selectedStick.hasRekordbox ? root.selectedStick.rekordboxPath : "",
                         root.selectedStick.hasEngine ? root.selectedStick.enginePath : "",
-                        root.outputPath, root.maxTracks, root.hardwareText, notesField.text)
+                        root.outputPath, root.hardwareText, notesField.text)
                 }
             }
 

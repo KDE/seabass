@@ -61,10 +61,6 @@ public:
     // tracks table. Returns false if no such (present) row is found.
     bool removeTrack(uint32_t trackId);
 
-    // Clears the presence bit for the playlist_entry row matching
-    // (playlistId, trackId). Returns false if not found.
-    bool removePlaylistEntry(uint32_t playlistId, uint32_t trackId);
-
     // Overwrites an existing playlist_entry row's track_id field in
     // place, leaving its entry_index/playlist_id untouched. Returns
     // false if no (playlistId, oldTrackId) row is found.

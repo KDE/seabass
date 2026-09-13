@@ -20,7 +20,7 @@ namespace
 
 // Runs entirely on a background thread (see
 // AnonymizeLibraryController::run()) -- no access to the controller.
-AnonymizeLibraryTaskResult runAnonymizeTask(QString rekordboxPath, QString enginePath, QString outDir, int maxTracks,
+AnonymizeLibraryTaskResult runAnonymizeTask(QString rekordboxPath, QString enginePath, QString outDir,
                                              QString hardware, QString notes,
                                              std::shared_ptr<QtProgressReporter> reporter)
 {
@@ -40,9 +40,6 @@ AnonymizeLibraryTaskResult runAnonymizeTask(QString rekordboxPath, QString engin
         }
 
         application::AnonymizationOptions options;
-        if (maxTracks > 0) {
-            options.maxTracks = static_cast<size_t>(maxTracks);
-        }
         options.hardware = hardware.toStdString();
         options.notes = notes.toStdString();
 
@@ -78,20 +75,14 @@ AnonymizeLibraryTaskResult runAnonymizeTask(QString rekordboxPath, QString engin
 
         QStringList lines;
         if (summary.rekordboxAttempted && summary.rekordboxError.empty()) {
-            QString line = QString("rekordbox: kept %1 track(s)").arg(summary.rekordboxTracksKept);
-            if (summary.rekordboxTracksDropped > 0) {
-                line += QString(", dropped %1").arg(summary.rekordboxTracksDropped);
-            }
+            QString line = QString("rekordbox: anonymized %1 track(s)").arg(summary.rekordboxTracksAnonymized);
             line += QString("; renamed %1 artist(s), %2 playlist(s)/folder(s)")
                         .arg(summary.rekordboxArtistsRenamed)
                         .arg(summary.rekordboxPlaylistsRenamed);
             lines << line;
         }
         if (summary.engineAttempted && summary.engineError.empty()) {
-            QString line = QString("Engine: kept %1 track(s)").arg(summary.engineTracksKept);
-            if (summary.engineTracksDropped > 0) {
-                line += QString(", dropped %1").arg(summary.engineTracksDropped);
-            }
+            QString line = QString("Engine: anonymized %1 track(s)").arg(summary.engineTracksAnonymized);
             line += QString("; renamed %1 playlist(s)/folder(s)").arg(summary.enginePlaylistsRenamed);
             lines << line;
         }
@@ -141,7 +132,7 @@ std::shared_ptr<QtProgressReporter> AnonymizeLibraryController::makeReporter()
 }
 
 void AnonymizeLibraryController::run(const QString &rekordboxPath, const QString &enginePath, const QString &outPath,
-                                      int maxTracks, const QString &hardware, const QString &notes)
+                                      const QString &hardware, const QString &notes)
 {
     if (m_busy) {
         return;
@@ -173,7 +164,7 @@ void AnonymizeLibraryController::run(const QString &rekordboxPath, const QString
     setProgress(0, 0);
     setBusy(true);
     m_watcher.setFuture(
-        QtConcurrent::run(runAnonymizeTask, rekordboxPath, enginePath, outDir, maxTracks, hardware, notes, makeReporter()));
+        QtConcurrent::run(runAnonymizeTask, rekordboxPath, enginePath, outDir, hardware, notes, makeReporter()));
 }
 
 void AnonymizeLibraryController::onRunFinished()

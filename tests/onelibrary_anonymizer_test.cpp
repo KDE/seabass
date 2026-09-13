@@ -16,7 +16,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
-#include <set>
 #include <string>
 #include <algorithm>
 #include <vector>
@@ -198,116 +197,6 @@ int main(int argc, char **argv)
             assert(known);
         }
         std::cout << "case 4 (every column of content is either scrubbed or knowingly benign) OK\n";
-    }
-
-    // --max-tracks: every track the other catalogs did not keep goes, with
-    // every row that refers to it -- and a kept track that shares its
-    // filename with a dropped one stays. Filenames repeat in real libraries;
-    // pruning by a drop list of names took both.
-    {
-        const fs::path pruned = root / "exportLibrary-pruned.db";
-        fs::copy_file(fixture, pruned, fs::copy_options::overwrite_existing, ec);
-        assert(!ec);
-
-        int64_t victimId = 0;
-        int64_t partnerId = 0;
-        std::string duplicateName;
-        int64_t duplicateRows = 0;
-        std::set<std::string> kept;
-        int64_t contentBefore = 0;
-        int64_t orphanedBankRowsBefore = -1;
-        {
-            Db handle(pruned);
-            // The one dropped: a track with a unique filename that carries cues.
-            SqlCipherStatement pick(handle.db,
-                "SELECT c.content_id FROM content c "
-                "WHERE c.fileName IN (SELECT fileName FROM content GROUP BY fileName HAVING count(*) = 1) "
-                "AND EXISTS (SELECT 1 FROM cue WHERE cue.content_id = c.content_id) LIMIT 1");
-            assert(pick.step());
-            victimId = pick.columnInt64(0);
-            // A name several rows share, all of it kept.
-            SqlCipherStatement dup(handle.db,
-                "SELECT fileName, count(*) FROM content WHERE fileName <> '' GROUP BY fileName "
-                "HAVING count(*) > 1 LIMIT 1");
-            assert(dup.step());
-            duplicateName = dup.columnText(0);
-            duplicateRows = dup.columnInt64(1);
-            // The keep list: every name but the victim's.
-            SqlCipherStatement names(handle.db, "SELECT fileName FROM content WHERE content_id <> ?");
-            names.bindInt64(1, victimId);
-            while (names.step()) {
-                kept.insert(names.columnText(0));
-            }
-            SqlCipherStatement count(handle.db, "SELECT count(*) FROM content");
-            assert(count.step());
-            contentBefore = count.columnInt64(0);
-            const auto tables = tablesOf(handle.db);
-            // recommendedLike pairs two tracks through content_id_1/_2. Plant
-            // a pair naming the victim, so a delete that only knows the
-            // column content_id is seen to leave it behind.
-            if (std::find(tables.begin(), tables.end(), "recommendedLike") != tables.end()) {
-                SqlCipherStatement other(handle.db, "SELECT content_id FROM content WHERE content_id <> ? LIMIT 1");
-                other.bindInt64(1, victimId);
-                assert(other.step());
-                partnerId = other.columnInt64(0);
-                SqlCipherStatement plant(handle.db,
-                    "INSERT INTO recommendedLike (content_id_1, content_id_2, rating, createdDate) VALUES (?, ?, 0, '')");
-                plant.bindInt64(1, victimId);
-                plant.bindInt64(2, partnerId);
-                plant.run();
-            }
-            if (std::find(tables.begin(), tables.end(), "hotCueBankList_cue") != tables.end()) {
-                SqlCipherStatement orphans(handle.db,
-                    "SELECT count(*) FROM hotCueBankList_cue WHERE cue_id NOT IN (SELECT cue_id FROM cue)");
-                assert(orphans.step());
-                orphanedBankRowsBefore = orphans.columnInt64(0);
-            }
-        }
-        assert(victimId != 0 && duplicateRows > 1 && kept.count(duplicateName) == 1);
-
-        const auto prunedResult = anonymizeOneLibraryDatabase(pruned.string(), kept);
-        assert(prunedResult.errorMessage.empty());
-        assert(prunedResult.tracksDropped == 1);
-
-        Db handle(pruned, true);
-        {
-            SqlCipherStatement count(handle.db, "SELECT count(*) FROM content");
-            assert(count.step());
-            assert(count.columnInt64(0) == contentBefore - 1);
-        }
-        // Nothing that refers to a content row still refers to this one --
-        // through any content_id* column.
-        for (const auto &table : tablesOf(handle.db)) {
-            for (const auto &column : columnsOf(handle.db, table)) {
-                if (column.rfind("content_id", 0) != 0 || table == "content") {
-                    continue;
-                }
-                SqlCipherStatement refs(handle.db,
-                    "SELECT count(*) FROM \"" + table + "\" WHERE \"" + column + "\" = ?");
-                refs.bindInt64(1, victimId);
-                assert(refs.step());
-                if (refs.columnInt64(0) != 0) {
-                    std::cerr << table << "." << column << " still refers to dropped content_id " << victimId << "\n";
-                }
-                assert(refs.columnInt64(0) == 0);
-            }
-        }
-        if (orphanedBankRowsBefore >= 0) {
-            SqlCipherStatement orphans(handle.db,
-                "SELECT count(*) FROM hotCueBankList_cue WHERE cue_id NOT IN (SELECT cue_id FROM cue)");
-            assert(orphans.step());
-            assert(orphans.columnInt64(0) == orphanedBankRowsBefore);
-        }
-        // And the database no longer states the real library's size.
-        {
-            const auto columns = columnsOf(handle.db, "property");
-            if (std::find(columns.begin(), columns.end(), "numberOfContents") != columns.end()) {
-                SqlCipherStatement stated(handle.db, "SELECT numberOfContents FROM property");
-                assert(stated.step());
-                assert(stated.columnInt64(0) == contentBefore - 1);
-            }
-        }
-        std::cout << "case 5 (only tracks outside the keep list go, with everything that refers to them) OK\n";
     }
 
     fs::remove_all(root, ec);

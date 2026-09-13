@@ -1322,8 +1322,6 @@ add_test(NAME pdb_row_writer_string_test COMMAND pdb_row_writer_string_test)
 add_executable(rekordbox_library_anonymizer_test tests/rekordbox_library_anonymizer_test.cpp)
 target_include_directories(rekordbox_library_anonymizer_test PRIVATE src)
 target_link_libraries(rekordbox_library_anonymizer_test PRIVATE seabass_core)
-target_compile_definitions(rekordbox_library_anonymizer_test PRIVATE
-    SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME rekordbox_library_anonymizer_test COMMAND rekordbox_library_anonymizer_test)
 
 add_executable(rekordbox_cleanup_writer_test

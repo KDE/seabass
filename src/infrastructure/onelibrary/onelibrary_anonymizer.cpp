@@ -99,8 +99,7 @@ int renameDistinctValues(const SqlCipherDb &db, const std::string &table, const 
 
 }  // namespace
 
-OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbPath,
-                                                         const std::optional<std::set<std::string>> &keptFilenames)
+OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbPath)
 {
     OneLibraryAnonymizationResult result;
     std::error_code ec;
@@ -127,79 +126,6 @@ OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbP
                 tracks.emplace_back(stmt.columnInt64(0), stmt.columnText(1), stmt.columnText(2));
             }
         }
-        // --- tracks --max-tracks did not keep in the other two catalogs ---
-        //
-        // The rekordbox and Engine anonymizers prune to the first N tracks;
-        // this database used to keep every one, so a slim export carried 40
-        // tracks in two catalogs and 1644 in the third.
-        //
-        // A keep list, not a drop list. Filenames repeat -- the fixture has
-        // 1644 rows under 1451 distinct names -- and dropping by name took
-        // out a kept track that happened to share one with a dropped track.
-        // It also missed rows with no counterpart in export.pdb at all, which
-        // were scrubbed and shipped. Keeping by name errs the other way, a
-        // dropped duplicate survives beside its kept namesake, which costs a
-        // track too many and never a kept one.
-        //
-        // Nothing enforces a foreign key in this schema, so dependents go
-        // first, in the order removeTrackByPath() follows: hot-cue bank rows
-        // through their cues, then every column that refers to a content row,
-        // then the row. Every column named content_id*, not only content_id:
-        // recommendedLike pairs tracks through content_id_1 and content_id_2.
-        if (keptFilenames) {
-            std::vector<std::pair<std::string, std::string>> references;  // table, column
-            {
-                SqlCipherStatement stmt(db, "SELECT name FROM sqlite_master WHERE type='table'");
-                std::vector<std::string> tables;
-                while (stmt.step()) {
-                    tables.push_back(stmt.columnText(0));
-                }
-                for (const auto &table : tables) {
-                    if (table == "content") {
-                        continue;
-                    }
-                    for (const auto &column : columnsOf(db, table)) {
-                        if (column.rfind("content_id", 0) == 0) {
-                            references.emplace_back(table, column);
-                        }
-                    }
-                }
-            }
-            const bool hasCueBank = tableExists(db, "hotCueBankList_cue") && tableExists(db, "cue");
-            std::vector<std::tuple<int64_t, std::string, std::string>> keptTracks;
-            for (const auto &track : tracks) {
-                const auto &[id, path, fileName] = track;
-                const std::string realFilename = fileName.empty() ? basenameOf(path) : fileName;
-                if (keptFilenames->count(realFilename) != 0) {
-                    keptTracks.push_back(track);
-                    continue;
-                }
-                if (hasCueBank) {
-                    SqlCipherStatement del(db, "DELETE FROM hotCueBankList_cue WHERE cue_id IN "
-                                               "(SELECT cue_id FROM cue WHERE content_id = ?)");
-                    del.bindInt64(1, id);
-                    del.run();
-                }
-                for (const auto &[table, column] : references) {
-                    SqlCipherStatement del(db, "DELETE FROM \"" + table + "\" WHERE \"" + column + "\" = ?");
-                    del.bindInt64(1, id);
-                    del.run();
-                }
-                SqlCipherStatement delContent(db, "DELETE FROM content WHERE content_id = ?");
-                delContent.bindInt64(1, id);
-                delContent.run();
-                ++result.tracksDropped;
-            }
-            tracks = std::move(keptTracks);
-
-            // The database also states its own size. Left alone, a pruned
-            // export still said how many tracks the donor's real library
-            // holds -- the very thing pruning is there to stop saying.
-            if (tableExists(db, "property") && columnsOf(db, "property").count("numberOfContents")) {
-                db.exec("UPDATE property SET numberOfContents = (SELECT count(*) FROM content)");
-            }
-        }
-
         for (const auto &[id, path, fileName] : tracks) {
             // The real filename is the shared key across all three
             // catalogs. Prefer the stored filename, fall back to the

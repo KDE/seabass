@@ -49,14 +49,6 @@ std::string hostOsName()
 }
 
 
-// Blended, catalog-specific compression ratios measured with `gzip -9`
-// against real rekordbox/Engine library files (see the plan this
-// implements) -- an *estimate*, not a guarantee, of what a zip archive
-// of the actual output would come to; printed alongside the real raw
-// size so a caller (or the CLI's own printed summary) can judge whether
-// to re-run with a smaller AnonymizationOptions::maxTracks before
-// attaching this to an email.
-
 std::string humanSize(std::uintmax_t bytes)
 {
     constexpr double Kib = 1024.0;
@@ -148,8 +140,7 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
     if (summary.rekordboxAttempted) {
         m << "rekordbox:\n";
         if (summary.rekordboxError.empty()) {
-            m << "Tracks kept: " << summary.rekordboxTracksKept << "\n";
-            m << "Tracks dropped (--max-tracks): " << summary.rekordboxTracksDropped << "\n";
+            m << "Tracks anonymized: " << summary.rekordboxTracksAnonymized << "\n";
             m << "Distinct artists renamed: " << summary.rekordboxArtistsRenamed << "\n";
             m << "Playlists/folders renamed: " << summary.rekordboxPlaylistsRenamed << "\n";
         } else {
@@ -160,8 +151,7 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
     if (summary.engineAttempted) {
         m << "Engine:\n";
         if (summary.engineError.empty()) {
-            m << "Tracks kept: " << summary.engineTracksKept << "\n";
-            m << "Tracks dropped (--max-tracks): " << summary.engineTracksDropped << "\n";
+            m << "Tracks anonymized: " << summary.engineTracksAnonymized << "\n";
             m << "Playlists/folders renamed: " << summary.enginePlaylistsRenamed << "\n";
             if (summary.engineTracksRefused > 0) {
                 m << "\n*** WARNING: " << summary.engineTracksRefused
@@ -222,9 +212,7 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
          "hardware/library. This dataset may be published as part of the\n"
          "project's test suite. If there's anything in the hardware or\n"
          "notes text above you'd rather not have published, leave it out\n"
-         "here and mention it directly in your email instead. If this is\n"
-         "too large to attach, re-run with --max-tracks to include a\n"
-         "smaller sample.\n";
+         "here and mention it directly in your email instead.\n";
 
     std::ofstream out(manifestPath, std::ios::binary | std::ios::trunc);
     out << m.str();
@@ -290,10 +278,9 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     if (rekordboxRoot) {
         summary.rekordboxAttempted = true;
         auto result = infrastructure::rekordbox::anonymizeRekordboxLibrary(
-            *rekordboxRoot, (fs::path(outputDir) / "rekordbox").string(), options.maxTracks,
+            *rekordboxRoot, (fs::path(outputDir) / "rekordbox").string(),
             options.slimForTesting, reporter);
-        summary.rekordboxTracksKept = result.tracksKept;
-        summary.rekordboxTracksDropped = result.tracksDropped;
+        summary.rekordboxTracksAnonymized = result.tracksAnonymized;
         summary.rekordboxArtistsRenamed = result.artistsRenamed;
         summary.rekordboxPlaylistsRenamed = result.playlistsRenamed;
         summary.rekordboxError = result.errorMessage;
@@ -302,10 +289,9 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     if (engineRoot) {
         summary.engineAttempted = true;
         auto result = infrastructure::engine::anonymizeEngineLibrary(
-            *engineRoot, (fs::path(outputDir) / "engine").string(), options.maxTracks, options.slimForTesting,
+            *engineRoot, (fs::path(outputDir) / "engine").string(), options.slimForTesting,
             reporter);
-        summary.engineTracksKept = result.tracksKept;
-        summary.engineTracksDropped = result.tracksDropped;
+        summary.engineTracksAnonymized = result.tracksAnonymized;
         summary.enginePlaylistsRenamed = result.playlistsRenamed;
         summary.engineTracksRefused = result.tracksRefused;
         summary.engineFirstRefusalReason = result.firstRefusalReason;

@@ -182,10 +182,10 @@ If you'd like to help test Seabass against hardware or a library shape Sebas doe
 
 ```
 seabass-cli anonymize --rekordbox [PATH] --engine [PATH] --out DIR \
-    [--max-tracks N] --hardware "what you use" --notes "what you'd like tested"
+    --hardware "what you use" --notes "what you'd like tested"
 ```
 
 - **Nothing is sent anywhere automatically.** This command only ever writes files to `DIR`. There is no networking code in this project at all; review what's in `DIR` yourself, then attach it (zipped) to an email to **sebas@kde.org** if you're happy with it.
-- Every real track is included by default; pass `--max-tracks` if you'd rather send a smaller sample (the command prints the real output size and an estimated zipped size, so you can judge whether that's necessary before attaching it to an email).
+- Every real track is included. The command prints the size of the zip it wrote, so you can see what you would be attaching.
 - `MANIFEST.txt` in the output tells you exactly what's included and excluded; read it before sending.
 - This data may be published as part of the project's test suite (the same way `tests/fixtures/anonymized_library/` is). If there's anything in your `--hardware`/`--notes` text you wouldn't want published, leave it out of those fields and mention it directly in your email instead.

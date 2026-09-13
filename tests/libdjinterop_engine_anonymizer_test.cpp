@@ -70,19 +70,18 @@ int main()
         nested.add_track_back(track3);
     }
 
-    auto result = anonymizeEngineLibrary(sourceRoot.string(), destRoot.string(), 2);
+    auto result = anonymizeEngineLibrary(sourceRoot.string(), destRoot.string());
 
     assert(result.errorMessage.empty());
-    assert(result.tracksKept == 2);
-    assert(result.tracksDropped == 1);
+    assert(result.tracksAnonymized == 3);
     assert(result.playlistsRenamed == 2);  // root + nested
-    std::cout << "case 1 (anonymizeEngineLibrary: prune/rename counts correct) OK\n";
+    std::cout << "case 1 (anonymizeEngineLibrary: rename counts correct) OK\n";
 
     auto dbAfter = djinterop::engine::load_database(destRoot.string());
     assert(dbAfter.track_by_id(track1Id).has_value());
     assert(dbAfter.track_by_id(track2Id).has_value());
-    assert(!dbAfter.track_by_id(track3Id).has_value());  // pruned
-    std::cout << "case 2 (kept tracks are exactly the first maxTracks, pruned track gone) OK\n";
+    assert(dbAfter.track_by_id(track3Id).has_value());
+    std::cout << "case 2 (every track is kept) OK\n";
 
     auto t1 = *dbAfter.track_by_id(track1Id);
     auto t2 = *dbAfter.track_by_id(track2Id);
@@ -90,6 +89,13 @@ int main()
     assert(t2.title() != std::optional<std::string>("Real Title 2"));
     assert(t1.title() != t2.title());  // distinct per-track placeholders
     assert(t1.comment() != std::optional<std::string>("Real Comment 1"));
+    // The last track too, so a pass that stopped short of the end could
+    // not pass this.
+    auto t3 = *dbAfter.track_by_id(track3Id);
+    assert(t3.title() != std::optional<std::string>("Real Title 3"));
+    assert(t3.comment() != std::optional<std::string>("Real Comment 3"));
+    assert(t3.artist() != std::optional<std::string>("Real Artist B"));
+    assert(t3.title() != t2.title());
     std::cout << "case 3 (title/comment obfuscated and distinct per track) OK\n";
 
     assert(t1.artist() == t2.artist());  // shared real artist -> same placeholder
@@ -105,13 +111,12 @@ int main()
             if (t.id() == track2Id) has2 = true;
             if (t.id() == track3Id) has3 = true;
         }
-        assert(has1 && has2);
-        assert(!has3);  // pruned track removed from playlist membership too
+        assert(has1 && has2 && has3);
         for (const auto &child : pl.children()) {
             assert(child.name() != "Real Nested Playlist");  // nested playlist renamed too
         }
     }
-    std::cout << "case 5 (playlist membership for the pruned track removed; names renamed, incl. nested) OK\n";
+    std::cout << "case 5 (playlist membership kept; names renamed, incl. nested) OK\n";
 
     auto keptCue = t1.hot_cue_at(0);
     assert(keptCue.has_value());

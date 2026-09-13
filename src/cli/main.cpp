@@ -91,7 +91,7 @@ void printUsage()
     Console::info("  seabass-cli sync --rekordbox [PATH] --engine [PATH] [--dry-run] [--auto]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
     Console::info("  seabass-cli anonymize [--rekordbox [PATH]] [--engine [PATH]] --out DIR");
-    Console::info("                        [--max-tracks N] [--hardware TEXT] [--notes TEXT]");
+    Console::info("                        [--hardware TEXT] [--notes TEXT]");
     Console::info("  seabass-cli --help");
     Console::info("");
     Console::heading("Commands");
@@ -112,8 +112,8 @@ void printUsage()
     Console::info("           N remain (default " + std::to_string(DefaultKeepBackups) +
                    "), freeing space on the stick.");
     Console::info("  anonymize  Writes a de-identified, structurally-real copy of one or both");
-    Console::info("           libraries to --out DIR: every real track is kept by default (pass");
-    Console::info("           --max-tracks to cap it), titles/artists/comments/filenames/playlist");
+    Console::info("           libraries to --out DIR: every real track is kept, and its");
+    Console::info("           titles/artists/comments/filenames/playlist");
     Console::info("           names are replaced with placeholders, artwork and detailed color");
     Console::info("           waveform data are dropped, everything else (BPM/key/cues/ratings/");
     Console::info("           play counts/playlist structure) is kept as-is. Never sends anything");
@@ -157,10 +157,6 @@ void printUsage()
     Console::info("                      the binary bulk -- unreferenced analysis files, Engine's");
     Console::info("                      waveform blobs and .rgb previews all go. For building a");
     Console::info("                      test fixture; leave off for a library you are submitting.");
-    Console::info("  --max-tracks N      anonymize only: include at most N real tracks (dropped");
-    Console::info("                      ones are pruned, not just hidden). Omit to keep every");
-    Console::info("                      real track -- see \"anonymize\" above for why that's the");
-    Console::info("                      default rather than a sampled subset.");
     Console::info("  --hardware TEXT     anonymize only: what hardware you use, saved into");
     Console::info("                      MANIFEST.txt verbatim. Optional.");
     Console::info("  --notes TEXT        anonymize only: anything you'd like tested, saved into");
@@ -1113,7 +1109,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
 // writes to DIR.
 int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPath,
                          const std::optional<std::string> &enginePath, const std::optional<std::string> &outDir,
-                         std::optional<size_t> maxTracks, bool slim, const std::string &hardware,
+                         bool slim, const std::string &hardware,
                          const std::string &notes)
 {
     if (!outDir) {
@@ -1127,7 +1123,6 @@ int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional
     }
 
     AnonymizationOptions options;
-    options.maxTracks = maxTracks;
     options.slimForTesting = slim;
     options.hardware = hardware;
     options.notes = notes;
@@ -1165,19 +1160,13 @@ int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional
     Console::info("");
     Console::heading("Anonymized library written to " + summary.outputZipPath);
     if (summary.rekordboxAttempted) {
-        std::string line = "  rekordbox: kept " + std::to_string(summary.rekordboxTracksKept) + " track(s)";
-        if (summary.rekordboxTracksDropped > 0) {
-            line += ", dropped " + std::to_string(summary.rekordboxTracksDropped);
-        }
+        std::string line = "  rekordbox: anonymized " + std::to_string(summary.rekordboxTracksAnonymized) + " track(s)";
         line += "; renamed " + std::to_string(summary.rekordboxArtistsRenamed) + " artist(s), " +
                 std::to_string(summary.rekordboxPlaylistsRenamed) + " playlist(s)/folder(s)";
         Console::info(line);
     }
     if (summary.engineAttempted) {
-        std::string line = "  engine: kept " + std::to_string(summary.engineTracksKept) + " track(s)";
-        if (summary.engineTracksDropped > 0) {
-            line += ", dropped " + std::to_string(summary.engineTracksDropped);
-        }
+        std::string line = "  engine: anonymized " + std::to_string(summary.engineTracksAnonymized) + " track(s)";
         line += "; renamed " + std::to_string(summary.enginePlaylistsRenamed) + " playlist(s)/folder(s)";
         Console::info(line);
     }
@@ -1195,10 +1184,6 @@ int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional
     Console::info("This dataset may be published as part of the project's test suite. If there's");
     Console::info("anything in --hardware/--notes you'd rather not have published, leave it out and");
     Console::info("mention it directly in your email instead.");
-    if (!maxTracks) {
-        Console::info("If this is too large to attach, re-run with --max-tracks to include a smaller");
-        Console::info("sample.");
-    }
 
     return 0;
 }
@@ -1232,7 +1217,6 @@ int main(int argc, char **argv)
     std::optional<std::string> enginePath;
     std::optional<std::string> trackFilter;
     std::optional<std::string> outDir;
-    std::optional<size_t> maxTracks;
     bool slim = false;
     std::string hardware;
     std::string notes;
@@ -1300,18 +1284,6 @@ int main(int argc, char **argv)
             outDir = args[++i];
         } else if (arg == "--slim") {
             slim = true;
-        } else if (arg == "--max-tracks") {
-            if (i + 1 >= args.size()) {
-                Console::error("--max-tracks requires a number");
-                return 1;
-            }
-            ++i;
-            try {
-                maxTracks = std::stoul(args[i]);
-            } catch (const std::exception &) {
-                Console::error("--max-tracks requires a number, got \"" + args[i] + "\"");
-                return 1;
-            }
         } else if (arg == "--hardware") {
             if (i + 1 >= args.size()) {
                 Console::error("--hardware requires a description");
@@ -1355,8 +1327,8 @@ int main(int argc, char **argv)
     }
 
     if (commands[0] == "anonymize") {
-        return runAnonymizeCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, outDir, maxTracks,
-                                    slim, hardware, notes);
+        return runAnonymizeCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, outDir, slim,
+                                    hardware, notes);
     }
 
     // commands[0] == "scan". Every detected stick carrying a requested

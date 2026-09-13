@@ -16,17 +16,10 @@ namespace seabass::application
 
 struct AnonymizationOptions
 {
-    // Unset (default) keeps every real track; set to cap the output at
-    // this many, dropping the rest -- see BRAINSTORM.md's "For
-    // Developers, Maintainers and Testing" section and the plan this
-    // implements for why this is an always-available user choice
-    // rather than an on-by-default sampling step.
-    std::optional<size_t> maxTracks;
-
     // Strips the export down to what a test suite needs: the three
     // catalogs and the cues, and none of the binary bulk.
     //
-    //   - analysis files no kept track points at are removed rather than
+    //   - analysis files no track points at are removed rather than
     //     scrubbed and shipped (20.7 MB across 5976 files on a real
     //     stick, against 2 MB for all three catalogs)
     //   - Engine's overviewWaveFormData column is emptied, and its
@@ -63,15 +56,13 @@ struct AnonymizationSummary
     // orphan-cleanup paths run against shared data at all.
     int audioFilesListed = 0;
     bool rekordboxAttempted = false;
-    int rekordboxTracksKept = 0;
-    int rekordboxTracksDropped = 0;
+    int rekordboxTracksAnonymized = 0;
     int rekordboxArtistsRenamed = 0;
     int rekordboxPlaylistsRenamed = 0;
     std::string rekordboxError;  // empty on success
 
     bool engineAttempted = false;
-    int engineTracksKept = 0;
-    int engineTracksDropped = 0;
+    int engineTracksAnonymized = 0;
     int enginePlaylistsRenamed = 0;
     // Tracks the Engine anonymizer could not touch: their real metadata is
     // still in the export, so it must not be shared. Surfaced in

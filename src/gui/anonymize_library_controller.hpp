@@ -65,13 +65,9 @@ public:
     QString outputZipPath() const { return m_outputZipPath; }
 
     // rekordboxPath/enginePath: empty means "skip this catalog" (same as
-    // omitting --rekordbox/--engine on seabass-cli anonymize). maxTracks
-    // <= 0 means "no limit, keep every real track" -- there is no
-    // spinbox "null" state in QML, so 0 is the UI's own stand-in, not
-    // application::AnonymizationOptions::maxTracks' literal C++ meaning
-    // (an *explicit* 0 there really would mean "keep none").
+    // omitting --rekordbox/--engine on seabass-cli anonymize).
     Q_INVOKABLE void run(const QString &rekordboxPath, const QString &enginePath, const QString &outPath,
-                          int maxTracks, const QString &hardware, const QString &notes);
+                          const QString &hardware, const QString &notes);
 
 signals:
     void busyChanged();

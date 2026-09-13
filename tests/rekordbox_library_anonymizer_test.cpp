@@ -20,8 +20,6 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_library_anonymizer.hpp"
 
-#include "infrastructure/onelibrary/onelibrary_key.hpp"
-#include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -45,9 +43,8 @@ void appendDeviceSqlString(std::string &buf, const std::string &text)
 
 // A minimal, structurally real export.pdb with 3 track rows (two
 // sharing one artist), 1 playlist with entries for all 3 tracks, and 2
-// artist rows -- enough to exercise pruning, shared-artist renaming
-// (once, not once per track), and playlist-entry cleanup for a pruned
-// track, all in one fixture.
+// artist rows -- enough to exercise shared-artist renaming (once, not
+// once per track) and a playlist, all in one fixture.
 std::string buildSyntheticPdb()
 {
     std::string buf(static_cast<size_t>(LenPage) * 5, '\0');
@@ -459,26 +456,20 @@ int main()
 
     assert(readCueCommentUtf8(track100Anlz) == "Real DJ Note");  // fixture self-check
 
-    auto result = anonymizeRekordboxLibrary(sourceRoot.string(), destRoot.string(), 2);
+    auto result = anonymizeRekordboxLibrary(sourceRoot.string(), destRoot.string());
 
     assert(result.errorMessage.empty());
-    assert(result.tracksKept == 2);
-    assert(result.tracksDropped == 1);
-    // Both artists, not just the one the kept tracks share. Artist 6
-    // belongs to the dropped track, and this used to assert that its row
-    // was left alone -- which is precisely how a real export shipped 15
-    // real artist names, on rows nothing referred to any more. The per-id
-    // pass still renames what kept tracks reference; a wholesale pass
-    // then covers every row that one cannot reach.
+    assert(result.tracksAnonymized == 3);
+    // Both artists: one shared by two tracks, one by the third.
     assert(result.artistsRenamed == 2);
     assert(result.playlistsRenamed == 1);
-    std::cout << "case 1 (anonymizeRekordboxLibrary: prune/rename counts correct) OK\n";
+    std::cout << "case 1 (anonymizeRekordboxLibrary: rename counts correct) OK\n";
 
     fs::path destPdb = destRoot / "rekordbox" / "export.pdb";
     auto ids = presentTrackIds(destPdb);
     std::sort(ids.begin(), ids.end());
-    assert((ids == std::vector<uint32_t>{100, 101}));
-    std::cout << "case 2 (kept tracks are exactly the first maxTracks in disk order) OK\n";
+    assert((ids == std::vector<uint32_t>{100, 101, 102}));
+    std::cout << "case 2 (every track is kept) OK\n";
 
     std::string title100 = trackFieldByIndex(destPdb, 100, 17);
     std::string title101 = trackFieldByIndex(destPdb, 101, 17);
@@ -487,9 +478,16 @@ int main()
     assert(title100 != title101);  // distinct per-track placeholders
     std::string comment100 = trackFieldByIndex(destPdb, 100, 16);
     assert(comment100 != "Real Comment 100");
+    // The last track too, and against what the source really holds, so
+    // a pass that stopped short of the end could not pass this.
+    const fs::path sourcePdb = sourceRoot / "rekordbox" / "export.pdb";
+    assert(trackFieldByIndex(sourcePdb, 102, 17) == "Real Title 102");  // fixture self-check
+    assert(trackFieldByIndex(destPdb, 102, 17) != "Real Title 102");
+    assert(trackFieldByIndex(destPdb, 102, 17) != title101);
+    assert(artistNameById(destPdb, 6) != artistNameById(sourcePdb, 6));
     std::cout << "case 3 (title/comment obfuscated and distinct per track) OK\n";
 
-    assert(artistNameById(destPdb, 5) != "Real Artist A");  // shared by both kept tracks -- renamed
+    assert(artistNameById(destPdb, 5) != "Real Artist A");  // shared by tracks 100 and 101 -- renamed
     std::cout << "case 4 (shared artist renamed once) OK\n";
 
     auto entries = presentPlaylistEntries(destPdb);
@@ -499,24 +497,23 @@ int main()
         if (e.second == 101) has101 = true;
         if (e.second == 102) has102 = true;
     }
-    assert(has100 && has101);
-    assert(!has102);  // playlist entry for the pruned track was cleaned up
-    std::cout << "case 5 (playlist entry for a pruned track is removed, others kept) OK\n";
+    assert(has100 && has101 && has102);
+    std::cout << "case 5 (every playlist entry is kept) OK\n";
 
     AnlzFile kept1 = AnlzFile::readRaw((destRoot / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT").string());
     assert(hasFourcc(kept1, Anlz::SECTION_TAGS_CUES));                 // preserved
     assert(!hasFourcc(kept1, Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW));  // stripped
     assert(!hasFourcc(kept1, Anlz::SECTION_TAGS_WAVE_SCROLL));  // stripped too -- large and unused by this app's reader
-    std::cout << "case 6 (kept track's ANLZ: large unused waveform sections stripped, cues preserved) OK\n";
+    std::cout << "case 6 (a track's ANLZ: large unused waveform sections stripped, cues preserved) OK\n";
 
     std::string destComment = readCueCommentUtf8(destRoot / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT");
     assert(destComment != "Real DJ Note");   // obfuscated, not left as real DJ free text
     assert(!destComment.empty());            // and not just blanked -- see BRAINSTORM.md discussion
-    std::cout << "case 6b (kept track's real cue comment is obfuscated, not left verbatim or blanked) OK\n";
+    std::cout << "case 6b (a track's real cue comment is obfuscated, not left verbatim or blanked) OK\n";
 
     std::error_code ec;
-    assert(!fs::exists(destRoot / "USBANLZ" / "P001" / "00000003", ec));  // pruned track's ANLZ dir deleted
-    std::cout << "case 7 (pruned track's ANLZ directory deleted) OK\n";
+    assert(fs::exists(destRoot / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT", ec));
+    std::cout << "case 7 (every track's analysis file is kept) OK\n";
 
     // Source untouched -- every edit happens on the destination copy.
     AnlzFile sourceStill = AnlzFile::readRaw((sourceRoot / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT").string());
@@ -539,72 +536,14 @@ int main()
         writeFile(source2 / "rekordbox" / "export.pdb", noTracks);
         assert(artistNameById(source2 / "rekordbox" / "export.pdb", 5) == "Real Artist A");  // fixture self-check
 
-        auto noTrackResult = anonymizeRekordboxLibrary(source2.string(), dest2.string(), std::nullopt);
+        auto noTrackResult = anonymizeRekordboxLibrary(source2.string(), dest2.string());
         assert(noTrackResult.errorMessage.empty());
-        assert(noTrackResult.tracksKept == 0);
+        assert(noTrackResult.tracksAnonymized == 0);
         assert(noTrackResult.artistsRenamed == 2);
         const fs::path dest2Pdb = dest2 / "rekordbox" / "export.pdb";
         assert(artistNameById(dest2Pdb, 5) != "Real Artist A");
         assert(artistNameById(dest2Pdb, 6) != "Real Artist B");
         std::cout << "case 9 (a pdb with only artist names is still written) OK\n";
-    }
-
-    // --max-tracks reaches OneLibrary too. The synthetic library's three
-    // tracks are real100/101/102.mp3; three rows of a real OneLibrary
-    // database are given those names, the export keeps two tracks, and the
-    // third must be gone from exportLibrary.db as well as from export.pdb --
-    // matched by real filename, the key all three catalogs share.
-    {
-        using namespace seabass::infrastructure::onelibrary;
-        struct OneLibraryDb
-        {
-            SqlCipherLibrary lib;
-            SqlCipherDb db;
-            explicit OneLibraryDb(const fs::path &path) : db(lib, path.string(), false)
-            {
-                db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
-            }
-        };
-        auto contentCount = [](const fs::path &path) {
-            OneLibraryDb handle(path);
-            SqlCipherStatement stmt(handle.db, "SELECT count(*) FROM content");
-            assert(stmt.step());
-            return stmt.columnInt64(0);
-        };
-
-        const fs::path source3 = root / "onelibrary-source";
-        const fs::path dest3 = root / "onelibrary-dest";
-        writeFile(source3 / "rekordbox" / "export.pdb", buildSyntheticPdb());
-        for (int n = 1; n <= 3; ++n) {
-            writeSyntheticAnlz(source3 / "USBANLZ" / "P001" / ("0000000" + std::to_string(n)) / "ANLZ0000.DAT");
-        }
-        const fs::path oneLibrary = source3 / "rekordbox" / "exportLibrary.db";
-        fs::copy_file(fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox"
-                          / "rekordbox" / "exportLibrary.db",
-                      oneLibrary, fs::copy_options::overwrite_existing);
-        {
-            OneLibraryDb handle(oneLibrary);
-            for (int k = 0; k < 3; ++k) {
-                const std::string name = "real" + std::to_string(100 + k) + ".mp3";
-                SqlCipherStatement rename(handle.db,
-                    "UPDATE content SET fileName = ?, path = ? WHERE content_id = "
-                    "(SELECT content_id FROM content ORDER BY content_id LIMIT 1 OFFSET " + std::to_string(k) + ")");
-                rename.bindText(1, name);
-                rename.bindText(2, "/Contents/" + name);
-                rename.run();
-            }
-        }
-        const auto before = contentCount(oneLibrary);
-
-        auto oneLibraryResult = anonymizeRekordboxLibrary(source3.string(), dest3.string(), 2);
-        assert(oneLibraryResult.errorMessage.empty());
-        assert(oneLibraryResult.oneLibraryError.empty());
-        assert(oneLibraryResult.tracksDropped == 1);
-        // Everything but the two kept tracks goes: the dropped one, and every
-        // mirror row no track of this export corresponds to.
-        assert(oneLibraryResult.oneLibraryTracksDropped == before - 2);
-        assert(contentCount(dest3 / "rekordbox" / "exportLibrary.db") == 2);
-        std::cout << "case 10 (--max-tracks prunes OneLibrary to exactly the tracks export.pdb kept) OK\n";
     }
 
     std::cout << "all cases passed\n";

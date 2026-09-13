@@ -266,8 +266,8 @@ int main()
         assert(summary.succeeded());
         assert(summary.rekordboxAttempted && summary.rekordboxError.empty());
         assert(summary.engineAttempted && summary.engineError.empty());
-        assert(summary.rekordboxTracksKept == 1);
-        assert(summary.engineTracksKept == 1);
+        assert(summary.rekordboxTracksAnonymized == 1);
+        assert(summary.engineTracksAnonymized == 1);
         assert(summary.outputSizeBytes > 0);
         assert(summary.filesWritten > 0);
         // The size that gets reported is now measured rather than
@@ -364,7 +364,7 @@ int main()
         assert(!summary.succeeded());
         assert(!summary.rekordboxError.empty());
         assert(summary.engineError.empty());
-        assert(summary.engineTracksKept == 1);  // the working catalog still completed
+        assert(summary.engineTracksAnonymized == 1);  // the working catalog still completed
         std::cout << "case 3 (one catalog failing doesn't stop the other, and succeeded() reflects it) OK\n";
     }
 
