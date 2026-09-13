@@ -687,14 +687,19 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         // page's own: a count merged on the Engine page (which has nowhere
         // to keep one) was otherwise lost, and OneLibrary kept its old count
         // beside rekordbox's new one.
+        //
+        // Best-effort, logged and carried on past: the page's own catalog
+        // may already have had rows removed by now, and a play count is not
+        // worth failing the rest of the cleanup over.
         if (!targets.survivorSourceId.empty()) {
+          try {
             if (secondaryFormat == "rekordbox" && plan.playCountForSurvivor) {
                 infrastructure::rekordbox::PdbRowWriter playWriter(sw.effectiveRoot + "/rekordbox/export.pdb");
                 if (!playWriter.setTrackPlayCount(static_cast<uint32_t>(std::stoul(targets.survivorSourceId)),
                                                   *plan.playCountForSurvivor)
                     || !playWriter.commit()) {
-                    return ChangeOutcome::failure("failed to merge the play count into "
-                                                  + QString::fromStdString(sw.effectiveRoot + "/rekordbox/export.pdb"));
+                    throw std::runtime_error("no rekordbox row id=" + targets.survivorSourceId
+                                             + " took the play count");
                 }
                 sw.session.noteItemApplied();
                 log.record("cleanup: merged the play count onto the rekordbox survivor row id="
@@ -713,6 +718,10 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                 log.record("cleanup: set the latest last-played time on the Engine survivor row id="
                            + targets.survivorSourceId);
             }
+          } catch (const std::exception &e) {
+            log.record("cleanup: play history not merged into " + secondaryFormat + " for \"" + plan.survivor.title
+                       + "\": " + e.what());
+          }
         }
 
         for (const auto &doomedId : targets.doomedSourceIds) {
