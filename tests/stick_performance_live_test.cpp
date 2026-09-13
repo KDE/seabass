@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
 // Runs the two performance probes against a real stick, the way the USB
 // Stick Performance page does, and prints what the page would show.
 // Skips itself unless SEABASS_LIVE_STICK names the stick's mount point;

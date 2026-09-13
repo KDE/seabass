@@ -63,6 +63,7 @@ License: CC-BY-SA-4.0
 Files: .gitignore
  .gitlab-ci.yml
  docs/design/stick-backup-mockups/canvas.json
+ docs/design/stick-performance-mockups/canvas.json
 Copyright: 2026 Sebastian Kügler <sebas@kde.org>
 License: CC0-1.0
 

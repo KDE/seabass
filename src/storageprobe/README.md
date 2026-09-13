@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # storageprobe
 
 Measures a removable drive (USB stick, SD card, portable SSD) the way an
