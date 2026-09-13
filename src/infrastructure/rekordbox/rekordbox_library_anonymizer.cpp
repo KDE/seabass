@@ -570,9 +570,17 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // left behind when it edited those rows still sit.
         result.freeBytesZeroed = writer.zeroUnusedSpace();
 
+        // Every pass above that can change a byte, not just some of them.
+        // The wholesale artist and playlist renames and the free-space
+        // clearing all edit the buffer; leaving them out meant a pdb with no
+        // track rows but real playlist names, or freed text, was never
+        // committed, and the copy went out exactly as rekordbox left it --
+        // which the byte sweep then refused with nothing to say why.
         bool anyEditAttempted = !kept.empty() || !dropped.empty() || !sortedArtistIds.empty() ||
                                  !enumerated.playlistIds.empty() || result.albumsRenamed > 0 ||
-                                 result.genresRenamed > 0 || result.labelsRenamed > 0;
+                                 result.genresRenamed > 0 || result.labelsRenamed > 0 ||
+                                 result.artistsRenamed > 0 || result.playlistsRenamed > 0 ||
+                                 result.freeBytesZeroed > 0;
         if (anyEditAttempted && !writer.commit()) {
             result.errorMessage = "failed to commit anonymized export.pdb (see PdbRowWriter::commit())";
             return result;

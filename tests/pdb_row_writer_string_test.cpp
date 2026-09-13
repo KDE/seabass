@@ -525,6 +525,46 @@ int main()
         std::cout << "case 5 (overwriteArtistName/overwritePlaylistName: fit to capacity, other tables untouched) OK\n";
     }
 
+    // overwriteTrackExtraText: a slot that is not in use points back into
+    // the row's fixed header, and must be left alone. Here ISRC (slot 0)
+    // points 8 bytes into track 100's header, where the byte reads like a
+    // 17-character string header -- as real header bytes can. Writing
+    // "a string" there used to fill 17 header bytes with text and spaces
+    // (on a real row: sample rate, file size, artist and album ids) while
+    // the page still parsed, so nothing downstream noticed.
+    {
+        const size_t trackRowStart = static_cast<size_t>(LenPage) * 1 + 40;
+        const size_t trackFixedSize = 136;
+        std::string withStraySlot = pristine;
+        writeU16LE(withStraySlot, trackRowStart + 94 + 0 * 2, 8);          // ISRC slot -> header byte 8
+        withStraySlot[trackRowStart + 8] = static_cast<char>(0x25);       // short ASCII, 17 characters
+        writeFile(pdbPath, withStraySlot);
+
+        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter::TrackExtraTextOverride extra;
+        extra.isrc = "ISRC-SCRUBBED";
+        extra.texter = "Texter";
+        extra.message = "Message";
+        extra.mixName = "Mix";
+        assert(writer.overwriteTrackExtraText(100, extra));
+        assert(writer.commit());
+
+        std::string after;
+        {
+            std::ifstream in(pdbPath, std::ios::binary);
+            std::ostringstream oss;
+            oss << in.rdbuf();
+            after = oss.str();
+        }
+        assert(after.size() == withStraySlot.size());
+        // Track 100's whole fixed header, string offset table included.
+        assert(after.compare(trackRowStart, trackFixedSize, withStraySlot, trackRowStart, trackFixedSize) == 0);
+        auto texts = readTrackTexts(pdbPath, 100);
+        assert(texts.title == "Real Title");
+        assert(texts.filename == "real.mp3");
+        std::cout << "case 6 (overwriteTrackExtraText: a slot pointing into the header is left alone) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

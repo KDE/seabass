@@ -522,6 +522,31 @@ int main()
     assert(readCueCommentUtf8(track100Anlz) == "Real DJ Note");
     std::cout << "case 8 (source library untouched) OK\n";
 
+    // A pdb with no track rows and no playlist rows, only artists. Every
+    // per-track and per-playlist pass has nothing to do, but the wholesale
+    // artist rename still renames both rows in memory -- and the commit
+    // used to be decided without counting that pass, so the file was
+    // never written and "Real Artist A" went out as it came in.
+    {
+        std::string noTracks = buildSyntheticPdb();
+        writeU16LE(noTracks, static_cast<size_t>(LenPage) * 1 + LenPage - 4, 0);  // tracks: none present
+        writeU16LE(noTracks, static_cast<size_t>(LenPage) * 3 + LenPage - 4, 0);  // playlist tree: none
+        writeU16LE(noTracks, static_cast<size_t>(LenPage) * 4 + LenPage - 4, 0);  // playlist entries: none
+        const fs::path source2 = root / "no-tracks-source";
+        const fs::path dest2 = root / "no-tracks-dest";
+        writeFile(source2 / "rekordbox" / "export.pdb", noTracks);
+        assert(artistNameById(source2 / "rekordbox" / "export.pdb", 5) == "Real Artist A");  // fixture self-check
+
+        auto noTrackResult = anonymizeRekordboxLibrary(source2.string(), dest2.string(), std::nullopt);
+        assert(noTrackResult.errorMessage.empty());
+        assert(noTrackResult.tracksKept == 0);
+        assert(noTrackResult.artistsRenamed == 2);
+        const fs::path dest2Pdb = dest2 / "rekordbox" / "export.pdb";
+        assert(artistNameById(dest2Pdb, 5) != "Real Artist A");
+        assert(artistNameById(dest2Pdb, 6) != "Real Artist B");
+        std::cout << "case 9 (a pdb with only artist names is still written) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

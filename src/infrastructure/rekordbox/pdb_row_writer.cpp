@@ -640,6 +640,30 @@ bool PdbRowWriter::setTrackRating(uint32_t trackId, int rating)
     return true;
 }
 
+namespace
+{
+
+// Overwrite one of a track row's strings in place -- but only if the slot
+// really points at a string. An unused slot points back into the row's
+// fixed header (rowKeepRanges above relies on exactly that), and writing
+// "a string" there fills header bytes with spaces: sample rate, file size,
+// the artist and album ids. The page still parses, so commit()'s reparse
+// check passes and the kept track ships with corrupted metadata. ISRC,
+// texter, message and mix name -- the slots the anonymizer blanks -- are
+// the ones most often unused.
+bool overwriteTrackStringIfUsed(std::string &buffer, size_t rowBodyOffset, auto stringIndex, const std::string &text)
+{
+    const size_t header = rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
+    const size_t absOffset = trackStringAbsOffset(buffer, rowBodyOffset, stringIndex);
+    if (absOffset < header || absOffset >= buffer.size()) {
+        return false;
+    }
+    overwriteDeviceSqlStringInPlace(buffer, absOffset, text);
+    return true;
+}
+
+}  // namespace
+
 bool PdbRowWriter::overwriteTrackText(uint32_t trackId, const TrackTextOverride &text)
 {
     auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
@@ -649,14 +673,10 @@ bool PdbRowWriter::overwriteTrackText(uint32_t trackId, const TrackTextOverride 
     if (!found) {
         return false;
     }
-    overwriteDeviceSqlStringInPlace(m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexTitle),
-                                     text.title);
-    overwriteDeviceSqlStringInPlace(
-        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexComment), text.comment);
-    overwriteDeviceSqlStringInPlace(
-        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexFilename), text.filename);
-    overwriteDeviceSqlStringInPlace(
-        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexFilePath), text.filePath);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexTitle, text.title);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexComment, text.comment);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilename, text.filename);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilePath, text.filePath);
     m_editedPageIndices.insert(found->pageIndex);
     return true;
 }
@@ -670,14 +690,10 @@ bool PdbRowWriter::overwriteTrackExtraText(uint32_t trackId, const TrackExtraTex
     if (!found) {
         return false;
     }
-    overwriteDeviceSqlStringInPlace(
-        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexIsrc), text.isrc);
-    overwriteDeviceSqlStringInPlace(
-        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexTexter), text.texter);
-    overwriteDeviceSqlStringInPlace(
-        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexMessage), text.message);
-    overwriteDeviceSqlStringInPlace(
-        m_buffer, trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexMixName), text.mixName);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexIsrc, text.isrc);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexTexter, text.texter);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexMessage, text.message);
+    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexMixName, text.mixName);
     m_editedPageIndices.insert(found->pageIndex);
     return true;
 }

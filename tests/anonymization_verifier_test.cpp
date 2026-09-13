@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/anonymization_byte_sweep.hpp"
 #include "infrastructure/anonymization_verifier.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
@@ -282,6 +283,36 @@ int main(int argc, char **argv)
         fs::copy_file(pristineBlob, blob, fs::copy_options::overwrite_existing, ec);
         assert(!ec);
         std::cout << "case 8 (text planted where no reader looks is caught by the byte sweep) OK\n";
+    }
+
+    // The byte sweep reads a SQLite file's own schema to know which words
+    // are the database's rather than the user's, and it opens that file
+    // through a URI. The output folder is the user's choice, and '#' or '%'
+    // in it used to break the URI: the open failed without a sound, the
+    // schema vocabulary came back empty, and schema text (the Engine
+    // triggers' own messages) was reported as a leak. Same database, two
+    // folders: the answer must not depend on the folder's name. ('?' is
+    // not allowed in a Windows path, so it is not in the name.)
+    {
+        const fs::path db = copy / "engine" / "Database2" / "m.db";
+        assert(fs::is_regular_file(db));
+        const fs::path plainDir = root / "sweep-plain";
+        const fs::path hostileDir = root / "Music #2 100%";
+        fs::create_directories(plainDir, ec);
+        fs::create_directories(hostileDir, ec);
+        fs::copy_file(db, plainDir / "m.db", fs::copy_options::overwrite_existing, ec);
+        assert(!ec);
+        fs::copy_file(db, hostileDir / "m.db", fs::copy_options::overwrite_existing, ec);
+        assert(!ec);
+
+        const auto plain = infrastructure::readableTextInRawBytes(plainDir / "m.db");
+        const auto hostile = infrastructure::readableTextInRawBytes(hostileDir / "m.db");
+        if (plain != hostile) {
+            std::cerr << "sweep of the same m.db differs by folder name: " << plain.size() << " vs "
+                      << hostile.size() << " unaccounted fragments\n";
+        }
+        assert(plain == hostile);
+        std::cout << "case 9 (the byte sweep reads a database's schema whatever its folder is called) OK\n";
     }
 
     fs::remove_all(root, ec);

@@ -171,6 +171,41 @@ bool isAccountableWord(const std::string &word, const std::set<std::string> &voc
     return to - from < 3;
 }
 
+// A read-only, immutable SQLite URI for a path -- escaped. The staging
+// directory lives inside an output folder the user picks, and inside a URI
+// SQLite gives '?', '#' and '%' meanings of their own: "~/Music #2/export"
+// was cut at the '#', the open failed, and the vocabulary came back empty.
+// That failure makes no noise and is not harmless -- the Engine schema's own
+// trigger text ("Recycling deleted track") then reads as unaccounted prose,
+// so every Engine export from such a folder was refused as a leak.
+//
+// Still a URI rather than a plain path because of immutable=1: without it
+// a read-only open of a WAL database can need -shm/-wal files beside the
+// staged copy, and the staged copy is the export.
+std::string sqliteReadOnlyUri(const fs::path &file)
+{
+    std::error_code ec;
+    const fs::path absolute = fs::absolute(file, ec);
+    const std::string path = (ec ? file : absolute).generic_string();
+    static const char *const hex = "0123456789ABCDEF";
+    std::string escaped;
+    escaped.reserve(path.size());
+    for (const char c : path) {
+        if (c == '%' || c == '?' || c == '#') {
+            const auto byte = static_cast<unsigned char>(c);
+            escaped += '%';
+            escaped += hex[byte >> 4];
+            escaped += hex[byte & 0x0F];
+        } else {
+            escaped += c;
+        }
+    }
+    // "file:/abs/path" on POSIX; a Windows drive letter needs the empty
+    // authority form, "file:///C:/path".
+    const bool windowsDrive = escaped.size() > 1 && escaped[1] == ':';
+    return std::string("file:") + (windowsDrive ? "///" : "") + escaped + "?mode=ro&immutable=1";
+}
+
 // Every identifier the database itself declares -- table and column
 // names, and the text of its triggers and views, which in the Engine
 // schema includes English RAISE messages like "Recycling deleted track".
@@ -180,7 +215,7 @@ std::set<std::string> schemaVocabulary(const fs::path &file)
 {
     std::set<std::string> vocabulary;
     sqlite3 *db = nullptr;
-    const std::string uri = "file:" + file.string() + "?mode=ro&immutable=1";
+    const std::string uri = sqliteReadOnlyUri(file);
     if (sqlite3_open_v2(uri.c_str(), &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return vocabulary;
