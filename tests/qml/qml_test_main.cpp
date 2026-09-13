@@ -12,6 +12,7 @@
 #include "gui/seabass_settings.hpp"
 #include <QSettings>
 #include <QString>
+#include <QQuickStyle>
 #include <QtQuickTest/quicktest.h>
 
 #include <cstdlib>
@@ -156,11 +157,17 @@ public slots:
         const char *dir = std::getenv("SEABASS_SCREENSHOT_DIR");
         engine->rootContext()->setContextProperty(QStringLiteral("screenshotDir"),
                                                   dir != nullptr ? QString::fromLocal8Bit(dir) : QString());
-        // Whether this run picked a Qt Quick Controls style of its own:
-        // the screenshot mode does, and so does a run under the desktop's
-        // style. Tests that measure pixels skip themselves then.
+        // Whether this run ended up under a Qt Quick Controls style other
+        // than "Basic", the one the pixel-measuring tests are calibrated
+        // against: the screenshot mode forces Material, a run under the
+        // desktop's own style forces that, and -- the case an env-var
+        // check alone missed -- a plain ctest run on Windows still lands
+        // on "Windows" with nothing forced at all, because that style is
+        // this platform's native default rather than something QML asks
+        // for. Comparing the resolved name instead of the env var catches
+        // every one of those the same way.
         engine->rootContext()->setContextProperty(QStringLiteral("controlsStyleForced"),
-                                                  qEnvironmentVariableIsSet("QT_QUICK_CONTROLS_STYLE"));
+                                                  QQuickStyle::name() != QStringLiteral("Basic"));
         // tests/qml-live/: the mount point of a real (scratch) stick to
         // drive the real pages and controllers against. Empty under
         // ctest, and every live test skips itself then.

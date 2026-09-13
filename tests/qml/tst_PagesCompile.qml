@@ -144,9 +144,12 @@ TestCase {
     // whose header carries a second row, 8 px more than the 11 it had.
     //
     // Pixels measured from the breadcrumb itself, whose height is the
-    // style's, so only under the default style ctest runs: skipped when
-    // QT_QUICK_CONTROLS_STYLE picks another, as the screenshot mode and a
-    // run under the desktop's own style both do.
+    // style's, so only valid under "Basic", the style this suite is
+    // calibrated against: skipped whenever the resolved style is anything
+    // else, whether that is an explicit QT_QUICK_CONTROLS_STYLE (the
+    // screenshot mode and a run under the desktop's own style both set
+    // one) or, as on Windows, a native default style picked with no
+    // override at all.
     function test_theBreadcrumbHasRoomUnderIt() {
         if (controlsStyleForced) {
             skip("measured against the suite's default style, and this run picked another");
