@@ -1192,6 +1192,16 @@ if(TARGET Qt6::Core)
         target_link_libraries(restore_metadata_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME restore_metadata_change_test COMMAND restore_metadata_change_test)
+
+    add_executable(merge_cues_change_test tests/merge_cues_change_test.cpp)
+    target_include_directories(merge_cues_change_test PRIVATE src)
+    target_compile_definitions(merge_cues_change_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(merge_cues_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(merge_cues_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME merge_cues_change_test COMMAND merge_cues_change_test)
 endif()
 
 add_executable(rekordbox_process_detector_test

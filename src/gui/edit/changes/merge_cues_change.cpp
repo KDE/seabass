@@ -54,8 +54,18 @@ struct LocalCueWriterContext
                 }
             }
         } else if (format == "engine") {
-            ctx.backupOnce((fs::path(root) / "Database2" / "m.db").string(), "local-restore");
-            writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(root);
+            // Through the save's shared session for this database, never
+            // straight at the stick's m.db. Clean Up, Sync and the repairs
+            // put m.db behind a scratch copy for a large enough save, and a
+            // write made directly to the real file while that copy exists
+            // is overwritten the moment the copy is committed back: the
+            // merge is reported as applied and is gone. Hint 0, so a cue
+            // restore is never the change that asks for a scratch copy --
+            // it only has to land wherever the database currently is. The
+            // session takes the backup this used to take itself. Same fix,
+            // for the same bug, as RemoveJunkCueChange.
+            engineSession = &sharedFormatWriteSession(ctx, "engine", root, 0, "local-restore");
+            writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "local-restore");
             writer = std::make_unique<OneLibraryCueWriterAdapter>(root, std::move(oneLibraryPaths));
@@ -64,6 +74,8 @@ struct LocalCueWriterContext
 
     std::unique_ptr<application::CueWriter> writer;
     std::unique_ptr<infrastructure::onelibrary::OneLibraryCueWriter> mirror;
+    // Engine only: the session that decides where m.db is written this save.
+    FormatWriteSession *engineSession = nullptr;
 };
 
 }  // namespace
@@ -144,6 +156,11 @@ ChangeOutcome MergeCuesChange::apply(SaveContext &ctx)
     // filled a gap. writeHotCues() replaces the whole set, so passing
     // anything less would silently drop what's already there.
     writer.writer->writeHotCues(track.sourceId, m_candidate.mergedCues);
+    if (writer.engineSession) {
+        // Counted, because FormatWriteSession discards a scratch copy
+        // nothing was applied to -- and this merge with it.
+        writer.engineSession->noteItemApplied();
+    }
     int added = static_cast<int>(m_candidate.mergedCues.size() - track.cues.size());
     ctx.log().record("local-restore: merged " + std::to_string(added) + " new cue(s) onto track id=" + track.sourceId
                      + " (\"" + track.title + "\") from local backup");
