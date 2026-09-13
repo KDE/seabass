@@ -442,9 +442,8 @@ TestCase {
     }
 
     // Closing a folder row is where its unsaved edits would otherwise
-    // vanish unseen (folder rows sit out the pulled-stick prompts): the
-    // close is refused while the session is dirty, and a clean session's
-    // lock is released before the row goes.
+    // vanish unseen: the close is refused while the session is dirty,
+    // and a clean session's lock is released before the row goes.
     function test_closingAFolderRowRefusesWhileDirtyAndReleasesWhenClean() {
         var folder = makeStick({
             label: "restored", mountPoint: "/home/dj/restored", devicePath: "",
@@ -473,6 +472,42 @@ TestCase {
         close.clicked();
         verify(reg.calls.indexOf("closeSession:folder-r1") >= 0, "a clean session is closed");
         verify(page.mediaController.calls.indexOf("closeFolder:/home/dj/restored") >= 0);
+    }
+
+    // Only one folder is open at a time, so opening another folder or
+    // browsing a backup replaces the current one. With staged edits on it
+    // that must be refused, as closing it is: otherwise the replaced row
+    // raises the stick-removed dialog, whose only live button discards.
+    function test_openingAnotherFolderOrBackupRefusesWhileTheCurrentOneIsDirty() {
+        var folder = makeStick({
+            label: "restored", mountPoint: "/home/dj/restored", devicePath: "",
+            isFolder: true, libraryId: "folder-r1",
+        });
+        var registry = fakeEditRegistry([]);
+        registry.session = {dirty: true};
+        registry.hasSession = function(id) { return id === "folder-r1"; };
+        registry.sessionFor = function(id) { return this.session; };
+        registry.closeSession = function(id) { this.calls.push("closeSession:" + id); };
+        var page = makePage([folder], makeAdvice({}), {editRegistry: registry});
+        var reg = page.editRegistry;
+        var folderDialog = findChild(page, "openFolderDialog");
+        var backupDialog = findChild(page, "openBackupDialog");
+        var error = findChild(page, "openFolderError");
+        verify(folderDialog !== null && backupDialog !== null && error !== null);
+
+        folderDialog.accepted();
+        backupDialog.accepted();
+        compare(page.mediaController.calls.length, 0,
+                "nothing may replace a folder with unsaved changes: " + page.mediaController.calls);
+        compare(reg.calls.indexOf("closeSession:folder-r1"), -1, "a dirty session must not be closed");
+        tryCompare(error, "visible", true);
+        error.close();
+
+        reg.session.dirty = false;
+        folderDialog.accepted();
+        verify(reg.calls.indexOf("closeSession:folder-r1") >= 0, "a clean session is closed first");
+        compare(page.mediaController.calls.length, 1);
+        compare(page.mediaController.calls[0].indexOf("openFolder:"), 0);
     }
 
     // The entry point itself: the toolbar button opens the folder picker.

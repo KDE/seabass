@@ -74,7 +74,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
 
     // Never touch the real user's settings: openFolder() persists the
-    // opened-folder list through QSettings, and a test that wrote into
+    // opened folder through QSettings, and a test that wrote into
     // ~/.config would change what the actual app shows on next launch.
     const fs::path scratch = seabass::testing::scratchRoot() / "open-folder-test";
     fs::remove_all(scratch);

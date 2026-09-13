@@ -28,6 +28,37 @@ Page {
             root.editRegistry.refreshLocks();
         }
     }
+    // Only one folder is open at a time, so closing it, opening another
+    // and browsing a backup all let go of the current one first -- and
+    // its staged edits would go with it. Refused while its session is
+    // dirty or saving; a clean session is closed, releasing its lock.
+    // Returns whether the way is clear.
+    function releaseOpenedFolder() {
+        var model = root.mediaController.sticks;
+        if (model === null || model === undefined) {
+            return true;
+        }
+        // A plain array in the tests, the real list model otherwise.
+        var count = model.length !== undefined ? model.length : model.rowCount();
+        for (var i = 0; i < count; ++i) {
+            var row = model.length !== undefined ? model[i] : model.get(i);
+            if (!row.isFolder) {
+                continue;
+            }
+            var reg = root.editRegistry;
+            if (reg && reg.hasSession(row.libraryId)) {
+                var session = reg.sessionFor(row.libraryId);
+                if (session && (session.dirty === true || session.writing === true)) {
+                    openFolderError.text = "\"" + row.label
+                        + "\" has unsaved changes. Save or discard them first.";
+                    openFolderError.open();
+                    return false;
+                }
+                reg.closeSession(row.libraryId);
+            }
+        }
+        return true;
+    }
     // How many rows are actual removable media, i.e. not a folder
     // someone opened and not a browsed backup.
     //
@@ -91,6 +122,9 @@ Page {
         objectName: "openFolderDialog"
         title: "Open a folder holding a rekordbox or Engine DJ library"
         onAccepted: {
+            if (!root.releaseOpenedFolder()) {
+                return;
+            }
             // Handed over as the URL it is; the controller converts it
             // with QUrl::toLocalFile (gui/local_file_url.hpp, localPathFromUrl).
             var message = root.mediaController.openFolder(selectedFolder.toString());
@@ -110,6 +144,9 @@ Page {
         nameFilters: ["Stick backups (*.zip)", "All files (*)"]
         currentFolder: root.appSettingsController.toLocalFileUrl(root.appSettingsController.stickBackupDirectory)
         onAccepted: {
+            if (!root.releaseOpenedFolder()) {
+                return;
+            }
             var message = root.mediaController.openBackup(selectedFile.toString());
             if (message.length > 0) {
                 openFolderError.text = message;
@@ -678,23 +715,9 @@ Page {
                         ToolTip.visible: hovered
                         ToolTip.text: "Remove " + delegateRoot.label + " from this list (nothing on disk is changed)"
                         onClicked: {
-                            // A folder row takes no part in the pulled-stick
-                            // prompts, so this is the one place its unsaved
-                            // edits would otherwise go unseen: refuse while
-                            // dirty, release a clean session's lock, then drop.
-                            var reg = root.editRegistry;
-                            var id = delegateRoot.libraryId;
-                            if (reg && reg.hasSession(id)) {
-                                var session = reg.sessionFor(id);
-                                if (session && session.dirty === true) {
-                                    openFolderError.text = "\"" + delegateRoot.label
-                                        + "\" has unsaved changes. Save or discard them before removing it from the list.";
-                                    openFolderError.open();
-                                    return;
-                                }
-                                reg.closeSession(id);
+                            if (root.releaseOpenedFolder()) {
+                                root.mediaController.closeFolder(delegateRoot.mountPoint);
                             }
-                            root.mediaController.closeFolder(delegateRoot.mountPoint);
                         }
                     }
 
