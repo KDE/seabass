@@ -47,6 +47,9 @@ Page {
     // Edit mode for this library: session, floating Save, leave guard.
     EditSessionHost {
         id: editHost
+        // Cancel on the low-space question leaves, as Back does -- see
+        // EditSessionHost's backupLocationDeclined for why it must.
+        onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "cleanup"
         // "Save" is right on a page that edits one thing; here the
         // button is the moment a stack of removals becomes real, and

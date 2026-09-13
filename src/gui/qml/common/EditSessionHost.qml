@@ -75,6 +75,13 @@ Item {
 
     // Accepted: edit anyway, backups land on this computer. Declined: the
     // page takes the user back where they came from, as it does for Back.
+    //
+    // Every page has to act on Declined itself -- the host cannot pop a
+    // StackView it is not the pushed item of -- and for a long time none
+    // did, so Cancel on this question closed the dialog and changed
+    // nothing: the user carried on editing a stick they had just said
+    // not to back up locally. edit_session_decline_wiring_test now fails
+    // for any page that hosts a session without handling it.
     signal backupLocationAccepted()
     signal backupLocationDeclined()
 
@@ -201,9 +208,12 @@ Item {
         onRemoveLockRequested: host.registry.removeLock(host.libraryId)
     }
 
-    // The first user of MessageDialog. Nothing has been staged yet when
-    // this opens, so Cancel costs the user nothing -- which is the whole
-    // reason the question is asked here and not at save time.
+    // The first user of MessageDialog, asked at page open rather than at
+    // save time so that Cancel usually costs the user nothing. Usually,
+    // not always: the measurement behind it runs on a worker thread and
+    // can land after a first cue was already staged. That is why Cancel
+    // leaves through requestLeave() -- staged work still gets the
+    // unsaved-changes question instead of being dropped with the page.
     MessageDialog {
         id: lowSpaceDialog
         objectName: "lowSpaceDialog"

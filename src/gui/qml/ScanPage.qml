@@ -78,6 +78,9 @@ Page {
     // the floating Save.
     EditSessionHost {
         id: editHost
+        // Cancel on the low-space question leaves, as Back does -- see
+        // EditSessionHost's backupLocationDeclined for why it must.
+        onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "addcue"
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"

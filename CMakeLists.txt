@@ -1179,6 +1179,11 @@ if(TARGET Qt6::Core)
     target_link_libraries(format_write_session_test PRIVATE seabass_edit Qt6::Core)
     add_test(NAME format_write_session_test COMMAND format_write_session_test)
 
+    add_executable(edit_session_decline_wiring_test tests/edit_session_decline_wiring_test.cpp)
+    target_compile_definitions(edit_session_decline_wiring_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME edit_session_decline_wiring_test COMMAND edit_session_decline_wiring_test)
+
     # Drives one staged change against a real encrypted OneLibrary
     # database, which is the point of seabass_edit being its own target.
     # ZLIB and dl for the same reason onelibrary_cue_writer_test needs

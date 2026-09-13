@@ -41,6 +41,12 @@ Page {
 
     EditSessionHost {
         id: editHost
+
+        // Cancel on the low-space question leaves, as Back does -- see
+
+        // EditSessionHost's backupLocationDeclined for why it must.
+
+        onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "metadata-restore"
         anchors.fill: parent
         libraryId: root.libraryId

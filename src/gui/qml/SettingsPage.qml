@@ -22,6 +22,9 @@ Page {
     // Edit mode for this library: session, Save button, leave guard.
     EditSessionHost {
         id: editHost
+        // Cancel on the low-space question leaves, as Back does -- see
+        // EditSessionHost's backupLocationDeclined for why it must.
+        onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "settings"
         anchors.fill: parent
         libraryId: root.registryLibraryId()
