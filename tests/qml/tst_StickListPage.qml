@@ -593,9 +593,13 @@ TestCase {
         verify(heart !== null, "the donate button must draw the filled heart");
         compare(donate.contentItem, heart);
         compare(heart.color, Qt.color("#aa0000"));
-        // Every icon in the header the menu icon's size.
-        compare(heart.implicitWidth, menu.icon.width);
-        compare(heart.implicitHeight, menu.icon.height);
+        // Every icon in the header one size, the menu's included -- and the
+        // heart DRAWN at it, not merely asking for it: a button stretches
+        // its contentItem, and under KDE's style the heart filled the button.
+        verify(page.headerIconSize > 0);
+        compare(menu.icon.width, page.headerIconSize);
+        compare(menu.icon.height, page.headerIconSize);
+        compare(heart.drawnSize, page.headerIconSize);
         var coloured = [{name: "aboutButton", icon: "dialog-information"}, {name: "preferencesButton", icon: "systemsettings"}];
         for (var i = 0; i < coloured.length; ++i) {
             var button = findByName(page, coloured[i].name);
@@ -604,8 +608,8 @@ TestCase {
             // what flattens a colour icon to a single colour.
             compare(button.icon.name, coloured[i].icon);
             compare(button.icon.color.a, 0, coloured[i].name + " must not be tinted");
-            compare(button.icon.width, menu.icon.width, coloured[i].name + " must be the menu icon's size");
-            compare(button.icon.height, menu.icon.height);
+            compare(button.icon.width, page.headerIconSize, coloured[i].name + " must be the menu icon's size");
+            compare(button.icon.height, page.headerIconSize);
         }
     }
 
@@ -615,7 +619,10 @@ TestCase {
         var probe = makePage([], {});
         var card = probe.minimumCardWidth;
         verify(card > 0);
-        var sizes = [{width: card * 3 + 80, columns: 3}, {width: card * 2 + 80, columns: 2}, {width: card + 80, columns: 1}];
+        // Room for that many cards and the 12 px between them, plus the page
+        // and card margins, with some to spare but never a card's worth.
+        var sizes = [{width: card * 3 + 24 + 120, columns: 3}, {width: card * 2 + 12 + 120, columns: 2},
+                     {width: card + 120, columns: 1}];
         for (var i = 0; i < sizes.length; ++i) {
             var page = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})}, {width: sizes[i].width});
             var grid = findByName(page, "actionGrid");

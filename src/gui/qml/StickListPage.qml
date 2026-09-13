@@ -88,6 +88,11 @@ Page {
     // rather than against a hardcoded expectation of what the machine holds.
     readonly property int homeBackupsMetadataCount: homeBackups.metadataTrackCount
 
+    // One size for every icon in the header, the menu's included. Set, not
+    // read off the menu button: KDE's ToolButton never sets icon.width, so
+    // binding to it gave 0 there and the heart filled its whole button.
+    readonly property int headerIconSize: Math.round(22 * Theme.iconScale)
+
     // The narrowest a stick's action card is laid out at: the grid under
     // each stick drops from three columns to two, then one, rather than
     // squeezing three cards into a window that has room for fewer.
@@ -289,6 +294,8 @@ Page {
                 id: homeMenuButton
                 objectName: "homeMenuButton"
                 icon.name: "application-menu"
+                icon.width: root.headerIconSize
+                icon.height: root.headerIconSize
                 display: AbstractButton.IconOnly
                 text: "Backups and folders"
                 ToolTip.visible: hovered && !homeMenu.visible
@@ -346,8 +353,8 @@ Page {
                 objectName: "aboutButton"
                 icon.name: "dialog-information"
                 icon.color: "transparent"
-                icon.width: homeMenuButton.icon.width
-                icon.height: homeMenuButton.icon.height
+                icon.width: root.headerIconSize
+                icon.height: root.headerIconSize
                 display: AbstractButton.IconOnly
                 text: "About Seabass"
                 ToolTip.visible: hovered
@@ -358,8 +365,8 @@ Page {
                 objectName: "preferencesButton"
                 icon.name: "systemsettings"
                 icon.color: "transparent"
-                icon.width: homeMenuButton.icon.width
-                icon.height: homeMenuButton.icon.height
+                icon.width: root.headerIconSize
+                icon.height: root.headerIconSize
                 display: AbstractButton.IconOnly
                 text: "Preferences"
                 ToolTip.visible: hovered
@@ -377,8 +384,7 @@ Page {
                 // edge. HeartIcon fills that icon's outer contour.
                 contentItem: HeartIcon {
                     objectName: "donateHeart"
-                    implicitWidth: homeMenuButton.icon.width
-                    implicitHeight: homeMenuButton.icon.height
+                    iconSize: root.headerIconSize
                     color: "#aa0000"
                 }
                 display: AbstractButton.IconOnly
@@ -855,10 +861,12 @@ Page {
                         Layout.fillWidth: true
                         Layout.topMargin: 8
                         Layout.bottomMargin: 8
-                        // From the card's own width, not the grid's: the
-                        // grid's width follows its columns, and binding to
-                        // it would feed back.
-                        columns: Math.max(1, Math.min(3, Math.floor(delegateRoot.width / root.minimumCardWidth)))
+                        // From the space the cards get -- this column's width,
+                        // set by the stick card -- counting the spacing between
+                        // them. Not the grid's own width: that follows its
+                        // columns, and binding to it would feed back.
+                        columns: Math.max(1, Math.min(3, Math.floor((parent.width + columnSpacing)
+                                                                    / (root.minimumCardWidth + columnSpacing))))
                         columnSpacing: 12
                         rowSpacing: 12
 

@@ -14,15 +14,21 @@ import SeabassGui
 Item {
     id: root
     property color color: Theme.danger
-    implicitWidth: Theme.iconSizeSmall * 0.7
-    implicitHeight: Theme.iconSizeSmall * 0.7
+    // When set, the heart is drawn this size, centred, however large the
+    // item is laid out: a button stretches its contentItem to fill it.
+    property real iconSize: 0
+    // The size the heart is actually drawn at, for a test to compare.
+    readonly property real drawnSize: box.width
+    implicitWidth: iconSize > 0 ? iconSize : Theme.iconSizeSmall * 0.7
+    implicitHeight: iconSize > 0 ? iconSize : Theme.iconSizeSmall * 0.7
 
     // Square and centred, so a non-square button still gets a heart of
     // the right shape in its middle.
     Item {
         id: box
         anchors.centerIn: parent
-        width: Math.min(root.width, root.height)
+        width: root.iconSize > 0 ? Math.min(root.iconSize, root.width, root.height)
+                                 : Math.min(root.width, root.height)
         height: width
 
         Shape {
