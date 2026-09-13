@@ -442,9 +442,14 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // rather than before it as it used to be -- so it can be pruned to the
         // same tracks. --max-tracks cut rekordbox and Engine to N and left
         // this database holding every track of the real library.
-        std::set<std::string> droppedFilenames;
-        for (const auto &t : dropped) {
-            droppedFilenames.insert(t.filename);
+        // Only when something was dropped: without --max-tracks, or under
+        // its limit, OneLibrary is scrubbed and nothing in it is pruned.
+        std::optional<std::set<std::string>> keptFilenames;
+        if (!dropped.empty()) {
+            keptFilenames.emplace();
+            for (const auto &t : kept) {
+                keptFilenames->insert(t.filename);
+            }
         }
         // exportLibrary.db is the Device Library Plus mirror: the complete
         // real library, encrypted with a key this project's own source
@@ -458,7 +463,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             const fs::path oneLibrary = fs::path(destinationRoot) / "rekordbox" / "exportLibrary.db";
             std::error_code existsEc;
             if (fs::is_regular_file(oneLibrary, existsEc)) {
-                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(oneLibrary.string(), droppedFilenames);
+                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(oneLibrary.string(), keptFilenames);
                 result.oneLibraryTracksScrubbed = oneLibraryResult.tracksScrubbed;
                 result.oneLibraryTracksDropped = oneLibraryResult.tracksDropped;
                 result.oneLibraryError = oneLibraryResult.errorMessage;

@@ -600,9 +600,11 @@ int main()
         assert(oneLibraryResult.errorMessage.empty());
         assert(oneLibraryResult.oneLibraryError.empty());
         assert(oneLibraryResult.tracksDropped == 1);
-        assert(oneLibraryResult.oneLibraryTracksDropped == 1);
-        assert(contentCount(dest3 / "rekordbox" / "exportLibrary.db") == before - 1);
-        std::cout << "case 10 (--max-tracks prunes OneLibrary to the same tracks as export.pdb) OK\n";
+        // Everything but the two kept tracks goes: the dropped one, and every
+        // mirror row no track of this export corresponds to.
+        assert(oneLibraryResult.oneLibraryTracksDropped == before - 2);
+        assert(contentCount(dest3 / "rekordbox" / "exportLibrary.db") == 2);
+        std::cout << "case 10 (--max-tracks prunes OneLibrary to exactly the tracks export.pdb kept) OK\n";
     }
 
     std::cout << "all cases passed\n";

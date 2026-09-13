@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <optional>
 #include <set>
 #include <string>
 
@@ -42,11 +43,11 @@ struct OneLibraryAnonymizationResult
 //
 // Operates in place on `dbPath`, which must already be a copy. It never
 // touches a stick.
-// droppedFilenames: real filenames of tracks the other two anonymizers
-// pruned (--max-tracks). Their content rows, and every row that refers to
-// them, are deleted rather than scrubbed, so all three catalogs describe
-// the same tracks.
-OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbPath,
-                                                         const std::set<std::string> &droppedFilenames = {});
+// keptFilenames: when set, the real filenames of the tracks the other two
+// anonymizers kept under --max-tracks. Every content row whose filename is
+// not among them is deleted, with every row that refers to it, so all
+// three catalogs describe the same tracks. Unset means nothing is pruned.
+OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(
+    const std::string &dbPath, const std::optional<std::set<std::string>> &keptFilenames = std::nullopt);
 
 }  // namespace seabass::infrastructure::onelibrary
