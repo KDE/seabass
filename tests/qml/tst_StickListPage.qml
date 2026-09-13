@@ -584,14 +584,19 @@ TestCase {
 
     function test_theHeaderIconsAreInColourAndTheHeartIsFilled() {
         var page = makePage([], {});
+        var menu = findByName(page, "homeMenuButton");
+        verify(menu !== null, "the menu button must exist");
         var donate = findByName(page, "donateButton");
         verify(donate !== null, "the donate button must exist");
         // Drawn, not a theme icon: Breeze's heart ("love") is an outline.
         var heart = findByName(page, "donateHeart");
         verify(heart !== null, "the donate button must draw the filled heart");
         compare(donate.contentItem, heart);
-        compare(heart.color, Theme.danger);
-        var coloured = [{name: "aboutButton", icon: "help-about"}, {name: "preferencesButton", icon: "systemsettings"}];
+        compare(heart.color, Qt.color("#aa0000"));
+        // Every icon in the header the menu icon's size.
+        compare(heart.implicitWidth, menu.icon.width);
+        compare(heart.implicitHeight, menu.icon.height);
+        var coloured = [{name: "aboutButton", icon: "dialog-information"}, {name: "preferencesButton", icon: "systemsettings"}];
         for (var i = 0; i < coloured.length; ++i) {
             var button = findByName(page, coloured[i].name);
             verify(button !== null, coloured[i].name + " must exist");
@@ -599,8 +604,23 @@ TestCase {
             // what flattens a colour icon to a single colour.
             compare(button.icon.name, coloured[i].icon);
             compare(button.icon.color.a, 0, coloured[i].name + " must not be tinted");
-            // Breeze has these in colour only from 32 px up.
-            verify(button.icon.width >= 32 && button.icon.height >= 32, coloured[i].name + " must ask for 32 px or more");
+            compare(button.icon.width, menu.icon.width, coloured[i].name + " must be the menu icon's size");
+            compare(button.icon.height, menu.icon.height);
+        }
+    }
+
+    // The stick card's actions keep a usable width: three columns where
+    // the page has room, then two, then one as the window narrows.
+    function test_theActionGridNarrowsWithThePage() {
+        var probe = makePage([], {});
+        var card = probe.minimumCardWidth;
+        verify(card > 0);
+        var sizes = [{width: card * 3 + 80, columns: 3}, {width: card * 2 + 80, columns: 2}, {width: card + 80, columns: 1}];
+        for (var i = 0; i < sizes.length; ++i) {
+            var page = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})}, {width: sizes[i].width});
+            var grid = findByName(page, "actionGrid");
+            verify(grid !== null, "the action grid must exist");
+            compare(grid.columns, sizes[i].columns, "at a page " + Math.round(sizes[i].width) + " px wide");
         }
     }
 

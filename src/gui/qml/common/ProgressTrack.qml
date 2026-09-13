@@ -45,12 +45,24 @@ ProgressBar {
         implicitHeight: track.barHeight
         clip: true
 
-        Rectangle {
+        // Clipped, not narrowed. A Rectangle narrower than it is tall has
+        // its radius cut down to fit, so a small fill came out as a
+        // square-ended sliver inside a round track. The pill stays at least
+        // as wide as it is tall and the clip trims it, which keeps the
+        // start of the fill the track's own round end at any value.
+        Item {
+            objectName: "progressFill"
             visible: !track.indeterminate
             height: parent.height
             width: track.visualPosition * parent.width
-            radius: height / 2
-            color: Theme.accent
+            clip: true
+
+            Rectangle {
+                height: parent.height
+                width: Math.max(parent.width, height)
+                radius: height / 2
+                color: Theme.accent
+            }
         }
 
         Rectangle {

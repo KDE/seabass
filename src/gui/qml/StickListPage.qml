@@ -88,6 +88,11 @@ Page {
     // rather than against a hardcoded expectation of what the machine holds.
     readonly property int homeBackupsMetadataCount: homeBackups.metadataTrackCount
 
+    // The narrowest a stick's action card is laid out at: the grid under
+    // each stick drops from three columns to two, then one, rather than
+    // squeezing three cards into a window that has room for fewer.
+    readonly property real minimumCardWidth: 300 * Theme.iconScale
+
     function isLockedByOther(libraryId) {
         return libraryId.length > 0 && root.editRegistry !== null && root.editRegistry !== undefined
             && root.editRegistry.lockedByOther.indexOf(libraryId) >= 0;
@@ -331,18 +336,18 @@ Page {
             // The monochrome action icons were three more grey marks in a
             // header of grey marks. These are Breeze's full-colour ones,
             // with icon.color "transparent" so the style does not tint
-            // them back to a single colour. Asked for at the small icon
-            // size, 32 px: Breeze has help-about in colour only from 32 up,
-            // and a smaller request resolves to the monochrome 22 and 24.
+            // them back to a single colour. Sized like the menu icon beside
+            // them. About is dialog-information because that one is in
+            // colour at this size; help-about is monochrome below 32 px.
             //
             // text is set on each despite IconOnly: it never renders,
             // and it is what an assistive reader announces.
             ToolButton {
                 objectName: "aboutButton"
-                icon.name: "help-about"
+                icon.name: "dialog-information"
                 icon.color: "transparent"
-                icon.width: Math.max(32, Theme.iconSizeSmall)
-                icon.height: Math.max(32, Theme.iconSizeSmall)
+                icon.width: homeMenuButton.icon.width
+                icon.height: homeMenuButton.icon.height
                 display: AbstractButton.IconOnly
                 text: "About Seabass"
                 ToolTip.visible: hovered
@@ -353,8 +358,8 @@ Page {
                 objectName: "preferencesButton"
                 icon.name: "systemsettings"
                 icon.color: "transparent"
-                icon.width: Math.max(32, Theme.iconSizeSmall)
-                icon.height: Math.max(32, Theme.iconSizeSmall)
+                icon.width: homeMenuButton.icon.width
+                icon.height: homeMenuButton.icon.height
                 display: AbstractButton.IconOnly
                 text: "Preferences"
                 ToolTip.visible: hovered
@@ -372,9 +377,9 @@ Page {
                 // edge. HeartIcon fills that icon's outer contour.
                 contentItem: HeartIcon {
                     objectName: "donateHeart"
-                    implicitWidth: Theme.iconSizeSmall
-                    implicitHeight: Theme.iconSizeSmall
-                    color: Theme.danger
+                    implicitWidth: homeMenuButton.icon.width
+                    implicitHeight: homeMenuButton.icon.height
+                    color: "#aa0000"
                 }
                 display: AbstractButton.IconOnly
                 text: "Support Seabass"
@@ -846,10 +851,14 @@ Page {
                     Layout.fillWidth: true
 
                     GridLayout {
+                        objectName: "actionGrid"
                         Layout.fillWidth: true
                         Layout.topMargin: 8
                         Layout.bottomMargin: 8
-                        columns: 3
+                        // From the card's own width, not the grid's: the
+                        // grid's width follows its columns, and binding to
+                        // it would feed back.
+                        columns: Math.max(1, Math.min(3, Math.floor(delegateRoot.width / root.minimumCardWidth)))
                         columnSpacing: 12
                         rowSpacing: 12
 
