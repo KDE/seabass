@@ -78,6 +78,9 @@ public:
         // a sibling partition still mounted and being written, "OK to
         // unplug" on this row would be a lie that costs a save.
         SafeToUnplugRole,
+        // Whether OneLibrary's exportLibrary.db sits beside export.pdb, so
+        // the stick card can name every catalog on the stick.
+        HasOneLibraryRole,
     };
 
     explicit DetectedStickListModel(QObject *parent = nullptr);

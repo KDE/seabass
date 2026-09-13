@@ -50,6 +50,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/MessagePopup.qml
     qml/common/HealthCheckCard.qml
     qml/common/HomeIcon.qml
+    qml/common/HeartIcon.qml
     qml/common/PageTitle.qml
     qml/common/SeabassDialog.qml
     qml/common/SpaceReclaimBar.qml

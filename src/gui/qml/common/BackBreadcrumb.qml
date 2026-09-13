@@ -132,6 +132,10 @@ RowLayout {
         Component {
             id: iconContent
             HomeIcon {
+                // A quarter larger than its own default: the one crumb
+                // that is a picture, and the way back to the start.
+                implicitWidth: Theme.iconSizeSmall * 0.875
+                implicitHeight: Theme.iconSizeSmall * 0.875
                 color: Theme.textMuted
                 opacity: crumb.enabled ? 1.0 : 0.5
             }

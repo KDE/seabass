@@ -242,6 +242,9 @@ Page {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 12
+                // The gap Theme.headerBottomPadding leaves under a one-row header,
+                // kept here too, before this header's second row.
+                Layout.bottomMargin: Theme.headerBottomPadding - headerLayout.spacing
                 BackBreadcrumb {
                     stack: root.StackView.view
                     middleLabel: root.stickLabel

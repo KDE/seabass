@@ -173,6 +173,8 @@ TestCase {
         var icon = crumb.contentItem.item;
         verify(icon !== null, "the Home crumb has no icon item");
         verify(icon.width > 0 && icon.height > 0, "the Home icon has no size");
+        // A quarter larger than HomeIcon's own 0.7 of a small icon.
+        compare(icon.implicitHeight, Theme.iconSizeSmall * 0.875);
         // Deliberately no assertion that pixels were painted. Two were
         // tried -- grabbing the icon, and scanning its rect inside a grab
         // of the header -- and both passed with the icon's color set to

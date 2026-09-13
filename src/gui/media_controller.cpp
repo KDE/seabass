@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "media_controller.hpp"
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 
 #include "application/stick_path_match.hpp"
 
@@ -101,6 +102,11 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
         return QString::fromLatin1(application::StickIdentity::strengthName(stick.identity.strength()));
     case CapacityBytesRole:
         return QVariant::fromValue(static_cast<qulonglong>(stick.capacityBytes));
+    case HasOneLibraryRole:
+        // Looked up when asked rather than kept by the locator: one file
+        // test, and only the stick card asks.
+        return stick.rekordboxPath.has_value()
+               && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*stick.rekordboxPath);
     case SafeToUnplugRole: {
         if (stick.mounted) {
             return false;
@@ -146,6 +152,7 @@ QHash<int, QByteArray> DetectedStickListModel::roleNames() const
         {HardwareSerialRole, "hardwareSerial"},
         {IdentityStrengthRole, "identityStrength"},
         {SafeToUnplugRole, "safeToUnplug"},
+        {HasOneLibraryRole, "hasOneLibrary"},
     };
 }
 

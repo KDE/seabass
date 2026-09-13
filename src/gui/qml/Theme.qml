@@ -364,7 +364,8 @@ QtObject {
     // ToolBar's bottomPadding by every page's header; the other three
     // sides stay zeroed so the header's horizontal inset is pageMargin
     // and nothing else (see any page's header comment for why).
-    readonly property real headerBottomPadding: 8
+    // 16, doubled from 8: at 8 the breadcrumb sat crowded onto the body.
+    readonly property real headerBottomPadding: 16
     readonly property real pageMargin: 16
     readonly property real cardPadding: 16
     readonly property real sectionSpacing: 14   // between blocks down a page

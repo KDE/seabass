@@ -245,72 +245,101 @@ Page {
             // title, because this page's subject IS the app: it is the
             // one screen you arrive at rather than navigate to, and
             // "Home" named the position rather than the thing.
-            ColumnLayout {
+            // The name and the slogan on one line, sharing a baseline: one
+            // mark rather than a title with a line under it. The name is
+            // large and in the regular weight, a wordmark rather than a
+            // heading shouting over the page.
+            RowLayout {
                 objectName: "brandLockup"
-                spacing: 0
+                spacing: Theme.rowSpacing
                 // Same two colours AboutPage gives this pair, which is
                 // the only other place the lockup appears: the Kelp
-                // palette's text, and its accent lightened, so the name
-                // and the slogan read as one mark rather than as a title
-                // that happens to have a line under it.
+                // palette's text, and its accent lightened.
                 Label {
                     objectName: "brandName"
                     text: "Seabass"
                     font.family: Theme.titleFamily
-                    font.weight: Font.Bold
-                    font.pointSize: Theme.titleMedium
+                    font.weight: Font.Normal
+                    font.pointSize: Theme.titleLarge
                     color: Theme.text
+                    Layout.alignment: Qt.AlignBaseline
                 }
                 Label {
                     objectName: "brandSlogan"
                     text: "Your DJ Toolbox"
                     font.family: Theme.titleFamily
                     font.weight: Theme.titleWeight
-                    // A clear step down from the name above it: this is
-                    // the subtitle, and at the same size the pair read as
-                    // two competing titles.
+                    // A clear step down from the name beside it: at the
+                    // same size the pair read as two competing titles.
                     font.pointSize: Theme.subtitleSize
                     color: Qt.lighter(Theme.accent, 1.3)
+                    Layout.alignment: Qt.AlignBaseline
                 }
             }
             Item { Layout.fillWidth: true }
+            // What opens a library from this computer rather than from a
+            // stick, behind one button: each is used now and then, and as
+            // two header buttons plus a row under the list they crowded a
+            // page whose subject is the sticks.
             ToolButton {
-                objectName: "openBackupButton"
-                icon.name: "package-x-generic"
+                id: homeMenuButton
+                objectName: "homeMenuButton"
+                icon.name: "application-menu"
                 display: AbstractButton.IconOnly
-                text: "Browse a full stick backup"
-                ToolTip.visible: hovered
-                ToolTip.text: "Browse a full stick backup -- opened in place, nothing is unpacked"
-                onClicked: openBackupDialog.open()
+                text: "Backups and folders"
+                ToolTip.visible: hovered && !homeMenu.visible
+                ToolTip.text: "Backups and folders on this computer"
+                onClicked: homeMenu.visible ? homeMenu.close() : homeMenu.open()
+
+                Menu {
+                    id: homeMenu
+                    objectName: "homeMenu"
+                    // Opens down and to the left, so it stays in the window
+                    // from a button near the right edge.
+                    x: homeMenuButton.width - width
+                    y: homeMenuButton.height
+                    MenuItem {
+                        objectName: "browseFullBackupItem"
+                        text: "Browse a Full Stick Backup…"
+                        icon.name: "package-x-generic"
+                        onTriggered: openBackupDialog.open()
+                    }
+                    MenuItem {
+                        objectName: "browseMetadataBackupsItem"
+                        // Off rather than missing while the store is empty:
+                        // the entry says the feature exists.
+                        text: homeBackups.metadataTrackCount > 0 ? "Browse Metadata Backups"
+                                                                 : "Browse Metadata Backups (none yet)"
+                        icon.name: "view-list-details"
+                        enabled: homeBackups.metadataTrackCount > 0
+                        // No stick: the page opens on its browse half.
+                        onTriggered: root.metadataBackupRequested("", "", "", "")
+                    }
+                    MenuItem {
+                        objectName: "openFolderItem"
+                        text: "Open a Library From a Folder…"
+                        icon.name: "folder-open"
+                        onTriggered: openFolderDialog.open()
+                    }
+                }
             }
-            ToolButton {
-                objectName: "openFolderButton"
-                icon.name: "folder-open"
-                display: AbstractButton.IconOnly
-                text: "Open a library from a folder"
-                ToolTip.visible: hovered
-                ToolTip.text: "Open a library from a folder -- a copy on this computer, or a restored stick"
-                onClicked: openFolderDialog.open()
-            }
-            // Breeze's own icons rather than emoji.
+            // Breeze's own icons rather than emoji, and in colour.
             //
-            // These were plain emoji with no font.family, which the
-            // system resolves to the color emoji font: five full-color
-            // pictures in a header whose every other mark is a flat
-            // glyph. Named theme icons instead, so they are monochrome,
-            // follow the desktop's icon theme, and recolor with it.
-            //
-            // icon.name, not a bundled .svg: Breeze recolors through
-            // `fill:currentColor`, which Qt's SVG renderer does not
-            // resolve (see HomeIcon.qml, which had to become a Shape for
-            // exactly that reason). Going through QIcon::fromTheme gets
-            // the platform's own resolved, recolored icon instead.
+            // The monochrome action icons were three more grey marks in a
+            // header of grey marks. These are Breeze's full-colour ones,
+            // with icon.color "transparent" so the style does not tint
+            // them back to a single colour. Asked for at the small icon
+            // size, 32 px: Breeze has help-about in colour only from 32 up,
+            // and a smaller request resolves to the monochrome 22 and 24.
             //
             // text is set on each despite IconOnly: it never renders,
             // and it is what an assistive reader announces.
             ToolButton {
                 objectName: "aboutButton"
                 icon.name: "help-about"
+                icon.color: "transparent"
+                icon.width: Math.max(32, Theme.iconSizeSmall)
+                icon.height: Math.max(32, Theme.iconSizeSmall)
                 display: AbstractButton.IconOnly
                 text: "About Seabass"
                 ToolTip.visible: hovered
@@ -319,7 +348,10 @@ Page {
             }
             ToolButton {
                 objectName: "preferencesButton"
-                icon.name: "configure"
+                icon.name: "systemsettings"
+                icon.color: "transparent"
+                icon.width: Math.max(32, Theme.iconSizeSmall)
+                icon.height: Math.max(32, Theme.iconSizeSmall)
                 display: AbstractButton.IconOnly
                 text: "Preferences"
                 ToolTip.visible: hovered
@@ -329,27 +361,18 @@ Page {
             ToolButton {
                 id: donateButton
                 objectName: "donateButton"
-                // The one that stays in colour, deliberately: this is
-                // the only button in the header asking for something
-                // rather than offering something, and a red mark among
-                // five grey ones is what makes it findable.
+                // The only button in the header asking for something
+                // rather than offering something.
                 //
-                // Breeze's own heart: "love", the icon Amarok uses for
-                // loving a track. Same artwork as love-amarok, which is
-                // byte-for-byte the same path, and the one of the two
-                // that ships every size (16/22/24/32, plus @2x and @3x)
-                // in both the light and dark themes.
-                //
-                // Not emblem-favorite, which this first reached for and
-                // which is a five-pointed star. Breeze does have a heart;
-                // it is filed under an intent rather than under a shape,
-                // so searching the theme for "heart" or "favorite" finds
-                // everything except the heart.
-                //
-                // Its artwork is fill:currentColor, so icon.color is
-                // what colours it.
-                icon.name: "love"
-                icon.color: Theme.danger
+                // A filled heart, drawn. Breeze's own "love" is an outline,
+                // and a red outline still reads as a grey button with a red
+                // edge. HeartIcon fills that icon's outer contour.
+                contentItem: HeartIcon {
+                    objectName: "donateHeart"
+                    implicitWidth: Theme.iconSizeSmall
+                    implicitHeight: Theme.iconSizeSmall
+                    color: Theme.danger
+                }
                 display: AbstractButton.IconOnly
                 text: "Support Seabass"
                 ToolTip.visible: hovered
@@ -497,6 +520,7 @@ Page {
                 // never say anything. Every fake stick in the tests
                 // supplies it for that reason.
                 required property bool safeToUnplug
+                required property bool hasOneLibrary
                 required property bool isSdCard
                 required property bool isFolder
                 required property bool isBrowsedBackup
@@ -611,26 +635,6 @@ Page {
                                         text: delegateRoot.label
                                         color: Theme.text
                                     }
-                                    // "OK to unplug" where that is provably true,
-                                    // and the old description where it is not.
-                                    // The state is the same either way --
-                                    // nothing of ours is holding the
-                                    // device open -- but the reader asks
-                                    // this question right after pressing
-                                    // eject, and what they want to know
-                                    // is whether they may pull the stick
-                                    // out, not what the kernel calls the
-                                    // state it is now in. True for a
-                                    // stick that was never mounted too:
-                                    // an unmounted device is safe to pull
-                                    // however it got that way.
-                                    Label {
-                                        objectName: "unmountedLabel"
-                                        text: delegateRoot.mounted ? ""
-                                            : (delegateRoot.safeToUnplug ? "OK to unplug"
-                                                                         : "(not mounted)")
-                                        color: Theme.textMuted
-                                    }
                                     Item { Layout.fillWidth: true }
                                 }
                                 RowLayout {
@@ -676,10 +680,52 @@ Page {
                                     }
                                     Item { Layout.fillWidth: true }
                                 }
+                                // What is on the stick or, once it is
+                                // unmounted, whether it may be pulled. One
+                                // row for both, at one height, so pressing
+                                // eject changes what the row says without
+                                // moving the card under the pointer.
                                 RowLayout {
-                                    visible: delegateRoot.mounted
-                                    Label { text: "DeviceLibrary: " + (delegateRoot.hasRekordbox ? "yes" : "no"); color: Theme.text }
-                                    Label { text: "  Engine: " + (delegateRoot.hasEngine ? "yes" : "no"); color: Theme.text }
+                                    objectName: "stickStateRow"
+                                    spacing: Theme.tightSpacing
+                                    Layout.preferredHeight: Math.max(unmountedLabel.implicitHeight,
+                                                                     deviceLibraryBadge.implicitHeight)
+                                    // "OK to unplug" where that is provably
+                                    // true, and the old description where it
+                                    // is not. The state is the same either
+                                    // way -- nothing of ours holds the device
+                                    // open -- but the reader asks this right
+                                    // after pressing eject, and wants to know
+                                    // whether they may pull the stick out.
+                                    // True for a stick that was never mounted
+                                    // too: an unmounted device is safe to pull
+                                    // however it got that way.
+                                    Label {
+                                        id: unmountedLabel
+                                        objectName: "unmountedLabel"
+                                        visible: !delegateRoot.mounted
+                                        text: delegateRoot.safeToUnplug ? "OK to unplug" : "(not mounted)"
+                                        color: Theme.textMuted
+                                    }
+                                    StatusBadge {
+                                        id: deviceLibraryBadge
+                                        objectName: "deviceLibraryBadge"
+                                        visible: delegateRoot.mounted && delegateRoot.hasRekordbox
+                                        label: "DeviceLibrary"
+                                        badgeColor: Theme.accent
+                                    }
+                                    StatusBadge {
+                                        objectName: "oneLibraryBadge"
+                                        visible: delegateRoot.mounted && delegateRoot.hasOneLibrary
+                                        label: "OneLibrary"
+                                        badgeColor: Theme.accent
+                                    }
+                                    StatusBadge {
+                                        objectName: "engineBadge"
+                                        visible: delegateRoot.mounted && delegateRoot.hasEngine
+                                        label: "Engine"
+                                        badgeColor: Theme.accent
+                                    }
                                 }
                             }
                         }
@@ -1070,50 +1116,5 @@ Page {
             }
         }
 
-        // Under every stick, because what is in here is not about any of
-        // them: these are the two stores this computer keeps, and the
-        // question they answer ("what have I got saved?") is one you ask
-        // after looking at the sticks rather than before.
-        //
-        // Each is off when its store is empty rather than hidden. A
-        // button that is missing tells you nothing; one that is there
-        // and grey tells you the feature exists and that you have not
-        // used it yet, and its tooltip says how to start.
-        RowLayout {
-            objectName: "browseBackupsRow"
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-
-            Button {
-                objectName: "browseFullBackupsButton"
-                text: "Browse Full Backups"
-                icon.name: "package-x-generic"
-                enabled: homeBackups.fullBackupCount > 0
-                onClicked: openBackupDialog.open()
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                ToolTip.text: homeBackups.fullBackupCount > 0
-                    ? "Open one of the " + homeBackups.fullBackupCount
-                      + " full stick backups on this computer. Nothing is unpacked."
-                    : "No full stick backups yet. A stick's Backups card makes one."
-            }
-            Button {
-                objectName: "browseMetadataBackupsButton"
-                text: "Browse Metadata Backups"
-                icon.name: "view-list-details"
-                enabled: homeBackups.metadataTrackCount > 0
-                // No stick: the page opens on its browse half, which is
-                // the half this button is about. Backing up needs a
-                // stick and says so there.
-                onClicked: root.metadataBackupRequested("", "", "", "")
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                ToolTip.text: homeBackups.metadataTrackCount > 0
-                    ? "The cues, ratings and comments kept on this computer for "
-                      + homeBackups.metadataTrackCount + " tracks"
-                    : "Nothing backed up yet. A stick's Metadata Backup card fills this."
-            }
-            Item { Layout.fillWidth: true }
-        }
     }
 }

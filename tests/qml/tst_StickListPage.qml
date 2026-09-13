@@ -28,7 +28,7 @@ TestCase {
             label: "MAIN", mountPoint: "/media/MAIN", devicePath: "/dev/sdb1", mounted: true,
             hasRekordbox: true, hasEngine: true, rekordboxPath: "/media/MAIN/PIONEER",
             enginePath: "/media/MAIN/Engine Library", isSdCard: false, isFolder: false,
-            isBrowsedBackup: false, libraryId: "lib-main", safeToUnplug: false,
+            isBrowsedBackup: false, libraryId: "lib-main", safeToUnplug: false, hasOneLibrary: false,
         };
         for (var key in overrides) {
             s[key] = overrides[key];
@@ -510,29 +510,34 @@ TestCase {
         compare(page.mediaController.calls[0].indexOf("openFolder:"), 0);
     }
 
-    // The entry point itself: the toolbar button opens the folder picker.
-    function test_openFolderButtonIsOnTheToolbar() {
-        var page = makePage([], makeAdvice({}), {});
-        var button = null;
-        function walk(item) {
-            if (button !== null) return;
-            if (item.objectName === "openFolderButton") { button = item; return; }
-            for (var i = 0; i < item.children.length; ++i) walk(item.children[i]);
-        }
-        walk(page);
-        verify(button !== null, "no openFolderButton on the toolbar");
+    // Backups and folders on this computer sit behind one menu button in
+    // the header, where the folder button used to be, rather than as two
+    // header buttons and a row of buttons under the list.
+    function test_theHomeMenuOffersBackupsAndFolders() {
+        var page = makePage([], {});
+        var button = findChild(page, "homeMenuButton");
+        verify(button !== null, "the menu button must be in the header");
         compare(button.visible, true);
+        compare(findChild(page, "openBackupButton"), null, "the separate backup button is gone");
+        compare(findChild(page, "openFolderButton"), null, "the separate folder button is gone");
+        compare(findChild(page, "browseBackupsRow"), null, "the row under the list is gone");
 
-        // And its sibling, for browsing a backup archive in place.
-        var backupButton = null;
-        function walkBackup(item) {
-            if (backupButton !== null) return;
-            if (item.objectName === "openBackupButton") { backupButton = item; return; }
-            for (var i = 0; i < item.children.length; ++i) walkBackup(item.children[i]);
-        }
-        walkBackup(page);
-        verify(backupButton !== null, "no openBackupButton on the toolbar");
-        compare(backupButton.visible, true);
+        var menu = findChild(page, "homeMenu");
+        verify(menu !== null, "the button must carry the menu");
+        button.clicked();
+        tryCompare(menu, "opened", true);
+        var full = findChild(page, "browseFullBackupItem");
+        var meta = findChild(page, "browseMetadataBackupsItem");
+        var folder = findChild(page, "openFolderItem");
+        verify(full !== null && meta !== null && folder !== null, "all three entries must be in the menu");
+        compare(folder.text, "Open a Library From a Folder…");
+        // Off, not missing, while there is nothing to browse; and wired
+        // to the page's request when there is.
+        compare(meta.enabled, page.homeBackupsMetadataCount > 0);
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "metadataBackupRequested"});
+        meta.triggered();
+        compare(spy.count, 1);
+        menu.close();
     }
 
     // Finds the first descendant with `objectName`, anywhere on the page.
@@ -574,54 +579,25 @@ TestCase {
                 "an opened folder must not count as a stick being in");
     }
 
-    function test_theTwoStoresAreOfferedUnderTheList() {
-        // Offered and off, rather than absent, when a store is empty: a
-        // missing button says nothing, and a grey one says the feature
-        // exists and its tooltip says how to fill it.
-        var page = makePage([], {});
-        var full = findByName(page, "browseFullBackupsButton");
-        var meta = findByName(page, "browseMetadataBackupsButton");
-        verify(full !== null, "Browse Full Backups must exist");
-        verify(meta !== null, "Browse Metadata Backups must exist");
-        compare(full.visible, true);
-        compare(meta.visible, true);
-        compare(full.text, "Browse Full Backups");
-        compare(meta.text, "Browse Metadata Backups");
-        // The probes run against this test run's own sandboxed
-        // SEABASS_HOME, so the counts are whatever that happens to
-        // hold. What is pinned is that each button's enabled state is
-        // its own store's count and not the other one's, and not a
-        // constant.
-        var backups = findByName(page, "browseBackupsRow");
-        verify(backups !== null, "the row under the list must exist");
-        compare(full.enabled, page.homeBackupsFullCount > 0);
-        compare(meta.enabled, page.homeBackupsMetadataCount > 0);
-    }
-
-    function test_theDonateButtonIsAHeartAndTheOnlyColouredOne() {
-        // Pinned because it was got wrong once and the mistake was not
-        // visible in the source: Breeze files its heart under "love",
-        // the intent, rather than under a shape, so searching the theme
-        // for "heart" or "favorite" turns up everything except the
-        // heart -- and emblem-favorite, which looks like the obvious
-        // answer, is a five-pointed star.
+    function test_theHeaderIconsAreInColourAndTheHeartIsFilled() {
         var page = makePage([], {});
         var donate = findByName(page, "donateButton");
         verify(donate !== null, "the donate button must exist");
-        compare(donate.icon.name, "love", "Breeze's heart is called love, not emblem-favorite");
-        // And it is the one that stays coloured: the only button in the
-        // header asking for something rather than offering something.
-        compare(donate.icon.color, Theme.danger);
-        var grey = ["openBackupButton", "openFolderButton", "aboutButton", "preferencesButton"];
-        for (var i = 0; i < grey.length; ++i) {
-            var button = findByName(page, grey[i]);
-            verify(button !== null, grey[i] + " must exist");
-            // A theme icon rather than an emoji: a bare emoji resolves
-            // to the system's colour emoji font, which is how these came
-            // to be five full-colour pictures in a header of flat marks.
-            verify(button.icon.name.length > 0, grey[i] + " must use a theme icon, not an emoji");
-            verify(button.icon.color !== donate.icon.color,
-                   grey[i] + " must not be tinted like the donate button, or nothing marks that one out");
+        // Drawn, not a theme icon: Breeze's heart ("love") is an outline.
+        var heart = findByName(page, "donateHeart");
+        verify(heart !== null, "the donate button must draw the filled heart");
+        compare(donate.contentItem, heart);
+        compare(heart.color, Theme.danger);
+        var coloured = [{name: "aboutButton", icon: "help-about"}, {name: "preferencesButton", icon: "systemsettings"}];
+        for (var i = 0; i < coloured.length; ++i) {
+            var button = findByName(page, coloured[i].name);
+            verify(button !== null, coloured[i].name + " must exist");
+            // A theme icon rather than an emoji, and untinted: a tint is
+            // what flattens a colour icon to a single colour.
+            compare(button.icon.name, coloured[i].icon);
+            compare(button.icon.color.a, 0, coloured[i].name + " must not be tinted");
+            // Breeze has these in colour only from 32 px up.
+            verify(button.icon.width >= 32 && button.icon.height >= 32, coloured[i].name + " must ask for 32 px or more");
         }
     }
 
@@ -638,6 +614,13 @@ TestCase {
         // read as two competing titles.
         verify(slogan.font.pointSize < name.font.pointSize,
                "the slogan must be a clear step smaller than the name");
+        // A wordmark: regular weight, larger than a page title.
+        compare(name.font.weight, Font.Normal, "the name is not bold");
+        compare(name.font.pointSize, Theme.titleLarge);
+        // Beside the name, on its baseline, rather than under it.
+        verify(slogan.x >= name.x + name.width, "the slogan sits to the right of the name");
+        compare(Math.round(slogan.y + slogan.baselineOffset), Math.round(name.y + name.baselineOffset),
+                "the slogan shares the name's baseline");
     }
 
     function test_aLongMountPointElidesInsteadOfPushingTheCardWide() {
@@ -697,7 +680,34 @@ TestCase {
         var page = makePage([makeStick({label: "MAIN", mounted: true})], {});
         var label = findByName(page, "unmountedLabel");
         verify(label !== null, "the unmounted label must exist");
-        compare(label.text, "");
+        compare(label.visible, false, "a mounted stick shows its catalogs in that row instead");
+    }
+
+    // What is on the stick is shown as labels, one per catalog, and only
+    // for the catalogs that are there.
+    function test_theCardLabelsEachCatalogOnTheStick() {
+        var page = makePage([makeStick({hasRekordbox: true, hasEngine: false, hasOneLibrary: true})], {});
+        var device = findByName(page, "deviceLibraryBadge");
+        verify(device !== null, "the DeviceLibrary label must exist");
+        compare(device.visible, true);
+        compare(device.label, "DeviceLibrary");
+        compare(findByName(page, "oneLibraryBadge").visible, true);
+        compare(findByName(page, "oneLibraryBadge").label, "OneLibrary");
+        compare(findByName(page, "engineBadge").visible, false);
+    }
+
+    // Ejecting swaps the labels for "OK to unplug" in the same row, at the
+    // same place and height, so the card does not jump under the pointer.
+    function test_ejectingDoesNotMoveTheRow() {
+        var mounted = makePage([makeStick({mounted: true})], {});
+        var unmounted = makePage([makeStick({mounted: false, safeToUnplug: true})], {});
+        var mountedRow = findByName(mounted, "stickStateRow");
+        var unmountedRow = findByName(unmounted, "stickStateRow");
+        verify(mountedRow !== null && unmountedRow !== null, "the state row must exist");
+        compare(unmountedRow.visible, true, "the row stays when the stick is unmounted");
+        compare(findByName(unmounted, "unmountedLabel").visible, true);
+        compare(unmountedRow.height, mountedRow.height);
+        compare(unmountedRow.mapToItem(unmounted, 0, 0).y, mountedRow.mapToItem(mounted, 0, 0).y);
     }
 
     // The path this card really showed abbreviated. Its natural width is

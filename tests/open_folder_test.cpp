@@ -399,6 +399,25 @@ int main(int argc, char **argv)
         std::cout << "case 11 (a replaced folder is announced gone) OK\n";
     }
 
+    // The stick card names every catalog on the stick, OneLibrary among
+    // them: its exportLibrary.db sits beside export.pdb.
+    {
+        const fs::path withOneLibrary = scratch / "with-onelibrary";
+        makeStickShapedFolder(withOneLibrary, true, false);
+        writeFile(withOneLibrary / "PIONEER" / "rekordbox" / "exportLibrary.db");
+        MediaController controller;
+        assert(controller.openFolder(QString::fromStdString(withOneLibrary.string())).isEmpty());
+        const auto *model = controller.sticksModel();
+        const int row = rowForMountPoint(*model, withOneLibrary.string());
+        assert(row >= 0);
+        assert(model->data(model->index(row), DetectedStickListModel::HasOneLibraryRole).toBool());
+        assert(controller.openFolder(QString::fromStdString(rbOnly.string())).isEmpty());
+        const int plain = rowForMountPoint(*model, rbOnly.string());
+        assert(plain >= 0);
+        assert(!model->data(model->index(plain), DetectedStickListModel::HasOneLibraryRole).toBool());
+        std::cout << "case 12 (hasOneLibrary follows exportLibrary.db) OK\n";
+    }
+
     fs::remove_all(scratch);
     std::cout << "open_folder_test: all cases passed\n";
     return 0;

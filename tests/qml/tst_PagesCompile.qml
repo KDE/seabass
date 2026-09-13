@@ -126,6 +126,48 @@ TestCase {
         ];
     }
 
+    function crumbIn(item) {
+        if (item.middleClickable !== undefined && item.title !== undefined) {
+            return item;
+        }
+        for (var i = 0; i < item.children.length; ++i) {
+            var found = crumbIn(item.children[i]);
+            if (found) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    // Room under the breadcrumb before a page's content: on a page with a
+    // one-row header, twice the 8 px it used to leave; on Browse Library,
+    // whose header carries a second row, 8 px more than the 11 it had.
+    //
+    // Pixels measured from the breadcrumb itself, whose height is the
+    // style's, so only under the style the suite runs in.
+    function test_theBreadcrumbHasRoomUnderIt() {
+        if (typeof screenshotDir !== "undefined" && screenshotDir.length > 0) {
+            skip("measured against the default style, not the screenshot style");
+        }
+        var backups = createTemporaryObject(Qt.createComponent(qmlDir + "BackupsPage.qml"), testCase, stickProps({}));
+        verify(backups !== null);
+        waitForRendering(backups);
+        var crumb = crumbIn(backups.header);
+        verify(crumb !== null, "BackupsPage must have a breadcrumb");
+        // The body starts pageMargin below the header.
+        var bodyTop = backups.header.height + Theme.pageMargin;
+        compare(Math.round(bodyTop - crumb.mapToItem(backups, 0, crumb.height).y), 16);
+
+        var scan = createTemporaryObject(Qt.createComponent(qmlDir + "ScanPage.qml"), testCase,
+                                         stickProps({playbackController: realPlayback, appSettingsController: realAppSettings}));
+        verify(scan !== null);
+        waitForRendering(scan);
+        var scanCrumb = crumbIn(scan.header);
+        var search = findChild(scan, "searchField");
+        verify(scanCrumb !== null && search !== null);
+        compare(Math.round(search.mapToItem(scan, 0, 0).y - scanCrumb.mapToItem(scan, 0, scanCrumb.height).y), 19);
+    }
+
     function test_everyPageCompiles() {
         var names = pageSpecs().map(function(spec) { return spec.name; }).concat(windowPages);
         var failures = [];
