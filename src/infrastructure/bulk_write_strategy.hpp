@@ -35,8 +35,8 @@ bool shouldUseWholeFileReplace(const BulkWriteStrategyInputs &inputs);
 // Soft preflight only for the whole-file-replace route above: false just
 // means "use the direct per-item writes instead", never an error.
 // Running out of space mid-swap (old file + new temp file briefly
-// coexisting on the target's filesystem, plus the scratch copy on temp
-// storage) would be a strictly worse failure mode than the simpler path
+// coexisting on the target's filesystem, plus the scratch copy and its
+// per-change checkpoint on temp storage) would be a strictly worse failure mode than the simpler path
 // this falls back to. Shared by every call site that stages a whole-file
 // replace (sync, cleanup, library-consistency repair) rather than
 // duplicating the same two fs::space() checks in each.

@@ -71,7 +71,9 @@ bool hasRoomForWholeFileReplace(const std::filesystem::path &targetDir, std::uin
     if (ec) {
         return false;
     }
-    return targetSpace.available >= 2 * existingFileBytes && tempSpace.available >= existingFileBytes;
+    // Temp holds the scratch copy and, while each change runs, that copy's
+    // checkpoint (SaveContext::protectForThisChange()): two of it.
+    return targetSpace.available >= 2 * existingFileBytes && tempSpace.available >= 2 * existingFileBytes;
 }
 
 }  // namespace seabass::infrastructure

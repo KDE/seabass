@@ -296,6 +296,17 @@ void SaveContext::protectForThisChange(const std::string &file)
                 fs::create_directories(dir);
                 m_checkpointDir.emplace(dir);
             }
+            // Refused up front with the numbers, rather than as a bare "no
+            // space left" halfway through a copy. Either way the change
+            // fails before it has written anything.
+            const std::uintmax_t size = fs::file_size(member);
+            const std::uintmax_t available = fs::space(m_checkpointDir->path).available;
+            if (available < size) {
+                throw std::runtime_error("not enough temporary space to protect " + fs::path(member).filename().string()
+                                         + " before writing it: needs " + std::to_string(size / (1024 * 1024))
+                                         + " MB in " + m_checkpointDir->path.parent_path().string() + ", "
+                                         + std::to_string(available / (1024 * 1024)) + " MB free");
+            }
             checkpoint.copy = (m_checkpointDir->path / std::to_string(m_checkpoints.size())).string();
             fs::copy_file(member, checkpoint.copy, fs::copy_options::overwrite_existing);
         }
@@ -306,6 +317,31 @@ void SaveContext::protectForThisChange(const std::string &file)
 void SaveContext::redirectWrites(const std::string &liveFile, const std::string &writtenFile)
 {
     m_redirects[application::normalizedPathKey(liveFile)] = writtenFile;
+    // The live file is not written again until the session commits, after
+    // every change, so a copy of it taken earlier in this change is dead
+    // weight -- a whole database held in temp beside the scratch copy and
+    // that copy's own checkpoint.
+    std::vector<std::string> live{liveFile};
+    if (fs::path(liveFile).extension() == ".db") {
+        live.push_back(liveFile + "-wal");
+        live.push_back(liveFile + "-journal");
+    }
+    for (const std::string &member : live) {
+        const std::string key = application::normalizedPathKey(member);
+        if (m_protected.erase(key) == 0) {
+            continue;
+        }
+        std::erase_if(m_checkpoints, [&](const Checkpoint &checkpoint) {
+            if (application::normalizedPathKey(checkpoint.original) != key) {
+                return false;
+            }
+            std::error_code ec;
+            if (!checkpoint.copy.empty()) {
+                fs::remove(checkpoint.copy, ec);
+            }
+            return true;
+        });
+    }
 }
 
 void SaveContext::endChange()

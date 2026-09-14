@@ -1012,28 +1012,6 @@ void CleanupController::attachSession()
                     }
                 }
             });
-            // A save that stopped part-way leaves the groups it did not get
-            // to still staged -- with plans read before it ran. The change
-            // that failed may already have written some of its catalogs, and
-            // the cache is only refreshed for formats of changes that
-            // completed, so saving again replays those plans against rows
-            // that are gone. On RV2 the retry failed on exactly that: an
-            // Engine row the first attempt had removed. Drop them, re-read
-            // every catalog, and let the DJ stage from what is there now.
-            connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &summary) {
-                if (summary.value(QStringLiteral("error")).toString().isEmpty() || m_stagedBySurvivor.empty()) {
-                    return;
-                }
-                QMetaObject::invokeMethod(
-                    this,
-                    [this]() {
-                        unstageAll();
-                        LibraryCatalogCache::instance().invalidateEveryCatalogOn(
-                            fs::path(m_path.toStdString()).parent_path().string());
-                        rescan();
-                    },
-                    Qt::QueuedConnection);
-            });
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
                 m_stagedBySurvivor.clear();
                 m_model.clearStaged();
