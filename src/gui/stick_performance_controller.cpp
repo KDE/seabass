@@ -230,9 +230,10 @@ WalkResult walk(const fs::path &dir, Accept accept, const application::Cancellat
             if (skipHidden && infrastructure::stick_backup::isExcludedFromBackup(relative, false)) {
                 continue;
             }
-            if (accept(*it)) {
+            const std::uint64_t size = sizeOf(*it);
+            if (accept(*it, size)) {
                 result.files.push_back(it->path().string());
-                result.sizes.push_back(sizeOf(*it));
+                result.sizes.push_back(size);
             }
         }
     }
@@ -383,11 +384,11 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             WalkResult analysis;
             if (!rekordboxPath.isEmpty()) {
                 analysis = walk(fs::path(rekordboxPath.toStdString()) / "USBANLZ",
-                                [](const fs::directory_entry &e) { return e.path().filename() == "ANLZ0000.DAT"; }, cancel);
+                                [](const fs::directory_entry &e, std::uint64_t) { return e.path().filename() == "ANLZ0000.DAT"; }, cancel);
             }
             if (analysis.files.empty() && !enginePath.isEmpty()) {
                 analysis = walk(fs::path(enginePath.toStdString()) / "Database2" / "OverviewData",
-                                [](const fs::directory_entry &) { return true; }, cancel);
+                                [](const fs::directory_entry &, std::uint64_t) { return true; }, cancel);
             }
             sampleKind = QStringLiteral("library");
 
@@ -396,7 +397,7 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
                 // stick big enough to stream from and seek in will do, and
                 // any small one stands in for an analysis file.
                 auto everything = walk(fs::path(stickRoot),
-                                       [](const fs::directory_entry &e) { return sizeOf(e) >= 4 * 1024; }, cancel, true);
+                                       [](const fs::directory_entry &, std::uint64_t size) { return size >= 4 * 1024; }, cancel, true);
                 analysis.folders = everything.folders;
                 for (std::size_t i = 0; i < everything.files.size(); ++i) {
                     (everything.sizes[i] >= 64 * 1024 ? audioFiles : analysis.files).push_back(everything.files[i]);

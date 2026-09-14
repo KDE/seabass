@@ -311,6 +311,11 @@ int main()
         assert(afterPortChange.state == TrendState::Unknown);
         assert(afterPortChange.summary.find("different port") != std::string::npos);
         assert(assessTrend(84, 0.8, 0, "", 0.0, fastPort).state == TrendState::Slowing);  // unknown link: compared
+        // No score this time (nothing measured) is not a port change.
+        auto unmeasured = assessTrend(0, 0.0, 0, "", 480.0, earlier);
+        assert(unmeasured.state == TrendState::Unknown);
+        assert(unmeasured.summary.find("different port") == std::string::npos);
+        assert(unmeasured.summary.find("Nothing was measured") != std::string::npos);
         std::cout << "case 10 (trend over earlier measurements) OK\n";
     }
 

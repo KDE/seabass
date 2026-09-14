@@ -301,7 +301,12 @@ TrendAssessment assessTrend(int currentScore, double currentRandomReadMs, int cu
         }
     }
     t.earlierCount = static_cast<int>(earlier.size());
-    if (earlier.empty() || currentScore <= 0) {
+    if (currentScore <= 0) {
+        t.state = TrendState::Unknown;
+        t.summary = "Nothing was measured this time, so there is no trend to report.";
+        return t;
+    }
+    if (earlier.empty()) {
         t.state = TrendState::Unknown;
         t.summary = allEarlier.empty()
             ? "First measurement of this stick on this computer; the next one will show whether it is changing."
