@@ -95,11 +95,14 @@ std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoi
         return plan.match.trackA.format == format || plan.match.trackB.format == format;
     };
     // Both sides, not just trackA: see the header for why one side's path
-    // is not "the file".
+    // is not "the file". A streaming track has no file of its own, and its
+    // path can come out as the Engine Library folder itself, which every
+    // streaming track would share -- keyed, two unrelated tracks would merge
+    // into one card and hold each other's plans back.
     const auto keysOf = [&fileKey](const SyncPlan &plan) {
         std::vector<std::string> keys;
         for (const Track *track : {&plan.match.trackA, &plan.match.trackB}) {
-            if (track->filePath.empty()) {
+            if (track->filePath.empty() || !track->streamingSource.empty()) {
                 continue;
             }
             std::string key = fileKey(track->filePath);

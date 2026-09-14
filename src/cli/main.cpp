@@ -802,6 +802,12 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
             engineTracks = scanPath(
                 std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(*resolved.enginePath),
                 *resolved.enginePath);
+            // Streaming tracks (TIDAL) have no real local file. Never sync
+            // cues onto/from one, same as the app. See
+            // domain::Track::streamingSource's own doc comment.
+            engineTracks.erase(std::remove_if(engineTracks.begin(), engineTracks.end(),
+                                              [](const seabass::domain::Track &t) { return !t.streamingSource.empty(); }),
+                               engineTracks.end());
         }
         if (hasOneLibrary) {
             oneLibraryDbFile =

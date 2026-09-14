@@ -330,6 +330,47 @@ int main()
             assert(choices.size() == 1 && plans.empty());
         }
         std::cout << "case hot-cue-choice-title-match (a choice holds both of its paths) OK\n";
+
+        // Two choices with different keys, joined only through the Engine
+        // path they share. The Engine<->OneLibrary choice comes first, so its
+        // group already exists when the rekordbox choice arrives and must be
+        // merged into it: without the join there would be two cards, and the
+        // plan naming only OneLibrary's path would slip through.
+        {
+            const auto rb = track("rekordbox", "r1", "/media/A/Contents/song.mp3");
+            const auto en = track("engine", "e1", "/media/B/Music/song.mp3");
+            const auto ol = track("onelibrary", "o1", "/media/C/Contents/song.mp3");
+            std::vector<SyncPlan> plans = {choiceBetween(en, ol), choiceBetween(rb, en),
+                                           plainBetween(track("engine", "e7", "/media/D/x.mp3"), ol)};
+            const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(
+                plans, seabass::application::normalizedPathKey);
+            assert(choices.size() == 1 && "two choices linked through Engine's path are one track");
+            assert(choices[0].sourceA.format == "rekordbox");
+            assert(plans.empty() && "a plan sharing only the far end of the joined group still waits");
+        }
+        std::cout << "case hot-cue-choice-joined-groups (choices with different keys meet through a shared path) OK\n";
+
+        // Streaming tracks have no file of their own, and their paths can all
+        // be the Engine Library folder. Two rekordbox tracks title-matched to
+        // two different streaming tracks are two cards, and a plan for a
+        // third streaming track is not held back by either.
+        {
+            auto streaming = [&](const std::string &id) {
+                auto t = track("engine", id, "/media/B/Engine Library");
+                t.streamingSource = "TIDAL";
+                return t;
+            };
+            std::vector<SyncPlan> plans = {
+                choiceBetween(track("rekordbox", "r1", "/media/A/Contents/one.mp3"), streaming("s1")),
+                choiceBetween(track("rekordbox", "r2", "/media/A/Contents/two.mp3"), streaming("s2")),
+                plainBetween(track("rekordbox", "r3", "/media/A/Contents/three.mp3"), streaming("s3"))};
+            const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(
+                plans, seabass::application::normalizedPathKey);
+            assert(choices.size() == 2 && "two tracks, two cards, even though their streaming paths are equal");
+            assert(plans.size() == 1 && plans[0].match.trackA.sourceId == "r3"
+                   && "a streaming track's shared path holds nothing back");
+        }
+        std::cout << "case hot-cue-choice-streaming (streaming tracks share no file) OK\n";
     }
 
     std::cout << "All cross_source_sync_conflict_test cases passed.\n";
