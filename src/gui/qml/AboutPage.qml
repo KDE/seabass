@@ -98,7 +98,7 @@ Page {
                     text: "• Browses tracks, playlists and cue points across every catalog on a stick\n"
                         + "• Finds duplicate tracks and consolidates their cue points onto every copy\n"
                         + "• Syncs cues between every pair of catalogs present on the same stick\n"
-                        + "• Lists and cleans up the automatic backups made before every write\n"
+                        + "• Backs up a whole stick into one file on this computer, and browses or deletes those backups\n"
                         + "• Backs up cues to this computer and restores them if a stick's cues are lost\n"
                         + "• Shows a stick's saved Rekordbox player settings"
                     wrapMode: Text.WordWrap

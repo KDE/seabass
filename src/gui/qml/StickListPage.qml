@@ -1037,7 +1037,7 @@ Page {
                                 case "back-up-new":
                                 case "no-backups": return "No full stick backup of this library yet";
                                 case "different-library": return delegateRoot.advice.detail + " Back it up as new.";
-                                default: return "Local cue backup/restore and automatic write backups";
+                                default: return "Back up the whole stick, and manage its backups on this computer";
                                 }
                             }
                             cardIcon: "backup"

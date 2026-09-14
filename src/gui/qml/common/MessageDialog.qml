@@ -13,11 +13,11 @@ import SeabassGui
 //   MessageDialog {
 //       severity: SeabassDialog.Warning
 //       title: "Delete This Backup?"
-//       headline: "This permanently deletes this one backup copy."
-//       detailText: "It never touches the stick's live data."
+//       headline: "This permanently deletes this backup from this computer."
+//       detailText: "The stick itself is not touched."
 //       acceptText: "Delete"
 //       destructive: true
-//       onAccepted: backupsController.deleteBackup(targetId)
+//       onAccepted: controller.deleteBackup(archivePath)
 //   }
 //
 // `destructive` is the important one. It marks the action button, and it

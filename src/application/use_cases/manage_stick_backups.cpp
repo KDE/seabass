@@ -91,9 +91,10 @@ DeleteStickBackupResult ManageStickBackups::remove(const fs::path &archivePath)
     // would try to recover an archive that is no longer there.
     std::error_code ignored;
     fs::remove(infrastructure::stick_backup::journal::journalPathFor(archivePath), ignored);
-    // And the lock file, while it is still held: with the archive gone there
-    // is nothing left for anyone to take it for.
-    fs::remove(lockPath, ignored);
+    // The lock file stays. Removing a lock file is how two writers end up
+    // holding "the" lock at once -- one on the unlinked file, one on a new
+    // one -- and on Windows a held lock file cannot be removed at all. The
+    // next backup under this name takes it again.
     result.status = DeleteStickBackupResult::Status::Deleted;
     return result;
 }

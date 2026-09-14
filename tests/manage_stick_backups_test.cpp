@@ -6,7 +6,7 @@
 // first, track and playlist counts from the recorded fingerprint, an
 // unreadable file listed rather than hidden) and deleting (refused while
 // something holds the archive's write lock, and complete when it goes:
-// archive, journal and lock file).
+// archive and journal).
 
 #include <cassert>
 #include <filesystem>
@@ -106,7 +106,6 @@ int main()
         assert(deleted.status == DeleteStickBackupResult::Status::Deleted);
         assert(!fs::exists(main));
         assert(!fs::exists(journal::journalPathFor(main)) && "the journal goes with it");
-        assert(!fs::exists(journal::lockPathFor(main)) && "and so does the lock file");
         assert(fs::exists(spare) && "nothing else is touched");
 
         assert(ManageStickBackups::remove(broken).status == DeleteStickBackupResult::Status::Deleted
@@ -118,7 +117,7 @@ int main()
         const auto left = ManageStickBackups::list(directory, {});
         assert(left.size() == 1 && left[0].description.stickLabel == "SPARE");
     }
-    std::cout << "case 3 (delete removes archive, journal and lock; a missing one fails) OK\n";
+    std::cout << "case 3 (delete removes archive and journal; a missing one fails) OK\n";
 
     fs::remove_all(root, ec);
     std::cout << "manage_stick_backups_test passed\n";

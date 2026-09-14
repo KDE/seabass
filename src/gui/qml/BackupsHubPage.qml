@@ -68,7 +68,15 @@ Page {
             }
         }
     }
-    StackView.onActivated: root.refreshLocks()
+    // Coming back from Manage Backups (or a backup): a deleted or new
+    // archive makes the advice stale -- the Full Stick Backup card and the
+    // backup handed on to Manage Backups both come from it.
+    StackView.onActivated: {
+        if (root.backupAdvisor !== null && typeof root.backupAdvisor.reassessAll === "function") {
+            root.backupAdvisor.reassessAll();
+        }
+        root.refreshLocks();
+    }
 
     readonly property bool hasRekordbox: rekordboxPath.length > 0
     readonly property bool hasEngine: enginePath.length > 0

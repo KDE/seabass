@@ -51,7 +51,8 @@ public:
     static std::vector<ManagedStickBackup> list(const std::filesystem::path &directory,
                                                 const std::filesystem::path &currentArchive);
 
-    // Deletes the archive together with its journal and lock file. Takes
+    // Deletes the archive together with its journal (the lock file stays;
+    // see the definition for why). Takes
     // the archive's own write lock first -- the one BackupStick,
     // RestoreStickBackup and CompactStickBackup hold for their whole run --
     // so an archive something is still writing is refused, not pulled out
