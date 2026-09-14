@@ -48,6 +48,14 @@ CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<S
     std::map<std::pair<std::string, std::string>, std::vector<const SyncPlan *>> byTarget;
     for (const auto &plan : actionablePlans) {
         const Track *target = sidesOf(plan).target;
+        // A target with no file (or a streaming one) shares its empty path
+        // with every other such row. Grouped, two unrelated plans would read
+        // as one conflict and resolving it would write one track's cues onto
+        // the other. It can only be one plan's target, so it passes through.
+        if (target->filePath.empty() || !target->streamingSource.empty()) {
+            result.nonConflicting.push_back(plan);
+            continue;
+        }
         byTarget[{target->format, target->filePath}].push_back(&plan);
     }
 

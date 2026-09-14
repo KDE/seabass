@@ -148,6 +148,29 @@ int main()
         std::cout << "case d (junk 0:00 cue flagged as a hint, conflict still reported, not silently resolved) OK\n";
     }
 
+    // Round 9's finding: two Engine targets with no file shared the key
+    // {"engine", ""}, so a rekordbox plan onto one and a OneLibrary plan onto
+    // the other read as one conflict -- and resolving it wrote one track's
+    // cues onto the other. Rows without a file are never grouped.
+    {
+        auto rb = makeTrack("rekordbox", "r1", "/media/A/Contents/x.mp3", {hot(1, 1000.0)});
+        auto ol = makeTrack("onelibrary", "o1", "/media/A/Contents/y.mp3", {hot(1, 9000.0)});
+        auto engineX = makeTrack("engine", "eX", "", {});
+        auto engineY = makeTrack("engine", "eY", "", {});
+        auto split = CrossSourceConflictDetector::detect(
+            {makePlan(rb, engineX, {hot(1, 1000.0)}), makePlan(ol, engineY, {hot(1, 9000.0)})});
+        assert(split.conflicts.empty() && "two tracks without a file are not one conflict");
+        assert(split.nonConflicting.size() == 2);
+
+        auto streamingX = makeTrack("engine", "sX", "/media/B/Engine Library", {});
+        auto streamingY = makeTrack("engine", "sY", "/media/B/Engine Library", {});
+        streamingX.streamingSource = streamingY.streamingSource = "TIDAL";
+        auto streamingSplit = CrossSourceConflictDetector::detect(
+            {makePlan(rb, streamingX, {hot(1, 1000.0)}), makePlan(ol, streamingY, {hot(1, 9000.0)})});
+        assert(streamingSplit.conflicts.empty() && streamingSplit.nonConflicting.size() == 2);
+        std::cout << "case e (targets without a file, or streaming ones, are never grouped into a conflict) OK\n";
+    }
+
     // A hot cue conflict between one pair's own two sides is taken out of the
     // plans as a choice, and never left behind to be applied on a clock.
     {

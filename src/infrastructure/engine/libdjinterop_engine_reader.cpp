@@ -180,27 +180,61 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
     std::unordered_map<int64_t, std::string> result;
     std::string dbPath = (std::filesystem::path(engineLibraryPath) / "Database2" / "m.db").string();
 
-    // Failing here must be heard, not return an empty map: without it every
-    // streaming track reads as an ordinary local one, and sync, merge and
-    // clean-up all treat it as a file on the stick.
+    // Two outcomes that look alike and are not. An Engine 1.x library has no
+    // Database2/m.db, and a 2.x one older than schema 2.18 no streamingSource
+    // column, because neither has streaming tracks: that is an empty map, and
+    // nothing to warn about. Anything else going wrong means
+    // streaming tracks cannot be told apart, and a streaming track read as a
+    // local one looks like a broken file -- which Library Health offers to
+    // repair by deleting the row. So that throws, and the read fails.
+    std::error_code existsError;
+    if (!std::filesystem::exists(dbPath, existsError) && !existsError) {
+        return result;
+    }
+
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    const auto fail = [&db, &dbPath](const std::string &what) {
         std::string message = db ? sqlite3_errmsg(db) : "out of memory";
         if (db) {
             sqlite3_close(db);
         }
-        throw std::runtime_error("cannot open " + dbPath + ": " + message);
+        throw std::runtime_error("cannot tell streaming tracks apart in " + dbPath + ": " + what + ": " + message);
+    };
+    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        fail("open");
+    }
+
+    bool hasColumn = false;
+    {
+        sqlite3_stmt *columns = nullptr;
+        if (sqlite3_prepare_v2(db, "PRAGMA table_info(Track)", -1, &columns, nullptr) != SQLITE_OK) {
+            fail("list Track columns");
+        }
+        int step;
+        while ((step = sqlite3_step(columns)) == SQLITE_ROW) {
+            const unsigned char *name = sqlite3_column_text(columns, 1);
+            if (name && std::string(reinterpret_cast<const char *>(name)) == "streamingSource") {
+                hasColumn = true;
+            }
+        }
+        sqlite3_finalize(columns);
+        if (step != SQLITE_DONE) {
+            fail("list Track columns");
+        }
+    }
+    if (!hasColumn) {
+        sqlite3_close(db);
+        return result;
     }
 
     sqlite3_stmt *stmt = nullptr;
     const char *sql = "SELECT id, streamingSource FROM Track WHERE streamingSource IS NOT NULL AND streamingSource != ''";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        std::string message = sqlite3_errmsg(db);
-        sqlite3_close(db);
-        throw std::runtime_error(message);
+        fail("query");
     }
 
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
         int64_t trackId = sqlite3_column_int64(stmt, 0);
         const unsigned char *sourceText = sqlite3_column_text(stmt, 1);
         if (!sourceText) {
@@ -209,6 +243,9 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
         result[trackId] = reinterpret_cast<const char *>(sourceText);
     }
     sqlite3_finalize(stmt);
+    if (step != SQLITE_DONE) {
+        fail("read");
+    }
     sqlite3_close(db);
     return result;
 }
@@ -287,12 +324,8 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 
     std::unordered_map<int64_t, std::string> streamingSourceByTrackId;
     std::unordered_map<int64_t, std::int64_t> lastEditTimeByTrackId;
-    try {
-        streamingSourceByTrackId = readStreamingSources(m_engineLibraryPath);
-    } catch (const std::exception &e) {
-        m_progress->warn(std::string("could not read streaming sources, so streaming tracks will look like local files: ")
-                         + e.what());
-    }
+    // Not caught: see readStreamingSources for why a failure fails the read.
+    streamingSourceByTrackId = readStreamingSources(m_engineLibraryPath);
     try {
         lastEditTimeByTrackId = readLastEditTimes(m_engineLibraryPath);
     } catch (const std::exception &e) {

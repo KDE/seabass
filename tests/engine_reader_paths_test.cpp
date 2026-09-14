@@ -16,6 +16,8 @@
 
 #include <sqlite3.h>
 
+#include <djinterop/djinterop.hpp>
+
 #include <cassert>
 #include <filesystem>
 #include <iostream>
@@ -105,6 +107,37 @@ int main()
     std::cout << "case 1 (an empty relative path gives no file, and streaming sources are read) OK\n";
 
     fs::remove_all(library.parent_path(), ec);
+
+    // An Engine 1.x library: m.db at its top level, no Database2/, and no
+    // streamingSource column. Reading streaming sources must not fail there
+    // -- failing now fails the whole read -- and it has nothing to warn about.
+    {
+        const fs::path legacy = seabass::testing::scratchRoot() / "seabass_engine_reader_paths_v1" / "Engine Library";
+        fs::remove_all(legacy.parent_path(), ec);
+        fs::create_directories(legacy.parent_path());
+        {
+            auto db = djinterop::engine::create_database(legacy.string(), djinterop::engine::latest_v1_schema);
+            djinterop::track_snapshot snapshot;
+            snapshot.title = "Legacy";
+            snapshot.relative_path = "../Music/legacy.mp3";
+            db.create_track(snapshot);
+        }
+        assert(fs::exists(legacy / "m.db") && !fs::exists(legacy / "Database2"));
+
+        RecordingReporter legacyReporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader legacyReader(legacy.string());
+        legacyReader.setProgressReporter(legacyReporter);
+        const auto legacyTracks = legacyReader.readAll();
+        assert(legacyTracks.size() == 1);
+        assert(legacyTracks[0].streamingSource.empty());
+        assert(!legacyTracks[0].filePath.empty());
+        for (const auto &warning : legacyReporter.warnings) {
+            assert(warning.find("streaming") == std::string::npos);
+        }
+        fs::remove_all(legacy.parent_path(), ec);
+    }
+    std::cout << "case 2 (an Engine 1.x library reads, with no streaming sources to find) OK\n";
+
     std::cout << "engine_reader_paths_test passed\n";
     return 0;
 }
