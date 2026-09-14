@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 
+#include "application/path_key.hpp"
 #include "application/ports/backup_store.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "application/use_cases/sync_libraries.hpp"
@@ -358,7 +359,8 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         // Those are not plans at all but choices: no clock can say whose hot
         // cues the DJ meant (see SyncPlan::hotCuesNeedChoice), so they are
         // listed for a pick and kept out of Stage All entirely.
-        auto hotCueChoices = domain::CrossSourceConflictDetector::takeHotCueChoices(actionable);
+        auto hotCueChoices = domain::CrossSourceConflictDetector::takeHotCueChoices(actionable,
+                                                                                    application::normalizedPathKey);
         auto conflictSplit = domain::CrossSourceConflictDetector::detect(actionable);
         actionable = std::move(conflictSplit.nonConflicting);
         result.conflicts = std::move(hotCueChoices);

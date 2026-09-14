@@ -4,6 +4,9 @@
 
 #pragma once
 
+#include <functional>
+#include <string>
+
 #include <vector>
 
 #include "domain/sync_planning.hpp"
@@ -109,7 +112,19 @@ public:
     //   plan naming that file, in any format, is held back too, so Stage All
     //   cannot write to a track before the DJ has decided about it. They
     //   come back on the analysis after the choice is saved.
-    static std::vector<CrossSourceSyncConflict> takeHotCueChoices(std::vector<SyncPlan> &plans);
+    //
+    // "The file" is both sides of a plan, compared through `fileKey`, never
+    // one side's raw path. Each reader spells a path its own way (rekordbox
+    // joins strings, Engine normalizes, OneLibrary uses the platform's
+    // separators), so on Windows one file arrives as "E:\/Contents/x.mp3"
+    // and "E:\Contents\x.mp3". And a pair matched by title can name two
+    // different paths for one track. A choice therefore links every key its
+    // two sides carry, and a plan is held back when either of its sides
+    // shares a key with an open choice. Callers pass
+    // application::normalizedPathKey; the domain does not depend on it.
+    using FileKey = std::function<std::string(const std::string &)>;
+    static std::vector<CrossSourceSyncConflict> takeHotCueChoices(std::vector<SyncPlan> &plans,
+                                                                  const FileKey &fileKey);
 };
 
 }  // namespace seabass::domain

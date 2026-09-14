@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "application/path_key.hpp"
 #include "application/ports/backup_store.hpp"
 #include "application/ports/cue_writer.hpp"
 #include "application/ports/library_reader.hpp"
@@ -848,8 +849,11 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     // file with an open choice, so neither pair writes a track the DJ has
     // been told to decide about. Filtering only the flagged plans left the
     // other pair free to write that same file.
+    // Counted before the choices and the plans waiting on them leave `plans`:
+    // they are matched tracks all the same.
+    const std::size_t matchedCount = plans.size();
     const std::vector<seabass::domain::CrossSourceSyncConflict> hotCueChoices =
-        seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans);
+        seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans, seabass::application::normalizedPathKey);
     if (!hasEngine) {
         // The only two catalogs here are rekordbox and OneLibrary, which is
         // one library in two formats. They are kept level by mirroring on
@@ -874,7 +878,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     if (hasOneLibrary) {
         Console::info("  onelibrary tracks: " + std::to_string(oneLibraryTracks.size()));
     }
-    Console::info("  matched tracks:    " + std::to_string(plans.size()));
+    Console::info("  matched tracks:    " + std::to_string(matchedCount));
 
     // Bucketed by the TARGET's own format rather than by which side of the
     // pair it sits on. With more than one pair, trackA is no longer always

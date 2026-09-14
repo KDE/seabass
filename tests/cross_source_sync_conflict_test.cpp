@@ -6,6 +6,7 @@
 #include <string>
 #include <iostream>
 
+#include "application/path_key.hpp"
 #include "domain/cross_source_sync_conflict.hpp"
 
 using namespace seabass::domain;
@@ -147,7 +148,6 @@ int main()
         std::cout << "case d (junk 0:00 cue flagged as a hint, conflict still reported, not silently resolved) OK\n";
     }
 
-    std::cout << "All cross_source_sync_conflict_test cases passed.\n";
     // A hot cue conflict between one pair's own two sides is taken out of the
     // plans as a choice, and never left behind to be applied on a clock.
     {
@@ -168,7 +168,7 @@ int main()
         plain.match.trackB.sourceId = "e2";
 
         std::vector<seabass::domain::SyncPlan> plans = {choice, plain};
-        const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans);
+        const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans, seabass::application::normalizedPathKey);
         assert(plans.size() == 1 && plans[0].match.trackB.sourceId == "e2" && "only the plain plan stays appliable");
         assert(choices.size() == 1);
         assert(choices[0].samePair);
@@ -224,7 +224,7 @@ int main()
 
         // OneLibrary's choice listed first, so "prefer rekordbox" is really exercised.
         std::vector<SyncPlan> plans = {viaOneLibrary, sameFileOther, viaRekordbox, otherFile};
-        const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans);
+        const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans, seabass::application::normalizedPathKey);
         assert(choices.size() == 1 && "one card for one track, not one per pair");
         const bool hasRekordbox = choices[0].sourceA.format == "rekordbox" || choices[0].sourceB.format == "rekordbox";
         assert(hasRekordbox && "the kept choice is the rekordbox one; its write mirrors into OneLibrary");
@@ -234,10 +234,104 @@ int main()
 
         // Without rekordbox on the stick the OneLibrary choice is the card.
         std::vector<SyncPlan> onlyOneLibrary = {viaOneLibrary};
-        const auto alone = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(onlyOneLibrary);
+        const auto alone = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(onlyOneLibrary, seabass::application::normalizedPathKey);
         assert(alone.size() == 1 && onlyOneLibrary.empty());
         std::cout << "case hot-cue-choice-onelibrary-only (a OneLibrary choice stands when it is the only one) OK\n";
     }
 
+    // The sixth review's finding: the file was keyed on trackA's raw path,
+    // but each reader spells a path its own way and a title match can pair
+    // two different paths. Keyed that way, the choice sat under one spelling
+    // and the other pair's plan under another, so nothing held the plan back
+    // and the track got a second card.
+    {
+        using seabass::domain::CuePoint;
+        using seabass::domain::SyncPlan;
+        const auto track = [](const std::string &format, const std::string &id, const std::string &path) {
+            seabass::domain::Track t;
+            t.format = format;
+            t.sourceId = id;
+            t.filePath = path;
+            return t;
+        };
+        const auto choiceBetween = [](const seabass::domain::Track &a, const seabass::domain::Track &b) {
+            SyncPlan p;
+            p.kind = SyncPlan::Kind::Conflict;
+            p.hotCuesNeedChoice = true;
+            p.match.trackA = a;
+            p.match.trackB = b;
+            p.direction = SyncPlan::Direction::ToB;
+            p.cuesIfAWins = {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""}};
+            p.cuesIfBWins = {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "", ""}};
+            return p;
+        };
+        const auto plainBetween = [](const seabass::domain::Track &a, const seabass::domain::Track &b) {
+            SyncPlan p;
+            p.kind = SyncPlan::Kind::AOnly;
+            p.direction = SyncPlan::Direction::ToB;
+            p.match.trackA = a;
+            p.match.trackB = b;
+            return p;
+        };
+
+        // Windows: the reviewer's spellings of one file. Keyed on trackA
+        // alone, the choice sat under rekordbox's spelling and the
+        // Engine->OneLibrary plan under Engine's, so the plan went through.
+        // (Both sides of that plan name the same Engine row as the choice,
+        // so it is keying both sides that catches this; the normalized key
+        // additionally joins spellings no side shares.)
+        {
+            const std::string rekordboxPath = "E:\\/Contents/song.mp3";
+            const std::string enginePath = "E:\\Contents\\song.mp3";
+            const std::string oneLibraryPath = "E:\\Contents\\Song.mp3";
+            assert(rekordboxPath != enginePath);
+            const auto rb = track("rekordbox", "r1", rekordboxPath);
+            const auto en = track("engine", "e1", enginePath);
+            const auto ol = track("onelibrary", "o1", oneLibraryPath);
+            const auto other = track("engine", "e2", "E:\\Contents\\other.mp3");
+
+            // OneLibrary has no hot cues: only the rekordbox pair asks, and the
+            // Engine->OneLibrary plan must wait for that answer.
+            std::vector<SyncPlan> plans = {plainBetween(en, ol), choiceBetween(rb, en),
+                                           plainBetween(other, track("onelibrary", "o2", "E:/Contents/other.mp3"))};
+            const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(
+                plans, seabass::application::normalizedPathKey);
+            assert(choices.size() == 1);
+            assert(plans.size() == 1 && plans[0].match.trackA.sourceId == "e2"
+                   && "the Engine->OneLibrary plan for the undecided file waits, whatever its path spelling");
+
+            // Both pairs ask: still one card, the rekordbox one.
+            std::vector<SyncPlan> both = {choiceBetween(en, ol), choiceBetween(rb, en)};
+            const auto one = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(
+                both, seabass::application::normalizedPathKey);
+            assert(one.size() == 1 && both.empty());
+            assert(one[0].sourceA.format == "rekordbox" && "one card per track across path spellings");
+        }
+        std::cout << "case hot-cue-choice-path-spellings (Windows separators do not split one track) OK\n";
+
+        // A title match pairs two different paths: rekordbox's file on one
+        // drive, Engine's copy on another. The Engine<->OneLibrary plan names
+        // only Engine's path and OneLibrary's (rekordbox's) path, never the
+        // choice's trackA key alone -- it must still wait.
+        {
+            const auto rb = track("rekordbox", "r1", "/media/A/Contents/song.mp3");
+            const auto en = track("engine", "e1", "/media/B/Music/song.mp3");
+            const auto ol = track("onelibrary", "o1", "/media/A/Contents/song.mp3");
+
+            std::vector<SyncPlan> enginePathOnly = {choiceBetween(rb, en),
+                                                    plainBetween(en, track("onelibrary", "o9", "/media/C/x.mp3"))};
+            seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(enginePathOnly,
+                                                                             seabass::application::normalizedPathKey);
+            assert(enginePathOnly.empty() && "a plan sharing only the Engine side's path still waits");
+
+            std::vector<SyncPlan> plans = {choiceBetween(rb, en), plainBetween(en, ol)};
+            const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(
+                plans, seabass::application::normalizedPathKey);
+            assert(choices.size() == 1 && plans.empty());
+        }
+        std::cout << "case hot-cue-choice-title-match (a choice holds both of its paths) OK\n";
+    }
+
+    std::cout << "All cross_source_sync_conflict_test cases passed.\n";
     return 0;
 }

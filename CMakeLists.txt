@@ -928,6 +928,7 @@ target_include_directories(format_usb_stick_test PRIVATE src)
 add_test(NAME format_usb_stick_test COMMAND format_usb_stick_test)
 
 add_executable(cross_source_sync_conflict_test
+    src/application/path_key.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
