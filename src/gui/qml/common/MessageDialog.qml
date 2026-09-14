@@ -36,6 +36,14 @@ SeabassDialog {
     // the way TypedConfirmDialog does.
     property string acceptObjectName: "acceptButton"
     property string rejectObjectName: "rejectButton"
+    // A second way to go ahead, beside the default one: set its text and
+    // handle alternateRequested(). Hidden while the text is empty. It closes
+    // the dialog without accepting, so onAccepted keeps meaning the default.
+    property string alternateText: ""
+    property string alternateObjectName: "alternateButton"
+    // Off when the default action has nothing to act on.
+    property bool acceptEnabled: true
+    signal alternateRequested()
 
     // Escape cancels, a click outside does not. Cancelling is reject(),
     // the same thing the Cancel button does, so a dialog dismissed by
@@ -80,6 +88,7 @@ SeabassDialog {
             id: acceptButton
             objectName: root.acceptObjectName
             text: root.acceptText
+            enabled: root.acceptEnabled
             focus: !root.destructive
             KeyNavigation.right: rejectButton.visible ? rejectButton : null
             KeyNavigation.left: rejectButton.visible ? rejectButton : null
@@ -97,6 +106,25 @@ SeabassDialog {
                 if (root.destructive) {
                     root.accept();
                 }
+            }
+        }
+
+        Button {
+            id: alternateButton
+            objectName: root.alternateObjectName
+            visible: root.alternateText.length > 0
+            text: root.alternateText
+            Keys.onReturnPressed: root.activateFooterSelection()
+            Keys.onEnterPressed: root.activateFooterSelection()
+            Keys.onLeftPressed: root.moveFooterSelection(-1)
+            Keys.onRightPressed: root.moveFooterSelection(1)
+            onActiveFocusChanged: if (activeFocus) root.selectFooterButton(alternateButton)
+            // ActionRole: the box leaves it alone, so it neither accepts nor
+            // rejects -- it says what it did and closes.
+            DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+            onClicked: {
+                root.close();
+                root.alternateRequested();
             }
         }
 

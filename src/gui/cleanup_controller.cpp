@@ -260,6 +260,17 @@ int CleanupPlanListModel::includedCount() const
     return static_cast<int>(std::count(m_included.begin(), m_included.end(), true));
 }
 
+bool CleanupPlanListModel::isVisible(size_t index) const
+{
+    return std::find(m_visibleIndices.begin(), m_visibleIndices.end(), index) != m_visibleIndices.end();
+}
+
+int CleanupPlanListModel::includedVisibleCount() const
+{
+    return static_cast<int>(std::count_if(m_visibleIndices.begin(), m_visibleIndices.end(),
+                                          [this](size_t index) { return included(index); }));
+}
+
 namespace
 {
 bool matchesQuery(const domain::Track &t, const QString &query)
@@ -896,6 +907,9 @@ void CleanupController::setAllIncluded(bool included)
 void CleanupController::search(const QString &query)
 {
     m_model.setFilter(query);
+    // Which included groups are visible has changed, even though which are
+    // included has not.
+    emit includedChanged();
 }
 
 std::shared_ptr<QtProgressReporter> CleanupController::makeReporter()
@@ -1086,7 +1100,7 @@ void CleanupController::stagePlan(size_t rawIndex)
 
 // Stages every currently-included group; the page's Save writes them.
 // Does NOT delete any audio file, see the class comment.
-void CleanupController::apply()
+void CleanupController::apply(bool matchingSearchOnly)
 {
     if (m_busy) {
         return;
@@ -1097,6 +1111,9 @@ void CleanupController::apply()
     const size_t count = m_model.plans().size();
     for (size_t i = 0; i < count; ++i) {
         if (!m_model.included(i) || m_stagedBySurvivor.count(m_model.plans()[i].survivor.sourceId)) {
+            continue;
+        }
+        if (matchingSearchOnly && !m_model.isVisible(i)) {
             continue;
         }
         stagePlan(i);

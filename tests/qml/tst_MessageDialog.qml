@@ -167,6 +167,49 @@ TestCase {
         compare(spy.count, 1);
     }
 
+    // A second way to go ahead, beside the default: shown only when it has a
+    // label, and it closes the dialog without counting as an accept.
+    function test_alternateActionIsASecondWayForward() {
+        var plain = createTemporaryObject(messageComponent, testCase, {title: "Stage?", acceptText: "Stage 3"});
+        plain.open();
+        tryCompare(plain, "opened", true);
+        compare(findChild(plain, "alternateButton").visible, false, "no alternate without a label");
+        plain.close();
+
+        var dialog = createTemporaryObject(messageComponent, testCase, {
+            title: "Stage?", acceptText: "Stage 3 Matching", alternateText: "Stage All 7 Selected"});
+        var alternates = 0;
+        var accepts = 0;
+        dialog.alternateRequested.connect(function() { alternates++; });
+        dialog.accepted.connect(function() { accepts++; });
+        dialog.open();
+        tryCompare(dialog, "opened", true);
+        var alternate = findChild(dialog, "alternateButton");
+        verify(alternate !== null && alternate.visible, "the alternate button must be shown");
+        compare(alternate.text, "Stage All 7 Selected");
+        mouseClick(alternate);
+        compare(alternates, 1, "clicking it asks for the alternate");
+        compare(accepts, 0, "and does not count as accepting");
+        tryCompare(dialog, "visible", false);
+
+        // The arrow keys walk all three buttons, the alternate included.
+        dialog.open();
+        tryCompare(dialog, "opened", true);
+        var accept = findChild(dialog, "acceptButton");
+        var reject = findChild(dialog, "rejectButton");
+        accept.forceActiveFocus();
+        keyClick(Qt.Key_Right);
+        verify(alternate.activeFocus, "Right from the default must reach the alternate");
+        keyClick(Qt.Key_Right);
+        verify(reject.activeFocus, "and Right again Cancel");
+        keyClick(Qt.Key_Left);
+        verify(alternate.activeFocus, "Left from Cancel must come back to the alternate");
+        dialog.close();
+
+        dialog.acceptEnabled = false;
+        compare(findChild(dialog, "acceptButton").enabled, false, "the default can be switched off");
+    }
+
     function test_acknowledgementHidesCancel() {
         // Opened first: `visible` is inherited, so every button of a closed
         // dialog reports false and the assertion would pass for free.

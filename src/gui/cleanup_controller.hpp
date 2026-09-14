@@ -71,6 +71,11 @@ public:
     const std::vector<domain::DuplicateCleanupPlan> &plans() const { return m_plans; }
     bool included(size_t index) const;
     int includedCount() const;
+    // Whether a plan passes the current search, and how many included plans
+    // do. Staging from a narrowed list says how many of the selected groups
+    // the search is hiding, and by default stages only the ones it shows.
+    bool isVisible(size_t index) const;
+    int includedVisibleCount() const;
     // Removes specific plans (by index into plans()/included(), not
     // visible row) without a full rescan -- for CleanupController::
     // apply() after a successful write: those groups are now merged
@@ -289,6 +294,9 @@ class CleanupController : public QObject
     Q_PROPERTY(qlonglong stickTotalBytes READ stickTotalBytes NOTIFY plansChanged)
     Q_PROPERTY(qlonglong stickFreeBytes READ stickFreeBytes NOTIFY plansChanged)
     Q_PROPERTY(int includedCount READ includedCount NOTIFY includedChanged)
+    // The included groups the search currently shows; equal to
+    // includedCount without a search.
+    Q_PROPERTY(int includedVisibleCount READ includedVisibleCount NOTIFY includedChanged)
     // The stray-file half of the last scan, for the page's own account
     // of what it looked at: {filesFound, bytesHuman, unreadable,
     // catalogsConsulted, walkIncomplete, probeAvailable, usable,
@@ -320,6 +328,7 @@ public:
     qlonglong stickTotalBytes() const;
     qlonglong stickFreeBytes() const;
     int includedCount() const { return m_model.includedCount(); }
+    int includedVisibleCount() const { return m_model.includedVisibleCount(); }
     QVariantMap unreferencedFiles() const;
     PendingDeletionListModel *pendingDeletionsModel() { return &m_pendingModel; }
     int pendingDeletionsIncludedCount() const { return m_pendingModel.includedCount(); }
@@ -366,7 +375,8 @@ public:
     // Stages cleaning up every currently-included group: cues merged onto
     // the survivor, playlist membership fixed up on both formats, backed
     // up first. Does NOT delete any audio file, see the class comment.
-    Q_INVOKABLE void apply();
+    // matchingSearchOnly leaves out included groups the search is hiding.
+    Q_INVOKABLE void apply(bool matchingSearchOnly = false);
     // row is the visible row (the delegate index).
     Q_INVOKABLE void unstage(int row);
     // Every staged group at once, for Escape. Loses no work: the

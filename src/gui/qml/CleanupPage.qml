@@ -388,15 +388,40 @@ Page {
 
     MessageDialog {
         id: confirmCleanupDialog
+        objectName: "confirmCleanupDialog"
         severity: SeabassDialog.Question
-        title: "Stage cleaning up " + cleanupController.includedCount + " duplicate group(s)?"
+        // Selected groups the search is hiding. Staging from a narrowed list
+        // takes only what it shows unless asked for everything selected: the
+        // hidden ones were ticked at some point, but not looked at just now.
+        readonly property int shownSelected: cleanupController.includedVisibleCount
+        readonly property int hiddenSelected: cleanupController.includedCount - shownSelected
+        readonly property bool searchHidesSome: searchField.text.length > 0 && hiddenSelected > 0
+        function tracks(n) { return n + (n === 1 ? " Track" : " Tracks"); }
+        title: "Stage cleaning up "
+            + (searchHidesSome ? shownSelected : cleanupController.includedCount) + " duplicate track(s)?"
+        acceptText: searchHidesSome ? "Stage " + tracks(shownSelected) + " Matching the Search"
+                                    : "Stage " + tracks(cleanupController.includedCount)
+        acceptEnabled: !searchHidesSome || shownSelected > 0
+        alternateText: searchHidesSome ? "Stage All " + tracks(cleanupController.includedCount) + " Selected" : ""
+        onAlternateRequested: cleanupController.apply(false)
         headline: "For each selected group, every copy except the one kept will be removed from the "
             + "library: its hot/memory cues are merged onto the surviving copy first (nothing is lost), "
             + "and any playlist it belonged to is updated to reference the surviving copy instead."
         detailText: "This does NOT delete the removed copies' audio files. Their library entries are "
             + "removed and they're recorded for you to review and delete separately."
-        acceptText: "Stage Clean-Up"
-        onAccepted: cleanupController.apply()
+        onAccepted: cleanupController.apply(searchHidesSome)
+
+        Label {
+            objectName: "hiddenSelectionWarning"
+            Layout.fillWidth: true
+            visible: confirmCleanupDialog.searchHidesSome
+            wrapMode: Text.WordWrap
+            color: Theme.warnText
+            text: "Your search (\"" + searchField.text + "\") hides " + confirmCleanupDialog.hiddenSelected
+                + " of the " + cleanupController.includedCount + " selected tracks. Only the "
+                + confirmCleanupDialog.shownSelected + " it shows are staged unless you stage all selected; "
+                + "the hidden ones stay selected either way."
+        }
 
         Label {
             Layout.fillWidth: true
