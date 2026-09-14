@@ -1019,6 +1019,29 @@ target_link_libraries(cue_color_normalization_test PRIVATE DjInterop rekordbox_f
     ZLIB::ZLIB)
 add_test(NAME cue_color_normalization_test COMMAND cue_color_normalization_test)
 
+# The analysis-path index decides which file a cue write lands in, so it
+# is checked against the single-id lookup it replaces on every id the
+# fixture holds, on every id it does not, and on databases it cannot read.
+add_executable(anlz_path_index_test
+    src/infrastructure/rekordbox/anlz_byte_source.cpp
+    src/infrastructure/rekordbox/anlz_source_for_root.cpp
+    src/infrastructure/local/browsed_backup_root.cpp
+    src/infrastructure/durable_file_write.cpp
+    src/infrastructure/stick_backup/archive_anlz_source.cpp
+    src/infrastructure/stick_backup/posix_archive_file.cpp
+    src/infrastructure/stick_backup/zip64_reader.cpp
+    src/infrastructure/stick_backup/zip_format.cpp
+    src/infrastructure/rekordbox/pdb_lookup.cpp
+    src/infrastructure/rekordbox/anlz_path_index.cpp
+    src/infrastructure/work_counters.cpp
+    tests/anlz_path_index_test.cpp
+)
+target_include_directories(anlz_path_index_test PRIVATE src)
+target_link_libraries(anlz_path_index_test PRIVATE rekordbox_format kaitai_cpp_stl_runtime ZLIB::ZLIB)
+add_test(NAME anlz_path_index_test COMMAND anlz_path_index_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(anlz_path_index_test PROPERTIES LABELS "integration")
+
 add_executable(anlz_cue_codec_test
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/work_counters.cpp
