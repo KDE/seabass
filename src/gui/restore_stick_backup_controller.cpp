@@ -22,6 +22,7 @@
 #include "infrastructure/engine/engine_restore_check.hpp"
 #include "infrastructure/media/media_factory.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
+#include "infrastructure/system/stick_hardware_info.hpp"
 
 namespace seabass::gui
 {
@@ -89,6 +90,10 @@ struct RestoreStickBackupController::AnalyzeResult
 {
     RestorePreview preview;
     bool targetGiven = false;
+    // Which drive this preview describes, so restore() can tell whether
+    // the drive it is about to write is still that one.
+    QString targetRoot;
+    QString targetIdentifier;
 };
 
 struct RestoreStickBackupController::RestoreResult
@@ -278,9 +283,17 @@ void RestoreStickBackupController::analyze(const QString &targetRoot)
     options.archivePath = fs::path(m_archivePath.toStdString());
     options.targetRoot = fs::path(targetRoot.toStdString());
     bool targetGiven = !targetRoot.isEmpty();
-    m_analyzeWatcher.setFuture(QtConcurrent::run([options, targetGiven]() {
+    m_analyzeWatcher.setFuture(QtConcurrent::run([options, targetGiven, targetRoot]() {
         auto result = std::make_shared<AnalyzeResult>();
         result->targetGiven = targetGiven;
+        if (targetGiven) {
+            result->targetRoot = targetRoot;
+            // The same identity a stick backup records for the stick it
+            // was taken from. An empty label on both this read and the one
+            // in restore(), so the two can only differ if the drive does.
+            result->targetIdentifier = QString::fromStdString(
+                infrastructure::system::readStickHardwareInfo(targetRoot.toStdString(), std::string()).stickIdentifier);
+        }
         result->preview = RestoreStickBackup::preview(options);
         return result;
     }));
@@ -318,6 +331,10 @@ void RestoreStickBackupController::onAnalyzeFinished()
             preview["enoughFreeSpace"] = p.enoughFreeSpace;
         }
         m_preview = preview;
+        if (result->targetGiven) {
+            m_analyzedTargetRoot = result->targetRoot;
+            m_analyzedTargetIdentifier = result->targetIdentifier;
+        }
         if (!p.error.empty()) {
             setErrorMessage(QString::fromStdString(p.error));
         } else {
@@ -363,6 +380,29 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
     if (busy() || m_archivePath.isEmpty() || targetRoot.isEmpty()) {
         emit actionFeedback(QStringLiteral("Still busy. Try again once the current operation finishes."), true);
         return;
+    }
+    // The drive about to be written has to be the drive the user saw the
+    // preview for. Between that preview and pressing Restore, a stick can
+    // be pulled and another plugged in at the same mount point -- same
+    // path, same label on a desk full of "NO NAME" sticks -- and the
+    // confirm dialog would still show the old drive's name and file
+    // counts. Re-identified here, at the last moment before the write,
+    // rather than trusted from the preview.
+    //
+    // Two drives with no readable identity at all compare equal (empty to
+    // empty): there is nothing to tell them apart with, and warning on
+    // every restore to such a drive would teach the user to click through
+    // the warning.
+    const bool confirmed = m_targetChangeConfirmed;
+    m_targetChangeConfirmed = false;
+    if (!confirmed) {
+        const QString identifierNow = QString::fromStdString(
+            infrastructure::system::readStickHardwareInfo(targetRoot.toStdString(), std::string()).stickIdentifier);
+        const bool sameDrive = targetRoot == m_analyzedTargetRoot && identifierNow == m_analyzedTargetIdentifier;
+        if (!sameDrive) {
+            emit targetChangedSinceAnalysis(targetRoot, exact);
+            return;
+        }
     }
     // Two libraries are involved: the target stick's (overwritten) and,
     // when the archive is of a library another instance may be editing
@@ -429,6 +469,15 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
         result->summary = RestoreStickBackup::execute(options);
         return result;
     }));
+}
+
+void RestoreStickBackupController::restoreAnyway(const QString &targetRoot, bool exact)
+{
+    // Consumed by exactly the next restore() call, which is this one. A
+    // later restore() -- including the retry after a lock refusal --
+    // checks the drive again.
+    m_targetChangeConfirmed = true;
+    restore(targetRoot, exact);
 }
 
 void RestoreStickBackupController::cancel()

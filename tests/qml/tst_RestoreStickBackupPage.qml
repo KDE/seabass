@@ -73,6 +73,8 @@ TestCase {
             refreshKnownBackups: function() {},
             analyze: function(mountPoint) { this.analyzeCalls.push(mountPoint); },
             restore: function(mountPoint, exact) { this.lastRestore = {mountPoint: mountPoint, exact: exact}; },
+            lastRestoreAnyway: null,
+            restoreAnyway: function(mountPoint, exact) { this.lastRestoreAnyway = {mountPoint: mountPoint, exact: exact}; },
             cancel: function() {},
             clearCalls: 0,
             clearResult: function() { this.result = {}; this.clearCalls += 1; },
@@ -165,6 +167,37 @@ TestCase {
         verify(page.controller.lastRestore !== null);
         compare(page.controller.lastRestore.mountPoint, "/media/STICK");
         compare(page.controller.lastRestore.exact, false);
+    }
+
+    // The drive at the restore target changed between the preview and the
+    // confirm. Nothing has been written, and the dialog's default is Cancel:
+    // the highlighted button, and what Return does. Only "Restore Anyway"
+    // goes on, and it goes through restoreAnyway(), never a plain restore()
+    // that would check the drive again and ask again.
+    function test_changedDriveDialogDefaultsToCancel() {
+        var page = makePage([makeDisk({})]);
+        var dialog = findChild(page, "targetChangedDialog");
+        verify(dialog !== null, "a changed drive must raise a dialog");
+        dialog.targetRoot = "/media/STICK";
+        dialog.exact = true;
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        // Waited for: MessageDialog assigns the default button when it
+        // opens, after DialogButtonBox has written its own highlight.
+        tryCompare(findChild(page, "cancelChangedTargetButton"), "highlighted", true);
+        tryCompare(findChild(page, "restoreAnywayButton"), "highlighted", false);
+        dialog.reject();
+        tryVerify(function() { return !dialog.visible; });
+        compare(page.controller.lastRestoreAnyway, null, "cancelling must not restore");
+        compare(page.controller.lastRestore, null);
+
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        findChild(page, "restoreAnywayButton").clicked();
+        verify(page.controller.lastRestoreAnyway !== null, "Restore Anyway must go on");
+        compare(page.controller.lastRestoreAnyway.mountPoint, "/media/STICK");
+        compare(page.controller.lastRestoreAnyway.exact, true);
+        compare(page.controller.lastRestore, null, "and must not loop back into a checking restore()");
     }
 
     // A target that already holds a DJ library: the exact label must be

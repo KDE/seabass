@@ -174,10 +174,18 @@ std::string filenameMatchKey(const Track &track)
     return filename.empty() ? std::string() : "fn:" + filename;
 }
 
+// A length that could not be read (0) agrees with nothing, the same rule
+// domain::matchTracks applies: without a length there is no telling a
+// radio edit from an extended mix under one artist and title. It used to
+// agree with everything, which was necessary while Engine reported no
+// length for most tracks; every read now fills missing lengths from the
+// audio file (fillTrackDurations), so what is still zero is a broken or
+// missing file, and a store row keyed on a guess would be worse than a row
+// not stored.
 bool durationsAgree(double a, double b)
 {
     if (a <= 0.0 || b <= 0.0) {
-        return true;
+        return false;
     }
     return std::abs(a - b) <= DurationToleranceSeconds;
 }

@@ -104,6 +104,10 @@ public:
     Q_INVOKABLE void keepPartial();
     Q_INVOKABLE void discardPartial();
     Q_INVOKABLE void verify();
+    // Removes this stick's backup archive and its journal. Offered after
+    // a failed verify; takes the stick's edit lock like any other write to
+    // the archive.
+    Q_INVOKABLE void deleteBackup();
     // Synchronous and cheap (reads the central directory only) -- the
     // numbers the compaction dialog shows before the user commits.
     Q_INVOKABLE QVariantMap compactionPreflight();
@@ -125,6 +129,10 @@ signals:
     // disk is part of it); nothing was started. retryLockedAction()
     // re-runs the refused action after "Remove Lock".
     void lockRefused(const QVariantMap &holder, const QString &libraryId);
+    // Verify found the backup unreadable or its files not matching what
+    // was written. `detail` is one sentence naming what failed. Not raised
+    // for a verify the user cancelled.
+    void verifyFailed(const QString &detail);
 
 private:
     // Takes this stick's edit lock for a run; emits lockRefused() and

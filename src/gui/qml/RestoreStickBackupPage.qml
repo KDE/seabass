@@ -179,6 +179,11 @@ Page {
         function onActionFeedback(message, isError) {
             messagePopup.show(message, isError);
         }
+        function onTargetChangedSinceAnalysis(targetRoot, exact) {
+            targetChangedDialog.targetRoot = targetRoot;
+            targetChangedDialog.exact = exact;
+            targetChangedDialog.open();
+        }
         function onDriveMounted(mountPoint) {
             for (var i = 0; i < root.disks.length; ++i) {
                 if (root.disks[i].mountPoint === mountPoint && root.disks[i].usable === true) {
@@ -226,6 +231,30 @@ Page {
             Item { Layout.fillWidth: true }
             BusyIndicator { running: root.controller.analyzing === true; visible: running; implicitWidth: 20; implicitHeight: 20 }
         }
+    }
+
+    // The drive at the restore target is not the one the preview was
+    // worked out for: swapped between the preview and the confirm. Nothing
+    // has been written. Cancel is the default (destructive puts the
+    // highlight, and Return, on it); going on is allowed for someone who
+    // knows they re-plugged the same stick and its identity read differently.
+    MessageDialog {
+        id: targetChangedDialog
+        objectName: "targetChangedDialog"
+        property string targetRoot: ""
+        property bool exact: false
+        severity: SeabassDialog.Warning
+        destructive: true
+        title: "This is not the drive you previewed"
+        headline: "The drive at " + targetChangedDialog.targetRoot + " is not the one the restore was worked out "
+            + "for. It may have been unplugged and another one put in its place."
+        detailText: "Nothing has been written. Cancel, check which stick is plugged in, and preview the restore "
+            + "again. Restore anyway only if you are sure this is the drive you mean to overwrite."
+        acceptText: "Restore Anyway"
+        rejectText: "Cancel"
+        acceptObjectName: "restoreAnywayButton"
+        rejectObjectName: "cancelChangedTargetButton"
+        onAccepted: root.controller.restoreAnyway(targetChangedDialog.targetRoot, targetChangedDialog.exact)
     }
 
     TypedConfirmDialog {

@@ -423,60 +423,56 @@ optimisation is ever wanted back, is for `FormatWriteSession` to
 checkpoint and close a format's connections before copying -- or to copy
 the `-wal` and `-shm` alongside the database.
 
-### The same WAL premise reaches the backups, and they have not moved
+### The same WAL premise reaches the backups -- closed
 
-If `exportLibrary.db` is a WAL database, then a copy of that file alone
-is not a copy of the database. Every backup path in Seabass still takes
-exactly that copy: `SaveContext::backupOnce()`, `backupAllNow()` and
-`filesWrittenFor()` all name the `.db` and never `-wal` or `-shm`.
+This section used to record an open gap, and it is kept because the
+reasoning still explains the code. If `exportLibrary.db` (or Engine's
+`m.db`) is a WAL database, a copy of the `.db` alone is not a copy of the
+database: committed rows can still be sitting in `-wal`. A backup that
+took only the `.db`, restored beside a newer `-wal`, would have SQLite
+replay the one over the other -- a restore that quietly does not restore,
+or trips the WAL checksum.
 
-The failure needs an uncheckpointed `-wal` on the stick, which is what
-being killed or unplugged with a connection open leaves behind. A later
-save then archives a `.db` that is missing the rows still sitting in that
-`-wal`. Restoring that archive puts the older `.db` back while the newer
-`-wal` is still there, and SQLite replays the one on top of the other --
-so the restore either quietly does not restore, or trips the WAL
-checksum.
+Fixed by the whole-tree data-integrity audit (`e90dc7ff`), in the backup
+format as this section said it belonged: the per-save backup captures a
+database's `-wal` and `-journal` along with it
+(`SaveContext`, `save_context.cpp`), and the per-save restore removes a
+`-wal`/`-shm`/`-journal` the archive does not hold before putting the
+database back (`filesystem_backup_store.cpp`).
 
-Not introduced by this work, and not fixed by it: it is the same premise
-the scratch-copy finding above rests on, followed into the other half of
-the write path. Backing up a WAL database means capturing its sidecars
-with it, and restoring means putting them back together or checkpointing
-before the copy. That belongs with the backup format, not here.
+### What was on the old footing -- closed, and why the rest is safe
 
-### What is still on the old footing
+Sharing the session fixed the lost write for the features that take
+theirs from `sharedFormatWriteSession()`. Four changes used to write their
+catalog at the real root instead, and so could lose to another change's
+scratch commit in the same save. Where they stand now:
 
-Sharing the session fixes it for the features that take theirs from
-`sharedFormatWriteSession()`. Four changes still write their catalog at
-the real root and so still lose to another change's scratch commit in
-the same save:
-
-| Change | Writes directly |
+| Change | Status |
 |---|---|
-| `AddCueChange` | OneLibrary, and Engine's `m.db` |
-| `RemoveJunkCueChange` | OneLibrary |
-| `CopyCuesChange` | OneLibrary |
-| `MergeCuesChange` | its catalogs, and the OneLibrary mirror |
+| `RemoveJunkCueChange` | Joins the shared Engine session (`e90dc7ff`) |
+| `MergeCuesChange` | Joins the shared Engine session (`d21220ff`) |
+| `AddCueChange` | Still writes Engine's `m.db` at the real root -- safe, see below |
+| `CopyCuesChange` | Still writes Engine's `m.db` at the real root -- safe, see below |
 
-The concrete case, unchanged by this work: add a hot cue to an Engine
-track, stage a twenty-group Engine Clean Up, save once. The cue goes to
-the stick's `m.db`; the Clean Up's scratch copy, taken before it, is
-committed on top; the cue is gone and the page said it was written.
+The two that remain are safe for a reason that has nothing to do with the
+session: the lost write needs a scratch-copying change **in the same
+save**, and a save can only ever hold one page's changes.
+`LibraryEditSession::stage()` refuses a change whose `owner()` differs
+from the batch's while anything is staged, and a change's owner is its id
+prefix. Add Cue's changes are all `addcue:` and Copy Cues' are all `dup:`;
+neither page stages anything that asks for a scratch copy (only Clean Up,
+Sync, Restore Metadata and the Library Health repairs do). So nothing can
+be committed over them.
 
-The OneLibrary mirror is the same story from the other side.
-`exportLibrary.db` is deliberately not behind a session anywhere,
-including here -- every mirror write in the codebase passes the real
-PIONEER root to `sharedOneLibraryWriter()`, so they at least all agree
-on one file and one writer. Putting only this feature's mirror behind a
-session would break that agreement rather than settle it: it would write
-a copy the others do not, and whichever committed last would win.
+That safety rests on the one-page-per-save rule, not on the write path.
+If a page ever stages Add Cue or Copy Cues alongside a scratch-copying
+change, move them onto the session the way `d21220ff` moved Merge Cues.
 
-Converting the four, and then the mirror, is the rest of this seam. It
-was left out of this change deliberately -- each needs the same care
-about which writers take the write root and which stay on the real one
-(rekordbox cues live in ANLZ files; only the catalog database moves),
-and that is a change to four destructive features, not a detail to slip
-in alongside a metadata feature.
+The OneLibrary mirror is deliberately not behind a session anywhere:
+every mirror write passes the real PIONEER root to
+`sharedOneLibraryWriter()`, so they all agree on one file and one writer,
+and `exportLibrary.db` is never given a scratch copy (see "OneLibrary
+cannot use a scratch copy at all" above).
 
 One more thing this made ordering-dependent. The scratch decision is
 taken once, by whichever change reaches the session first, from that

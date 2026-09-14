@@ -578,6 +578,17 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             } catch (const std::exception &e) {
                 log.record("cleanup: OneLibrary field propagation failed for \"" + plan.survivor.title
                            + "\": " + e.what());
+                // Not a success: the survivor's bpm/key/artwork would reach
+                // DeviceLibrary and not Device Library Plus, one library
+                // disagreeing with itself. Failing the change makes the save
+                // loop put back everything it wrote, in every catalog, so
+                // the group is left exactly as it was rather than logged
+                // under a save that said it all went through.
+                return ChangeOutcome::failure(
+                    QStringLiteral("Could not copy the missing bpm/key/artwork onto \"%1\" in Device Library "
+                                   "Plus: %2. The save stops here and puts back what this change wrote, so "
+                                   "DeviceLibrary and Device Library Plus stay in agreement.")
+                        .arg(QString::fromStdString(plan.survivor.title), QString::fromUtf8(e.what())));
             }
         }
     }

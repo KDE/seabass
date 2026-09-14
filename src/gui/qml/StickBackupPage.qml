@@ -100,6 +100,10 @@ Page {
                 cancelDecisionDialog.open();
             }
         }
+        function onVerifyFailed(detail) {
+            verifyFailedDialog.detail = detail;
+            verifyFailedDialog.open();
+        }
     }
 
     header: ToolBar {
@@ -161,6 +165,61 @@ Page {
             }
         }
         onAccepted: root.controller.keepPartial()
+    }
+
+    // ---- A backup that failed verification ----
+    //
+    // A decision, not a message: a backup whose files do not match what was
+    // written is worse than none, because the next restore would put them
+    // back. Delete is the default. Keep exists because deleting means the
+    // next backup copies the whole stick again, which for one damaged file
+    // on a large stick is a lot to pay -- but keeping it must not sound
+    // like a repair, because an incremental backup only re-copies files
+    // that changed on the stick, and a damaged copy of an unchanged file
+    // stays damaged.
+    SeabassDialog {
+        id: verifyFailedDialog
+        objectName: "verifyFailedDialog"
+        property string detail: ""
+        severity: SeabassDialog.Error
+        closePolicy: Popup.NoAutoClose
+        title: "This backup is likely corrupt"
+        headline: verifyFailedDialog.detail + " Restoring from this backup could put damaged files back onto a stick."
+        detailText: "Delete Backup removes it; the next backup copies the whole stick again. Keep Failed Backup "
+            + "saves copying everything again, but the next backup only copies files that changed on the "
+            + "stick, so damaged files in it may stay damaged. Run Verify again before relying on it."
+        // DialogButtonBox writes its buttons' `highlighted` itself, so a
+        // declared `highlighted: true` is gone by the time anyone sees it --
+        // Delete looked like the default in the source and was not one on
+        // screen. MessageDialog documents the same trap; the default is
+        // assigned instead, on completion and again every time the dialog
+        // opens, because the box writes to it again on every show.
+        function applyDefaultButton() {
+            deleteFailedBackupButton.highlighted = true;
+            keepFailedBackupButton.highlighted = false;
+        }
+        Component.onCompleted: verifyFailedDialog.applyDefaultButton()
+        // Replaces SeabassDialog's own onOpened, so its focus call is
+        // repeated here rather than assumed.
+        onOpened: {
+            verifyFailedDialog.applyDefaultButton();
+            Qt.callLater(verifyFailedDialog.focusDefaultFooterButton);
+        }
+        footer: DialogButtonBox {
+            Button {
+                id: deleteFailedBackupButton
+                objectName: "deleteFailedBackupButton"
+                text: "Delete Backup"
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                id: keepFailedBackupButton
+                objectName: "keepFailedBackupButton"
+                text: "Keep Failed Backup"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+        onAccepted: root.controller.deleteBackup()
     }
 
     // ---- Compaction ----

@@ -110,19 +110,30 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
         }
 
         for (const auto *trackB : *candidates) {
-            // durationSeconds == 0 means "unreadable," the same fallback
-            // convention used throughout Track's own fields (see
-            // DuplicateTrackFinder::find()'s identical handling), not a
-            // real zero-length track. Gating the match on a mismatch only
-            // when *both* readings are real avoids silently failing to
-            // match the same song across formats just because one side's
-            // duration failed to read -- confirmed as the dominant real
-            // cause of sync match failures on real data (1207 of 1566
-            // Engine tracks failed to match their exact title+artist
-            // rekordbox counterpart for this reason alone, zero from an
-            // actual duration mismatch).
+            // durationSeconds == 0 means "unreadable": the same convention
+            // used throughout Track's own fields, not a real zero-length
+            // track. A track whose length cannot be read cannot be
+            // compared on length, so it does not match on title and artist
+            // at all -- a radio edit and an extended mix share both, and
+            // length is the only thing that tells them apart. Matching
+            // anyway would hand one of them the other's cues.
+            //
+            // This used to be the other way round, and the reason no
+            // longer holds. On RV2, Engine reports no length for 1214 of
+            // its 1469 local tracks, which once made most of them
+            // unmatchable -- so unknown lengths were let through. Every
+            // read now fills a missing length from the audio file itself
+            // (infrastructure::audio::fillTrackDurations, run by
+            // LibraryCatalogCache and the CLI), and on RV2 that leaves
+            // exactly one track without a length. What is still zero after
+            // that is a file that is broken or missing, and not something
+            // a match should guess about.
+            //
+            // The exact-path branch above is untouched: two rows naming
+            // the same file on the same stick are one track with nothing
+            // to compare.
             bool bothDurationsKnown = trackA.durationSeconds > 0.0 && trackB->durationSeconds > 0.0;
-            if (!bothDurationsKnown ||
+            if (bothDurationsKnown &&
                 std::abs(trackA.durationSeconds - trackB->durationSeconds) <= DurationToleranceSeconds) {
                 matches.emplace_back(&trackA, trackB);
                 break;  // one match per `a` track is enough for propagating cues

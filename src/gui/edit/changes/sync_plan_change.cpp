@@ -171,16 +171,24 @@ ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
         // workflow mirrors here; Sync did not, which is what made a
         // rekordbox sync a two-way sync on a three-format stick.
         //
-        // Best-effort and logged, the same convention Add Cue, Local Cue
-        // restore and stray-cue removal use: the primary write has already
-        // landed, and failing the save over the mirror would leave the
-        // user worse off than a stale copy they can re-sync.
+        // A mirror failure fails the change. It used to be logged while
+        // the save reported success -- the argument being that a stale
+        // copy you can re-sync beats a failed save -- but nobody re-syncs
+        // a library they were told had synced. Failing the change also
+        // takes the DeviceLibrary half back out -- the save loop restores
+        // every file the change declared -- so the stick is left as it was
+        // before this track, not half synced.
         if (!tgt.filePath.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(catalogPath)) {
             try {
                 sharedOneLibraryWriter(ctx, catalogPath).writeCuesForPath(tgt.filePath, m_plan.cuesToApply);
                 ctx.log().record("sync: also wrote cues to the OneLibrary copy of track id=" + tgt.sourceId);
             } catch (const std::exception &e) {
                 ctx.log().record(std::string("sync: OneLibrary cue mirror failed: ") + e.what());
+                return ChangeOutcome::failure(
+                    QStringLiteral("Could not write the cues for \"%1\" into Device Library Plus: %2. The save "
+                                   "stops here and puts back what this change wrote, so DeviceLibrary and Device "
+                                   "Library Plus stay in agreement.")
+                        .arg(QString::fromStdString(tgt.title), QString::fromUtf8(e.what())));
             }
         }
     } else if (targetFormat == "engine") {

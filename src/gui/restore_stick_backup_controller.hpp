@@ -94,6 +94,9 @@ public:
     // a directory, what restoring onto it would do.
     Q_INVOKABLE void analyze(const QString &targetRoot);
     Q_INVOKABLE void restore(const QString &targetRoot, bool exact);
+    // restore(), after the user was told the drive at targetRoot is not the
+    // one the preview was worked out for, and chose to go on anyway.
+    Q_INVOKABLE void restoreAnyway(const QString &targetRoot, bool exact);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void retryLockedAction() { m_writeHold.retryLockedAction(); }
     // Drops the last restore's report and messages (the page's "Start Over").
@@ -127,6 +130,10 @@ signals:
     void errorMessageChanged();
     void statusMessageChanged();
     void actionFeedback(const QString &message, bool isError);
+    // restore() found a different drive at targetRoot than the one
+    // analyze() previewed -- swapped between preview and confirm. Nothing
+    // was written. restoreAnyway() proceeds.
+    void targetChangedSinceAnalysis(const QString &targetRoot, bool exact);
 
 private:
     struct AnalyzeResult;
@@ -150,6 +157,13 @@ private:
     QVariantList m_knownBackups;
     bool m_restoring = false;
     QString m_restoreTarget;  // where the last restore() wrote, for cache invalidation
+    // Which drive the current preview was worked out for: its mount point
+    // and the identifier readStickHardwareInfo() gave it at the time.
+    // restore() compares the drive it is about to write against these.
+    QString m_analyzedTargetRoot;
+    QString m_analyzedTargetIdentifier;
+    // Set by restoreAnyway() for exactly one restore() call.
+    bool m_targetChangeConfirmed = false;
     DirectWriteHold m_writeHold;
     bool m_analyzing = false;
     bool m_mounting = false;

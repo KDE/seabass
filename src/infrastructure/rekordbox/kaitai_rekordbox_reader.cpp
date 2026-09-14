@@ -399,9 +399,35 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
 
                     std::string analyzePath = sqlText(rowTrack->analyze_path());
                     if (!analyzePath.empty()) {
-                        auto bytes = m_anlzSource->read(anlzRelativePath(analyzePath, /*wantExt=*/true));
+                        const std::string extRelative = anlzRelativePath(analyzePath, /*wantExt=*/true);
+                        auto bytes = m_anlzSource->read(extRelative);
                         if (bytes) {
                             track.cues = readCues(*bytes);
+                        }
+                        // The track's own edit time: rekordbox keeps a
+                        // track's cues in its ANLZ .EXT file, so that
+                        // file's mtime moves when this track's cues change
+                        // and for no other track. Sync resolves a hot cue
+                        // conflict with it instead of export.pdb's mtime,
+                        // which moves for the whole library at once.
+                        //
+                        // Left at 0 (unknown) when the bytes did not come
+                        // from a file on disk -- a browsed backup reads
+                        // them out of an archive, where there is no mtime
+                        // to take -- and Sync then falls back to the
+                        // catalog dates for this track.
+                        // The conversion is spelled out here rather than
+                        // borrowed from stick_tree_walker's toUnixSeconds:
+                        // this reader is compiled into narrow test targets
+                        // that list their own sources, and the walker
+                        // would drag its directory reader in with it.
+                        std::error_code ec;
+                        const auto written =
+                            std::filesystem::last_write_time(std::filesystem::path(m_pioneerRoot) / extRelative, ec);
+                        if (!ec) {
+                            const auto asSystem = std::chrono::clock_cast<std::chrono::system_clock>(written);
+                            track.metadataModifiedAt =
+                                std::chrono::duration_cast<std::chrono::seconds>(asSystem.time_since_epoch()).count();
                         }
                     }
                     tracks.push_back(std::move(track));

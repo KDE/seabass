@@ -34,10 +34,16 @@ struct SyncPlan
         // Only one side has cues: propagate them to the other side.
         AOnly,
         BOnly,
-        // Both sides have cues, and they differ: resolved by direction
-        // (see below) using last-write-wins on the underlying file's
-        // mtime, but the resolution is a heuristic, not a certainty --
-        // reported clearly as a conflict either way.
+        // Both sides have cues, and they differ. Hot cues go to the side
+        // edited more recently -- each track's own edit time when both
+        // catalogs record one, the catalog file's mtime otherwise -- and
+        // memory cues are the union of both sides, never taken away.
+        // Still a heuristic rather than a certainty, and reported clearly
+        // as a conflict either way.
+        //
+        // An Engine track whose memory cues are all among the other side's
+        // is not a conflict: Engine holds one memory cue, and one of
+        // rekordbox's three is agreement, not a difference.
         Conflict,
         // Both sides already have the same cues.
         AlreadyConsistent,

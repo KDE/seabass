@@ -60,6 +60,7 @@ TestCase {
             cancel: function() { this.calls.push("cancel"); },
             keepPartial: function() { this.calls.push("keepPartial"); },
             discardPartial: function() { this.calls.push("discardPartial"); },
+            deleteBackup: function() { this.calls.push("deleteBackup"); },
             verify: function() { this.calls.push("verify"); },
             compact: function() { this.calls.push("compact"); },
             compactionPreflight: function() { this.calls.push("compactionPreflight"); return this.preflight; },
@@ -167,6 +168,35 @@ TestCase {
         verify(calls(again).indexOf("discardPartial") >= 0);
         tryVerify(function() { return !dialog2.visible; });
         compare(findChild(again, "backUpButton").enabled, false);  // still pending until the controller says otherwise
+    }
+
+    // A backup that failed verification is a decision, not a message: its
+    // files do not match what was written, and a restore would put them
+    // back. Delete is the default -- the highlighted button, and what Return
+    // does -- and Keep deletes nothing.
+    function test_verifyFailedDialogDefaultsToDeleteAndKeepDeletesNothing() {
+        var page = makePage({});
+        var dialog = findChild(page, "verifyFailedDialog");
+        verify(dialog !== null, "a failed verify must have a dialog, not only a message");
+        dialog.detail = "3 files in the backup did not match what was written.";
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        compare(dialog.closePolicy, 0);  // Popup.NoAutoClose: it has to be answered
+        verify(dialog.title.indexOf("corrupt") >= 0, "the dialog must say the backup is likely corrupt");
+        // Waited for rather than read at once: the highlight is assigned
+        // when the dialog opens, after DialogButtonBox has written its own.
+        tryCompare(findChild(page, "deleteFailedBackupButton"), "highlighted", true);
+        tryCompare(findChild(page, "keepFailedBackupButton"), "highlighted", false);
+        dialog.accept();
+        verify(calls(page).indexOf("deleteBackup") >= 0, "the default must delete the backup");
+
+        var again = makePage({});
+        var dialog2 = findChild(again, "verifyFailedDialog");
+        dialog2.open();
+        tryVerify(function() { return dialog2.visible; });
+        findChild(again, "keepFailedBackupButton").clicked();
+        tryVerify(function() { return !dialog2.visible; });
+        compare(calls(again).indexOf("deleteBackup"), -1, "keeping the backup must not delete it");
     }
 
     function test_compactDialogShowsPreflightAndOnlyProceedsWithSpace() {

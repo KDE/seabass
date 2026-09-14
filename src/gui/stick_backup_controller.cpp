@@ -393,6 +393,36 @@ void StickBackupController::discardPartial()
     }));
 }
 
+void StickBackupController::deleteBackup()
+{
+    if (busy() || m_pending || m_archivePath.isEmpty()) {
+        return;
+    }
+    // The archive is part of this stick's library as far as other
+    // instances are concerned; deleting it takes the same lock a backup
+    // writing to it does.
+    if (!enterDirectWrite([this] { deleteBackup(); })) {
+        return;
+    }
+    const fs::path archive(m_archivePath.toStdString());
+    std::error_code archiveError;
+    fs::remove(archive, archiveError);
+    // The journal goes too: left behind, the next backup would try to
+    // recover an archive that is no longer there.
+    std::error_code journalError;
+    fs::remove(BackupStick::journalPathFor(archive), journalError);
+    m_writeHold.release();
+    if (archiveError) {
+        setErrorMessage(QStringLiteral("Could not delete the backup: ") + QString::fromStdString(archiveError.message()));
+        emit actionFeedback(m_errorMessage, true);
+    } else {
+        setErrorMessage({});
+        setStatusMessage(QStringLiteral("Deleted the damaged backup. The next backup copies the whole stick again."));
+        emit actionFeedback(m_statusMessage, false);
+    }
+    refresh();
+}
+
 void StickBackupController::verify()
 {
     if (busy() || m_pending) {
@@ -580,11 +610,20 @@ void StickBackupController::onRunFinished()
         if (!v.error.empty()) {
             setErrorMessage(QStringLiteral("Verification failed: ") + QString::fromStdString(v.error));
             emit actionFeedback(m_errorMessage, true);
+            // A cancelled verify says "cancelled" through the same field.
+            // Nothing was found wrong, so there is nothing to decide.
+            if (v.error != "cancelled") {
+                emit verifyFailed(QStringLiteral("The backup could not be read back: %1.")
+                                      .arg(QString::fromStdString(v.error)));
+            }
         } else if (!v.ok) {
             setErrorMessage(QStringLiteral("Verification found %1 damaged entr%2 -- this backup should not be trusted; run a new backup.")
                                 .arg(v.failures.size())
                                 .arg(v.failures.size() == 1 ? QStringLiteral("y") : QStringLiteral("ies")));
             emit actionFeedback(m_errorMessage, true);
+            emit verifyFailed(QStringLiteral("%1 file%2 in the backup did not match what was written.")
+                                  .arg(v.failures.size())
+                                  .arg(v.failures.size() == 1 ? QString() : QStringLiteral("s")));
         } else {
             setStatusMessage(QStringLiteral("Verified: %1 files, %2 MiB, every checksum matches.")
                                  .arg(v.entriesChecked)

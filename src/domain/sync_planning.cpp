@@ -18,6 +18,81 @@ std::vector<SyncMatch> TrackMatcher::match(const std::vector<Track> &tracksA, co
     return matches;
 }
 
+namespace
+{
+
+std::vector<CuePoint> cuesOfKind(const std::vector<CuePoint> &cues, CuePoint::Kind kind)
+{
+    std::vector<CuePoint> out;
+    for (const CuePoint &cue : cues) {
+        if (cue.kind == kind) {
+            out.push_back(cue);
+        }
+    }
+    return out;
+}
+
+// The tolerance cueSetsEqual() allows, so a memory cue that drifted by a
+// cross-format rounding is still the same cue here.
+constexpr double MemoryCuePositionToleranceMs = 1000.0;
+
+bool samePosition(const CuePoint &a, const CuePoint &b)
+{
+    double distance = a.positionMs - b.positionMs;
+    if (distance < 0) {
+        distance = -distance;
+    }
+    return distance <= MemoryCuePositionToleranceMs;
+}
+
+// True when every cue in `sub` has one at the same position in `super`,
+// and `sub` holds one whenever `super` holds any.
+//
+// Not vacuous for an empty `sub`: an Engine track with no memory cue at all,
+// against a rekordbox track with three, is Engine missing the one it could
+// hold, which a sync should put there -- not agreement.
+bool positionsCoveredBy(const std::vector<CuePoint> &sub, const std::vector<CuePoint> &super)
+{
+    if (sub.empty()) {
+        return super.empty();
+    }
+    for (const CuePoint &cue : sub) {
+        bool found = false;
+        for (const CuePoint &other : super) {
+            if (samePosition(cue, other)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Every cue in `a`, then every cue in `b` not already at one of those
+// positions.
+std::vector<CuePoint> unionByPosition(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b)
+{
+    std::vector<CuePoint> out = a;
+    for (const CuePoint &cue : b) {
+        bool present = false;
+        for (const CuePoint &existing : out) {
+            if (samePosition(cue, existing)) {
+                present = true;
+                break;
+            }
+        }
+        if (!present) {
+            out.push_back(cue);
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
 SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::time_point mtimeA,
                             std::chrono::system_clock::time_point mtimeB)
 {
@@ -46,19 +121,56 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
         return result;
     }
 
-    // Both sides have cues.
-    if (cueSetsEqual(match.trackA.cues, match.trackB.cues)) {
+    // Both sides have cues. Hot cues and memory cues are decided apart,
+    // because they are not the same kind of fact on both formats: a hot
+    // cue slot exists on every format, while Engine holds exactly one
+    // memory cue and rekordbox holds as many as the DJ set. Comparing the
+    // two lists whole made the difference in memory-cue CAPACITY look like
+    // a disagreement, and resolving it by last-write-wins then replaced
+    // rekordbox's memory cues with Engine's one -- after every sync,
+    // because a sync is exactly what makes m.db the newer file.
+    const std::vector<CuePoint> hotA = cuesOfKind(match.trackA.cues, CuePoint::Kind::Hot);
+    const std::vector<CuePoint> hotB = cuesOfKind(match.trackB.cues, CuePoint::Kind::Hot);
+    const std::vector<CuePoint> memoryA = cuesOfKind(match.trackA.cues, CuePoint::Kind::Memory);
+    const std::vector<CuePoint> memoryB = cuesOfKind(match.trackB.cues, CuePoint::Kind::Memory);
+
+    // Memory cues agree when the lists match, or when one side is Engine
+    // and holds nothing the other lacks: Engine can only ever keep one, so
+    // "its one is among rekordbox's three" is agreement, not a difference.
+    const bool memoryAgrees = cueSetsEqual(memoryA, memoryB)
+        || (match.trackA.format == "engine" && positionsCoveredBy(memoryA, memoryB))
+        || (match.trackB.format == "engine" && positionsCoveredBy(memoryB, memoryA));
+
+    if (cueSetsEqual(hotA, hotB) && memoryAgrees) {
         result.kind = SyncPlan::Kind::AlreadyConsistent;
         return result;
     }
 
     result.kind = SyncPlan::Kind::Conflict;
-    if (mtimeA > mtimeB) {
-        result.direction = SyncPlan::Direction::ToB;
-        result.cuesToApply = match.trackA.cues;
-    } else {
-        result.direction = SyncPlan::Direction::ToA;
-        result.cuesToApply = match.trackB.cues;
+
+    // The clock. Each track's own edit time when both catalogs can say --
+    // Engine records one per track, a rekordbox track's is its ANLZ file's
+    // mtime -- because the whole-catalog mtime moves for every track the
+    // moment any one is edited, so it cannot tell which side of THIS track
+    // is newer. Falls back to the catalog mtimes only when either side
+    // cannot date its own track (0).
+    const bool perTrack = match.trackA.metadataModifiedAt > 0 && match.trackB.metadataModifiedAt > 0;
+    const bool aIsNewer = perTrack
+        ? match.trackA.metadataModifiedAt > match.trackB.metadataModifiedAt
+        : mtimeA > mtimeB;
+
+    const Track &winner = aIsNewer ? match.trackA : match.trackB;
+    result.direction = aIsNewer ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
+
+    // The winner's hot cues, plus every memory cue either side has. A
+    // memory cue is never taken away by a sync: the newer side's list wins
+    // for hot cue slots, where one value per slot is all there is, but a
+    // memory cue missing from one side is far more often that side's
+    // capacity than the DJ's intent. Engine's writer keeps the earliest of
+    // them, which is all it ever could; rekordbox keeps them all.
+    result.cuesToApply = cuesOfKind(winner.cues, CuePoint::Kind::Hot);
+    for (const CuePoint &cue : unionByPosition(memoryA, memoryB)) {
+        result.cuesToApply.push_back(cue);
     }
     return result;
 }

@@ -1262,6 +1262,16 @@ if(TARGET Qt6::Core)
         target_link_libraries(failed_change_rollback_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME failed_change_rollback_test COMMAND failed_change_rollback_test)
+
+    add_executable(add_cue_mirror_failure_test tests/add_cue_mirror_failure_test.cpp)
+    target_include_directories(add_cue_mirror_failure_test PRIVATE src)
+    target_compile_definitions(add_cue_mirror_failure_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(add_cue_mirror_failure_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(add_cue_mirror_failure_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME add_cue_mirror_failure_test COMMAND add_cue_mirror_failure_test)
 endif()
 
 add_executable(rekordbox_process_detector_test

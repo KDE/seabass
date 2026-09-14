@@ -207,9 +207,17 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
     ctx.log().record("add-cue: added " + kind + (m_isLoop ? " loop" : " cue") + " at " + positionText + "ms to track id="
                      + id + " (\"" + track->title + "\")");
 
-    // Best-effort OneLibrary mirror -- same secondary write every
-    // other rekordbox cue path here already does, never fatal to
-    // the primary write above.
+    // The OneLibrary mirror. export.pdb and exportLibrary.db are one
+    // library in two formats, so a cue that reached one and not the other
+    // is a library that disagrees with itself.
+    //
+    // A failure here fails the change. It used to be logged and the save
+    // reported success, which told the user their cue was written when a
+    // player reading Device Library Plus would not show it. Failing the
+    // change also takes the DeviceLibrary half back out: the save loop
+    // restores every file this change declared (runSaveLoop and
+    // SaveContext::rollBackChange), so the two formats stay in agreement
+    // rather than half the library holding a cue the other half lacks.
     if (m_format == "rekordbox" && !track->filePath.empty()
         && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneerRoot)) {
         try {
@@ -218,6 +226,11 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
             ctx.log().record("add-cue: also wrote into OneLibrary");
         } catch (const std::exception &e) {
             ctx.log().record(std::string("add-cue: OneLibrary write failed: ") + e.what());
+            return ChangeOutcome::failure(
+                QStringLiteral("Could not write the cue into Device Library Plus: %1. The save stops here and "
+                               "puts back what this change wrote, so DeviceLibrary and Device Library Plus stay "
+                               "in agreement.")
+                    .arg(QString::fromUtf8(e.what())));
         }
     }
 

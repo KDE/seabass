@@ -465,6 +465,27 @@ void caseScanCounts(const DataSet &set, Catalogs &catalogs, Expectations &expect
             expected.expect("rekordbox.tracksWithAlbum", countWithAlbum(catalogs.rekordbox),
                             "rekordbox tracks-with-album unchanged");
             pass("case 1: rekordbox scan at real scale, track and cue counts hold");
+
+            // Sync's per-track clock. A rekordbox track's cues live in its
+            // ANLZ .EXT file, so every track that read cues from one has
+            // that file's mtime to be dated by. A zero here means Sync fell
+            // back to export.pdb's mtime for it -- the whole-library date
+            // that cannot say which side of one track is newer.
+            long long withCues = 0;
+            long long withCuesButUndated = 0;
+            for (const auto &track : catalogs.rekordbox) {
+                if (!track.cues.empty()) {
+                    withCues++;
+                    if (track.metadataModifiedAt <= 0) {
+                        withCuesButUndated++;
+                    }
+                }
+            }
+            if (check(withCuesButUndated == 0,
+                      "every rekordbox track with cues is dated by its ANLZ file (" + std::to_string(withCuesButUndated)
+                          + " of " + std::to_string(withCues) + " were not)")) {
+                pass("case 1b: rekordbox tracks carry their own edit time for Sync");
+            }
         }
     }
     if (set.rekordboxRoot && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*set.rekordboxRoot)) {
@@ -494,6 +515,21 @@ void caseScanCounts(const DataSet &set, Catalogs &catalogs, Expectations &expect
             expected.expect("engine.tracksWithAlbum", countWithAlbum(catalogs.engine),
                             "Engine tracks-with-album unchanged");
             pass("case 2: Engine scan at real scale, track and cue counts hold");
+
+            // Sync's per-track clock, Engine side. Engine writes
+            // Track.lastEditTime for every track, so a real library should
+            // leave none undated; libdjinterop's high-level API does not
+            // expose the column, which is why the reader reads it itself.
+            long long undated = 0;
+            for (const auto &track : catalogs.engine) {
+                if (track.metadataModifiedAt <= 0) {
+                    undated++;
+                }
+            }
+            if (check(undated == 0, "every Engine track carries Track.lastEditTime (" + std::to_string(undated) + " of "
+                                        + std::to_string(catalogs.engine.size()) + " did not)")) {
+                pass("case 2c: Engine tracks carry their own edit time for Sync");
+            }
         }
     }
 }

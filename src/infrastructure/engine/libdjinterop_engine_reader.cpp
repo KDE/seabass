@@ -208,6 +208,46 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
     return result;
 }
 
+// Track id -> Track.lastEditTime, in seconds since the epoch. Raw SQLite
+// for the same reason as the two readers above: libdjinterop's high-level
+// track API does not expose the column (only its v2 table row type does).
+//
+// This is the per-track clock Sync resolves a hot cue conflict with.
+// Without it the only date was m.db's mtime, which moves for every track
+// the moment any one is edited, so it could not tell which side of one
+// particular track was newer -- and a sync is exactly what makes m.db the
+// newest file on the stick. A value of 0 or below is "unknown" and left
+// out, which makes Sync fall back to the catalog dates for that track.
+std::unordered_map<int64_t, std::int64_t> readLastEditTimes(const std::string &engineLibraryPath)
+{
+    std::unordered_map<int64_t, std::int64_t> result;
+    std::string dbPath = (std::filesystem::path(engineLibraryPath) / "Database2" / "m.db").string();
+
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        if (db) {
+            sqlite3_close(db);
+        }
+        return result;
+    }
+
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "SELECT id, lastEditTime FROM Track WHERE lastEditTime IS NOT NULL AND lastEditTime > 0";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        // An older schema without the column: no per-track clock, not an
+        // error. Sync falls back to the catalog dates.
+        sqlite3_close(db);
+        return result;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        result[sqlite3_column_int64(stmt, 0)] = sqlite3_column_int64(stmt, 1);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return result;
+}
+
 }  // namespace
 
 LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath)
@@ -241,8 +281,10 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
     }
 
     std::unordered_map<int64_t, std::string> streamingSourceByTrackId;
+    std::unordered_map<int64_t, std::int64_t> lastEditTimeByTrackId;
     try {
         streamingSourceByTrackId = readStreamingSources(m_engineLibraryPath);
+        lastEditTimeByTrackId = readLastEditTimes(m_engineLibraryPath);
     } catch (const std::exception &e) {
         m_progress->warn(std::string("could not read streaming sources: ") + e.what());
     }
@@ -305,6 +347,10 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
         auto streamingIt = streamingSourceByTrackId.find(id);
         if (streamingIt != streamingSourceByTrackId.end()) {
             track.streamingSource = streamingIt->second;
+        }
+        auto lastEditIt = lastEditTimeByTrackId.find(id);
+        if (lastEditIt != lastEditTimeByTrackId.end()) {
+            track.metadataModifiedAt = lastEditIt->second;
         }
 
         auto sampleRate = safeGet<std::optional<double>>(*m_progress, id, "sample_rate",

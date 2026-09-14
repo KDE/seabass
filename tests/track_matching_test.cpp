@@ -177,12 +177,16 @@ int main()
 
     // matchTracks: a duration of 0 means "unreadable" (same fallback
     // convention as the rest of Track's fields), not a real zero-length
-    // track -- a track whose duration failed to read on one side must
-    // still match its counterpart by title+artist. Regression case:
-    // found on real data, this exact bug silently failed to match 1207
-    // of 1566 Engine tracks against their rekordbox counterpart during
-    // Sync Cue Points, so most cues never actually propagated across
-    // formats.
+    // track. A length that cannot be read cannot be compared, so title
+    // and artist alone do not make a match: a radio edit and an extended
+    // mix share both, and length is what tells them apart.
+    //
+    // This case used to assert the opposite. That leniency was needed
+    // while Engine reported no length for most tracks (1207 of 1566 once
+    // failed to match for that reason alone). Every read now fills missing
+    // lengths from the audio file -- on RV2 that leaves one track of 1469
+    // without one -- so what is still 0 is a broken or missing file, and
+    // guessing a match for it is how one mix gets the other's cues.
     {
         Track engineTrack;
         engineTrack.sourceId = "engine1";
@@ -199,10 +203,35 @@ int main()
         std::vector<Track> engineTracks = {engineTrack};
         std::vector<Track> rekordboxTracks = {rekordboxTrack};
         auto matches = matchTracks(engineTracks, rekordboxTracks);
+        assert(matches.empty());
+        std::cout << "case 9 (matchTracks: an unreadable duration cannot be compared, so no title+artist match) OK\n";
+    }
+
+    // ...but the same file is still the same file. Two rows naming one path
+    // on one stick match with no comparison at all, so an unreadable
+    // length on either side does not stand in the way.
+    {
+        Track engineTrack;
+        engineTrack.sourceId = "engine1";
+        engineTrack.title = "In My Head";
+        engineTrack.artist = "Domek";
+        engineTrack.filePath = "/media/RV2/Contents/Domek/In My Head.mp3";
+        engineTrack.durationSeconds = 0.0;
+
+        Track rekordboxTrack;
+        rekordboxTrack.sourceId = "rb1";
+        rekordboxTrack.title = "In My Head";
+        rekordboxTrack.artist = "Domek";
+        rekordboxTrack.filePath = "/media/RV2/Contents/Domek/In My Head.mp3";
+        rekordboxTrack.durationSeconds = 462.0;
+
+        std::vector<Track> engineTracks = {engineTrack};
+        std::vector<Track> rekordboxTracks = {rekordboxTrack};
+        auto matches = matchTracks(engineTracks, rekordboxTracks);
         assert(matches.size() == 1);
         assert(matches[0].first->sourceId == "engine1");
         assert(matches[0].second->sourceId == "rb1");
-        std::cout << "case 9 (matchTracks: unreadable duration on one side doesn't block a real match) OK\n";
+        std::cout << "case 9b (matchTracks: the same file path matches whatever either length reads) OK\n";
     }
 
     // matchTracks: a genuine duration mismatch (both sides have a real

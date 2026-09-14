@@ -134,6 +134,90 @@ int main()
         std::cout << "case 7 (conflict, engine newer -> to rekordbox) OK\n";
     }
 
+    // The wipe this planner used to do. rekordbox has three memory cues,
+    // Engine can only hold one, and after a sync Engine holds the first of
+    // them. Same hot cues. That is agreement: Engine's one memory cue is
+    // among rekordbox's. It used to read as a conflict, m.db was the newer
+    // file (the sync had just written it), and Engine's single memory cue
+    // replaced rekordbox's three -- on every sync after the first.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 2000.0, "", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 60000.0, "", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 120000.0, "", ""}});
+        r.format = "rekordbox";
+        Track e = makeTrack("e1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 2000.0, "", ""}});
+        e.format = "engine";
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
+        assert(plan.kind == SyncPlan::Kind::AlreadyConsistent);
+        assert(plan.direction == SyncPlan::Direction::None);
+        std::cout << "case 8 (Engine's one memory cue among rekordbox's three is agreement, not a wipe) OK\n";
+    }
+
+    // A genuine hot cue conflict with Engine newer still goes to rekordbox
+    // -- but rekordbox keeps all three of its memory cues.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 2000.0, "", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 60000.0, "", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 120000.0, "", ""}});
+        r.format = "rekordbox";
+        Track e = makeTrack("e1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 9000.0, "#00FF00", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 2000.0, "", ""}});
+        e.format = "engine";
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(plan.direction == SyncPlan::Direction::ToA);
+        int hot = 0;
+        int memory = 0;
+        for (const auto &cue : plan.cuesToApply) {
+            if (cue.kind == CuePoint::Kind::Hot) {
+                hot++;
+                assert(cue.positionMs == 9000.0);  // the newer side's hot cue
+            } else {
+                memory++;
+            }
+        }
+        assert(hot == 1);
+        assert(memory == 3);  // none of rekordbox's memory cues is taken away
+        std::cout << "case 9 (a hot cue conflict keeps every memory cue) OK\n";
+    }
+
+    // Per-track clocks outrank the catalog files. The catalogs say Engine is
+    // newer (m.db was written an hour ago for some other track), but this
+    // track was last edited on the rekordbox side.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}});
+        r.format = "rekordbox";
+        r.metadataModifiedAt = 1'800'000'000;
+        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#FF0000", ""}});
+        e.format = "engine";
+        e.metadataModifiedAt = 1'700'000'000;
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(plan.direction == SyncPlan::Direction::ToB);
+        std::cout << "case 10 (each track's own edit time outranks the catalog file's) OK\n";
+    }
+
+    // A side that cannot date its own track falls back to the catalog files
+    // for both, rather than comparing a real date against zero.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}});
+        r.format = "rekordbox";
+        r.metadataModifiedAt = 1'800'000'000;
+        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#FF0000", ""}});
+        e.format = "engine";
+        e.metadataModifiedAt = 0;  // unknown
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now - hours(1), now);
+        assert(plan.direction == SyncPlan::Direction::ToA);  // catalogs: Engine newer
+        std::cout << "case 11 (an undatable track falls back to the catalog files) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
