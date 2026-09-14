@@ -79,6 +79,10 @@ Rectangle {
 
     // ---- state -------------------------------------------------------
     property bool selectable: true
+    // Keeps the tick box's column when a row has no tick of its own, so a
+    // list mixing both kinds -- Sync Cue Points' decisions above its
+    // tickable tracks -- lines every cover and title up in one column.
+    property bool reserveSelectionSpace: false
     property bool selected: false
     // What ticking this row does, which is not the same on both pages:
     // on one it stages a restore and on the other it marks an entry to
@@ -94,6 +98,13 @@ Rectangle {
     property string detailNote: ""
 
     property alias actionItems: actionRow.data
+    // Page-specific content under the expanded half's facts, lined up with
+    // the title like they are. Only shown while expanded.
+    property alias expandedItems: expandedExtra.data
+    // How far the title sits from the row's left edge: tick box, cover and
+    // the gaps after each. What anything lining up with the title needs.
+    readonly property real contentInset: (selectBox.visible ? selectBox.width + Theme.rowSpacing : 0)
+        + artworkTile.width + Theme.rowSpacing
 
     readonly property bool hovered: rowMouse.containsMouse
 
@@ -147,7 +158,9 @@ Rectangle {
             CheckBox {
                 id: selectBox
                 objectName: "selectCheckBox"
-                visible: delegate.selectable
+                visible: delegate.selectable || delegate.reserveSelectionSpace
+                opacity: delegate.selectable ? 1 : 0
+                enabled: delegate.selectable
                 checked: delegate.selected
                 // The selection is the model's to own: the page writes
                 // it back and the delegate re-reads it, so a recycled
@@ -284,8 +297,7 @@ Rectangle {
             // Lines the detail up under the title rather than under the
             // tick box, measured off the controls themselves so it stays
             // right at any font size.
-            Layout.leftMargin: (selectBox.visible ? selectBox.width + Theme.rowSpacing : 0)
-                + artworkTile.width + Theme.rowSpacing
+            Layout.leftMargin: delegate.contentInset
             Layout.bottomMargin: Theme.tightSpacing
             visible: delegate.expanded
             columns: 2
@@ -334,6 +346,16 @@ Rectangle {
                 text: delegate.storedFrom + (delegate.storedAt.length > 0 ? " on " + delegate.storedAt : "")
                 color: Theme.textMuted
             }
+        }
+
+        ColumnLayout {
+            id: expandedExtra
+            objectName: "expandedExtra"
+            Layout.fillWidth: true
+            Layout.leftMargin: delegate.contentInset
+            Layout.bottomMargin: Theme.tightSpacing
+            visible: delegate.expanded && children.length > 0
+            spacing: Theme.tightSpacing
         }
     }
 }

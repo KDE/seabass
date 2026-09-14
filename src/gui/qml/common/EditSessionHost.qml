@@ -41,6 +41,12 @@ Item {
     // whose save means something more specific than "write my edits"
     // overrides it.
     property string saveLabel: "Save"
+    // How much room the floating Save button takes out of the bottom of
+    // the page, gap included. A list gives itself this much bottomMargin so
+    // its last row can always scroll clear of the button. Measured whether
+    // or not the button is showing, so staging the first change does not
+    // make the list jump.
+    readonly property real saveClearance: saveOverlayButton.implicitHeight + 2 * saveOverlayButton.anchors.margins
     readonly property var session: internal.session
     readonly property string editorOwner: internal.session !== null && internal.session.editorOwner !== undefined
         ? internal.session.editorOwner : ""
@@ -194,6 +200,7 @@ Item {
     }
 
     SaveOverlayButton {
+        id: saveOverlayButton
         objectName: "saveOverlay"
         session: host.session
         label: host.saveLabel
