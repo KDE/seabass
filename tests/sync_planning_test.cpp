@@ -365,6 +365,34 @@ int main()
         std::cout << "case 16 (hot cues on one side only are copied across without asking) OK\n";
     }
 
+    // Counting a write the way the page shows it: a hot cue already on the
+    // same pad at the same place is kept, the rest are gained.
+    {
+        std::vector<CuePoint> current = {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "", ""}};
+        std::vector<CuePoint> written = {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "", ""},
+                                         CuePoint{CuePoint::Kind::Hot, 2, 20000.0, "", ""},
+                                         CuePoint{CuePoint::Kind::Hot, 3, 40000.0, "", ""},
+                                         CuePoint{CuePoint::Kind::Hot, 4, 60000.0, "", ""}};
+        CueChange change = describeCueChange(current, written);
+        assert(change.gainedHot == 3 && "four written, one of them already there");
+        assert(change.keptHot == 1);
+        assert(change.droppedHot == 0);
+        std::cout << "case 17 (a hot cue already there is kept, not gained) OK\n";
+    }
+
+    // A cue moved to another pad is not the same hot cue: one gained, one
+    // dropped. A memory cue a rounding away is still the same cue.
+    {
+        std::vector<CuePoint> current = {CuePoint{CuePoint::Kind::Hot, 2, 5000.0, "", ""},
+                                         CuePoint{CuePoint::Kind::Memory, 0, 9000.0, "", ""}};
+        std::vector<CuePoint> written = {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "", ""},
+                                         CuePoint{CuePoint::Kind::Memory, 0, 9400.0, "", ""}};
+        CueChange change = describeCueChange(current, written);
+        assert(change.gainedHot == 1 && change.droppedHot == 1 && change.keptHot == 0);
+        assert(change.keptMemory == 1 && change.gainedMemory == 0 && change.droppedMemory == 0);
+        std::cout << "case 18 (a moved pad is dropped and gained; a drifted memory cue is kept) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

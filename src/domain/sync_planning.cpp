@@ -238,4 +238,44 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
     return result;
 }
 
+namespace
+{
+
+bool sameCue(const CuePoint &a, const CuePoint &b)
+{
+    return a.kind == b.kind && samePosition(a, b)
+        && (a.kind != CuePoint::Kind::Hot || a.hotCueNumber == b.hotCueNumber);
+}
+
+bool containsCue(const std::vector<CuePoint> &cues, const CuePoint &cue)
+{
+    for (const CuePoint &other : cues) {
+        if (sameCue(cue, other)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+CueChange describeCueChange(const std::vector<CuePoint> &current, const std::vector<CuePoint> &written)
+{
+    CueChange change;
+    for (const CuePoint &cue : written) {
+        const bool hot = cue.kind == CuePoint::Kind::Hot;
+        if (containsCue(current, cue)) {
+            (hot ? change.keptHot : change.keptMemory)++;
+        } else {
+            (hot ? change.gainedHot : change.gainedMemory)++;
+        }
+    }
+    for (const CuePoint &cue : current) {
+        if (!containsCue(written, cue)) {
+            (cue.kind == CuePoint::Kind::Hot ? change.droppedHot : change.droppedMemory)++;
+        }
+    }
+    return change;
+}
+
 }  // namespace seabass::domain

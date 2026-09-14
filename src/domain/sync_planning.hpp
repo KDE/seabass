@@ -96,4 +96,26 @@ public:
                           std::chrono::system_clock::time_point mtimeB);
 };
 
+// What putting `written` on a track that currently has `current` does to
+// its cues, counted the way a DJ reads it. A cue already on the track at
+// the same place -- and, for a hot cue, on the same pad -- is kept; one
+// that is not is gained; one of the track's own that `written` leaves out
+// is dropped. Positions compare with the tolerance the planner itself
+// uses, so a cue that drifted by a cross-format rounding is kept here too.
+//
+// Exists for the Sync Cue Points page. "Copy 4 hot cues" onto a track that
+// already has one of those four reads as four new cues when it is three,
+// and a pad that moved reads as nothing lost when one was.
+struct CueChange
+{
+    int gainedHot = 0;
+    int keptHot = 0;
+    int droppedHot = 0;
+    int gainedMemory = 0;
+    int keptMemory = 0;
+    int droppedMemory = 0;
+};
+
+CueChange describeCueChange(const std::vector<CuePoint> &current, const std::vector<CuePoint> &written);
+
 }  // namespace seabass::domain
