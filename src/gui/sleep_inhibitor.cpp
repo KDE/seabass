@@ -169,6 +169,13 @@ int SleepInhibitor::activeHolds()
     return s.holds;
 }
 
+bool SleepInhibitor::granted()
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    return s.holds > 0 && s.acquired;
+}
+
 void SleepInhibitor::setBackendForTesting(std::unique_ptr<Backend> backend)
 {
     State &s = state();

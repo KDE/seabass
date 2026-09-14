@@ -44,6 +44,10 @@ public:
     // How many tokens are alive right now.
     static int activeHolds();
 
+    // Whether the system actually granted the inhibitor behind the tokens
+    // alive right now: false with none alive, or when it was refused.
+    static bool granted();
+
     // What actually talks to the system; swapped out by tests.
     class Backend
     {

@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 // SleepInhibitor: one system inhibitor however many operations overlap,
-// let go with the last of them -- and, on a machine where logind can be
-// asked, the real inhibitor listed by systemd-inhibit while it is held.
+// let go with the last of them -- and the real one: on Linux, listed by
+// systemd-inhibit while it is held; on Windows, granted by the system and,
+// from an elevated prompt, listed by powercfg /requests.
 
 #include <QCoreApplication>
 #include <QProcess>
@@ -56,6 +57,7 @@ private:
     std::shared_ptr<Counts> m_counts;
 };
 
+#ifdef Q_OS_LINUX
 // systemd-inhibit's own list, or nullopt when there is no logind to ask.
 std::optional<QString> inhibitorList()
 {
@@ -69,6 +71,7 @@ std::optional<QString> inhibitorList()
     }
     return QString::fromUtf8(list.readAllStandardOutput());
 }
+#endif
 
 }  // namespace
 
@@ -76,8 +79,9 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
 
+#ifdef Q_OS_LINUX
     // Case 1, before any fake replaces it: the real backend, where logind
-    // is there to ask. Skipped without one (containers, CI, Windows).
+    // is there to ask. Skipped without one (containers, CI).
     {
         const auto before = inhibitorList();
         const QString why = QStringLiteral("sleep_inhibitor_test %1").arg(QCoreApplication::applicationPid());
@@ -87,6 +91,7 @@ int main(int argc, char **argv)
             assert(!before->contains(why));
             {
                 auto token = SleepInhibitor::hold(why);
+                assert(SleepInhibitor::granted() && "logind must grant the inhibitor");
                 const auto during = inhibitorList();
                 assert(during && during->contains(why) && "logind must list the inhibitor while it is held");
             }
@@ -95,6 +100,37 @@ int main(int argc, char **argv)
             std::cout << "case 1 (logind lists the inhibitor while held, and drops it after) OK\n";
         }
     }
+#endif
+
+#ifdef Q_OS_WIN
+    // Case 1w, before any fake replaces it: the real power request. That
+    // Windows grants it is checked everywhere; that powercfg /requests lists
+    // it needs an elevated prompt, and is skipped without one (and under
+    // Wine, which has no powercfg).
+    {
+        const QString why = QStringLiteral("sleep_inhibitor_test %1").arg(QCoreApplication::applicationPid());
+        {
+            auto token = SleepInhibitor::hold(why);
+            assert(SleepInhibitor::granted() && "Windows must grant the power request");
+            QProcess requests;
+            requests.start(QStringLiteral("powercfg"), {QStringLiteral("/requests")});
+            const bool finished = requests.waitForFinished(10000) && requests.exitStatus() == QProcess::NormalExit;
+            const QString listed = finished ? QString::fromLocal8Bit(requests.readAllStandardOutput()) : QString();
+            // Gated on the listing itself, not the exit code: a prompt without
+            // the rights to list requests may still exit 0 with a message.
+            // A real listing always has its SYSTEM: section.
+            if (listed.contains(QStringLiteral("SYSTEM:"))) {
+                assert(listed.contains(why) && "powercfg /requests must list the request while it is held");
+                std::cout << "case 1w: powercfg /requests lists the request while it is held\n";
+            } else {
+                std::cout << "case 1w: powercfg /requests not available here (needs an elevated prompt) -- "
+                             "listing not checked\n";
+            }
+        }
+        assert(!SleepInhibitor::granted());
+        std::cout << "case 1w (Windows grants the power request, and it is let go after) OK\n";
+    }
+#endif
 
     auto counts = std::make_shared<Counts>();
     SleepInhibitor::setBackendForTesting(std::make_unique<FakeSleep>(counts));
@@ -105,12 +141,14 @@ int main(int argc, char **argv)
         auto first = SleepInhibitor::hold(QStringLiteral("Backing up a USB stick"));
         auto second = SleepInhibitor::hold(QStringLiteral("Formatting a USB stick"));
         assert(counts->acquires == 1 && counts->held);
+        assert(SleepInhibitor::granted());
         assert(counts->why == QStringLiteral("Backing up a USB stick"));
         assert(SleepInhibitor::activeHolds() == 2);
         first.reset();
         assert(counts->held && counts->releases == 0 && "one operation finishing must not wake the other's guard");
         second.reset();
         assert(!counts->held && counts->releases == 1);
+        assert(!SleepInhibitor::granted() && "nothing is granted with nothing held");
         assert(SleepInhibitor::activeHolds() == 0);
         std::cout << "case 2 (overlapping holds share one inhibitor) OK\n";
     }
@@ -137,6 +175,7 @@ int main(int argc, char **argv)
         {
             auto token = SleepInhibitor::hold(QStringLiteral("Restoring a stick backup"));
             assert(SleepInhibitor::activeHolds() == 1);
+            assert(!SleepInhibitor::granted() && "a refusal must not be reported as granted");
         }
         assert(counts->releases == releasesBefore && "a refused inhibitor must not be released");
         counts->refuse = false;
