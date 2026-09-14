@@ -6,7 +6,8 @@
 
 #include <cstdlib>
 #include <iostream>
-#include <unistd.h>
+
+#include "infrastructure/system/tty_check.hpp"
 
 namespace seabass::cli
 {
@@ -18,7 +19,8 @@ namespace
 
 bool colorEnabled()
 {
-    static const bool enabled = (::isatty(STDOUT_FILENO) != 0) && (std::getenv("NO_COLOR") == nullptr);
+    static const bool enabled =
+        seabass::infrastructure::system::isStdoutTty() && (std::getenv("NO_COLOR") == nullptr);
     return enabled;
 }
 
@@ -92,7 +94,7 @@ void Console::heading(const std::string &message)
 
 bool Console::isInteractive()
 {
-    static const bool result = ::isatty(STDIN_FILENO) != 0;
+    static const bool result = seabass::infrastructure::system::isStdinTty();
     return result;
 }
 

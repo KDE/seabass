@@ -6,9 +6,9 @@
 
 #include <algorithm>
 #include <iostream>
-#include <unistd.h>
 
 #include "cli/console.hpp"
+#include "infrastructure/system/tty_check.hpp"
 
 namespace seabass::cli
 {
@@ -18,7 +18,7 @@ namespace
 
 bool isTerminal()
 {
-    static const bool result = ::isatty(STDOUT_FILENO) != 0;
+    static const bool result = seabass::infrastructure::system::isStdoutTty();
     return result;
 }
 

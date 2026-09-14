@@ -17,6 +17,18 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    # MSVC leaves the __cplusplus macro at 199711L regardless of
+    # /std:c++<N> unless told otherwise -- a legacy-compatibility default,
+    # not a bug -- so every __cplusplus version check anywhere (this
+    # project's own code never does one, but vendored third_party/
+    # dependencies do, e.g. libdjinterop's config.hpp) sees a C++98
+    # compiler even while genuinely compiling as C++23. GCC and Clang
+    # report the real value unconditionally, so this has no MINGW
+    # counterpart.
+    add_compile_options(/Zc:__cplusplus)
+endif()
+
 # --- vendored dependencies (git submodules under third_party/) ---
 #
 # .gitmodules itself is intentionally not a tracked file in this repo
@@ -185,12 +197,15 @@ target_include_directories(kaitai_cpp_stl_runtime PUBLIC
 )
 target_compile_definitions(kaitai_cpp_stl_runtime PUBLIC KS_STR_ENCODING_ICONV)
 if(WIN32)
-    # mingw-w64 has neither <endian.h> nor <byteswap.h> (Linux/BSD-only) --
-    # see third_party/mingw-compat/endian.h for the full explanation. Only
-    # this one target needs it (the only place that source file's
-    # platform-detection preamble is compiled), and PRIVATE so it doesn't
-    # leak onto anything else's include path.
+    # Neither mingw-w64 nor MSVC ship <endian.h> or <byteswap.h>
+    # (Linux/BSD-only) -- see third_party/mingw-compat/endian.h for the
+    # full explanation (the name predates MSVC support; the shim itself
+    # is not mingw-specific). Only this one target needs it (the only
+    # place that source file's platform-detection preamble is compiled),
+    # and PRIVATE so it doesn't leak onto anything else's include path.
     target_include_directories(kaitai_cpp_stl_runtime PRIVATE third_party/mingw-compat)
+endif()
+if(MINGW)
     # win-iconv-mingw-w64-dev's iconv() declares its second parameter
     # `const char **` by default (POSIX-2008 style); kaitaistream.cpp
     # (written against glibc's non-const `char **`) passes a plain
@@ -208,6 +223,15 @@ if(WIN32)
     # libiconv.a instead, for a self-contained portable exe.
     find_library(WIN_ICONV_STATIC_LIB NAMES libiconv.a PATHS /usr/x86_64-w64-mingw32/lib REQUIRED)
     target_link_libraries(kaitai_cpp_stl_runtime PUBLIC ${WIN_ICONV_STATIC_LIB})
+elseif(MSVC)
+    # MSVC has no iconv() at all (no POSIX C runtime layer providing
+    # one), unlike mingw-w64's win-iconv above. libiconv itself (e.g.
+    # vcpkg's `libiconv` port) is the direct substitute and needs no
+    # source change -- kaitaistream.cpp's `char**` call matches libiconv's
+    # own (non-const) signature already, so WINICONV_CONST is a
+    # win-iconv-specific escape hatch this branch never needs.
+    find_package(Iconv REQUIRED)
+    target_link_libraries(kaitai_cpp_stl_runtime PUBLIC Iconv::Iconv)
 endif()
 
 # --- rekordbox format parser, generated from specs/*.ksy (see specs/README.md) ---
@@ -423,7 +447,7 @@ add_executable(seabass-cli
 )
 target_include_directories(seabass-cli PRIVATE src)
 target_link_libraries(seabass-cli PRIVATE seabass_core)
-if(WIN32)
+if(MINGW)
     # A portable single-file .exe - without these, mingw links
     # libgcc_s_seh-1.dll/libstdc++-6.dll dynamically, which aren't
     # present next to the exe (or anywhere in a real Windows install)
@@ -432,6 +456,9 @@ if(WIN32)
     # variant (required to match Qt's prebuilt win64_mingw binaries,
     # see cmake/mingw-w64-toolchain.cmake). That variant also pulls
     # in libwinpthread-1.dll dynamically unless -static covers it too.
+    # MSVC has no equivalent of this branch: its runtime is the
+    # near-universally-preinstalled VC++ Redistributable, not a
+    # toolchain-specific DLL pair that needs statically absorbing.
     target_link_options(seabass-cli PRIVATE -static-libgcc -static-libstdc++ -static)
 endif()
 
@@ -465,8 +492,18 @@ option(SEABASS_EXPERIMENTAL "Compile in the experimental-features opt-in (Settin
 # them separately is what lets the check below name the package that is
 # actually absent. It is not a licence to continue without them; that
 # check is a FATAL_ERROR.
-find_package(Qt6 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts QuickEffects QuickDialogs2 QuickShapes Multimedia Concurrent Svg
-    OPTIONAL_COMPONENTS Test QuickTest)
+# QuickEffects/QuickShapes are OPTIONAL_COMPONENTS too, for a different
+# reason than Test/QuickTest above: MSYS2's Qt6 packaging ships a public
+# Qt6QuickEffects/Qt6QuickShapes CMake config, but the official Qt
+# installer (and aqtinstall, which fetches the same kits) only ships
+# their *Private counterparts -- confirmed by comparing the two
+# installs' lib/cmake directories directly, not assumed. Every use below
+# is itself guarded on `TARGET Qt6::QuickEffects`/`Qt6::QuickShapes`, so
+# an MSVC build built from an official Qt kit just proceeds without
+# them (losing MultiEffect/Shape QML types) rather than failing to
+# configure at all.
+find_package(Qt6 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts QuickDialogs2 Multimedia Concurrent Svg
+    OPTIONAL_COMPONENTS Test QuickTest QuickEffects QuickShapes)
 # --- QtMultimedia duration probe (see TrackDurationProbe) ---
 #
 # Deliberately its own tiny target rather than sources in seabass_core:
@@ -690,13 +727,19 @@ if(SEABASS_GUI AND Qt6_FOUND)
             Qt6::Quick
             Qt6::QuickControls2
             Qt6::QuickLayouts
-            Qt6::QuickEffects
             Qt6::QuickDialogs2
-            Qt6::QuickShapes
             Qt6::Multimedia
             Qt6::Concurrent
             Qt6::Svg
         )
+        # See the find_package(Qt6 ...) call above for why these two are
+        # conditional rather than in the list above.
+        if(TARGET Qt6::QuickEffects)
+            target_link_libraries(seabass_qml_tests PRIVATE Qt6::QuickEffects)
+        endif()
+        if(TARGET Qt6::QuickShapes)
+            target_link_libraries(seabass_qml_tests PRIVATE Qt6::QuickShapes)
+        endif()
         # The generated qmltyperegistrations.cpp #includes each QML_ELEMENT
         # header via <angle brackets> (see e.g. seabass_qmltyperegistrations.cpp
         # in the build dir), resolved against the include path -- src/gui/

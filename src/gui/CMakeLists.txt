@@ -292,10 +292,17 @@ target_link_libraries(seabass PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::QuickLayouts
-    Qt6::QuickEffects
     Qt6::QuickDialogs2
-    Qt6::QuickShapes
     Qt6::Multimedia
     Qt6::Concurrent
     Qt6::Svg
 )
+# See the find_package(Qt6 ...) call in the top-level CMakeLists.txt for
+# why these two are conditional: an official (aqtinstall-fetched) Qt kit
+# ships only their *Private counterparts, unlike MSYS2's packaging.
+if(TARGET Qt6::QuickEffects)
+    target_link_libraries(seabass PRIVATE Qt6::QuickEffects)
+endif()
+if(TARGET Qt6::QuickShapes)
+    target_link_libraries(seabass PRIVATE Qt6::QuickShapes)
+endif()
