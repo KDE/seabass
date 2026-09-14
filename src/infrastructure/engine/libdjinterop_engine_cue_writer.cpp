@@ -4,13 +4,10 @@
 
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 
-#include <chrono>
-#include <filesystem>
 #include <optional>
 #include <stdexcept>
 
 #include <djinterop/djinterop.hpp>
-#include <sqlite3.h>
 
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/work_counters.hpp"
@@ -39,43 +36,6 @@ djinterop::pad_color parseColor(const std::string &color)
 LibdjinteropEngineCueWriter::LibdjinteropEngineCueWriter(std::string engineLibraryPath)
     : m_engineLibraryPath(std::move(engineLibraryPath))
 {
-}
-
-void LibdjinteropEngineCueWriter::stampLastEditTime(std::int64_t trackId)
-{
-    const std::string dbPath = (std::filesystem::path(m_engineLibraryPath) / "Database2" / "m.db").string();
-    sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
-        const std::string message = db ? sqlite3_errmsg(db) : "out of memory";
-        if (db) {
-            sqlite3_close(db);
-        }
-        throw std::runtime_error("could not open " + dbPath + " to date the edit: " + message);
-    }
-    // libdjinterop's own connection to the same file has just committed;
-    // a short wait covers the moment its lock is still being released.
-    sqlite3_busy_timeout(db, 5000);
-
-    sqlite3_stmt *stmt = nullptr;
-    if (sqlite3_prepare_v2(db, "UPDATE Track SET lastEditTime = ? WHERE id = ?", -1, &stmt, nullptr) != SQLITE_OK) {
-        // A schema older than the column (before 2.20.3): there is no
-        // per-track clock to keep current, and Sync falls back to the
-        // catalog dates for such a library, as the reader does.
-        sqlite3_finalize(stmt);
-        sqlite3_close(db);
-        return;
-    }
-    const auto now =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(now));
-    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(trackId));
-    const int stepped = sqlite3_step(stmt);
-    const std::string message = sqlite3_errmsg(db);
-    sqlite3_finalize(stmt);
-    sqlite3_close(db);
-    if (stepped != SQLITE_DONE) {
-        throw std::runtime_error("the cues were written but the edit could not be dated: " + message);
-    }
 }
 
 djinterop::database &LibdjinteropEngineCueWriter::database()
@@ -118,9 +78,6 @@ void LibdjinteropEngineCueWriter::writeAnnotation(const std::string &trackSource
     // future one rather than a live case.
     if (comment) {
         track->set_comment(*comment);
-    }
-    if ((stars && *stars > 0) || comment) {
-        stampLastEditTime(std::stoll(trackSourceId));
     }
 }
 
@@ -214,7 +171,6 @@ void LibdjinteropEngineCueWriter::writeHotCues(const std::string &trackSourceId,
     track->set_main_cue(earliestMemoryCueMs
                             ? std::optional<double>(*earliestMemoryCueMs / 1000.0 * sampleRate)
                             : std::nullopt);
-    stampLastEditTime(std::stoll(trackSourceId));
 }
 
 void LibdjinteropEngineCueWriter::setLastPlayedAt(const std::string &trackSourceId,

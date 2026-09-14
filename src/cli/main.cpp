@@ -876,8 +876,16 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     std::vector<const SyncPlan *> toEngine;
     std::vector<const SyncPlan *> toRekordbox;
     std::vector<const SyncPlan *> toOneLibrary;
+    // Both sides have different hot cues. The app asks which side is meant;
+    // this has no way to, and a clock cannot say (see
+    // SyncPlan::hotCuesNeedChoice), so these are listed and left alone.
+    std::vector<const SyncPlan *> needChoice;
     for (const auto &plan : plans) {
         if (plan.direction == SyncPlan::Direction::None) {
+            continue;
+        }
+        if (plan.hotCuesNeedChoice) {
+            needChoice.push_back(&plan);
             continue;
         }
         const std::string &format = targetOf(plan)->format;
@@ -887,6 +895,17 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
             toRekordbox.push_back(&plan);
         } else if (format == "onelibrary") {
             toOneLibrary.push_back(&plan);
+        }
+    }
+
+    if (!needChoice.empty()) {
+        Console::info("");
+        Console::warn("Hot cues differ on both sides for " + std::to_string(needChoice.size())
+                      + " track(s). Not changed: choose a side in the Seabass app's Sync page.");
+        for (const auto *plan : needChoice) {
+            Console::info("  \"" + plan->match.trackA.filename + "\": " + plan->match.trackA.format + " "
+                          + describeCues(plan->match.trackA.cues) + "  vs  " + plan->match.trackB.format + " "
+                          + describeCues(plan->match.trackB.cues));
         }
     }
 
@@ -901,7 +920,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         for (const auto *plan : toEngine) {
             bool conflict = plan->kind == SyncPlan::Kind::Conflict;
             Console::info("  \"" + targetOf(*plan)->filename + "\": " + describeCues(plan->cuesToApply) +
-                           (conflict ? "  [conflict resolved: the source catalog is newer]" : ""));
+                           (conflict ? "  [differing cues merged; nothing overwritten]" : ""));
         }
     }
 
@@ -911,7 +930,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         for (const auto *plan : toRekordbox) {
             bool conflict = plan->kind == SyncPlan::Kind::Conflict;
             Console::info("  \"" + targetOf(*plan)->filename + "\": " + describeCues(plan->cuesToApply) +
-                           (conflict ? "  [conflict resolved: the source catalog is newer]" : ""));
+                           (conflict ? "  [differing cues merged; nothing overwritten]" : ""));
         }
         Console::warn("rekordbox writing is the least-proven part of Seabass -- verify the result in rekordbox");
         Console::warn("and on real hardware before trusting it for a gig (see --help's Sync section).");
@@ -923,7 +942,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         for (const auto *plan : toOneLibrary) {
             bool conflict = plan->kind == SyncPlan::Kind::Conflict;
             Console::info("  \"" + targetOf(*plan)->filename + "\": " + describeCues(plan->cuesToApply) +
-                           (conflict ? "  [conflict resolved: the source catalog is newer]" : ""));
+                           (conflict ? "  [differing cues merged; nothing overwritten]" : ""));
         }
     }
 

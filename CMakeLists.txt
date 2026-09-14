@@ -1410,7 +1410,7 @@ add_executable(libdjinterop_engine_library_creator_test
     tests/libdjinterop_engine_library_creator_test.cpp
 )
 target_include_directories(libdjinterop_engine_library_creator_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_library_creator_test PRIVATE DjInterop SQLite::SQLite3)
+target_link_libraries(libdjinterop_engine_library_creator_test PRIVATE DjInterop)
 add_test(NAME libdjinterop_engine_library_creator_test COMMAND libdjinterop_engine_library_creator_test)
 
 add_executable(libdjinterop_engine_sync_scratch_replace_test
@@ -1424,7 +1424,7 @@ add_executable(libdjinterop_engine_sync_scratch_replace_test
     tests/libdjinterop_engine_sync_scratch_replace_test.cpp
 )
 target_include_directories(libdjinterop_engine_sync_scratch_replace_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_sync_scratch_replace_test PRIVATE DjInterop SQLite::SQLite3)
+target_link_libraries(libdjinterop_engine_sync_scratch_replace_test PRIVATE DjInterop)
 add_test(NAME libdjinterop_engine_sync_scratch_replace_test COMMAND libdjinterop_engine_sync_scratch_replace_test)
 
 add_executable(libdjinterop_engine_loop_cue_test
@@ -1437,7 +1437,7 @@ add_executable(libdjinterop_engine_loop_cue_test
     tests/libdjinterop_engine_loop_cue_test.cpp
 )
 target_include_directories(libdjinterop_engine_loop_cue_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_loop_cue_test PRIVATE DjInterop SQLite::SQLite3)
+target_link_libraries(libdjinterop_engine_loop_cue_test PRIVATE DjInterop)
 add_test(NAME libdjinterop_engine_loop_cue_test COMMAND libdjinterop_engine_loop_cue_test)
 
 add_executable(libdjinterop_engine_cleanup_writer_test
@@ -1481,7 +1481,7 @@ add_executable(libdjinterop_engine_cue_writer_propagate_test
     tests/libdjinterop_engine_cue_writer_propagate_test.cpp
 )
 target_include_directories(libdjinterop_engine_cue_writer_propagate_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_cue_writer_propagate_test PRIVATE DjInterop SQLite::SQLite3)
+target_link_libraries(libdjinterop_engine_cue_writer_propagate_test PRIVATE DjInterop)
 add_test(NAME libdjinterop_engine_cue_writer_propagate_test COMMAND libdjinterop_engine_cue_writer_propagate_test)
 
 add_executable(libdjinterop_engine_cue_writer_main_cue_test

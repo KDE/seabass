@@ -19,8 +19,8 @@ matrix.repair.pdbParses 1
 matrix.strayCue.durableWritesPerSave 6
 matrix.strayCue.encryptedOpensPerSave 1
 matrix.strayCue.pdbParsesPerSave 1
-matrix.sync.durableWritesPerSave 4
-matrix.sync.engineOpens 1
+matrix.sync.durableWritesPerSave 7
+matrix.sync.engineOpens 0
 onelibrary.tracks 1644
 rekordbox.cues 314
 rekordbox.tracks 1161

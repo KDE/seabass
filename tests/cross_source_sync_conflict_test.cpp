@@ -147,5 +147,35 @@ int main()
     }
 
     std::cout << "All cross_source_sync_conflict_test cases passed.\n";
+    // A hot cue conflict between one pair's own two sides is taken out of the
+    // plans as a choice, and never left behind to be applied on a clock.
+    {
+        seabass::domain::SyncPlan choice;
+        choice.kind = seabass::domain::SyncPlan::Kind::Conflict;
+        choice.hotCuesNeedChoice = true;
+        choice.match.trackA.format = "rekordbox";
+        choice.match.trackA.sourceId = "r1";
+        choice.match.trackB.format = "engine";
+        choice.match.trackB.sourceId = "e1";
+        choice.direction = seabass::domain::SyncPlan::Direction::ToA;  // the suggestion only
+        choice.cuesIfAWins = {seabass::domain::CuePoint{seabass::domain::CuePoint::Kind::Hot, 1, 1000.0, "", ""}};
+        choice.cuesIfBWins = {seabass::domain::CuePoint{seabass::domain::CuePoint::Kind::Hot, 1, 5000.0, "", ""}};
+
+        seabass::domain::SyncPlan plain;
+        plain.kind = seabass::domain::SyncPlan::Kind::AOnly;
+        plain.direction = seabass::domain::SyncPlan::Direction::ToB;
+        plain.match.trackB.sourceId = "e2";
+
+        std::vector<seabass::domain::SyncPlan> plans = {choice, plain};
+        const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans);
+        assert(plans.size() == 1 && plans[0].match.trackB.sourceId == "e2" && "only the plain plan stays appliable");
+        assert(choices.size() == 1);
+        assert(choices[0].samePair);
+        assert(choices[0].sourceA.sourceId == "r1" && choices[0].sourceB.sourceId == "e1");
+        assert(choices[0].cuesFromA.front().positionMs == 1000.0 && "choosing A writes A's hot cues onto B");
+        assert(choices[0].cuesFromB.front().positionMs == 5000.0 && "choosing B writes B's hot cues onto A");
+        std::cout << "case hot-cue-choice (a same-pair hot cue conflict becomes a choice, not a plan) OK\n";
+    }
+
     return 0;
 }

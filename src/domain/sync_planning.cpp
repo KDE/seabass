@@ -168,12 +168,32 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
     // it is gone from both formats, with the next sync then calling the
     // track consistent because Engine's new one is among the other side's.
     //
-    // Hot cues agree, only memory cues differ: write the side that can
-    // hold every memory cue, and give it the union. That is the non-Engine
-    // side whenever exactly one side is Engine; the clock only picks when
-    // neither or both are.
+    // Hot cues agree, only memory cues differ: write the side that is
+    // actually missing something, and give it the union.
+    //
+    // With exactly one side Engine there are two ways to disagree. The
+    // other side lacks a memory cue Engine has: write the other side, which
+    // can hold them all. Or Engine has no memory cue at all while the other
+    // side has some: write Engine -- it has nothing to lose, and its writer
+    // keeps the earliest of the union, after which Engine's one cue is
+    // among the other side's and the pair agrees. Writing the non-Engine
+    // side there instead gave it back exactly what it had, left Engine
+    // empty, and repeated -- backup, mirror write, conflict -- on every
+    // sync. With neither or both sides Engine, the clock picks.
     if (cueSetsEqual(hotA, hotB)) {
-        const bool writeA = aIsEngine != bIsEngine ? bIsEngine : !aIsNewer;
+        const auto engineIsEmpty = [](bool isEngine, const std::vector<CuePoint> &own,
+                                      const std::vector<CuePoint> &other) {
+            return isEngine && own.empty() && !other.empty();
+        };
+        bool writeA;
+        if (aIsEngine != bIsEngine) {
+            const bool engineIsA = aIsEngine;
+            const bool writeEngine = engineIsA ? engineIsEmpty(true, memoryA, memoryB)
+                                               : engineIsEmpty(true, memoryB, memoryA);
+            writeA = writeEngine ? engineIsA : !engineIsA;
+        } else {
+            writeA = !aIsNewer;
+        }
         const Track &target = writeA ? match.trackA : match.trackB;
         result.direction = writeA ? SyncPlan::Direction::ToA : SyncPlan::Direction::ToB;
         result.cuesToApply = cuesOfKind(target.cues, CuePoint::Kind::Hot);
@@ -183,23 +203,38 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
         return result;
     }
 
-    // Hot cues differ: the newer side's hot cues win, one value per slot
-    // being all there is.
-    const Track &winner = aIsNewer ? match.trackA : match.trackB;
-    const Track &target = aIsNewer ? match.trackB : match.trackA;
-    result.direction = aIsNewer ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
-    result.cuesToApply = cuesOfKind(winner.cues, CuePoint::Kind::Hot);
+    // Hot cues differ. What each side would write onto the other: its own
+    // hot cues, plus memory cues by the rule above -- an Engine target that
+    // already has a memory cue keeps its own (the other side's extras are
+    // still on the other side, and the next sync, hot cues then agreeing,
+    // carries Engine's across); any other target gets the union.
+    const auto writeOnto = [&](const Track &from, const Track &onto) {
+        std::vector<CuePoint> cues = cuesOfKind(from.cues, CuePoint::Kind::Hot);
+        const std::vector<CuePoint> ontoMemory = cuesOfKind(onto.cues, CuePoint::Kind::Memory);
+        const std::vector<CuePoint> memory =
+            onto.format == "engine" && !ontoMemory.empty() ? ontoMemory : unionByPosition(memoryA, memoryB);
+        cues.insert(cues.end(), memory.begin(), memory.end());
+        return cues;
+    };
 
-    // And the memory cues. An Engine target that already has one keeps its
-    // own, for the reason above; the other side's extra memory cues are
-    // still on the other side, and the next sync -- hot cues now agreeing
-    // -- carries Engine's cue across to it. Any other target gets the union.
-    const std::vector<CuePoint> targetMemory = cuesOfKind(target.cues, CuePoint::Kind::Memory);
-    const std::vector<CuePoint> memoryToWrite =
-        target.format == "engine" && !targetMemory.empty() ? targetMemory : unionByPosition(memoryA, memoryB);
-    for (const CuePoint &cue : memoryToWrite) {
-        result.cuesToApply.push_back(cue);
+    // Only one side has hot cues at all: nothing is at risk, so that side
+    // wins whatever the clocks say. Writing the other way would erase hot
+    // cues to make room for none.
+    if (hotA.empty() != hotB.empty()) {
+        const bool aHasHot = !hotA.empty();
+        result.direction = aHasHot ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
+        result.cuesToApply = aHasHot ? writeOnto(match.trackA, match.trackB) : writeOnto(match.trackB, match.trackA);
+        return result;
     }
+
+    // Both sides have hot cues and they differ: the DJ chooses. The newer
+    // side is only the suggestion -- see SyncPlan::hotCuesNeedChoice for why
+    // no clock here can settle it.
+    result.hotCuesNeedChoice = true;
+    result.cuesIfAWins = writeOnto(match.trackA, match.trackB);
+    result.cuesIfBWins = writeOnto(match.trackB, match.trackA);
+    result.direction = aIsNewer ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
+    result.cuesToApply = aIsNewer ? result.cuesIfAWins : result.cuesIfBWins;
     return result;
 }
 

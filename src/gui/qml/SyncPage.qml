@@ -364,11 +364,22 @@ Page {
                                     // ("Use this" per side) is legible
                                     // from the badge alone, before even
                                     // opening the per-track cards.
-                                    tooltipText: root.formatLabel(conflictCard.modelData.targetFormat) + " needs cues, but "
-                                        + root.formatLabel(conflictCard.modelData.sourceAFormat) + " ("
-                                        + conflictCard.modelData.sourceASummary + ") and "
-                                        + root.formatLabel(conflictCard.modelData.sourceBFormat) + " ("
-                                        + conflictCard.modelData.sourceBSummary + ") disagree."
+                                    // A same-pair conflict is one track with
+                                    // different hot cues in two catalogs:
+                                    // nothing is missing, both sides have
+                                    // their own, and Seabass will not guess
+                                    // which the DJ meant.
+                                    tooltipText: conflictCard.modelData.samePair
+                                        ? root.formatLabel(conflictCard.modelData.sourceAFormat) + " ("
+                                          + conflictCard.modelData.sourceASummary + ") and "
+                                          + root.formatLabel(conflictCard.modelData.sourceBFormat) + " ("
+                                          + conflictCard.modelData.sourceBSummary + ") have different hot cues "
+                                          + "for this track. Choose the side whose hot cues should be on both."
+                                        : root.formatLabel(conflictCard.modelData.targetFormat) + " needs cues, but "
+                                          + root.formatLabel(conflictCard.modelData.sourceAFormat) + " ("
+                                          + conflictCard.modelData.sourceASummary + ") and "
+                                          + root.formatLabel(conflictCard.modelData.sourceBFormat) + " ("
+                                          + conflictCard.modelData.sourceBSummary + ") disagree."
                                 }
                             }
 
@@ -420,7 +431,9 @@ Page {
                                             formatLabelText: root.formatLabel(cardLoader.modelData.format)
                                             formatLabelTooltip: cardLoader.modelData.summary
                                             actionButtonText: "Use this"
-                                            actionButtonTooltip: "Stage copying (and overwriting) these cue points onto the other track; Save writes it"
+                                            actionButtonTooltip: conflictCard.modelData.samePair
+                                                ? "Stage these hot cues onto the other catalog's copy of this track, replacing its own; Save writes it"
+                                                : "Stage copying (and overwriting) these cue points onto the other track; Save writes it"
                                             onActionTriggered: syncController.resolveConflict(conflictCard.index, cardLoader.modelData.useSourceA)
                                             hintText: cardLoader.modelData.hasJunkCue
                                                 ? "This side has a 0:00 memory cue that's usually accidental - consider cleaning it up in Clean Up before deciding."

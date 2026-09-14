@@ -1771,6 +1771,13 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
         if (plan.cuesToApply.empty()) {
             continue;
         }
+        // Not a plan the app ever applies. Both sides have different hot
+        // cues, so the Sync page asks which side is meant and the CLI leaves
+        // the track alone (SyncPlan::hotCuesNeedChoice); applying the
+        // suggestion here would measure writes the product no longer makes.
+        if (plan.hotCuesNeedChoice) {
+            continue;
+        }
         bool hasHot = false;
         for (const auto &c : plan.cuesToApply) {
             if (c.kind == domain::CuePoint::Kind::Hot) {

@@ -45,6 +45,13 @@ struct CrossSourceSyncConflict
     Track sourceB;
     std::vector<CuePoint> cuesFromB;
     bool sourceBHasJunkCue = false;
+
+    // Not two catalogs disagreeing about a third, but one pair's own two
+    // sides having different hot cues (SyncPlan::hotCuesNeedChoice). Then
+    // sourceA and sourceB are the two tracks as they are, cuesFromA is what
+    // choosing A writes onto B, cuesFromB what choosing B writes onto A, and
+    // target is just sourceA, for the heading.
+    bool samePair = false;
 };
 
 struct CrossSourceConflictSplit
@@ -80,6 +87,13 @@ public:
     // added, this needs real N-way resolution, not just a pairwise
     // comparison.
     static CrossSourceConflictSplit detect(const std::vector<SyncPlan> &actionablePlans);
+
+    // Moves every plan whose two sides have different hot cues out of
+    // `plans` and returns one samePair conflict for each. A choice for the
+    // DJ, never a plan to apply: see SyncPlan::hotCuesNeedChoice. Run before
+    // detect(), so a plan waiting on a choice cannot also be collapsed or
+    // grouped with another pair's proposal.
+    static std::vector<CrossSourceSyncConflict> takeHotCueChoices(std::vector<SyncPlan> &plans);
 };
 
 }  // namespace seabass::domain

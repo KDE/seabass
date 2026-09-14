@@ -58,6 +58,18 @@ struct SyncPlan
     SyncMatch match;
     Direction direction = Direction::None;
     std::vector<CuePoint> cuesToApply;  // the source side's cues, when direction != None
+
+    // Both sides have hot cues and they differ: a choice for the user, not
+    // for a clock. Engine's Track.lastEditTime is moved by the database's
+    // own triggers on ANY track edit -- a rating, a BPM change -- while a
+    // rekordbox track's ANLZ mtime moves only when its cues change, so
+    // "newer" cannot say whose hot cues are the ones the DJ meant. When
+    // set, direction and cuesToApply hold only the suggestion (the newer
+    // side); a caller that cannot ask must not apply it. The two lists
+    // are what each choice would write, memory cue rules included.
+    bool hotCuesNeedChoice = false;
+    std::vector<CuePoint> cuesIfAWins;  // written onto B
+    std::vector<CuePoint> cuesIfBWins;  // written onto A
 };
 
 // Matches tracks across two catalog scans. See domain::matchTracks() for

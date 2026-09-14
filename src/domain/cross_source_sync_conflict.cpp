@@ -86,4 +86,29 @@ CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<S
     return result;
 }
 
+std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoices(std::vector<SyncPlan> &plans)
+{
+    std::vector<CrossSourceSyncConflict> choices;
+    std::vector<SyncPlan> rest;
+    rest.reserve(plans.size());
+    for (auto &plan : plans) {
+        if (!plan.hotCuesNeedChoice) {
+            rest.push_back(std::move(plan));
+            continue;
+        }
+        CrossSourceSyncConflict choice;
+        choice.samePair = true;
+        choice.target = plan.match.trackA;
+        choice.sourceA = plan.match.trackA;
+        choice.cuesFromA = plan.cuesIfAWins;
+        choice.sourceAHasJunkCue = hasJunkCue(plan.match.trackA.cues);
+        choice.sourceB = plan.match.trackB;
+        choice.cuesFromB = plan.cuesIfBWins;
+        choice.sourceBHasJunkCue = hasJunkCue(plan.match.trackB.cues);
+        choices.push_back(std::move(choice));
+    }
+    plans = std::move(rest);
+    return choices;
+}
+
 }  // namespace seabass::domain

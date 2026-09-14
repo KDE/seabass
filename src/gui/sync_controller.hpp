@@ -162,12 +162,14 @@ class SyncController : public StagedCueEditController
     // toEngineCount/toRekordboxCount pair, which had no way to represent
     // a third catalog's own counts.
     Q_PROPERTY(QVariantList directionCounts READ directionCounts NOTIFY analysisChanged)
-    // One entry per still-unresolved domain::CrossSourceSyncConflict --
-    // two different pairs proposing genuinely different cues to the same
+    // One entry per still-unresolved domain::CrossSourceSyncConflict: two
+    // different pairs proposing genuinely different cues to the same
     // target track, which SyncPlanner alone can't detect (it only ever
-    // sees two catalogs at a time). See resolveConflict(). Never
-    // includes plans already in `plans` -- a target stays out of the
-    // appliable list entirely until its conflict here is resolved.
+    // sees two catalogs at a time) -- or, with samePair set, one pair's own
+    // two sides having different hot cues, which no clock can settle. See
+    // resolveConflict(). Never includes plans already in `plans` -- a
+    // target stays out of the appliable list entirely until its conflict
+    // here is resolved.
     Q_PROPERTY(QVariantList unresolvedConflicts READ unresolvedConflicts NOTIFY conflictsChanged)
 
 public:

@@ -288,6 +288,83 @@ int main()
         std::cout << "case 13b (two syncs settle it with no memory cue lost) OK\n";
     }
 
+    // The third review's finding: an Engine track with no memory cue at all
+    // never got one. Hot cues agree, rekordbox has memory cues at 2s and 60s,
+    // Engine has none. Writing rekordbox would hand it back exactly what it
+    // has and repeat on every sync; Engine is the side missing something,
+    // and has nothing to lose.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 2000.0, "", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 60000.0, "", ""}});
+        r.format = "rekordbox";
+        r.metadataModifiedAt = 1'800'000'000;  // rekordbox newer: must not matter here
+        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}});
+        e.format = "engine";
+        e.metadataModifiedAt = 1'700'000'000;
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(plan.direction == SyncPlan::Direction::ToB && "an Engine side with no memory cue is the one written");
+        std::cout << "case 14 (an Engine track with no memory cue is given one) OK\n";
+
+        // Engine's writer keeps the earliest memory cue it is given. After
+        // that write the pair agrees: nothing left to rewrite next time.
+        std::vector<CuePoint> engineAfter;
+        const CuePoint *earliest = nullptr;
+        for (const auto &cue : plan.cuesToApply) {
+            if (cue.kind == CuePoint::Kind::Hot) {
+                engineAfter.push_back(cue);
+            } else if (!earliest || cue.positionMs < earliest->positionMs) {
+                earliest = &cue;
+            }
+        }
+        assert(earliest != nullptr && earliest->positionMs == 2000.0);
+        engineAfter.push_back(*earliest);
+        e.cues = engineAfter;
+        auto after = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(after.kind == SyncPlan::Kind::AlreadyConsistent && "one sync settles it; no endless conflict");
+        std::cout << "case 14b (the empty Engine side settles in one sync) OK\n";
+    }
+
+    // Your decision after the third review: a real hot cue conflict is asked,
+    // not settled by a clock. Both sides have hot cues and they differ.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}});
+        r.format = "rekordbox";
+        r.metadataModifiedAt = 1'700'000'000;
+        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#FF0000", ""}});
+        e.format = "engine";
+        e.metadataModifiedAt = 1'800'000'000;  // e.g. rated in Engine DJ after the rekordbox cue edit
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(plan.hotCuesNeedChoice && "both sides have different hot cues: the DJ chooses");
+        // Both choices are ready to write, each with its own hot cues.
+        assert(!plan.cuesIfAWins.empty() && plan.cuesIfAWins.front().positionMs == 1000.0);
+        assert(!plan.cuesIfBWins.empty() && plan.cuesIfBWins.front().positionMs == 5000.0);
+        // The suggestion is still the newer side, for display only.
+        assert(plan.direction == SyncPlan::Direction::ToA);
+        std::cout << "case 15 (differing hot cues on both sides need a choice, with both options prepared) OK\n";
+    }
+
+    // Only one side has hot cues: nothing to choose, nothing at risk. That
+    // side wins even when the other is newer.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 2000.0, "", ""}});
+        r.format = "rekordbox";
+        r.metadataModifiedAt = 1'700'000'000;
+        Track e = makeTrack("e1", "song.mp3", 200.0, {CuePoint{CuePoint::Kind::Memory, 0, 9000.0, "", ""}});
+        e.format = "engine";
+        e.metadataModifiedAt = 1'800'000'000;
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(!plan.hotCuesNeedChoice);
+        assert(plan.direction == SyncPlan::Direction::ToB && "the side with hot cues wins; none are erased");
+        std::cout << "case 16 (hot cues on one side only are copied across without asking) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

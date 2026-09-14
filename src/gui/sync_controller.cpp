@@ -353,9 +353,18 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         // out into unresolved conflicts (requires a manual pick, see
         // SyncController::resolveConflict()) before anything below
         // treats `actionable` as safe to apply directly.
+        //
+        // First, though, every plan whose two sides have different hot cues.
+        // Those are not plans at all but choices: no clock can say whose hot
+        // cues the DJ meant (see SyncPlan::hotCuesNeedChoice), so they are
+        // listed for a pick and kept out of Stage All entirely.
+        auto hotCueChoices = domain::CrossSourceConflictDetector::takeHotCueChoices(actionable);
         auto conflictSplit = domain::CrossSourceConflictDetector::detect(actionable);
         actionable = std::move(conflictSplit.nonConflicting);
-        result.conflicts = std::move(conflictSplit.conflicts);
+        result.conflicts = std::move(hotCueChoices);
+        for (auto &conflict : conflictSplit.conflicts) {
+            result.conflicts.push_back(std::move(conflict));
+        }
 
         // Waveforms are deliberately NOT loaded here -- see
         // sync_controller.hpp's own comment on SyncPlanList Model::
@@ -488,10 +497,17 @@ void SyncController::rebuildUnresolvedConflictsList()
         // same way any other plan already is, not just read as a
         // one-line summary. Waveform itself is fetched on demand by
         // QML, not included here (see trackToMap()'s own comment).
+        //
+        // A same-pair conflict shows each track's cues as they ARE: the
+        // choice is between those two sets, and a proposal already merged
+        // with the other side's memory cues would blur the difference being
+        // decided.
         domain::Track sourceATrack = conflict.sourceA;
-        sourceATrack.cues = conflict.cuesFromA;
         domain::Track sourceBTrack = conflict.sourceB;
-        sourceBTrack.cues = conflict.cuesFromB;
+        if (!conflict.samePair) {
+            sourceATrack.cues = conflict.cuesFromA;
+            sourceBTrack.cues = conflict.cuesFromB;
+        }
 
         QVariantMap m;
         m["targetPath"] = QString::fromStdString(conflict.target.filePath);
@@ -499,11 +515,12 @@ void SyncController::rebuildUnresolvedConflictsList()
         m["targetArtist"] = QString::fromStdString(conflict.target.artist);
         m["targetFormat"] = QString::fromStdString(conflict.target.format);
         m["sourceAFormat"] = QString::fromStdString(conflict.sourceA.format);
-        m["sourceASummary"] = summarizeCueCounts(conflict.cuesFromA);
+        m["samePair"] = conflict.samePair;
+        m["sourceASummary"] = summarizeCueCounts(sourceATrack.cues);
         m["sourceAHasJunkCue"] = conflict.sourceAHasJunkCue;
         m["sourceATrack"] = trackToMap(sourceATrack);
         m["sourceBFormat"] = QString::fromStdString(conflict.sourceB.format);
-        m["sourceBSummary"] = summarizeCueCounts(conflict.cuesFromB);
+        m["sourceBSummary"] = summarizeCueCounts(sourceBTrack.cues);
         m["sourceBHasJunkCue"] = conflict.sourceBHasJunkCue;
         m["sourceBTrack"] = trackToMap(sourceBTrack);
         list << m;
@@ -520,11 +537,22 @@ void SyncController::resolveConflict(int index, bool useSourceA)
     const domain::CrossSourceSyncConflict &conflict = m_conflicts[static_cast<size_t>(index)];
 
     domain::SyncPlan plan;
-    plan.kind = domain::SyncPlan::Kind::AOnly;
-    plan.match.trackA = useSourceA ? conflict.sourceA : conflict.sourceB;
-    plan.match.trackB = conflict.target;
-    plan.direction = domain::SyncPlan::Direction::ToB;
-    plan.cuesToApply = useSourceA ? conflict.cuesFromA : conflict.cuesFromB;
+    if (conflict.samePair) {
+        // One pair's own two sides: the chosen side's hot cues go onto the
+        // other side of that same pair, with the memory cues the planner
+        // prepared for that direction.
+        plan.kind = domain::SyncPlan::Kind::Conflict;
+        plan.match.trackA = conflict.sourceA;
+        plan.match.trackB = conflict.sourceB;
+        plan.direction = useSourceA ? domain::SyncPlan::Direction::ToB : domain::SyncPlan::Direction::ToA;
+        plan.cuesToApply = useSourceA ? conflict.cuesFromA : conflict.cuesFromB;
+    } else {
+        plan.kind = domain::SyncPlan::Kind::AOnly;
+        plan.match.trackA = useSourceA ? conflict.sourceA : conflict.sourceB;
+        plan.match.trackB = conflict.target;
+        plan.direction = domain::SyncPlan::Direction::ToB;
+        plan.cuesToApply = useSourceA ? conflict.cuesFromA : conflict.cuesFromB;
+    }
     m_model.addPlan(std::move(plan));
     recomputeDirectionCounts();
     // The decision is the edit: staged right away, Save writes it.
