@@ -28,8 +28,9 @@ struct SettingsTaskResult
 
 // Wraps readDeviceSettings() for QML: decodes whichever of rekordbox's
 // player/mixer settings files are present on a stick, exposed as
-// `groups` -- a list of { title, fileName, fields: [{label, value,
-// options, pendingValue, unsaved}] }.
+// `groups` -- a list of { title, fields: [{label, fileName, value,
+// options, pendingValue, unsaved, explanation, isSwitch}] }, one group
+// per category of setting rather than per file.
 //
 // Edits are staged, not written: setField() adds one PendingChange per
 // field to the library's LibraryEditSession (the first one takes the

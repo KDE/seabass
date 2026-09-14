@@ -7,6 +7,8 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <filesystem>
+#include <map>
+#include <string>
 
 #include <QVariantMap>
 
@@ -27,43 +29,65 @@ namespace fs = std::filesystem;
 namespace
 {
 
-// Decodes every recognized settings file on the stick into `groups`.
+// Decodes every recognized settings file on the stick into `groups`,
+// one group per category (see settingsCategoryOrder()), in that order.
+//
+// Grouped by what a setting is about, not by the file it lives in. Every
+// field carries its own fileName instead, because that is what staging
+// and writing need; a heading reading "Player settings (2)" was the file
+// layout leaking onto the page and told nobody what was under it.
+//
 // *errorMessage is set (and groups left empty) on failure, including the
-// "nothing recognized" case -- mirrors the previous synchronous load()'s
-// exact wording.
+// "nothing recognized" case.
 QVariantList buildGroups(const QString &pioneerRoot, QString *errorMessage)
 {
+    namespace rb = infrastructure::rekordbox;
     QVariantList groups;
     try {
-        auto files = infrastructure::rekordbox::readDeviceSettings(pioneerRoot.toStdString());
-        for (const auto &file : files) {
-            QVariantMap group;
-            group["title"] = QString::fromStdString(file.title);
-            group["fileName"] = QString::fromStdString(file.fileName);
-
-            QVariantList fields;
+        std::map<std::string, QVariantList> fieldsByCategory;
+        for (const auto &file : rb::readDeviceSettings(pioneerRoot.toStdString())) {
             for (const auto &[label, value] : file.fields) {
-                QVariantMap fieldMap;
-                fieldMap["label"] = QString::fromStdString(label);
-                fieldMap["value"] = QString::fromStdString(value);
-                fieldMap["pendingValue"] = QString();
-                fieldMap["unsaved"] = false;
-
-                QVariantList options;
-                for (const auto &field : infrastructure::rekordbox::allSettingsFields()) {
+                const rb::SettingsFieldDescriptor *descriptor = nullptr;
+                for (const auto &field : rb::allSettingsFields()) {
                     if (field.fileName == file.fileName && field.label == label) {
-                        for (const auto &option : field.options) {
-                            options << QString::fromStdString(option.name);
-                        }
+                        descriptor = &field;
                         break;
                     }
                 }
+                if (!descriptor) {
+                    continue;  // the reader only decodes table fields, so this cannot happen
+                }
+
+                QVariantMap fieldMap;
+                fieldMap["label"] = QString::fromStdString(label);
+                fieldMap["fileName"] = QString::fromStdString(file.fileName);
+                fieldMap["value"] = QString::fromStdString(value);
+                fieldMap["pendingValue"] = QString();
+                fieldMap["unsaved"] = false;
+                fieldMap["explanation"] = QString::fromStdString(descriptor->explanation);
+
+                QStringList options;
+                for (const auto &option : descriptor->options) {
+                    options << QString::fromStdString(option.name);
+                }
                 fieldMap["options"] = options;
+                // Exactly off and on, in that order, and nothing else. A
+                // switch cannot show "dark", and a lock/unlock pair reads
+                // as a choice between two named states rather than as a
+                // setting being on or off, so those stay drop-downs.
+                fieldMap["isSwitch"] = options == QStringList{QStringLiteral("off"), QStringLiteral("on")};
 
-                fields << fieldMap;
+                fieldsByCategory[descriptor->category] << fieldMap;
             }
-            group["fields"] = fields;
-
+        }
+        for (const auto &category : rb::settingsCategoryOrder()) {
+            const auto found = fieldsByCategory.find(category);
+            if (found == fieldsByCategory.end()) {
+                continue;  // a stick without a mixer file has no mixer headings at all
+            }
+            QVariantMap group;
+            group["title"] = QString::fromStdString(category);
+            group["fields"] = found->second;
             groups << group;
         }
         if (groups.isEmpty()) {
@@ -158,13 +182,10 @@ void SettingsController::setField(const QString &fileName, const QString &fieldL
     QString oldValue;
     bool known = false;
     for (const QVariant &groupVariant : m_groups) {
-        QVariantMap group = groupVariant.toMap();
-        if (group["fileName"].toString() != fileName) {
-            continue;
-        }
+        const QVariantMap group = groupVariant.toMap();
         for (const QVariant &fieldVariant : group["fields"].toList()) {
             QVariantMap field = fieldVariant.toMap();
-            if (field["label"].toString() == fieldLabel) {
+            if (field["fileName"].toString() == fileName && field["label"].toString() == fieldLabel) {
                 oldValue = field["value"].toString();
                 known = field["options"].toStringList().contains(optionName);
             }
@@ -206,7 +227,7 @@ void SettingsController::rebuildGroupsView()
         QVariantList fields;
         for (const QVariant &fieldVariant : group["fields"].toList()) {
             QVariantMap field = fieldVariant.toMap();
-            auto it = m_pending.find({group["fileName"].toString(), field["label"].toString()});
+            auto it = m_pending.find({field["fileName"].toString(), field["label"].toString()});
             if (it != m_pending.end()) {
                 field["pendingValue"] = it->second;
                 field["unsaved"] = true;

@@ -94,6 +94,37 @@ int main()
         std::filesystem::remove_all(dir);
     }
 
+    // Every field says what it is about and what it does. The page groups
+    // by category and shows the explanation behind each setting's (i), so
+    // a field added to the table without either would land in no group or
+    // open an empty popup -- and neither would fail anything else.
+    {
+        const auto &order = settingsCategoryOrder();
+        std::vector<bool> used(order.size(), false);
+        for (const auto &field : allSettingsFields()) {
+            assert(!field.explanation.empty());
+            bool known = false;
+            for (std::size_t i = 0; i < order.size(); ++i) {
+                if (order[i] == field.category) {
+                    known = true;
+                    used[i] = true;
+                }
+            }
+            if (!known) {
+                std::cerr << "field \"" << field.label << "\" has unknown category \"" << field.category << "\"\n";
+            }
+            assert(known);
+        }
+        // And no heading in the order that nothing ever lands under.
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            if (!used[i]) {
+                std::cerr << "category \"" << order[i] << "\" has no fields\n";
+            }
+            assert(used[i]);
+        }
+        std::cout << "case 4 (every field has a known category and an explanation, every category a field) OK\n";
+    }
+
     std::cout << "All rekordbox_settings_test cases passed.\n";
     return 0;
 }

@@ -30,7 +30,22 @@ struct SettingsFieldDescriptor
     std::string label;
     size_t byteOffset;
     std::vector<SettingsFieldOption> options;
+    // What the setting is about, for grouping on the page. One of
+    // settingsCategoryOrder(). Not the file it lives in: which of three
+    // .DAT files a byte happens to sit in is an accident of when Pioneer
+    // added it, and "Player settings (2)" told nobody anything.
+    std::string category;
+    // One or two sentences on what the setting actually does on the
+    // hardware. Taken from the CDJ-3000 and DJM-900NXS2 manuals where
+    // they describe it; where they do not, it says only what the name
+    // and its values establish, rather than inventing behaviour.
+    std::string explanation;
 };
+
+// Every category allSettingsFields() uses, in the order the page shows
+// them: the player first, then the mixer, each from what you reach for
+// most to what you set once.
+const std::vector<std::string> &settingsCategoryOrder();
 
 // The single source of truth for every known settings field -- shared by
 // the reader (decodes the current byte against `options`) and the writer
