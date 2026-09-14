@@ -100,28 +100,17 @@ and `specs/README.md` for exact sources):
 |---|---|---|
 | `libdjinterop` | `third_party/libdjinterop/` (git submodule) | LGPL-3.0-or-later |
 | `kaitai_struct_cpp_stl_runtime` | `third_party/kaitai_struct_cpp_stl_runtime/` (git submodule) | MIT |
-| rekordbox PDB/ANLZ format specs, and the C++ parser generated from them | `specs/*.ksy`, `src/infrastructure/rekordbox/generated/` | EPL-2.0, provisionally (from [Deep-Symmetry/crate-digger](https://github.com/Deep-Symmetry/crate-digger)) |
+| rekordbox PDB/ANLZ format specs, and the C++ parser generated from them | `specs/*.ksy`, `src/infrastructure/rekordbox/generated/` | EPL-2.0 OR MPL-2.0 OR LGPL-3.0-only, used here under LGPL-3.0-only (from [Deep-Symmetry/crate-digger](https://github.com/Deep-Symmetry/crate-digger)) |
 
-**An open licensing question, narrower than it once looked.** The two
-`.ksy` specs declare `license: EPL-1.0` in their own `meta:` block, and
-the FSF does not consider EPL-1.0 compatible with the GPL for combined
-works. Read on that alone, this project could not ship them.
-
-But crate-digger's actual `LICENSE` is **EPL-2.0**, with Secondary
-Licenses of MPL-2.0 or LGPL-3.0 -- the `meta:` field simply predates the
-move and was never updated. Taking the `LICENSE` as authoritative and
-electing LGPL-3.0 under the secondary-licence clause, the specs combine
+**The crate-digger specs.** They are EPL-2.0 with Secondary Licenses of
+MPL-2.0 or LGPL-3.0, as both the project's `LICENSE` and the specs' own
+`meta:` block say
+([crate-digger#49](https://github.com/Deep-Symmetry/crate-digger/issues/49)).
+Parsers generated from them carry the same licence and secondary-licence
+election
+([#50](https://github.com/Deep-Symmetry/crate-digger/issues/50)). Seabass
+uses the specs and its generated parser under LGPL-3.0-only, so they combine
 with this project on exactly the footing `libdjinterop` already does.
 
-Two things are being confirmed upstream rather than assumed:
-[crate-digger#49](https://github.com/Deep-Symmetry/crate-digger/issues/49)
-reports the stale `meta:` field, and
-[#50](https://github.com/Deep-Symmetry/crate-digger/issues/50) asks
-whether the election reaches the parser Kaitai generates from the specs.
-Until #50 is answered, [`.reuse/dep5`](.reuse/dep5) marks both the specs
-and the generated parser EPL-2.0 provisionally, and says so at the point
-where the answer would change something.
-
-`libdjinterop`'s LGPL-3.0 combines cleanly either way: the disjunction
-above offers GPL-3.0-only, and a GPLv3 combined work takes LGPLv3 code
-without difficulty.
+Both combine cleanly: the disjunction above offers GPL-3.0-only, and a
+GPLv3 combined work takes LGPLv3 code without difficulty.
