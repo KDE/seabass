@@ -287,7 +287,7 @@ Page {
                         text: "Browse"
                         enabled: backupRow.readable && root.controller.deleting !== true
                         ToolTip.visible: hovered
-                        ToolTip.text: "Open this backup on the Home page like a stick, without unpacking it. Read-only."
+                        ToolTip.text: "Open this backup in Browse Library, without unpacking it. Read-only; it also stays on the Home page like a stick."
                         onClicked: root.browseRequested(backupRow.modelData.archivePath)
                     }
                     Button {

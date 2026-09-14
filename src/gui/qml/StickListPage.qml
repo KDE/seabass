@@ -155,7 +155,9 @@ Page {
         currentFolder: root.appSettingsController.toLocalFileUrl(root.appSettingsController.stickBackupDirectory)
         onAccepted: root.openBackupArchive(selectedFile.toString())
     }
-    // Also Manage Backups' Browse, which comes back here to do it.
+    // Also Manage Backups' Browse, which comes back here to do it. A
+    // backup is opened to look at its library, so it goes straight on into
+    // Browse Library; its row stays here for the other read-only cards.
     function openBackupArchive(archivePath) {
         if (!root.releaseOpenedFolder()) {
             return;
@@ -164,7 +166,29 @@ Page {
         if (message.length > 0) {
             openFolderError.text = message;
             openFolderError.open();
+            return;
         }
+        // Listed by the time openBackup returns: opening re-detects before
+        // it does. Only one backup or folder is open at a time.
+        var row = root.browsedBackupRow();
+        if (row && (row.hasRekordbox || row.hasEngine)) {
+            root.browseRequested(row.label, row.rekordboxPath, row.enginePath);
+        }
+    }
+    function browsedBackupRow() {
+        var model = root.mediaController.sticks;
+        if (model === null || model === undefined) {
+            return null;
+        }
+        // A plain array in the tests, the real list model otherwise.
+        var count = model.length !== undefined ? model.length : model.rowCount();
+        for (var i = 0; i < count; ++i) {
+            var row = model.length !== undefined ? model[i] : model.get(i);
+            if (row.isBrowsedBackup) {
+                return row;
+            }
+        }
+        return null;
     }
     Dialog {
         id: openFolderError

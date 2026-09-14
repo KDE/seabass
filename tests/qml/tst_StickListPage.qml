@@ -510,6 +510,32 @@ TestCase {
         compare(page.mediaController.calls[0].indexOf("openFolder:"), 0);
     }
 
+    // A backup is opened to look at its library: once it is open, the page
+    // asks for Browse Library on it, with the row it became. The menu's
+    // entry and Manage Backups' Browse both come through here.
+    function test_openingABackupGoesOnIntoBrowseLibrary() {
+        var backup = makeStick({
+            label: "PARTY STICK", mountPoint: "/cache/backups/b1", devicePath: "",
+            isFolder: true, isBrowsedBackup: true, libraryId: "folder-b1",
+            hasRekordbox: true, hasEngine: true,
+            rekordboxPath: "/cache/backups/b1/PIONEER", enginePath: "/cache/backups/b1/Engine Library",
+        });
+        var page = makePage([backup], makeAdvice({}));
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "browseRequested"});
+        findChild(page, "openBackupDialog").accepted();
+        compare(page.mediaController.calls.filter(function(c) { return c.indexOf("openBackup:") === 0; }).length, 1);
+        compare(spy.count, 1, "an opened backup must go on into Browse Library");
+        compare(spy.signalArguments[0][0], "PARTY STICK");
+        compare(spy.signalArguments[0][1], "/cache/backups/b1/PIONEER");
+        compare(spy.signalArguments[0][2], "/cache/backups/b1/Engine Library");
+
+        // One that could not be opened stays on Home, with the reason.
+        page.mediaController.openBackup = function(p) { return "That backup could not be read."; };
+        page.openBackupArchive("/backups/broken.zip");
+        compare(spy.count, 1, "a backup that failed to open must not be browsed");
+        tryCompare(findChild(page, "openFolderError"), "visible", true);
+    }
+
     // Backups and folders on this computer sit behind one menu button in
     // the header, where the folder button used to be, rather than as two
     // header buttons and a row of buttons under the list.

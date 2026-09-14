@@ -690,7 +690,8 @@ ApplicationWindow {
             controller: FullBackupsController {}
             backupDirectory: appSettingsCtrl.stickBackupDirectory
             mediaController: mediaCtrl
-            // Browsing happens on Home, where the backup becomes a row.
+            // Opened from Home, where the backup becomes a row, and on
+            // from there into Browse Library.
             onBrowseRequested: (archivePath) => {
                 stackView.pop(null);
                 stackView.get(0).openBackupArchive(archivePath);
