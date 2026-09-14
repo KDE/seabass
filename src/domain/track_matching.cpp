@@ -60,6 +60,16 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
     std::map<std::string, const Track *> bByFilePath;
     std::map<std::string, std::vector<const Track *>> bByTitleArtist;
     std::map<std::string, std::vector<const Track *>> bByFilename;
+    // How many tracks on side `a` share each key, so an unknown length can
+    // tell a key that names one track from one that names two (see below).
+    std::map<std::string, int> aCountByTitleArtist;
+    std::map<std::string, int> aCountByFilename;
+    for (const auto &track : a) {
+        if (auto key = titleArtistKey(track)) {
+            aCountByTitleArtist[*key]++;
+        }
+        aCountByFilename[normalizeFilename(track.filename)]++;
+    }
     for (const auto &track : b) {
         if (!track.filePath.empty()) {
             // first-wins if somehow more than one row on this side
@@ -92,17 +102,23 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
         }
 
         const std::vector<const Track *> *candidates = nullptr;
+        // The key names exactly one track on each side. Only then may a
+        // length that cannot be read stand aside -- see the loop below.
+        bool unambiguous = false;
 
         if (auto key = titleArtistKey(trackA)) {
             auto it = bByTitleArtist.find(*key);
             if (it != bByTitleArtist.end()) {
                 candidates = &it->second;
+                unambiguous = it->second.size() == 1 && aCountByTitleArtist[*key] == 1;
             }
         }
         if (!candidates) {
-            auto it = bByFilename.find(normalizeFilename(trackA.filename));
+            const std::string name = normalizeFilename(trackA.filename);
+            auto it = bByFilename.find(name);
             if (it != bByFilename.end()) {
                 candidates = &it->second;
+                unambiguous = it->second.size() == 1 && aCountByFilename[name] == 1;
             }
         }
         if (!candidates) {
@@ -112,29 +128,35 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
         for (const auto *trackB : *candidates) {
             // durationSeconds == 0 means "unreadable": the same convention
             // used throughout Track's own fields, not a real zero-length
-            // track. A track whose length cannot be read cannot be
-            // compared on length, so it does not match on title and artist
-            // at all -- a radio edit and an extended mix share both, and
-            // length is the only thing that tells them apart. Matching
-            // anyway would hand one of them the other's cues.
+            // track.
             //
-            // This used to be the other way round, and the reason no
-            // longer holds. On RV2, Engine reports no length for 1214 of
-            // its 1469 local tracks, which once made most of them
-            // unmatchable -- so unknown lengths were let through. Every
-            // read now fills a missing length from the audio file itself
+            // Two real lengths have to agree. That is what tells a radio
+            // edit from an extended mix filed under one artist and title.
+            //
+            // A length that cannot be read cannot be compared, so it only
+            // stands aside when there is nothing to tell apart: the key
+            // names exactly one track on each side. Under a key that names
+            // two -- the radio edit and the extended mix, on either side --
+            // an unknown length matches nothing, because matching anyway
+            // would hand one of them the other's cues.
+            //
+            // Not stricter than that, although every read now fills
+            // missing lengths from the audio file itself
             // (infrastructure::audio::fillTrackDurations, run by
-            // LibraryCatalogCache and the CLI), and on RV2 that leaves
-            // exactly one track without a length. What is still zero after
-            // that is a file that is broken or missing, and not something
-            // a match should guess about.
+            // LibraryCatalogCache and the CLI). The fill cannot always
+            // run: a build without QtMultimedia probes nothing, and a
+            // stick missing its audio has nothing to probe. On the
+            // committed fixture, which has catalogs and no audio, refusing
+            // every unknown length took matching from 1161 tracks to 188.
             //
             // The exact-path branch above is untouched: two rows naming
             // the same file on the same stick are one track with nothing
             // to compare.
             bool bothDurationsKnown = trackA.durationSeconds > 0.0 && trackB->durationSeconds > 0.0;
-            if (bothDurationsKnown &&
-                std::abs(trackA.durationSeconds - trackB->durationSeconds) <= DurationToleranceSeconds) {
+            bool agree = bothDurationsKnown
+                ? std::abs(trackA.durationSeconds - trackB->durationSeconds) <= DurationToleranceSeconds
+                : unambiguous;
+            if (agree) {
                 matches.emplace_back(&trackA, trackB);
                 break;  // one match per `a` track is enough for propagating cues
             }

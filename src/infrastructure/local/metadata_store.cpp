@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <optional>
+#include <map>
 #include <system_error>
 
 #include "domain/metadata_merge.hpp"
@@ -174,14 +176,10 @@ std::string filenameMatchKey(const Track &track)
     return filename.empty() ? std::string() : "fn:" + filename;
 }
 
-// A length that could not be read (0) agrees with nothing, the same rule
-// domain::matchTracks applies: without a length there is no telling a
-// radio edit from an extended mix under one artist and title. It used to
-// agree with everything, which was necessary while Engine reported no
-// length for most tracks; every read now fills missing lengths from the
-// audio file (fillTrackDurations), so what is still zero is a broken or
-// missing file, and a store row keyed on a guess would be worse than a row
-// not stored.
+// Two real lengths within tolerance. A length that could not be read (0)
+// agrees with nothing here; whether it may stand aside is decided by the
+// lookup in store(), which knows how many rows the key names -- the same
+// rule domain::matchTracks applies.
 bool durationsAgree(double a, double b)
 {
     if (a <= 0.0 || b <= 0.0) {
@@ -590,6 +588,22 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         }
     } guard{m_db};
 
+    // How many tracks in this batch share each key. An incoming track whose
+    // length cannot be read may only land on an existing row when nothing
+    // else in the batch is asking for that row too -- two unknown-length
+    // tracks under one artist and title are the radio edit and the
+    // extended mix, and letting both merge into one row is the mix-up.
+    std::map<std::string, int> batchCountByMatchKey;
+    std::map<std::string, int> batchCountByFallbackKey;
+    for (const Track &incoming : tracks) {
+        if (const std::string key = titleArtistMatchKey(incoming); !key.empty()) {
+            batchCountByMatchKey[key]++;
+        }
+        if (const std::string key = filenameMatchKey(incoming); !key.empty()) {
+            batchCountByFallbackKey[key]++;
+        }
+    }
+
     for (std::size_t i = 0; i < tracks.size(); ++i) {
         if (cancel.cancelled()) {
             summary.cancelled = true;
@@ -654,40 +668,74 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                 "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at "
                 "FROM tracks WHERE fallback_key = ? ORDER BY id";
 
+            struct Row
+            {
+                std::int64_t id = 0;
+                std::optional<int> rating;
+                std::string comment;
+                std::optional<int> playCount;
+                std::string artworkSha;
+                double durationSeconds = 0.0;
+                std::int64_t modifiedAt = 0;
+            };
+
             // Returns whether the key named any row at all, and sets the
-            // stored-row variables above when one of them also agreed on
-            // length.
-            const auto lookUp = [&](const char *sql, const std::string &key) {
-                bool named = false;
+            // stored-row variables above when one of them is this track.
+            //
+            // A row is this track when both lengths are real and agree.
+            // When either length cannot be read, the row is this track only
+            // if nothing else could be: the key names that one row and no
+            // other track in this batch carries the key. The same rule
+            // domain::matchTracks applies; see its comment for why it is
+            // not stricter.
+            const auto lookUp = [&](const char *sql, const std::string &key, int batchCount) {
                 if (key.empty()) {
-                    return named;
+                    return false;
                 }
+                std::vector<Row> rows;
                 Stmt find(m_db, sql);
                 find.bind(1, key);
                 while (find.step()) {
-                    named = true;
-                    if (!durationsAgree(find.columnDouble(5), track.durationSeconds)) {
-                        continue;
-                    }
-                    exists = true;
-                    id = find.columnInt64(0);
-                    storedRating = find.columnOptionalInt(1);
-                    storedComment = find.columnText(2);
-                    storedPlayCount = find.columnOptionalInt(3);
-                    storedArtworkSha = find.columnText(4);
+                    Row row;
+                    row.id = find.columnInt64(0);
+                    row.rating = find.columnOptionalInt(1);
+                    row.comment = find.columnText(2);
+                    row.playCount = find.columnOptionalInt(3);
+                    row.artworkSha = find.columnText(4);
+                    row.durationSeconds = find.columnDouble(5);
                     // authored_at, falling back to updated_at for a row
                     // migrated from version 1, which did not tell the
                     // two apart.
                     const std::string authored = find.columnText(6);
-                    storedModifiedAt = epochFromIsoTimestamp(authored.empty() ? find.columnText(7) : authored);
-                    break;
+                    row.modifiedAt = epochFromIsoTimestamp(authored.empty() ? find.columnText(7) : authored);
+                    rows.push_back(std::move(row));
                 }
-                return named;
+                const Row *chosen = nullptr;
+                for (const Row &row : rows) {
+                    if (durationsAgree(row.durationSeconds, track.durationSeconds)) {
+                        chosen = &row;
+                        break;
+                    }
+                }
+                if (!chosen && rows.size() == 1 && batchCount == 1
+                    && (rows.front().durationSeconds <= 0.0 || track.durationSeconds <= 0.0)) {
+                    chosen = &rows.front();
+                }
+                if (chosen) {
+                    exists = true;
+                    id = chosen->id;
+                    storedRating = chosen->rating;
+                    storedComment = chosen->comment;
+                    storedPlayCount = chosen->playCount;
+                    storedArtworkSha = chosen->artworkSha;
+                    storedModifiedAt = chosen->modifiedAt;
+                }
+                return !rows.empty();
             };
 
-            const bool strongKeyNamedARow = lookUp(ByMatchKey, matchKey);
+            const bool strongKeyNamedARow = lookUp(ByMatchKey, matchKey, batchCountByMatchKey[matchKey]);
             if (!exists && !strongKeyNamedARow) {
-                lookUp(ByFallbackKey, fallbackKey);
+                lookUp(ByFallbackKey, fallbackKey, batchCountByFallbackKey[fallbackKey]);
             }
         }
 

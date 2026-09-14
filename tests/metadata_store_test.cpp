@@ -764,5 +764,66 @@ int main()
 
     fs::remove_all(root);
     std::cout << "all metadata_store_test cases passed\n";
+    // ---- case 18: an unreadable length and how many rows its key names ----
+    //
+    // The same rule domain::matchTracks applies. A track whose length could
+    // not be read can only be compared on its key, so it lands on a stored
+    // row only when the key names that one row: then there is nothing to
+    // tell apart, and refusing would store the same track twice. Under a key
+    // naming two rows -- the radio edit and the extended mix -- it matches
+    // neither and gets a row of its own, because merging it into either
+    // would hand one mix the other's cues.
+    {
+        const fs::path db18 = root / "local-18" / "metadata.db";
+        MetadataStore metadata(db18);
+
+        Track known = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
+        known.cues = {hotCue(1, 1000.0)};
+        store(metadata, {known}, sourceFor(stick, "RV2", CatalogOld));
+        assert(metadata.trackCount() == 1);
+
+        Track unknownLength = known;
+        unknownLength.durationSeconds = 0.0;
+        unknownLength.cues = {hotCue(1, 1000.0), hotCue(2, 2000.0)};
+        store(metadata, {unknownLength}, sourceFor(stick, "RV2", CatalogNew));
+        // One row still, and it took the new cue: the unknown length stood
+        // aside because the key names only that row.
+        assert(metadata.trackCount() == 1);
+        const auto rows = metadata.browse("", 10, 0);
+        assert(rows.size() == 1 && rows[0].cueCount == 2);
+        std::cout << "case 18 (an unreadable length lands on the one row its key names) OK\n";
+    }
+    {
+        const fs::path db18b = root / "local-18b" / "metadata.db";
+        MetadataStore metadata(db18b);
+
+        Track radioEdit = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
+        radioEdit.durationSeconds = 210.0;
+        Track extended = radioEdit;
+        extended.sourceId = "Erste-extended";
+        extended.filePath = (stick / "Contents/Kalte Nacht/Erste (Extended).mp3").string();
+        extended.filename = "Erste (Extended).mp3";
+        extended.durationSeconds = 480.0;
+        store(metadata, {radioEdit, extended}, sourceFor(stick, "RV2", CatalogOld));
+        assert(metadata.trackCount() == 2);
+
+        Track unknownLength = radioEdit;
+        unknownLength.sourceId = "Erste-unknown";
+        unknownLength.filePath = (stick / "Contents/Kalte Nacht/Erste (Club).mp3").string();
+        unknownLength.filename = "Erste (Club).mp3";
+        unknownLength.durationSeconds = 0.0;
+        unknownLength.cues = {hotCue(3, 3000.0)};
+        store(metadata, {unknownLength}, sourceFor(stick, "RV2", CatalogNew));
+        // Neither mix took it: it is a third row, and both originals kept
+        // the cue counts they had.
+        assert(metadata.trackCount() == 3);
+        for (const auto &row : metadata.browse("", 10, 0)) {
+            if (row.durationSeconds == 210.0 || row.durationSeconds == 480.0) {
+                assert(row.cueCount == 0);
+            }
+        }
+        std::cout << "case 18b (an unreadable length under a key naming two rows merges into neither) OK\n";
+    }
+
     return 0;
 }

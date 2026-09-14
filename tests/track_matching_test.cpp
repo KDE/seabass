@@ -177,16 +177,12 @@ int main()
 
     // matchTracks: a duration of 0 means "unreadable" (same fallback
     // convention as the rest of Track's fields), not a real zero-length
-    // track. A length that cannot be read cannot be compared, so title
-    // and artist alone do not make a match: a radio edit and an extended
-    // mix share both, and length is what tells them apart.
-    //
-    // This case used to assert the opposite. That leniency was needed
-    // while Engine reported no length for most tracks (1207 of 1566 once
-    // failed to match for that reason alone). Every read now fills missing
-    // lengths from the audio file -- on RV2 that leaves one track of 1469
-    // without one -- so what is still 0 is a broken or missing file, and
-    // guessing a match for it is how one mix gets the other's cues.
+    // track. It cannot be compared, so it stands aside only when there is
+    // nothing to tell apart: here the key names exactly one track on each
+    // side, so the match holds. Found on real data as the dominant cause of
+    // sync match failures (1207 of 1566 Engine tracks), and the committed
+    // fixture -- catalogs without audio to fill lengths from -- still
+    // depends on it (1161 matches, 188 if unknown lengths never matched).
     {
         Track engineTrack;
         engineTrack.sourceId = "engine1";
@@ -203,8 +199,8 @@ int main()
         std::vector<Track> engineTracks = {engineTrack};
         std::vector<Track> rekordboxTracks = {rekordboxTrack};
         auto matches = matchTracks(engineTracks, rekordboxTracks);
-        assert(matches.empty());
-        std::cout << "case 9 (matchTracks: an unreadable duration cannot be compared, so no title+artist match) OK\n";
+        assert(matches.size() == 1);
+        std::cout << "case 9 (matchTracks: an unreadable duration under an unambiguous title+artist still matches) OK\n";
     }
 
     // ...but the same file is still the same file. Two rows naming one path
@@ -232,6 +228,51 @@ int main()
         assert(matches[0].first->sourceId == "engine1");
         assert(matches[0].second->sourceId == "rb1");
         std::cout << "case 9b (matchTracks: the same file path matches whatever either length reads) OK\n";
+    }
+
+    // ...and an unknown length does not match under a title+artist that
+    // names two tracks. The radio edit and the extended mix share artist
+    // and title; with one side's length unreadable there is nothing to say
+    // which is which, and matching the first would hand it the other's
+    // cues. Checked from both sides: the pair can be on either.
+    {
+        Track unknown;
+        unknown.sourceId = "engine1";
+        unknown.title = "In My Head";
+        unknown.artist = "Domek";
+        unknown.durationSeconds = 0.0;
+
+        Track radioEdit;
+        radioEdit.sourceId = "rb-radio";
+        radioEdit.title = "In My Head";
+        radioEdit.artist = "Domek";
+        radioEdit.durationSeconds = 212.0;
+        Track extendedMix = radioEdit;
+        extendedMix.sourceId = "rb-extended";
+        extendedMix.durationSeconds = 462.0;
+
+        std::vector<Track> one = {unknown};
+        std::vector<Track> two = {radioEdit, extendedMix};
+        assert(matchTracks(one, two).empty());
+        assert(matchTracks(two, one).empty());
+        std::cout << "case 9c (matchTracks: an unreadable duration under a title+artist naming two tracks matches none) OK\n";
+    }
+
+    // Two real lengths still have to agree, however unambiguous the key.
+    {
+        Track engineTrack;
+        engineTrack.sourceId = "engine1";
+        engineTrack.title = "In My Head";
+        engineTrack.artist = "Domek";
+        engineTrack.durationSeconds = 212.0;
+        Track rekordboxTrack = engineTrack;
+        rekordboxTrack.sourceId = "rb1";
+        rekordboxTrack.durationSeconds = 462.0;
+
+        std::vector<Track> engineTracks = {engineTrack};
+        std::vector<Track> rekordboxTracks = {rekordboxTrack};
+        assert(matchTracks(engineTracks, rekordboxTracks).empty());
+        std::cout << "case 9d (matchTracks: a unique key does not excuse two real lengths that disagree) OK\n";
     }
 
     // matchTracks: a genuine duration mismatch (both sides have a real
