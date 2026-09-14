@@ -122,8 +122,9 @@ signals:
     void pendingCancelDecisionChanged();
     void errorMessageChanged();
     void statusMessageChanged();
-    // Fires on every outcome (see LocalCueController for why a signal
-    // rather than a diffed property).
+    // Fires on every outcome. A signal rather than a diffed property: the
+    // same message twice in a row is two outcomes, and a property that did
+    // not change would announce the second one to nobody.
     void actionFeedback(const QString &message, bool isError);
     // Another instance is editing this stick's library (its archive on
     // disk is part of it); nothing was started. retryLockedAction()

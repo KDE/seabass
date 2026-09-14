@@ -610,13 +610,19 @@ void StickBackupController::onRunFinished()
         if (!v.error.empty()) {
             setErrorMessage(QStringLiteral("Verification failed: ") + QString::fromStdString(v.error));
             emit actionFeedback(m_errorMessage, true);
-            // A cancelled verify says "cancelled" through the same field.
-            // Nothing was found wrong, so there is nothing to decide.
-            if (v.error != "cancelled") {
-                emit verifyFailed(QStringLiteral("The backup could not be read back: %1.")
-                                      .arg(QString::fromStdString(v.error)));
-            }
+            // No decision dialog here. This branch is every way verify can
+            // stop without having compared the backup's contents: the
+            // archive would not open, there is no backup, its tail could
+            // not be read, or the user cancelled. Several of those are the
+            // drive or the moment, not the backup -- a disk that went away,
+            // a permission, a transient read error -- and offering Delete
+            // as the default there could remove an archive that is intact.
+            // The message says what failed; running Verify again is the
+            // answer to all of them.
         } else if (!v.ok) {
+            // Only here is the backup itself known to be damaged: every
+            // entry was read back, and these did not match what was
+            // written.
             setErrorMessage(QStringLiteral("Verification found %1 damaged entr%2 -- this backup should not be trusted; run a new backup.")
                                 .arg(v.failures.size())
                                 .arg(v.failures.size() == 1 ? QStringLiteral("y") : QStringLiteral("ies")));

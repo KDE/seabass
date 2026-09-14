@@ -526,8 +526,8 @@ Page {
                     // Now-playing highlight, an accent-colored stripe,
                     // same idiom as most media players use for "this one."
                     // Rounded to match every other accent-bordered highlight
-                    // in the app (BackupsPage/LocalCuePage's active-field
-                    // outline, etc.), all radius: 4. This one was square.
+                    // in the app (BackupsPage's active-field outline,
+                    // etc.), all radius: 4. This one was square.
                     border.color: trackDelegate.isPlaying ? Theme.accent : "transparent"
                     border.width: trackDelegate.isPlaying ? 2 : 0
                     radius: trackDelegate.isPlaying ? 4 : 0

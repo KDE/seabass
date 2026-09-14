@@ -224,8 +224,8 @@ writing a 0 clears a rating rather than setting a zero-star one. The
 store keeps the two apart; DeviceLibrary cannot.
 
 Writes are **staged, not applied**. Restore builds one `PendingChange`
-per track into the library's `LibraryEditSession`, exactly as
-`LocalCueController::applyRestore()` already does; the page's Save writes
+per track into the library's `LibraryEditSession`, the same pattern every
+editing page uses; the page's Save writes
 them through `runSaveLoop`, which backs up first. Nothing here invents a
 write path, and nothing here reaches the stick without the user pressing
 Save.
@@ -485,10 +485,21 @@ the first write, would remove it.
 
 ## Relationship to Local Cue Backup
 
-`LocalCueStore`, `LocalCueController`, `LocalCuePage.qml` and
-`domain::LocalRestorePlanner` are the narrow ancestor of this and are
-already marked deprecated in the UI. They should go once this ships --
-pre-1.0, and two features that back up overlapping data to two different
-databases is worse than either alone. That removal is deliberately not
-part of this branch: it is a separate decision, and it wants the new path
-proven on real sticks first.
+Local Cue Backup was the narrow ancestor of this: cue backups kept on this
+computer across every stick, restored into one catalog at a time. It was
+marked deprecated once this shipped, on the grounds that two features
+backing up overlapping data to two different databases is worse than
+either alone, and its page was removed on 2026-09-14 (the audit's open
+decision (2)).
+
+What went: `LocalCuePage.qml`, `LocalCueController`, and the "Local Cue
+Backup" card on the Home page's no-stick block.
+
+What stayed, on purpose: `LocalCueStore` and `MergeCuesChange`, which no
+page uses any more. They are the only code that can read the cue
+snapshots a user already saved with the old page, and deleting them would
+strand that data rather than retire the feature. `domain::LocalRestorePlanner`
+stays for a different reason: its `mergeCues` is the cue union Clean Up
+and catalog collapsing both use. Whether to offer a one-time import of old
+snapshots into the metadata store, and then remove the store, is not
+decided.

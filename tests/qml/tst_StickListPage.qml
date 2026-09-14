@@ -329,20 +329,20 @@ TestCase {
         // see test_theNoStickToolsStepAsideOnceAStickIsIn.
         var page = makePage([], {});
         var restoreCard = findChild(page, "generalRestoreCard");
-        var localCueCard = findChild(page, "generalLocalCueCard");
         verify(restoreCard !== null);
-        verify(localCueCard !== null);
-        compare(localCueCard.deprecated, true);
+        // Local Cue Backup is gone: Metadata Backup and Restore replaced it.
+        compare(findChild(page, "generalLocalCueCard"), null);
+
+        // The block holds one card now that Local Cue Backup is gone; worth a
+        // picture, because a two-column grid with one card in it is exactly
+        // the kind of layout no assertion here would call wrong.
+        waitForRendering(page);
+        saveScreenshot(page, "stick-list-no-stick");
 
         var restoreSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreStickBackupRequested"});
         restoreCard.clicked();
         compare(restoreSpy.count, 1);
         compare(restoreSpy.signalArguments[0][0], "");
-
-        var localCueSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "localCueRequested"});
-        localCueCard.clicked();
-        compare(localCueSpy.count, 1);
-        compare(localCueSpy.signalArguments[0][0], "");
     }
 
     // The card is visible unconditionally for a blank stick (it is also
@@ -556,10 +556,10 @@ TestCase {
     }
 
     function test_theNoStickToolsStepAsideOnceAStickIsIn() {
-        // Two cards about this computer's own backup stores. With no
-        // stick in they are the only thing to do here; with one in they
-        // sit above the thing the page is actually about, taking the top
-        // of the screen for the case that is not happening.
+        // A card about this computer's own stick backups. With no stick in
+        // it is the only thing to do here; with one in it would sit above
+        // the thing the page is actually about, taking the top of the
+        // screen for the case that is not happening.
         var empty = makePage([], {});
         var tools = findByName(empty, "noStickBackupTools");
         verify(tools !== null, "the no-stick tools must exist");

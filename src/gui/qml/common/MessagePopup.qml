@@ -6,10 +6,10 @@ import QtQuick
 import QtQuick.Controls
 import SeabassGui
 
-// The outcome of an action taken somewhere else on a long page -- e.g.
-// LocalCuePage's "Restore From Here" buttons up in Backup History, whose
-// result used to show only as a quiet line of text down in a different
-// section, easy to miss entirely.
+// The outcome of an action taken somewhere else on a long page, whose
+// result would otherwise show only as a quiet line of text down in a
+// different section, easy to miss entirely. (It was written for the
+// "Restore From Here" buttons of the since-removed Local Cue Backup page.)
 //
 // Deliberately does NOT auto-dismiss. An earlier version did, on a timer,
 // and that was explicitly rejected: the message needs to be seen and

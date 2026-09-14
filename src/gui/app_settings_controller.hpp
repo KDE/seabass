@@ -13,9 +13,9 @@ namespace seabass::gui
 
 // App-level (not per-stick) preferences, persisted via QSettings under the
 // user's standard config location. Main.qml binds Material.theme to
-// useSystemTheme; ScanPage/DuplicatesPage/LocalCuePage bind their
-// Rekordbox/Engine mode toggle to preferredFormat, so the last-chosen
-// format carries over between those pages and across app restarts.
+// useSystemTheme; ScanPage and DuplicatesPage bind their Rekordbox/Engine
+// mode toggle to preferredFormat, so the last-chosen format carries over
+// between those pages and across app restarts.
 // ScanPage similarly persists lastBrowsePlaylistName, so Browse Library
 // reopens on whichever playlist was last selected.
 class AppSettingsController : public QObject

@@ -227,7 +227,6 @@ Page {
     // tied to any particular stick, so mountPoint/devicePath/archivePath
     // (or stickLabel/rekordboxPath/enginePath) may all be empty; the
     // target page picks its own drive/backup/library from within itself.
-    signal localCueRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal metadataBackupRequested(string stickLabel, string rekordboxPath, string enginePath, string libraryId)
     signal metadataRestoreRequested(string stickLabel, string rekordboxPath, string enginePath, string libraryId)
     // Copy the library on another mounted stick onto this one -- either a
@@ -445,9 +444,10 @@ Page {
         // it genuinely does need a specific stick).
         //
         // Shown only while no stick is plugged in. With one in, the
-        // sticks are what this page is about and these two cards sit
-        // above them taking the top of the screen for the case that is
-        // not happening.
+        // sticks are what this page is about and this card sits above
+        // them taking the top of the screen for the case that is not
+        // happening. (Local Cue Backup used to sit beside it; it was
+        // removed once Metadata Backup and Restore covered the same need.)
         //
         // removableCount, not the row count: a folder someone opened is
         // not a stick, and should not make the no-stick tools vanish.
@@ -475,15 +475,6 @@ Page {
                     // No stick preselected: the page itself lists every
                     // mounted drive and every backup on disk to choose from.
                     onClicked: root.restoreStickBackupRequested("", "", "")
-                }
-                ActionCard {
-                    objectName: "generalLocalCueCard"
-                    cardTitle: "Local Cue Backup"
-                    cardSubtitle: "Cue backups kept on this computer, across every stick"
-                    cardIcon: "bookmarks"
-                    deprecated: true
-                    deprecatedNote: "Needs rework"
-                    onClicked: root.localCueRequested("", "", "")
                 }
             }
         }

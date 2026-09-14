@@ -20,8 +20,8 @@ Page {
     readonly property bool hasOneLibrary: root.hasRekordbox && duplicatesController.hasOneLibrary(root.rekordboxPath)
     // OneLibrary selection is deliberately page-local, not persisted into
     // appSettingsController.preferredFormat -- that setting is shared
-    // with ScanPage/LocalCuePage (see FormatToggle.qml's own comment),
-    // neither of which know what to do with "onelibrary" as a value.
+    // with ScanPage (see FormatToggle.qml's own comment), which does not
+    // know what to do with "onelibrary" as a value.
     // Rekordbox/Engine still persist exactly as before.
     property string localFormatOverride: ""
     readonly property string format: {

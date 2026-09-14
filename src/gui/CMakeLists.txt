@@ -96,7 +96,6 @@ set(SEABASS_GUI_QML_FILES
     qml/EngineLibraryCreatorPage.qml
     qml/SyncPage.qml
     qml/BackupsPage.qml
-    qml/LocalCuePage.qml
     qml/MetadataBackupPage.qml
     qml/MetadataRestorePage.qml
     qml/FormatToggle.qml
@@ -167,8 +166,6 @@ set(SEABASS_GUI_SOURCES
     sync_controller.cpp
     backups_controller.hpp
     backups_controller.cpp
-    local_cue_controller.hpp
-    local_cue_controller.cpp
     metadata_backup_controller.hpp
     metadata_backup_proposal_model.hpp
     metadata_backup_controller.cpp

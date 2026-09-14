@@ -662,11 +662,11 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             // track's cues, silently relabelled. A strong-key hit is
             // therefore decisive even when it ends in no match.
             static constexpr const char *ByMatchKey =
-                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at "
-                "FROM tracks WHERE match_key = ? ORDER BY id";
+                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at, "
+                "relative_path FROM tracks WHERE match_key = ? ORDER BY id";
             static constexpr const char *ByFallbackKey =
-                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at "
-                "FROM tracks WHERE fallback_key = ? ORDER BY id";
+                "SELECT id, rating, comment, play_count, artwork_sha, duration_seconds, authored_at, updated_at, "
+                "relative_path FROM tracks WHERE fallback_key = ? ORDER BY id";
 
             struct Row
             {
@@ -677,6 +677,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                 std::string artworkSha;
                 double durationSeconds = 0.0;
                 std::int64_t modifiedAt = 0;
+                std::string relativePath;
             };
 
             // Returns whether the key named any row at all, and sets the
@@ -708,6 +709,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                     // two apart.
                     const std::string authored = find.columnText(6);
                     row.modifiedAt = epochFromIsoTimestamp(authored.empty() ? find.columnText(7) : authored);
+                    row.relativePath = find.columnText(8);
                     rows.push_back(std::move(row));
                 }
                 const Row *chosen = nullptr;
@@ -715,6 +717,26 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                     if (durationsAgree(row.durationSeconds, track.durationSeconds)) {
                         chosen = &row;
                         break;
+                    }
+                }
+                // Lengths could not decide. The same file on the same
+                // stick is still this track: a re-backup of a radio edit
+                // and an extended mix that both lack a length would
+                // otherwise match neither row and insert both again on
+                // every run, piling up rows that never merge.
+                //
+                // Only a tie-breaker between rows the key already named.
+                // A path is never how a track is found -- a backup from a
+                // rebuilt or different stick still matches on artist and
+                // title -- so this cannot pair a row with some other
+                // track; it only says which of the named rows is this one.
+                if (!chosen && !relativePath.empty()) {
+                    for (const Row &row : rows) {
+                        if ((row.durationSeconds <= 0.0 || track.durationSeconds <= 0.0)
+                            && row.relativePath == relativePath) {
+                            chosen = &row;
+                            break;
+                        }
                     }
                 }
                 if (!chosen && rows.size() == 1 && batchCount == 1

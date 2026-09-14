@@ -825,5 +825,45 @@ int main()
         std::cout << "case 18b (an unreadable length under a key naming two rows merges into neither) OK\n";
     }
 
+    // ---- case 18c: backing up the same stick again does not pile up rows ----
+    //
+    // The review finding this guards. Two mixes under one artist and title,
+    // both with an unreadable length: the first backup stores two rows. The
+    // second backup's key then names two rows, lengths cannot choose, and
+    // without a tie-breaker neither row was chosen -- so both were inserted
+    // again, on every run, with the second run's cues merged into nothing.
+    // The same file on the same stick settles which row is which.
+    {
+        const fs::path db18c = root / "local-18c" / "metadata.db";
+        MetadataStore metadata(db18c);
+
+        Track radioEdit = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
+        radioEdit.durationSeconds = 0.0;
+        radioEdit.cues = {hotCue(1, 1000.0)};
+        Track extended = radioEdit;
+        extended.sourceId = "Erste-extended";
+        extended.filePath = (stick / "Contents/Kalte Nacht/Erste (Extended).mp3").string();
+        extended.filename = "Erste (Extended).mp3";
+        extended.cues = {hotCue(1, 5000.0)};
+
+        store(metadata, {radioEdit, extended}, sourceFor(stick, "RV2", CatalogOld));
+        assert(metadata.trackCount() == 2);
+
+        // Again, with one more cue on the radio edit.
+        radioEdit.cues = {hotCue(1, 1000.0), hotCue(2, 2000.0)};
+        store(metadata, {radioEdit, extended}, sourceFor(stick, "RV2", CatalogNew));
+        store(metadata, {radioEdit, extended}, sourceFor(stick, "RV2", CatalogNewest));
+        assert(metadata.trackCount() == 2 && "a re-backup of the same two files must reuse their rows");
+
+        int twoCues = 0;
+        for (const auto &row : metadata.browse("", 10, 0)) {
+            if (row.cueCount == 2) {
+                twoCues++;
+            }
+        }
+        assert(twoCues == 1 && "the radio edit's new cue merged into its own row, not into nothing");
+        std::cout << "case 18c (a re-backup of two unknown-length mixes reuses their rows) OK\n";
+    }
+
     return 0;
 }

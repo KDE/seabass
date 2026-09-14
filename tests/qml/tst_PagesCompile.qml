@@ -106,7 +106,6 @@ TestCase {
             {name: "BackupsPage", props: stickProps({})},
             {name: "BackupsHubPage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "PendingDeletionsPage", props: stickProps({appSettingsController: realAppSettings})},
-            {name: "LocalCuePage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "MetadataBackupPage", props: stickProps({libraryId: ""})},
             {name: "MetadataRestorePage", props: stickProps({libraryId: ""})},
             {name: "LibraryHealthHubPage", props: stickProps({playbackController: realPlayback})},

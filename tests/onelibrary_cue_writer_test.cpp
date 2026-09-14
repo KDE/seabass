@@ -211,8 +211,9 @@ int main()
     // baseline must refresh after each successful write, or every call
     // after the first would spuriously refuse itself (see
     // onelibrary_cue_writer.cpp's refresh at the end of
-    // writeCuesForPath()). Matches how local_cue_controller.cpp actually
-    // uses this class (one writer, one write per restore candidate).
+    // writeCuesForPath()). Matches how a save uses this class: one writer
+    // per database for the whole save (sharedOneLibraryWriter), one write
+    // per staged item.
     {
         fs::path scratch = freshScratch();
         fs::path pioneerRoot = scratch / "PIONEER";

@@ -377,6 +377,14 @@ void RestoreStickBackupController::applyProgress(const RestoreProgress &progress
 
 void RestoreStickBackupController::restore(const QString &targetRoot, bool exact)
 {
+    // Consumed first, before anything can return. restoreAnyway() confirms
+    // exactly the call it makes, and a confirmation that survived an early
+    // return below -- "Still busy" while an analyze or a mount was running
+    // -- would be picked up by some later restore(), after the user had
+    // swapped sticks, and skip the one check that would have caught it.
+    const bool confirmed = m_targetChangeConfirmed;
+    m_targetChangeConfirmed = false;
+
     if (busy() || m_archivePath.isEmpty() || targetRoot.isEmpty()) {
         emit actionFeedback(QStringLiteral("Still busy. Try again once the current operation finishes."), true);
         return;
@@ -393,8 +401,6 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
     // empty): there is nothing to tell them apart with, and warning on
     // every restore to such a drive would teach the user to click through
     // the warning.
-    const bool confirmed = m_targetChangeConfirmed;
-    m_targetChangeConfirmed = false;
     if (!confirmed) {
         const QString identifierNow = QString::fromStdString(
             infrastructure::system::readStickHardwareInfo(targetRoot.toStdString(), std::string()).stickIdentifier);

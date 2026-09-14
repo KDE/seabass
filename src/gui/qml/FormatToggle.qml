@@ -6,10 +6,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Rekordbox/Engine mode switch shared by ScanPage, DuplicatesPage and
-// LocalCuePage -- bound to AppSettingsController.preferredFormat, so the
-// last-chosen format is remembered across all three (and across app
-// restarts). Whichever side isn't present on this stick is disabled
+// Rekordbox/Engine mode switch shared by ScanPage and DuplicatesPage --
+// bound to AppSettingsController.preferredFormat, so the last-chosen
+// format is remembered across both (and across app restarts). Whichever side isn't present on this stick is disabled
 // rather than hidden, so the control's shape stays stable.
 RowLayout {
     id: root

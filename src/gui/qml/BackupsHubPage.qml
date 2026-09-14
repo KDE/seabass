@@ -13,11 +13,9 @@ import SeabassGui
 // date from a newer copy of its library (writes the stick), and
 // BackupsPage (the automatic per-write backups kept on the stick itself
 // under Seabass/backups -- deprecated pending a rework). Restoring a
-// stick backup and LocalCuePage (cue backup/restore to/from this
-// computer) moved to a general block on the Home page instead: neither
-// is actually about this specific stick -- Restore picks its own target
-// drive, and the local cue database spans every stick you've ever backed
-// up -- so requiring a stick already be inserted and scanned just to
+// stick backup moved to a general block on the Home page instead: it is
+// not actually about this specific stick -- Restore picks its own target
+// drive -- so requiring a stick already be inserted and scanned just to
 // reach them was the wrong gate. restoreStickBackupRequested stays here,
 // used internally by Update Stick's disk-backup route.
 Page {
