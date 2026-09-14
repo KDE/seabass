@@ -56,7 +56,7 @@ TestCase {
             var fields = ctrl.groups[g].fields;
             for (var f = 0; f < fields.length; ++f) {
                 if (fields[f].options.length >= 2 && fields[f].options.indexOf(fields[f].value) >= 0) {
-                    return {fileName: ctrl.groups[g].fileName, label: fields[f].label,
+                    return {fileName: fields[f].fileName, label: fields[f].label,
                             other: fields[f].options[(fields[f].options.indexOf(fields[f].value) + 1) % fields[f].options.length]};
                 }
             }

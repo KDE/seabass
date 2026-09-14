@@ -126,7 +126,7 @@ TestCase {
             var fields = ctrl.groups[g].fields;
             for (var f = 0; f < fields.length; ++f) {
                 if (fields[f].options.length >= 2 && fields[f].options.indexOf(fields[f].value) >= 0) {
-                    target = {fileName: ctrl.groups[g].fileName, label: fields[f].label, value: fields[f].value,
+                    target = {fileName: fields[f].fileName, label: fields[f].label, value: fields[f].value,
                               other: fields[f].options[(fields[f].options.indexOf(fields[f].value) + 1) % fields[f].options.length]};
                     break;
                 }
@@ -169,11 +169,13 @@ TestCase {
         console.log("  on disk after undo: " + valueOf(reread, target.fileName, target.label));
     }
 
+    // Groups are categories now, not files, so the file name is on each
+    // field and one label can only be matched together with its file.
     function valueOf(ctrl, fileName, label) {
         for (var g = 0; g < ctrl.groups.length; ++g) {
-            if (ctrl.groups[g].fileName !== fileName) continue;
             for (var f = 0; f < ctrl.groups[g].fields.length; ++f) {
-                if (ctrl.groups[g].fields[f].label === label) return ctrl.groups[g].fields[f].value;
+                var field = ctrl.groups[g].fields[f];
+                if (field.fileName === fileName && field.label === label) return field.value;
             }
         }
         return "";
