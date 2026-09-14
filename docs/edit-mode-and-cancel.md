@@ -30,8 +30,8 @@ feature, and it is on for everyone.
   Browse), Local Cue merge.
 - **Direct write**: an operation that writes as soon as it is confirmed,
   because staging it makes no sense: full stick backup/restore/clone/
-  compact, Format USB, Create Engine Library, Manage Backups restore/
-  prune/delete, deleting orphaned files. These get the write-mode
+  compact, Format USB, Create Engine Library, deleting a full backup
+  in Manage Backups, deleting orphaned files. These get the write-mode
   semantics (lock, progress, cancel where safe, summary) without a
   staging step.
 - **Edit lock** (cookie): a small JSON file in
@@ -105,8 +105,7 @@ idle ----stage()---- editing ----save()---- writing
 |---|---|---|---|
 | Any library scan | yes | per track | page pops, nothing cached |
 | Save of staged changes | yes | between changes | summary, rest stays staged |
-| Manage Backups: Clean Up | yes | between backups | summary "k of N backups deleted" |
-| Manage Backups: restore / delete one | no | one step | summary |
+| Manage Backups: delete a full backup | no | one step | status line |
 | Delete orphaned files | yes | between files | summary; manifest keeps the rest |
 | Create Engine Library | until "Copying to stick" | between tracks (scratch build) | "Cancelled, nothing was created" |
 | Full stick backup / clone / compact | yes (pre-existing) | per file, keep/discard partial | own result frame |

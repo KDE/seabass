@@ -87,6 +87,7 @@ Page {
     // the menu entry's enabled state against the thing that decides it
     // rather than against a hardcoded expectation of what the machine holds.
     readonly property int homeBackupsMetadataCount: homeBackups.metadataTrackCount
+    readonly property int homeBackupsFullCount: homeBackups.fullBackupCount
 
     // One size for every icon in the header, the menu's included. Set, not
     // read off the menu button: KDE's ToolButton never sets icon.width, so
@@ -152,15 +153,17 @@ Page {
         title: "Open a full stick backup to browse"
         nameFilters: ["Stick backups (*.zip)", "All files (*)"]
         currentFolder: root.appSettingsController.toLocalFileUrl(root.appSettingsController.stickBackupDirectory)
-        onAccepted: {
-            if (!root.releaseOpenedFolder()) {
-                return;
-            }
-            var message = root.mediaController.openBackup(selectedFile.toString());
-            if (message.length > 0) {
-                openFolderError.text = message;
-                openFolderError.open();
-            }
+        onAccepted: root.openBackupArchive(selectedFile.toString())
+    }
+    // Also Manage Backups' Browse, which comes back here to do it.
+    function openBackupArchive(archivePath) {
+        if (!root.releaseOpenedFolder()) {
+            return;
+        }
+        var message = root.mediaController.openBackup(archivePath);
+        if (message.length > 0) {
+            openFolderError.text = message;
+            openFolderError.open();
         }
     }
     Dialog {
@@ -199,6 +202,7 @@ Page {
         }
     }
     signal browseRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal manageBackupsRequested()
     // Deduplication and Backups are hub pages now (see
     // DuplicatesHubPage.qml / BackupsHubPage.qml), each fanning out to two
     // sub-pages that used to be separate top-level cards here
@@ -319,6 +323,15 @@ Page {
                         icon.source: Theme.iconUrl("backup")
                         icon.color: enabled ? Theme.text : Theme.textMuted
                         onTriggered: openBackupDialog.open()
+                    }
+                    MenuItem {
+                        objectName: "manageBackupsItem"
+                        text: homeBackups.fullBackupCount > 0 ? "Manage Full Stick Backups…"
+                                                              : "Manage Full Stick Backups (none yet)"
+                        icon.source: Theme.iconUrl("deep-history")
+                        icon.color: enabled ? Theme.text : Theme.textMuted
+                        enabled: homeBackups.fullBackupCount > 0
+                        onTriggered: root.manageBackupsRequested()
                     }
                     MenuItem {
                         objectName: "browseMetadataBackupsItem"

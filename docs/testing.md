@@ -133,7 +133,7 @@ One design point worth knowing if you're touching the anonymizer: the same real 
 
 `tests/qml-live/` drives the real pages with their real controllers
 against a mounted stick: reads, staged edits, saves, cancels, undo,
-Manage Backups, the foreign lock, the process guard, the CLI probe, and
+the foreign lock, the process guard, the CLI probe, and
 the stick being pulled. Nothing there runs under a default `ctest`; those
 tests are registered only when the build was configured with
 `-DSEABASS_LIVE_STICK` naming a mount point. Only ever

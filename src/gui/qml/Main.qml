@@ -425,6 +425,7 @@ ApplicationWindow {
                 devicePath: devicePath,
                 backupAdvisor: backupAdvisorCtrl,
             })
+            onManageBackupsRequested: stackView.push(backupsPageComponent)
             onAboutRequested: stackView.push(aboutPageComponent)
             onDonationRequested: stackView.push(donationPageComponent)
             onFormatUsbRequested: stackView.push(formatUsbPageComponent)
@@ -610,10 +611,9 @@ ApplicationWindow {
         id: backupsHubPageComponent
         BackupsHubPage {
             appSettingsController: appSettingsCtrl
-            onManageBackupsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(backupsPageComponent, {
+            onManageBackupsRequested: (stickLabel, currentArchivePath) => stackView.push(backupsPageComponent, {
                 stickLabel: stickLabel,
-                rekordboxPath: rekordboxPath,
-                enginePath: enginePath,
+                currentArchivePath: currentArchivePath,
             })
             onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(stickBackupPageComponent, {
                 stickLabel: stickLabel,
@@ -684,7 +684,17 @@ ApplicationWindow {
 
     Component {
         id: backupsPageComponent
-        BackupsPage {}
+        BackupsPage {
+            controller: FullBackupsController {
+                backupDirectory: appSettingsCtrl.stickBackupDirectory
+            }
+            mediaController: mediaCtrl
+            // Browsing happens on Home, where the backup becomes a row.
+            onBrowseRequested: (archivePath) => {
+                stackView.pop(null);
+                stackView.get(0).openBackupArchive(archivePath);
+            }
+        }
     }
 
     Component {

@@ -11,8 +11,8 @@ import SeabassGui
 // option that genuinely needs THIS stick present: the full stick backup
 // into one archive on this computer (reads the stick), bringing it up to
 // date from a newer copy of its library (writes the stick), and
-// BackupsPage (the automatic per-write backups kept on the stick itself
-// under Seabass/backups -- deprecated pending a rework). Restoring a
+// Manage Backups (BackupsPage: every full stick backup on this computer,
+// this stick's first -- also reachable from Home's menu). Restoring a
 // stick backup moved to a general block on the Home page instead: it is
 // not actually about this specific stick -- Restore picks its own target
 // drive -- so requiring a stick already be inserted and scanned just to
@@ -30,7 +30,9 @@ Page {
     property string mountPoint: ""
     property string devicePath: ""
     property var backupAdvisor: null
-    signal manageBackupsRequested(string stickLabel, string rekordboxPath, string enginePath)
+    // `currentArchivePath`: this stick's own full backup, when the advisor
+    // matched one to it; listed first there.
+    signal manageBackupsRequested(string stickLabel, string currentArchivePath)
     signal fullStickBackupRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal restoreStickBackupRequested(string mountPoint, string devicePath, string archivePath)
     signal cloneStickRequested(string sourceLabel, string sourceRekordboxPath, string sourceEnginePath,
@@ -74,6 +76,10 @@ Page {
         ? (root.backupAdvisor.advice[root.mountPoint] || null) : null
     // A newer copy of this stick's library somewhere else -- see
     // BackupAdvisorController's advice map.
+    // The full backup the advisor matched to this stick. "newest" is only
+    // the most recent backup of anything, not this stick's.
+    readonly property string currentArchivePath: root.advice && root.advice.backupPath
+        && ["fingerprint", "identifier", "label"].indexOf(root.advice.matchedBy) >= 0 ? root.advice.backupPath : ""
     readonly property var updateSource: root.advice && root.advice.updateSource && root.advice.updateSource.kind !== "none"
         ? root.advice.updateSource : null
 
@@ -164,12 +170,11 @@ Page {
             onReadOnlyClicked: root.explainLock()
             objectName: "manageBackupsCard"
             cardTitle: "Manage Backups"
-            cardSubtitle: "List and clean up automatic write backups"
+            cardSubtitle: "Browse and delete the full stick backups on this computer"
             cardIcon: "deep-history"
-            deprecated: true
-            deprecatedNote: "Needs rework"
-            enabled: root.hasRekordbox || root.hasEngine
-            onClicked: root.manageBackupsRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
+            // Not gated like Full Stick Backup: it only browses and deletes
+            // files on this computer, and Home's menu offers it ungated too.
+            onClicked: root.manageBackupsRequested(root.stickLabel, root.currentArchivePath)
         }
         Item { Layout.fillHeight: true }
     }

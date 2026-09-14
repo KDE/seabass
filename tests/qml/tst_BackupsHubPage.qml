@@ -8,7 +8,7 @@ import SeabassGui
 
 // BackupsHubPage.qml headless with a fake advisor: the Update Stick card
 // (from a peer stick -> clone page, from the disk backup -> restore page)
-// and the deprecated badge on Manage Backups. Restore a Stick Backup and
+// and Manage Backups, which hands on this stick's own full backup. Restore a Stick Backup and
 // Local Cue Backup moved to a general block on Home (see
 // tst_StickListPage.qml) -- neither card lives here anymore.
 TestCase {
@@ -77,13 +77,34 @@ TestCase {
         saveScreenshot(page, "backups-hub-read-only");
     }
 
-    function test_deprecatedBadgeAndNoUpdateSource() {
+    function test_manageBackupsIsNoLongerDeprecatedAndNoUpdateSource() {
         var page = makePage({});
-        compare(findChild(page, "manageBackupsCard").deprecated, true);
+        compare(findChild(page, "manageBackupsCard").deprecated, false);
+        compare(findChild(page, "manageBackupsCard").experimental, false);
         compare(findChild(page, "updateStickCard").visible, false);
         compare(findChild(page, "restoreCard"), null);
         compare(findChild(page, "localCueCard"), null);
         saveScreenshot(page, "backups-hub");
+    }
+
+    // Manage Backups lists every full backup, this stick's first -- but only
+    // a backup the advisor really matched to it, not merely the newest one.
+    function test_manageBackupsHandsOnThisSticksBackup() {
+        var advice = {};
+        advice["/media/MAIN"] = {state: "current", matchedBy: "fingerprint", backupPath: "/home/u/Backups/MAIN.zip",
+            detail: "", cloneSource: noSource(), updateSource: noSource(), diverged: false};
+        var page = makePage(advice);
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "manageBackupsRequested"});
+        findChild(page, "manageBackupsCard").clicked();
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "MAIN");
+        compare(spy.signalArguments[0][1], "/home/u/Backups/MAIN.zip");
+
+        advice["/media/MAIN"].matchedBy = "newest";
+        var newest = makePage(advice);
+        var newestSpy = createTemporaryObject(spyComponent, testCase, {target: newest, signalName: "manageBackupsRequested"});
+        findChild(newest, "manageBackupsCard").clicked();
+        compare(newestSpy.signalArguments[0][1], "", "the newest backup of anything is not this stick's");
     }
 
     function test_updateFromPeerStickOpensTheClonePage() {

@@ -271,6 +271,7 @@ add_library(seabass_core STATIC
     src/infrastructure/rekordbox/anlz_source_for_root.cpp
     src/infrastructure/local/browsed_backup_root.cpp
     src/application/use_cases/open_stick_backup.cpp
+    src/application/use_cases/manage_stick_backups.cpp
     src/infrastructure/stick_backup/archive_anlz_source.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_file.cpp
@@ -1692,6 +1693,13 @@ add_executable(backup_database_capture_test
 target_include_directories(backup_database_capture_test PRIVATE src)
 target_link_libraries(backup_database_capture_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME backup_database_capture_test COMMAND backup_database_capture_test)
+
+# Manage Backups over real archives: listing (this stick first, counts
+# from the fingerprint) and deleting under the archive's own write lock.
+add_executable(manage_stick_backups_test tests/manage_stick_backups_test.cpp)
+target_include_directories(manage_stick_backups_test PRIVATE src)
+target_link_libraries(manage_stick_backups_test PRIVATE seabass_core)
+add_test(NAME manage_stick_backups_test COMMAND manage_stick_backups_test)
 
 add_executable(backup_stick_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}

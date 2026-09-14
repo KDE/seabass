@@ -7,81 +7,101 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
+// Manage Backups: the full stick backups on this computer. Each one says
+// which stick it came from, how old and how big it is and what library it
+// holds; it can be browsed (without unpacking it) or deleted. Reached from
+// a stick's Backups page -- that stick's backup is listed first -- and
+// from Home's menu, with no stick at all.
 Page {
     id: root
-    required property string stickLabel
-    required property string rekordboxPath
-    required property string enginePath
+    // A FullBackupsController; a plain object in the tests.
+    required property var controller
+    // The stick this was opened for, if any.
+    property string stickLabel: ""
+    // The archive the stick advisor matched to that stick; listed first.
+    property string currentArchivePath: ""
+    // For which archives are open as browsed libraries right now.
+    property var mediaController: null
+    signal browseRequested(string archivePath)
+    // What refreshOpenArchives last found, kept here as well as on the
+    // controller: the rows bind to this, which changes exactly when the
+    // page recomputes it.
+    property var openArchives: []
 
-    BackupsController {
-        id: backupsController
+    function refreshOpenArchives() {
+        var open = [];
+        var model = root.mediaController ? root.mediaController.sticks : null;
+        if (model !== null && model !== undefined) {
+            var count = model.length !== undefined ? model.length : model.rowCount();
+            for (var i = 0; i < count; ++i) {
+                var row = model.length !== undefined ? model[i] : model.get(i);
+                if (row.isBrowsedBackup) {
+                    var archive = root.controller.browsedArchiveFor(row.mountPoint);
+                    if (archive.length > 0) {
+                        open.push(archive);
+                    }
+                }
+            }
+        }
+        root.openArchives = open;
+        root.controller.openArchivePaths = open;
     }
 
-    Component.onCompleted: backupsController.load(root.rekordboxPath, root.enginePath, root.stickLabel)
-
-    // The mutating action the user last asked for, re-run after "Remove
-    // Lock" in the locked-library dialog.
-    property var pendingAction: null
-    function runWrite(action) {
-        root.pendingAction = action;
-        action();
+    Component.onCompleted: {
+        root.controller.currentArchivePath = root.currentArchivePath;
+        root.refreshOpenArchives();
+        root.controller.refresh();
+    }
+    StackView.onActivated: {
+        root.refreshOpenArchives();
+        root.controller.refresh();
     }
 
-    readonly property var reasonNames: ({
-        "duplicate-cue-consolidation": "Duplicate cue consolidation",
-        "sync": "Cross-format sync",
-        "local-restore": "Local cue restore",
-        "device-settings": "Device settings change",
-        "pre-restore": "Pre-restore snapshot",
+    readonly property var statusNames: ({
+        "partial-cancelled": "Incomplete: cancelled and kept; the next backup continues from there",
+        "partial-conflict": "Incomplete: the DJ software was running, so the databases were skipped",
+        "partial-db-too-large": "Incomplete: the databases were too large to include",
+        "partial-skipped": "Incomplete: some files could not be read",
     })
 
-    // Backup ids are "<timestamp>-<reason>[-N]"; label is everything after
-    // the first dash (see FilesystemBackupStore::list()). Presented as a
-    // readable date/reason pair, with the raw id/label kept as a tooltip
-    // for anyone who needs to find the directory on disk by hand.
-    function friendlyTimestamp(id) {
-        var m = id.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/);
-        if (!m) {
-            return id;
+    // "today", "yesterday", "5 days ago", "3 weeks ago", "4 months ago".
+    function age(iso) {
+        if (!iso || iso.length === 0) {
+            return "at an unknown time";
         }
-        var d = new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]), parseInt(m[4]), parseInt(m[5]), parseInt(m[6]));
-        return d.toLocaleString(Qt.locale(), "d MMM yyyy, HH:mm:ss");
+        var then = new Date(iso);
+        var now = new Date();
+        var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var startOfThen = new Date(then.getFullYear(), then.getMonth(), then.getDate());
+        var days = Math.round((startOfToday - startOfThen) / 86400000);
+        if (days <= 0) return "today";
+        if (days === 1) return "yesterday";
+        if (days < 14) return days + " days ago";
+        if (days < 60) return Math.round(days / 7) + " weeks ago";
+        if (days < 730) return Math.round(days / 30) + " months ago";
+        return Math.round(days / 365) + " years ago";
     }
-
-    function friendlyReason(label) {
-        var stripped = label.replace(/-\d+$/, "");
-        if (root.reasonNames[stripped] !== undefined) {
-            return root.reasonNames[stripped];
+    function exactDate(iso) {
+        return iso && iso.length > 0 ? new Date(iso).toLocaleString(Qt.locale(), "d MMM yyyy, HH:mm") : "";
+    }
+    function details(backup) {
+        var parts = ["Backed up " + root.age(backup.createdAt), Theme.humanBytes(backup.bytes)];
+        if (backup.trackCount >= 0) {
+            parts.push(backup.trackCount.toLocaleString(Qt.locale(), "f", 0) + " tracks");
         }
-        return stripped.split("-").map((w) => w.length > 0 ? w[0].toUpperCase() + w.slice(1) : w).join(" ");
-    }
-
-    // "What's actually in this backup" -- export.pdb/m.db give no hint by
-    // themselves that OneLibrary's exportLibrary.db was (or wasn't)
-    // included alongside them, which is exactly what was invisible here
-    // before this list existed at all.
-    readonly property var fileDisplayNames: ({
-        "exportLibrary.db": "OneLibrary",
-        "export.pdb": "export.pdb (DeviceLibrary)",
-        "m.db": "m.db (Engine library)",
-    })
-    function friendlyFileNames(names) {
-        return names.map((n) => root.fileDisplayNames[n] !== undefined ? root.fileDisplayNames[n] : n).join(", ");
+        if (backup.playlistCount >= 0) {
+            parts.push(backup.playlistCount.toLocaleString(Qt.locale(), "f", 0) + " playlists");
+        }
+        return parts.join("  ·  ");
     }
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
-        // and nothing else. `padding` alone does not do it: styles set
-        // horizontalPadding or leftPadding of their own on top of it,
-        // 4px under Breeze and 6 under the default style, and that is
-        // exactly how far right of the body the breadcrumb used to sit.
+        // and nothing else -- see BackupsHubPage.qml's header.
         leftPadding: 0
         rightPadding: 0
         topPadding: 0
         bottomPadding: Theme.headerBottomPadding
-        // Opaque background override -- see AppSettingsPage.qml's header
-        // for why (KDE's Breeze style bleeds the window behind Seabass
-        // through an unstyled ToolBar).
         background: Rectangle { color: Theme.surface }
 
         RowLayout {
@@ -89,32 +109,17 @@ Page {
             anchors.margins: Theme.pageMargin
             BackBreadcrumb {
                 stack: root.StackView.view
-                middleLabel: "Backups"
+                // As before: the crumb names the Backups page it came from.
+                middleLabel: root.stickLabel.length > 0 ? "Backups" : ""
                 title: "Manage Backups"
-                backEnabled: !backupsController.busy
+                backEnabled: root.controller.deleting !== true
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()
             }
             Item { Layout.fillWidth: true }
-            Label { text: "Keep:" }
-            SpinBox {
-                id: keepSpinBox
-                from: 0
-                to: 1000
-                value: 10
-                ToolTip.visible: hovered
-                ToolTip.text: "How many of the most recent automatic backups to keep. Backups you made yourself are always kept"
-            }
-            Button {
-                text: "Clean Up"
-                enabled: !backupsController.busy && backupsController.backups.automaticCount > 0
-                ToolTip.visible: hovered
-                ToolTip.text: "Permanently delete older backup copies; never touches the stick's live data"
-                onClicked: confirmCleanDialog.open()
-            }
             BusyIndicator {
-                visible: backupsController.busy
-                running: backupsController.busy
+                visible: root.controller.listing === true || root.controller.deleting === true
+                running: visible
                 implicitWidth: 24
                 implicitHeight: 24
             }
@@ -122,222 +127,181 @@ Page {
     }
 
     MessageDialog {
-        id: confirmCleanDialog
-        severity: SeabassDialog.Warning
-        destructive: true
-        title: "Clean Up Backups?"
-        headline: "This permanently deletes the "
-            + Math.max(0, backupsController.backups.automaticCount - keepSpinBox.value)
-            + " oldest automatic backup(s) under " + backupsController.backupDir + "."
-        detailText: "Backups you made yourself are kept; delete one of those with its own delete button. "
-            + "It never touches the stick's live DeviceLibrary/Engine data."
-        acceptText: "Clean Up"
-        onAccepted: root.runWrite(() => backupsController.clean(keepSpinBox.value))
-    }
-
-    MessageDialog {
-        id: confirmRestoreDialog
-        property string targetId: ""
-        severity: SeabassDialog.Warning
-        title: "Restore This Backup?"
-        headline: "This overwrites the current files on the stick with this backup's copies."
-        detailText: "The files being overwritten are themselves backed up first, so this can be undone."
-        acceptText: "Restore"
-        onAccepted: {
-            const id = targetId;
-            root.runWrite(() => backupsController.restoreBackup(id));
-        }
-    }
-
-    MessageDialog {
         id: confirmDeleteDialog
-        property string targetId: ""
+        objectName: "confirmDeleteDialog"
+        property var backup: ({})
         severity: SeabassDialog.Warning
         destructive: true
         title: "Delete This Backup?"
-        headline: "This permanently deletes this one backup copy."
-        detailText: "It never touches the stick's live data."
+        headline: "This permanently deletes the full backup of "
+            + (confirmDeleteDialog.backup.label && confirmDeleteDialog.backup.label.length > 0
+                ? confirmDeleteDialog.backup.label : confirmDeleteDialog.backup.fileName)
+            + " (" + Theme.humanBytes(confirmDeleteDialog.backup.bytes) + ") from this computer."
+        detailText: "The stick itself is not touched. Once deleted, the next backup of that stick copies the whole stick again."
         acceptText: "Delete"
-        onAccepted: {
-            const id = targetId;
-            root.runWrite(() => backupsController.deleteBackup(id));
-        }
+        onAccepted: root.controller.deleteBackup(confirmDeleteDialog.backup.archivePath)
     }
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 16
+        anchors.margins: Theme.pageMargin
         spacing: 8
 
         Label {
-            visible: backupsController.errorMessage.length > 0
-            text: backupsController.errorMessage
+            objectName: "errorLabel"
+            visible: text.length > 0
+            text: root.controller.errorMessage || ""
             color: Theme.danger
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
         Label {
-            visible: backupsController.statusMessage.length > 0
-            text: backupsController.statusMessage
+            objectName: "statusLabel"
+            visible: text.length > 0
+            text: root.controller.statusMessage || ""
             color: Theme.good
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
         Label {
-            text: backupsListView.count + " backup(s), " + backupsController.totalSizeHuman + " total: " + backupsController.backupDir
+            objectName: "summaryLabel"
+            text: backupsList.count + (backupsList.count === 1 ? " backup, " : " backups, ")
+                + Theme.humanBytes(root.controller.totalBytes) + " in " + root.controller.backupDirectory
             color: Theme.textMuted
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
 
         ListView {
-            id: backupsListView
-            // Not draggable when everything already fits.
-            interactive: contentHeight > height
+            id: backupsList
+            objectName: "backupsList"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // Not draggable when everything already fits.
+            interactive: contentHeight > height
             clip: true
-            model: backupsController.backups
-            spacing: 2
+            spacing: 8
+            model: root.controller.backups
 
-            delegate: ItemDelegate {
-                id: backupDelegate
+            delegate: Rectangle {
+                id: backupRow
+                required property var modelData
+                required property int index
+                readonly property bool readable: modelData.error.length === 0
+                readonly property bool open: root.openArchives.indexOf(modelData.archivePath) >= 0
+                objectName: "backupRow" + index
                 width: ListView.view.width
-                // Sized to its own content, not a fixed pixel height: the
-                // contentItem below is two rows (the main row, then the
-                // "Files:" summary), and a fixed height didn't reliably
-                // fit both -- the second line's text overflowed its own
-                // boundary, worse at larger system font sizes.
-                height: backupContent.implicitHeight + 16
-                hoverEnabled: true
+                implicitHeight: rowContent.implicitHeight + 24
+                radius: 6
+                color: Theme.surface
+                border.width: 1
+                border.color: modelData.isCurrentStick ? Theme.accent : Theme.border
 
-                required property string id
-                required property string label
-                required property string description
-                required property string sizeHuman
-                required property var fileNames
+                RowLayout {
+                    id: rowContent
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 12
 
-                ToolTip.visible: hovered
-                ToolTip.text: "ID: " + backupDelegate.id + "\nReason: " + backupDelegate.label
-                    + "\nFiles: " + (backupDelegate.fileNames.length > 0
-                        ? root.friendlyFileNames(backupDelegate.fileNames) : "(unknown, predates file tracking)")
+                    SeabassIcon {
+                        Layout.alignment: Qt.AlignTop
+                        iconName: backupRow.readable ? "archive-insert" : "dialog-warning"
+                        size: Theme.iconSizeLarge
+                        color: backupRow.readable ? Theme.text : Theme.warnIcon
+                    }
 
-                contentItem: ColumnLayout {
-                    id: backupContent
-                    spacing: 2
-                    RowLayout {
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: 2
+                        RowLayout {
+                            spacing: 8
+                            Label {
+                                objectName: "backupTitle"
+                                text: backupRow.readable && backupRow.modelData.label.length > 0
+                                    ? backupRow.modelData.label : backupRow.modelData.fileName
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: rowContent.width * 0.5
+                            }
+                            Label {
+                                objectName: "currentStickBadge"
+                                visible: backupRow.modelData.isCurrentStick
+                                text: "This stick"
+                                color: Theme.accent
+                                font.pointSize: Theme.fontSmall
+                            }
+                            Label {
+                                visible: backupRow.open
+                                text: "Open on Home"
+                                color: Theme.textMuted
+                                font.pointSize: Theme.fontSmall
+                            }
+                        }
                         Label {
-                            text: root.friendlyTimestamp(backupDelegate.id) + "  ·  " + root.friendlyReason(backupDelegate.label)
-                            Layout.preferredWidth: 320
-                            elide: Text.ElideRight
-                        }
-                        // Reads as plain text until clicked -- a border and
-                        // background only appear while actually editing, so the
-                        // row doesn't look like a form when you're just scanning
-                        // the list for a backup.
-                        TextField {
-                            id: descriptionField
+                            objectName: "backupDetails"
+                            visible: backupRow.readable
+                            text: root.details(backupRow.modelData)
+                            color: Theme.textMuted
+                            wrapMode: Text.WordWrap
                             Layout.fillWidth: true
-                            placeholderText: "Click to add a note (e.g. \"before Berlin gig\")..."
-                            text: backupDelegate.description
-                            background: Rectangle {
-                                radius: 4
-                                color: descriptionField.activeFocus ? Qt.rgba(Theme.text.r, Theme.text.g, Theme.text.b, 0.08) : "transparent"
-                                border.width: descriptionField.activeFocus ? 1 : 0
-                                border.color: Theme.accent
-                            }
-                            onEditingFinished: backupsController.setDescription(backupDelegate.id, text)
+                            HoverHandler { id: detailsHover }
+                            ToolTip.visible: detailsHover.hovered
+                            ToolTip.text: root.exactDate(backupRow.modelData.createdAt) + "\n" + backupRow.modelData.archivePath
                         }
-                        Label { text: backupDelegate.sizeHuman; color: Theme.textMuted; Layout.preferredWidth: 70 }
-                        Button {
-                            text: "Restore"
-                            enabled: !backupsController.busy
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Copy this backup's files back to where they came from"
-                            onClicked: {
-                                confirmRestoreDialog.targetId = backupDelegate.id;
-                                confirmRestoreDialog.open();
-                            }
+                        Label {
+                            objectName: "backupStatus"
+                            visible: backupRow.readable && backupRow.modelData.status !== "complete"
+                            text: root.statusNames[backupRow.modelData.status] || "Incomplete"
+                            color: Theme.warnIcon
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
                         }
-                        // Deliberately understated (flat, dim, icon-only) --
-                        // deleting a single backup is rarer and less reversible
-                        // than "Clean Up," so it shouldn't compete visually
-                        // with Restore.
-                        ToolButton {
-                            display: AbstractButton.IconOnly
-                            text: "Delete"
-                            icon.source: Theme.iconUrl("edit-delete")
-                            icon.color: enabled ? Theme.text : Theme.textMuted
-                            opacity: 0.55
-                            enabled: !backupsController.busy
-                            Layout.preferredWidth: Theme.iconSizeSmall
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Delete this backup permanently"
-                            onClicked: {
-                                confirmDeleteDialog.targetId = backupDelegate.id;
-                                confirmDeleteDialog.open();
-                            }
+                        Label {
+                            objectName: "backupError"
+                            visible: !backupRow.readable
+                            text: "Cannot be read: " + backupRow.modelData.error + "  ·  " + Theme.humanBytes(backupRow.modelData.bytes)
+                            color: Theme.danger
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
                         }
                     }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 2
-                        text: "Files: " + (backupDelegate.fileNames.length > 0
-                            ? root.friendlyFileNames(backupDelegate.fileNames) : "unknown (predates file tracking)")
-                        color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                        elide: Text.ElideRight
+
+                    Button {
+                        objectName: "browseButton"
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "Browse"
+                        enabled: backupRow.readable && root.controller.deleting !== true
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Open this backup on the Home page like a stick, without unpacking it. Read-only."
+                        onClicked: root.browseRequested(backupRow.modelData.archivePath)
+                    }
+                    Button {
+                        objectName: "deleteButton"
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "Delete…"
+                        icon.source: Theme.iconUrl("edit-delete")
+                        enabled: root.controller.deleting !== true && !backupRow.open
+                        ToolTip.visible: hovered
+                        ToolTip.text: backupRow.open ? "Open for browsing: close it on the Home page first"
+                                                     : "Delete this backup from this computer"
+                        onClicked: {
+                            confirmDeleteDialog.backup = backupRow.modelData;
+                            confirmDeleteDialog.open();
+                        }
                     }
                 }
             }
 
             Label {
+                objectName: "emptyLabel"
                 anchors.centerIn: parent
-                visible: backupsListView.count === 0
-                text: "No backups found for this stick."
+                width: parent.width * 0.8
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                visible: backupsList.count === 0 && root.controller.listing !== true
+                text: "No full stick backups yet. Make one from a stick's Backups page: Full Stick Backup."
                 color: Theme.textMuted
             }
         }
-    }
-
-    // Write mode for the direct writes on this page: lock refusal, the
-    // cancellable progress of a Clean Up, and the summary afterwards. OK
-    // on the summary stays here after a completed action (the list is
-    // fresh) and goes back after a cancelled one.
-    LockedLibraryDialog {
-        id: lockedDialog
-        objectName: "lockedDialog"
-        onRemoveLockRequested: {
-            EditSessionRegistry.removeLock(backupsController.libraryId);
-            if (root.pendingAction) {
-                root.pendingAction();
-            }
-        }
-    }
-    OperationSummaryDialog {
-        id: summaryDialog
-        objectName: "summaryDialog"
-        onAccepted: {
-            if (summaryDialog.cancelled) {
-                root.StackView.view.pop();
-            }
-        }
-    }
-    Connections {
-        target: backupsController
-        function onLockRefused(holder) { lockedDialog.openFor(backupsController.libraryId, holder); }
-        function onWriteFinished(summary) { summaryDialog.show(summary); }
-    }
-    BusyOverlay {
-        anchors.fill: parent
-        busy: backupsController.writing
-        cancellable: backupsController.writeCancellable
-        current: backupsController.writeCurrent
-        total: backupsController.writeTotal
-        label: backupsController.writeTotal > 0 ? "Deleting old backups. Do not remove your USB stick."
-            : "Writing to the stick. Do not remove your USB stick."
-        onCancelRequested: backupsController.cancelWrite()
     }
 }

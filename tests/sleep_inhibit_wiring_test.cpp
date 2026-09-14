@@ -39,7 +39,6 @@ const Site kSites[] = {
     {"src/gui/restore_stick_backup_controller.cpp", "m_restoreWatcher.setFuture", "a restore"},
     {"src/gui/clone_stick_controller.cpp", "m_runWatcher.setFuture", "a stick copy"},
     {"src/gui/format_usb_controller.cpp", "m_watcher.setFuture", "a format"},
-    {"src/gui/backups_controller.cpp", "m_watcher.setFuture", "making or removing backups"},
     {"src/gui/metadata_backup_controller.cpp", "m_saveWatcher.setFuture", "a metadata backup"},
     {"src/gui/cleanup_controller.cpp", "m_pendingWriteWatcher.setFuture", "deleting files from a stick"},
     {"src/gui/engine_library_creator_controller.cpp", "m_watcher.setFuture", "creating an Engine library"},

@@ -164,8 +164,8 @@ set(SEABASS_GUI_SOURCES
     staged_cue_edit_controller.cpp
     sync_controller.hpp
     sync_controller.cpp
-    backups_controller.hpp
-    backups_controller.cpp
+    full_backups_controller.hpp
+    full_backups_controller.cpp
     metadata_backup_controller.hpp
     metadata_backup_proposal_model.hpp
     metadata_backup_controller.cpp

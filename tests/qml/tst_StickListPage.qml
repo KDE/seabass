@@ -527,9 +527,10 @@ TestCase {
         mouseClick(button);
         tryCompare(menu, "opened", true);
         var full = findChild(page, "browseFullBackupItem");
+        var manage = findChild(page, "manageBackupsItem");
         var meta = findChild(page, "browseMetadataBackupsItem");
         var folder = findChild(page, "openFolderItem");
-        verify(full !== null && meta !== null && folder !== null, "all three entries must be in the menu");
+        verify(full !== null && manage !== null && meta !== null && folder !== null, "all four entries must be in the menu");
         compare(folder.text, "Open a Library From a Folder…");
         // And the button closes what it opened: a press on it no longer
         // closes the menu only for the click to open it again.
@@ -541,6 +542,12 @@ TestCase {
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "metadataBackupRequested"});
         meta.triggered();
         compare(spy.count, 1);
+        // Manage Backups works with no stick at all: off while there is
+        // no full backup, otherwise straight to the page.
+        compare(manage.enabled, page.homeBackupsFullCount > 0);
+        var manageSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "manageBackupsRequested"});
+        manage.triggered();
+        compare(manageSpy.count, 1);
     }
 
     // Finds the first descendant with `objectName`, anywhere on the page.

@@ -103,7 +103,7 @@ TestCase {
                 appSettingsController: realAppSettings, backupAdvisor: realAdvisor})},
             {name: "DuplicatesHubPage", props: stickProps({})},
             {name: "JunkCuePage", props: stickProps({appSettingsController: realAppSettings})},
-            {name: "BackupsPage", props: stickProps({})},
+            {name: "BackupsPage", props: {controller: ({backupDirectory: "/tmp", currentArchivePath: "", openArchivePaths: [], backups: [], totalBytes: 0, listing: false, deleting: false, errorMessage: "", statusMessage: "", refresh: function() {}, deleteBackup: function(p) {}, browsedArchiveFor: function(r) { return ""; }, isOpen: function(p) { return false; }})}},
             {name: "BackupsHubPage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "PendingDeletionsPage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "MetadataBackupPage", props: stickProps({libraryId: "", appSettingsController: realAppSettings})},
@@ -153,7 +153,7 @@ TestCase {
         if (controlsStyleForced) {
             skip("measured against the suite's default style, and this run picked another");
         }
-        var backups = createTemporaryObject(Qt.createComponent(qmlDir + "BackupsPage.qml"), testCase, stickProps({}));
+        var backups = createTemporaryObject(Qt.createComponent(qmlDir + "BackupsPage.qml"), testCase, {controller: ({backupDirectory: "/tmp", currentArchivePath: "", openArchivePaths: [], backups: [], totalBytes: 0, listing: false, deleting: false, errorMessage: "", statusMessage: "", refresh: function() {}, deleteBackup: function(p) {}, browsedArchiveFor: function(r) { return ""; }, isOpen: function(p) { return false; }})});
         verify(backups !== null);
         waitForRendering(backups);
         var crumb = crumbIn(backups.header);

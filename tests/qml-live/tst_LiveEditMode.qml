@@ -36,7 +36,6 @@ TestCase {
     Component { id: syncPage; SyncPage { width: 1100; height: 820 } }
     Component { id: junkPage; JunkCuePage { width: 1100; height: 820 } }
     Component { id: healthPage; LibraryConsistencyPage { width: 1100; height: 820 } }
-    Component { id: backupsPage; BackupsPage { width: 1100; height: 820 } }
     Component { id: pendingPage; PendingDeletionsPage { width: 1100; height: 820 } }
     Component { id: scanController; ScanController {} }
     Component { id: settingsController; SettingsController {} }
@@ -281,51 +280,6 @@ TestCase {
         tryCompare(s, "pendingCount", 0, 5000);
         compare(s.dirty, false);
         compare(ctrl.stagedCount, 0);
-    }
-
-    // ---- 6. Manage Backups: prune two, restore the newest ----
-    function test_06_backupsCleanAndRestore() {
-        var page = createTemporaryObject(backupsPage, testCase, {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
-                                                                 enginePath: enginePath});
-        var ctrl = Live.findByType(page, "BackupsController");
-        verify(ctrl !== null);
-        waitIdle(ctrl);
-        var count = ctrl.backups.rowCount();
-        // Clean Up only ever removes automatic backups; ones the user made
-        // stay, so the keep count is taken among the automatic ones.
-        var automatic = ctrl.backups.automaticCount;
-        console.log("  backups on the stick: " + count + " (" + automatic + " automatic), " + ctrl.totalSizeHuman);
-        if (automatic < 3) {
-            skip("fewer than three automatic backups to prune");
-        }
-        var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "writeFinished"});
-        ctrl.clean(automatic - 2);
-        tryVerify(function() { return spy.count > 0; }, 120000);
-        var summary = spy.signalArguments[0][0];
-        console.log("  clean: " + Live.summaryLine(summary));
-        compare(summary.written, 2);
-        compare(summary.total, 2);
-        compare(summary.verb, "deleted");
-        waitIdle(ctrl);
-        compare(ctrl.backups.rowCount(), count - 2);
-        compare(ctrl.backups.automaticCount, automatic - 2, "only automatic backups may go");
-        tryCompare(findChild(page, "summaryDialog"), "opened", true, 5000);
-        shot(page, "live-backups-pruned");
-        findChild(findChild(page, "summaryDialog"), "okButton").clicked();
-
-        var newestId = ctrl.backups.data(ctrl.backups.index(0, 0), 257);  // IdRole
-        console.log("  restoring " + newestId);
-        spy.clear();
-        ctrl.restoreBackup(newestId);
-        tryVerify(function() { return spy.count > 0; }, 120000);
-        summary = spy.signalArguments[0][0];
-        console.log("  restore: " + Live.summaryLine(summary));
-        compare(summary.error, "");
-        compare(summary.written, 1);
-        compare(summary.verb, "restored");
-        waitIdle(ctrl);
-        compare(ctrl.backups.rowCount(), count - 1);  // the pre-restore snapshot
-        compare(EditSessionRegistry.anyWriting, false);
     }
 
     // ---- 7. Delete Orphaned Files: cancel before the first file ----
