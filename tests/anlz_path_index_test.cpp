@@ -12,16 +12,23 @@
 // never disagree: not for one track the writers happen to pick, but for
 // every id the database holds, for every id it does not, and for a
 // database that cannot be read at all. Issue #2.
+//
+// The exhaustive comparison is against one independent walk of the
+// tracks table, not against the direct lookup per id: the direct lookup
+// parses 1.4 MB per call, and 1161 of those cost 15 s to prove what the
+// walk proves in 30 ms. The direct lookup is still called on a spread of
+// ids, so the contract between the two is exercised, not inferred.
 
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <set>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
@@ -48,12 +55,24 @@ bool check(bool condition, const std::string &what)
     return condition;
 }
 
-// Every track id the database holds, in its own walk of the tracks table
-// so the test does not take the index's word for which ids exist. Rows
-// with no analysis path are kept: those are the ids the index must answer
-// "nothing" for, and they are the ones a lookup could most plausibly
-// confuse with a neighbour.
-std::set<uint32_t> everyTrackId(const std::string &pioneerRoot)
+std::string verdict(int failuresAtCaseStart)
+{
+    return g_failures == failuresAtCaseStart ? "OK" : "FAILED";
+}
+
+// Every present track row in the database, in the test's own walk of the
+// tracks table, so it does not take the index's word for which ids exist.
+// Rows with no analysis path are kept: those are the ids the index must
+// answer "nothing" for, and they are the ones a lookup could most
+// plausibly confuse with a neighbour.
+struct TrackRows
+{
+    // id -> analyze_path as stored, possibly empty. First row wins.
+    std::map<uint32_t, std::string> byId;
+    size_t rowCount = 0;
+};
+
+TrackRows everyTrackRow(const std::string &pioneerRoot)
 {
     std::ifstream ifs(pioneerRoot + "/rekordbox/export.pdb", std::ifstream::binary);
     if (!ifs.is_open()) {
@@ -62,7 +81,7 @@ std::set<uint32_t> everyTrackId(const std::string &pioneerRoot)
     kaitai::kstream ks(&ifs);
     rekordbox_pdb_t pdb(false, &ks);
 
-    std::set<uint32_t> ids;
+    TrackRows rows;
     for (const auto &table : *pdb.tables()) {
         if (table->type() != rekordbox_pdb_t::PAGE_TYPE_TRACKS) {
             continue;
@@ -74,23 +93,14 @@ std::set<uint32_t> everyTrackId(const std::string &pioneerRoot)
                         continue;
                     }
                     if (auto *track = dynamic_cast<rekordbox_pdb_t::track_row_t *>(row->body())) {
-                        ids.insert(track->id());
+                        ++rows.rowCount;
+                        rows.byId.emplace(track->id(), sqlText(track->analyze_path()));
                     }
                 }
             }
         });
     }
-    return ids;
-}
-
-// A case's own verdict line: OK only if none of its checks failed.
-int g_failuresAtCaseStart = 0;
-
-std::string verdict()
-{
-    const bool ok = g_failures == g_failuresAtCaseStart;
-    g_failuresAtCaseStart = g_failures;
-    return ok ? "OK" : "FAILED";
+    return rows;
 }
 
 std::string describe(const std::optional<std::string> &path)
@@ -98,13 +108,39 @@ std::string describe(const std::optional<std::string> &path)
     return path ? *path : std::string("<nothing>");
 }
 
+// What the walk says the index must answer for this row: the stored
+// path, or nothing when the row has none.
+std::optional<std::string> expectedFor(const std::string &storedPath)
+{
+    if (storedPath.empty()) {
+        return std::nullopt;
+    }
+    return storedPath;
+}
+
 // A pioneerRoot whose rekordbox/export.pdb holds exactly these bytes.
+// Checked, because these roots exist to hold bytes the index must
+// reject; a write that silently failed would leave a missing or empty
+// file, which the index also rejects, and the case would pass without
+// ever seeing the bytes it was about.
 fs::path rootWithDatabase(const fs::path &scratch, const std::string &name, const std::string &bytes)
 {
     const fs::path root = scratch / name;
     fs::create_directories(root / "rekordbox");
-    std::ofstream out(root / "rekordbox" / "export.pdb", std::ios::binary | std::ios::trunc);
-    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    const fs::path pdb = root / "rekordbox" / "export.pdb";
+    {
+        std::ofstream out(pdb, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            throw std::runtime_error("could not create " + pdb.string());
+        }
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!out) {
+            throw std::runtime_error("could not write " + pdb.string());
+        }
+    }
+    if (fs::file_size(pdb) != bytes.size()) {
+        throw std::runtime_error("short write to " + pdb.string());
+    }
     return root;
 }
 
@@ -116,12 +152,11 @@ std::string readFile(const fs::path &path)
     return oss.str();
 }
 
-// Whether building an index over this root throws, and what the direct
-// lookup does for the same root. The contract for a database that cannot
-// be read is "the same as the single-id lookup": a caller that catches
-// the throw falls back to per-id lookups, and a database the index
-// cannot read is one the fallback cannot read either, so nothing is
-// silently answered from a half-built table.
+// The contract for a database that cannot be read is "the same as the
+// single-id lookup": a caller that catches the throw falls back to
+// per-id lookups (change_helpers.cpp does), and a database the index
+// cannot read must be one the fallback cannot read either, so nothing
+// is silently answered from a half-built table.
 bool indexThrows(const fs::path &root)
 {
     try {
@@ -142,6 +177,14 @@ bool lookupThrows(const fs::path &root, uint32_t id)
     }
 }
 
+// The index throws or the lookup throws: whichever happened, the other
+// must have too. Runs the pair for one unreadable root.
+void checkUnreadable(const fs::path &root, uint32_t id, const std::string &what)
+{
+    check(indexThrows(root), what + ": the index throws instead of coming up empty");
+    check(lookupThrows(root, id), what + ": the direct lookup throws on the same bytes");
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -154,63 +197,104 @@ int main(int argc, char **argv)
     }
     const std::string root = pioneerRoot.string();
 
-    const std::set<uint32_t> ids = everyTrackId(root);
-    if (!check(ids.size() > 100, "the fixture holds a real number of tracks (" + std::to_string(ids.size()) + ")")) {
+    const TrackRows rows = everyTrackRow(root);
+    const auto &byId = rows.byId;
+    if (!check(byId.size() > 100, "the fixture holds a real number of tracks (" + std::to_string(byId.size()) + ")")) {
         return 1;
     }
+    // The two walks pick different rows when one id appears twice (the
+    // lookup returns at the first present row, the index at the first
+    // non-empty path). No writer of this format produces that, and the
+    // comparison below assumes it, so say so where it would first fail.
+    check(rows.rowCount == byId.size(),
+          "every track id appears once (" + std::to_string(rows.rowCount) + " rows, " + std::to_string(byId.size())
+              + " ids)");
 
     // Case 1: one pass. The index's reason to exist is that it parses the
     // database once per save instead of twice per item, so a second parse
     // here would be the regression it was written against.
+    int before = g_failures;
     WorkCounters::instance().reset();
     AnlzPathIndex index(root);
     check(WorkCounters::instance().snapshot().trackDatabaseParses == 1,
           "building the index parses export.pdb exactly once");
-    check(index.size() > 0 && index.size() <= ids.size(),
-          "the index holds at most one entry per track id (" + std::to_string(index.size()) + " of "
-              + std::to_string(ids.size()) + ")");
-    std::cout << "case 1 (one parse, " << index.size() << " paths for " << ids.size() << " tracks) " << verdict() << "\n";
+    size_t withPath = 0;
+    for (const auto &[id, path] : byId) {
+        withPath += path.empty() ? 0 : 1;
+    }
+    check(index.size() == withPath, "the index holds one entry per track with a path (" + std::to_string(index.size())
+                                        + " entries, " + std::to_string(withPath) + " such tracks)");
+    std::cout << "case 1 (one parse, " << index.size() << " paths for " << byId.size() << " tracks) "
+              << verdict(before) << "\n";
 
-    // Case 2: every id the database holds resolves identically through
-    // the index and through the single-id lookup. Both branches: tracks
-    // with a path, and tracks without one, which the index must not
-    // answer with a neighbour's.
+    // Case 2: every id the database holds resolves through the index to
+    // what its own row says: the stored path, or nothing where the row
+    // has none. Then the direct lookup, on a spread of those ids, says
+    // the same as the index.
+    before = g_failures;
     {
-        size_t withPath = 0;
-        size_t withoutPath = 0;
         size_t disagreements = 0;
-        for (uint32_t id : ids) {
-            const auto direct = findAnlzPathForTrackId(root, id);
+        for (const auto &[id, storedPath] : byId) {
             const auto indexed = index.pathFor(id);
-            if (direct != indexed) {
+            if (indexed != expectedFor(storedPath)) {
                 ++disagreements;
                 if (disagreements <= 5) {
-                    std::cout << "    id " << id << ": direct=" << describe(direct)
+                    std::cout << "    id " << id << ": row=" << describe(expectedFor(storedPath))
                               << " index=" << describe(indexed) << "\n";
                 }
             }
-            (direct ? withPath : withoutPath) += 1;
         }
-        check(disagreements == 0, "index and direct lookup agree on every track id (" + std::to_string(disagreements)
-                                      + " disagreements)");
-        check(withPath == index.size(),
-              "every track the direct lookup resolves is in the index, and nothing else is");
-        // The fixture is only evidence for the "no path" branch if it has
-        // such rows. Say so rather than pass on a branch that never ran.
-        std::cout << "case 2 (agreement on all " << ids.size() << " ids: " << withPath << " with a path, "
-                  << withoutPath << " without) " << verdict() << "\n";
+        check(disagreements == 0, "the index answers every track id with its own row's path ("
+                                      + std::to_string(disagreements) + " disagreements)");
+
+        // A spread: first, last, and every 100th in between.
+        std::vector<uint32_t> sample;
+        size_t position = 0;
+        for (const auto &[id, path] : byId) {
+            if (position == 0 || position + 1 == byId.size() || position % 100 == 0) {
+                sample.push_back(id);
+            }
+            ++position;
+        }
+        size_t directDisagreements = 0;
+        for (uint32_t id : sample) {
+            const auto direct = findAnlzPathForTrackId(root, id);
+            if (direct != index.pathFor(id)) {
+                ++directDisagreements;
+                std::cout << "    id " << id << ": direct=" << describe(direct) << " index="
+                          << describe(index.pathFor(id)) << "\n";
+            }
+        }
+        check(directDisagreements == 0, "index and direct lookup agree on " + std::to_string(sample.size())
+                                            + " sampled ids (" + std::to_string(directDisagreements)
+                                            + " disagreements)");
+
+        // The "row without a path" branch only ran if the fixture has
+        // such rows. It is reported, not asserted: the committed fixture
+        // has none, and this test cannot make one (PdbRowWriter has no
+        // way to blank a path). A regenerated fixture that has one
+        // shows up here.
+        const size_t withoutPath = byId.size() - withPath;
+        std::cout << "case 2 (all " << byId.size() << " ids match their rows, " << withPath << " with a path, "
+                  << withoutPath << " without" << (withoutPath == 0 ? " [that branch did not run]" : "") << "; "
+                  << sample.size() << " checked against the direct lookup) " << verdict(before) << "\n";
     }
 
     // Case 3: an id absent from the database yields nothing, not a
     // neighbouring track's path. Every unused id inside the range the
-    // fixture spans, plus the ends of the id space.
+    // fixture spans, plus the ends of the id space. None of these may
+    // cost a parse: the header promises every lookup is answered from
+    // memory, and a pathFor() that fell back to the direct lookup on a
+    // miss would agree on every answer while parsing once per item.
+    before = g_failures;
     {
+        const auto parsesBefore = WorkCounters::instance().snapshot().trackDatabaseParses;
         size_t absent = 0;
         size_t wrong = 0;
-        const uint32_t lowest = *ids.begin();
-        const uint32_t highest = *ids.rbegin();
+        const uint32_t lowest = byId.begin()->first;
+        const uint32_t highest = byId.rbegin()->first;
         for (uint32_t id = lowest; id <= highest; ++id) {
-            if (ids.count(id)) {
+            if (byId.count(id)) {
                 continue;
             }
             ++absent;
@@ -223,77 +307,72 @@ int main(int argc, char **argv)
         check(!index.pathFor(0).has_value(), "id 0 resolves to nothing");
         check(!index.pathFor(highest + 1).has_value(), "the id just past the highest resolves to nothing");
         check(!index.pathFor(4294967295u).has_value(), "the largest possible id resolves to nothing");
+        check(WorkCounters::instance().snapshot().trackDatabaseParses == parsesBefore,
+              "a miss is answered from memory, not by parsing the database again");
         check(!findAnlzPathForTrackId(root, highest + 1).has_value(),
               "the direct lookup agrees that the id just past the highest resolves to nothing");
-        std::cout << "case 3 (" << absent << " unused ids in " << lowest << ".." << highest << " resolve to nothing) " << verdict() << "\n";
+        std::cout << "case 3 (" << absent << " unused ids in " << lowest << ".." << highest
+                  << " resolve to nothing, without a parse) " << verdict(before) << "\n";
     }
 
-    // Cases 4 to 6: a database that cannot be read. The index must not
+    // Cases 4 to 7: a database that cannot be read. The index must not
     // come up empty or partial and let a save proceed against it; it
     // fails the way the single-id lookup fails, so callers take the
-    // fallback path (change_helpers.cpp catches it) and the fallback
-    // tells them the same thing.
+    // fallback path and the fallback tells them the same thing.
     const fs::path scratch = seabass::testing::scratchRoot() / "seabass_anlz_path_index_test";
     fs::remove_all(scratch);
     fs::create_directories(scratch);
-    const uint32_t someId = *ids.begin();
+    const uint32_t someId = byId.begin()->first;
 
+    before = g_failures;
     {
-        const fs::path root = scratch / "no-database";
-        fs::create_directories(root / "rekordbox");
-        check(indexThrows(root), "a missing export.pdb throws instead of building an empty index");
-        check(lookupThrows(root, someId), "the direct lookup throws on the same missing export.pdb");
-        std::cout << "case 4 (missing export.pdb) " << verdict() << "\n";
+        const fs::path noDatabase = scratch / "no-database";
+        fs::create_directories(noDatabase / "rekordbox");
+        checkUnreadable(noDatabase, someId, "missing export.pdb");
+        std::cout << "case 4 (missing export.pdb) " << verdict(before) << "\n";
     }
 
-    {
-        const fs::path root = rootWithDatabase(scratch, "garbage", std::string(4096, 'x'));
-        check(indexThrows(root), "an export.pdb that is not a database throws instead of building an empty index");
-        check(lookupThrows(root, someId), "the direct lookup throws on the same garbage");
-        std::cout << "case 5 (garbage export.pdb) " << verdict() << "\n";
-    }
+    before = g_failures;
+    checkUnreadable(rootWithDatabase(scratch, "garbage", std::string(4096, 'x')), someId,
+                    "export.pdb that is not a database");
+    std::cout << "case 5 (garbage export.pdb) " << verdict(before) << "\n";
 
-    {
-        const fs::path root = rootWithDatabase(scratch, "empty", std::string());
-        check(indexThrows(root), "an empty export.pdb throws instead of building an empty index");
-        check(lookupThrows(root, someId), "the direct lookup throws on the same empty file");
-        std::cout << "case 6 (empty export.pdb) " << verdict() << "\n";
-    }
+    before = g_failures;
+    checkUnreadable(rootWithDatabase(scratch, "empty", std::string()), someId, "empty export.pdb");
+    std::cout << "case 6 (empty export.pdb) " << verdict(before) << "\n";
 
     // Case 7: a truncated database, the shape a stick yanked mid-copy
-    // leaves behind. Whatever the index manages to answer must be what
-    // the direct lookup would answer on the same bytes; and where the
-    // direct lookup cannot read the file, neither may the index.
+    // leaves behind. Cut at half, which on this fixture lands inside the
+    // tracks table, so both readers hit the cut while walking it. The
+    // index and the direct lookup must fail together; and if both do
+    // manage to read it, whatever the index answers must be what the
+    // direct lookup would answer on the same bytes.
+    before = g_failures;
     {
         const std::string whole = readFile(pioneerRoot / "rekordbox" / "export.pdb");
-        const fs::path root = rootWithDatabase(scratch, "truncated", whole.substr(0, whole.size() / 2));
-        const bool threw = indexThrows(root);
+        const fs::path truncated = rootWithDatabase(scratch, "truncated", whole.substr(0, whole.size() / 2));
+        const bool threw = indexThrows(truncated);
+        const bool lookupThrew = lookupThrows(truncated, someId);
+        check(threw == lookupThrew, std::string("on a truncated database the index and the direct lookup fail together (index ")
+                                        + (threw ? "threw" : "did not throw") + ", lookup "
+                                        + (lookupThrew ? "threw" : "did not throw") + ")");
         size_t answered = 0;
-        size_t disagreements = 0;
-        if (!threw) {
-            AnlzPathIndex partial(root.string());
-            for (uint32_t id : ids) {
-                std::optional<std::string> direct;
-                bool directThrew = false;
-                try {
-                    direct = findAnlzPathForTrackId(root.string(), id);
-                } catch (const std::exception &) {
-                    directThrew = true;
-                }
+        if (!threw && !lookupThrew) {
+            AnlzPathIndex partial(truncated.string());
+            size_t disagreements = 0;
+            for (const auto &[id, path] : byId) {
                 const auto indexed = partial.pathFor(id);
-                if (indexed) {
-                    ++answered;
-                }
-                if (directThrew ? indexed.has_value() : direct != indexed) {
+                answered += indexed ? 1 : 0;
+                if (findAnlzPathForTrackId(truncated.string(), id) != indexed) {
                     ++disagreements;
                 }
             }
+            check(disagreements == 0, "on a truncated database the index never answers what the direct lookup would not ("
+                                          + std::to_string(disagreements) + " disagreements)");
         }
-        check(disagreements == 0,
-              "on a truncated database the index never answers what the direct lookup would not ("
-                  + std::to_string(disagreements) + " disagreements)");
-        std::cout << "case 7 (truncated export.pdb: " << (threw ? "throws" : std::to_string(answered) + " paths answered")
-                  << ", agrees with the direct lookup) " << verdict() << "\n";
+        std::cout << "case 7 (truncated export.pdb: "
+                  << (threw ? "both throw" : std::to_string(answered) + " paths answered, all as the direct lookup would")
+                  << ") " << verdict(before) << "\n";
     }
 
     fs::remove_all(scratch);
