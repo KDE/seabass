@@ -13,8 +13,8 @@ import SeabassGui
 // with nowhere to go), and BigScrollBar is paired with a plain Flickable
 // rather than a Control-styled ScrollView.
 //
-// The Flickable choice isn't cosmetic -- see StickStatisticsPage.qml's and
-// SyncPage.qml's own comments on the same fix. A platform style (KDE's
+// The Flickable choice isn't cosmetic -- see StickStatisticsPage.qml's
+// own comment on the same fix. A platform style (KDE's
 // org.kde.desktop on Linux; FluentWinUI3 on Windows, which has no
 // ScrollView.qml of its own and falls back to Basic's) knows how to
 // position a ScrollView's *own* default scrollbar, but doesn't know how

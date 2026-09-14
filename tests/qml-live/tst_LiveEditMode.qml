@@ -187,16 +187,16 @@ TestCase {
         var ctrl = Live.findByType(page, "SyncController");
         verify(ctrl !== null);
         waitIdle(ctrl, 300000);
-        var plans = ctrl.plans.rowCount();
+        var plans = ctrl.planCount;
         console.log("  sync plans: " + plans + " (rekordbox " + ctrl.rekordboxTrackCount + ", engine " + ctrl.engineTrackCount + ")");
         if (plans === 0) {
             skip("nothing to sync on this stick");
         }
-        ctrl.apply();  // stages every plan that is not an unresolved conflict
+        ctrl.stageSelected(false);  // every ready track starts ticked; decisions are never staged
         var s = session();
         tryVerify(function() { return s.pendingCount > 0 && s.pendingCount === ctrl.stagedCount; }, 10000);
         var staged = s.pendingCount;
-        console.log("  staged " + staged + " of " + plans + " (" + ctrl.unresolvedConflicts.length + " unresolved conflicts stay out)");
+        console.log("  staged " + staged + " of " + plans + " (" + ctrl.conflictCount + " decisions stay out)");
         verify(staged <= plans);
         shot(page, "live-sync-staged");
 

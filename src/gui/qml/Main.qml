@@ -588,6 +588,11 @@ ApplicationWindow {
         SyncPage {
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
+            onJunkCueCleanupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(junkCuePageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
         }
     }
 

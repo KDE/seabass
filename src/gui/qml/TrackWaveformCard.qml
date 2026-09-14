@@ -10,8 +10,10 @@ import QtQuick.Layouts
 // action button, waveform with cue markers, cue-fallback notice, and an
 // optional hint -- shared by every page that lets someone compare one
 // catalog's copy of a track against another's before deciding what to do
-// with it: DuplicatesPage's per-copy conflict view and SyncPage's plan
-// list and cross-source conflict cards. Pulled out after these three
+// with it, DuplicatesPage's per-copy conflict view among them. Sync Cue
+// Points used it twice until its redesign, which puts both copies of a
+// track in equal columns with its own SideCard (SyncPage.qml). Pulled
+// out after these three
 // diverged into three near-identical hand-rolled Frames, one of which
 // (Sync's new cross-source conflicts) was the only one showing which
 // library an option even came from -- this makes the format badge a
@@ -33,13 +35,13 @@ Frame {
     required property var track
     property string formatLabelText: ""
     // Optional detail shown on hover instead of crammed into
-    // formatLabelText itself (e.g. SyncPage's per-track cue summary) --
+    // formatLabelText itself (e.g. a per-track cue summary) --
     // empty just means the badge has no tooltip.
     property string formatLabelTooltip: ""
     property bool showPlaylists: false
 
-    // Empty actionButtonText hides the button entirely (SyncPage's plan
-    // list has no per-track action, just Play).
+    // Empty actionButtonText hides the button entirely (a card that only
+    // offers Play).
     property string actionButtonText: ""
     property string actionButtonTooltip: ""
     property bool actionButtonEnabled: true

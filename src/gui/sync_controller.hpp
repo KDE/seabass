@@ -4,105 +4,27 @@
 
 #pragma once
 
-#include <QAbstractListModel>
 #include <QFutureWatcher>
 #include <QObject>
-#include <QPointer>
 #include <QQmlEngine>
 #include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
 
-#include <map>
 #include <memory>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "domain/cross_source_sync_conflict.hpp"
 #include "domain/sync_planning.hpp"
-#include "domain/track_scope.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/staged_cue_edit_controller.hpp"
-#include "gui/staged_plan_model.hpp"
+#include "gui/sync_plan_list_model.hpp"
 
 namespace seabass::gui
 {
 
 class LibraryEditSession;
-
-// Read-only Qt list model over the SyncPlans SyncController last computed,
-// across every pair of catalogs actually present on the stick (rekordbox
-// <->Engine, rekordbox<->OneLibrary, Engine<->OneLibrary -- see
-// SyncController's own class comment). Only plans with an actual
-// direction are exposed; AlreadyConsistent/NoCues need no attention.
-class SyncPlanListModel : public QAbstractListModel, public StagedPlanModel
-{
-    Q_OBJECT
-    QML_ELEMENT
-    QML_UNCREATABLE("Populated by SyncController; not constructible from QML")
-
-public:
-    enum Roles {
-        // "rekordbox"/"engine"/"onelibrary" -- which catalog the cues are
-        // coming from/going to for this specific plan. Read off the
-        // matched tracks' own Track::format rather than assuming a fixed
-        // pair, so the same role works for any of the three pairs.
-        SourceFormatRole = Qt::UserRole + 1,
-        TargetFormatRole,
-        FilenameRole,
-        DescriptionRole,
-        ConflictRole,
-        TracksRole,
-        // This plan is staged in the edit session: what Save will write.
-        StagedRole,
-        StagedDescriptionRole,
-    };
-
-    explicit SyncPlanListModel(QObject *parent = nullptr);
-
-    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
-    QVariant data(const QModelIndex &index, int role) const override;
-    QHash<int, QByteArray> roleNames() const override;
-
-    // Waveforms are NOT precomputed here -- see this class's own history:
-    // this used to take a waveformsByKey map built eagerly (one file read
-    // per actionable track) during the whole analyze() scan, which for a
-    // stick where most of the library is actionable meant thousands of
-    // individual reads against removable media before the user had even
-    // looked at a single row -- confirmed as the actual cause of a real
-    // "scanning takes forever" report. QML now fetches a given track's
-    // waveform on demand via PlaybackController::waveformFor(), the same
-    // already-proven pattern LibraryConsistencyPage's own track cards use
-    // -- only the rows actually rendered (ListView's own virtualization)
-    // ever pay for a waveform read at all.
-    void setPlans(std::vector<domain::SyncPlan> plans);
-    const std::vector<domain::SyncPlan> &plans() const { return m_plans; }
-
-    // Appends one plan without disturbing the rest -- for a manually-
-    // resolved cross-source conflict (see SyncController::
-    // resolveConflict()) becoming an ordinary, immediately-appliable plan.
-    void addPlan(domain::SyncPlan plan);
-    // Removes one plan without a full rescan -- for SyncController::
-    // applyOne() after a successful write: that one plan is now
-    // consistent, nothing else in the model could have changed (see
-    // SyncController::onWriteFinished()'s own comment on why).
-    void removePlanAt(int index) override;
-    void setStaged(int index, bool staged, const QString &description) override;
-    void clearStaged() override;
-
-    int planCount() const override { return static_cast<int>(m_plans.size()); }
-    // A plan's identity across re-analyses: the track it would write to,
-    // as "<format>:<sourceId>". Two plans can share a target (that is what
-    // CrossSourceConflictDetector looks for), so at most one of them is
-    // ever listed at a time.
-    QString planKeyAt(int index) const override;
-
-private:
-    std::vector<domain::SyncPlan> m_plans;
-    std::vector<QString> m_stagedDescriptions;  // empty = not staged; parallel to m_plans
-};
 
 // Result of a background analyze task, see SyncController::analyze().
 // Built entirely on a worker thread, with no access to the controller.
@@ -137,11 +59,13 @@ struct SyncTaskResult
 // reliable than title+artist+duration), and all three pairs' actionable
 // plans are combined into one list. analyze() only ever reads.
 //
-// Edits are staged, not written: apply()/applyOne()/resolveConflict()
-// stage one SyncPlanChange per target track in the library's
-// LibraryEditSession (the first one takes the edit lock), the row shows
-// it, and the page's Save writes them all. A row whose change reached the
-// stick disappears from the list.
+// Edits are staged, not written, the way Clean Up stages them: every
+// ready track starts ticked, stageSelected() stages the ticked ones as one
+// SyncPlanChange per target track in the library's LibraryEditSession
+// (the first one takes the edit lock), and the page's Save writes them
+// all. resolveConflict() is the other way in -- a pick is itself the
+// edit, so it stages at once. A row whose change reached the stick
+// disappears from the list.
 class SyncController : public StagedCueEditController
 {
     Q_OBJECT
@@ -156,21 +80,16 @@ class SyncController : public StagedCueEditController
     // PlaylistListView.qml).
     Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY analysisChanged)
     Q_PROPERTY(QVariantMap playlistTrackCounts READ playlistTrackCounts NOTIFY analysisChanged)
-    // One entry per (sourceFormat, targetFormat, count) actually present
-    // among the current plans, e.g. [{sourceFormat:"engine",
-    // targetFormat:"rekordbox", count:12}, ...] -- replaces the old fixed
-    // toEngineCount/toRekordboxCount pair, which had no way to represent
-    // a third catalog's own counts.
-    Q_PROPERTY(QVariantList directionCounts READ directionCounts NOTIFY analysisChanged)
-    // One entry per still-unresolved domain::CrossSourceSyncConflict: two
-    // different pairs proposing genuinely different cues to the same
-    // target track, which SyncPlanner alone can't detect (it only ever
-    // sees two catalogs at a time) -- or, with samePair set, one pair's own
-    // two sides having different hot cues, which no clock can settle. See
-    // resolveConflict(). Never includes plans already in `plans` -- a
-    // target stays out of the appliable list entirely until its conflict
-    // here is resolved.
-    Q_PROPERTY(QVariantList unresolvedConflicts READ unresolvedConflicts NOTIFY conflictsChanged)
+    // The list's own numbers, straight from SyncPlanListModel. A "plan" is
+    // a track ready to sync and a "conflict" one waiting for a decision;
+    // "visible" is what the search shows; "selected" is ticked and not yet
+    // staged, which is exactly what Stage Selected would stage.
+    Q_PROPERTY(int planCount READ planCount NOTIFY listChanged)
+    Q_PROPERTY(int conflictCount READ conflictCount NOTIFY listChanged)
+    Q_PROPERTY(int visiblePlanCount READ visiblePlanCount NOTIFY listChanged)
+    Q_PROPERTY(int visibleConflictCount READ visibleConflictCount NOTIFY listChanged)
+    Q_PROPERTY(int selectedCount READ selectedCount NOTIFY listChanged)
+    Q_PROPERTY(int selectedVisibleCount READ selectedVisibleCount NOTIFY listChanged)
 
 public:
     explicit SyncController(QObject *parent = nullptr);
@@ -181,88 +100,82 @@ public:
     int oneLibraryTrackCount() const { return m_oneLibraryTrackCount; }
     QStringList playlistNames() const { return m_playlistNames; }
     QVariantMap playlistTrackCounts() const { return m_playlistTrackCounts; }
-    QVariantList directionCounts() const { return m_directionCounts; }
-    QVariantList unresolvedConflicts() const { return m_unresolvedConflicts; }
+    int planCount() const { return m_model.planCount(); }
+    int conflictCount() const { return m_model.conflictCount(); }
+    int visiblePlanCount() const { return m_model.visiblePlanCount(); }
+    int visibleConflictCount() const { return m_model.visibleConflictCount(); }
+    int selectedCount() const { return m_model.selectedCount(); }
+    int selectedVisibleCount() const { return m_model.selectedVisibleCount(); }
 
     // Phase 1: read-only. rekordboxPath/enginePath are the stick's
     // DetectedStick.rekordboxPath / .enginePath (either may be empty if
     // that catalog isn't present); OneLibrary is picked up automatically
     // whenever exportLibrary.db exists under rekordboxPath, same
     // convention as every other feature in this app. playlistName empty
-    // (the default) analyzes/syncs the whole library, same as before this
-    // parameter existed; a real name scopes matching, the plan list, and
-    // rekordboxTrackCount/engineTrackCount/oneLibraryTrackCount to just
-    // that playlist's tracks -- playlistNames/playlistTrackCounts
-    // themselves stay unfiltered so the picker never shrinks its own
-    // choices.
-    // searchQuery empty (the default) applies no text filter; a real query
-    // narrows by case-insensitive title/artist substring match, same rule
-    // ScanController's own search box uses, applied on top of
-    // playlistName (both can narrow at once, same as ScanPage's own
-    // playlist+search combination).
+    // (the default) analyzes the whole library; a real name scopes
+    // matching, the list, and the three track counts to just that
+    // playlist's tracks -- playlistNames/playlistTrackCounts themselves
+    // stay unfiltered so the picker never shrinks its own choices.
     Q_INVOKABLE void analyze(const QString &rekordboxPath, const QString &enginePath,
-                              const QString &playlistName = QString(), const QString &searchQuery = QString());
+                              const QString &playlistName = QString());
 
-    // Stages every plan currently in the model, across every pair; the
-    // page's Save writes them.
-    Q_INVOKABLE void apply();
+    // Narrows the list by title/artist without rescanning, and without
+    // touching a tick. It used to be a parameter of analyze(), so every
+    // keystroke (debounced) started a background scan and every result
+    // threw away whatever had been ticked or decided. Survives
+    // re-analyses: it belongs to the page, not to a scan.
+    Q_INVOKABLE void search(const QString &query);
 
-    // Same as apply(), scoped to the single plan at index.
-    Q_INVOKABLE void applyOne(int index);
+    // planIndex is the row's planIndex role, not its row.
+    Q_INVOKABLE void setIncluded(int planIndex, bool included);
+    // The ready tracks the search shows; see SyncPlanListModel.
+    Q_INVOKABLE void setAllIncluded(bool included);
 
-    // Picks one side of unresolvedConflicts[index] as the winner: turns
-    // it into an ordinary actionable plan (added to `plans` and staged
-    // right away -- the decision is the edit) and removes it from
-    // unresolvedConflicts. useSourceA selects CrossSourceSyncConflict::
+    // Stages every ticked, not yet staged track; the page's Save writes
+    // them. matchingSearchOnly leaves out ticked tracks the search hides,
+    // which is what the page asks for by default when a search is active
+    // -- the same choice Clean Up offers.
+    Q_INVOKABLE void stageSelected(bool matchingSearchOnly = false);
+
+    // What stageSelected(matchingSearchOnly) would stage, grouped by
+    // direction: [{sourceFormat, targetFormat, count}, ...]. For the
+    // confirmation dialog, which lists each direction.
+    Q_INVOKABLE QVariantList directionCountsFor(bool matchingSearchOnly) const;
+
+    // Picks one side of conflicts()[conflictIndex] (the row's
+    // conflictIndex role): it becomes an ordinary plan, appended and
+    // staged right away -- the decision is the edit -- and the decision
+    // leaves the list. useSourceA selects CrossSourceSyncConflict::
     // sourceA/cuesFromA when true, sourceB/cuesFromB when false.
-    Q_INVOKABLE void resolveConflict(int index, bool useSourceA);
+    Q_INVOKABLE void resolveConflict(int conflictIndex, bool useSourceA);
 
 signals:
     void analysisChanged();
-    void conflictsChanged();
+    void listChanged();
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
-    void reanalyzeAfterUndo() override
-    {
-        analyze(m_rekordboxPath, m_enginePath, m_currentPlaylistName, m_currentSearchQuery);
-    }
-    // The per-direction counts are derived from the row set, so they only
-    // move when a row actually left it.
-    void onStagedChangeApplied(bool rowRemoved) override
-    {
-        if (rowRemoved) {
-            recomputeDirectionCounts();
-        }
-    }
+    void reanalyzeAfterUndo() override { analyze(m_rekordboxPath, m_enginePath, m_currentPlaylistName); }
 
 private:
     void onAnalyzeFinished();
-    void recomputeDirectionCounts();
-    void rebuildUnresolvedConflictsList();
     void attachSession();
     void stagePlan(int index);
+    bool wouldStage(int planIndex, bool matchingSearchOnly) const;
 
     SyncPlanListModel m_model;
     QFutureWatcher<SyncTaskResult> m_watcher;
     QString m_rekordboxPath;
     QString m_enginePath;
     // The playlistName analyze() was last called with -- so the automatic
-    // re-analyze onWriteFinished() runs after every apply()/applyOne()/
-    // undoLastOperation() stays scoped to whatever playlist was selected,
-    // instead of silently reverting to "All tracks".
+    // re-analyze after an undo stays scoped to whatever playlist was
+    // selected, instead of silently reverting to "All tracks".
     QString m_currentPlaylistName;
-    // Same reasoning as m_currentPlaylistName -- the search box's own text
-    // must also survive the automatic post-undo re-analyze.
-    QString m_currentSearchQuery;
     int m_rekordboxTrackCount = 0;
     int m_engineTrackCount = 0;
     int m_oneLibraryTrackCount = 0;
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
-    QVariantList m_directionCounts;
-    std::vector<domain::CrossSourceSyncConflict> m_conflicts;
-    QVariantList m_unresolvedConflicts;
 };
 
 }  // namespace seabass::gui

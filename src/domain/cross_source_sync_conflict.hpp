@@ -109,7 +109,7 @@ public:
     //   A OneLibrary choice stays when nothing else raised one for that file.
     //
     // - Nothing else touches a file while its choice is open. Every other
-    //   plan naming that file, in any format, is held back too, so Stage All
+    //   plan naming that file, in any format, is held back too, so staging
     //   cannot write to a track before the DJ has decided about it. They
     //   come back on the analysis after the choice is saved.
     //

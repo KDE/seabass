@@ -119,9 +119,9 @@ Page {
     // know how to place a foreign BigScrollBar -- it was rendering
     // unanchored at the content's top-left instead of docked to the
     // right edge. Every other scrollable page in this app pairs
-    // BigScrollBar with a real Flickable/ListView instead (see e.g.
-    // SyncPage.qml's own comment on the same pairing) precisely because
-    // that positions the attached scrollbar itself, independent of style.
+    // BigScrollBar with a real Flickable/ListView instead precisely
+    // because that positions the attached scrollbar itself, independent
+    // of style.
     Flickable {
         anchors.fill: parent
         anchors.margins: 16

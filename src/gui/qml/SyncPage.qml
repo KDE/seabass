@@ -7,6 +7,23 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
+// Sync Cue Points: every track whose copies in the stick's catalogs carry
+// different cues, and the one decision each needs.
+//
+// Laid out like Clean Up, top to bottom: what this does, what is in scope,
+// the controls that act on the list, then the list. The header holds only
+// the breadcrumb -- the playlist, search and staging controls used to sit
+// beside it, as far from the list they act on as the window allowed, and
+// ran off the edge of any narrower one.
+//
+// One list, two sections (see SyncPlanListModel): tracks waiting for a
+// decision, then tracks ready to sync. Both are the same row, the shared
+// MetadataTrackDelegate, and expand into the same panel: the two copies'
+// waveforms side by side at equal width, one under the other on a narrow
+// window. They used to be two designs -- amber cards with frames sized to
+// whatever text sat next to them, and text rows whose expanded group hung
+// off a 160px label column -- so picking a side moved a track from one look
+// to the other.
 Page {
     id: root
     required property string stickLabel
@@ -18,10 +35,21 @@ Page {
     // "" scopes analyze() to the whole library (every catalog present),
     // same empty-means-all convention every other picker in this app uses.
     property string selectedPlaylistName: ""
-    property string searchQuery: ""
+
+    // From a decision whose side carries a 0:00 memory cue: Clean Up Stray
+    // Cues is where that gets fixed. Main.qml pushes the page; this one
+    // only asks, through the same leave guard Back uses, because changes
+    // staged here hold the library's edit session.
+    signal junkCueCleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+
+    // Wide enough for the row's catalog and cue columns beside the title,
+    // and for a decision's two waveforms beside each other. Below it both
+    // fold: the columns move into the artist line and the waveforms stack.
+    readonly property bool wide: width >= 980
 
     SyncController {
         id: syncController
+        objectName: "syncController"
     }
 
     // Edit mode for this library: session, floating Save, leave guard.
@@ -47,28 +75,109 @@ Page {
     readonly property var playlistPickerModel: [{name: "All tracks", count: ""}].concat(
         syncController.playlistNames.map((n) => ({name: n, count: syncController.playlistTrackCounts[n] ?? 0})))
 
+    readonly property bool searching: toolbar.searchText.length > 0
+
     function formatLabel(format) { return FormatLabels.label(format); }
     function pathForFormat(format) {
         return format === "engine" ? root.enginePath : root.rekordboxPath;
     }
-
-    // A conflict's own title/artist alone can't tell two conflicts on
-    // duplicate copies of the same track apart (same title, same
-    // artist, different file) -- appending the actual filename makes
-    // "this title shown 5 times" legible as 5 distinct files instead
-    // of looking like a bug.
-    function conflictHeading(conflict) {
-        var filename = conflict.targetPath.split("/").pop();
-        if (conflict.targetTitle.length === 0) {
-            return conflict.targetPath;
+    function analyzeInScope() {
+        syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
+    }
+    function plural(n, word) {
+        return n + " " + word + (n === 1 ? "" : "s");
+    }
+    function describeCues(cues) {
+        var hot = 0;
+        var memory = 0;
+        for (var i = 0; i < cues.length; i++) {
+            if (cues[i].kind === "hot") {
+                hot++;
+            } else {
+                memory++;
+            }
         }
-        return conflict.targetTitle + " - " + conflict.targetArtist + "  [" + filename + "]";
+        var parts = [];
+        if (hot > 0) {
+            parts.push(hot + " hot");
+        }
+        if (memory > 0) {
+            parts.push(memory + " memory");
+        }
+        return parts.length > 0 ? parts.join(" · ") : "no cues";
+    }
+    function formatDuration(ms) {
+        if (!(ms > 0)) {
+            return "";
+        }
+        var totalSeconds = Math.round(ms / 1000);
+        var m = Math.floor(totalSeconds / 60);
+        var s = totalSeconds % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    // What each side's header says next to its catalog. A decision's two
+    // sides are just their cues; a ready track's target also says what the
+    // write does to it, counted the way the row counts it.
+    function sideCueText(row, side) {
+        var text = root.describeCues(row.tracks[side].cues);
+        if (row.needsDecision || side === 0) {
+            return text;
+        }
+        var change = row.cueChange;
+        var gained = change.gainedHot + change.gainedMemory;
+        var dropped = change.droppedHot + change.droppedMemory;
+        if (gained > 0) {
+            text += " · gains " + gained;
+        }
+        if (dropped > 0) {
+            text += " · loses " + dropped;
+        }
+        return text;
+    }
+
+    // The sentence under a row's waveforms: what staging or picking does,
+    // in the numbers the row already showed.
+    function panelSentence(row) {
+        if (row.needsDecision) {
+            if (row.samePair) {
+                return "Whichever side you pick is staged onto the other copy, replacing its hot cues. "
+                    + "Nothing is written until Save.";
+            }
+            return root.formatLabel(row.targetFormat) + " needs cues, but "
+                + root.formatLabel(row.tracks[0].side) + " and " + root.formatLabel(row.tracks[1].side)
+                + " disagree. The side you pick is staged onto " + root.formatLabel(row.targetFormat)
+                + ". Nothing is written until Save.";
+        }
+        var change = row.cueChange;
+        var source = root.formatLabel(row.sourceFormat);
+        var target = root.formatLabel(row.targetFormat);
+        var gained = [];
+        if (change.gainedHot > 0) {
+            gained.push(root.plural(change.gainedHot, "hot cue"));
+        }
+        if (change.gainedMemory > 0) {
+            gained.push(root.plural(change.gainedMemory, "memory cue"));
+        }
+        var sentence = gained.length > 0
+            ? "Adds " + gained.join(" and ") + " from " + source
+            : "Copies the " + source + " cues";
+        var kept = change.keptHot + change.keptMemory;
+        var dropped = change.droppedHot + change.droppedMemory;
+        if (kept > 0) {
+            sentence += (dropped > 0 ? ", keeps the " : " and keeps the ")
+                + root.plural(kept, "cue") + " " + target + " already has";
+        }
+        if (dropped > 0) {
+            sentence += " and replaces " + root.plural(dropped, "cue") + " of its own";
+        }
+        return sentence + ". Nothing is written until Save.";
     }
 
     // Opens on the playlist last picked on any page with a picker.
     Component.onCompleted: {
         root.selectedPlaylistName = root.appSettingsController.lastPlaylistName;
-        syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery);
+        root.analyzeInScope();
     }
 
     // A remembered playlist this library does not have would scan
@@ -84,7 +193,218 @@ Page {
             return;
         }
         root.selectedPlaylistName = "";
-        syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery);
+        root.analyzeInScope();
+    }
+
+    // Fixed widths for the row's right-hand columns, measured from the
+    // widest thing each can hold, so a catalog badge, a cue count and a
+    // status badge sit in the same place on every row whatever their text.
+    TextMetrics {
+        id: catalogNameMetrics
+        font.bold: true
+        font.pointSize: Theme.fontTiny
+        text: FormatLabels.label("rekordbox")
+    }
+    TextMetrics {
+        id: cueSummaryMetrics
+        font.family: Theme.dataFamily
+        font.pointSize: Theme.fontSmall
+        text: "+16 hot, +2 memory, keeps 16"
+    }
+    TextMetrics {
+        id: statusBadgeMetrics
+        font.bold: true
+        font.pointSize: Theme.fontTiny
+        text: "CONFLICT"
+    }
+    TextMetrics {
+        id: unstageMetrics
+        text: "Unstage"
+    }
+    readonly property real catalogBadgeWidth: Math.ceil(catalogNameMetrics.advanceWidth) + 12
+    readonly property real directionMarkWidth: Theme.iconSizeSmall * 0.75
+    readonly property real cueColumnWidth: Math.ceil(cueSummaryMetrics.advanceWidth) + 1
+    readonly property real statusColumnWidth: Math.ceil(statusBadgeMetrics.advanceWidth) + 12
+        + Theme.tightSpacing + Math.ceil(unstageMetrics.advanceWidth) + 2 * Theme.cardPadding
+
+    // A catalog as Home shows it: an accent badge with its FormatLabels
+    // name, in a slot as wide as the longest name so the arrow between two
+    // of them never moves. The first badge sits against the arrow from the
+    // left and the second from the right, so a short name leaves its gap
+    // on the outside rather than between the two. Dimmed for the side a
+    // ready track writes to.
+    component CatalogSlot: Item {
+        id: slot
+        property string format: ""
+        property bool dimmed: false
+        property bool towardsRight: false
+        implicitWidth: root.catalogBadgeWidth
+        implicitHeight: slotBadge.implicitHeight
+        StatusBadge {
+            id: slotBadge
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: slot.towardsRight ? parent.right : undefined
+            anchors.left: slot.towardsRight ? undefined : parent.left
+            label: root.formatLabel(slot.format)
+            badgeColor: slot.dimmed ? Theme.textMuted : Theme.accent
+        }
+    }
+
+    // One copy of a track inside an expanded row.
+    component SideCard: ColumnLayout {
+        id: card
+        required property var track
+        property string eyebrow: ""
+        property bool dimmed: false
+        property string cueText: ""
+        property string actionText: ""
+        property string actionTooltip: ""
+        property bool showJunkNote: false
+        signal actionTriggered()
+        signal junkLinkActivated()
+
+        objectName: "sideCard"
+        Layout.fillWidth: true
+        Layout.minimumWidth: 0
+        Layout.alignment: Qt.AlignTop
+        spacing: Theme.tightSpacing
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.minimumHeight: actionButton.implicitHeight
+            spacing: Theme.tightSpacing
+            TableHeaderLabel {
+                visible: card.eyebrow.length > 0
+                label: card.eyebrow
+            }
+            StatusBadge {
+                label: root.formatLabel(card.track.side)
+                badgeColor: card.dimmed ? Theme.textMuted : Theme.accent
+            }
+            Label {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                text: card.cueText
+                font.family: Theme.dataFamily
+                font.pointSize: Theme.fontSmall
+                color: Theme.textMuted
+                elide: Text.ElideRight
+            }
+            Button {
+                id: actionButton
+                objectName: "useTheseCuesButton"
+                visible: card.actionText.length > 0
+                text: card.actionText
+                enabled: !syncController.busy && !syncController.writing
+                ToolTip.visible: hovered
+                ToolTip.text: card.actionTooltip
+                onClicked: card.actionTriggered()
+            }
+        }
+
+        Item {
+            objectName: "sideWaveform"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 40
+            WaveformView {
+                anchors.fill: parent
+                opacity: card.dimmed ? 0.75 : 1.0
+                // Fetched on demand, and only for a row someone opened --
+                // see SyncPlanListModel::setAnalysis() for why that matters.
+                waveformData: root.playbackController
+                    ? root.playbackController.waveformFor(card.track.side, root.pathForFormat(card.track.side),
+                                                          card.track.sourceId)
+                    : []
+                format: card.track.side
+                cueData: card.track.cues
+                trackDurationMs: card.track.durationMs
+            }
+            // In the waveform's corner rather than beside it, so both
+            // sides' waveforms are exactly as wide as their column.
+            ToolButton {
+                id: playButton
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.tightSpacing
+                anchors.verticalCenter: parent.verticalCenter
+                implicitWidth: Theme.iconSizeSmall * 0.75
+                implicitHeight: Theme.iconSizeSmall * 0.75
+                padding: 0
+                display: AbstractButton.IconOnly
+                text: "Play"
+                // SeabassIcon, as the Re-Analyze button: icon.source drew
+                // an empty square under the KDE style.
+                contentItem: Item {
+                    SeabassIcon {
+                        anchors.centerIn: parent
+                        iconName: "media-playback-start"
+                        size: Theme.iconSizeSmall * 0.5
+                        color: playButton.enabled ? Theme.text : Theme.textMuted
+                    }
+                }
+                enabled: card.track.filePath.length > 0 && root.playbackController !== null
+                background: Rectangle {
+                    radius: 4
+                    color: playButton.hovered ? Theme.rowHover : Theme.surface
+                    opacity: 0.9
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: "Play this copy of the track"
+                onClicked: root.playbackController.load(card.track.side, root.pathForFormat(card.track.side),
+                    card.track.sourceId, card.track.filePath, card.track.title, card.track.artist,
+                    card.track.artworkPath, card.track.cues)
+            }
+        }
+
+        CueFallbackNotice {
+            cues: card.track.cues
+            durationMs: card.track.durationMs
+        }
+
+        RowLayout {
+            objectName: "junkCueNote"
+            visible: card.showJunkNote
+            Layout.fillWidth: true
+            spacing: Theme.tightSpacing
+            SeabassIcon {
+                Layout.alignment: Qt.AlignTop
+                iconName: "dialog-warning"
+                size: junkLabel.font.pixelSize > 0 ? junkLabel.font.pixelSize * 1.3 : Theme.iconSizeSmall * 0.5
+                color: Theme.conflictText
+            }
+            Label {
+                id: junkLabel
+                objectName: "junkCueLink"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.conflictText
+                font.pointSize: Theme.fontSmall
+                textFormat: Text.StyledText
+                linkColor: Theme.accent
+                text: "A 0:00 memory cue on this side is usually accidental. "
+                    + "<a href=\"clean-up-stray-cues\">Clean Up Stray Cues</a>"
+                onLinkActivated: card.junkLinkActivated()
+                HoverHandler {
+                    cursorShape: junkLabel.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                }
+            }
+        }
+    }
+
+    component StatFigure: RowLayout {
+        id: figure
+        property string value: ""
+        property string label: ""
+        property color valueColor: Theme.text
+        spacing: Theme.tightSpacing
+        StatValue {
+            Layout.alignment: Qt.AlignBaseline
+            text: figure.value
+            color: figure.valueColor
+        }
+        TableHeaderLabel {
+            Layout.alignment: Qt.AlignBaseline
+            label: figure.label
+        }
     }
 
     header: ToolBar {
@@ -114,116 +434,69 @@ Page {
                 onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
             }
             Item { Layout.fillWidth: true }
-            Label {
-                text: "Playlist:"
-                color: Theme.textMuted
-            }
-            PlaylistPickerCombo {
-                objectName: "playlistPicker"
-                Layout.minimumWidth: 140
-                enabled: !syncController.busy
-                model: root.playlistPickerModel
-                currentIndex: {
-                    if (root.selectedPlaylistName.length === 0) {
-                        return 0;
-                    }
-                    for (var i = 1; i < root.playlistPickerModel.length; i++) {
-                        if (root.playlistPickerModel[i].name === root.selectedPlaylistName) {
-                            return i;
-                        }
-                    }
-                    return 0;
-                }
-                ToolTip.visible: hovered
-                ToolTip.text: "Scope Sync Cue Points to one playlist instead of the whole library"
-                onPlaylistPicked: (index, modelData) => {
-                    root.selectedPlaylistName = index === 0 ? "" : modelData.name;
-                    root.appSettingsController.lastPlaylistName = root.selectedPlaylistName;
-                    syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery);
-                }
-            }
-            TextField {
-                id: searchField
-                Layout.preferredWidth: 160
-                enabled: !syncController.busy
-                placeholderText: "Search title/artist"
-                text: root.searchQuery
-                // analyze() does a real background scan+match pass, not a
-                // free in-memory filter over already-loaded tracks (unlike
-                // ScanController's own search box) -- debounced rather
-                // than firing on every keystroke, so typing doesn't spam
-                // redundant background tasks.
-                onTextEdited: {
-                    root.searchQuery = text;
-                    searchDebounce.restart();
-                }
-                ToolTip.visible: hovered
-                ToolTip.text: "Filter by title or artist, on top of the playlist scope"
-            }
-            Timer {
-                id: searchDebounce
-                interval: 350
-                onTriggered: syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery)
-            }
-            Button {
-                text: "Re-Analyze"
-                enabled: !syncController.busy
-                ToolTip.visible: hovered
-                ToolTip.text: "Re-scan both libraries and recompute what needs syncing"
-                onClicked: syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery)
-            }
-            Label {
-                visible: syncController.stagedCount > 0
-                text: syncController.stagedCount + " staged, not saved yet"
-                color: Theme.warnText
-            }
-            Button {
-                text: "Stage All " + plansListView.count
-                enabled: !syncController.busy && !syncController.writing
-                    && plansListView.count > syncController.stagedCount
-                ToolTip.visible: hovered
-                ToolTip.text: "Review what will be copied, then stage every listed track; Save writes them"
-                onClicked: confirmDialog.open()
-            }
-            Button {
-                text: "Undo Last Save"
-                visible: syncController.canUndo
-                enabled: !syncController.busy && !syncController.writing
-                ToolTip.visible: hovered
-                ToolTip.text: "Revert the last save: restores every file it touched to what it was before"
-                onClicked: syncController.undoLastOperation()
-            }
         }
     }
 
     MessageDialog {
         id: confirmDialog
+        objectName: "confirmStageDialog"
         severity: SeabassDialog.Question
-        title: "Stage all changes?"
-        acceptText: "Stage All"
-        onAccepted: syncController.apply()
+
+        // Same choice Clean Up offers when a search is hiding some of what
+        // is ticked: stage what the search shows (the default, since that
+        // is what is on screen) or everything ticked.
+        readonly property int shownSelected: syncController.selectedVisibleCount
+        readonly property int hiddenSelected: syncController.selectedCount - shownSelected
+        readonly property bool searchHidesSome: root.searching && hiddenSelected > 0
+        // Taken when the dialog opens: directionCountsFor() is a call, not
+        // a property, so nothing would re-evaluate it.
+        property var directions: []
+        function prepare() {
+            confirmDialog.directions = syncController.directionCountsFor(confirmDialog.searchHidesSome);
+        }
+        function tracks(n) { return n + (n === 1 ? " Track" : " Tracks"); }
+
+        title: "Stage syncing " + root.plural(searchHidesSome ? shownSelected : syncController.selectedCount, "track") + "?"
+        acceptText: searchHidesSome ? "Stage " + tracks(shownSelected) + " Matching the Search"
+                                    : "Stage " + tracks(syncController.selectedCount)
+        acceptEnabled: !searchHidesSome || shownSelected > 0
+        alternateText: searchHidesSome ? "Stage All " + tracks(syncController.selectedCount) + " Selected" : ""
+        onAlternateRequested: syncController.stageSelected(false)
+        onAccepted: syncController.stageSelected(searchHidesSome)
 
         // A per-direction list rather than one sentence, so it stays in the
         // content slot instead of being flattened into `headline`.
         Repeater {
-            model: syncController.directionCounts
+            model: confirmDialog.directions
             delegate: Label {
                 required property var modelData
                 Layout.fillWidth: true
                 text: "Copy cues to " + root.formatLabel(modelData.targetFormat) + " from "
-                    + root.formatLabel(modelData.sourceFormat) + " for " + modelData.count + " track(s)."
+                    + root.formatLabel(modelData.sourceFormat) + " for " + root.plural(modelData.count, "track") + "."
                 wrapMode: Text.WordWrap
             }
         }
         Label {
+            objectName: "hiddenSelectionWarning"
+            Layout.fillWidth: true
+            visible: confirmDialog.searchHidesSome
+            wrapMode: Text.WordWrap
+            color: Theme.warnText
+            text: "Your search (\"" + toolbar.searchText + "\") hides " + confirmDialog.hiddenSelected
+                + " of the " + syncController.selectedCount + " selected tracks. Only the "
+                + confirmDialog.shownSelected + " it shows are staged unless you stage all selected; "
+                + "the hidden ones stay selected either way."
+        }
+        Label {
             Layout.fillWidth: true
             visible: {
-                for (var i = 0; i < syncController.directionCounts.length; i++) {
-                    if (syncController.directionCounts[i].targetFormat === "rekordbox") return true;
+                for (var i = 0; i < confirmDialog.directions.length; i++) {
+                    if (confirmDialog.directions[i].targetFormat === "rekordbox") return true;
                 }
                 return false;
             }
-            text: "DeviceLibrary writing is the least-proven part of Seabass. Verify the result\non real hardware before trusting it for a gig."
+            text: "DeviceLibrary writing is the least-proven part of Seabass. Verify the result "
+                + "on real hardware before trusting it for a gig."
             color: Theme.conflictText
             wrapMode: Text.WordWrap
         }
@@ -239,8 +512,232 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 16
-        spacing: 8
+        anchors.margins: Theme.pageMargin
+        spacing: Theme.sectionSpacing
+
+        RowLayout {
+            objectName: "introRow"
+            Layout.fillWidth: true
+            spacing: Theme.rowSpacing
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+                text: "A track exported to more than one catalog on this stick can end up with hot cues in "
+                    + "one and none, or different ones, in another. Seabass matches the copies across the "
+                    + "stick's catalogs and lists every track where they differ. Tick the ones you want and "
+                    + "stage them; Save copies the cues across. Every catalog is backed up first, and "
+                    + "\"Undo Last Save\" puts back every file it touched."
+            }
+            InfoButton {
+                Layout.alignment: Qt.AlignTop
+                explanationTitle: "How Sync Cue Points decides"
+                summaryText: "Copies are matched by file first. A track with cues on only one side is ready "
+                    + "to sync; one whose two sides have different hot cues waits for you to pick."
+                explanationText:
+                      "## Matching\n"
+                    + "The same audio file on the stick is the same track, whichever catalog lists it. "
+                    + "Only when a catalog has no file path for a track does Seabass fall back to title, "
+                    + "artist and length.\n\n"
+                    + "## Ready to sync\n"
+                    + "One side has cues the other lacks, and staging copies them across. A hot cue the "
+                    + "other side already has, on the same pad at the same place, is kept rather than "
+                    + "copied again: that is what *keeps 1* on a row means.\n\n"
+                    + "## Needs a decision\n"
+                    + "Both sides have hot cues, and they differ. No timestamp can say which set you "
+                    + "meant -- Engine moves a track's edit time for a rating or a BPM change just as for "
+                    + "a cue. Pick the side whose hot cues should be on both; the pick is staged straight "
+                    + "away.\n\n"
+                    + "## DeviceLibrary and OneLibrary\n"
+                    + "They are one library written in two formats, so they are never synced against each "
+                    + "other. Every write to DeviceLibrary is mirrored into OneLibrary.\n\n"
+                    + "## Saving\n"
+                    + "Nothing is written until Save. Every catalog involved is backed up first, and "
+                    + "*Undo Last Save* restores every file the last save touched.\n"
+            }
+        }
+
+        RowLayout {
+            objectName: "scopeRow"
+            Layout.fillWidth: true
+            spacing: Theme.rowSpacing
+
+            Flow {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                Layout.alignment: Qt.AlignVCenter
+                spacing: Theme.tightSpacing
+                StatusBadge {
+                    visible: root.rekordboxPath.length > 0
+                    label: root.formatLabel("rekordbox") + "  " + syncController.rekordboxTrackCount
+                    badgeColor: Theme.accent
+                    tooltipText: root.plural(syncController.rekordboxTrackCount, "DeviceLibrary track") + " in scope"
+                }
+                StatusBadge {
+                    visible: root.enginePath.length > 0
+                    label: root.formatLabel("engine") + "  " + syncController.engineTrackCount
+                    badgeColor: Theme.accent
+                    tooltipText: root.plural(syncController.engineTrackCount, "Engine track") + " in scope"
+                }
+                StatusBadge {
+                    visible: syncController.oneLibraryTrackCount > 0
+                    label: root.formatLabel("onelibrary") + "  " + syncController.oneLibraryTrackCount
+                    badgeColor: Theme.accent
+                    tooltipText: root.plural(syncController.oneLibraryTrackCount, "OneLibrary track") + " in scope"
+                }
+                Label {
+                    height: parent.children[0].implicitHeight
+                    verticalAlignment: Text.AlignVCenter
+                    color: Theme.textMuted
+                    font.pointSize: Theme.fontSmall
+                    text: root.selectedPlaylistName.length > 0
+                        ? "tracks in “" + root.selectedPlaylistName + "”"
+                        : "tracks on the stick"
+                }
+            }
+
+            StatFigure {
+                objectName: "needSyncFigure"
+                value: syncController.planCount
+                label: "need sync"
+            }
+            StatFigure {
+                Layout.leftMargin: Theme.rowSpacing
+                value: syncController.conflictCount
+                label: "conflicts"
+                valueColor: syncController.conflictCount > 0 ? Theme.conflictText : Theme.text
+            }
+            StatFigure {
+                Layout.leftMargin: Theme.rowSpacing
+                value: syncController.stagedCount
+                label: "staged"
+                valueColor: syncController.stagedCount > 0 ? Theme.warnText : Theme.text
+            }
+        }
+
+        GridLayout {
+            id: toolsRow
+            objectName: "filterRow"
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            columns: root.wide ? 3 : 1
+            columnSpacing: Theme.sectionSpacing
+            rowSpacing: Theme.tightSpacing
+
+            RowLayout {
+                Layout.minimumWidth: 0
+                spacing: Theme.tightSpacing
+                Label {
+                    text: "Playlist:"
+                    color: Theme.textMuted
+                }
+                PlaylistPickerCombo {
+                    objectName: "playlistPicker"
+                    Layout.preferredWidth: Math.max(160, Math.min(240, root.width * 0.2))
+                    Layout.minimumWidth: 0
+                    enabled: !syncController.busy
+                    model: root.playlistPickerModel
+                    currentIndex: {
+                        if (root.selectedPlaylistName.length === 0) {
+                            return 0;
+                        }
+                        for (var i = 1; i < root.playlistPickerModel.length; i++) {
+                            if (root.playlistPickerModel[i].name === root.selectedPlaylistName) {
+                                return i;
+                            }
+                        }
+                        return 0;
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Scope Sync Cue Points to one playlist instead of the whole library"
+                    onPlaylistPicked: (index, modelData) => {
+                        root.selectedPlaylistName = index === 0 ? "" : modelData.name;
+                        root.appSettingsController.lastPlaylistName = root.selectedPlaylistName;
+                        root.analyzeInScope();
+                    }
+                }
+                ToolButton {
+                    id: reanalyzeButton
+                    objectName: "reanalyzeButton"
+                    implicitWidth: Theme.iconSizeSmall
+                    implicitHeight: Theme.iconSizeSmall
+                    padding: 0
+                    flat: true
+                    // Still needed with a contentItem of our own: the KDE
+                    // style paints the label itself, over the icon, unless
+                    // told the button is icon-only.
+                    display: AbstractButton.IconOnly
+                    text: "Re-Analyze"
+                    // Drawn by SeabassIcon rather than icon.source: under
+                    // the KDE style an icon-only ToolButton's own icon
+                    // rendered as an empty square.
+                    contentItem: Item {
+                        SeabassIcon {
+                            anchors.centerIn: parent
+                            iconName: "view-refresh"
+                            size: Theme.iconSizeSmall * 0.5
+                            color: reanalyzeButton.enabled ? Theme.text : Theme.textMuted
+                        }
+                    }
+                    enabled: !syncController.busy && !syncController.writing
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Re-scan the catalogs and recompute what needs syncing"
+                    onClicked: root.analyzeInScope()
+                }
+            }
+
+            MetadataListToolbar {
+                id: toolbar
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                placeholder: "Search title or artist"
+                selectionEnabled: !syncController.busy && !syncController.writing
+                    && syncController.visiblePlanCount > 0
+                selectAllTooltip: root.searching ? "Tick every track the search shows" : "Tick every track ready to sync"
+                summary: {
+                    var shown = syncController.visiblePlanCount + syncController.visibleConflictCount;
+                    var total = syncController.planCount + syncController.conflictCount;
+                    return root.searching
+                        ? shown + " of " + total + " shown · " + syncController.selectedVisibleCount + " selected"
+                        : root.plural(total, "track") + " · " + syncController.selectedCount + " selected";
+                }
+                onSelectAllRequested: syncController.setAllIncluded(true)
+                onSelectNoneRequested: syncController.setAllIncluded(false)
+                onSearchChanged: (text) => syncController.search(text)
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                spacing: Theme.rowSpacing
+                Label {
+                    visible: syncController.stagedCount > 0
+                    text: syncController.stagedCount + " staged, not saved yet"
+                    color: Theme.warnText
+                    font.pointSize: Theme.fontSmall
+                }
+                Button {
+                    text: "Undo Last Save"
+                    visible: syncController.canUndo
+                    enabled: !syncController.busy && !syncController.writing
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Revert the last save: restores every file it touched to what it was before"
+                    onClicked: syncController.undoLastOperation()
+                }
+                Button {
+                    objectName: "stageSelectedButton"
+                    highlighted: true
+                    text: "Stage " + (root.searching ? syncController.selectedVisibleCount : syncController.selectedCount)
+                        + " Selected"
+                    enabled: !syncController.busy && !syncController.writing && syncController.selectedCount > 0
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Review what will be copied, then stage every ticked track; Save writes them"
+                    onClicked: {
+                        confirmDialog.prepare();
+                        confirmDialog.open();
+                    }
+                }
+            }
+        }
 
         Label {
             visible: syncController.errorMessage.length > 0
@@ -256,348 +753,308 @@ Page {
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
-        Label {
-            visible: !syncController.busy
-            // Counts already reflect the selected playlist/search
-            // (SyncController scopes matching to both before counting) --
-            // the trailing note makes that explicit rather than leaving a
-            // small number unexplained.
-            text: "DeviceLibrary tracks: " + syncController.rekordboxTrackCount
-                + "   Engine tracks: " + syncController.engineTrackCount
-                + (syncController.oneLibraryTrackCount > 0 ? "   OneLibrary tracks: " + syncController.oneLibraryTrackCount : "")
-                + "   needing sync: " + plansListView.count
-                + (root.selectedPlaylistName.length > 0 ? "   (playlist: " + root.selectedPlaylistName + ")" : "")
-                + (root.searchQuery.length > 0 ? "   (search: \"" + root.searchQuery + "\")" : "")
-            color: Theme.textMuted
-        }
 
         ListView {
-            // Room to scroll the last row clear of the Save overlay (bottom right).
-            bottomMargin: 80
             id: plansListView
-            // Not draggable when everything already fits.
-            interactive: contentHeight > height
+            objectName: "plansList"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // Not draggable when everything already fits.
+            interactive: contentHeight > height
             clip: true
             model: syncController.plans
-            spacing: 4
+            spacing: 2
+            // Scrolls the last row clear of the floating Save button, which
+            // it would otherwise sit behind for good.
+            bottomMargin: editHost.saveClearance
             ScrollBar.vertical: BigScrollBar {}
 
-            // BigScrollBar overlays the list rather than reserving its
-            // own layout space (a real, deliberate overlay scrollbar,
-            // same as the platform default it replaces) -- delegate/
-            // header content sized to the ListView's full width used to
-            // extend all the way under it, right up to (and visually
-            // clipped by) the scrollbar thumb. Every "width: ..." below
-            // that used to read plansListView.width/ListView.view.width
-            // directly now reads this instead, leaving a small gutter
-            // for the scrollbar to sit in without overlapping real
-            // content.
+            // BigScrollBar overlays the list rather than reserving its own
+            // layout space, so rows stop short of it instead of running
+            // underneath the thumb.
             readonly property real delegateWidth: width - 14
 
-            // One list, one scrollbar: unresolved conflicts need
-            // resolving before their track can sync at all, so they
-            // belong above the actionable plans, not in a second,
-            // separately-scrolled list next to them. A ListView header
-            // (not a second ListView) keeps this one virtualized list
-            // for the -- potentially thousands-long -- plans below,
-            // while the conflicts themselves (always few) render plainly
-            // via Repeater.
-            header: Column {
-                id: conflictsHeader
+            section.property: "section"
+            section.criteria: ViewSection.FullString
+            section.delegate: Item {
+                id: sectionHeader
+                required property string section
+                readonly property bool decisions: section === "decision"
+                // Room above the second section, none above the first.
+                readonly property real gapAbove: !decisions && syncController.visibleConflictCount > 0
+                    ? Theme.sectionSpacing : 0
                 width: plansListView.delegateWidth
-                spacing: 8
-                bottomPadding: visible ? 12 : 0
-                visible: syncController.unresolvedConflicts.length > 0
-                height: visible ? implicitHeight : 0
+                height: gapAbove + headerRow.implicitHeight + Theme.tightSpacing
 
-                // Each conflict card's waveforms load asynchronously
-                // (see the inner Repeater's own comment below), so this
-                // header's real height only reaches its final value
-                // gradually, over several frames, not in one shot.
-                // ListView's own default behavior when content *above*
-                // the current viewport changes size is to adjust
-                // contentY to keep whatever's currently visible looking
-                // stationary -- exactly wrong here: it means every
-                // incremental growth pushes the header (and the
-                // conflicts it's meant to surface) further up and out of
-                // view, since nothing has scrolled away from the top on
-                // purpose. positionViewAtBeginning() (not a direct
-                // contentY assignment -- that raced against ListView's
-                // own internal repositioning for this exact change and
-                // lost) re-pins to the real top; deferred via
-                // Qt.callLater() so it runs after ListView's own
-                // response to this same height change has already
-                // happened, not before it. Stops mattering once the
-                // height stops changing (i.e. once the user might
-                // actually be scrolling themselves).
-                onHeightChanged: Qt.callLater(plansListView.positionViewAtBeginning)
-
-                Label {
-                    text: "Unresolved conflicts (" + syncController.unresolvedConflicts.length + ")"
-                    font.bold: true
-                    color: Theme.warnText
-                }
-
-                Repeater {
-                    model: syncController.unresolvedConflicts
-                    delegate: Rectangle {
-                        id: conflictCard
-                        required property var modelData
-                        required property int index
-                        width: plansListView.delegateWidth
-                        color: Theme.warnBg
-                        border.color: Theme.warnBorder
-                        radius: 4
-                        height: conflictColumn.implicitHeight + 16
-
-                        ColumnLayout {
-                            id: conflictColumn
-                            anchors.fill: parent
-                            anchors.margins: 8
-                            spacing: 6
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-                                Label {
-                                    Layout.fillWidth: true
-                                    wrapMode: Text.WordWrap
-                                    color: Theme.warnText
-                                    font.bold: true
-                                    text: root.conflictHeading(conflictCard.modelData)
-                                }
-                                StatusBadge {
-                                    // Same "CONFLICT" wording and
-                                    // dedicated conflictText color
-                                    // LibraryConsistencyPage's own
-                                    // conflict badge uses -- warnText is
-                                    // the generic "needs attention" color
-                                    // (still used for this section's
-                                    // header/card chrome above and
-                                    // below), conflictText is Theme.qml's
-                                    // own dedicated "these two things
-                                    // disagree" token.
-                                    label: "CONFLICT"
-                                    badgeColor: Theme.conflictText
-                                    // Spells out the actual conflicting
-                                    // options, not just which two formats
-                                    // disagree -- so the choice below
-                                    // ("Use this" per side) is legible
-                                    // from the badge alone, before even
-                                    // opening the per-track cards.
-                                    // A same-pair conflict is one track with
-                                    // different hot cues in two catalogs:
-                                    // nothing is missing, both sides have
-                                    // their own, and Seabass will not guess
-                                    // which the DJ meant.
-                                    tooltipText: conflictCard.modelData.samePair
-                                        ? root.formatLabel(conflictCard.modelData.sourceAFormat) + " ("
-                                          + conflictCard.modelData.sourceASummary + ") and "
-                                          + root.formatLabel(conflictCard.modelData.sourceBFormat) + " ("
-                                          + conflictCard.modelData.sourceBSummary + ") have different hot cues "
-                                          + "for this track. Choose the side whose hot cues should be on both."
-                                        : root.formatLabel(conflictCard.modelData.targetFormat) + " needs cues, but "
-                                          + root.formatLabel(conflictCard.modelData.sourceAFormat) + " ("
-                                          + conflictCard.modelData.sourceASummary + ") and "
-                                          + root.formatLabel(conflictCard.modelData.sourceBFormat) + " ("
-                                          + conflictCard.modelData.sourceBSummary + ") disagree."
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
-
-                                // Same investigation tools (waveform with cue
-                                // markers, Play, CueFallbackNotice) the
-                                // ordinary plan list below already gives each
-                                // side of a match -- a conflict deserves the
-                                // same look, not just a one-line summary.
-                                //
-                                // Conflicts render via a plain Repeater
-                                // (see the header comment above on why:
-                                // "one list, one scrollbar"), not a
-                                // virtualized ListView -- so unlike the
-                                // real plan list below, every conflict
-                                // card here gets created immediately,
-                                // all at once, whether on-screen yet or
-                                // not. Each TrackWaveformCard's waveform
-                                // fetch is a real, synchronous disk read
-                                // (PlaybackController::waveformFor(),
-                                // uncached on first access) -- with
-                                // several conflicts on a real library,
-                                // that's a real, measurable UI-thread
-                                // stall right when this page opens.
-                                // asynchronous: true spreads each card's
-                                // creation (and so its waveform read)
-                                // across idle frames instead of doing
-                                // them all in one block, without needing
-                                // to make the read itself async or turn
-                                // this into a second, separately-
-                                // scrolled virtualized list.
-                                Repeater {
-                                    model: [
-                                        { track: conflictCard.modelData.sourceATrack, format: conflictCard.modelData.sourceAFormat,
-                                          summary: conflictCard.modelData.sourceASummary, hasJunkCue: conflictCard.modelData.sourceAHasJunkCue, useSourceA: true },
-                                        { track: conflictCard.modelData.sourceBTrack, format: conflictCard.modelData.sourceBFormat,
-                                          summary: conflictCard.modelData.sourceBSummary, hasJunkCue: conflictCard.modelData.sourceBHasJunkCue, useSourceA: false }
-                                    ]
-                                    delegate: Loader {
-                                        id: cardLoader
-                                        required property var modelData
-                                        Layout.fillWidth: true
-                                        asynchronous: true
-                                        sourceComponent: TrackWaveformCard {
-                                            track: cardLoader.modelData.track
-                                            formatLabelText: root.formatLabel(cardLoader.modelData.format)
-                                            formatLabelTooltip: cardLoader.modelData.summary
-                                            actionButtonText: "Use this"
-                                            actionButtonTooltip: conflictCard.modelData.samePair
-                                                ? "Stage these hot cues onto the other catalog's copy of this track, replacing its own; Save writes it"
-                                                : "Stage copying (and overwriting) these cue points onto the other track; Save writes it"
-                                            onActionTriggered: syncController.resolveConflict(conflictCard.index, cardLoader.modelData.useSourceA)
-                                            hintText: cardLoader.modelData.hasJunkCue
-                                                ? "This side has a 0:00 memory cue that's usually accidental - consider cleaning it up in Clean Up before deciding."
-                                                : ""
-                                            playbackController: root.playbackController
-                                            playbackPath: root.pathForFormat(cardLoader.modelData.track.side)
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                RowLayout {
+                    id: headerRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: Theme.tightSpacing
+                    spacing: Theme.rowSpacing
+                    Subtitle {
+                        Layout.alignment: Qt.AlignBaseline
+                        text: sectionHeader.decisions ? "Needs a decision" : "Ready to sync"
+                    }
+                    Label {
+                        Layout.alignment: Qt.AlignBaseline
+                        text: sectionHeader.decisions ? syncController.visibleConflictCount : syncController.visiblePlanCount
+                        font.family: Theme.dataFamily
+                        color: Theme.textMuted
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignBaseline
+                        horizontalAlignment: Text.AlignRight
+                        elide: Text.ElideRight
+                        color: Theme.textMuted
+                        font.pointSize: Theme.fontSmall
+                        text: sectionHeader.decisions
+                            ? "Both sides have their own hot cues. Pick the side that should be on both."
+                            : "One side has cues the other lacks. Staging copies them across."
                     }
                 }
             }
 
-            delegate: Column {
-                id: delegateRoot
-                width: plansListView.delegateWidth
-                spacing: 4
-
-                required property int index
+            delegate: MetadataTrackDelegate {
+                id: row
+                required property string section
+                required property bool needsDecision
+                required property int planIndex
+                required property int conflictIndex
+                required property bool samePair
                 required property string sourceFormat
                 required property string targetFormat
                 required property string filename
-                required property string description
-                required property bool conflict
                 required property var tracks
+                required property string cueSummary
+                required property var cueChange
+                required property var junkCues
+                required property bool included
                 required property bool staged
                 required property string stagedDescription
 
-                property bool expanded: false
+                // The row is about the track, not one copy of it; the
+                // first copy stands for it.
+                readonly property var shown: tracks[0]
+                readonly property string directionText: root.formatLabel(tracks[0].side)
+                    + (needsDecision ? " vs " : " → ") + root.formatLabel(tracks[1].side)
 
-                ItemDelegate {
-                    id: planRow
-                    width: parent.width
-                    hoverEnabled: true
-                    onClicked: delegateRoot.expanded = !delegateRoot.expanded
+                width: plansListView.delegateWidth
+                title: shown.title
+                // Narrow, the catalog and cue columns fold into this line.
+                artist: root.wide ? shown.artist : shown.artist + " · " + directionText + " · " + cueSummary
+                artworkUrl: shown.artworkPath
+                selectable: !needsDecision
+                reserveSelectionSpace: true
+                selected: included
+                selectTooltip: staged ? "Already staged; Unstage takes it out" : "Include this track when staging"
+                onSelectionToggled: (checked) => syncController.setIncluded(row.planIndex, checked)
+                onExpandToggled: row.expanded = !row.expanded
 
-                    ToolTip.visible: hovered
-                    ToolTip.text: delegateRoot.filename
-
-                    contentItem: ColumnLayout {
-                        spacing: 2
-                        RowLayout {
-                            Layout.fillWidth: true
+                actionItems: [
+                    RowLayout {
+                        objectName: "directionColumn"
+                        visible: root.wide
+                        spacing: 0
+                        CatalogSlot {
+                            format: row.tracks[0].side
+                            towardsRight: true
+                        }
+                        Item {
+                            implicitWidth: root.directionMarkWidth
+                            implicitHeight: Theme.iconSizeSmall * 0.5
                             Label {
-                                text: root.formatLabel(delegateRoot.sourceFormat) + " -> " + root.formatLabel(delegateRoot.targetFormat)
-                                font.bold: true
-                                color: Theme.good
-                                Layout.preferredWidth: 160
-                            }
-                            Label {
-                                text: delegateRoot.tracks.length > 0
-                                    ? (delegateRoot.tracks[0].title + " - " + delegateRoot.tracks[0].artist)
-                                    : delegateRoot.filename
-                                font.bold: true
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
-                            StatusBadge {
-                                visible: delegateRoot.staged
-                                label: "Staged"
-                                badgeColor: Theme.warnText
-                                tooltipText: delegateRoot.stagedDescription + "\n\nNot on the stick yet: press Save."
-                            }
-                            Button {
-                                text: delegateRoot.staged ? "Unstage" : "Stage"
-                                enabled: !syncController.busy && !syncController.writing
-                                ToolTip.visible: hovered
-                                ToolTip.text: delegateRoot.staged
-                                    ? "Take this track back out of the changes to save"
-                                    : "Stage syncing just this one track; Save writes it"
-                                onClicked: delegateRoot.staged
-                                    ? syncController.unstage(delegateRoot.index)
-                                    : syncController.applyOne(delegateRoot.index)
+                                anchors.centerIn: parent
+                                visible: row.needsDecision
+                                text: "vs"
+                                color: Theme.textMuted
+                                font.pointSize: Theme.fontSmall
                             }
                             SeabassIcon {
-                                iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
-                                size: Theme.iconSizeSmall * 0.75
+                                anchors.centerIn: parent
+                                visible: !row.needsDecision
+                                iconName: "arrow-right"
+                                size: Theme.iconSizeSmall * 0.5
                                 color: Theme.textMuted
                             }
                         }
-                        Label {
-                            text: delegateRoot.description
-                            color: Theme.textMuted
-                            leftPadding: 168
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
+                        CatalogSlot {
+                            format: row.tracks[1].side
+                            dimmed: !row.needsDecision
                         }
-                    }
-                }
-
-                // Groups the two sides' copies of this track visually -
-                // matches DuplicatesPage.qml's treatment, and same
-                // rationale: several stacked expanded groups otherwise read
-                // as one long list rather than distinct matched pairs.
-                Rectangle {
-                    x: 168
-                    width: parent.width - 168
-                    visible: delegateRoot.expanded
-                    height: delegateRoot.expanded ? syncGroupColumn.implicitHeight + 16 : 0
-                    color: Theme.groupBackground
-                    border.color: Theme.borderSubtle
-                    radius: 4
-
-                    ColumnLayout {
-                        id: syncGroupColumn
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 8
-
-                    // The "meta track" both sides below are matched copies
-                    // of, ties the pair together as one group rather than
-                    // two unrelated-looking Rekordbox/Engine frames.
+                    },
                     Label {
-                        Layout.fillWidth: true
-                        text: (delegateRoot.tracks.length > 0
-                            ? delegateRoot.tracks[0].title + " - " + delegateRoot.tracks[0].artist
-                            : delegateRoot.filename)
-                        font.bold: true
+                        objectName: "cueSummaryColumn"
+                        visible: root.wide
+                        Layout.preferredWidth: root.cueColumnWidth
+                        Layout.leftMargin: Theme.rowSpacing
+                        text: row.cueSummary
+                        font.family: Theme.dataFamily
+                        font.pointSize: Theme.fontSmall
+                        color: Theme.textMuted
                         elide: Text.ElideRight
+                    },
+                    RowLayout {
+                        objectName: "statusColumn"
+                        // Not fillWidth, though a layout holding a filler
+                        // defaults to it: it would then share the row's
+                        // spare width with the title, in proportion to the
+                        // title's length, and move from row to row.
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: root.statusColumnWidth
+                        spacing: Theme.tightSpacing
+                        Item { Layout.fillWidth: true }
+                        StatusBadge {
+                            visible: row.needsDecision
+                            label: "CONFLICT"
+                            badgeColor: Theme.conflictText
+                            tooltipText: row.samePair
+                                ? root.formatLabel(row.tracks[0].side) + " (" + root.describeCues(row.tracks[0].cues)
+                                  + ") and " + root.formatLabel(row.tracks[1].side) + " ("
+                                  + root.describeCues(row.tracks[1].cues) + ") have different hot cues for this "
+                                  + "track. Choose the side whose hot cues should be on both."
+                                : root.formatLabel(row.targetFormat) + " needs cues, but "
+                                  + root.formatLabel(row.tracks[0].side) + " and "
+                                  + root.formatLabel(row.tracks[1].side) + " disagree."
+                        }
+                        StatusBadge {
+                            visible: row.staged
+                            label: "STAGED"
+                            badgeColor: Theme.warnText
+                            tooltipText: row.stagedDescription + "\n\nNot on the stick yet: press Save."
+                        }
+                        ToolButton {
+                            visible: row.staged
+                            text: "Unstage"
+                            enabled: !syncController.writing
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Take this track back out of the changes to save"
+                            onClicked: syncController.unstage(row.planIndex)
+                        }
+                    },
+                    SeabassIcon {
+                        iconName: row.expanded ? "arrow-down" : "arrow-right"
+                        size: Theme.iconSizeSmall * 0.75
+                        color: Theme.textMuted
                     }
+                ]
 
-                    Repeater {
-                        model: delegateRoot.tracks
-                        delegate: TrackWaveformCard {
-                            required property var modelData
-                            track: modelData
-                            formatLabelText: root.formatLabel(modelData.side)
-                            playbackController: root.playbackController
-                            playbackPath: root.pathForFormat(modelData.side)
+                expandedItems: [
+                    Rectangle {
+                        objectName: "syncPanel"
+                        Layout.fillWidth: true
+                        implicitHeight: panelColumn.implicitHeight + 2 * Theme.rowSpacing
+                        color: Theme.groupBackground
+                        border.color: Theme.borderSubtle
+                        radius: 4
+
+                        // Takes clicks on the panel's own background, which
+                        // would otherwise reach the row underneath and fold
+                        // it shut.
+                        MouseArea {
+                            anchors.fill: parent
+                        }
+
+                        ColumnLayout {
+                            id: panelColumn
+                            anchors.fill: parent
+                            anchors.margins: Theme.rowSpacing
+                            spacing: Theme.rowSpacing
+
+                            // The file and its facts: here rather than in
+                            // the row, where they competed with the title.
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: Theme.sectionSpacing
+                                Label {
+                                    text: row.filename
+                                    font.family: Theme.dataFamily
+                                    font.pointSize: Theme.fontSmall
+                                    color: Theme.textMuted
+                                    width: Math.min(implicitWidth, panelColumn.width)
+                                    elide: Text.ElideMiddle
+                                }
+                                Label {
+                                    visible: text.length > 0
+                                    text: root.formatDuration(row.shown.durationMs)
+                                    font.family: Theme.dataFamily
+                                    font.pointSize: Theme.fontSmall
+                                    color: Theme.textMuted
+                                }
+                                Label {
+                                    visible: row.shown.bpm > 0
+                                    text: Math.round(row.shown.bpm * 10) / 10 + " BPM"
+                                    font.family: Theme.dataFamily
+                                    font.pointSize: Theme.fontSmall
+                                    color: Theme.textMuted
+                                }
+                                Label {
+                                    visible: row.shown.key.length > 0
+                                    text: row.shown.key
+                                    font.family: Theme.dataFamily
+                                    font.pointSize: Theme.fontSmall
+                                    color: Theme.textMuted
+                                }
+                            }
+
+                            GridLayout {
+                                objectName: "sidesGrid"
+                                Layout.fillWidth: true
+                                columns: root.wide ? 2 : 1
+                                uniformCellWidths: true
+                                columnSpacing: Theme.rowSpacing
+                                rowSpacing: Theme.rowSpacing
+
+                                // Built only while the row is open, so a
+                                // waveform is read only for a row someone
+                                // looks at.
+                                Repeater {
+                                    model: row.expanded ? 2 : 0
+                                    delegate: SideCard {
+                                        id: sideCard
+                                        required property int index
+                                        track: row.tracks[index]
+                                        eyebrow: row.needsDecision ? "" : (index === 0 ? "source" : "target")
+                                        dimmed: !row.needsDecision && index === 1
+                                        cueText: root.sideCueText(row, index)
+                                        actionText: row.needsDecision ? "Use These Cues" : ""
+                                        actionTooltip: row.samePair
+                                            ? "Stage these hot cues onto the other catalog's copy of this track, "
+                                              + "replacing its own; Save writes it"
+                                            : "Stage copying these cue points onto the "
+                                              + root.formatLabel(row.targetFormat) + " copy; Save writes it"
+                                        showJunkNote: row.needsDecision && row.junkCues[index] === true
+                                        onActionTriggered: syncController.resolveConflict(row.conflictIndex, sideCard.index === 0)
+                                        onJunkLinkActivated: editHost.requestLeave(() => root.junkCueCleanupRequested(
+                                            root.stickLabel, root.rekordboxPath, root.enginePath))
+                                    }
+                                }
+                            }
+
+                            Label {
+                                objectName: "panelSentence"
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: Theme.textMuted
+                                font.pointSize: Theme.fontSmall
+                                text: root.panelSentence(row)
+                            }
                         }
                     }
-                    }
-                }
+                ]
             }
 
             Label {
                 anchors.centerIn: parent
+                width: Math.min(implicitWidth, parent.width)
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
                 visible: plansListView.count === 0 && !syncController.busy
-                text: "Nothing to sync. Matched tracks' cues are already consistent."
+                text: root.searching
+                    ? "No track needing sync matches “" + toolbar.searchText + "”."
+                    : "Nothing to sync. Matched tracks' cues are already consistent."
                 color: Theme.textMuted
             }
         }

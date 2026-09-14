@@ -10,6 +10,8 @@
 #include <filesystem>
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
+#include "gui/edit/library_edit_session.hpp"
+#include "gui/sync_controller.hpp"
 #include <QSettings>
 #include <QString>
 #include <QStringList>
@@ -29,6 +31,131 @@
 // (grabImage(page).save(...)), so a layout can be looked at for real
 // rather than only asserted about. Empty (the default, and under ctest)
 // means no files are written.
+// Fills a Sync Cue Points page's own controller with a small fixed
+// analysis, so tst_SyncPage.qml can measure the page and screenshot it
+// without a stick: two decisions (one side of the first carries a 0:00
+// memory cue) and five tracks ready to sync, one of which already has one
+// of the cues it is about to receive. The page builds its controller
+// itself, so the test finds it by objectName and hands it here.
+class SyncPageFixture : public QObject
+{
+    Q_OBJECT
+public:
+    using QObject::QObject;
+
+    Q_INVOKABLE bool fill(QObject *controller)
+    {
+        auto *sync = qobject_cast<seabass::gui::SyncController *>(controller);
+        if (sync == nullptr) {
+            return false;
+        }
+        using namespace seabass::domain;
+        const auto hot = [](int pad, double seconds, const char *color) {
+            CuePoint cue;
+            cue.kind = CuePoint::Kind::Hot;
+            cue.hotCueNumber = pad;
+            cue.positionMs = seconds * 1000.0;
+            cue.color = color;
+            return cue;
+        };
+        const auto memory = [](double seconds) {
+            CuePoint cue;
+            cue.kind = CuePoint::Kind::Memory;
+            cue.positionMs = seconds * 1000.0;
+            return cue;
+        };
+        const auto track = [](const char *format, const char *id, const char *title, const char *artist,
+                              const char *filename, double seconds, double bpm, const char *key,
+                              std::vector<CuePoint> cues) {
+            Track t;
+            t.format = format;
+            t.sourceId = id;
+            t.title = title;
+            t.artist = artist;
+            t.filename = filename;
+            // Never read: it only makes Play look the way it does for a
+            // real track, which is what the screenshots are for.
+            t.filePath = std::string("/nonexistent/TESTSTICK/Contents/") + filename;
+            t.durationSeconds = seconds;
+            t.bpm = bpm;
+            t.key = key;
+            t.cues = std::move(cues);
+            return t;
+        };
+        const auto readyPlan = [](Track source, Track target) {
+            SyncPlan plan;
+            plan.kind = SyncPlan::Kind::AOnly;
+            plan.direction = SyncPlan::Direction::ToB;
+            plan.cuesToApply = source.cues;
+            plan.match.trackA = std::move(source);
+            plan.match.trackB = std::move(target);
+            return plan;
+        };
+        const auto decision = [](Track a, Track b, bool junkOnB) {
+            CrossSourceSyncConflict conflict;
+            conflict.samePair = true;
+            conflict.target = b;
+            conflict.cuesFromA = a.cues;
+            conflict.cuesFromB = b.cues;
+            conflict.sourceBHasJunkCue = junkOnB;
+            conflict.sourceA = std::move(a);
+            conflict.sourceB = std::move(b);
+            return conflict;
+        };
+
+        std::vector<CrossSourceSyncConflict> conflicts;
+        conflicts.push_back(decision(
+            track("rekordbox", "10", "Flaschenpost", "Kollektiv Turmstrasse",
+                  "05_Kollektiv Turmstrasse-Flaschenpost.mp3", 432, 124, "8A",
+                  {hot(1, 8, "#e03c3c"), hot(2, 120, "#ff9b1a"), hot(3, 200, "#ffe13b"), hot(4, 260, "#39d353"),
+                   hot(5, 330, "#2ec4f0")}),
+            track("engine", "110", "Flaschenpost", "Kollektiv Turmstrasse",
+                  "05_Kollektiv Turmstrasse-Flaschenpost.mp3", 432, 124, "8A",
+                  {hot(1, 8, "#e03c3c"), hot(2, 150, "#ff9b1a"), hot(3, 200, "#ffe13b"), hot(4, 300, "#39d353"),
+                   memory(0)}),
+            true));
+        conflicts.push_back(decision(
+            track("engine", "111", "Diary of a Lost Girl", "Roman Fl\u00fcgel",
+                  "17_Roman Flugel-Diary of a Lost Girl.mp3", 418, 122, "5A",
+                  {hot(1, 16, "#e03c3c"), hot(2, 140, "#ffe13b"), hot(3, 290, "#2ec4f0")}),
+            track("rekordbox", "11", "Diary of a Lost Girl", "Roman Fl\u00fcgel",
+                  "17_Roman Flugel-Diary of a Lost Girl.mp3", 418, 122, "5A",
+                  {hot(1, 16, "#e03c3c"), hot(2, 132, "#ffe13b"), hot(3, 290, "#2ec4f0")}),
+            false));
+
+        std::vector<SyncPlan> plans;
+        plans.push_back(readyPlan(
+            track("engine", "112", "Rej", "\u00c2me", "12_Ame-Rej.mp3", 521, 124, "11B",
+                  {hot(1, 20, "#e03c3c"), hot(2, 150, "#ff9b1a"), hot(3, 290, "#39d353"), hot(4, 430, "#2ec4f0")}),
+            track("rekordbox", "12", "Rej", "\u00c2me", "12_Ame-Rej.mp3", 521, 124, "11B",
+                  {hot(1, 20, "#e03c3c")})));
+        plans.push_back(readyPlan(
+            track("rekordbox", "13", "Bloom", "Nils Hoffmann", "02_Nils Hoffmann-Bloom.mp3", 389, 120, "3A",
+                  {hot(1, 4, "#e03c3c"), hot(2, 64, "#ff9b1a"), hot(3, 128, "#ffe13b"), hot(4, 192, "#39d353"),
+                   hot(5, 256, "#2ec4f0"), hot(6, 320, "#7b61ff"), memory(4), memory(256)}),
+            track("engine", "113", "Bloom", "Nils Hoffmann", "02_Nils Hoffmann-Bloom.mp3", 389, 120, "3A", {})));
+        plans.push_back(readyPlan(
+            track("rekordbox", "14", "Loop In Loop", "Sven V\u00e4th", "09_Sven Vath-Loop In Loop.mp3", 468, 127,
+                  "6A", {hot(1, 32, "#e03c3c"), hot(2, 180, "#ffe13b"), hot(3, 360, "#2ec4f0")}),
+            track("engine", "114", "Loop In Loop", "Sven V\u00e4th", "09_Sven Vath-Loop In Loop.mp3", 468, 127,
+                  "6A", {})));
+        plans.push_back(readyPlan(
+            track("onelibrary", "15", "Sisters", "Recondite", "21_Recondite-Sisters.mp3", 402, 123, "9A",
+                  {hot(1, 12, "#e03c3c"), hot(2, 90, "#ff9b1a"), hot(3, 180, "#ffe13b"), hot(4, 270, "#39d353"),
+                   hot(5, 350, "#2ec4f0"), memory(12)}),
+            track("engine", "115", "Sisters", "Recondite", "21_Recondite-Sisters.mp3", 402, 123, "9A", {})));
+        plans.push_back(readyPlan(
+            track("rekordbox", "16", "Flaschenpost (Edit)", "Kollektiv Turmstrasse",
+                  "33_Kollektiv Turmstrasse-Flaschenpost Edit.mp3", 245, 124, "8A",
+                  {hot(1, 8, "#e03c3c"), hot(2, 120, "#ff9b1a")}),
+            track("engine", "116", "Flaschenpost (Edit)", "Kollektiv Turmstrasse",
+                  "33_Kollektiv Turmstrasse-Flaschenpost Edit.mp3", 245, 124, "8A", {})));
+
+        sync->plansModel()->setAnalysis(std::move(plans), std::move(conflicts));
+        return true;
+    }
+};
+
 class Setup : public QObject
 {
     Q_OBJECT
@@ -193,6 +320,7 @@ public slots:
             bundledIcons.append(file.chopped(4));
         }
         engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
+        engine->rootContext()->setContextProperty(QStringLiteral("syncPageFixture"), new SyncPageFixture(engine));
     }
 };
 

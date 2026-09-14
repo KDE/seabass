@@ -530,8 +530,8 @@ Page {
             // custom `background:` assignment doesn't fully replace (kept
             // rendering a stray light margin around the real content no
             // matter what the override's own color was set to). Every
-            // other grouping frame in this app (SyncPage.qml/
-            // DuplicatesPage.qml's meta-track groups) already uses this
+            // other grouping frame in this app (Sync Cue Points' expanded
+            // panels, DuplicatesPage.qml's meta-track groups) already uses this
             // same plain-Rectangle pattern for exactly that reason.
             delegate: Rectangle {
                 id: delegateRoot

@@ -1223,6 +1223,17 @@ if(TARGET Qt6::Core)
     target_link_libraries(metadata_restore_proposal_model_test PRIVATE seabass_core Qt6::Core Qt6::Qml)
     add_test(NAME metadata_restore_proposal_model_test COMMAND metadata_restore_proposal_model_test)
 
+    # Sync Cue Points' list, on its own: decisions before the tracks ready
+    # to sync, a search that narrows both without losing a tick, and each
+    # row counting its cues the way the page shows them.
+    add_executable(sync_plan_list_model_test
+        src/gui/sync_plan_list_model.cpp
+        tests/sync_plan_list_model_test.cpp
+    )
+    target_include_directories(sync_plan_list_model_test PRIVATE src)
+    target_link_libraries(sync_plan_list_model_test PRIVATE seabass_core Qt6::Core Qt6::Qml)
+    add_test(NAME sync_plan_list_model_test COMMAND sync_plan_list_model_test)
+
     add_executable(format_write_session_test tests/format_write_session_test.cpp)
     target_include_directories(format_write_session_test PRIVATE src)
     target_link_libraries(format_write_session_test PRIVATE seabass_edit Qt6::Core)

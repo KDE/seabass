@@ -162,6 +162,8 @@ set(SEABASS_GUI_SOURCES
     staged_plan_model.hpp
     staged_cue_edit_controller.hpp
     staged_cue_edit_controller.cpp
+    sync_plan_list_model.hpp
+    sync_plan_list_model.cpp
     sync_controller.hpp
     sync_controller.cpp
     full_backups_controller.hpp

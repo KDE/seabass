@@ -34,7 +34,6 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
-#include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
 
 namespace seabass::gui
@@ -42,145 +41,6 @@ namespace seabass::gui
 
 namespace fs = std::filesystem;
 using domain::SyncPlan;
-
-SyncPlanListModel::SyncPlanListModel(QObject *parent) : QAbstractListModel(parent) {}
-
-int SyncPlanListModel::rowCount(const QModelIndex &parent) const
-{
-    if (parent.isValid()) {
-        return 0;
-    }
-    return static_cast<int>(m_plans.size());
-}
-
-namespace
-{
-
-// No waveform field here -- see sync_controller.hpp's own comment on
-// SyncPlanListModel::setPlans() for why: QML fetches a track's waveform
-// on demand via PlaybackController::waveformFor() instead of this
-// controller decoding one eagerly for every actionable track up front.
-QVariantMap trackToMap(const domain::Track &track)
-{
-    QVariantMap m;
-    m["side"] = QString::fromStdString(track.format);
-    m["sourceId"] = QString::fromStdString(track.sourceId);
-    m["title"] = QString::fromStdString(track.title);
-    m["artist"] = QString::fromStdString(track.artist);
-    m["filePath"] = QString::fromStdString(track.filePath);
-    m["artworkPath"] = QString::fromStdString(track.artworkPath);
-    m["durationMs"] = track.durationSeconds * 1000.0;
-
-    QVariantList cues;
-    for (const auto &c : track.cues) {
-        QVariantMap cueMap;
-        cueMap["kind"] = c.kind == domain::CuePoint::Kind::Hot ? QStringLiteral("hot") : QStringLiteral("memory");
-        cueMap["hotCueNumber"] = c.hotCueNumber;
-        cueMap["positionMs"] = c.positionMs;
-        cueMap["isLoop"] = c.isLoop;
-        cueMap["loopEndMs"] = c.loopEndMs;
-        cueMap["color"] = QString::fromStdString(c.color);
-        cueMap["comment"] = QString::fromStdString(c.comment);
-        cues << cueMap;
-    }
-    m["cues"] = cues;
-    return m;
-}
-
-}  // namespace
-
-QVariant SyncPlanListModel::data(const QModelIndex &index, int role) const
-{
-    if (!index.isValid() || index.row() < 0 || static_cast<size_t>(index.row()) >= m_plans.size()) {
-        return {};
-    }
-    const auto &plan = m_plans[static_cast<size_t>(index.row())];
-    bool toB = plan.direction == SyncPlan::Direction::ToB;
-    const domain::Track &source = toB ? plan.match.trackA : plan.match.trackB;
-    const domain::Track &target = toB ? plan.match.trackB : plan.match.trackA;
-    switch (role) {
-    case SourceFormatRole:
-        return QString::fromStdString(source.format);
-    case TargetFormatRole:
-        return QString::fromStdString(target.format);
-    case FilenameRole:
-        return QString::fromStdString(source.filename);
-    case DescriptionRole:
-        return describeCues(plan.cuesToApply);
-    case ConflictRole:
-        return plan.kind == SyncPlan::Kind::Conflict;
-    case TracksRole:
-        return QVariantList{trackToMap(plan.match.trackA), trackToMap(plan.match.trackB)};
-    case StagedRole:
-        return static_cast<size_t>(index.row()) < m_stagedDescriptions.size()
-            && !m_stagedDescriptions[static_cast<size_t>(index.row())].isEmpty();
-    case StagedDescriptionRole:
-        return static_cast<size_t>(index.row()) < m_stagedDescriptions.size()
-            ? m_stagedDescriptions[static_cast<size_t>(index.row())] : QString();
-    default:
-        return {};
-    }
-}
-
-QHash<int, QByteArray> SyncPlanListModel::roleNames() const
-{
-    return {
-        {SourceFormatRole, "sourceFormat"},
-        {TargetFormatRole, "targetFormat"},
-        {FilenameRole, "filename"},
-        {DescriptionRole, "description"},
-        {ConflictRole, "conflict"},
-        {TracksRole, "tracks"},
-        {StagedRole, "staged"},
-        {StagedDescriptionRole, "stagedDescription"},
-    };
-}
-
-void SyncPlanListModel::setPlans(std::vector<domain::SyncPlan> plans)
-{
-    beginResetModel();
-    m_plans = std::move(plans);
-    m_stagedDescriptions.assign(m_plans.size(), QString());
-    endResetModel();
-}
-
-void SyncPlanListModel::addPlan(domain::SyncPlan plan)
-{
-    int row = static_cast<int>(m_plans.size());
-    beginInsertRows(QModelIndex(), row, row);
-    m_plans.push_back(std::move(plan));
-    m_stagedDescriptions.push_back(QString());
-    endInsertRows();
-}
-
-void SyncPlanListModel::removePlanAt(int index)
-{
-    if (index < 0 || static_cast<size_t>(index) >= m_plans.size()) {
-        return;
-    }
-    beginRemoveRows(QModelIndex(), index, index);
-    m_plans.erase(m_plans.begin() + index);
-    m_stagedDescriptions.erase(m_stagedDescriptions.begin() + index);
-    endRemoveRows();
-}
-
-void SyncPlanListModel::setStaged(int index, bool staged, const QString &description)
-{
-    if (index < 0 || static_cast<size_t>(index) >= m_plans.size()) {
-        return;
-    }
-    m_stagedDescriptions[static_cast<size_t>(index)] = staged ? description : QString();
-    emit dataChanged(this->index(index), this->index(index), {StagedRole, StagedDescriptionRole});
-}
-
-void SyncPlanListModel::clearStaged()
-{
-    if (m_plans.empty()) {
-        return;
-    }
-    std::fill(m_stagedDescriptions.begin(), m_stagedDescriptions.end(), QString());
-    emit dataChanged(index(0), index(static_cast<int>(m_plans.size()) - 1), {StagedRole, StagedDescriptionRole});
-}
 
 namespace
 {
@@ -239,28 +99,7 @@ void collectPlaylistSummary(const std::vector<domain::Track> &rekordboxTracks,
 // exact same real diff+direction logic (domain::SyncLibraries) once per
 // pair actually available on this stick, combining every pair's
 // actionable plans into one list.
-// Case-insensitive title/artist substring match, same rule
-// ScanController's own search box uses -- QString-based, not
-// domain::TrackScope::search(), which is deliberately ASCII-only (see its
-// own doc comment); real music metadata needs Unicode-aware case folding.
-std::vector<domain::Track> filterBySearchQuery(const std::vector<domain::Track> &tracks, const QString &query)
-{
-    if (query.isEmpty()) {
-        return tracks;
-    }
-    QString lowered = query.toLower();
-    std::vector<domain::Track> filtered;
-    for (const auto &track : tracks) {
-        QString title = QString::fromStdString(track.title).toLower();
-        QString artist = QString::fromStdString(track.artist).toLower();
-        if (title.contains(lowered) || artist.contains(lowered)) {
-            filtered.push_back(track);
-        }
-    }
-    return filtered;
-}
-
-SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString playlistName, QString searchQuery,
+SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString playlistName,
                                std::shared_ptr<QtProgressReporter> reporter, application::CancellationToken cancel)
 {
     SyncTaskResult result;
@@ -302,11 +141,6 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             rekordboxTracks = domain::filterByScope(rekordboxTracks, scope);
             engineTracks = domain::filterByScope(engineTracks, scope);
             oneLibraryTracks = domain::filterByScope(oneLibraryTracks, scope);
-        }
-        if (!searchQuery.isEmpty()) {
-            rekordboxTracks = filterBySearchQuery(rekordboxTracks, searchQuery);
-            engineTracks = filterBySearchQuery(engineTracks, searchQuery);
-            oneLibraryTracks = filterBySearchQuery(oneLibraryTracks, searchQuery);
         }
 
         result.rekordboxTrackCount = static_cast<int>(rekordboxTracks.size());
@@ -358,7 +192,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         // First, though, every plan whose two sides have different hot cues.
         // Those are not plans at all but choices: no clock can say whose hot
         // cues the DJ meant (see SyncPlan::hotCuesNeedChoice), so they are
-        // listed for a pick and kept out of Stage All entirely.
+        // listed for a pick and never staged until one is made.
         auto hotCueChoices = domain::CrossSourceConflictDetector::takeHotCueChoices(actionable,
                                                                                     application::normalizedPathKey);
         auto conflictSplit = domain::CrossSourceConflictDetector::detect(actionable);
@@ -391,10 +225,14 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
 SyncController::SyncController(QObject *parent) : StagedCueEditController(parent)
 {
     connect(&m_watcher, &QFutureWatcher<SyncTaskResult>::finished, this, &SyncController::onAnalyzeFinished);
+    // Every count the page shows is derived from the rows, and the rows
+    // change from many places: a scan, the search, a tick, a staged mark,
+    // a row leaving once its change is saved. The model announces all of
+    // them, so none of those paths can forget to.
+    connect(&m_model, &SyncPlanListModel::countsChanged, this, &SyncController::listChanged);
 }
 
-void SyncController::analyze(const QString &rekordboxPath, const QString &enginePath, const QString &playlistName,
-                              const QString &searchQuery)
+void SyncController::analyze(const QString &rekordboxPath, const QString &enginePath, const QString &playlistName)
 {
     // Recorded even on the early return below: the QML picker is already
     // disabled while busy (SyncPage.qml), so this path shouldn't be
@@ -405,7 +243,6 @@ void SyncController::analyze(const QString &rekordboxPath, const QString &engine
     // superseded value there would resurrect this exact bug for any
     // future caller that isn't gated by that one QML property.
     m_currentPlaylistName = playlistName;
-    m_currentSearchQuery = searchQuery;
 
     if (busy()) {
         return;  // never overlap two analyses
@@ -416,8 +253,8 @@ void SyncController::analyze(const QString &rekordboxPath, const QString &engine
     setErrorMessage({});
     setStatusMessage({});
     setScanProgress(0, 0);
-    m_watcher.setFuture(QtConcurrent::run(runAnalyzeTask, rekordboxPath, enginePath, playlistName, searchQuery,
-                                          makeReporter(), beginScan()));
+    m_watcher.setFuture(QtConcurrent::run(runAnalyzeTask, rekordboxPath, enginePath, playlistName, makeReporter(),
+                                          beginScan()));
 }
 
 void SyncController::onAnalyzeFinished()
@@ -440,7 +277,11 @@ void SyncController::onAnalyzeFinished()
     m_oneLibraryTrackCount = result.oneLibraryTrackCount;
     m_playlistNames = std::move(result.playlistNames);
     m_playlistTrackCounts = std::move(result.playlistTrackCounts);
-    m_model.setPlans(std::move(result.plans));
+    // A rescan is a fresh snapshot -- any decision made against the
+    // previous one no longer means anything (the plan it produced is
+    // already gone too, replaced by whatever this scan found), so this
+    // never tries to carry old resolutions forward.
+    m_model.setAnalysis(std::move(result.plans), std::move(result.conflicts));
     // Plans staged before this re-analyze keep their mark if they are
     // still listed (the change itself lives in the session either way).
     for (const auto &[targetKey, info] : m_stagedByKey) {
@@ -449,94 +290,91 @@ void SyncController::onAnalyzeFinished()
             m_model.setStaged(index, true, info.description);
         }
     }
-    recomputeDirectionCounts();
-    // A rescan is a fresh snapshot -- any conflict resolved against the
-    // previous one no longer means anything (the plan it produced is
-    // already gone too, replaced by whatever this scan found), so this
-    // never tries to carry old resolutions forward.
-    m_conflicts = std::move(result.conflicts);
-    rebuildUnresolvedConflictsList();
+    emit analysisChanged();
     setBusy(false);
 }
 
-namespace
+void SyncController::search(const QString &query)
 {
-
-QString summarizeCueCounts(const std::vector<domain::CuePoint> &cues)
-{
-    int hot = 0;
-    int hotLoop = 0;
-    int memory = 0;
-    for (const auto &cue : cues) {
-        if (cue.kind == domain::CuePoint::Kind::Hot) {
-            (cue.isLoop ? hotLoop : hot)++;
-        } else {
-            memory++;
-        }
-    }
-    QStringList parts;
-    if (hot > 0) {
-        parts << QString("%1 hot cue(s)").arg(hot);
-    }
-    if (hotLoop > 0) {
-        parts << QString("%1 hot loop(s)").arg(hotLoop);
-    }
-    if (memory > 0) {
-        parts << QString("%1 memory cue(s)").arg(memory);
-    }
-    return parts.isEmpty() ? "no cues" : parts.join(", ");
+    m_model.setFilter(query);
 }
 
-}  // namespace
-
-void SyncController::rebuildUnresolvedConflictsList()
+void SyncController::setIncluded(int planIndex, bool included)
 {
-    QVariantList list;
-    for (const auto &conflict : m_conflicts) {
-        // Same trackToMap() shape (cues, artwork, play-ready
-        // filePath/sourceId) the ordinary plan list already renders with
-        // TrackWaveformCard -- so a conflict can be investigated the
-        // same way any other plan already is, not just read as a
-        // one-line summary. Waveform itself is fetched on demand by
-        // QML, not included here (see trackToMap()'s own comment).
-        //
-        // A same-pair conflict shows each track's cues as they ARE: the
-        // choice is between those two sets, and a proposal already merged
-        // with the other side's memory cues would blur the difference being
-        // decided.
-        domain::Track sourceATrack = conflict.sourceA;
-        domain::Track sourceBTrack = conflict.sourceB;
-        if (!conflict.samePair) {
-            sourceATrack.cues = conflict.cuesFromA;
-            sourceBTrack.cues = conflict.cuesFromB;
-        }
-
-        QVariantMap m;
-        m["targetPath"] = QString::fromStdString(conflict.target.filePath);
-        m["targetTitle"] = QString::fromStdString(conflict.target.title);
-        m["targetArtist"] = QString::fromStdString(conflict.target.artist);
-        m["targetFormat"] = QString::fromStdString(conflict.target.format);
-        m["sourceAFormat"] = QString::fromStdString(conflict.sourceA.format);
-        m["samePair"] = conflict.samePair;
-        m["sourceASummary"] = summarizeCueCounts(sourceATrack.cues);
-        m["sourceAHasJunkCue"] = conflict.sourceAHasJunkCue;
-        m["sourceATrack"] = trackToMap(sourceATrack);
-        m["sourceBFormat"] = QString::fromStdString(conflict.sourceB.format);
-        m["sourceBSummary"] = summarizeCueCounts(sourceBTrack.cues);
-        m["sourceBHasJunkCue"] = conflict.sourceBHasJunkCue;
-        m["sourceBTrack"] = trackToMap(sourceBTrack);
-        list << m;
-    }
-    m_unresolvedConflicts = list;
-    emit conflictsChanged();
+    m_model.setIncluded(planIndex, included);
 }
 
-void SyncController::resolveConflict(int index, bool useSourceA)
+void SyncController::setAllIncluded(bool included)
 {
-    if (index < 0 || static_cast<size_t>(index) >= m_conflicts.size()) {
+    m_model.setAllIncluded(included);
+}
+
+bool SyncController::wouldStage(int planIndex, bool matchingSearchOnly) const
+{
+    if (!m_model.included(planIndex) || m_stagedByKey.count(m_model.planKeyAt(planIndex))) {
+        return false;
+    }
+    if (m_model.plans()[static_cast<size_t>(planIndex)].direction == SyncPlan::Direction::None) {
+        return false;
+    }
+    return !matchingSearchOnly || m_model.isPlanVisible(planIndex);
+}
+
+void SyncController::stageSelected(bool matchingSearchOnly)
+{
+    if (busy()) {
         return;
     }
-    const domain::CrossSourceSyncConflict &conflict = m_conflicts[static_cast<size_t>(index)];
+    setErrorMessage({});
+    setStatusMessage({});
+    int staged = 0;
+    const int count = m_model.planCount();
+    for (int i = 0; i < count; ++i) {
+        if (!wouldStage(i, matchingSearchOnly)) {
+            continue;
+        }
+        stagePlan(i);
+        staged++;
+        if (session() && !session()->lockHeld()) {
+            return;  // refused at the first one; no point trying the rest
+        }
+    }
+    if (staged > 0) {
+        setStatusMessage(QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged));
+    }
+}
+
+QVariantList SyncController::directionCountsFor(bool matchingSearchOnly) const
+{
+    std::map<std::pair<std::string, std::string>, int> counts;
+    for (int i = 0; i < m_model.planCount(); ++i) {
+        if (!wouldStage(i, matchingSearchOnly)) {
+            continue;
+        }
+        const SyncPlan &plan = m_model.plans()[static_cast<size_t>(i)];
+        bool toB = plan.direction == SyncPlan::Direction::ToB;
+        const std::string &sourceFormat = toB ? plan.match.trackA.format : plan.match.trackB.format;
+        const std::string &targetFormat = toB ? plan.match.trackB.format : plan.match.trackA.format;
+        counts[{sourceFormat, targetFormat}]++;
+    }
+    QVariantList list;
+    for (const auto &[key, count] : counts) {
+        QVariantMap m;
+        m["sourceFormat"] = QString::fromStdString(key.first);
+        m["targetFormat"] = QString::fromStdString(key.second);
+        m["count"] = count;
+        list << m;
+    }
+    return list;
+}
+
+void SyncController::resolveConflict(int conflictIndex, bool useSourceA)
+{
+    if (conflictIndex < 0 || conflictIndex >= m_model.conflictCount()) {
+        return;
+    }
+    // A copy: the decision leaves the model below, before this is done.
+    const domain::CrossSourceSyncConflict conflict = m_model.conflicts()[static_cast<size_t>(conflictIndex)];
 
     domain::SyncPlan plan;
     if (conflict.samePair) {
@@ -555,47 +393,10 @@ void SyncController::resolveConflict(int index, bool useSourceA)
         plan.direction = domain::SyncPlan::Direction::ToB;
         plan.cuesToApply = useSourceA ? conflict.cuesFromA : conflict.cuesFromB;
     }
+    m_model.removeConflictAt(conflictIndex);
     m_model.addPlan(std::move(plan));
-    recomputeDirectionCounts();
     // The decision is the edit: staged right away, Save writes it.
-    stagePlan(static_cast<int>(m_model.plans().size()) - 1);
-
-    m_conflicts.erase(m_conflicts.begin() + index);
-    rebuildUnresolvedConflictsList();
-}
-
-void SyncController::recomputeDirectionCounts()
-{
-    std::map<std::pair<std::string, std::string>, int> counts;
-    for (const auto &plan : m_model.plans()) {
-        bool toB = plan.direction == SyncPlan::Direction::ToB;
-        const std::string &sourceFormat = toB ? plan.match.trackA.format : plan.match.trackB.format;
-        const std::string &targetFormat = toB ? plan.match.trackB.format : plan.match.trackA.format;
-        counts[{sourceFormat, targetFormat}]++;
-    }
-    QVariantList list;
-    for (const auto &[key, count] : counts) {
-        QVariantMap m;
-        m["sourceFormat"] = QString::fromStdString(key.first);
-        m["targetFormat"] = QString::fromStdString(key.second);
-        m["count"] = count;
-        list << m;
-    }
-    m_directionCounts = list;
-    emit analysisChanged();
-}
-
-// The target track identifies a plan across re-analyses: at most one plan
-// per target track ever exists (SyncPlanner classifies each matched pair
-// once), so this is also the staged change's key.
-QString SyncPlanListModel::planKeyAt(int index) const
-{
-    if (index < 0 || static_cast<size_t>(index) >= m_plans.size()) {
-        return {};
-    }
-    const SyncPlan &plan = m_plans[static_cast<size_t>(index)];
-    const domain::Track &target = plan.direction == SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
-    return QString::fromStdString(target.format) + ":" + QString::fromStdString(target.sourceId);
+    stagePlan(m_model.planCount() - 1);
 }
 
 // The base wires the session's state and staged-change signals; the only
@@ -641,41 +442,6 @@ void SyncController::stagePlan(int index)
     }
     stageChange(index, targetKey,
                 std::make_unique<SyncPlanChange>(m_rekordboxPath, m_enginePath, plan, itemCountHint));
-}
-
-// Stages every plan currently in the model; the page's Save writes them.
-void SyncController::apply()
-{
-    if (busy()) {
-        return;
-    }
-    setErrorMessage({});
-    setStatusMessage({});
-    int staged = 0;
-    const size_t count = m_model.plans().size();
-    for (size_t i = 0; i < count; ++i) {
-        if (m_model.plans()[i].direction != SyncPlan::Direction::None
-            && !m_stagedByKey.count(m_model.planKeyAt(static_cast<int>(i)))) {
-            stagePlan(static_cast<int>(i));
-            staged++;
-            if (session() && !session()->lockHeld()) {
-                return;  // refused at the first one; no point trying the rest
-            }
-        }
-    }
-    if (staged > 0) {
-        setStatusMessage(QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged));
-    }
-}
-
-void SyncController::applyOne(int index)
-{
-    if (busy()) {
-        return;
-    }
-    setErrorMessage({});
-    setStatusMessage({});
-    stagePlan(index);
 }
 
 }  // namespace seabass::gui

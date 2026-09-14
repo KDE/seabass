@@ -339,9 +339,8 @@ public:
     // DetectedStick.rekordboxPath / .enginePath.
     //
     // playlistName and searchQuery scope the review to part of the
-    // library, empty meaning the whole of it -- same pair, same
-    // meanings, as SyncController::analyze(), so the two pages narrow
-    // the same way. Both can narrow at once. Scoping applies to the
+    // library, empty meaning the whole of it. Both can narrow at once.
+    // Scoping applies to the
     // finished track list, stray files included: a stray copy of a
     // scoped track must stay reachable, or narrowing would hide exactly
     // the copies this page exists to find.

@@ -242,7 +242,7 @@ int main()
         // Pair order as the controller builds them: rekordbox<->Engine, then Engine<->OneLibrary.
         SyncPlan viaRekordbox = choiceBetween(track("rekordbox", "r1", file), track("engine", "e1", file));
         SyncPlan viaOneLibrary = choiceBetween(track("engine", "e1", file), track("onelibrary", "o1", file));
-        // A memory-only plan for the same file, which Stage All must not
+        // A memory-only plan for the same file, which staging must not
         // write before the choice is made.
         SyncPlan sameFileOther;
         sameFileOther.kind = SyncPlan::Kind::Conflict;
