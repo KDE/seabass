@@ -52,6 +52,12 @@ public:
     application::BackupRecord addToArchive(const std::string &id, const std::vector<std::string> &filePaths);
     std::vector<application::BackupRecord> list() override;
     std::uint64_t prune(size_t keepCount) override;
+    // What prune(keepCount) removes, oldest first: the automatic backups
+    // beyond the newest keepCount of them, and never a user-requested one.
+    // For a caller that deletes them itself, one remove() at a time (the
+    // GUI's cancellable Clean Up), so both ways of cleaning up choose the
+    // same backups.
+    std::vector<application::BackupRecord> pruneCandidates(size_t keepCount);
 
     // Deletes automatic backups, oldest first, until at least bytesWanted
     // has been freed or only the newest automatic record is left. Returns

@@ -26,6 +26,8 @@ class BackupListModel : public QAbstractListModel
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Populated by BackupsController; not constructible from QML")
+    // Backups Seabass made on its own, the only ones Clean Up removes.
+    Q_PROPERTY(int automaticCount READ automaticCount NOTIFY automaticCountChanged)
 
 public:
     enum Roles {
@@ -35,6 +37,8 @@ public:
         SizeHumanRole,
         SizeBytesRole,
         FileNamesRole,
+        // Made because the user asked, so never removed by Clean Up.
+        UserRequestedRole,
     };
 
     explicit BackupListModel(QObject *parent = nullptr);
@@ -44,6 +48,10 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     void setRecords(std::vector<application::BackupRecord> records);
+    int automaticCount() const;
+
+signals:
+    void automaticCountChanged();
 
 private:
     std::vector<application::BackupRecord> m_records;

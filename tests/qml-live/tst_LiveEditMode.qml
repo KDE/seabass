@@ -291,12 +291,15 @@ TestCase {
         verify(ctrl !== null);
         waitIdle(ctrl);
         var count = ctrl.backups.rowCount();
-        console.log("  backups on the stick: " + count + ", " + ctrl.totalSizeHuman);
-        if (count < 3) {
-            skip("fewer than three backups to prune");
+        // Clean Up only ever removes automatic backups; ones the user made
+        // stay, so the keep count is taken among the automatic ones.
+        var automatic = ctrl.backups.automaticCount;
+        console.log("  backups on the stick: " + count + " (" + automatic + " automatic), " + ctrl.totalSizeHuman);
+        if (automatic < 3) {
+            skip("fewer than three automatic backups to prune");
         }
         var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "writeFinished"});
-        ctrl.clean(count - 2);
+        ctrl.clean(automatic - 2);
         tryVerify(function() { return spy.count > 0; }, 120000);
         var summary = spy.signalArguments[0][0];
         console.log("  clean: " + Live.summaryLine(summary));
@@ -305,6 +308,7 @@ TestCase {
         compare(summary.verb, "deleted");
         waitIdle(ctrl);
         compare(ctrl.backups.rowCount(), count - 2);
+        compare(ctrl.backups.automaticCount, automatic - 2, "only automatic backups may go");
         tryCompare(findChild(page, "summaryDialog"), "opened", true, 5000);
         shot(page, "live-backups-pruned");
         findChild(findChild(page, "summaryDialog"), "okButton").clicked();

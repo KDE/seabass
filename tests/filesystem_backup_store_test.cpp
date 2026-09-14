@@ -406,6 +406,46 @@ int main()
         std::cout << "case 17 (prune deletes automatic backups and leaves the user's) OK\n";
     }
 
+    // The GUI's Clean Up deletes one backup at a time so it can be
+    // cancelled between two, choosing them with pruneCandidates(). It once
+    // chose the oldest of every backup instead, and deleted one the user
+    // had made (found on Windows, 2026-09-14). So: the same choice as
+    // prune(), with the user's backup the oldest of all and in between.
+    {
+        fs::path stick = root / "candidates";
+        fs::path a = stick / "PIONEER" / "export.pdb";
+        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+
+        writeFile(a, "zero");
+        auto mineOldest = store.backup({a.string()}, "first-gig", BackupOrigin::UserRequested);
+        writeFile(a, "one");
+        auto auto1 = store.backup({a.string()}, "sync");
+        writeFile(a, "two");
+        auto mineBetween = store.backup({a.string()}, "before-gig", BackupOrigin::UserRequested);
+        writeFile(a, "three");
+        auto auto2 = store.backup({a.string()}, "sync");
+
+        auto keepOne = store.pruneCandidates(1);
+        assert(keepOne.size() == 1);
+        assert(keepOne[0].id == auto1.id);
+
+        auto keepNone = store.pruneCandidates(0);
+        assert(keepNone.size() == 2);
+        assert(keepNone[0].id == auto1.id);  // oldest first
+        assert(keepNone[1].id == auto2.id);
+        for (const auto &r : keepNone) {
+            assert(r.id != mineOldest.id && r.id != mineBetween.id);
+        }
+
+        // keepCount counts automatic backups only: two of them, keep two,
+        // nothing to remove even though there are four backups in all.
+        assert(store.pruneCandidates(2).empty());
+        assert(store.pruneCandidates(10).empty());
+        // Choosing removes nothing.
+        assert(store.list().size() == 4);
+        std::cout << "case 17b (pruneCandidates never chooses a user's backup) OK\n";
+    }
+
     // The newest automatic record is what Undo Last Save needs, so the
     // pressure release never takes it however much space is asked for.
     {

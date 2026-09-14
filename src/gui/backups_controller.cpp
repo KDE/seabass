@@ -55,6 +55,13 @@ std::string backupDirFor(const QString &rekordboxPath, const QString &enginePath
 
 BackupListModel::BackupListModel(QObject *parent) : QAbstractListModel(parent) {}
 
+int BackupListModel::automaticCount() const
+{
+    return static_cast<int>(std::count_if(m_records.begin(), m_records.end(), [](const auto &record) {
+        return record.origin == application::BackupOrigin::Automatic;
+    }));
+}
+
 int BackupListModel::rowCount(const QModelIndex &parent) const
 {
     if (parent.isValid()) {
@@ -80,6 +87,8 @@ QVariant BackupListModel::data(const QModelIndex &index, int role) const
         return humanSize(record.sizeBytes);
     case SizeBytesRole:
         return QVariant::fromValue<qulonglong>(record.sizeBytes);
+    case UserRequestedRole:
+        return record.origin == application::BackupOrigin::UserRequested;
     case FileNamesRole: {
         // Basenames only, not full paths -- this is a "what did this
         // backup touch" glance (e.g. is OneLibrary's exportLibrary.db in
@@ -104,6 +113,7 @@ QHash<int, QByteArray> BackupListModel::roleNames() const
         {SizeHumanRole, "sizeHuman"},
         {SizeBytesRole, "sizeBytes"},
         {FileNamesRole, "fileNames"},
+        {UserRequestedRole, "userRequested"},
     };
 }
 
@@ -117,6 +127,7 @@ void BackupListModel::setRecords(std::vector<application::BackupRecord> records)
     beginResetModel();
     m_records = std::move(records);
     endResetModel();
+    emit automaticCountChanged();
 }
 
 namespace
@@ -151,10 +162,13 @@ BackupsTaskResult runBackupsTask(BackupsAction action, QString dir, int keepCoun
             // One backup per step rather than BackupStore::prune(): a
             // cancel between two steps leaves every backup either whole
             // or gone, and the summary can say exactly how many went.
-            auto records = store.list();  // oldest first (see list())
-            size_t toRemove = records.size() > static_cast<size_t>(keepCount)
-                                  ? records.size() - static_cast<size_t>(keepCount)
-                                  : 0;
+            //
+            // The same backups prune() would remove, though: only automatic
+            // ones, keepCount counted among those. This used to take the
+            // oldest of every backup, and deleted ones the user had made
+            // themselves -- which are theirs to delete, one at a time.
+            const auto records = store.pruneCandidates(static_cast<size_t>(std::max(keepCount, 0)));
+            size_t toRemove = records.size();
             result.showSummary = true;
             result.verb = QStringLiteral("deleted");
             result.total = static_cast<int>(toRemove);
@@ -175,7 +189,9 @@ BackupsTaskResult runBackupsTask(BackupsAction action, QString dir, int keepCoun
             }
             reporter->finish();
             result.statusMessage =
-                QString("Freed %1 (kept up to %2 most recent backup(s))").arg(humanSize(freed)).arg(keepCount);
+                QString("Freed %1 (kept up to %2 most recent automatic backup(s), and every backup you made yourself)")
+                    .arg(humanSize(freed))
+                    .arg(keepCount);
             break;
         }
         case BackupsAction::SetDescription:

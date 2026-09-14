@@ -103,11 +103,11 @@ Page {
                 to: 1000
                 value: 10
                 ToolTip.visible: hovered
-                ToolTip.text: "How many of the most recent backups to keep"
+                ToolTip.text: "How many of the most recent automatic backups to keep. Backups you made yourself are always kept"
             }
             Button {
                 text: "Clean Up"
-                enabled: !backupsController.busy && backupsListView.count > 0
+                enabled: !backupsController.busy && backupsController.backups.automaticCount > 0
                 ToolTip.visible: hovered
                 ToolTip.text: "Permanently delete older backup copies; never touches the stick's live data"
                 onClicked: confirmCleanDialog.open()
@@ -127,9 +127,10 @@ Page {
         destructive: true
         title: "Clean Up Backups?"
         headline: "This permanently deletes the "
-            + Math.max(0, backupsListView.count - keepSpinBox.value)
-            + " oldest backup(s) under " + backupsController.backupDir + "."
-        detailText: "It never touches the stick's live DeviceLibrary/Engine data."
+            + Math.max(0, backupsController.backups.automaticCount - keepSpinBox.value)
+            + " oldest automatic backup(s) under " + backupsController.backupDir + "."
+        detailText: "Backups you made yourself are kept; delete one of those with its own delete button. "
+            + "It never touches the stick's live DeviceLibrary/Engine data."
         acceptText: "Clean Up"
         onAccepted: root.runWrite(() => backupsController.clean(keepSpinBox.value))
     }

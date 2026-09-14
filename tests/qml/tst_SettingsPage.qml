@@ -23,9 +23,13 @@ TestCase {
     // tests/qml/ -> tests/fixtures/anonymized_library/rekordbox, which
     // holds MYSETTING.DAT, MYSETTING2.DAT and DJMMYSETTING.DAT directly,
     // the way a stick's PIONEER folder does.
+    // A local path, not a URL. On Windows the URL is file:///C:/..., so
+    // taking off "file://" alone leaves "/C:/...", which is no path at all
+    // there -- the mistake gui/local_file_url.hpp's localPathFromUrl()
+    // exists to avoid -- and every test in this file found no settings.
     readonly property string fixturePioneerRoot: {
         var url = Qt.resolvedUrl("../fixtures/anonymized_library/rekordbox").toString();
-        return decodeURIComponent(url.replace(/^file:\/\//, ""));
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
     }
 
     Component {

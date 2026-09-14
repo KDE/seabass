@@ -436,7 +436,7 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
     return records;
 }
 
-std::uint64_t FilesystemBackupStore::prune(size_t keepCount)
+std::vector<BackupRecord> FilesystemBackupStore::pruneCandidates(size_t keepCount)
 {
     std::vector<BackupRecord> automatic;
     for (auto &record : list()) {  // oldest first
@@ -445,11 +445,17 @@ std::uint64_t FilesystemBackupStore::prune(size_t keepCount)
         }
     }
     if (automatic.size() <= keepCount) {
-        return 0;
+        return {};
     }
+    automatic.resize(automatic.size() - keepCount);
+    return automatic;
+}
 
+std::uint64_t FilesystemBackupStore::prune(size_t keepCount)
+{
+    const std::vector<BackupRecord> automatic = pruneCandidates(keepCount);
     std::uint64_t freed = 0;
-    size_t toRemove = automatic.size() - keepCount;
+    size_t toRemove = automatic.size();
     for (size_t i = 0; i < toRemove; ++i) {
         std::error_code ec;
         fs::remove_all(automatic[i].path, ec);
