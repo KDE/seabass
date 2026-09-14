@@ -68,6 +68,7 @@ private:
     std::uintmax_t m_existingBytes = 0;
     std::optional<infrastructure::ScratchDirGuard> m_scratch;
     int m_itemsApplied = 0;
+    int m_itemsLanded = 0;  // by changes that completed
     SaveContext &m_ctx;
 };
 

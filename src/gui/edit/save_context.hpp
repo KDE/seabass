@@ -4,6 +4,13 @@
 
 #pragma once
 
+#include <functional>
+#include <map>
+#include <optional>
+#include <set>
+
+#include "infrastructure/scratch_dir_guard.hpp"
+
 #include <cstdint>
 
 #include <QString>
@@ -46,6 +53,11 @@ namespace seabass::gui
 //   had.
 // - onFinish(): hooks run after the loop in creation order, even after a
 //   cancel or a failure (a scratch copy commits what completed).
+// - beginChange() / endChange() / rollBackChange(): a change lands whole or
+//   not at all. Every file it declares, and every file it protects on the
+//   way (backupOnce() does, so does a scratch copy), is copied aside before
+//   it runs; if it fails, the save's writers are closed and those files are
+//   put back, so no catalog keeps half of a change that failed.
 class SaveContext
 {
 public:
@@ -115,6 +127,39 @@ public:
         return *static_cast<T *>(it->second.get());
     }
 
+    // shared(), for a resource that has to outlive a rolled-back change: a
+    // FormatWriteSession, whose commit still has to carry the changes that
+    // landed before the one that failed. rollBackChange() closes every
+    // shared() resource and none of these.
+    template <class T>
+    T &sharedForWholeSave(const std::string &key, const std::function<std::unique_ptr<T>()> &make)
+    {
+        auto it = m_wholeSaveShared.find(key);
+        if (it == m_wholeSaveShared.end()) {
+            std::shared_ptr<T> made(make());
+            it = m_wholeSaveShared.emplace(key, std::shared_ptr<void>(made)).first;
+        }
+        return *static_cast<T *>(it->second.get());
+    }
+
+    // One change at a time, driven by runSaveLoop(). beginChange() copies
+    // the declared files aside; protectForThisChange() does the same for a
+    // file the change is about to write that it did not declare, once per
+    // change, and does nothing outside one. Throws when a file cannot be
+    // copied, which fails the change before it has written anything.
+    void beginChange(const std::vector<BackupTarget> &declared);
+    void protectForThisChange(const std::string &file);
+    // Writes to `liveFile` land in `writtenFile` for the rest of this save
+    // (a scratch copy), so that is the file a failed change must put back.
+    void redirectWrites(const std::string &liveFile, const std::string &writtenFile);
+    void endChange();
+    // Closes every shared() writer, then puts back every file this change
+    // protected. Returns the first file that could not be put back.
+    std::optional<QString> rollBackChange();
+    // hook(true) once a change has landed, hook(false) once it was rolled
+    // back.
+    void onChangeEnd(std::function<void(bool landed)> hook);
+
     void onFinish(std::function<void(bool ok)> hook);
     // Runs every hook once, creation order; a throwing hook does not stop
     // the rest. Returns the first hook error, if any.
@@ -138,9 +183,27 @@ private:
     std::map<std::string, std::string> m_backedUp;  // normalizedPathKey(file) -> backup id
     std::map<std::string, std::string> m_recordByLabel;  // label -> this save's record for it
     std::vector<UndoableBackup> m_backups;
+    // Declared before m_shared so it is destroyed after it: writers close
+    // before the sessions whose scratch copies they may hold open.
+    std::map<std::string, std::shared_ptr<void>> m_wholeSaveShared;
     std::map<std::string, std::shared_ptr<void>> m_shared;
     std::vector<std::function<void(bool)>> m_finishHooks;
     bool m_hooksRan = false;
+
+    // Whether this save has a stick to log to; tests run without one.
+    bool hasStick() const { return !m_rekordboxPath.isEmpty() || !m_enginePath.isEmpty(); }
+
+    struct Checkpoint
+    {
+        std::string original;
+        std::string copy;  // empty when the file did not exist
+    };
+    bool m_inChange = false;
+    std::optional<infrastructure::ScratchDirGuard> m_checkpointDir;
+    std::vector<Checkpoint> m_checkpoints;
+    std::set<std::string> m_protected;               // normalizedPathKey, this change
+    std::map<std::string, std::string> m_redirects;  // normalizedPathKey(live) -> written
+    std::vector<std::function<void(bool)>> m_changeEndHooks;
 };
 
 }  // namespace seabass::gui

@@ -3,6 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/edit/save_context.hpp"
+#include "infrastructure/durable_file_write.hpp"
+#include <algorithm>
+#include <fstream>
+#include <chrono>
+#include <array>
 
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
 
@@ -182,6 +187,10 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
 
 bool SaveContext::backupOnce(const std::string &file, const std::string &label)
 {
+    // Before the dedup: a file backed up once for the whole save is still
+    // written again by every later change, and each of those needs its own
+    // copy to roll back to.
+    protectForThisChange(file);
     // See backupAllNow()'s own comment: keyed by normalizedPathKey(), not
     // the raw string, so a file already backed up under one spelling of
     // its path is recognised under another.
@@ -222,6 +231,159 @@ std::string SaveContext::backupIdOf(const std::string &file) const
 {
     auto it = m_backedUp.find(application::normalizedPathKey(file));
     return it == m_backedUp.end() ? std::string() : it->second;
+}
+
+namespace
+{
+
+bool sameBytes(const std::string &a, const std::string &b)
+{
+    std::error_code ec;
+    if (fs::file_size(a, ec) != fs::file_size(b, ec) || ec) {
+        return false;
+    }
+    std::ifstream left(a, std::ios::binary);
+    std::ifstream right(b, std::ios::binary);
+    std::array<char, 65536> l{};
+    std::array<char, 65536> r{};
+    while (left && right) {
+        left.read(l.data(), l.size());
+        right.read(r.data(), r.size());
+        if (left.gcount() != right.gcount() || !std::equal(l.begin(), l.begin() + left.gcount(), r.begin())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+void SaveContext::beginChange(const std::vector<BackupTarget> &declared)
+{
+    m_inChange = true;
+    for (const BackupTarget &target : declared) {
+        protectForThisChange(target.file);
+    }
+}
+
+void SaveContext::protectForThisChange(const std::string &file)
+{
+    if (!m_inChange || file.empty()) {
+        return;
+    }
+    std::string target = file;
+    if (auto redirect = m_redirects.find(application::normalizedPathKey(file)); redirect != m_redirects.end()) {
+        target = redirect->second;
+    }
+    // A SQLite database is its sidecars too. Absent ones are recorded as
+    // absent, so one the change created is removed again.
+    std::vector<std::string> members{target};
+    if (fs::path(target).extension() == ".db") {
+        members.push_back(target + "-wal");
+        members.push_back(target + "-journal");
+    }
+    for (const std::string &member : members) {
+        if (!m_protected.insert(application::normalizedPathKey(member)).second) {
+            continue;
+        }
+        Checkpoint checkpoint{member, {}};
+        std::error_code ec;
+        if (fs::is_regular_file(member, ec)) {
+            if (!m_checkpointDir) {
+                fs::path dir = fs::temp_directory_path()
+                    / ("seabass-change-checkpoint-"
+                       + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                fs::create_directories(dir);
+                m_checkpointDir.emplace(dir);
+            }
+            checkpoint.copy = (m_checkpointDir->path / std::to_string(m_checkpoints.size())).string();
+            fs::copy_file(member, checkpoint.copy, fs::copy_options::overwrite_existing);
+        }
+        m_checkpoints.push_back(std::move(checkpoint));
+    }
+}
+
+void SaveContext::redirectWrites(const std::string &liveFile, const std::string &writtenFile)
+{
+    m_redirects[application::normalizedPathKey(liveFile)] = writtenFile;
+}
+
+void SaveContext::endChange()
+{
+    for (auto &hook : m_changeEndHooks) {
+        hook(true);
+    }
+    m_checkpoints.clear();
+    m_protected.clear();
+    m_checkpointDir.reset();
+    m_inChange = false;
+}
+
+std::optional<QString> SaveContext::rollBackChange()
+{
+    // Writers first. A SQLite connection that closes checkpoints its WAL
+    // into the database, so closing one after the restore would write the
+    // failed change straight back over it.
+    m_shared.clear();
+
+    std::optional<QString> firstError;
+    int putBack = 0;
+    for (auto it = m_checkpoints.rbegin(); it != m_checkpoints.rend(); ++it) {
+        try {
+            std::error_code ec;
+            if (it->copy.empty()) {
+                if (fs::exists(it->original, ec) && fs::remove(it->original, ec)) {
+                    ++putBack;
+                }
+                if (ec) {
+                    throw std::runtime_error("could not remove " + it->original + ": " + ec.message());
+                }
+                continue;
+            }
+            // Byte for byte, not by mtime: FAT keeps two-second mtimes, so
+            // a same-size rewrite inside that window looks untouched.
+            if (fs::exists(it->original, ec) && sameBytes(it->copy, it->original)) {
+                continue;
+            }
+            if (!infrastructure::copyFileDurablyAtomic(it->copy, it->original)) {
+                throw std::runtime_error("could not put back " + it->original);
+            }
+            ++putBack;
+        } catch (const std::exception &e) {
+            if (!firstError) {
+                firstError = QString::fromStdString(e.what());
+            }
+        }
+    }
+    // The -shm indexes a -wal that was just replaced; SQLite rebuilds it.
+    for (const Checkpoint &checkpoint : m_checkpoints) {
+        const std::string suffix = "-wal";
+        if (checkpoint.original.size() > suffix.size()
+            && checkpoint.original.compare(checkpoint.original.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            std::error_code ec;
+            fs::remove(checkpoint.original.substr(0, checkpoint.original.size() - suffix.size()) + "-shm", ec);
+        }
+    }
+    if (hasStick()) {
+        log().record(firstError ? "save: putting back what the failed change had written FAILED: "
+                                      + firstError->toStdString()
+                                : "save: put back " + std::to_string(putBack)
+                                      + " file(s) the failed change had written");
+    }
+
+    for (auto &hook : m_changeEndHooks) {
+        hook(false);
+    }
+    m_checkpoints.clear();
+    m_protected.clear();
+    m_checkpointDir.reset();
+    m_inChange = false;
+    return firstError;
+}
+
+void SaveContext::onChangeEnd(std::function<void(bool)> hook)
+{
+    m_changeEndHooks.push_back(std::move(hook));
 }
 
 void SaveContext::onFinish(std::function<void(bool)> hook)

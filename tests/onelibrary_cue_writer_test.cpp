@@ -832,6 +832,58 @@ int main()
         std::cout << "case: a file listed under two content rows is removed by id, and wholly by path OK\n";
     }
 
+    // One file under two content rows, and every write by path. The reader
+    // shows whichever row it meets, so each write has to reach both rows --
+    // until this, only the first got it and the file's cues, rating, play
+    // count and fields depended on which row was read. A donor listed twice
+    // gives the value from whichever of its rows has one.
+    {
+        fs::path scratch = freshScratch();
+        fs::path pioneerRoot = scratch / "PIONEER";
+        createFixture(pioneerRoot.string());
+        const std::string dbPath = OneLibraryCueWriter::dbPathFor(pioneerRoot.string());
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec("ALTER TABLE content ADD COLUMN rating integer;");
+            db.exec("ALTER TABLE content ADD COLUMN djComment varchar;");
+            db.exec("ALTER TABLE content ADD COLUMN djPlayCount integer;");
+            db.exec("INSERT INTO content (content_id, title, path) VALUES (5, 'Test Track', '/Contents/Test Track.mp3');");
+            db.exec("INSERT INTO content (content_id, title, path, bpmx100) VALUES "
+                    "(6, 'Donor', '/Contents/Donor.mp3', NULL), (7, 'Donor', '/Contents/Donor.mp3', 12800);");
+        }
+        const std::string track = (scratch / "Contents" / "Test Track.mp3").string();
+        const std::string donor = (scratch / "Contents" / "Donor.mp3").string();
+        auto value = [&](const std::string &sql) {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            SqlCipherStatement statement(db, sql);
+            statement.step();
+            return statement.columnInt64(0);
+        };
+
+        OneLibraryCueWriter writer(pioneerRoot.string());
+        writer.writeCuesForPath(track, sampleCues());
+        assert(value("SELECT count(*) FROM cue WHERE content_id = 1") == static_cast<int64_t>(sampleCues().size()));
+        assert(value("SELECT count(*) FROM cue WHERE content_id = 5") == static_cast<int64_t>(sampleCues().size()));
+
+        writer.writeAnnotationForPath(track, 4, std::string("keeper"));
+        assert(value("SELECT count(*) FROM content WHERE rating = 4 AND djComment = 'keeper'") == 2);
+
+        writer.writePlayCountForPath(track, 7);
+        assert(value("SELECT count(*) FROM content WHERE djPlayCount = 7") == 2);
+
+        writer.propagateMissingFieldsForPath(donor, track, /*copyBpm=*/true, /*copyKey=*/false, /*copyArtwork=*/false);
+        assert(value("SELECT count(*) FROM content WHERE content_id IN (1, 5) AND bpmx100 = 12800") == 2);
+
+        writer.removeTrackByPath(track);
+        assert(value("SELECT count(*) FROM content WHERE path = '/Contents/Test Track.mp3'") == 0);
+        assert(value("SELECT count(*) FROM cue") == 0);
+        std::cout << "case: every write by path reaches each row listing the file OK\n";
+    }
+
     std::cout << "All onelibrary_cue_writer_test cases passed.\n";
     return 0;
 }

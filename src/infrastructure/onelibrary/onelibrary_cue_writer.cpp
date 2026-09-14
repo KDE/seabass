@@ -54,6 +54,29 @@ std::string toContentPath(const std::string &stickRoot, const std::string &track
 
 }  // namespace
 
+namespace
+{
+
+// Every content row at `contentPath`, oldest first. A real
+// exportLibrary.db can list one file under more than one row (193 files on
+// RV2), and the reader shows whichever it meets, so a write meant for the
+// file has to reach all of them.
+std::vector<int64_t> contentIdsAt(SqlCipherDb &db, const std::string &contentPath)
+{
+    std::vector<int64_t> ids;
+    SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ? ORDER BY content_id");
+    find.bindText(1, contentPath);
+    while (find.step()) {
+        ids.push_back(find.columnInt64(0));
+    }
+    if (ids.empty()) {
+        throw std::runtime_error("onelibrary: no content row for path " + contentPath);
+    }
+    return ids;
+}
+
+}  // namespace
+
 std::string OneLibraryCueWriter::dbPathFor(const std::string &pioneerRoot)
 {
     return (fs::path(pioneerRoot) / "rekordbox" / "exportLibrary.db").string();
@@ -153,33 +176,26 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
 
     std::string contentPath = toContentPath(m_stickRoot, filePath);
     SqlCipherDb &db = writeConnection();
-    {
+    // Every row listing this file gets the same cues; see contentIdsAt().
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
 
-        int64_t contentId = -1;
-        {
-            SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-            find.bindText(1, contentPath);
-            if (!find.step()) {
-                throw std::runtime_error("onelibrary: no content row for path " + contentPath);
-            }
-            contentId = find.columnInt64(0);
+    // The colour index of every cue each row has now, by slot and
+    // position: the domain model carries no OneLibrary colour, so a
+    // whole-set rewrite used to reset every cue to colour 0. A cue that
+    // keeps its slot and position keeps its colour.
+    std::map<int64_t, std::map<std::pair<int64_t, int64_t>, int64_t>> coloursByContentId;
+    for (int64_t contentId : contentIds) {
+        SqlCipherStatement colours(db, "SELECT kind, inUsec, colorTableIndex FROM cue WHERE content_id = ?");
+        colours.bindInt64(1, contentId);
+        while (colours.step()) {
+            coloursByContentId[contentId][{colours.columnInt64(0), colours.columnInt64(1)}] = colours.columnInt64(2);
         }
+    }
 
-        // The colour index of every cue this track has now, by slot and
-        // position: the domain model carries no OneLibrary colour, so a
-        // whole-set rewrite used to reset every cue to colour 0. A cue
-        // that keeps its slot and position keeps its colour.
-        std::map<std::pair<int64_t, int64_t>, int64_t> colorByKindAndPosition;
-        {
-            SqlCipherStatement colours(db, "SELECT kind, inUsec, colorTableIndex FROM cue WHERE content_id = ?");
-            colours.bindInt64(1, contentId);
-            while (colours.step()) {
-                colorByKindAndPosition[{colours.columnInt64(0), colours.columnInt64(1)}] = colours.columnInt64(2);
-            }
-        }
-
-        db.exec("BEGIN IMMEDIATE;");
-        try {
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        for (int64_t contentId : contentIds) {
+            const auto &colorByKindAndPosition = coloursByContentId[contentId];
             {
                 // Must run before the DELETE FROM cue below. It looks
                 // up cue_ids by content_id via a subquery against the
@@ -197,56 +213,56 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
                 del.run();
             }
             for (const auto &cue : cues) {
-                // kind: 0 for a memory cue, otherwise the hot cue slot
-                // number, matching the DOCUMENTED convention of
-                // master.db's structurally-equivalent djmdCue.Kind
-                // ("0 if memory cue, otherwise the number of Hot Cue").
-                // Device Library Plus's own schema is described by prior
-                // reverse-engineering as "similar to the main Rekordbox
-                // database", and this stick's own OneLibrary cue table
-                // is empty (never populated), so this specific mapping
-                // is a well-reasoned inference, not independently
-                // confirmed against real Device Library Plus data,
-                // see docs/onelibrary-format.md.
-                int kind = cue.kind == CuePoint::Kind::Hot ? cue.hotCueNumber : 0;
-                int64_t inUsec = static_cast<int64_t>(cue.positionMs * 1000.0);
-                // A loop keeps its out point and is flagged as one; a cue
-                // point has out == in, matching export.pdb's convention.
-                const int64_t outUsec = cue.isLoop ? static_cast<int64_t>(cue.loopEndMs * 1000.0) : inUsec;
+                    // kind: 0 for a memory cue, otherwise the hot cue slot
+                    // number, matching the DOCUMENTED convention of
+                    // master.db's structurally-equivalent djmdCue.Kind
+                    // ("0 if memory cue, otherwise the number of Hot Cue").
+                    // Device Library Plus's own schema is described by prior
+                    // reverse-engineering as "similar to the main Rekordbox
+                    // database", and this stick's own OneLibrary cue table
+                    // is empty (never populated), so this specific mapping
+                    // is a well-reasoned inference, not independently
+                    // confirmed against real Device Library Plus data,
+                    // see docs/onelibrary-format.md.
+                    int kind = cue.kind == CuePoint::Kind::Hot ? cue.hotCueNumber : 0;
+                    int64_t inUsec = static_cast<int64_t>(cue.positionMs * 1000.0);
+                    // A loop keeps its out point and is flagged as one; a cue
+                    // point has out == in, matching export.pdb's convention.
+                    const int64_t outUsec = cue.isLoop ? static_cast<int64_t>(cue.loopEndMs * 1000.0) : inUsec;
 
-                SqlCipherStatement insert(db,
-                                           "INSERT INTO cue (content_id, kind, colorTableIndex, cueComment, "
-                                           "isActiveLoop, inUsec, outUsec) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                insert.bindInt64(1, contentId);
-                insert.bindInt64(2, kind);
-                // colorTableIndex: no verified RGB/hex -> index mapping
-                // exists anywhere this was cross-checked against (see
-                // docs/onelibrary-format.md), so a cue that was here
-                // before keeps the index it had, and a new one gets 0 (a
-                // defined, inert default) rather than a fabricated guess.
-                auto knownColour = colorByKindAndPosition.find({static_cast<int64_t>(kind), inUsec});
-                insert.bindInt64(3, knownColour == colorByKindAndPosition.end() ? 0 : knownColour->second);
-                if (cue.comment.empty()) {
-                    insert.bindNull(4);
-                } else {
-                    insert.bindText(4, cue.comment);
-                }
-                insert.bindInt64(5, cue.isLoop ? 1 : 0);
-                insert.bindInt64(6, inUsec);
-                insert.bindInt64(7, outUsec);
-                insert.run();
+                    SqlCipherStatement insert(db,
+                                               "INSERT INTO cue (content_id, kind, colorTableIndex, cueComment, "
+                                               "isActiveLoop, inUsec, outUsec) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                    insert.bindInt64(1, contentId);
+                    insert.bindInt64(2, kind);
+                    // colorTableIndex: no verified RGB/hex -> index mapping
+                    // exists anywhere this was cross-checked against (see
+                    // docs/onelibrary-format.md), so a cue that was here
+                    // before keeps the index it had, and a new one gets 0 (a
+                    // defined, inert default) rather than a fabricated guess.
+                    auto knownColour = colorByKindAndPosition.find({static_cast<int64_t>(kind), inUsec});
+                    insert.bindInt64(3, knownColour == colorByKindAndPosition.end() ? 0 : knownColour->second);
+                    if (cue.comment.empty()) {
+                        insert.bindNull(4);
+                    } else {
+                        insert.bindText(4, cue.comment);
+                    }
+                    insert.bindInt64(5, cue.isLoop ? 1 : 0);
+                    insert.bindInt64(6, inUsec);
+                    insert.bindInt64(7, outUsec);
+                    insert.run();
             }
-            db.exec("COMMIT;");
-        } catch (...) {
-            // Best-effort: never let a rollback failure mask (or replace,
-            // via a second throw) the original error that triggered it.
-            try {
-                db.exec("ROLLBACK;");
-            } catch (...) {
-            }
-            throw;
         }
-    }  // db closed here
+        db.exec("COMMIT;");
+    } catch (...) {
+        // Best-effort: never let a rollback failure mask (or replace,
+        // via a second throw) the original error that triggered it.
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
 
     // Correctness verification: SQLite's transaction already guarantees
     // the commit was durable, but not that this code wrote what it
@@ -255,23 +271,22 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
     // trusting it" check, adapted to "re-read the committed result
     // before trusting it" for a SQL store.
     SqlCipherDb &verifyDb = verifyConnection();
-    int64_t contentId = -1;
-    {
-        SqlCipherStatement find(verifyDb, "SELECT content_id FROM content WHERE path = ?");
-        find.bindText(1, contentPath);
-        if (!find.step()) {
+    for (int64_t contentId : contentIds) {
+        SqlCipherStatement row(verifyDb, "SELECT count(*) FROM content WHERE content_id = ?");
+        row.bindInt64(1, contentId);
+        row.step();
+        if (row.columnInt64(0) != 1) {
             throw std::runtime_error("onelibrary: post-write verification failed, content row vanished");
         }
-        contentId = find.columnInt64(0);
-    }
-    SqlCipherStatement verify(verifyDb, "SELECT count(*) FROM cue WHERE content_id = ?");
-    verify.bindInt64(1, contentId);
-    verify.step();
-    auto actualCount = static_cast<size_t>(verify.columnInt64(0));
-    if (actualCount != cues.size()) {
-        throw std::runtime_error("onelibrary: post-write verification failed, expected " +
-                                  std::to_string(cues.size()) + " cue row(s), found " +
-                                  std::to_string(actualCount));
+        SqlCipherStatement verify(verifyDb, "SELECT count(*) FROM cue WHERE content_id = ?");
+        verify.bindInt64(1, contentId);
+        verify.step();
+        auto actualCount = static_cast<size_t>(verify.columnInt64(0));
+        if (actualCount != cues.size()) {
+            throw std::runtime_error("onelibrary: post-write verification failed, expected " +
+                                      std::to_string(cues.size()) + " cue row(s), found " +
+                                      std::to_string(actualCount));
+        }
     }
 
     // Refresh the staleness baseline to the file's new (post-write) state.
@@ -292,15 +307,8 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
     SqlCipherDb &db = writeConnection();
     {
 
-        int64_t contentId = -1;
-        {
-            SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-            find.bindText(1, contentPath);
-            if (!find.step()) {
-                throw std::runtime_error("onelibrary: no content row for path " + contentPath);
-            }
-            contentId = find.columnInt64(0);
-        }
+        // Every row listing the file; see contentIdsAt().
+        const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
 
         db.exec("BEGIN IMMEDIATE;");
         try {
@@ -311,27 +319,29 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
             // order, exactly like writeCuesForPath()'s own
             // hotCueBankList_cue -> cue ordering, extended one level up
             // to content itself.
-            {
-                SqlCipherStatement delBank(db,
-                                            "DELETE FROM hotCueBankList_cue WHERE cue_id IN "
-                                            "(SELECT cue_id FROM cue WHERE content_id = ?)");
-                delBank.bindInt64(1, contentId);
-                delBank.run();
-            }
-            {
-                SqlCipherStatement delCue(db, "DELETE FROM cue WHERE content_id = ?");
-                delCue.bindInt64(1, contentId);
-                delCue.run();
-            }
-            {
-                SqlCipherStatement delPlaylist(db, "DELETE FROM playlist_content WHERE content_id = ?");
-                delPlaylist.bindInt64(1, contentId);
-                delPlaylist.run();
-            }
-            {
-                SqlCipherStatement delContent(db, "DELETE FROM content WHERE content_id = ?");
-                delContent.bindInt64(1, contentId);
-                delContent.run();
+            for (int64_t contentId : contentIds) {
+                {
+                    SqlCipherStatement delBank(db,
+                                                "DELETE FROM hotCueBankList_cue WHERE cue_id IN "
+                                                "(SELECT cue_id FROM cue WHERE content_id = ?)");
+                    delBank.bindInt64(1, contentId);
+                    delBank.run();
+                }
+                {
+                    SqlCipherStatement delCue(db, "DELETE FROM cue WHERE content_id = ?");
+                    delCue.bindInt64(1, contentId);
+                    delCue.run();
+                }
+                {
+                    SqlCipherStatement delPlaylist(db, "DELETE FROM playlist_content WHERE content_id = ?");
+                    delPlaylist.bindInt64(1, contentId);
+                    delPlaylist.run();
+                }
+                {
+                    SqlCipherStatement delContent(db, "DELETE FROM content WHERE content_id = ?");
+                    delContent.bindInt64(1, contentId);
+                    delContent.run();
+                }
             }
             db.exec("COMMIT;");
         } catch (...) {
@@ -371,32 +381,9 @@ void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doom
     std::string survivorContentPath = toContentPath(m_stickRoot, survivorFilePath);
     SqlCipherDb &db = writeConnection();
 
-    // Every row at the doomed path, not the first: a real
-    // exportLibrary.db can list one file under two content rows (193
-    // files on RV2), and removing one of them left the file listed --
-    // which the old count-by-path verification then reported as a
-    // failure after the removal had already been committed.
-    std::vector<int64_t> doomedIds;
-    {
-        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-        find.bindText(1, doomedContentPath);
-        while (find.step()) {
-            doomedIds.push_back(find.columnInt64(0));
-        }
-    }
-    if (doomedIds.empty()) {
-        throw std::runtime_error("onelibrary: no content row for path " + doomedContentPath);
-    }
+    const std::vector<int64_t> doomedIds = contentIdsAt(db, doomedContentPath);
     // Any one of the survivor's rows will do to repoint playlists at.
-    int64_t survivorId = -1;
-    {
-        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-        find.bindText(1, survivorContentPath);
-        if (!find.step()) {
-            throw std::runtime_error("onelibrary: no content row for path " + survivorContentPath);
-        }
-        survivorId = find.columnInt64(0);
-    }
+    const int64_t survivorId = contentIdsAt(db, survivorContentPath).front();
 
     for (int64_t doomedId : doomedIds) {
         removeTrackByIdReplacingWith(doomedId, survivorId);
@@ -510,18 +497,12 @@ void OneLibraryCueWriter::writeAnnotationForPath(const std::string &filePath, co
     const std::string contentPath = toContentPath(m_stickRoot, filePath);
     SqlCipherDb &db = writeConnection();
 
-    int64_t contentId = -1;
-    {
-        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-        find.bindText(1, contentPath);
-        if (!find.step()) {
-            throw std::runtime_error("onelibrary: no content row for path " + contentPath);
-        }
-        contentId = find.columnInt64(0);
-    }
+    // Every row listing the file; see contentIdsAt().
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
 
     db.exec("BEGIN IMMEDIATE;");
     try {
+      for (int64_t contentId : contentIds) {
         if (stars) {
             // Stars, 0 to 5, the same scale rekordbox uses and the same
             // one domain::Track carries. Not Engine's 0-100: measured on
@@ -541,6 +522,7 @@ void OneLibraryCueWriter::writeAnnotationForPath(const std::string &filePath, co
             set.bindInt64(2, contentId);
             set.run();
         }
+      }
         db.exec("COMMIT;");
     } catch (...) {
         try {
@@ -558,6 +540,7 @@ void OneLibraryCueWriter::writeAnnotationForPath(const std::string &filePath, co
     // writer would record the file as its own successful change and the
     // page would tell the DJ the rating went back.
     SqlCipherDb &verifyDb = verifyConnection();
+    for (int64_t contentId : contentIds) {
     if (stars) {
         SqlCipherStatement verify(verifyDb, "SELECT rating FROM content WHERE content_id = ?");
         verify.bindInt64(1, contentId);
@@ -576,6 +559,7 @@ void OneLibraryCueWriter::writeAnnotationForPath(const std::string &filePath, co
                                      + contentPath);
         }
     }
+    }
 
     refreshStalenessBaseline();
 }
@@ -587,23 +571,18 @@ void OneLibraryCueWriter::writePlayCountForPath(const std::string &filePath, int
     const std::string contentPath = toContentPath(m_stickRoot, filePath);
     SqlCipherDb &db = writeConnection();
 
-    int64_t contentId = -1;
-    {
-        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-        find.bindText(1, contentPath);
-        if (!find.step()) {
-            throw std::runtime_error("onelibrary: no content row for path " + contentPath);
-        }
-        contentId = find.columnInt64(0);
-    }
+    // Every row listing the file; see contentIdsAt().
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
 
     const int64_t count = std::max(0, playCount);
     db.exec("BEGIN IMMEDIATE;");
     try {
-        SqlCipherStatement set(db, "UPDATE content SET djPlayCount = ? WHERE content_id = ?");
-        set.bindInt64(1, count);
-        set.bindInt64(2, contentId);
-        set.run();
+        for (int64_t contentId : contentIds) {
+            SqlCipherStatement set(db, "UPDATE content SET djPlayCount = ? WHERE content_id = ?");
+            set.bindInt64(1, count);
+            set.bindInt64(2, contentId);
+            set.run();
+        }
         db.exec("COMMIT;");
     } catch (...) {
         try {
@@ -615,12 +594,14 @@ void OneLibraryCueWriter::writePlayCountForPath(const std::string &filePath, int
 
     // Read back through the verify connection before the staleness
     // baseline moves, for the reason writeAnnotationForPath gives.
-    SqlCipherStatement verify(verifyConnection(), "SELECT djPlayCount FROM content WHERE content_id = ?");
-    verify.bindInt64(1, contentId);
-    verify.step();
-    if (verify.columnIsNull(0) || verify.columnInt64(0) != count) {
-        throw std::runtime_error("onelibrary: post-write verification failed, play count did not land for "
-                                 + contentPath);
+    for (int64_t contentId : contentIds) {
+        SqlCipherStatement verify(verifyConnection(), "SELECT djPlayCount FROM content WHERE content_id = ?");
+        verify.bindInt64(1, contentId);
+        verify.step();
+        if (verify.columnIsNull(0) || verify.columnInt64(0) != count) {
+            throw std::runtime_error("onelibrary: post-write verification failed, play count did not land for "
+                                     + contentPath);
+        }
     }
 
     refreshStalenessBaseline();
@@ -640,47 +621,45 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
     std::string targetContentPath = toContentPath(m_stickRoot, targetFilePath);
     SqlCipherDb &db = writeConnection();
 
-    int64_t donorId = -1;
-    {
-        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-        find.bindText(1, donorContentPath);
-        if (!find.step()) {
-            throw std::runtime_error("onelibrary: no content row for path " + donorContentPath);
+    // Every row listing the target gets the field; see contentIdsAt(). From
+    // the donor, the first of its rows that has one: a file listed twice
+    // can carry a value on one row and nothing on the other.
+    const std::vector<int64_t> donorIds = contentIdsAt(db, donorContentPath);
+    const std::vector<int64_t> targetIds = contentIdsAt(db, targetContentPath);
+    auto donorWith = [&](const std::string &column) {
+        for (int64_t id : donorIds) {
+            SqlCipherStatement has(db, "SELECT " + column + " IS NOT NULL AND " + column
+                                           + " != 0 FROM content WHERE content_id = ?");
+            has.bindInt64(1, id);
+            if (has.step() && has.columnInt64(0) != 0) {
+                return id;
+            }
         }
-        donorId = find.columnInt64(0);
-    }
-    int64_t targetId = -1;
-    {
-        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-        find.bindText(1, targetContentPath);
-        if (!find.step()) {
-            throw std::runtime_error("onelibrary: no content row for path " + targetContentPath);
-        }
-        targetId = find.columnInt64(0);
-    }
+        return donorIds.front();
+    };
+    const int64_t bpmDonor = copyBpm ? donorWith("bpmx100") : -1;
+    const int64_t keyDonor = copyKey ? donorWith("key_id") : -1;
+    const int64_t artworkDonor = copyArtwork ? donorWith("image_id") : -1;
 
     db.exec("BEGIN IMMEDIATE;");
     try {
+        auto copyColumn = [&](const std::string &column, int64_t donorId) {
+            for (int64_t targetId : targetIds) {
+                SqlCipherStatement copy(db, "UPDATE content SET " + column + " = (SELECT " + column
+                                                + " FROM content WHERE content_id = ?) WHERE content_id = ?");
+                copy.bindInt64(1, donorId);
+                copy.bindInt64(2, targetId);
+                copy.run();
+            }
+        };
         if (copyBpm) {
-            SqlCipherStatement copy(db, "UPDATE content SET bpmx100 = (SELECT bpmx100 FROM content WHERE "
-                                         "content_id = ?) WHERE content_id = ?");
-            copy.bindInt64(1, donorId);
-            copy.bindInt64(2, targetId);
-            copy.run();
+            copyColumn("bpmx100", bpmDonor);
         }
         if (copyKey) {
-            SqlCipherStatement copy(db, "UPDATE content SET key_id = (SELECT key_id FROM content WHERE "
-                                         "content_id = ?) WHERE content_id = ?");
-            copy.bindInt64(1, donorId);
-            copy.bindInt64(2, targetId);
-            copy.run();
+            copyColumn("key_id", keyDonor);
         }
         if (copyArtwork) {
-            SqlCipherStatement copy(db, "UPDATE content SET image_id = (SELECT image_id FROM content WHERE "
-                                         "content_id = ?) WHERE content_id = ?");
-            copy.bindInt64(1, donorId);
-            copy.bindInt64(2, targetId);
-            copy.run();
+            copyColumn("image_id", artworkDonor);
         }
         db.exec("COMMIT;");
     } catch (...) {

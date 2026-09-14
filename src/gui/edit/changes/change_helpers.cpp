@@ -178,7 +178,9 @@ FormatWriteSession &sharedFormatWriteSession(SaveContext &ctx, const std::string
     // available for this format, it only looked available. Engine's
     // m.db is a rollback-journal database and keeps its scratch copy.
     const int hint = format == "onelibrary" ? 0 : itemCountHint;
-    return ctx.shared<FormatWriteSession>(key, [&]() {
+    // For the whole save: a failed change is rolled back, and the session
+    // still has to commit what the changes before it wrote.
+    return ctx.sharedForWholeSave<FormatWriteSession>(key, [&]() {
         return std::make_unique<FormatWriteSession>(format, catalogPath, hint, label, ctx);
     });
 }

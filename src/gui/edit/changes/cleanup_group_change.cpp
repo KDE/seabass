@@ -344,6 +344,11 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     // A plan that writes to no catalog is one or more manifest lines and
     // nothing else, so it deliberately opens no write session: the
     // manifest is append-per-call precisely so it needs none.
+    // The manifest is appended to, never backed up; a failed change's lines
+    // come out again with the rest of it.
+    ctx.protectForThisChange(
+        infrastructure::paths::stickPendingDeletions(fs::path(m_path.toStdString()).parent_path()).string());
+
     if (!writesToCatalog(plan)) {
         infrastructure::cleanup::PendingDeletionManifest manifest(
             infrastructure::paths::stickPendingDeletions(fs::path(m_path.toStdString()).parent_path()).string());

@@ -27,9 +27,11 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // half a backup. Changes that cannot answer yet keep backing up as
     // they go, and backupOnce() skips whatever this already covered.
     std::vector<BackupTarget> upfront;
+    std::vector<std::vector<BackupTarget>> declaredByChange;
     for (const auto &change : changes) {
-        for (auto &target : change->filesToBackup(ctx)) {
-            upfront.push_back(std::move(target));
+        declaredByChange.push_back(change->filesToBackup(ctx));
+        for (const auto &target : declaredByChange.back()) {
+            upfront.push_back(target);
         }
     }
     if (!upfront.empty()) {
@@ -47,7 +49,8 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
 
     ctx.progress().start("Saving changes", changes.size());
     size_t done = 0;
-    for (const auto &change : changes) {
+    for (size_t index = 0; index < changes.size(); ++index) {
+        const auto &change = changes[index];
         if (ctx.cancel().cancelled()) {
             result.cancelled = true;
             break;
@@ -55,6 +58,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         ctx.status(change->description());
         ChangeOutcome outcome;
         try {
+            ctx.beginChange(declaredByChange[index]);
             outcome = change->apply(ctx);
         } catch (const std::exception &e) {
             outcome = ChangeOutcome::failure(QString::fromStdString(e.what()));
@@ -69,8 +73,17 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
                 ctx.log().record("save: stopped at \"" + change->description().toStdString()
                                  + "\": " + result.error.toStdString());
             }
+            // Whatever the change had already written, in any catalog, goes
+            // back: a file removed from Engine but still listed by rekordbox
+            // is the one state a DJ cannot repair from the page.
+            if (auto undoError = ctx.rollBackChange()) {
+                result.error += QStringLiteral(" -- and putting back what it had already written failed (%1); "
+                                               "restore this save's backup")
+                                    .arg(*undoError);
+            }
             break;
         }
+        ctx.endChange();
         result.appliedIds << change->id();
         ctx.progress().tick(++done);
     }

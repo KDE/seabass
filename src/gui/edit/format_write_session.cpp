@@ -70,11 +70,24 @@ FormatWriteSession::FormatWriteSession(std::string format, std::string catalogPa
         fs::copy_file(m_dbFile, scratchDir / m_scratchSubdir / m_scratchFilename);
         m_scratch.emplace(scratchDir);
         m_writeRoot = scratchDir.string();
+        // From here on this save writes the scratch copy, so that is what a
+        // failed change has to put back -- starting with this change.
+        const std::string scratchFile = (scratchDir / m_scratchSubdir / m_scratchFilename).string();
+        m_ctx.redirectWrites(m_dbFile, scratchFile);
+        m_ctx.protectForThisChange(scratchFile);
         m_ctx.log().record(m_label + ": applying up to " + std::to_string(itemCountHint) + " " + m_format
                            + " update(s) to a local scratch copy first (" + m_scratchFilename + " is "
                            + std::to_string(m_existingBytes) + " bytes)");
     }
 
+    // Items of a change that was rolled back are no longer in the copy.
+    m_ctx.onChangeEnd([this](bool landed) {
+        if (landed) {
+            m_itemsLanded = m_itemsApplied;
+        } else {
+            m_itemsApplied = m_itemsLanded;
+        }
+    });
     m_ctx.onFinish([this](bool ok) { commit(ok); });
 }
 

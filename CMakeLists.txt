@@ -1238,6 +1238,14 @@ if(TARGET Qt6::Core)
         target_link_libraries(merge_cues_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME merge_cues_change_test COMMAND merge_cues_change_test)
+
+    add_executable(failed_change_rollback_test tests/failed_change_rollback_test.cpp)
+    target_include_directories(failed_change_rollback_test PRIVATE src tests)
+    target_link_libraries(failed_change_rollback_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(failed_change_rollback_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME failed_change_rollback_test COMMAND failed_change_rollback_test)
 endif()
 
 add_executable(rekordbox_process_detector_test
