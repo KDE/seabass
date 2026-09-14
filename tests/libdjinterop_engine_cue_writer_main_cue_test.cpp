@@ -14,6 +14,7 @@
 // handed it straight back as a memory cue that had just been removed.
 
 #include <cassert>
+#include <chrono>
 #include <sqlite3.h>
 #include <filesystem>
 #include <iostream>
@@ -64,6 +65,39 @@ seabass::domain::CuePoint memoryCue(double positionMs)
     cue.hotCueNumber = 0;
     cue.positionMs = positionMs;
     return cue;
+}
+
+// Track.lastEditTime straight from the file, the way the reader takes it.
+long long lastEditTimeOf(const fs::path &root, int64_t trackId)
+{
+    sqlite3 *db = nullptr;
+    const std::string path = (root / "Database2" / "m.db").string();
+    assert(sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+    sqlite3_stmt *stmt = nullptr;
+    assert(sqlite3_prepare_v2(db, "SELECT lastEditTime FROM Track WHERE id = ?", -1, &stmt, nullptr) == SQLITE_OK);
+    sqlite3_bind_int64(stmt, 1, trackId);
+    assert(sqlite3_step(stmt) == SQLITE_ROW);
+    const long long value = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return value;
+}
+
+void backdate(const fs::path &root, int64_t trackId, long long seconds)
+{
+    sqlite3 *db = nullptr;
+    const std::string path = (root / "Database2" / "m.db").string();
+    assert(sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+    const std::string sql = "UPDATE Track SET lastEditTime = " + std::to_string(seconds) + " WHERE id = "
+        + std::to_string(trackId);
+    assert(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(db);
+}
+
+long long nowSeconds()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
 }
 
 djinterop::track makeTrack(djinterop::database &db)
@@ -170,5 +204,36 @@ int main()
     }
 
     std::cout << "all cases passed\n";
+    // A write dates the track. Engine's per-track clock is what Sync
+    // compares against a rekordbox track's ANLZ mtime, and libdjinterop
+    // never moves it: an edit made here left the clock where it was, and
+    // the next Sync judged the untouched rekordbox copy newer and wrote its
+    // hot cues over the edit. Backdated first, so "moved" cannot pass on a
+    // value that was already recent.
+    {
+        fs::path root = freshRoot("last-edit-time");
+        auto db = djinterop::engine::create_database(root.string());
+        auto track = makeTrack(db);
+        const long long longAgo = 1'000'000'000;  // 2001
+        backdate(root, track.id(), longAgo);
+        assert(lastEditTimeOf(root, track.id()) == longAgo);
+
+        LibdjinteropEngineCueWriter writer(root.string());
+        const long long before = nowSeconds();
+        writer.writeHotCues(std::to_string(track.id()), {hotCue(1, 1000.0)});
+        const long long afterCues = lastEditTimeOf(root, track.id());
+        assert(afterCues >= before && afterCues <= nowSeconds() + 1 && "a cue write must date the track now");
+
+        backdate(root, track.id(), longAgo);
+        writer.writeAnnotation(std::to_string(track.id()), 4, std::nullopt);
+        assert(lastEditTimeOf(root, track.id()) >= before && "a rating write must date the track now");
+
+        // And nothing written, nothing dated.
+        backdate(root, track.id(), longAgo);
+        writer.writeAnnotation(std::to_string(track.id()), std::nullopt, std::nullopt);
+        assert(lastEditTimeOf(root, track.id()) == longAgo);
+        std::cout << "case last-edit-time (a cue or rating write moves Track.lastEditTime; no write, no move) OK\n";
+    }
+
     return 0;
 }

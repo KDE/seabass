@@ -5,6 +5,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -64,6 +65,24 @@ private:
     // transactions, and nothing else in this process writes this file
     // while a save owns the writer.
     djinterop::database &database();
+
+    // Moves Track.lastEditTime to now for one track, after a write that
+    // changed what the DJ put on it (cues, loops, rating, comment).
+    //
+    // libdjinterop's track API never touches the column, so without this
+    // an edit made in Seabass left Engine's per-track clock where it was,
+    // while a rekordbox write moves its ANLZ file's mtime. Sync resolves a
+    // hot cue conflict by those two clocks, so the next Sync judged the
+    // untouched rekordbox copy newer and wrote its hot cues over the edit
+    // the user had just made here.
+    //
+    // Raw SQL on this writer's own m.db, the same way the reader reads the
+    // column: it lands in a scratch copy when the save uses one, and the
+    // save's rollback checkpoints already cover m.db and its WAL. A schema
+    // without the column skips the stamp; a stamp that fails on one that
+    // has it throws, because a cue write whose clock silently stays stale
+    // is the bug this exists to fix.
+    void stampLastEditTime(std::int64_t trackId);
 
     std::string m_engineLibraryPath;
     std::optional<djinterop::database> m_database;

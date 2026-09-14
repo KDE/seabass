@@ -158,18 +158,46 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
     const bool aIsNewer = perTrack
         ? match.trackA.metadataModifiedAt > match.trackB.metadataModifiedAt
         : mtimeA > mtimeB;
+    const bool aIsEngine = match.trackA.format == "engine";
+    const bool bIsEngine = match.trackB.format == "engine";
 
+    // Memory cues are never resolved by overwriting Engine. Engine holds
+    // one memory cue and its writer keeps the earliest it is given, so
+    // sending it the union of both sides would replace its one cue with
+    // the other side's earliest -- and when that cue exists nowhere else,
+    // it is gone from both formats, with the next sync then calling the
+    // track consistent because Engine's new one is among the other side's.
+    //
+    // Hot cues agree, only memory cues differ: write the side that can
+    // hold every memory cue, and give it the union. That is the non-Engine
+    // side whenever exactly one side is Engine; the clock only picks when
+    // neither or both are.
+    if (cueSetsEqual(hotA, hotB)) {
+        const bool writeA = aIsEngine != bIsEngine ? bIsEngine : !aIsNewer;
+        const Track &target = writeA ? match.trackA : match.trackB;
+        result.direction = writeA ? SyncPlan::Direction::ToA : SyncPlan::Direction::ToB;
+        result.cuesToApply = cuesOfKind(target.cues, CuePoint::Kind::Hot);
+        for (const CuePoint &cue : unionByPosition(memoryA, memoryB)) {
+            result.cuesToApply.push_back(cue);
+        }
+        return result;
+    }
+
+    // Hot cues differ: the newer side's hot cues win, one value per slot
+    // being all there is.
     const Track &winner = aIsNewer ? match.trackA : match.trackB;
+    const Track &target = aIsNewer ? match.trackB : match.trackA;
     result.direction = aIsNewer ? SyncPlan::Direction::ToB : SyncPlan::Direction::ToA;
-
-    // The winner's hot cues, plus every memory cue either side has. A
-    // memory cue is never taken away by a sync: the newer side's list wins
-    // for hot cue slots, where one value per slot is all there is, but a
-    // memory cue missing from one side is far more often that side's
-    // capacity than the DJ's intent. Engine's writer keeps the earliest of
-    // them, which is all it ever could; rekordbox keeps them all.
     result.cuesToApply = cuesOfKind(winner.cues, CuePoint::Kind::Hot);
-    for (const CuePoint &cue : unionByPosition(memoryA, memoryB)) {
+
+    // And the memory cues. An Engine target that already has one keeps its
+    // own, for the reason above; the other side's extra memory cues are
+    // still on the other side, and the next sync -- hot cues now agreeing
+    // -- carries Engine's cue across to it. Any other target gets the union.
+    const std::vector<CuePoint> targetMemory = cuesOfKind(target.cues, CuePoint::Kind::Memory);
+    const std::vector<CuePoint> memoryToWrite =
+        target.format == "engine" && !targetMemory.empty() ? targetMemory : unionByPosition(memoryA, memoryB);
+    for (const CuePoint &cue : memoryToWrite) {
         result.cuesToApply.push_back(cue);
     }
     return result;

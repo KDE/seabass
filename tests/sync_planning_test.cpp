@@ -218,6 +218,76 @@ int main()
         std::cout << "case 11 (an undatable track falls back to the catalog files) OK\n";
     }
 
+    // The review finding: Engine's only memory cue destroyed. rekordbox has
+    // memory cues at 10s and 20s, Engine one at 15s, and rekordbox is newer
+    // with a differing hot cue. The plan goes onto Engine -- and must not
+    // send it a union whose earliest (10s) would replace Engine's 15s, a cue
+    // that exists nowhere else.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 10000.0, "", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 20000.0, "", ""}});
+        r.format = "rekordbox";
+        r.metadataModifiedAt = 1'800'000'000;
+        Track e = makeTrack("e1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 9000.0, "#00FF00", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 15000.0, "", ""}});
+        e.format = "engine";
+        e.metadataModifiedAt = 1'700'000'000;
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(plan.direction == SyncPlan::Direction::ToB);  // onto Engine: rekordbox's hot cue is newer
+        std::vector<double> memory;
+        for (const auto &cue : plan.cuesToApply) {
+            if (cue.kind == CuePoint::Kind::Hot) {
+                assert(cue.positionMs == 1000.0);
+            } else {
+                memory.push_back(cue.positionMs);
+            }
+        }
+        assert(memory.size() == 1 && memory[0] == 15000.0 && "Engine keeps its own memory cue");
+        std::cout << "case 12 (a hot cue sync onto Engine keeps Engine's only memory cue) OK\n";
+    }
+
+    // ...and the next sync carries it across. Hot cues now agree, Engine's
+    // 15s is not among rekordbox's memory cues, and Engine happens to be the
+    // newer side. The plan must still write rekordbox, the side that can
+    // hold every memory cue, with the union -- never Engine.
+    {
+        Track r = makeTrack("r1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 10000.0, "", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 20000.0, "", ""}});
+        r.format = "rekordbox";
+        r.metadataModifiedAt = 1'700'000'000;
+        Track e = makeTrack("e1", "song.mp3", 200.0,
+                            {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+                             CuePoint{CuePoint::Kind::Memory, 0, 15000.0, "", ""}});
+        e.format = "engine";
+        e.metadataModifiedAt = 1'800'000'000;
+        auto plan = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(plan.kind == SyncPlan::Kind::Conflict);
+        assert(plan.direction == SyncPlan::Direction::ToA && "memory cues resolve onto rekordbox, not Engine");
+        int memory = 0;
+        bool has15 = false;
+        for (const auto &cue : plan.cuesToApply) {
+            if (cue.kind == CuePoint::Kind::Memory) {
+                memory++;
+                has15 = has15 || cue.positionMs == 15000.0;
+            }
+        }
+        assert(memory == 3 && has15);
+        std::cout << "case 13 (a memory-only difference writes the side that can hold every memory cue) OK\n";
+
+        // And after that write the pair is consistent: Engine's one memory
+        // cue is among rekordbox's three.
+        r.cues = plan.cuesToApply;
+        auto after = SyncPlanner::plan(SyncMatch{r, e}, now, now);
+        assert(after.kind == SyncPlan::Kind::AlreadyConsistent);
+        std::cout << "case 13b (two syncs settle it with no memory cue lost) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

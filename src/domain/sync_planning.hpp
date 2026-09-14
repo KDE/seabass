@@ -36,10 +36,12 @@ struct SyncPlan
         BOnly,
         // Both sides have cues, and they differ. Hot cues go to the side
         // edited more recently -- each track's own edit time when both
-        // catalogs record one, the catalog file's mtime otherwise -- and
-        // memory cues are the union of both sides, never taken away.
-        // Still a heuristic rather than a certainty, and reported clearly
-        // as a conflict either way.
+        // catalogs record one, the catalog file's mtime otherwise. Memory
+        // cues are never resolved by overwriting Engine's one: when only
+        // memory cues differ, the side that can hold them all receives the
+        // union; when hot cues send the plan onto Engine, Engine keeps its
+        // own memory cue. Still a heuristic rather than a certainty, and
+        // reported clearly as a conflict either way.
         //
         // An Engine track whose memory cues are all among the other side's
         // is not a conflict: Engine holds one memory cue, and one of
