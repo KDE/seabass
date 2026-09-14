@@ -96,21 +96,26 @@ Page {
     // both PlaylistListView instances' onPlaylistPicked and
     // restoreSelectedPlaylist() below funnel through this, so filtering
     // and persisting the choice (AppSettingsController.
-    // lastBrowsePlaylistName) can't drift out of sync with each other.
-    function selectPlaylist(index, name) {
+    // lastPlaylistName) can't drift out of sync with each other.
+    // remember is false only for the fallback below, which must not
+    // forget a playlist because this library happens not to have it.
+    function selectPlaylist(index, name, remember) {
         root.selectedPlaylistIndex = index;
         scanController.filterByPlaylist(index === 0 ? "" : name);
-        root.appSettingsController.lastBrowsePlaylistName = index === 0 ? "" : name;
+        if (remember !== false) {
+            root.appSettingsController.lastPlaylistName = index === 0 ? "" : name;
+        }
     }
 
     // Called once scanController.playlistNames is populated (see
     // onPlaylistNamesChanged above). Falls back to "All tracks" if the
     // last-selected name doesn't match any playlist on this stick --
-    // e.g. it was deleted, or this is a different stick than last time.
+    // e.g. it was deleted, or this is a different stick than last time --
+    // and keeps remembering it, since the next stick may well have it.
     function restoreSelectedPlaylist() {
-        var wanted = root.appSettingsController.lastBrowsePlaylistName;
+        var wanted = root.appSettingsController.lastPlaylistName;
         var idx = wanted.length > 0 ? scanController.playlistNames.indexOf(wanted) : -1;
-        root.selectPlaylist(idx >= 0 ? idx + 1 : 0, wanted);
+        root.selectPlaylist(idx >= 0 ? idx + 1 : 0, wanted, false);
     }
 
     // ---- Matching (Experimental, see docs/experimental-

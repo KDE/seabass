@@ -24,6 +24,8 @@ TestCase {
     visible: true
     when: windowShown
 
+    AppSettingsController { id: realAppSettings }
+
     Component {
         id: pageComponent
         MetadataBackupPage {
@@ -36,6 +38,7 @@ TestCase {
             rekordboxPath: "/nonexistent/TESTSTICK/PIONEER"
             enginePath: "/nonexistent/TESTSTICK/Engine Library"
             libraryId: ""
+            appSettingsController: realAppSettings
         }
     }
 
@@ -44,6 +47,20 @@ TestCase {
         verify(page, "page did not instantiate");
         waitForRendering(page);
         return page;
+    }
+
+    // A pick here is what the next page with a playlist picker opens on.
+    function test_aPlaylistPickIsRemembered() {
+        var before = realAppSettings.lastPlaylistName;
+        try {
+            var page = make();
+            var picker = findChild(page, "playlistPicker");
+            verify(picker !== null, "the playlist picker must be there");
+            picker.playlistPicked(1, {name: "Peak Time", count: 3});
+            compare(realAppSettings.lastPlaylistName, "Peak Time", "the next page with a picker must open on it");
+        } finally {
+            realAppSettings.lastPlaylistName = before;
+        }
     }
 
     function test_thereIsNoConflictQuestionToGetWrong() {

@@ -12,6 +12,7 @@ Page {
     required property string stickLabel
     required property string rekordboxPath
     required property string enginePath
+    required property var appSettingsController
     required property var playbackController
 
     // "" scopes analyze() to the whole library (every catalog present),
@@ -64,7 +65,27 @@ Page {
         return conflict.targetTitle + " - " + conflict.targetArtist + "  [" + filename + "]";
     }
 
-    Component.onCompleted: syncController.analyze(root.rekordboxPath, root.enginePath)
+    // Opens on the playlist last picked on any page with a picker.
+    Component.onCompleted: {
+        root.selectedPlaylistName = root.appSettingsController.lastPlaylistName;
+        syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery);
+    }
+
+    // A remembered playlist this library does not have would scan
+    // nothing. The picker lists the whole library's playlists whatever
+    // the scope, so once a scan is done a missing one falls back to all
+    // tracks -- without forgetting it, since the next stick may have it.
+    // Checked a turn later, not from inside the controller's own
+    // busyChanged, and never after a cancel: a cancelled scan leaves.
+    property bool cancellingScan: false
+    function dropMissingPlaylist() {
+        if (root.cancellingScan || syncController.busy || root.selectedPlaylistName.length === 0
+            || syncController.playlistNames.indexOf(root.selectedPlaylistName) >= 0) {
+            return;
+        }
+        root.selectedPlaylistName = "";
+        syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery);
+    }
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
@@ -98,6 +119,7 @@ Page {
                 color: Theme.textMuted
             }
             PlaylistPickerCombo {
+                objectName: "playlistPicker"
                 Layout.minimumWidth: 140
                 enabled: !syncController.busy
                 model: root.playlistPickerModel
@@ -116,6 +138,7 @@ Page {
                 ToolTip.text: "Scope Sync Cue Points to one playlist instead of the whole library"
                 onPlaylistPicked: (index, modelData) => {
                     root.selectedPlaylistName = index === 0 ? "" : modelData.name;
+                    root.appSettingsController.lastPlaylistName = root.selectedPlaylistName;
                     syncController.analyze(root.rekordboxPath, root.enginePath, root.selectedPlaylistName, root.searchQuery);
                 }
             }
@@ -584,6 +607,11 @@ Page {
     Connections {
         target: syncController
         function onScanCancelled() { root.StackView.view.pop(); }
+        function onBusyChanged() {
+            if (!syncController.busy && !root.cancellingScan) {
+                Qt.callLater(root.dropMissingPlaylist);
+            }
+        }
     }
 
     BusyOverlay {
@@ -594,6 +622,9 @@ Page {
         label: "Scanning for sync differences..."
         unitName: "tracks"
         cancellable: syncController.scanCancellable
-        onCancelRequested: syncController.cancelScan()
+        onCancelRequested: {
+            root.cancellingScan = true;
+            syncController.cancelScan();
+        }
     }
 }

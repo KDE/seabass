@@ -502,6 +502,7 @@ ApplicationWindow {
     Component {
         id: junkCuePageComponent
         JunkCuePage {
+            appSettingsController: appSettingsCtrl
         }
     }
 
@@ -585,6 +586,7 @@ ApplicationWindow {
         id: syncPageComponent
         SyncPage {
             playbackController: playbackCtrl
+            appSettingsController: appSettingsCtrl
         }
     }
 
@@ -688,6 +690,7 @@ ApplicationWindow {
     Component {
         id: metadataBackupPageComponent
         MetadataBackupPage {
+            appSettingsController: appSettingsCtrl
             // For the source picker: every stick with a library on it,
             // plus the store itself.
             mediaController: mediaCtrl

@@ -102,15 +102,15 @@ TestCase {
             {name: "StickListPage", props: props({mediaController: realMedia, playbackController: realPlayback,
                 appSettingsController: realAppSettings, backupAdvisor: realAdvisor})},
             {name: "DuplicatesHubPage", props: stickProps({})},
-            {name: "JunkCuePage", props: stickProps({})},
+            {name: "JunkCuePage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "BackupsPage", props: stickProps({})},
             {name: "BackupsHubPage", props: stickProps({appSettingsController: realAppSettings})},
             {name: "PendingDeletionsPage", props: stickProps({appSettingsController: realAppSettings})},
-            {name: "MetadataBackupPage", props: stickProps({libraryId: ""})},
+            {name: "MetadataBackupPage", props: stickProps({libraryId: "", appSettingsController: realAppSettings})},
             {name: "MetadataRestorePage", props: stickProps({libraryId: ""})},
             {name: "LibraryHealthHubPage", props: stickProps({playbackController: realPlayback})},
             {name: "LibraryConsistencyPage", props: stickProps({playbackController: realPlayback})},
-            {name: "SyncPage", props: stickProps({playbackController: realPlayback})},
+            {name: "SyncPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "ScanPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "DuplicatesPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "CleanupPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
@@ -170,6 +170,39 @@ TestCase {
         var search = findChild(scan, "searchField");
         verify(scanCrumb !== null && search !== null);
         compare(Math.round(search.mapToItem(scan, 0, 0).y - scanCrumb.mapToItem(scan, 0, scanCrumb.height).y), 19);
+    }
+
+    // Pages with a playlist picker open on the playlist last picked on
+    // any of them, and a pick on one is what the next opens on. Their
+    // library is nowhere, so it has no such playlist: once the scan is
+    // done each falls back to all tracks, and keeps remembering the
+    // playlist for a library that has it.
+    function test_playlistPagesOpenOnTheLastPickedPlaylist_data() {
+        return [
+            {tag: "CleanupPage", extra: {playbackController: realPlayback, appSettingsController: realAppSettings}},
+            {tag: "SyncPage", extra: {playbackController: realPlayback, appSettingsController: realAppSettings}},
+            {tag: "JunkCuePage", extra: {appSettingsController: realAppSettings}},
+        ];
+    }
+
+    function test_playlistPagesOpenOnTheLastPickedPlaylist(data) {
+        var before = realAppSettings.lastPlaylistName;
+        realAppSettings.lastPlaylistName = "Warm-Up";
+        try {
+            var page = createTemporaryObject(Qt.createComponent(qmlDir + data.tag + ".qml"), testCase,
+                                             stickProps(data.extra));
+            verify(page !== null, data.tag + " did not instantiate");
+            compare(page.selectedPlaylistName, "Warm-Up", "it must open on the last picked playlist");
+            tryCompare(page, "selectedPlaylistName", "", 5000);
+            compare(realAppSettings.lastPlaylistName, "Warm-Up", "falling back must not forget the playlist");
+            var picker = findChild(page, "playlistPicker");
+            verify(picker !== null, "the playlist picker must be there");
+            picker.playlistPicked(1, {name: "Peak Time", count: ""});
+            compare(page.selectedPlaylistName, "Peak Time");
+            compare(realAppSettings.lastPlaylistName, "Peak Time", "the next page with a picker must open on it");
+        } finally {
+            realAppSettings.lastPlaylistName = before;
+        }
     }
 
     function test_everyPageCompiles() {

@@ -34,7 +34,7 @@ AppSettingsController::AppSettingsController(QObject *parent)
         m_seabassHomeDirectory = defaultSeabassHomeDirectory();
     }
     infrastructure::paths::setLocalRootOverride(m_seabassHomeDirectory.toStdString());
-    m_lastBrowsePlaylistName = m_settings.value("lastBrowsePlaylistName", "").toString();
+    m_lastPlaylistName = m_settings.value("lastPlaylistName", "").toString();
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     m_experimentalFeaturesEnabled = m_settings.value("experimentalFeaturesEnabled", false).toBool();
 #endif
@@ -132,14 +132,14 @@ void AppSettingsController::setSeabassHomeDirectory(const QString &value)
     emit seabassHomeDirectoryChanged();
 }
 
-void AppSettingsController::setLastBrowsePlaylistName(const QString &value)
+void AppSettingsController::setLastPlaylistName(const QString &value)
 {
-    if (m_lastBrowsePlaylistName == value) {
+    if (m_lastPlaylistName == value) {
         return;
     }
-    m_lastBrowsePlaylistName = value;
-    m_settings.setValue("lastBrowsePlaylistName", value);
-    emit lastBrowsePlaylistNameChanged();
+    m_lastPlaylistName = value;
+    m_settings.setValue("lastPlaylistName", value);
+    emit lastPlaylistNameChanged();
 }
 
 #ifdef SEABASS_EXPERIMENTAL_BUILD

@@ -77,7 +77,28 @@ Page {
         cleanupController.scan(root.format, root.currentPath(), root.selectedPlaylistName, "");
     }
 
-    Component.onCompleted: root.rescanInScope()
+    // Opens on the playlist last picked on any page with a picker, so
+    // going from a playlist in Browse Library to cleaning it up keeps it.
+    Component.onCompleted: {
+        root.selectedPlaylistName = root.appSettingsController.lastPlaylistName;
+        root.rescanInScope();
+    }
+
+    // A remembered playlist this library does not have would scan
+    // nothing. The picker lists the whole library's playlists whatever
+    // the scope, so once a scan is done a missing one falls back to all
+    // tracks -- without forgetting it, since the next stick may have it.
+    // Checked a turn later, not from inside the controller's own
+    // busyChanged, and never after a cancel: a cancelled scan leaves.
+    property bool cancellingScan: false
+    function dropMissingPlaylist() {
+        if (root.cancellingScan || cleanupController.busy || root.selectedPlaylistName.length === 0
+            || cleanupController.playlistNames.indexOf(root.selectedPlaylistName) >= 0) {
+            return;
+        }
+        root.selectedPlaylistName = "";
+        root.rescanInScope();
+    }
     onFormatChanged: root.rescanInScope()
 
     function formatDuration(ms) {
@@ -262,6 +283,7 @@ Page {
                     anchors.verticalCenter: undefined
                 }
                 PlaylistPickerCombo {
+                    objectName: "playlistPicker"
                     width: Math.max(160, Math.min(260, root.width * 0.28))
                     enabled: !cleanupController.busy && !cleanupController.writing
                     model: root.playlistPickerModel
@@ -280,6 +302,7 @@ Page {
                     ToolTip.text: "Clean up one playlist instead of the whole library"
                     onPlaylistPicked: (index, modelData) => {
                         root.selectedPlaylistName = index === 0 ? "" : modelData.name;
+                        root.appSettingsController.lastPlaylistName = root.selectedPlaylistName;
                         root.rescanInScope();
                     }
                 }
@@ -673,6 +696,11 @@ Page {
     Connections {
         target: cleanupController
         function onScanCancelled() { root.StackView.view.pop(); }
+        function onBusyChanged() {
+            if (!cleanupController.busy && !root.cancellingScan) {
+                Qt.callLater(root.dropMissingPlaylist);
+            }
+        }
     }
 
     BusyOverlay {
@@ -682,6 +710,9 @@ Page {
         total: cleanupController.scanTotal
         label: "Scanning for duplicates..."
         cancellable: cleanupController.scanCancellable
-        onCancelRequested: cleanupController.cancelScan()
+        onCancelRequested: {
+            root.cancellingScan = true;
+            cleanupController.cancelScan();
+        }
     }
 }

@@ -33,6 +33,7 @@ Page {
     required property string rekordboxPath
     required property string enginePath
     required property string libraryId
+    required property var appSettingsController
     // For the source picker. Optional so the QML tests can build the
     // page without the whole media stack behind it; the picker then
     // offers the stick the page was opened on and the store, which is
@@ -135,6 +136,22 @@ Page {
 
     Component.onCompleted: root.rebuildSourceModel()
 
+    // Each stick opens on the playlist last picked on any page with a
+    // picker, when it has that playlist. The controller drops the
+    // playlist whenever the source changes, since it belonged to the one
+    // left, so this applies afresh to every source once it is read.
+    property bool rememberedPlaylistApplied: false
+    function applyRememberedPlaylist() {
+        if (root.rememberedPlaylistApplied || !controller.hasScanned || controller.browsingStore) {
+            return;
+        }
+        root.rememberedPlaylistApplied = true;
+        var wanted = root.appSettingsController.lastPlaylistName;
+        if (wanted.length > 0 && controller.playlistNames.indexOf(wanted) >= 0) {
+            controller.setPlaylist(wanted);
+        }
+    }
+
     Connections {
         target: root.mediaController && root.mediaController.sticks ? root.mediaController.sticks : null
         function onCountsChanged() { root.rebuildSourceModel(); }
@@ -142,7 +159,11 @@ Page {
 
     Connections {
         target: controller
-        function onSourceChanged() { root.rebuildSourceModel(); }
+        function onSourceChanged() {
+            root.rebuildSourceModel();
+            root.rememberedPlaylistApplied = false;
+        }
+        function onAnalysisChanged() { root.applyRememberedPlaylist(); }
     }
 
     // Which entry the combo should be showing, derived from the
@@ -394,7 +415,10 @@ Page {
                     }
                     return 0;
                 }
-                onPlaylistPicked: (index, modelData) => controller.setPlaylist(index === 0 ? "" : modelData.name)
+                onPlaylistPicked: (index, modelData) => {
+                    controller.setPlaylist(index === 0 ? "" : modelData.name);
+                    root.appSettingsController.lastPlaylistName = index === 0 ? "" : modelData.name;
+                }
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
                 ToolTip.text: "Back up one playlist instead of the whole stick"

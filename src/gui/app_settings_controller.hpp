@@ -16,8 +16,10 @@ namespace seabass::gui
 // useSystemTheme; ScanPage and DuplicatesPage bind their Rekordbox/Engine
 // mode toggle to preferredFormat, so the last-chosen format carries over
 // between those pages and across app restarts.
-// ScanPage similarly persists lastBrowsePlaylistName, so Browse Library
-// reopens on whichever playlist was last selected.
+// lastPlaylistName is the playlist last picked on any page with a playlist
+// picker -- Browse Library, Clean Up Duplicates, Clean Up Stray Cues, Sync
+// Cue Points, Metadata Backup -- and each of them opens on it, so moving
+// from one to the next keeps the scope. "" is all tracks.
 class AppSettingsController : public QObject
 {
     Q_OBJECT
@@ -35,8 +37,8 @@ class AppSettingsController : public QObject
     // "back up my Seabass data" should have a single answer.
     Q_PROPERTY(QString seabassHomeDirectory READ seabassHomeDirectory WRITE setSeabassHomeDirectory NOTIFY
                    seabassHomeDirectoryChanged)
-    Q_PROPERTY(QString lastBrowsePlaylistName READ lastBrowsePlaylistName WRITE setLastBrowsePlaylistName NOTIFY
-                   lastBrowsePlaylistNameChanged)
+    Q_PROPERTY(QString lastPlaylistName READ lastPlaylistName WRITE setLastPlaylistName NOTIFY
+                   lastPlaylistNameChanged)
     // Always present (even in a build compiled with SEABASS_EXPERIMENTAL
     // off) so QML can gate the whole Settings section on it.
     Q_PROPERTY(bool experimentalBuildSupported READ experimentalBuildSupported CONSTANT)
@@ -105,8 +107,8 @@ public:
     // user left off instead of always resetting to "All tracks". ScanPage
     // falls back to "All tracks" itself if this name no longer matches any
     // playlist on the stick currently being browsed.
-    QString lastBrowsePlaylistName() const { return m_lastBrowsePlaylistName; }
-    void setLastBrowsePlaylistName(const QString &value);
+    QString lastPlaylistName() const { return m_lastPlaylistName; }
+    void setLastPlaylistName(const QString &value);
 
     // See docs/experimental-features.md for the convention this backs:
     // new non-trivial features default to hidden behind
@@ -135,7 +137,7 @@ signals:
     void keyNotationChanged();
     void stickBackupDirectoryChanged();
     void seabassHomeDirectoryChanged();
-    void lastBrowsePlaylistNameChanged();
+    void lastPlaylistNameChanged();
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     void experimentalFeaturesEnabledChanged();
 #endif
@@ -148,7 +150,7 @@ private:
     QString m_keyNotation = QStringLiteral("camelot");
     QString m_stickBackupDirectory;
     QString m_seabassHomeDirectory;
-    QString m_lastBrowsePlaylistName;
+    QString m_lastPlaylistName;
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     bool m_experimentalFeaturesEnabled = false;
 #endif

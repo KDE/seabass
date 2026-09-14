@@ -27,6 +27,7 @@ Page {
     required property string stickLabel
     required property string rekordboxPath
     required property string enginePath
+    required property var appSettingsController
 
     LibraryConsistencyController {
         id: consistencyController
@@ -68,7 +69,35 @@ Page {
         return "DeviceLibrary";
     }
 
-    Component.onCompleted: consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName)
+    // Opens on the playlist last picked on any page with a picker.
+    Component.onCompleted: {
+        root.selectedPlaylistName = root.appSettingsController.lastPlaylistName;
+        consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
+    }
+
+    // A remembered playlist this library does not have would scan
+    // nothing. The picker lists the whole library's playlists whatever
+    // the scope, so once a scan is done a missing one falls back to all
+    // tracks -- without forgetting it, since the next stick may have it.
+    // Checked a turn later, not from inside the controller's own
+    // busyChanged. A cancel stays on this page, so it is checked then too.
+    function dropMissingPlaylist() {
+        if (consistencyController.busy || root.selectedPlaylistName.length === 0
+            || consistencyController.playlistNames.indexOf(root.selectedPlaylistName) >= 0) {
+            return;
+        }
+        root.selectedPlaylistName = "";
+        consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
+    }
+
+    Connections {
+        target: consistencyController
+        function onBusyChanged() {
+            if (!consistencyController.busy) {
+                Qt.callLater(root.dropMissingPlaylist);
+            }
+        }
+    }
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
@@ -103,6 +132,7 @@ Page {
                 color: Theme.textMuted
             }
             PlaylistPickerCombo {
+                objectName: "playlistPicker"
                 Layout.minimumWidth: 140
                 model: root.playlistPickerModel
                 currentIndex: {
@@ -120,6 +150,7 @@ Page {
                 ToolTip.text: "Scope Clean Up Stray Cues to one playlist instead of the whole library"
                 onPlaylistPicked: (index, modelData) => {
                     root.selectedPlaylistName = index === 0 ? "" : modelData.name;
+                    root.appSettingsController.lastPlaylistName = root.selectedPlaylistName;
                     consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
                 }
             }
