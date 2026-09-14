@@ -370,39 +370,74 @@ void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doom
     std::string doomedContentPath = toContentPath(m_stickRoot, doomedFilePath);
     std::string survivorContentPath = toContentPath(m_stickRoot, survivorFilePath);
     SqlCipherDb &db = writeConnection();
+
+    // Every row at the doomed path, not the first: a real
+    // exportLibrary.db can list one file under two content rows (193
+    // files on RV2), and removing one of them left the file listed --
+    // which the old count-by-path verification then reported as a
+    // failure after the removal had already been committed.
+    std::vector<int64_t> doomedIds;
     {
-
-        int64_t doomedId = -1;
-        {
-            SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-            find.bindText(1, doomedContentPath);
-            if (!find.step()) {
-                throw std::runtime_error("onelibrary: no content row for path " + doomedContentPath);
-            }
-            doomedId = find.columnInt64(0);
+        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
+        find.bindText(1, doomedContentPath);
+        while (find.step()) {
+            doomedIds.push_back(find.columnInt64(0));
         }
-        int64_t survivorId = -1;
-        {
-            SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
-            find.bindText(1, survivorContentPath);
-            if (!find.step()) {
-                throw std::runtime_error("onelibrary: no content row for path " + survivorContentPath);
-            }
-            survivorId = find.columnInt64(0);
+    }
+    if (doomedIds.empty()) {
+        throw std::runtime_error("onelibrary: no content row for path " + doomedContentPath);
+    }
+    // Any one of the survivor's rows will do to repoint playlists at.
+    int64_t survivorId = -1;
+    {
+        SqlCipherStatement find(db, "SELECT content_id FROM content WHERE path = ?");
+        find.bindText(1, survivorContentPath);
+        if (!find.step()) {
+            throw std::runtime_error("onelibrary: no content row for path " + survivorContentPath);
         }
+        survivorId = find.columnInt64(0);
+    }
 
+    for (int64_t doomedId : doomedIds) {
+        removeTrackByIdReplacingWith(doomedId, survivorId);
+    }
+}
+
+void OneLibraryCueWriter::removeTrackByIdReplacingWith(int64_t doomedContentId, int64_t survivorContentId)
+{
+    checkNotStale();
+    if (doomedContentId == survivorContentId) {
+        throw std::runtime_error("onelibrary: refusing to replace content row id=" + std::to_string(doomedContentId)
+                                 + " with itself");
+    }
+
+    auto rowExists = [](SqlCipherDb &db, int64_t contentId) {
+        SqlCipherStatement count(db, "SELECT count(*) FROM content WHERE content_id = ?");
+        count.bindInt64(1, contentId);
+        count.step();
+        return count.columnInt64(0) == 1;
+    };
+
+    SqlCipherDb &db = writeConnection();
+    if (!rowExists(db, doomedContentId)) {
+        throw std::runtime_error("onelibrary: no content row id=" + std::to_string(doomedContentId));
+    }
+    if (!rowExists(db, survivorContentId)) {
+        throw std::runtime_error("onelibrary: no content row id=" + std::to_string(survivorContentId));
+    }
+    {
         db.exec("BEGIN IMMEDIATE;");
         try {
             {
                 SqlCipherStatement delBank(db,
                                             "DELETE FROM hotCueBankList_cue WHERE cue_id IN "
                                             "(SELECT cue_id FROM cue WHERE content_id = ?)");
-                delBank.bindInt64(1, doomedId);
+                delBank.bindInt64(1, doomedContentId);
                 delBank.run();
             }
             {
                 SqlCipherStatement delCue(db, "DELETE FROM cue WHERE content_id = ?");
-                delCue.bindInt64(1, doomedId);
+                delCue.bindInt64(1, doomedContentId);
                 delCue.run();
             }
             {
@@ -417,22 +452,22 @@ void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doom
                                              "UPDATE playlist_content SET content_id = ? WHERE content_id = ? "
                                              "AND playlist_id NOT IN "
                                              "(SELECT playlist_id FROM playlist_content WHERE content_id = ?)");
-                reassign.bindInt64(1, survivorId);
-                reassign.bindInt64(2, doomedId);
-                reassign.bindInt64(3, survivorId);
+                reassign.bindInt64(1, survivorContentId);
+                reassign.bindInt64(2, doomedContentId);
+                reassign.bindInt64(3, survivorContentId);
                 reassign.run();
             }
             {
-                // Whatever's left under doomedId at this point is exactly
+                // Whatever's left under doomedContentId at this point is exactly
                 // the memberships the UPDATE above skipped (survivor
                 // already had them) -- safe to drop outright now.
                 SqlCipherStatement delPlaylist(db, "DELETE FROM playlist_content WHERE content_id = ?");
-                delPlaylist.bindInt64(1, doomedId);
+                delPlaylist.bindInt64(1, doomedContentId);
                 delPlaylist.run();
             }
             {
                 SqlCipherStatement delContent(db, "DELETE FROM content WHERE content_id = ?");
-                delContent.bindInt64(1, doomedId);
+                delContent.bindInt64(1, doomedContentId);
                 delContent.run();
             }
             db.exec("COMMIT;");
@@ -443,29 +478,21 @@ void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doom
             }
             throw;
         }
-    }  // db closed here
+    }
 
     // Correctness verification: re-open fresh and confirm the doomed row
     // is gone AND the survivor's own row still exists (a broken
     // survivor-lookup above would otherwise silently produce a no-op
     // reassignment followed by a real deletion, losing memberships
-    // instead of moving them).
+    // instead of moving them). By id, never by path: a path can name
+    // more than one row, and counting by it failed a removal that had
+    // worked.
     SqlCipherDb &verifyDb = verifyConnection();
-    {
-        SqlCipherStatement verify(verifyDb, "SELECT count(*) FROM content WHERE path = ?");
-        verify.bindText(1, doomedContentPath);
-        verify.step();
-        if (verify.columnInt64(0) != 0) {
-            throw std::runtime_error("onelibrary: post-removal verification failed, content row still present");
-        }
+    if (rowExists(verifyDb, doomedContentId)) {
+        throw std::runtime_error("onelibrary: post-removal verification failed, content row still present");
     }
-    {
-        SqlCipherStatement verify(verifyDb, "SELECT count(*) FROM content WHERE path = ?");
-        verify.bindText(1, survivorContentPath);
-        verify.step();
-        if (verify.columnInt64(0) != 1) {
-            throw std::runtime_error("onelibrary: post-removal verification failed, survivor content row missing");
-        }
+    if (!rowExists(verifyDb, survivorContentId)) {
+        throw std::runtime_error("onelibrary: post-removal verification failed, survivor content row missing");
     }
 
     refreshStalenessBaseline();

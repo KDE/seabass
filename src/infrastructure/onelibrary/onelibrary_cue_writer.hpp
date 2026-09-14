@@ -118,6 +118,12 @@ public:
     // (playlist, survivor) pair.
     void removeTrackByPathReplacingWith(const std::string &doomedFilePath, const std::string &survivorFilePath);
 
+    // The same removal for one content row, named by id. What a caller
+    // holding row ids (Clean Up, whose plan was read from this database)
+    // must use: a path can name more than one row, so resolving an id
+    // back through its path picks whichever row SQLite returns first.
+    void removeTrackByIdReplacingWith(int64_t doomedContentId, int64_t survivorContentId);
+
     // Writes the two authored fields that are not cues: the rating in
     // stars (0 to 5, the scale domain::Track uses) and the DJ's own
     // comment. Either may be absent, and an absent one is left alone

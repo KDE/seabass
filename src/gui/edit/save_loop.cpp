@@ -62,6 +62,13 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         if (!outcome.ok) {
             result.failedId = change->id();
             result.error = outcome.error.isEmpty() ? QStringLiteral("failed") : outcome.error;
+            // The page shows this once and forgets it; the stick's own log
+            // is what is left to read afterwards, next to whatever the
+            // change had already written before it failed.
+            if (!ctx.rekordboxPath().isEmpty() || !ctx.enginePath().isEmpty()) {
+                ctx.log().record("save: stopped at \"" + change->description().toStdString()
+                                 + "\": " + result.error.toStdString());
+            }
             break;
         }
         result.appliedIds << change->id();

@@ -94,8 +94,7 @@ CleanupFormatContext makeContext(const QString &format, const QString &path,
         std::string realStickRoot = fs::path(pioneerRoot).parent_path().string();
         ctx.cueWriter =
             std::make_unique<OneLibraryCueWriterAdapter>(effectivePath, oneLibrarySourceIdToPath, realStickRoot);
-        ctx.cleanupWriter = std::make_unique<OneLibraryCleanupWriterAdapter>(effectivePath, oneLibrarySourceIdToPath,
-                                                                             realStickRoot);
+        ctx.cleanupWriter = std::make_unique<OneLibraryCleanupWriterAdapter>(effectivePath, realStickRoot);
     }
     return ctx;
 }
@@ -585,17 +584,21 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             // loop, by recordStrayFilesForDeletion().
             continue;
         }
-        const std::string doomedId = domain::rowIdIn(doomed, primaryFormat);
-        if (doomedId.empty()) {
+        // Every row this copy has in the page's catalog: one file can be
+        // listed twice in the same database (exportLibrary.db does it).
+        const std::vector<std::string> doomedIds = domain::rowIdsIn(doomed, primaryFormat);
+        if (doomedIds.empty()) {
             // This copy has no row in the page's catalog (it was read from
             // another one); its own catalog's removal happens in the
             // per-catalog loop below.
             continue;
         }
-        fc.cleanupWriter->removeTrackReplacingWith(doomedId, survivorId);
-        w.session.noteItemApplied();
-        log.record("cleanup: removed duplicate track id=" + doomedId + " (\"" + doomed.title
-                   + "\"), replaced by survivor id=" + survivorId);
+        for (const std::string &doomedId : doomedIds) {
+            fc.cleanupWriter->removeTrackReplacingWith(doomedId, survivorId);
+            w.session.noteItemApplied();
+            log.record("cleanup: removed duplicate track id=" + doomedId + " (\"" + doomed.title
+                       + "\"), replaced by survivor id=" + survivorId);
+        }
 
         // Best-effort OneLibrary mirror. Without this, the doomed
         // track's own OneLibrary row is left pointing at a file this

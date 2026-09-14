@@ -205,6 +205,13 @@ CatalogWriteTargets writeTargetsFor(const DuplicateCleanupPlan &plan, const std:
 // rows densely from 1, so a wrong-format id silently hits another track.
 std::string rowIdIn(const Track &track, const std::string &format);
 
+// Every row id the track has in `format`, in catalogRows order; the same
+// fallback to its own sourceId as rowIdIn(). More than one when a catalog
+// lists the same file twice -- exportLibrary.db does, for 193 files on
+// one real stick -- and removing a file means removing all of them, or
+// the catalog still lists it.
+std::vector<std::string> rowIdsIn(const Track &track, const std::string &format);
+
 // False when this catalog has rows to remove but no row for the survivor
 // to repoint at. Removing them anyway would drop the doomed rows'
 // playlist entries on the floor, or repoint them at an id this catalog

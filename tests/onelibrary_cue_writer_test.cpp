@@ -768,6 +768,70 @@ int main()
         std::cout << "case: writePlayCountForPath sets djPlayCount OK\n";
     }
 
+    // One file under two content rows, as a real exportLibrary.db has it
+    // (193 files on RV2). Clean Up removed one of the doomed file's rows
+    // and then failed its own verification, because that counted rows by
+    // path: the doomed path still had one, the survivor's had two. The
+    // removal had already been committed. By id, the named row goes and
+    // nothing else does; by path, every row at the doomed path goes.
+    {
+        fs::path scratch = freshScratch();
+        fs::path pioneerRoot = scratch / "PIONEER";
+        createFixture(pioneerRoot.string());
+        auto seed = [&]() {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot.string()), /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec("DELETE FROM content; DELETE FROM playlist_content;");
+            db.exec("INSERT INTO content (content_id, title, path) VALUES "
+                    "(1, 'Doomed', '/Contents/Test Track.mp3'), (3, 'Doomed', '/Contents/Test Track.mp3'), "
+                    "(2, 'Survivor', '/Contents/Survivor Track.mp3'), (4, 'Survivor', '/Contents/Survivor Track.mp3');");
+            db.exec("INSERT INTO playlist_content (content_id, playlist_id, sequenceNo) VALUES (3, 99, 0);");
+        };
+        auto remaining = [&]() {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot.string()), /*readOnly=*/true);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            std::vector<int64_t> ids;
+            SqlCipherStatement rows(db, "SELECT content_id FROM content ORDER BY content_id");
+            while (rows.step()) {
+                ids.push_back(rows.columnInt64(0));
+            }
+            SqlCipherStatement moved(db, "SELECT count(*) FROM playlist_content WHERE content_id = 2 AND playlist_id = 99");
+            moved.step();
+            return std::make_pair(ids, moved.columnInt64(0));
+        };
+
+        seed();
+        {
+            OneLibraryCueWriter writer(pioneerRoot.string());
+            writer.removeTrackByIdReplacingWith(3, 2);  // by path this threw "survivor content row missing"
+        }
+        auto [afterId, movedById] = remaining();
+        assert((afterId == std::vector<int64_t>{1, 2, 4}));
+        assert(movedById == 1);
+
+        seed();
+        {
+            OneLibraryCueWriter writer(pioneerRoot.string());
+            writer.removeTrackByPathReplacingWith((scratch / "Contents" / "Test Track.mp3").string(),
+                                                  (scratch / "Contents" / "Survivor Track.mp3").string());
+        }
+        auto [afterPath, movedByPath] = remaining();
+        assert((afterPath == std::vector<int64_t>{2, 4}));
+        assert(movedByPath == 1);
+
+        bool threw = false;
+        try {
+            OneLibraryCueWriter writer(pioneerRoot.string());
+            writer.removeTrackByIdReplacingWith(2, 2);
+        } catch (const std::exception &) {
+            threw = true;
+        }
+        assert(threw);
+        std::cout << "case: a file listed under two content rows is removed by id, and wholly by path OK\n";
+    }
+
     std::cout << "All onelibrary_cue_writer_test cases passed.\n";
     return 0;
 }

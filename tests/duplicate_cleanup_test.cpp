@@ -626,6 +626,25 @@ int main()
         std::cout << "case 24 (a collapsed file answers with each catalog's own ids) OK\n";
     }
 
+    // One catalog listing the doomed file twice, as exportLibrary.db
+    // does. Both rows are the file's, so both go; removing only the first
+    // left the file listed in Device Library Plus.
+    {
+        DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 128, 3'000'000)}};
+        group.tracks[0].format = "rekordbox";
+        group.tracks[0].catalogRows = {{"rekordbox", "rb-keep"}, {"onelibrary", "ol-keep"}, {"onelibrary", "ol-keep-2"}};
+        group.tracks[1].format = "rekordbox";
+        group.tracks[1].catalogRows = {{"rekordbox", "rb-drop"}, {"onelibrary", "ol-drop"}, {"onelibrary", "ol-drop-2"}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+
+        auto onelibrary = writeTargetsFor(plan, "onelibrary");
+        assert(onelibrary.survivorSourceId == "ol-keep");
+        assert((onelibrary.doomedSourceIds == std::vector<std::string>{"ol-drop", "ol-drop-2"}));
+        assert((rowIdsIn(plan.toRemove[0], "onelibrary") == std::vector<std::string>{"ol-drop", "ol-drop-2"}));
+        assert(rowIdsIn(plan.toRemove[0], "engine").empty());
+        std::cout << "case 24b (a file listed twice in one catalog has both rows removed) OK\n";
+    }
+
     // The unsafe shape: the doomed copy has an Engine row, the survivor
     // does not. Engine cannot be written -- there is no id to repoint its
     // playlists at -- and the planner must already have refused the whole

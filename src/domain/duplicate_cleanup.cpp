@@ -309,6 +309,20 @@ std::string rowIdIn(const Track &track, const std::string &format)
     return {};
 }
 
+std::vector<std::string> rowIdsIn(const Track &track, const std::string &format)
+{
+    std::vector<std::string> ids;
+    for (const auto &row : track.catalogRows) {
+        if (row.format == format) {
+            ids.push_back(row.sourceId);
+        }
+    }
+    if (ids.empty() && track.format == format) {
+        ids.push_back(track.sourceId);
+    }
+    return ids;
+}
+
 CatalogWriteTargets writeTargetsFor(const DuplicateCleanupPlan &plan, const std::string &format)
 {
     CatalogWriteTargets targets;
@@ -320,9 +334,8 @@ CatalogWriteTargets writeTargetsFor(const DuplicateCleanupPlan &plan, const std:
         if (doomed.isUnreferenced) {
             continue;
         }
-        std::string id = rowIdIn(doomed, format);
-        if (!id.empty()) {
-            targets.doomedSourceIds.push_back(id);
+        for (std::string &id : rowIdsIn(doomed, format)) {
+            targets.doomedSourceIds.push_back(std::move(id));
         }
     }
     return targets;

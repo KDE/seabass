@@ -123,32 +123,25 @@ class OneLibraryCleanupWriterAdapter : public application::LibraryCleanupWriter
 {
 public:
     // realStickRoot: see OneLibraryCueWriterAdapter's own comment above.
-    OneLibraryCleanupWriterAdapter(std::string pioneerRoot,
-                                    std::unordered_map<std::string, std::string> sourceIdToPath,
-                                    std::optional<std::string> realStickRoot = std::nullopt)
-        : m_pioneerRoot(std::move(pioneerRoot)),
-          m_sourceIdToPath(std::move(sourceIdToPath)),
-          m_realStickRoot(std::move(realStickRoot))
+    explicit OneLibraryCleanupWriterAdapter(std::string pioneerRoot,
+                                            std::optional<std::string> realStickRoot = std::nullopt)
+        : m_pioneerRoot(std::move(pioneerRoot)), m_realStickRoot(std::move(realStickRoot))
     {
     }
 
+    // A OneLibrary source id IS its content_id, so removal goes by id and
+    // never through the file path: exportLibrary.db can list one file
+    // under two content rows, and resolving an id back through its path
+    // removed whichever of them came first -- then failed the save when
+    // the file was still listed.
     void removeTrackReplacingWith(const std::string &doomedTrackId, const std::string &survivorTrackId) override
     {
-        auto doomedIt = m_sourceIdToPath.find(doomedTrackId);
-        if (doomedIt == m_sourceIdToPath.end()) {
-            throw std::runtime_error("onelibrary: no known file path for source id=" + doomedTrackId);
-        }
-        auto survivorIt = m_sourceIdToPath.find(survivorTrackId);
-        if (survivorIt == m_sourceIdToPath.end()) {
-            throw std::runtime_error("onelibrary: no known file path for source id=" + survivorTrackId);
-        }
         infrastructure::onelibrary::OneLibraryCueWriter writer(m_pioneerRoot, m_realStickRoot);
-        writer.removeTrackByPathReplacingWith(doomedIt->second, survivorIt->second);
+        writer.removeTrackByIdReplacingWith(std::stoll(doomedTrackId), std::stoll(survivorTrackId));
     }
 
 private:
     std::string m_pioneerRoot;
-    std::unordered_map<std::string, std::string> m_sourceIdToPath;
     std::optional<std::string> m_realStickRoot;
 };
 
