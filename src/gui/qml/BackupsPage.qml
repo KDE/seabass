@@ -270,7 +270,10 @@ Page {
                         objectName: "browseButton"
                         Layout.alignment: Qt.AlignVCenter
                         text: "Browse"
-                        enabled: backupRow.readable && root.controller.deleting !== true
+                        // Not while listing either: leaving the page waits for
+                        // the listing to finish, which on a slow disk would
+                        // freeze the window on the way to Home.
+                        enabled: backupRow.readable && root.controller.deleting !== true && root.controller.listing !== true
                         ToolTip.visible: hovered
                         ToolTip.text: "Open this backup on the Home page like a stick, without unpacking it. Read-only."
                         onClicked: root.browseRequested(backupRow.modelData.archivePath)

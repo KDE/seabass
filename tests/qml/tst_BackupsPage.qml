@@ -146,6 +146,12 @@ TestCase {
         compare(findChild(row(page, 1), "deleteButton").enabled, true);
     }
 
+    function test_browseWaitsForTheListing() {
+        var page = makePage(makeController({listing: true}));
+        compare(findChild(row(page, 0), "browseButton").enabled, false,
+                "leaving mid-listing would block on it, so Browse waits");
+    }
+
     function test_browseHandsTheArchiveOn() {
         var page = makePage(makeController());
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "browseRequested"});

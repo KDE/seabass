@@ -105,6 +105,13 @@ TestCase {
         var newestSpy = createTemporaryObject(spyComponent, testCase, {target: newest, signalName: "manageBackupsRequested"});
         findChild(newest, "manageBackupsCard").clicked();
         compare(newestSpy.signalArguments[0][1], "", "the newest backup of anything is not this stick's");
+
+        // Nor is a backup of another stick that merely has the same label.
+        advice["/media/MAIN"].matchedBy = "label";
+        var byLabel = makePage(advice);
+        var labelSpy = createTemporaryObject(spyComponent, testCase, {target: byLabel, signalName: "manageBackupsRequested"});
+        findChild(byLabel, "manageBackupsCard").clicked();
+        compare(labelSpy.signalArguments[0][1], "", "a label match is not enough to mark a backup as this stick's");
     }
 
     function test_updateFromPeerStickOpensTheClonePage() {

@@ -70,11 +70,15 @@ Page {
     }
     // Coming back from Manage Backups (or a backup): a deleted or new
     // archive makes the advice stale -- the Full Stick Backup card and the
-    // backup handed on to Manage Backups both come from it.
+    // backup handed on to Manage Backups both come from it. Not on the first
+    // activation: Home reassessed just before pushing this page, and doing it
+    // again would re-read every stick alongside whatever is clicked next.
+    property bool shownBefore: false
     StackView.onActivated: {
-        if (root.backupAdvisor !== null && typeof root.backupAdvisor.reassessAll === "function") {
+        if (root.shownBefore && root.backupAdvisor !== null && typeof root.backupAdvisor.reassessAll === "function") {
             root.backupAdvisor.reassessAll();
         }
+        root.shownBefore = true;
         root.refreshLocks();
     }
 
@@ -84,10 +88,12 @@ Page {
         ? (root.backupAdvisor.advice[root.mountPoint] || null) : null
     // A newer copy of this stick's library somewhere else -- see
     // BackupAdvisorController's advice map.
-    // The full backup the advisor matched to this stick. "newest" is only
-    // the most recent backup of anything, not this stick's.
+    // The full backup the advisor matched to this stick, by its library or
+    // its hardware. Not "label": two sticks called NO NAME would put the
+    // other one's backup first, marked "This stick", next to Delete. Not
+    // "newest" either: that is only the most recent backup of anything.
     readonly property string currentArchivePath: root.advice && root.advice.backupPath
-        && ["fingerprint", "identifier", "label"].indexOf(root.advice.matchedBy) >= 0 ? root.advice.backupPath : ""
+        && ["fingerprint", "identifier"].indexOf(root.advice.matchedBy) >= 0 ? root.advice.backupPath : ""
     readonly property var updateSource: root.advice && root.advice.updateSource && root.advice.updateSource.kind !== "none"
         ? root.advice.updateSource : null
 
