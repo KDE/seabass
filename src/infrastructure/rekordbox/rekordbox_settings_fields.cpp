@@ -255,6 +255,12 @@ const std::vector<SettingsFieldDescriptor> &allSettingsFields()
     return fields;
 }
 
+bool isOffOnSwitch(const std::vector<SettingsFieldOption> &options, const std::string &currentValue)
+{
+    return options.size() == 2 && options[0].name == "off" && options[1].name == "on"
+        && (currentValue == "off" || currentValue == "on");
+}
+
 size_t settingsDataSizeFor(const std::string &fileName)
 {
     return fileName == "DJMMYSETTING.DAT" ? 52 : 40;

@@ -125,6 +125,42 @@ int main()
         std::cout << "case 4 (every field has a known category and an explanation, every category a field) OK\n";
     }
 
+    // A switch only where it can tell the truth. The review finding this
+    // guards: an off/on field holding an unrecognised byte decodes as
+    // "unknown (0x..)", and a switch drew that as "off".
+    {
+        const std::vector<SettingsFieldOption> offOn = {{0x80, "off"}, {0x81, "on"}};
+        assert(isOffOnSwitch(offOn, "off"));
+        assert(isOffOnSwitch(offOn, "on"));
+        assert(!isOffOnSwitch(offOn, "unknown (0x82)"));
+        assert(!isOffOnSwitch({{0x80, "unlock"}, {0x81, "lock"}}, "lock"));
+        assert(!isOffOnSwitch({{0x80, "off"}, {0x81, "dark"}, {0x82, "bright"}}, "off"));
+        std::cout << "case 5 (a switch only for off/on values the stick actually holds) OK\n";
+    }
+
+    // And the unknown byte is named in the hex the label promises, read
+    // back through the real decoder.
+    {
+        std::filesystem::path dir = seabass::testing::scratchRoot() / "seabass_settings_test5";
+        std::filesystem::create_directories(dir);
+        {
+            auto bytes = makeMySettingBytes();
+            bytes[104 + 10] = 0x82;  // Quantize: off/on field, byte outside both
+            std::ofstream ofs(dir / "MYSETTING.DAT", std::ofstream::binary | std::ofstream::trunc);
+            ofs.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+        bool found = false;
+        for (const auto &[label, value] : readDeviceSettings(dir.string())[0].fields) {
+            if (label == "Quantize") {
+                assert(value == "unknown (0x82)");
+                found = true;
+            }
+        }
+        assert(found);
+        std::cout << "case 6 (an unrecognised byte is shown in hex) OK\n";
+        std::filesystem::remove_all(dir);
+    }
+
     std::cout << "All rekordbox_settings_test cases passed.\n";
     return 0;
 }

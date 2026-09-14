@@ -42,6 +42,15 @@ struct SettingsFieldDescriptor
     std::string explanation;
 };
 
+// Whether a field is shown as a switch: its values are exactly "off" then
+// "on", AND the stick currently holds one of them. The second half matters.
+// A byte outside every known option decodes as "unknown (0x..)", and a
+// switch has no way to show that -- it would draw "off", claiming a state
+// the stick does not hold, and a click would stage "on" over a value
+// nobody has seen. Such a field keeps its drop-down, which shows no
+// selection at all.
+bool isOffOnSwitch(const std::vector<SettingsFieldOption> &options, const std::string &currentValue);
+
 // Every category allSettingsFields() uses, in the order the page shows
 // them: the player first, then the mixer, each from what you reach for
 // most to what you set once.

@@ -71,11 +71,10 @@ QVariantList buildGroups(const QString &pioneerRoot, QString *errorMessage)
                     options << QString::fromStdString(option.name);
                 }
                 fieldMap["options"] = options;
-                // Exactly off and on, in that order, and nothing else. A
-                // switch cannot show "dark", and a lock/unlock pair reads
-                // as a choice between two named states rather than as a
-                // setting being on or off, so those stay drop-downs.
-                fieldMap["isSwitch"] = options == QStringList{QStringLiteral("off"), QStringLiteral("on")};
+                // Exactly off and on, and only while the stick holds one
+                // of them -- see isOffOnSwitch(). A lock/unlock pair is a
+                // choice between named states and stays a drop-down.
+                fieldMap["isSwitch"] = rb::isOffOnSwitch(descriptor->options, value);
 
                 fieldsByCategory[descriptor->category] << fieldMap;
             }

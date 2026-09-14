@@ -25,7 +25,10 @@ std::string decodeField(uint8_t byteValue, const std::vector<SettingsFieldOption
             return option.name;
         }
     }
-    return "unknown (0x" + std::to_string(byteValue) + ")";
+    // Hex, as the label says. std::to_string printed decimal behind the
+    // "0x", so a 0x82 on the stick read as "unknown (0x130)" on the page.
+    static const char digits[] = "0123456789ABCDEF";
+    return std::string("unknown (0x") + digits[byteValue >> 4] + digits[byteValue & 0x0F] + ")";
 }
 
 // Reads one settings file if it exists and is the expected size, decoding
