@@ -21,6 +21,7 @@
 #include <iterator>
 #include <memory>
 #include <sstream>
+#include <system_error>
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
@@ -98,6 +99,27 @@ int64_t cueCount(const fs::path &dbPath, int64_t contentId)
 
 }  // namespace
 
+// A case's scratch stick: emptied when the case starts, removed when its
+// block ends. Declared first in the block so it is destroyed last -- after
+// the SaveContext, whose operation log keeps Seabass/seabass.log open for
+// as long as it lives. POSIX removes an open file; Windows refuses ("used
+// by another process"), and a remove_all() inside the block threw there.
+struct ScratchStick
+{
+    fs::path path;
+    explicit ScratchStick(fs::path p) : path(std::move(p)) { fs::remove_all(path); }
+    ~ScratchStick()
+    {
+        std::error_code ec;
+        fs::remove_all(path, ec);
+        if (ec) {
+            std::cerr << "warning: could not remove " << path.string() << ": " << ec.message() << "\n";
+        }
+    }
+    ScratchStick(const ScratchStick &) = delete;
+    ScratchStick &operator=(const ScratchStick &) = delete;
+};
+
 int main()
 {
     auto &noProgress = application::NullProgressReporter::instance();
@@ -106,8 +128,8 @@ int main()
     //    the failing one's writes are undone, including a file it created
     //    and one it wrote without declaring (protected on the way).
     {
-        fs::path stick = seabass::testing::scratchRoot() / "seabass_failed_change_rollback_plain";
-        fs::remove_all(stick);
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_plain");
+        const fs::path &stick = scratch.path;
         fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
         fs::path anlz = stick / "PIONEER" / "USBANLZ" / "P001" / "ANLZ0000.EXT";
         fs::path extra = stick / "PIONEER" / "USBANLZ" / "P002" / "ANLZ0000.EXT";
@@ -143,14 +165,13 @@ int main()
         assert(read(extra) == "extra-original");
         assert(!fs::exists(created));
         assert(read(stick / "Seabass" / "seabass.log").find("put back 4 file(s)") != std::string::npos);
-        fs::remove_all(stick);
         std::cout << "case 1 (a failed change's writes are put back, earlier changes kept) OK\n";
     }
 
     // 2. A change that throws is rolled back the same way.
     {
-        fs::path stick = seabass::testing::scratchRoot() / "seabass_failed_change_rollback_throw";
-        fs::remove_all(stick);
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_throw");
+        const fs::path &stick = scratch.path;
         fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
         write(pdb, "pdb-original");
         CancellationToken token;
@@ -165,7 +186,6 @@ int main()
         auto result = runSaveLoop(changes, ctx);
         assert(result.appliedIds.isEmpty() && result.error == "boom");
         assert(read(pdb) == "pdb-original");
-        fs::remove_all(stick);
         std::cout << "case 2 (a throwing change is put back too) OK\n";
     }
 
@@ -173,8 +193,8 @@ int main()
     //    the commit at the end must carry the first change and not the
     //    second, and say it applied one update, not two.
     {
-        fs::path stick = seabass::testing::scratchRoot() / "seabass_failed_change_rollback_scratch";
-        fs::remove_all(stick);
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_scratch");
+        const fs::path &stick = scratch.path;
         fs::path engineLibrary = stick / "Engine Library";
         fs::path mdb = engineLibrary / "Database2" / "m.db";
         write(mdb, std::string(1 << 20, 'o'));
@@ -203,7 +223,6 @@ int main()
         assert(read(mdb) == std::string(1 << 20, 'a'));
         const std::string log = read(stick / "Seabass" / "seabass.log");
         assert(log.find("committed the engine scratch copy (1 update(s))") != std::string::npos);
-        fs::remove_all(stick);
         std::cout << "case 3 (a scratch copy commits the changes that landed, not the one that failed) OK\n";
     }
 
@@ -212,8 +231,8 @@ int main()
     //    change's WAL frames straight back in, so this is the case that
     //    proves the writers are closed first.
     {
-        fs::path stick = seabass::testing::scratchRoot() / "seabass_failed_change_rollback_wal";
-        fs::remove_all(stick);
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_wal");
+        const fs::path &stick = scratch.path;
         fs::path pioneer = stick / "PIONEER";
         fs::create_directories(pioneer / "rekordbox");
         const fs::path dbPath = OneLibraryCueWriter::dbPathFor(pioneer.string());
@@ -250,7 +269,6 @@ int main()
         assert(result.appliedIds == QStringList{"a"});
         assert(cueCount(dbPath, 1) == 2);
         assert(cueCount(dbPath, 2) == 0);
-        fs::remove_all(stick);
         std::cout << "case 4 (a WAL database is put back with its writer closed first) OK\n";
     }
 
