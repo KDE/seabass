@@ -89,10 +89,26 @@ public:
     static CrossSourceConflictSplit detect(const std::vector<SyncPlan> &actionablePlans);
 
     // Moves every plan whose two sides have different hot cues out of
-    // `plans` and returns one samePair conflict for each. A choice for the
-    // DJ, never a plan to apply: see SyncPlan::hotCuesNeedChoice. Run before
-    // detect(), so a plan waiting on a choice cannot also be collapsed or
-    // grouped with another pair's proposal.
+    // `plans` and returns one samePair conflict for each file. A choice for
+    // the DJ, never a plan to apply: see SyncPlan::hotCuesNeedChoice. Run
+    // before detect(), so a plan waiting on a choice cannot also be collapsed
+    // or grouped with another pair's proposal.
+    //
+    // Two rules keyed on the file, because rekordbox, OneLibrary and Engine
+    // rows naming one file are one track:
+    //
+    // - One choice per file. rekordbox and OneLibrary are one library in two
+    //   formats, so an Engine track whose hot cues differ from rekordbox's
+    //   raises a choice in both the rekordbox<->Engine and the
+    //   Engine<->OneLibrary pair. Two independent picks for one track can
+    //   swap its hot cues rather than settle them, so only the rekordbox
+    //   choice is kept -- writing rekordbox mirrors into OneLibrary anyway.
+    //   A OneLibrary choice stays when nothing else raised one for that file.
+    //
+    // - Nothing else touches a file while its choice is open. Every other
+    //   plan naming that file, in any format, is held back too, so Stage All
+    //   cannot write to a track before the DJ has decided about it. They
+    //   come back on the analysis after the choice is saved.
     static std::vector<CrossSourceSyncConflict> takeHotCueChoices(std::vector<SyncPlan> &plans);
 };
 

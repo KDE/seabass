@@ -910,7 +910,15 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     }
 
     if (toEngine.empty() && toRekordbox.empty() && toOneLibrary.empty()) {
-        Console::info("  nothing to sync -- matched tracks' cues are already consistent (or empty on both sides).");
+        // "Consistent" only when it is. Tracks waiting on a hot cue choice
+        // are not consistent -- they were just listed as disagreeing -- and a
+        // last line saying otherwise is what a reader, or a script, keeps.
+        if (needChoice.empty()) {
+            Console::info("  nothing to sync -- matched tracks' cues are already consistent (or empty on both sides).");
+        } else {
+            Console::info("  nothing else to sync. " + std::to_string(needChoice.size())
+                          + " track(s) above still disagree and need a choice in the app.");
+        }
         return 0;
     }
 

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <string>
 #include <iostream>
 
 #include "domain/cross_source_sync_conflict.hpp"
@@ -175,6 +176,67 @@ int main()
         assert(choices[0].cuesFromA.front().positionMs == 1000.0 && "choosing A writes A's hot cues onto B");
         assert(choices[0].cuesFromB.front().positionMs == 5000.0 && "choosing B writes B's hot cues onto A");
         std::cout << "case hot-cue-choice (a same-pair hot cue conflict becomes a choice, not a plan) OK\n";
+    }
+
+    // The fourth review's finding: on a three-format stick one Engine track
+    // whose hot cues differ from rekordbox's raises a choice in BOTH pairs
+    // (rekordbox<->Engine and Engine<->OneLibrary). Two picks for one track
+    // could swap its hot cues, so it is one card -- the rekordbox one -- and
+    // any other plan for that file waits until the choice is made.
+    {
+        using seabass::domain::CuePoint;
+        using seabass::domain::SyncPlan;
+        const std::string file = "/media/RV2/Contents/song.mp3";
+        const auto track = [&](const std::string &format, const std::string &id, const std::string &path) {
+            seabass::domain::Track t;
+            t.format = format;
+            t.sourceId = id;
+            t.filePath = path;
+            return t;
+        };
+        const auto choiceBetween = [&](const seabass::domain::Track &a, const seabass::domain::Track &b) {
+            SyncPlan p;
+            p.kind = SyncPlan::Kind::Conflict;
+            p.hotCuesNeedChoice = true;
+            p.match.trackA = a;
+            p.match.trackB = b;
+            p.direction = SyncPlan::Direction::ToB;
+            p.cuesIfAWins = {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""}};
+            p.cuesIfBWins = {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "", ""}};
+            return p;
+        };
+        // Pair order as the controller builds them: rekordbox<->Engine, then Engine<->OneLibrary.
+        SyncPlan viaRekordbox = choiceBetween(track("rekordbox", "r1", file), track("engine", "e1", file));
+        SyncPlan viaOneLibrary = choiceBetween(track("engine", "e1", file), track("onelibrary", "o1", file));
+        // A memory-only plan for the same file, which Stage All must not
+        // write before the choice is made.
+        SyncPlan sameFileOther;
+        sameFileOther.kind = SyncPlan::Kind::Conflict;
+        sameFileOther.direction = SyncPlan::Direction::ToB;
+        sameFileOther.match.trackA = track("engine", "e1", file);
+        sameFileOther.match.trackB = track("onelibrary", "o1", file);
+        // And one for another file entirely, which stays.
+        SyncPlan otherFile;
+        otherFile.kind = SyncPlan::Kind::AOnly;
+        otherFile.direction = SyncPlan::Direction::ToB;
+        otherFile.match.trackA = track("rekordbox", "r2", "/media/RV2/Contents/other.mp3");
+        otherFile.match.trackB = track("engine", "e2", "/media/RV2/Contents/other.mp3");
+
+        // OneLibrary's choice listed first, so "prefer rekordbox" is really exercised.
+        std::vector<SyncPlan> plans = {viaOneLibrary, sameFileOther, viaRekordbox, otherFile};
+        const auto choices = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans);
+        assert(choices.size() == 1 && "one card for one track, not one per pair");
+        const bool hasRekordbox = choices[0].sourceA.format == "rekordbox" || choices[0].sourceB.format == "rekordbox";
+        assert(hasRekordbox && "the kept choice is the rekordbox one; its write mirrors into OneLibrary");
+        assert(plans.size() == 1 && plans[0].match.trackA.sourceId == "r2"
+               && "every other plan for the undecided file waits; other files are untouched");
+        std::cout << "case hot-cue-choice-three-formats (one card per file, and nothing else writes it meanwhile) OK\n";
+
+        // Without rekordbox on the stick the OneLibrary choice is the card.
+        std::vector<SyncPlan> onlyOneLibrary = {viaOneLibrary};
+        const auto alone = seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(onlyOneLibrary);
+        assert(alone.size() == 1 && onlyOneLibrary.empty());
+        std::cout << "case hot-cue-choice-onelibrary-only (a OneLibrary choice stands when it is the only one) OK\n";
     }
 
     return 0;

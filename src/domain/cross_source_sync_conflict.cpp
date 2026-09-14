@@ -88,14 +88,32 @@ CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<S
 
 std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoices(std::vector<SyncPlan> &plans)
 {
-    std::vector<CrossSourceSyncConflict> choices;
-    std::vector<SyncPlan> rest;
-    rest.reserve(plans.size());
-    for (auto &plan : plans) {
+    const auto fileOf = [](const SyncPlan &plan) -> const std::string & {
+        return plan.match.trackA.filePath.empty() ? plan.match.trackB.filePath : plan.match.trackA.filePath;
+    };
+    const auto involves = [](const SyncPlan &plan, const std::string &format) {
+        return plan.match.trackA.format == format || plan.match.trackB.format == format;
+    };
+
+    // One choice per file: prefer the pair with rekordbox in it.
+    std::map<std::string, const SyncPlan *> choiceByFile;
+    std::vector<const SyncPlan *> choicesWithoutFile;
+    for (const auto &plan : plans) {
         if (!plan.hotCuesNeedChoice) {
-            rest.push_back(std::move(plan));
             continue;
         }
+        const std::string &file = fileOf(plan);
+        if (file.empty()) {
+            choicesWithoutFile.push_back(&plan);
+            continue;
+        }
+        auto [it, inserted] = choiceByFile.emplace(file, &plan);
+        if (!inserted && involves(plan, "rekordbox") && !involves(*it->second, "rekordbox")) {
+            it->second = &plan;
+        }
+    }
+
+    const auto toConflict = [](const SyncPlan &plan) {
         CrossSourceSyncConflict choice;
         choice.samePair = true;
         choice.target = plan.match.trackA;
@@ -105,7 +123,29 @@ std::vector<CrossSourceSyncConflict> CrossSourceConflictDetector::takeHotCueChoi
         choice.sourceB = plan.match.trackB;
         choice.cuesFromB = plan.cuesIfBWins;
         choice.sourceBHasJunkCue = hasJunkCue(plan.match.trackB.cues);
-        choices.push_back(std::move(choice));
+        return choice;
+    };
+
+    std::vector<CrossSourceSyncConflict> choices;
+    for (const auto &[file, plan] : choiceByFile) {
+        choices.push_back(toConflict(*plan));
+    }
+    for (const auto *plan : choicesWithoutFile) {
+        choices.push_back(toConflict(*plan));
+    }
+
+    // Everything else touching a file with an open choice waits for it.
+    std::vector<SyncPlan> rest;
+    rest.reserve(plans.size());
+    for (auto &plan : plans) {
+        if (plan.hotCuesNeedChoice) {
+            continue;
+        }
+        const std::string &file = fileOf(plan);
+        if (!file.empty() && choiceByFile.count(file)) {
+            continue;
+        }
+        rest.push_back(std::move(plan));
     }
     plans = std::move(rest);
     return choices;
