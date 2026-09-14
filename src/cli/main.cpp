@@ -28,6 +28,7 @@
 #include "application/use_cases/sync_libraries.hpp"
 #include "cli/console.hpp"
 #include "cli/terminal_progress_reporter.hpp"
+#include "domain/cross_source_sync_conflict.hpp"
 #include "domain/fuzzy_matcher.hpp"
 #include "domain/track_queries.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
@@ -841,6 +842,14 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     if (hasEngine && hasOneLibrary) {
         addPair(engineTracks, oneLibraryTracks, engineMtime, oneLibraryMtime);
     }
+    // Hot cues that differ on both sides are the DJ's choice, made in the
+    // app; this has no way to ask. The same function the app uses takes them
+    // out -- one choice per file -- and holds back every other plan naming a
+    // file with an open choice, so neither pair writes a track the DJ has
+    // been told to decide about. Filtering only the flagged plans left the
+    // other pair free to write that same file.
+    const std::vector<seabass::domain::CrossSourceSyncConflict> hotCueChoices =
+        seabass::domain::CrossSourceConflictDetector::takeHotCueChoices(plans);
     if (!hasEngine) {
         // The only two catalogs here are rekordbox and OneLibrary, which is
         // one library in two formats. They are kept level by mirroring on
@@ -876,16 +885,8 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     std::vector<const SyncPlan *> toEngine;
     std::vector<const SyncPlan *> toRekordbox;
     std::vector<const SyncPlan *> toOneLibrary;
-    // Both sides have different hot cues. The app asks which side is meant;
-    // this has no way to, and a clock cannot say (see
-    // SyncPlan::hotCuesNeedChoice), so these are listed and left alone.
-    std::vector<const SyncPlan *> needChoice;
     for (const auto &plan : plans) {
         if (plan.direction == SyncPlan::Direction::None) {
-            continue;
-        }
-        if (plan.hotCuesNeedChoice) {
-            needChoice.push_back(&plan);
             continue;
         }
         const std::string &format = targetOf(plan)->format;
@@ -898,14 +899,14 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         }
     }
 
-    if (!needChoice.empty()) {
+    if (!hotCueChoices.empty()) {
         Console::info("");
-        Console::warn("Hot cues differ on both sides for " + std::to_string(needChoice.size())
+        Console::warn("Hot cues differ on both sides for " + std::to_string(hotCueChoices.size())
                       + " track(s). Not changed: choose a side in the Seabass app's Sync page.");
-        for (const auto *plan : needChoice) {
-            Console::info("  \"" + plan->match.trackA.filename + "\": " + plan->match.trackA.format + " "
-                          + describeCues(plan->match.trackA.cues) + "  vs  " + plan->match.trackB.format + " "
-                          + describeCues(plan->match.trackB.cues));
+        for (const auto &choice : hotCueChoices) {
+            Console::info("  \"" + choice.sourceA.filename + "\": " + choice.sourceA.format + " "
+                          + describeCues(choice.sourceA.cues) + "  vs  " + choice.sourceB.format + " "
+                          + describeCues(choice.sourceB.cues));
         }
     }
 
@@ -913,10 +914,10 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         // "Consistent" only when it is. Tracks waiting on a hot cue choice
         // are not consistent -- they were just listed as disagreeing -- and a
         // last line saying otherwise is what a reader, or a script, keeps.
-        if (needChoice.empty()) {
+        if (hotCueChoices.empty()) {
             Console::info("  nothing to sync -- matched tracks' cues are already consistent (or empty on both sides).");
         } else {
-            Console::info("  nothing else to sync. " + std::to_string(needChoice.size())
+            Console::info("  nothing else to sync. " + std::to_string(hotCueChoices.size())
                           + " track(s) above still disagree and need a choice in the app.");
         }
         return 0;
