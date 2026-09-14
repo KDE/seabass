@@ -143,6 +143,18 @@ TestCase {
         compare(findChild(page, "backUpButton").visible, false);
         var cancel = findChild(page, "cancelButton");
         compare(cancel.visible, true);
+        // At the card's right edge, like the Back Up Now button it replaces.
+        // Measured against the card, not the button's own column: that column
+        // was right-aligned all along while the row around it had shrunk.
+        waitForRendering(page);
+        var cancelRight = cancel.mapToItem(page, cancel.width, 0).x;
+        var content = findChild(page, "backUpFrame").contentItem;
+        var contentRight = content.mapToItem(page, content.width, 0).x;
+        verify(Math.abs(cancelRight - contentRight) <= 1,
+               "Cancel must sit at the card's right edge: " + cancelRight + " vs " + contentRight);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(page).save(screenshotDir + "/stick-backup-running.png");
+        }
         cancel.clicked();
         verify(calls(page).indexOf("cancel") >= 0);
         compare(findChild(page, "restoreButton").enabled, false);

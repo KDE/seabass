@@ -389,6 +389,7 @@ Page {
 
             // ---- Back up (idle) / progress (running) ----
             Frame {
+                objectName: "backUpFrame"
                 Layout.fillWidth: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -400,7 +401,13 @@ Page {
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 2
+                            // Fills the column itself: a nested layout only
+                            // grows as far as a visible child can, and while a
+                            // backup runs the description below is hidden --
+                            // the row then shrank to its content and Cancel
+                            // stood in the middle of the card.
                             Label {
+                                Layout.fillWidth: true
                                 text: root.controller.backingUp === true ? "Backing up " + root.stickLabel : "Back Up to This Computer"
                                 font.bold: true
                             }
@@ -412,11 +419,15 @@ Page {
                                 text: "Reads the whole stick into one file on this computer. Never writes to the stick."
                             }
                         }
+                        // Everything in this column hugs the right edge: the
+                        // hint under Cancel is wider than the button, and
+                        // left-aligned the button drifted in from the side.
                         ColumnLayout {
                             spacing: 4
                             Layout.alignment: Qt.AlignTop
                             Button {
                                 objectName: "backUpButton"
+                                Layout.alignment: Qt.AlignRight
                                 visible: root.controller.busy !== true
                                 text: "Back Up Now"
                                 highlighted: true
@@ -425,17 +436,20 @@ Page {
                             }
                             Button {
                                 objectName: "cancelButton"
+                                Layout.alignment: Qt.AlignRight
                                 visible: root.controller.busy === true && root.controller.activity !== "decide"
                                 text: "Cancel"
                                 onClicked: root.controller.cancel()
                             }
                             Label {
+                                Layout.alignment: Qt.AlignRight
                                 visible: root.controller.backingUp === true
                                 color: Theme.textMuted
                                 font.pointSize: Theme.fontSmall
                                 text: "Stops after the current file."
                             }
                             Label {
+                                Layout.alignment: Qt.AlignRight
                                 visible: root.controller.busy !== true && root.blockedBy.length > 0
                                 color: Theme.textMuted
                                 font.pointSize: Theme.fontSmall
