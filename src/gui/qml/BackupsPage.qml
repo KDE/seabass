@@ -47,14 +47,21 @@ Page {
         root.controller.openArchivePaths = open;
     }
 
+    // The controller lists the folder as soon as it is given one, and again
+    // when this stick's archive changes; listing here as well only queued a
+    // second full pass. Coming back to the page (from Home's browse of a
+    // backup, say) is when the list can be stale.
+    property bool shownBefore: false
     Component.onCompleted: {
         root.controller.currentArchivePath = root.currentArchivePath;
         root.refreshOpenArchives();
-        root.controller.refresh();
     }
     StackView.onActivated: {
         root.refreshOpenArchives();
-        root.controller.refresh();
+        if (root.shownBefore) {
+            root.controller.refresh();
+        }
+        root.shownBefore = true;
     }
 
     readonly property var statusNames: ({
@@ -270,10 +277,7 @@ Page {
                         objectName: "browseButton"
                         Layout.alignment: Qt.AlignVCenter
                         text: "Browse"
-                        // Not while listing either: leaving the page waits for
-                        // the listing to finish, which on a slow disk would
-                        // freeze the window on the way to Home.
-                        enabled: backupRow.readable && root.controller.deleting !== true && root.controller.listing !== true
+                        enabled: backupRow.readable && root.controller.deleting !== true
                         ToolTip.visible: hovered
                         ToolTip.text: "Open this backup on the Home page like a stick, without unpacking it. Read-only."
                         onClicked: root.browseRequested(backupRow.modelData.archivePath)

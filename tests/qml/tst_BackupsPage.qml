@@ -96,7 +96,6 @@ TestCase {
         // what it did is read back from page.controller.
         var page = makePage(makeController(), {stickLabel: "MAIN", currentArchivePath: "/home/u/Backups/MAIN.zip"});
         compare(page.controller.currentArchivePath, "/home/u/Backups/MAIN.zip", "the page hands this stick's backup on");
-        verify(page.controller.calls.indexOf("refresh") >= 0);
         compare(findChild(page, "backupsList").count, 3);
 
         var main = row(page, 0);
@@ -144,12 +143,6 @@ TestCase {
         compare(page.controller.openArchivePaths, ["/home/u/Backups/MAIN.zip"]);
         compare(findChild(row(page, 0), "deleteButton").enabled, false);
         compare(findChild(row(page, 1), "deleteButton").enabled, true);
-    }
-
-    function test_browseWaitsForTheListing() {
-        var page = makePage(makeController({listing: true}));
-        compare(findChild(row(page, 0), "browseButton").enabled, false,
-                "leaving mid-listing would block on it, so Browse waits");
     }
 
     function test_browseHandsTheArchiveOn() {

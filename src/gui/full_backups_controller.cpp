@@ -44,7 +44,11 @@ FullBackupsController::FullBackupsController(QObject *parent) : QObject(parent)
 
 FullBackupsController::~FullBackupsController()
 {
-    awaitQuietly(m_listWatcher);
+    // Not the listing: it only reads the folder and captures nothing of
+    // this object, so it can run out on its own with its result unused.
+    // Waiting for it froze the window when the page was left mid-listing
+    // on a slow disk. A delete is awaited -- Back is off while one runs,
+    // so this only matters when the window closes.
     awaitQuietly(m_deleteWatcher);
 }
 

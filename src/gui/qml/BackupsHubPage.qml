@@ -71,8 +71,9 @@ Page {
     // Coming back from Manage Backups (or a backup): a deleted or new
     // archive makes the advice stale -- the Full Stick Backup card and the
     // backup handed on to Manage Backups both come from it. Not on the first
-    // activation: Home reassessed just before pushing this page, and doing it
-    // again would re-read every stick alongside whatever is clicked next.
+    // activation: Home reassessed when it last came to the front, every route
+    // here passes through it, and doing it again would re-read every stick
+    // alongside whatever is clicked next.
     property bool shownBefore: false
     StackView.onActivated: {
         if (root.shownBefore && root.backupAdvisor !== null && typeof root.backupAdvisor.reassessAll === "function") {
