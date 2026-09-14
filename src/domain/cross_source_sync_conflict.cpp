@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <map>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -45,18 +46,18 @@ CrossSourceConflictSplit CrossSourceConflictDetector::detect(const std::vector<S
 {
     CrossSourceConflictSplit result;
 
-    std::map<std::pair<std::string, std::string>, std::vector<const SyncPlan *>> byTarget;
+    std::map<std::tuple<std::string, bool, std::string>, std::vector<const SyncPlan *>> byTarget;
     for (const auto &plan : actionablePlans) {
         const Track *target = sidesOf(plan).target;
         // A target with no file (or a streaming one) shares its empty path
-        // with every other such row. Grouped, two unrelated plans would read
-        // as one conflict and resolving it would write one track's cues onto
-        // the other. It can only be one plan's target, so it passes through.
-        if (target->filePath.empty() || !target->streamingSource.empty()) {
-            result.nonConflicting.push_back(plan);
-            continue;
-        }
-        byTarget[{target->format, target->filePath}].push_back(&plan);
+        // with every other such row, so the path cannot say which track it
+        // is: grouped by it, two unrelated plans would read as one conflict
+        // and resolving it would write one track's cues onto the other. Its
+        // own row id can -- and it must still group, because both pairs can
+        // match the same fileless Engine row by title and artist, and two
+        // plans onto one row are exactly the conflict this is here to find.
+        const bool byRow = target->filePath.empty() || !target->streamingSource.empty();
+        byTarget[{target->format, byRow, byRow ? target->sourceId : target->filePath}].push_back(&plan);
     }
 
     for (const auto &[key, plans] : byTarget) {

@@ -168,7 +168,18 @@ int main()
         auto streamingSplit = CrossSourceConflictDetector::detect(
             {makePlan(rb, streamingX, {hot(1, 1000.0)}), makePlan(ol, streamingY, {hot(1, 9000.0)})});
         assert(streamingSplit.conflicts.empty() && streamingSplit.nonConflicting.size() == 2);
-        std::cout << "case e (targets without a file, or streaming ones, are never grouped into a conflict) OK\n";
+        std::cout << "case e (different targets without a file, or streaming ones, are not grouped by path) OK\n";
+
+        // Round 10's finding: skipping them outright let two plans onto the
+        // SAME fileless row through. rekordbox and OneLibrary can both match
+        // one Engine row by title and artist; applied one after the other, the
+        // second would silently overwrite the first. Same row, one conflict.
+        auto sameRowSplit = CrossSourceConflictDetector::detect(
+            {makePlan(rb, engineX, {memory(1000.0)}), makePlan(ol, engineX, {memory(9000.0)})});
+        assert(sameRowSplit.conflicts.size() == 1 && "two different proposals for one fileless row are a conflict");
+        assert(sameRowSplit.nonConflicting.empty());
+        assert(sameRowSplit.conflicts[0].target.sourceId == "eX");
+        std::cout << "case e2 (two plans onto one fileless row are still a conflict) OK\n";
     }
 
     // A hot cue conflict between one pair's own two sides is taken out of the
