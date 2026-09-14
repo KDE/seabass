@@ -173,6 +173,8 @@ set(SEABASS_GUI_SOURCES
     metadata_backup_proposal_model.cpp
     metadata_restore_controller.hpp
     metadata_restore_controller.cpp
+    metadata_restore_proposal_model.hpp
+    metadata_restore_proposal_model.cpp
     playback_controller.hpp
     playback_controller.cpp
     settings_controller.hpp

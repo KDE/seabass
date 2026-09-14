@@ -134,203 +134,6 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
 
 }  // namespace
 
-// ---- model ----------------------------------------------------------
-
-RestoreProposalListModel::RestoreProposalListModel(QObject *parent) : QAbstractListModel(parent) {}
-
-int RestoreProposalListModel::rowCount(const QModelIndex &parent) const
-{
-    return parent.isValid() ? 0 : static_cast<int>(m_visible.size());
-}
-
-QHash<int, QByteArray> RestoreProposalListModel::roleNames() const
-{
-    return {
-        {TitleRole, "title"},
-        {ArtistRole, "artist"},
-        {FilenameRole, "filename"},
-        {RelativePathRole, "relativePath"},
-        {DurationTextRole, "durationText"},
-        {CueCountRole, "cueCount"},
-        {CuesAddedRole, "cuesAdded"},
-        {CueSummaryRole, "cueSummary"},
-        {FillsAGapRole, "fillsAGap"},
-        {ConflictRole, "conflict"},
-        {CuesOfferedRole, "cuesOffered"},
-        {StoredIdRole, "storedId"},
-        {RatingRole, "rating"},
-        {CommentRole, "comment"},
-        {StoredFromRole, "storedFrom"},
-        {ArtworkUrlRole, "artworkUrl"},
-        {StagedRole, "staged"},
-    };
-}
-
-QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) const
-{
-    const int source = sourceIndexOfRow(index.row());
-    if (source < 0) {
-        return {};
-    }
-    const auto &proposal = m_proposals[static_cast<std::size_t>(source)];
-    switch (role) {
-    case TitleRole:
-        return QString::fromStdString(proposal.stickTrack.title);
-    case ArtistRole:
-        return QString::fromStdString(proposal.stickTrack.artist);
-    case FilenameRole:
-        return QString::fromStdString(proposal.stickTrack.filename);
-    case RelativePathRole:
-        // The stick's own path, which is absolute, and the only one a
-        // proposal has: the stored side deliberately carries no path at
-        // all (MetadataStore::readAll). The row this fills is labelled
-        // "File" rather than anything promising a relative one.
-        return QString::fromStdString(proposal.stickTrack.filePath);
-    case DurationTextRole:
-        return metadataDurationText(proposal.stickTrack.durationSeconds);
-    case CueSummaryRole:
-        return metadataCueSummary(proposal.cues);
-    case StoredFromRole:
-        return QString::fromStdString(proposal.storedFrom);
-    case ArtworkUrlRole:
-        // The store's own copy of the cover, not the stick's. On the
-        // stick this page is aimed at -- one that has lost its metadata
-        // -- the stick's copy is exactly what is missing.
-        return toLocalFileUrl(proposal.artworkPath);
-    case CueCountRole:
-        return static_cast<int>(proposal.cues.size());
-    case CuesAddedRole:
-        return proposal.cuesAdded();
-    case FillsAGapRole:
-        return proposal.cuesFillAGap;
-    case ConflictRole:
-        return proposal.cuesConflict;
-    case CuesOfferedRole:
-        return proposal.cuesOffered;
-    case StoredIdRole:
-        return QString::fromStdString(proposal.storedId);
-    case RatingRole:
-        // -1 when this restore offers no rating, so a row can tell "no
-        // rating on offer" from "zero stars on offer".
-        return proposal.ratingOffered && proposal.rating ? *proposal.rating : -1;
-    case CommentRole:
-        return proposal.commentOffered ? QString::fromStdString(proposal.comment) : QString();
-    case StagedRole:
-        return m_staged[static_cast<std::size_t>(source)];
-    default:
-        return {};
-    }
-}
-
-void RestoreProposalListModel::setProposals(std::vector<MetadataRestoreProposal> proposals)
-{
-    beginResetModel();
-    m_proposals = std::move(proposals);
-    m_staged.assign(m_proposals.size(), false);
-    rebuildVisible();
-    endResetModel();
-}
-
-void RestoreProposalListModel::rebuildVisible()
-{
-    m_visible.clear();
-    m_visible.reserve(m_proposals.size());
-    const QString needle = m_filter.trimmed().toLower();
-    for (std::size_t i = 0; i < m_proposals.size(); ++i) {
-        if (needle.isEmpty()) {
-            m_visible.push_back(static_cast<int>(i));
-            continue;
-        }
-        const auto &track = m_proposals[i].stickTrack;
-        // The same three fields the browse list searches, so one search
-        // term means the same thing on both pages.
-        const QString haystack = (QString::fromStdString(track.title) + QLatin1Char('\n')
-                                  + QString::fromStdString(track.artist) + QLatin1Char('\n')
-                                  + QString::fromStdString(track.filename))
-                                     .toLower();
-        if (haystack.contains(needle)) {
-            m_visible.push_back(static_cast<int>(i));
-        }
-    }
-}
-
-void RestoreProposalListModel::setFilter(const QString &text)
-{
-    if (m_filter == text) {
-        return;
-    }
-    beginResetModel();
-    m_filter = text;
-    rebuildVisible();
-    endResetModel();
-}
-
-int RestoreProposalListModel::sourceIndexOfRow(int row) const
-{
-    if (row < 0 || row >= static_cast<int>(m_visible.size())) {
-        return -1;
-    }
-    return m_visible[static_cast<std::size_t>(row)];
-}
-
-int RestoreProposalListModel::rowOfSourceIndex(int sourceIndex) const
-{
-    for (std::size_t row = 0; row < m_visible.size(); ++row) {
-        if (m_visible[row] == sourceIndex) {
-            return static_cast<int>(row);
-        }
-    }
-    return -1;
-}
-
-void RestoreProposalListModel::setStaged(int index, bool staged)
-{
-    if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
-        return;
-    }
-    m_staged[static_cast<std::size_t>(index)] = staged;
-    // Nothing to repaint when the row is filtered out, but the flag
-    // still has to be set: the search is a view of the list, not a
-    // different list.
-    const int row = rowOfSourceIndex(index);
-    if (row >= 0) {
-        emit dataChanged(this->index(row), this->index(row), {StagedRole});
-    }
-}
-
-void RestoreProposalListModel::removeAt(int index)
-{
-    if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
-        return;
-    }
-    // A reset rather than beginRemoveRows: removing one proposal
-    // renumbers every visible index after it, and the mapping is what
-    // this model is for.
-    beginResetModel();
-    m_proposals.erase(m_proposals.begin() + index);
-    m_staged.erase(m_staged.begin() + index);
-    rebuildVisible();
-    endResetModel();
-}
-
-bool RestoreProposalListModel::isStaged(int index) const
-{
-    if (index < 0 || index >= static_cast<int>(m_staged.size())) {
-        return false;
-    }
-    return m_staged[static_cast<std::size_t>(index)];
-}
-
-int RestoreProposalListModel::indexOfStoredId(const std::string &storedId) const
-{
-    for (std::size_t i = 0; i < m_proposals.size(); ++i) {
-        if (m_proposals[i].storedId == storedId) {
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
-}
-
 // ---- controller -----------------------------------------------------
 
 MetadataRestoreController::MetadataRestoreController(QObject *parent) : QObject(parent)
@@ -385,7 +188,6 @@ void MetadataRestoreController::onScanFinished()
     if (result.cancelled) {
         return;
     }
-    m_stagedByStoredId.clear();
     m_model.setProposals(result.proposals);
     m_stickTrackCount = result.stickTrackCount;
     m_storedTrackCount = result.storedTrackCount;
@@ -442,21 +244,18 @@ void MetadataRestoreController::attachSession()
         // A proposal disappears once every change it staged has landed:
         // the stick now has what the store had, so there is nothing left
         // to offer it.
-        for (auto it = m_stagedByStoredId.begin(); it != m_stagedByStoredId.end(); ++it) {
-            if (!it->second.contains(changeId)) {
-                continue;
-            }
-            it->second.removeAll(changeId);
-            if (it->second.isEmpty()) {
-                const int index = m_model.indexOfStoredId(it->first);
-                m_stagedByStoredId.erase(it);
-                if (index >= 0) {
-                    m_model.removeAt(index);
-                }
-                emit analysisChanged();
-            }
+        const int index = m_model.indexOfChange(changeId);
+        if (index < 0) {
             return;
         }
+        QStringList remaining = m_model.stagedChanges(index);
+        remaining.removeAll(changeId);
+        if (!remaining.isEmpty()) {
+            m_model.setStagedChanges(index, remaining);
+            return;
+        }
+        m_model.removeAt(index);
+        emit analysisChanged();
     });
 }
 
@@ -489,7 +288,7 @@ void MetadataRestoreController::stage(int row)
 
 // itemCountHint is what the save is expected to write in total, which
 // decides whether the catalog is worth copying to local scratch first.
-// stageAll() knows that number; a single row's button does not, and
+// stageAll() knows that number; a single row's tick box does not, and
 // does not need to.
 void MetadataRestoreController::stageOne(int index, int itemCountHint)
 {
@@ -498,7 +297,7 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
         return;
     }
     const MetadataRestoreProposal &proposal = proposals[static_cast<std::size_t>(index)];
-    if (m_stagedByStoredId.count(proposal.storedId)) {
+    if (m_model.isStaged(index)) {
         return;
     }
     if (!proposal.offersAnything()) {
@@ -544,8 +343,7 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
     if (staged.isEmpty()) {
         return;
     }
-    m_stagedByStoredId[proposal.storedId] = staged;
-    m_model.setStaged(index, true);
+    m_model.setStagedChanges(index, staged);
     emit analysisChanged();
 }
 
@@ -561,14 +359,13 @@ void MetadataRestoreController::stageAll()
         return;
     }
     const int count = proposalCount();
-    const auto &proposals = m_model.proposals();
     // The real number about to be staged, which is what decides whether
     // the save copies a catalog to local scratch first. Counted before
     // staging anything, because staging removes nothing from the list
     // but does change what a later pass would count.
     int toStage = 0;
     for (int i = 0; i < count; ++i) {
-        if (!m_stagedByStoredId.count(proposals[static_cast<std::size_t>(i)].storedId)) {
+        if (!m_model.isStaged(i)) {
             toStage++;
         }
     }
@@ -576,29 +373,24 @@ void MetadataRestoreController::stageAll()
         return;
     }
 
-    int staged = 0;
+    // No confirmation afterwards: the toolbar already says how many are
+    // staged, and a popup for what the button's own name promised is one
+    // more thing to dismiss.
     for (int i = 0; i < count; ++i) {
-        if (m_stagedByStoredId.count(proposals[static_cast<std::size_t>(i)].storedId)) {
+        if (m_model.isStaged(i)) {
             continue;
         }
         stageOne(i, toStage);
         if (m_session && !m_session->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
         }
-        staged++;
-    }
-    if (staged > 0) {
-        emit actionFeedback(
-            QStringLiteral("Staged %1 track(s). Press Restore to write them to the stick.").arg(staged), false);
     }
 }
 
 void MetadataRestoreController::unstageAll()
 {
-    // By row, so this goes through the same path a single row's button
-    // does and cannot drift from it. Backwards, because unstaging can
-    // remove nothing from the list but the map it walks is the one
-    // unstageAt mutates.
+    // By proposal, through the same path a single row's tick box takes, so
+    // the two cannot drift apart.
     for (int index = proposalCount() - 1; index >= 0; --index) {
         unstageAt(index);
     }
@@ -614,21 +406,16 @@ void MetadataRestoreController::unstageAt(int index)
     if (index < 0) {
         return;
     }
-    const auto &proposals = m_model.proposals();
-    if (static_cast<std::size_t>(index) >= proposals.size()) {
-        return;
-    }
-    auto it = m_stagedByStoredId.find(proposals[static_cast<std::size_t>(index)].storedId);
-    if (it == m_stagedByStoredId.end()) {
+    const QStringList changes = m_model.stagedChanges(index);
+    if (changes.isEmpty()) {
         return;
     }
     if (m_session) {
-        for (const auto &changeId : it->second) {
+        for (const auto &changeId : changes) {
             m_session->unstage(changeId);
         }
     }
-    m_stagedByStoredId.erase(it);
-    m_model.setStaged(index, false);
+    m_model.setStagedChanges(index, {});
     emit analysisChanged();
 }
 

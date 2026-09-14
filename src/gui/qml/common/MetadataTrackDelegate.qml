@@ -61,6 +61,12 @@ Rectangle {
     property string cueTooltip: ""
     property string cueBadgeLabel: delegate.cueCount + (delegate.cueCount === 1 ? " cue" : " cues")
     property color cueBadgeColor: Theme.good
+    // What hovering the cue badge says; the cue list unless a page has more to say.
+    property string cueBadgeTooltip: delegate.cueTooltip
+    // What hovering the title says, when a page has something to say about
+    // the whole row (the restore page: what a restore writes). Empty shows
+    // nothing.
+    property string titleTooltip: ""
     property string playlistNames: ""
 
     // ---- where it came from ------------------------------------------
@@ -146,7 +152,16 @@ Rectangle {
                 // The selection is the model's to own: the page writes
                 // it back and the delegate re-reads it, so a recycled
                 // delegate cannot carry one row's tick to the next.
-                onToggled: delegate.selectionToggled(checked)
+                onToggled: {
+                    delegate.selectionToggled(checked);
+                    // Back to what the model says. A click sets `checked`
+                    // itself, and when the page refuses the change -- a
+                    // library another page holds, a row with nothing it
+                    // can write -- the model's value never moves, so
+                    // nothing re-read it and the box stayed ticked over
+                    // nothing staged, out of Select None's reach too.
+                    checked = Qt.binding(function() { return delegate.selected; });
+                }
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
                 ToolTip.text: delegate.selectTooltip
@@ -187,6 +202,10 @@ Rectangle {
                     font.pointSize: Theme.fontNormal
                     elide: Text.ElideRight
                     font.strikeout: delegate.markedForRemoval
+                    HoverHandler { id: titleHover }
+                    ToolTip.visible: titleHover.hovered && delegate.titleTooltip.length > 0
+                    ToolTip.delay: 400
+                    ToolTip.text: delegate.titleTooltip
                 }
                 Label {
                     Layout.fillWidth: true
@@ -230,7 +249,7 @@ Rectangle {
                 // only in the expanded half, which meant opening a row
                 // to answer "which cues?" about the number already on
                 // screen.
-                tooltipText: delegate.cueTooltip
+                tooltipText: delegate.cueBadgeTooltip
             }
 
             Label {

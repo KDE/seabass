@@ -27,13 +27,13 @@ Page {
 
     // The row whose detail is showing, or "". One at a time.
     //
-    // Keyed on the store's row id rather than the filename. A filename
-    // is not unique -- two folders on a rebuilt stick routinely hold the
-    // same basename, and those rows opened and closed together -- and
-    // the empty starting value matched any proposal whose stick track
-    // had no filename at all, rendering it expanded before anyone
-    // touched it.
-    property string expandedStoredId: ""
+    // Keyed on the store's row id AND the stick file, not either alone. A
+    // filename is not unique -- two folders on a rebuilt stick routinely
+    // hold the same basename, and those rows opened and closed together --
+    // and neither is the stored id: one stored track can match several
+    // tracks on the stick, and keyed on it alone every copy opened at
+    // once. The key is never empty, so nothing starts out expanded.
+    property string expandedKey: ""
 
     MetadataRestoreController {
         id: controller
@@ -265,6 +265,7 @@ Page {
                 required property string cueSummary
                 required property bool staged
                 required property string storedId
+                required property string restoreSummary
 
                 // And the ones it does, marked required here so the
                 // model fills them.
@@ -285,7 +286,15 @@ Page {
                 // for the two to disagree.
                 selected: proposalRow.staged
                 cueTooltip: proposalRow.cueSummary
-                expanded: root.expandedStoredId === proposalRow.storedId
+                // The badge is the "replaces 4" a person hovers to ask what
+                // exactly would happen: what goes to this track, where, and
+                // which other tracks on the stick get it too.
+                cueBadgeTooltip: proposalRow.restoreSummary
+                    + (proposalRow.cueSummary.length > 0 ? "\n\n" + proposalRow.cueSummary : "")
+                // And on the title, for the rows with no cue badge: a restore
+                // of a rating or a comment alone.
+                titleTooltip: proposalRow.restoreSummary
+                expanded: root.expandedKey === proposalRow.storedId + "\n" + proposalRow.relativePath
                 // What this row's badge is counting is not what is on
                 // the track but what a restore would leave on it, and
                 // the two are different numbers whenever it replaces
@@ -308,23 +317,9 @@ Page {
 
                 onSelectionToggled: stage => stage ? controller.stage(proposalRow.index)
                                                    : controller.unstage(proposalRow.index)
-                onExpandToggled: root.expandedStoredId =
-                    proposalRow.expanded ? "" : proposalRow.storedId
+                onExpandToggled: root.expandedKey =
+                    proposalRow.expanded ? "" : proposalRow.storedId + "\n" + proposalRow.relativePath
 
-                actionItems: [
-                    Button {
-                        objectName: "stageButton"
-                        text: proposalRow.staged ? "Staged" : "Restore"
-                        enabled: !editHost.writing
-                        onClicked: proposalRow.staged ? controller.unstage(proposalRow.index)
-                                                      : controller.stage(proposalRow.index)
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        ToolTip.text: proposalRow.staged
-                            ? "Staged. Press again to take it back off the list."
-                            : "Stage this track's metadata for restoring"
-                    }
-                ]
             }
 
             Label {

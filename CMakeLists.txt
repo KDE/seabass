@@ -1190,6 +1190,17 @@ if(TARGET Qt6::Core)
     target_link_libraries(open_folder_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME open_folder_test COMMAND open_folder_test)
 
+    # The restore page's proposal list, on its own: staging is kept per
+    # proposal, so two stick tracks matched to one stored track stage and
+    # unstage apart, and each row says what a restore writes and where.
+    add_executable(metadata_restore_proposal_model_test
+        src/gui/metadata_restore_proposal_model.cpp
+        tests/metadata_restore_proposal_model_test.cpp
+    )
+    target_include_directories(metadata_restore_proposal_model_test PRIVATE src)
+    target_link_libraries(metadata_restore_proposal_model_test PRIVATE seabass_core Qt6::Core Qt6::Qml)
+    add_test(NAME metadata_restore_proposal_model_test COMMAND metadata_restore_proposal_model_test)
+
     add_executable(format_write_session_test tests/format_write_session_test.cpp)
     target_include_directories(format_write_session_test PRIVATE src)
     target_link_libraries(format_write_session_test PRIVATE seabass_edit Qt6::Core)

@@ -18,79 +18,13 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "domain/metadata_restore.hpp"
+#include "gui/metadata_restore_proposal_model.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
 namespace seabass::gui
 {
 
 class LibraryEditSession;
-
-// Read-only model over the proposals the controller last planned.
-class RestoreProposalListModel : public QAbstractListModel
-{
-    Q_OBJECT
-    QML_ELEMENT
-    QML_UNCREATABLE("Populated by MetadataRestoreController; not constructible from QML")
-
-public:
-    enum Roles {
-        TitleRole = Qt::UserRole + 1,
-        ArtistRole,
-        FilenameRole,
-        RelativePathRole,  // where the file sits on THIS stick, absolute
-        DurationTextRole,
-        CueCountRole,      // how many cues the write would leave on the track
-        CuesAddedRole,     // how many of those are new
-        CueSummaryRole,    // every offered cue on a line, for the badge's tooltip
-        FillsAGapRole,     // the track has no cues at all today
-        ConflictRole,      // the track has cues and they differ
-        CuesOfferedRole,   // and whether the merge rule then chose the stored set
-        StoredIdRole,      // the store row this came from; unique, unlike a filename
-        RatingRole,        // the rating this restore would write, -1 for none
-        CommentRole,       // the comment it would write, empty for none
-        StoredFromRole,    // the stick this copy was last backed up from
-        ArtworkUrlRole,    // the cover the store copied, as a file:// URL
-        StagedRole,
-    };
-
-    explicit RestoreProposalListModel(QObject *parent = nullptr);
-
-    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
-    QVariant data(const QModelIndex &index, int role) const override;
-    QHash<int, QByteArray> roleNames() const override;
-
-    void setProposals(std::vector<domain::MetadataRestoreProposal> proposals);
-    const std::vector<domain::MetadataRestoreProposal> &proposals() const { return m_proposals; }
-    void setStaged(int index, bool staged);
-    void removeAt(int index);
-    int indexOfStoredId(const std::string &storedId) const;
-
-    bool isStaged(int index) const;
-
-    // ---- the search --------------------------------------------------
-    // Filtered here rather than in the delegate. A ListView still lays
-    // out, spaces and counts a delegate that has hidden itself, so a
-    // search matching three of six hundred rows left hundreds of blank
-    // gaps to scroll through and a count that disagreed with the list.
-    //
-    // Every index above is an index into the full proposal list, not a
-    // row number: the filter must not renumber the things staging and
-    // undo hold on to. sourceIndexOfRow() is the one place the two
-    // numbering schemes meet.
-    void setFilter(const QString &text);
-    int sourceIndexOfRow(int row) const;
-    int rowOfSourceIndex(int sourceIndex) const;
-    int totalCount() const { return static_cast<int>(m_proposals.size()); }
-
-private:
-    void rebuildVisible();
-
-    std::vector<domain::MetadataRestoreProposal> m_proposals;
-    std::vector<bool> m_staged;  // parallel to m_proposals
-    // Indices into m_proposals, in order, for the rows this model shows.
-    std::vector<int> m_visible;
-    QString m_filter;
-};
 
 struct MetadataRestoreTaskResult
 {
@@ -157,7 +91,7 @@ public:
     int storedTrackCount() const { return m_storedTrackCount; }
     int conflictCount() const { return m_conflictCount; }
     int conflictsLeftAlone() const { return m_conflictsLeftAlone; }
-    int stagedCount() const { return static_cast<int>(m_stagedByStoredId.size()); }
+    int stagedCount() const { return m_model.stagedCount(); }
     int commentsRekordboxCannotTake() const { return m_commentsRekordboxCannotTake; }
     int proposalCount() const { return static_cast<int>(m_model.proposals().size()); }
     bool allStaged() const { return proposalCount() > 0 && stagedCount() == proposalCount(); }
@@ -176,12 +110,9 @@ public:
     // translation happens here, at the one boundary where QML and the
     // proposal list meet, rather than being something each call site has
     // to remember.
-    // Ticking a row stages it, and that is the whole of the selection
-    // model on this page. There was briefly a selection parallel to
-    // staging, with a button to turn one into the other; it meant two
-    // ways to say the same thing and a button whose tooltip had to
-    // explain which of them it did. One page, one verb, one button: the
-    // standard floating Save, labelled Restore.
+    // Ticking a row stages it, and that is the whole of the selection on
+    // this page: no second selection, no per-row button doing the same
+    // thing. The floating Save, labelled Restore, writes what is staged.
     Q_INVOKABLE void stage(int row);
     Q_INVOKABLE void unstage(int row);
     Q_INVOKABLE void search(const QString &text);
@@ -192,7 +123,7 @@ public:
     Q_INVOKABLE void stageAll();
     Q_INVOKABLE void unstageAll();
     // Both row-taking entry points above funnel here, so a bulk unstage
-    // cannot drift from what one row's button does.
+    // cannot drift from what ticking one row does.
     void unstageAt(int index);
     // stage(), plus what the save is expected to write in total -- see
     // RestoreMetadataChange's own itemCountHint.
@@ -221,9 +152,6 @@ private:
     RestoreProposalListModel m_model;
     QPointer<LibraryEditSession> m_session;
     application::CancellationToken m_cancel;
-    // One proposal can stage several changes, one per catalog that lists
-    // the track, so this maps a proposal to all of them.
-    std::map<std::string, QStringList> m_stagedByStoredId;
 
     QString m_libraryPath;
     bool m_busy = false;
