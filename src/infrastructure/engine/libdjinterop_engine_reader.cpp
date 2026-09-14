@@ -180,19 +180,24 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
     std::unordered_map<int64_t, std::string> result;
     std::string dbPath = (std::filesystem::path(engineLibraryPath) / "Database2" / "m.db").string();
 
+    // Failing here must be heard, not return an empty map: without it every
+    // streaming track reads as an ordinary local one, and sync, merge and
+    // clean-up all treat it as a file on the stick.
     sqlite3 *db = nullptr;
     if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        std::string message = db ? sqlite3_errmsg(db) : "out of memory";
         if (db) {
             sqlite3_close(db);
         }
-        return result;
+        throw std::runtime_error("cannot open " + dbPath + ": " + message);
     }
 
     sqlite3_stmt *stmt = nullptr;
     const char *sql = "SELECT id, streamingSource FROM Track WHERE streamingSource IS NOT NULL AND streamingSource != ''";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::string message = sqlite3_errmsg(db);
         sqlite3_close(db);
-        return result;
+        throw std::runtime_error(message);
     }
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -284,9 +289,14 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
     std::unordered_map<int64_t, std::int64_t> lastEditTimeByTrackId;
     try {
         streamingSourceByTrackId = readStreamingSources(m_engineLibraryPath);
+    } catch (const std::exception &e) {
+        m_progress->warn(std::string("could not read streaming sources, so streaming tracks will look like local files: ")
+                         + e.what());
+    }
+    try {
         lastEditTimeByTrackId = readLastEditTimes(m_engineLibraryPath);
     } catch (const std::exception &e) {
-        m_progress->warn(std::string("could not read streaming sources: ") + e.what());
+        m_progress->warn(std::string("could not read track edit times: ") + e.what());
     }
 
     m_progress->start("Scanning Engine tracks", allTracks.size());
@@ -303,7 +313,14 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
         track.album = safeGet<std::string>(*m_progress, id, "album", [&] { return tr.album().value_or(""); });
         track.filename = safeGet<std::string>(*m_progress, id, "filename", [&] { return tr.filename(); });
         track.filePath = safeGet<std::string>(*m_progress, id, "relative_path", [&] {
-            auto resolved = std::filesystem::path(m_engineLibraryPath) / tr.relative_path();
+            // No relative path names no file. Joined anyway it would name the
+            // Engine Library folder itself -- one path shared by every such
+            // row, which anything keyed on the file would take for one track.
+            const std::string relative = tr.relative_path();
+            if (relative.empty()) {
+                return std::string();
+            }
+            auto resolved = std::filesystem::path(m_engineLibraryPath) / relative;
             return resolved.lexically_normal().string();
         });
         if (!track.filePath.empty()) {

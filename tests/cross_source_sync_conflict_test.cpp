@@ -334,8 +334,10 @@ int main()
         // Two choices with different keys, joined only through the Engine
         // path they share. The Engine<->OneLibrary choice comes first, so its
         // group already exists when the rekordbox choice arrives and must be
-        // merged into it: without the join there would be two cards, and the
-        // plan naming only OneLibrary's path would slip through.
+        // merged into it: without the join there would be two cards. (The
+        // plain plan waits either way -- holding back only asks whether a key
+        // belongs to any open choice -- so the card count is the assertion
+        // that guards the join.)
         {
             const auto rb = track("rekordbox", "r1", "/media/A/Contents/song.mp3");
             const auto en = track("engine", "e1", "/media/B/Music/song.mp3");
@@ -346,7 +348,7 @@ int main()
                 plans, seabass::application::normalizedPathKey);
             assert(choices.size() == 1 && "two choices linked through Engine's path are one track");
             assert(choices[0].sourceA.format == "rekordbox");
-            assert(plans.empty() && "a plan sharing only the far end of the joined group still waits");
+            assert(plans.empty() && "a plan naming a path of an open choice waits");
         }
         std::cout << "case hot-cue-choice-joined-groups (choices with different keys meet through a shared path) OK\n";
 

@@ -1915,6 +1915,14 @@ add_test(NAME anonymization_verifier_test COMMAND anonymization_verifier_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(anonymization_verifier_test PROPERTIES LABELS "integration")
 
+# An Engine row with no relative path names no file, not the Engine Library
+# folder -- see the test's own header.
+add_executable(engine_reader_paths_test tests/engine_reader_paths_test.cpp)
+target_include_directories(engine_reader_paths_test PRIVATE src)
+target_compile_definitions(engine_reader_paths_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(engine_reader_paths_test PRIVATE seabass_core SQLite::SQLite3)
+add_test(NAME engine_reader_paths_test COMMAND engine_reader_paths_test)
+
 # Browsing a stick backup in place: cues read through the archive must
 # match cues read off the folder, byte for byte, with nothing extracted.
 # Real fixture data, both compression methods -- see the test's own header.
