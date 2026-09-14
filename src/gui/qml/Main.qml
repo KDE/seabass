@@ -685,9 +685,10 @@ ApplicationWindow {
     Component {
         id: backupsPageComponent
         BackupsPage {
-            controller: FullBackupsController {
-                backupDirectory: appSettingsCtrl.stickBackupDirectory
-            }
+            // The folder goes through the page, which hands it on after this
+            // stick's archive -- see BackupsPage.backupDirectory.
+            controller: FullBackupsController {}
+            backupDirectory: appSettingsCtrl.stickBackupDirectory
             mediaController: mediaCtrl
             // Browsing happens on Home, where the backup becomes a row.
             onBrowseRequested: (archivePath) => {

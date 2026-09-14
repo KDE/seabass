@@ -123,6 +123,18 @@ TestCase {
         saveScreenshot(page, "manage-backups");
     }
 
+    // The folder reaches the controller from the page, after this stick's
+    // archive: set the other way round, the controller listed once without
+    // knowing it and again with it.
+    function test_handsTheFolderOnAfterTheCurrentArchive() {
+        var page = makePage(makeController({backupDirectory: ""}),
+                            {backupDirectory: "/home/u/Other Backups", currentArchivePath: "/home/u/Other Backups/MAIN.zip"});
+        compare(page.controller.currentArchivePath, "/home/u/Other Backups/MAIN.zip");
+        compare(page.controller.backupDirectory, "/home/u/Other Backups");
+        page.backupDirectory = "/mnt/backups";
+        compare(page.controller.backupDirectory, "/mnt/backups", "a changed folder is handed on too");
+    }
+
     function test_deleteAsksFirst() {
         var page = makePage(makeController());
         mouseClick(findChild(row(page, 1), "deleteButton"));

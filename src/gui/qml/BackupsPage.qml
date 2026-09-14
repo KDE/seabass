@@ -22,6 +22,18 @@ Page {
     property string currentArchivePath: ""
     // For which archives are open as browsed libraries right now.
     property var mediaController: null
+    // The backup folder (app settings). Handed to the controller here, after
+    // the current archive, rather than bound on the controller where it is
+    // created: a folder set first starts a listing that does not know this
+    // stick's archive yet, and the second listing that follows reorders
+    // the list under the user.
+    property string backupDirectory: ""
+    onBackupDirectoryChanged: {
+        if (root.configured) {
+            root.controller.backupDirectory = root.backupDirectory;
+        }
+    }
+    property bool configured: false
     signal browseRequested(string archivePath)
     // What refreshOpenArchives last found, kept here as well as on the
     // controller: the rows bind to this, which changes exactly when the
@@ -47,21 +59,17 @@ Page {
         root.controller.openArchivePaths = open;
     }
 
-    // The controller lists the folder as soon as it is given one, and again
-    // when this stick's archive changes; listing here as well only queued a
-    // second full pass. Coming back to the page (from Home's browse of a
-    // backup, say) is when the list can be stale.
-    property bool shownBefore: false
+    // The controller lists the folder as soon as it has one, so that is
+    // given last: one listing, already knowing this stick's archive. Nothing
+    // is pushed on top of this page -- Browse leaves it for Home -- so there
+    // is no coming back to a stale list.
     Component.onCompleted: {
         root.controller.currentArchivePath = root.currentArchivePath;
         root.refreshOpenArchives();
-    }
-    StackView.onActivated: {
-        root.refreshOpenArchives();
-        if (root.shownBefore) {
-            root.controller.refresh();
+        if (root.backupDirectory.length > 0) {
+            root.controller.backupDirectory = root.backupDirectory;
         }
-        root.shownBefore = true;
+        root.configured = true;
     }
 
     readonly property var statusNames: ({
