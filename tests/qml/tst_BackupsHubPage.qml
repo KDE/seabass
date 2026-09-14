@@ -96,7 +96,8 @@ TestCase {
         var page = makePage(advice);
         var card = findChild(page, "updateStickCard");
         compare(card.visible, true);
-        verify(card.cardSubtitle.indexOf("⚠") === 0);
+        compare(card.cardSubtitleIcon, "dialog-warning");
+        compare(card.cardSubtitle, "SPARE holds a newer copy of this library.");
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "cloneStickRequested"});
         card.clicked();
         compare(spy.count, 1);

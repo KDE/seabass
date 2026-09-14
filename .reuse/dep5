@@ -77,3 +77,11 @@ License: CC0-1.0
 Files: prime4display.jpg
 Copyright: 2026 Sebastian Kügler <sebas@kde.org>
 License: CC-BY-SA-4.0
+
+# --- Breeze icons --------------------------------------------------------
+# Copied unmodified from KDE's breeze-icons by tools/update-breeze-icons.sh,
+# which lists each file's upstream path. Unmodified so they can be refreshed
+# from a newer release; the app tints them when drawing.
+Files: src/gui/qml/icons/breeze/*
+Copyright: 2014-2026 The KDE Visual Design Group and breeze-icons contributors
+License: LGPL-3.0-or-later

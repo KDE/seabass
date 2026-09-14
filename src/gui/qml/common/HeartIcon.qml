@@ -8,9 +8,8 @@ import SeabassGui
 
 // breeze-icons' actions/22/love.svg, its outer contour only. The icon is
 // an outline -- an outer and an inner contour -- and the Support button
-// wants the heart filled. A Shape rather than the .svg for the reason
-// HomeIcon.qml gives: Breeze colours through fill:currentColor, which Qt's
-// SVG renderer does not resolve.
+// wants the heart filled, so this draws the outer contour as a Shape
+// instead of using the bundled .svg through SeabassIcon.
 Item {
     id: root
     property color color: Theme.danger

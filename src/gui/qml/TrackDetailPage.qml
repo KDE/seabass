@@ -177,7 +177,9 @@ Page {
             }
 
             Button {
-                text: "▶ Play"
+                text: "Play"
+                icon.source: Theme.iconUrl("media-playback-start")
+                icon.color: enabled ? Theme.text : Theme.textMuted
                 enabled: root.track && root.track.filePath.length > 0
                 ToolTip.visible: hovered
                 ToolTip.text: root.track && root.track.filePath.length === 0
@@ -283,12 +285,12 @@ Page {
             }
 
             TransitionPanel {
-                headingText: "◀ Previous track"
+                headingText: "Previous track"
                 neighborTrack: root.prevTrack
                 direction: "before"
             }
             TransitionPanel {
-                headingText: "Next track ▶"
+                headingText: "Next track"
                 neighborTrack: root.nextTrack
                 direction: "after"
             }

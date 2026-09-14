@@ -58,7 +58,7 @@ SeabassDialog {
                 anchors.fill: parent
                 anchors.margins: 12
                 spacing: 10
-                Label { text: "⚠"; font.family: "Noto Sans Symbols2"; font.pointSize: Theme.fontHuge; color: Theme.dangerText; Layout.alignment: Qt.AlignTop }
+                SeabassIcon { iconName: "dialog-warning"; size: Theme.iconSizeSmall; color: Theme.dangerText; Layout.alignment: Qt.AlignTop }
                 ColumnLayout {
                     id: warnColumn
                     Layout.fillWidth: true

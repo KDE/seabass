@@ -582,7 +582,7 @@ TestCase {
                 "an opened folder must not count as a stick being in");
     }
 
-    function test_theHeaderIconsAreInColourAndTheHeartIsFilled() {
+    function test_theHeaderIconsAreBundledAndTheHeartIsFilled() {
         var page = makePage([], {});
         var menu = findByName(page, "homeMenuButton");
         verify(menu !== null, "the menu button must exist");
@@ -600,15 +600,17 @@ TestCase {
         compare(menu.icon.width, page.headerIconSize);
         compare(menu.icon.height, page.headerIconSize);
         compare(heart.drawnSize, page.headerIconSize);
-        var coloured = [{name: "aboutButton", icon: "dialog-information"}, {name: "preferencesButton", icon: "systemsettings"}];
-        for (var i = 0; i < coloured.length; ++i) {
-            var button = findByName(page, coloured[i].name);
-            verify(button !== null, coloured[i].name + " must exist");
-            // A theme icon rather than an emoji, and untinted: a tint is
-            // what flattens a colour icon to a single colour.
-            compare(button.icon.name, coloured[i].icon);
-            compare(button.icon.color.a, 0, coloured[i].name + " must not be tinted");
-            compare(button.icon.width, page.headerIconSize, coloured[i].name + " must be the menu icon's size");
+        var buttons = [{name: "homeMenuButton", icon: "application-menu"}, {name: "aboutButton", icon: "help-about"},
+                       {name: "preferencesButton", icon: "configure"}];
+        for (var i = 0; i < buttons.length; ++i) {
+            var button = findByName(page, buttons[i].name);
+            verify(button !== null, buttons[i].name + " must exist");
+            // A bundled Breeze icon, not a theme lookup (nothing to find on
+            // Windows or macOS), flat in the text colour like the rest.
+            compare(button.icon.name, "", buttons[i].name + " must not look the icon up in the theme");
+            compare(button.icon.source.toString(), Theme.iconUrl(buttons[i].icon));
+            compare(button.icon.color, Theme.text, buttons[i].name + " must be tinted flat");
+            compare(button.icon.width, page.headerIconSize, buttons[i].name + " must be the menu icon's size");
             compare(button.icon.height, page.headerIconSize);
         }
     }

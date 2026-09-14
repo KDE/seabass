@@ -124,7 +124,7 @@ Page {
                 : (root.advice && root.advice.state === "current"
                     ? "Full stick backup is up to date"
                     : "Back up the whole stick into one file on this computer")
-            cardIcon: "🗃"
+            cardIcon: "archive-insert"
             // Experimental (see docs/experimental-features.md and
             // docs/stick-backup-plan.md): a new archive format and a
             // restore path that overwrites files on a stick.
@@ -138,11 +138,9 @@ Page {
             onReadOnlyClicked: root.explainLock()
             objectName: "updateStickCard"
             cardTitle: "Update Stick"
-            cardSubtitle: root.updateSource !== null
-                ? (root.advice.diverged === true ? "⚠ " : "") + root.updateSource.detail
-                : ""
-            cardIcon: "⟳"
-            cardIconFont: "Noto Sans Math"
+            cardSubtitle: root.updateSource !== null ? root.updateSource.detail : ""
+            cardSubtitleIcon: root.updateSource !== null && root.advice.diverged === true ? "dialog-warning" : ""
+            cardIcon: "view-refresh"
             experimental: true
             experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
             // A newer copy of this stick's library exists: on another
@@ -169,7 +167,7 @@ Page {
             objectName: "manageBackupsCard"
             cardTitle: "Manage Backups"
             cardSubtitle: "List and clean up automatic write backups"
-            cardIcon: "🗄"
+            cardIcon: "deep-history"
             deprecated: true
             deprecatedNote: "Needs rework"
             enabled: root.hasRekordbox || root.hasEngine

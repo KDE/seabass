@@ -317,7 +317,10 @@ ColumnLayout {
             }
             ToolButton {
                 Layout.alignment: Qt.AlignTop
-                text: "✕"
+                display: AbstractButton.IconOnly
+                text: "Close"
+                icon.source: Theme.iconUrl("window-close")
+                icon.color: Theme.text
                 ToolTip.visible: hovered
                 ToolTip.text: "Close"
                 onClicked: root.closeRequested()
@@ -653,14 +656,20 @@ ColumnLayout {
                         root.wheelHoverRelationLabel = hovering ? relationLabel : ""
                 }
                 ToolButton {
-                    text: "ⓘ"
+                    display: AbstractButton.IconOnly
+                    text: "Track details"
+                    icon.source: Theme.iconUrl("help-about")
+                    icon.color: Theme.text
                     Layout.preferredWidth: Theme.iconSizeSmall
                     ToolTip.visible: hovered
                     ToolTip.text: "Track details"
                     onClicked: candidateInfoPopup.showFor(candidateDelegate.modelData)
                 }
                 ToolButton {
-                    text: "↑"
+                    display: AbstractButton.IconOnly
+                    text: "Move before"
+                    icon.source: Theme.iconUrl("go-up")
+                    icon.color: enabled ? Theme.text : Theme.textMuted
                     enabled: root.hasTarget
                     ToolTip.visible: hovered
                     // Always a move, never an insert: every candidate is
@@ -672,7 +681,10 @@ ColumnLayout {
                     onClicked: root.previewNotSaved("moved before", candidateDelegate.modelData.title)
                 }
                 ToolButton {
-                    text: "↓"
+                    display: AbstractButton.IconOnly
+                    text: "Move after"
+                    icon.source: Theme.iconUrl("go-down")
+                    icon.color: enabled ? Theme.text : Theme.textMuted
                     enabled: root.hasTarget
                     ToolTip.visible: hovered
                     ToolTip.text: !root.hasTarget ? "Pick a playlist first"

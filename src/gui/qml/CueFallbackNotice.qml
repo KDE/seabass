@@ -16,12 +16,13 @@ import SeabassGui
 // another copy's -- confirmed against real duplicate-conflict data where
 // both copies had real, differing hot-cue data but null duration/
 // waveform/beatgrid fields.
-Label {
+IconLabel {
     id: root
     required property var cues
     property real durationMs: 0
     visible: durationMs <= 0 && cues.length > 0
     color: Theme.conflictText
+    iconName: "dialog-warning"
     wrapMode: Text.WordWrap
     Layout.fillWidth: true
 
@@ -42,7 +43,7 @@ Label {
         if (memory > 0) {
             parts.push(memory + " memory");
         }
-        return "⚠ " + parts.join(", ") + " cue(s) set, not shown above: this track wasn't analyzed by "
+        return parts.join(", ") + " cue(s) set, not shown above: this track wasn't analyzed by "
             + "Engine, so its duration is unknown.";
     }
 }

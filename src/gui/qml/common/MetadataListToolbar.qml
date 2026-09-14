@@ -80,8 +80,12 @@ RowLayout {
             visible: field.text.length > 0
             width: Theme.iconSizeSmall
             height: Theme.iconSizeSmall
-            text: "✕"
-            font.pointSize: Theme.fontSmall
+            display: AbstractButton.IconOnly
+            text: "Clear the search"
+            icon.source: Theme.iconUrl("edit-clear")
+            icon.color: Theme.text
+            icon.width: Theme.iconSizeSmall * 0.5
+            icon.height: Theme.iconSizeSmall * 0.5
             onClicked: {
                 field.clear();
                 // Back to the field, not to whatever the click left

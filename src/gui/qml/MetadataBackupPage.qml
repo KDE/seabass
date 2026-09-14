@@ -743,7 +743,8 @@ Page {
                 actionItems: [
                     ToolButton {
                         objectName: "stageDeleteButton"
-                        icon.name: trackRow.stagedForDeletion ? "edit-undo" : "edit-delete"
+                        icon.source: Theme.iconUrl(trackRow.stagedForDeletion ? "edit-undo" : "edit-delete")
+                        icon.color: Theme.text
                         // Icon only, and the text is still set because
                         // that is what an assistive reader announces.
                         // Leaving the display at its default drew both:

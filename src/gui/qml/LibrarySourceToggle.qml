@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import SeabassGui
 
 // Browse Library's own three-way catalog switch -- Engine OS, Rekordbox's
 // classic per-USB Device Library, and Rekordbox 7's newer OneLibrary
@@ -240,14 +241,14 @@ ComboBox {
     // below (and on this KDE system it draws nothing legible against the
     // app's palette anyway), so the control drew as a bordered box with a
     // word in it -- a text field, as far as a reader is concerned, with
-    // nothing saying the other two catalogs are behind it. U+25BE is a
-    // plain geometric glyph, present in the UI fonts and in no danger of
-    // a color-emoji fallback.
+    // nothing saying the other two catalogs are behind it. Breeze's
+    // arrow, the same one the expandable rows use.
     rightPadding: 24
-    indicator: Label {
+    indicator: SeabassIcon {
         x: root.width - width - 8
         y: root.topPadding + (root.availableHeight - height) / 2
-        text: "▾"
+        iconName: "arrow-down"
+        size: Theme.iconSizeSmall * 0.5
         color: Theme.textMuted
     }
 

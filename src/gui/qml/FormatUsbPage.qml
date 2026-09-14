@@ -212,9 +212,9 @@ Page {
                     anchors.margins: 12
                     spacing: 10
 
-                    Label {
-                        text: "⚠"
-                        font.pointSize: Theme.fontHuge
+                    SeabassIcon {
+                        iconName: "dialog-warning"
+                        size: Theme.iconSizeSmall
                         color: root.nothingToLose ? Theme.warnIcon : Theme.dangerText
                         Layout.alignment: Qt.AlignTop
                     }

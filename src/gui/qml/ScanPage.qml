@@ -268,7 +268,9 @@ Page {
                 spacing: 12
                 ToolButton {
                     visible: root.matchingEnabled
-                    text: (root.playlistSidebarOpen ? "◀ " : "▶ ") + root.currentPlaylistLabel
+                    text: root.currentPlaylistLabel
+                    icon.source: Theme.iconUrl(root.playlistSidebarOpen ? "sidebar-collapse-left" : "sidebar-expand-left")
+                    icon.color: Theme.text
                     ToolTip.visible: hovered
                     ToolTip.text: root.playlistSidebarOpen ? "Collapse the playlist sidebar" : "Show the playlist sidebar"
                     onClicked: root.playlistSidebarOpen = !root.playlistSidebarOpen
@@ -294,7 +296,10 @@ Page {
                         implicitWidth: Theme.iconSizeSmall + 8
                         implicitHeight: Theme.iconSizeSmall + 8
                         flat: true
-                        text: "✕"
+                        display: AbstractButton.IconOnly
+                        text: "Clear search"
+                        icon.source: Theme.iconUrl("edit-clear")
+                        icon.color: Theme.text
                         ToolTip.visible: hovered
                         ToolTip.text: "Clear search"
                         onClicked: searchField.text = ""
@@ -328,7 +333,8 @@ Page {
                     checkable: true
                     checked: true
                     display: AbstractButton.IconOnly
-                    icon.name: checked ? "view-sort-ascending" : "view-sort-descending"
+                    icon.source: Theme.iconUrl(checked ? "view-sort-ascending" : "view-sort-descending")
+                    icon.color: Theme.text
                     text: checked ? "Ascending" : "Descending"
                     ToolTip.visible: hovered
                     ToolTip.text: checked ? "Sorted ascending -- click to sort descending"
@@ -596,11 +602,11 @@ Page {
                                 anchors.fill: parent
                                 visible: artworkHoverHandler.hovered && trackDelegate.streamingSource.length === 0
                                 color: "#80000000"
-                                Label {
+                                SeabassIcon {
                                     anchors.centerIn: parent
-                                    text: "▶"
+                                    iconName: "media-playback-start"
+                                    size: Theme.iconSizeSmall * 0.75
                                     color: "white"
-                                    font.pointSize: Theme.fontLarge
                                 }
                             }
                             // At the narrowest tier (see root.browseTier's own
@@ -699,14 +705,10 @@ Page {
                             Layout.preferredWidth: 50
                         }
                         ToolButton {
-                            // Monochrome, like every other glyph the app draws:
-                            // the family forces the flat outline instead of the
-                            // system's color-emoji fallback. U+26D3 rather than
-                            // the 🔗 this used to be because Noto Sans Symbols2
-                            // has no glyph for that one, so it would fall back to
-                            // color anyway -- same chain-link reading either way.
-                            text: "⛓"
-                            font.family: "Noto Sans Symbols2"
+                            display: AbstractButton.IconOnly
+                            text: "Merge"
+                            icon.source: Theme.iconUrl("link")
+                            icon.color: enabled ? Theme.text : Theme.textMuted
                             Layout.preferredWidth: Theme.iconSizeSmall
                             enabled: root.format !== "onelibrary" && trackDelegate.streamingSource.length === 0
                             ToolTip.visible: hovered
@@ -720,8 +722,10 @@ Page {
                         ToolButton {
                             id: editButton
                             visible: root.matchingEnabled
-                            text: "🔍"
-                            font.family: "Noto Sans Symbols2"
+                            display: AbstractButton.IconOnly
+                            text: "Find matching tracks"
+                            icon.source: Theme.iconUrl("edit-find")
+                            icon.color: Theme.text
                             Layout.preferredWidth: Theme.iconSizeSmall
                             ToolTip.visible: hovered
                             ToolTip.text: "Find matching tracks"

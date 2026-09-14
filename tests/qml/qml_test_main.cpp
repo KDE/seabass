@@ -12,6 +12,7 @@
 #include "gui/seabass_settings.hpp"
 #include <QSettings>
 #include <QString>
+#include <QStringList>
 #include <QQuickStyle>
 #include <QtQuickTest/quicktest.h>
 
@@ -182,6 +183,16 @@ public slots:
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_GUARD"));
         engine->rootContext()->setContextProperty(QStringLiteral("liveStickPullRun"),
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_STICK_PULL"));
+        // The Breeze icons compiled into this binary, by name, read from
+        // the resources rather than listed: tst_SeabassIcon loads each one
+        // through Theme.iconUrl(), so a file registered under a different
+        // path than the one QML asks for fails there.
+        QStringList bundledIcons;
+        for (const QString &file : QDir(QStringLiteral(":/qt/qml/SeabassGui/qml/icons/breeze"))
+                                       .entryList({QStringLiteral("*.svg")}, QDir::Files)) {
+            bundledIcons.append(file.chopped(4));
+        }
+        engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
     }
 };
 

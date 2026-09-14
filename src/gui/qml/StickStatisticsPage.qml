@@ -258,10 +258,9 @@ Page {
                             anchors.fill: parent
                             anchors.margins: 8
                             spacing: 8
-                            Label {
-                                text: "⚠"
-                                font.family: "Noto Sans Symbols2"
-                                font.pointSize: Theme.fontMedium
+                            SeabassIcon {
+                                iconName: "dialog-warning"
+                                size: Theme.iconSizeSmall * 0.75
                                 color: Theme.warnIcon
                             }
                             Label {
@@ -467,7 +466,9 @@ Page {
                         Layout.fillWidth: true
                         spacing: 8
                         Button {
-                            text: "◂ Back"
+                            text: "Back"
+                            icon.source: Theme.iconUrl("go-previous")
+                            icon.color: enabled ? Theme.text : Theme.textMuted
                             enabled: root.treemapStack.length > 1
                             onClicked: root.treemapStack = root.treemapStack.slice(0, root.treemapStack.length - 1)
                         }

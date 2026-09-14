@@ -133,7 +133,9 @@ Frame {
                 onClicked: root.actionTriggered()
             }
             Button {
-                text: "▶ Play"
+                text: "Play"
+                icon.source: Theme.iconUrl("media-playback-start")
+                icon.color: enabled ? Theme.text : Theme.textMuted
                 enabled: root.track.filePath.length > 0 && root.playbackController !== null
                 ToolTip.visible: hovered
                 ToolTip.text: "Play this copy of the track"

@@ -399,7 +399,7 @@ Page {
                                    + (root.since.databaseChanged ? " · database changed" : ""))
                                 : ("reads everything: " + Theme.humanBytes(root.since.stickBytes) + ", " + root.since.entriesOnStick + " entries")
                         }
-                        Label { text: "→"; color: Theme.textMuted }
+                        SeabassIcon { iconName: "go-next"; size: Theme.iconSizeSmall * 0.5; color: Theme.textMuted }
                         Label {
                             font.family: Theme.dataFamily
                             text: "about " + Theme.humanBytes(root.since.bytesToRead) + " to read"

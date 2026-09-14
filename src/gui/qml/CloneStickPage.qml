@@ -217,7 +217,7 @@ Page {
                             text: Theme.humanBytes(root.preview.sourceBytes || 0) + " on the stick"
                         }
                     }
-                    Label { text: "→"; font.family: "Noto Sans Math"; font.pointSize: Theme.fontHuge; color: Theme.textMuted }
+                    SeabassIcon { iconName: "go-next"; size: Theme.iconSizeSmall; color: Theme.textMuted }
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
@@ -316,14 +316,25 @@ Page {
                             radius: 3
                             color: current ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.15) : "transparent"
                             border.color: current ? Theme.accent : Theme.borderSubtle
-                            implicitWidth: stageText.implicitWidth + 16
-                            implicitHeight: stageText.implicitHeight + 6
-                            Label {
-                                id: stageText
+                            id: stageChip
+                            implicitWidth: stageRow.implicitWidth + 16
+                            implicitHeight: stageRow.implicitHeight + 6
+                            Row {
+                                id: stageRow
                                 anchors.centerIn: parent
-                                text: (parent.done ? "✓  " : "") + parent.modelData.text
-                                color: parent.current ? Theme.accent : (parent.done ? Theme.good : Theme.textMuted)
-                                font.bold: parent.current
+                                spacing: 4
+                                SeabassIcon {
+                                    visible: stageChip.done
+                                    iconName: "checkmark"
+                                    size: stageText.implicitHeight
+                                    color: Theme.good
+                                }
+                                Label {
+                                    id: stageText
+                                    text: stageChip.modelData.text
+                                    color: stageChip.current ? Theme.accent : (stageChip.done ? Theme.good : Theme.textMuted)
+                                    font.bold: stageChip.current
+                                }
                             }
                         }
                     }

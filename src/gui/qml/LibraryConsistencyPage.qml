@@ -581,8 +581,9 @@ Page {
                                 confirmDeleteOrphanDialog.open();
                             }
                         }
-                        Label {
-                            text: issueDelegate.expanded ? "▾" : "▸"
+                        SeabassIcon {
+                            iconName: issueDelegate.expanded ? "arrow-down" : "arrow-right"
+                            size: Theme.iconSizeSmall * 0.75
                             color: Theme.textMuted
                         }
                     }
@@ -648,7 +649,9 @@ Page {
                                             Layout.fillWidth: true
                                         }
                                         Button {
-                                            text: "▶ Play"
+                                            text: "Play"
+                                            icon.source: Theme.iconUrl("media-playback-start")
+                                            icon.color: enabled ? Theme.text : Theme.textMuted
                                             enabled: trackFrame.isSurvivor && trackFrame.modelData.filePath.length > 0
                                             ToolTip.visible: hovered
                                             ToolTip.text: trackFrame.isSurvivor

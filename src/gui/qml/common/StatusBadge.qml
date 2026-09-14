@@ -18,20 +18,34 @@ Rectangle {
     required property string label
     required property color badgeColor
     property string tooltipText: ""
+    // A bundled Breeze icon in front of the label ("dialog-warning" for a
+    // caution), in the badge's colour, or none.
+    property string iconName: ""
 
     radius: 3
     border.color: badge.badgeColor
     color: Qt.rgba(badge.badgeColor.r, badge.badgeColor.g, badge.badgeColor.b, 0.15)
-    implicitWidth: badgeLabel.implicitWidth + 12
-    implicitHeight: badgeLabel.implicitHeight + 6
+    implicitWidth: badgeContent.implicitWidth + 12
+    implicitHeight: badgeContent.implicitHeight + 6
 
-    Label {
-        id: badgeLabel
+    Row {
+        id: badgeContent
         anchors.centerIn: parent
-        text: badge.label
-        font.bold: true
-        font.pointSize: Theme.fontTiny
-        color: badge.badgeColor
+        spacing: 4
+        SeabassIcon {
+            objectName: "badgeIcon"
+            visible: badge.iconName.length > 0
+            iconName: badge.iconName
+            size: badgeLabel.implicitHeight
+            color: badge.badgeColor
+        }
+        Label {
+            id: badgeLabel
+            text: badge.label
+            font.bold: true
+            font.pointSize: Theme.fontTiny
+            color: badge.badgeColor
+        }
     }
 
     HoverHandler { id: hoverHandler }

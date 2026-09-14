@@ -265,8 +265,10 @@ Page {
                         // than "Clean Up," so it shouldn't compete visually
                         // with Restore.
                         ToolButton {
-                            text: "🗑"
-                            font.family: "Noto Sans Symbols2"
+                            display: AbstractButton.IconOnly
+                            text: "Delete"
+                            icon.source: Theme.iconUrl("edit-delete")
+                            icon.color: enabled ? Theme.text : Theme.textMuted
                             opacity: 0.55
                             enabled: !backupsController.busy
                             Layout.preferredWidth: Theme.iconSizeSmall

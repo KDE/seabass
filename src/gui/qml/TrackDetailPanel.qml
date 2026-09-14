@@ -195,7 +195,10 @@ Pane {
             }
             ToolButton {
                 objectName: "closeTrackPanelButton"
-                text: "✕"
+                display: AbstractButton.IconOnly
+                text: "Close track details"
+                icon.source: Theme.iconUrl("window-close")
+                icon.color: Theme.text
                 ToolTip.visible: hovered
                 ToolTip.text: "Close track details"
                 onClicked: panel.closeRequested()

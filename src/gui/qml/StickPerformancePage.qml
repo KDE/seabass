@@ -195,10 +195,9 @@ Page {
                     anchors.fill: parent
                     anchors.margins: Theme.rowSpacing
                     spacing: Theme.rowSpacing
-                    Label {
-                        text: "⚠"
-                        font.family: "Noto Sans Symbols2"
-                        font.pointSize: Theme.fontMedium
+                    SeabassIcon {
+                        iconName: "dialog-warning"
+                        size: Theme.iconSizeSmall * 0.75
                         color: Theme.warnIcon
                     }
                     Label {

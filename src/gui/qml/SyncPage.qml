@@ -497,8 +497,9 @@ Page {
                                     ? syncController.unstage(delegateRoot.index)
                                     : syncController.applyOne(delegateRoot.index)
                             }
-                            Label {
-                                text: delegateRoot.expanded ? "▾" : "▸"
+                            SeabassIcon {
+                                iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
+                                size: Theme.iconSizeSmall * 0.75
                                 color: Theme.textMuted
                             }
                         }

@@ -341,6 +341,14 @@ QtObject {
     readonly property real iconSizeNormal: 40 * iconScale
     readonly property real iconSizeLarge: 48 * iconScale
 
+    // The URL of a bundled Breeze icon (qml/icons/breeze/<name>.svg), for
+    // a button's icon.source; SeabassIcon draws one on its own. The same
+    // URL in the app and under test, since both register the icons at
+    // this path (see the test module in the top-level CMakeLists.txt).
+    function iconUrl(name) {
+        return "qrc:/qt/qml/SeabassGui/qml/icons/breeze/" + name + ".svg";
+    }
+
     // ---- spacing scale --------------------------------------------
     //
     // One page, one left edge. These exist because the page they were
@@ -376,9 +384,7 @@ QtObject {
     // ---- Titles -- a dedicated (non-bold) display face + scale, set once
     // here and consumed only via PageTitle.qml, so every page title stays
     // consistent. Falls back to the platform's default sans if "Manrope"
-    // isn't installed, same as this app already does elsewhere for named
-    // fonts (e.g. "Noto Sans Symbols2" for the warning glyph) -- no font
-    // is bundled with the app.
+    // isn't installed -- no font is bundled with the app.
     readonly property string titleFamily: "Manrope"
     readonly property int titleWeight: Font.Medium
     readonly property real titleMedium: baseFontPointSize * 2.0
@@ -386,7 +392,7 @@ QtObject {
     // The breadcrumb row, a step down from titleMedium. That row carries
     // three pieces of text where the rest of a header carries one, and at
     // title size the three of them were what pushed the stick's name into
-    // an ellipsis on a window nobody would call narrow. The house glyph
+    // an ellipsis on a window nobody would call narrow. The house icon
     // that starts the row is deliberately NOT on this step -- an icon
     // reads smaller than text of the same nominal size, and it is the one
     // thing in the row a reader aims a click at.

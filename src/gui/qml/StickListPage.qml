@@ -293,7 +293,8 @@ Page {
             ToolButton {
                 id: homeMenuButton
                 objectName: "homeMenuButton"
-                icon.name: "application-menu"
+                icon.source: Theme.iconUrl("application-menu")
+                icon.color: Theme.text
                 icon.width: root.headerIconSize
                 icon.height: root.headerIconSize
                 display: AbstractButton.IconOnly
@@ -316,7 +317,8 @@ Page {
                     MenuItem {
                         objectName: "browseFullBackupItem"
                         text: "Browse a Full Stick Backup…"
-                        icon.name: "package-x-generic"
+                        icon.source: Theme.iconUrl("backup")
+                        icon.color: enabled ? Theme.text : Theme.textMuted
                         onTriggered: openBackupDialog.open()
                     }
                     MenuItem {
@@ -325,7 +327,8 @@ Page {
                         // the entry says the feature exists.
                         text: homeBackups.metadataTrackCount > 0 ? "Browse Metadata Backups"
                                                                  : "Browse Metadata Backups (none yet)"
-                        icon.name: "view-list-details"
+                        icon.source: Theme.iconUrl("view-list-details")
+                        icon.color: enabled ? Theme.text : Theme.textMuted
                         enabled: homeBackups.metadataTrackCount > 0
                         // No stick: the page opens on its browse half.
                         onTriggered: root.metadataBackupRequested("", "", "", "")
@@ -333,26 +336,25 @@ Page {
                     MenuItem {
                         objectName: "openFolderItem"
                         text: "Open a Library From a Folder…"
-                        icon.name: "folder-open"
+                        icon.source: Theme.iconUrl("folder-open")
+                        icon.color: enabled ? Theme.text : Theme.textMuted
                         onTriggered: openFolderDialog.open()
                     }
                 }
             }
-            // Breeze's own icons rather than emoji, and in colour.
-            //
-            // The monochrome action icons were three more grey marks in a
-            // header of grey marks. These are Breeze's full-colour ones,
-            // with icon.color "transparent" so the style does not tint
-            // them back to a single colour. Sized like the menu icon beside
-            // them. About is dialog-information because that one is in
-            // colour at this size; help-about is monochrome below 32 px.
+            // Bundled Breeze icons, flat in the text colour like every
+            // other icon in the app (see SeabassIcon): a theme lookup
+            // finds nothing on Windows or macOS, and colour icons next to
+            // flat ones read as two different sets. Sized like the menu
+            // icon beside them. The heart after them stays red: it is
+            // the one button asking for something.
             //
             // text is set on each despite IconOnly: it never renders,
             // and it is what an assistive reader announces.
             ToolButton {
                 objectName: "aboutButton"
-                icon.name: "dialog-information"
-                icon.color: "transparent"
+                icon.source: Theme.iconUrl("help-about")
+                icon.color: Theme.text
                 icon.width: root.headerIconSize
                 icon.height: root.headerIconSize
                 display: AbstractButton.IconOnly
@@ -363,8 +365,8 @@ Page {
             }
             ToolButton {
                 objectName: "preferencesButton"
-                icon.name: "systemsettings"
-                icon.color: "transparent"
+                icon.source: Theme.iconUrl("configure")
+                icon.color: Theme.text
                 icon.width: root.headerIconSize
                 icon.height: root.headerIconSize
                 display: AbstractButton.IconOnly
@@ -467,7 +469,7 @@ Page {
                     objectName: "generalRestoreCard"
                     cardTitle: "Restore a Stick Backup"
                     cardSubtitle: "Put a stick backup from this computer onto any drive"
-                    cardIcon: "🗂"
+                    cardIcon: "document-revert"
                     experimental: true
                     experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
                     // No stick preselected: the page itself lists every
@@ -478,7 +480,7 @@ Page {
                     objectName: "generalLocalCueCard"
                     cardTitle: "Local Cue Backup"
                     cardSubtitle: "Cue backups kept on this computer, across every stick"
-                    cardIcon: "💿"
+                    cardIcon: "bookmarks"
                     deprecated: true
                     deprecatedNote: "Needs rework"
                     onClicked: root.localCueRequested("", "", "")
@@ -631,8 +633,7 @@ Page {
                             spacing: 12
 
                             UsbStickIcon {
-                                Layout.preferredWidth: Theme.iconSizeNormal
-                                Layout.preferredHeight: Theme.iconSizeNormal
+                                size: Theme.iconSizeNormal
                                 Layout.alignment: Qt.AlignVCenter
                                 isSdCard: delegateRoot.isSdCard
                                 isFolder: delegateRoot.isFolder
@@ -774,8 +775,14 @@ Page {
                     ToolButton {
                         visible: delegateRoot.isFolder
                         objectName: "closeFolderButton"
-                        text: "✕"
-                        font.pointSize: Theme.fontLarge
+                        // Icon only; the text is what an assistive
+                        // reader announces.
+                        display: AbstractButton.IconOnly
+                        text: "Remove from list"
+                        icon.source: Theme.iconUrl("window-close")
+                        icon.color: Theme.text
+                        icon.width: root.headerIconSize
+                        icon.height: root.headerIconSize
                         Layout.preferredWidth: Theme.iconSizeLarge
                         Layout.preferredHeight: Theme.iconSizeLarge
                         Layout.alignment: Qt.AlignVCenter
@@ -798,10 +805,13 @@ Page {
                         // here queues behind whatever else is in flight.
                         objectName: "ejectButton"
                         enabled: true
-                        text: "⏏"
-                        font.family: "Noto Sans Symbols2"
-                        font.pointSize: Theme.fontHuge
-                        // Rotating the eject glyph 180° to mean "mount"
+                        display: AbstractButton.IconOnly
+                        text: delegateRoot.mounted ? "Eject" : "Mount"
+                        icon.source: Theme.iconUrl("media-eject")
+                        icon.color: Theme.text
+                        icon.width: root.headerIconSize
+                        icon.height: root.headerIconSize
+                        // Rotating the eject icon 180° to mean "mount"
                         // isn't a real convention -- it just reads as
                         // an upside-down (broken-looking) eject icon.
                         // Kept upright always; the tooltip (and now
@@ -873,7 +883,7 @@ Page {
                         ActionCard {
                             cardTitle: "Browse Library"
                             cardSubtitle: "View tracks, playlists and cues"
-                            cardIcon: "▤"
+                            cardIcon: "view-media-track"
                             visible: delegateRoot.hasKnownLibrary
                             enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
                             onClicked: root.browseRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
@@ -890,7 +900,7 @@ Page {
                             readOnly: delegateRoot.lockedByOther
                             onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
                             cardSubtitle: "Duplicate stats, copy cues between copies, and clean up"
-                            cardIcon: "▣"
+                            cardIcon: "edit-clear-all"
                             visible: delegateRoot.writable
                             enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
                             onClicked: root.duplicateTracksHubRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
@@ -900,7 +910,7 @@ Page {
                             readOnly: delegateRoot.lockedByOther
                             onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
                             cardSubtitle: "Find rows whose file is missing and repair or clean them up"
-                            cardIcon: "🩹"
+                            cardIcon: "kt-check-data"
                             // Graduated from experimental (see
                             // docs/experimental-features.md) after real
                             // use with no incidents.
@@ -911,7 +921,7 @@ Page {
                         ActionCard {
                             cardTitle: "Library Statistics"
                             cardSubtitle: "Filesystem, library stats, and disk usage"
-                            cardIcon: "📊"
+                            cardIcon: "office-chart-bar"
                             // Graduated from experimental (see
                             // docs/experimental-features.md) after real
                             // use with no incidents.
@@ -922,7 +932,7 @@ Page {
                         ActionCard {
                             cardTitle: "USB Stick Performance"
                             cardSubtitle: "Measure the stick the way a player reads it, per player generation"
-                            cardIcon: "⏱"
+                            cardIcon: "speedometer"
                             // See docs/experimental-features.md: the
                             // measurement only reads, but the optional
                             // write test on the page is a write path
@@ -946,7 +956,7 @@ Page {
                         ActionCard {
                             cardTitle: "Metadata Backup"
                             cardSubtitle: "Copy this stick's cues, ratings and comments to this computer"
-                            cardIcon: "💾"
+                            cardIcon: "document-save"
                             // Not gated on the write lock: this only ever
                             // writes to the local store, so another
                             // session editing the library is no reason to
@@ -961,7 +971,7 @@ Page {
                             readOnly: delegateRoot.lockedByOther
                             onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
                             cardSubtitle: "Put cues from this computer back on tracks that have lost them"
-                            cardIcon: "📥"
+                            cardIcon: "document-import"
                             visible: delegateRoot.writable
                             enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
                             onClicked: root.metadataRestoreRequested(delegateRoot.label, delegateRoot.rekordboxPath,
@@ -972,8 +982,7 @@ Page {
                             readOnly: delegateRoot.lockedByOther
                             onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
                             cardSubtitle: "Build a new Engine Library from this stick's DeviceLibrary export"
-                            cardIcon: "⚙"
-                            cardIconFont: "Noto Sans Symbols"
+                            cardIcon: "server-database"
                             // Experimental (see docs/experimental-features.md):
                             // the first feature here that fabricates a whole
                             // new database from scratch. Only makes sense
@@ -1002,8 +1011,7 @@ Page {
                             readOnly: delegateRoot.lockedByOther
                             onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
                             cardSubtitle: "Copy cues between DeviceLibrary and Engine"
-                            cardIcon: "⇄"
-                            cardIconFont: "Noto Sans Math"
+                            cardIcon: "exchange-positions"
                             visible: delegateRoot.writable
                             enabled: delegateRoot.hasRekordbox && delegateRoot.hasEngine
                             onClicked: root.syncRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
@@ -1028,7 +1036,7 @@ Page {
                                 default: return "Local cue backup/restore and automatic write backups";
                                 }
                             }
-                            cardIcon: "🗄"
+                            cardIcon: "backup"
                             visible: delegateRoot.writable
                             enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
                             onClicked: root.backupsHubRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath,
@@ -1039,8 +1047,7 @@ Page {
                             readOnly: delegateRoot.lockedByOther
                             onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
                             cardSubtitle: "View this stick's saved Rekordbox player settings"
-                            cardIcon: "⚙"
-                            cardIconFont: "Noto Sans Symbols"
+                            cardIcon: "view-media-equalizer"
                             visible: delegateRoot.writable
                             enabled: delegateRoot.hasRekordbox
                             onClicked: root.settingsRequested(delegateRoot.label, delegateRoot.rekordboxPath)
@@ -1051,7 +1058,7 @@ Page {
                             // erase, and devicePath is empty for one.
                             visible: !delegateRoot.isFolder
                             cardSubtitle: "Erase and prepare this drive for CDJs, XDJs, and Denon Engine players"
-                            cardIcon: "💽"
+                            cardIcon: "edit-delete-shred"
                             // Experimental (see docs/experimental-features.md):
                             // the first feature here that can permanently
                             // erase a drive, not just modify/consolidate
@@ -1094,8 +1101,7 @@ Page {
                                 : (delegateRoot.adviceState === "restore"
                                     ? "Restore " + delegateRoot.advice.backupLabel + "'s library onto this stick"
                                     : "No known stick backups yet -- browse for a backup file to restore")
-                            cardIcon: "⧉"
-                            cardIconFont: "Noto Sans Math"
+                            cardIcon: "edit-copy"
                             // Experimental with the stick backup it is built
                             // on: either a copy of another mounted stick's
                             // own current library, or an existing backup

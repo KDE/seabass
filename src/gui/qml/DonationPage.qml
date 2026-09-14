@@ -42,9 +42,9 @@ Page {
         anchors.centerIn: parent
         spacing: 12
 
-        Label {
-            text: "❤️"
-            font.pointSize: Theme.titleLarge
+        HeartIcon {
+            iconSize: Theme.iconSizeLarge
+            color: "#aa0000"
             Layout.alignment: Qt.AlignHCenter
         }
         Label {

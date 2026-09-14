@@ -304,10 +304,9 @@ Page {
                                     ? duplicatesController.unstage(delegateRoot.index)
                                     : duplicatesController.applyOne(delegateRoot.index)
                             }
-                            Label {
-                                text: delegateRoot.expanded ? "▾" : "▸"
-                                font.pointSize: Theme.fontHuge
-                                font.bold: true
+                            SeabassIcon {
+                                iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
+                                size: Theme.iconSizeSmall * 0.75
                                 color: Theme.textMuted
                             }
                         }

@@ -133,7 +133,7 @@ Page {
         ActionCard {
             cardTitle: "Match Duplicate Cues"
             cardSubtitle: "Give every copy of a track the same cues, and see the space they waste"
-            cardIcon: "▣"
+            cardIcon: "edit-duplicate"
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.duplicatesStatsRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
         }
@@ -143,7 +143,7 @@ Page {
             cardTitle: "Clean Up Duplicates"
             cardSubtitle: "Remove redundant copies, keep the best one"
                 + (root.hasOneLibrary ? " (also updates OneLibrary)" : "")
-            cardIcon: "🧹"
+            cardIcon: "edit-clear-all"
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.cleanupRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
         }
@@ -154,7 +154,7 @@ Page {
             cardSubtitle: root.hasPendingDeletions
                 ? "Free disk space: delete files earlier cleanups' database edits orphaned"
                 : "Nothing orphaned right now. Every earlier cleanup's files are accounted for"
-            cardIcon: "🗑"
+            cardIcon: "edit-delete"
             enabled: (root.hasRekordbox || root.hasEngine) && root.hasPendingDeletions
             onClicked: root.pendingDeletionsRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
         }
@@ -163,7 +163,7 @@ Page {
             onReadOnlyClicked: root.explainLock()
             cardTitle: "Clean Up Stray Cues"
             cardSubtitle: "Remove memory cues sitting at 0:00, almost always accidental"
-            cardIcon: "🧽"
+            cardIcon: "draw-eraser"
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.junkCueCleanupRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
         }

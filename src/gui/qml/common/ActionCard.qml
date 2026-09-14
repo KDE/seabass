@@ -16,8 +16,12 @@ Button {
     id: card
     property string cardTitle
     property string cardSubtitle
+    // A bundled Breeze icon's name (see SeabassIcon), drawn flat in the
+    // subtitle's colour and dimmed with it.
     property string cardIcon
-    property string cardIconFont: "Noto Sans Symbols2"
+    // A mark in front of the subtitle -- "dialog-warning" when the
+    // subtitle is a caution -- or none.
+    property string cardSubtitleIcon: ""
     // See docs/experimental-features.md. A card marked experimental stays
     // hidden until experimentalFeaturesEnabled is on -- set both from the
     // page embedding this card (experimental: true, experimentalFeaturesEnabled:
@@ -51,13 +55,12 @@ Button {
 
     contentItem: RowLayout {
         spacing: 10
-        Label {
-            text: card.cardIcon
-            font.family: card.cardIconFont
-            font.pointSize: Theme.fontHuge
+        SeabassIcon {
+            objectName: "cardIcon"
+            iconName: card.cardIcon
+            size: Theme.iconSizeSmall
             color: card.enabled && !card.readOnly ? Theme.textMuted : Qt.darker(Theme.textMuted, 1.6)
-            Layout.preferredWidth: 30
-            horizontalAlignment: Text.AlignHCenter
+            Layout.alignment: Qt.AlignVCenter
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -134,12 +137,26 @@ Button {
                     ToolTip.text: card.deprecatedNote
                 }
             }
-            Label {
-                text: card.cardSubtitle
-                color: card.enabled && !card.readOnly ? Theme.textMuted : Qt.darker(Theme.textMuted, 1.6)
-                font.pointSize: Theme.baseFontPointSize * 0.9
-                wrapMode: Text.WordWrap
+            RowLayout {
                 Layout.fillWidth: true
+                spacing: 4
+                SeabassIcon {
+                    objectName: "cardSubtitleIcon"
+                    visible: card.cardSubtitleIcon.length > 0
+                    iconName: card.cardSubtitleIcon
+                    // One line of the subtitle tall, on its first line.
+                    size: subtitleLabel.fontInfo.pixelSize * 1.3
+                    color: card.enabled && !card.readOnly ? Theme.warnIcon : Qt.darker(Theme.textMuted, 1.6)
+                    Layout.alignment: Qt.AlignTop
+                }
+                Label {
+                    id: subtitleLabel
+                    text: card.cardSubtitle
+                    color: card.enabled && !card.readOnly ? Theme.textMuted : Qt.darker(Theme.textMuted, 1.6)
+                    font.pointSize: Theme.baseFontPointSize * 0.9
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
             }
         }
     }

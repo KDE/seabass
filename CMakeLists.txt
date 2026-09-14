@@ -664,6 +664,10 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # screenshot and mistrusts it.
         set_source_files_properties(src/gui/qml/icons/seabass_soundbass.svg
             PROPERTIES QT_RESOURCE_ALIAS qml/icons/seabass_soundbass.svg)
+        foreach(icon IN LISTS SEABASS_GUI_ICONS_FROM_ROOT)
+            string(REPLACE "src/gui/" "" iconAlias "${icon}")
+            set_source_files_properties(${icon} PROPERTIES QT_RESOURCE_ALIAS ${iconAlias})
+        endforeach()
         qt_add_qml_module(seabass_qml_tests
             URI SeabassGui
             VERSION 1.0
@@ -671,6 +675,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 ${SEABASS_GUI_QML_FILES_FROM_ROOT}
             RESOURCES
                 src/gui/qml/icons/seabass_soundbass.svg
+                ${SEABASS_GUI_ICONS_FROM_ROOT}
             SOURCES
                 ${SEABASS_GUI_SOURCES_FROM_ROOT}
         )
@@ -1513,6 +1518,12 @@ add_executable(sha256_test
 )
 target_include_directories(sha256_test PRIVATE src)
 add_test(NAME sha256_test COMMAND sha256_test)
+
+# The icons the QML names are all bundled (see the script for why a
+# missing one would otherwise go unnoticed). A script, not a target, so
+# the -UNDEBUG check at the end of this file has nothing to say about it.
+add_test(NAME breeze_icons_test
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/tests/breeze_icons_test.cmake)
 
 # Windows-only: WindowsRemovableMediaMonitor has no Linux equivalent
 # target (see infrastructure/media/linux_udev_media_monitor.cpp for that

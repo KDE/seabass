@@ -106,8 +106,7 @@ RowLayout {
         // Draws HomeIcon rather than a word. Not a font glyph: a symbol
         // font that lacks the character silently falls back to whatever
         // fontconfig picks, or to tofu, and this is the only way back on
-        // the six pages that have no middle segment. See HomeIcon.qml for
-        // why it is a Shape and not the .svg either.
+        // the six pages that have no middle segment.
         property bool showsIcon: false
         contentItem: Loader {
             sourceComponent: crumb.showsIcon ? iconContent : textContent
@@ -134,8 +133,7 @@ RowLayout {
             HomeIcon {
                 // A quarter larger than its own default: the one crumb
                 // that is a picture, and the way back to the start.
-                implicitWidth: Theme.iconSizeSmall * 0.875
-                implicitHeight: Theme.iconSizeSmall * 0.875
+                size: Theme.iconSizeSmall * 0.875
                 color: Theme.textMuted
                 opacity: crumb.enabled ? 1.0 : 0.5
             }

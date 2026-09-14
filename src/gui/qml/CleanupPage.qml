@@ -375,7 +375,7 @@ Page {
         headline: "This marks all " + plansListView.count + " currently listed duplicate group(s) - "
             + cleanupController.totalWastedBytesHuman + " total if every copy kept only one file - "
             + "for the next \"Clean Up Selected\" click, including groups excluded by default because "
-            + "their copies differ in quality (marked with ⚠ below)."
+            + "their copies differ in quality (marked “copies differ” below)."
         detailText: searchField.text.length > 0
             ? "Your search (\"" + searchField.text + "\") is currently narrowing this list. Clear it "
                 + "first if you meant to select across your whole library, or leave it as-is to select "
@@ -508,7 +508,8 @@ Page {
                                 color: Theme.textMuted
                             }
                             StatusBadge {
-                                label: "ⓘ what's conserved"
+                                label: "what's conserved"
+                                iconName: "help-about"
                                 badgeColor: Theme.textMuted
                                 // Was 558 characters of prose. A hover
                                 // tooltip is read standing up, with the
@@ -524,7 +525,8 @@ Page {
                             }
                             StatusBadge {
                                 visible: delegateRoot.differs
-                                label: "⚠ copies differ"
+                                label: "copies differ"
+                                iconName: "dialog-warning"
                                 badgeColor: Theme.conflictText
                                 // The "why" (a shorter edit kept on
                                 // purpose) is what the exclusion is FOR,
@@ -545,23 +547,24 @@ Page {
                             }
                             StatusBadge {
                                 visible: delegateRoot.unreferencedHeldBackCount > 0
-                                label: "⚠ " + delegateRoot.unreferencedHeldBackCount + " file(s) kept back"
+                                label: delegateRoot.unreferencedHeldBackCount + " file(s) kept back"
+                                iconName: "dialog-warning"
                                 badgeColor: Theme.conflictText
                                 tooltipText: "Left on the stick either way: these copies may not be the same "
                                     + "recording, and nothing is deleted on a guess."
                             }
                             StatusBadge {
                                 visible: delegateRoot.hasUnpreservableDataAtRisk
-                                label: "⚠ data would be lost"
+                                label: "data would be lost"
+                                iconName: "dialog-warning"
                                 badgeColor: Theme.conflictText
                                 tooltipText: "The copies' ratings or comments differ, and only one can be kept. "
                                     + "Excluded by default; tick to include."
                             }
                             Item { Layout.fillWidth: true }
-                            Label {
-                                text: delegateRoot.expanded ? "▾" : "▸"
-                                font.pointSize: Theme.fontHuge
-                                font.bold: true
+                            SeabassIcon {
+                                iconName: delegateRoot.expanded ? "arrow-down" : "arrow-right"
+                                size: Theme.iconSizeSmall * 0.75
                                 color: Theme.textMuted
                             }
                         }

@@ -51,6 +51,8 @@ set(SEABASS_GUI_QML_FILES
     qml/common/HealthCheckCard.qml
     qml/common/HomeIcon.qml
     qml/common/HeartIcon.qml
+    qml/common/SeabassIcon.qml
+    qml/common/IconLabel.qml
     qml/common/PageTitle.qml
     qml/common/SeabassDialog.qml
     qml/common/SpaceReclaimBar.qml
@@ -199,14 +201,70 @@ set(SEABASS_GUI_SOURCES
     system_font_metrics.hpp
     system_font_metrics.cpp
 )
+# The Breeze icons the UI draws (common/SeabassIcon.qml), copied by
+# tools/update-breeze-icons.sh -- which is also where to add one.
+set(SEABASS_GUI_ICONS
+    qml/icons/breeze/application-menu.svg
+    qml/icons/breeze/archive-insert.svg
+    qml/icons/breeze/arrow-down.svg
+    qml/icons/breeze/arrow-right.svg
+    qml/icons/breeze/backup.svg
+    qml/icons/breeze/bookmarks.svg
+    qml/icons/breeze/checkmark.svg
+    qml/icons/breeze/configure.svg
+    qml/icons/breeze/deep-history.svg
+    qml/icons/breeze/dialog-warning.svg
+    qml/icons/breeze/document-import.svg
+    qml/icons/breeze/document-revert.svg
+    qml/icons/breeze/document-save.svg
+    qml/icons/breeze/draw-eraser.svg
+    qml/icons/breeze/drive-removable-media-usb-pendrive.svg
+    qml/icons/breeze/edit-clear-all.svg
+    qml/icons/breeze/edit-clear.svg
+    qml/icons/breeze/edit-copy.svg
+    qml/icons/breeze/edit-delete-shred.svg
+    qml/icons/breeze/edit-delete.svg
+    qml/icons/breeze/edit-duplicate.svg
+    qml/icons/breeze/edit-find.svg
+    qml/icons/breeze/edit-undo.svg
+    qml/icons/breeze/exchange-positions.svg
+    qml/icons/breeze/folder-open.svg
+    qml/icons/breeze/folder.svg
+    qml/icons/breeze/go-down.svg
+    qml/icons/breeze/go-home.svg
+    qml/icons/breeze/go-next.svg
+    qml/icons/breeze/go-previous.svg
+    qml/icons/breeze/go-up.svg
+    qml/icons/breeze/help-about.svg
+    qml/icons/breeze/kt-check-data.svg
+    qml/icons/breeze/link.svg
+    qml/icons/breeze/media-eject.svg
+    qml/icons/breeze/media-flash-sd-mmc.svg
+    qml/icons/breeze/media-playback-start.svg
+    qml/icons/breeze/office-chart-bar.svg
+    qml/icons/breeze/server-database.svg
+    qml/icons/breeze/sidebar-collapse-left.svg
+    qml/icons/breeze/sidebar-expand-left.svg
+    qml/icons/breeze/speedometer.svg
+    qml/icons/breeze/view-list-details.svg
+    qml/icons/breeze/view-media-equalizer.svg
+    qml/icons/breeze/view-media-track.svg
+    qml/icons/breeze/view-refresh.svg
+    qml/icons/breeze/view-sort-ascending.svg
+    qml/icons/breeze/view-sort-descending.svg
+    qml/icons/breeze/window-close.svg
+)
 # Relative here (qt_add_qml_module derives each file's resource path from
 # its path relative to the calling directory); the parent gets them
 # re-rooted so the test module in the top-level directory resolves them.
 set(SEABASS_GUI_QML_FILES_FROM_ROOT ${SEABASS_GUI_QML_FILES})
 list(TRANSFORM SEABASS_GUI_QML_FILES_FROM_ROOT PREPEND "src/gui/")
+set(SEABASS_GUI_ICONS_FROM_ROOT ${SEABASS_GUI_ICONS})
+list(TRANSFORM SEABASS_GUI_ICONS_FROM_ROOT PREPEND "src/gui/")
 set(SEABASS_GUI_SOURCES_FROM_ROOT ${SEABASS_GUI_SOURCES})
 list(TRANSFORM SEABASS_GUI_SOURCES_FROM_ROOT PREPEND "src/gui/")
 set(SEABASS_GUI_QML_FILES_FROM_ROOT ${SEABASS_GUI_QML_FILES_FROM_ROOT} PARENT_SCOPE)
+set(SEABASS_GUI_ICONS_FROM_ROOT ${SEABASS_GUI_ICONS_FROM_ROOT} PARENT_SCOPE)
 set(SEABASS_GUI_SOURCES_FROM_ROOT ${SEABASS_GUI_SOURCES_FROM_ROOT} PARENT_SCOPE)
 
 qt_add_qml_module(seabass
@@ -216,6 +274,7 @@ qt_add_qml_module(seabass
         ${SEABASS_GUI_QML_FILES}
     RESOURCES
         qml/icons/seabass_soundbass.svg
+        ${SEABASS_GUI_ICONS}
     SOURCES
         ${SEABASS_GUI_SOURCES}
 )

@@ -534,12 +534,13 @@ Page {
                     // it gets its own unmissable line rather than folding
                     // into the ordinary "N problems" count restore reports
                     // afterward.
-                    Label {
+                    IconLabel {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         visible: (root.info.unreadableEntries || 0) > 0
                         color: Theme.danger
-                        text: "⚠ " + root.info.unreadableEntries + " of " + root.info.entries
+                        iconName: "dialog-warning"
+                        text: root.info.unreadableEntries + " of " + root.info.entries
                             + " entries in this backup have no readable data. The archive may be damaged"
                             + ((root.info.unreadableEntries || 0) * 2 > (root.info.entries || 1)
                                ? " and this restore will be refused." : "; the rest can still be restored.")

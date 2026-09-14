@@ -54,10 +54,10 @@ TestCase {
         var button = findChild(page, "sortDirectionButton");
         verify(button !== null, "the sort direction button must exist");
         compare(button.display, AbstractButton.IconOnly);
-        compare(button.icon.name, "view-sort-ascending");
+        compare(button.icon.source.toString(), Theme.iconUrl("view-sort-ascending"));
         compare(button.text, "Ascending");
         button.checked = false;
-        compare(button.icon.name, "view-sort-descending");
+        compare(button.icon.source.toString(), Theme.iconUrl("view-sort-descending"));
         compare(button.text, "Descending");
     }
 

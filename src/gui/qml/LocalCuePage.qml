@@ -335,8 +335,10 @@ Page {
                                 }
                             }
                             ToolButton {
-                                text: "🗑"
-                                font.family: "Noto Sans Symbols2"
+                                display: AbstractButton.IconOnly
+                                text: "Delete"
+                                icon.source: Theme.iconUrl("edit-delete")
+                                icon.color: enabled ? Theme.text : Theme.textMuted
                                 opacity: 0.55
                                 Layout.preferredWidth: Theme.iconSizeSmall
                                 ToolTip.visible: hovered
