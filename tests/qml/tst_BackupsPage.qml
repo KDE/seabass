@@ -26,6 +26,10 @@ TestCase {
         id: spyComponent
         SignalSpy {}
     }
+    Component {
+        id: realControllerComponent
+        FullBackupsController {}
+    }
 
     function daysAgo(days) {
         var d = new Date();
@@ -133,6 +137,25 @@ TestCase {
         compare(page.controller.backupDirectory, "/home/u/Other Backups");
         page.backupDirectory = "/mnt/backups";
         compare(page.controller.backupDirectory, "/mnt/backups", "a changed folder is handed on too");
+    }
+
+    // The real controller: handing over this stick's archive before the
+    // folder starts no listing (there is nothing to list yet), and the
+    // folder then starts exactly one.
+    function test_realControllerListsOnceTheFolderIsKnown() {
+        var controller = createTemporaryObject(realControllerComponent, testCase);
+        var spy = createTemporaryObject(spyComponent, testCase, {target: controller, signalName: "busyChanged"});
+        controller.currentArchivePath = "/nonexistent/Backups/MAIN.zip";
+        compare(controller.listing, false, "no folder yet: nothing to list");
+        compare(spy.count, 0);
+        controller.backupDirectory = "/nonexistent/Backups";
+        // Started and finished: one busyChanged each. A missing folder lists
+        // in no time, so `listing` itself may already be false here.
+        tryCompare(spy, "count", 2, 5000);
+        compare(controller.listing, false);
+        wait(50);
+        compare(spy.count, 2, "one listing, not a second one queued behind it");
+        compare(controller.backups.length, 0);
     }
 
     function test_deleteAsksFirst() {

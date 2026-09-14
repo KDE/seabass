@@ -90,6 +90,12 @@ void FullBackupsController::setOpenArchivePaths(const QStringList &paths)
 
 void FullBackupsController::refresh()
 {
+    // Nothing to list until there is a folder -- and the page hands over the
+    // current archive before the folder, so listing here would read an empty
+    // folder and then the real one straight after.
+    if (m_backupDirectory.isEmpty()) {
+        return;
+    }
     if (m_listWatcher.isRunning()) {
         // The folder or the current stick changed mid-listing: list again
         // once this one lands rather than showing a stale answer.
