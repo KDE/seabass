@@ -111,24 +111,36 @@ struct Opened
 
     enum class Journal
     {
-        // Listing: read what is there and never look at the journal. Safe
-        // against a folder someone is backing up into right now.
-        Ignore,
-        // Preview: read-only as well. An update that did not finish (or is
-        // still running) is read past, as the generation before it -- what
-        // the restore's rollback will leave -- and flagged, never truncated.
+        // Listing and preview: read-only. An update that did not finish (or
+        // is still running) is read past, as the generation before it --
+        // what the restore's rollback will leave -- and flagged, never
+        // truncated. Safe against a folder someone is backing up into now.
         ReadSettled,
-        // The restore itself, under the archive's write lock: roll an
-        // unfinished update back for real first. Only then is write access
-        // needed.
+        // The restore itself: roll an unfinished update back for real first,
+        // and clear a journal that outlived a finished one. Both need the
+        // archive's write lock (see canWrite) and write access.
         Recover,
     };
+
+    // Set by execute(): whether it holds the archive's write lock. A folder
+    // nobody can write to cannot hold the lock file -- nor a backup writing
+    // into it -- so the restore still reads the archive, but must not roll
+    // anything back.
+    bool canWrite = true;
 
     const ArchiveFile &readable() const { return settled ? *settled : *archive; }
 
     // The journal record of an update that did not finish, if there is one.
     // Read-only: looks at the journal, never clears it.
-    std::optional<JournalRecord> unfinishedUpdate(const fs::path &archivePath) const
+    //
+    // `thorough` checks every byte appended since the journal's offset, as
+    // the rollback itself does. Listing and preview pass false and settle
+    // for the cheap test instead: an update writes its central directory
+    // last, so an archive that still opens from its end has finished. That
+    // matters because the backup list is read over and over while a backup
+    // runs, and for a first backup the journal's offset is 0 -- a thorough
+    // check there would re-read the whole growing archive on every pass.
+    std::optional<JournalRecord> unfinishedUpdate(const fs::path &archivePath, bool thorough) const
     {
         const fs::path journalPath = journal::journalPathFor(archivePath);
         std::error_code ec;
@@ -139,7 +151,12 @@ struct Opened
         if (state.kind != JournalState::Kind::Valid) {
             return std::nullopt;  // absent, or corrupt: nothing was appended
         }
-        if (archive->size() >= state.record.preLength && verifyArchiveTail(*archive, state.record.preLength)) {
+        if (archive->size() < state.record.preLength) {
+            return state.record;
+        }
+        const bool finished = thorough ? verifyArchiveTail(*archive, state.record.preLength)
+                                       : Zip64Reader::tryOpen(*archive).has_value();
+        if (finished) {
             return std::nullopt;  // the update finished; only its journal outlived it
         }
         return state.record;
@@ -164,16 +181,32 @@ struct Opened
     {
         try {
             archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadOnly);
-            if (mode != Journal::Ignore) {
-                if (std::optional<JournalRecord> record = unfinishedUpdate(archivePath)) {
-                    if (mode == Journal::ReadSettled) {
-                        readSettled(*record);
-                    } else {
-                        archive.reset();
-                        archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
-                        journal = std::make_unique<PosixArchiveFile>(journal::journalPathFor(archivePath),
-                                                                     PosixArchiveFile::OpenMode::ReadWrite);
-                        recoverOnOpen(*archive, *journal);
+            const fs::path journalPath = journal::journalPathFor(archivePath);
+            std::optional<JournalRecord> record = unfinishedUpdate(archivePath, mode == Journal::Recover);
+            if (record && mode == Journal::ReadSettled) {
+                readSettled(*record);
+            } else if (record && !canWrite) {
+                error = "the last update of this backup did not finish, and the folder it is in cannot be written "
+                        "to, so it cannot be rolled back";
+                return false;
+            } else if (record) {
+                archive.reset();
+                archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
+                journal = std::make_unique<PosixArchiveFile>(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+                recoverOnOpen(*archive, *journal);
+            } else if (mode == Journal::Recover && canWrite) {
+                // A journal that outlived a finished update, or a corrupt one
+                // (nothing was appended), is left for whoever writes next --
+                // but every preview until then re-checks the archive's tail
+                // from its offset, which for a first backup is the whole
+                // file. Clear it while the lock is held. Best effort: the
+                // restore does not depend on it.
+                std::error_code ec;
+                if (fs::exists(journalPath, ec) && fs::file_size(journalPath, ec) > 0) {
+                    try {
+                        PosixArchiveFile stale(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+                        journal::clear(stale);
+                    } catch (const std::exception &) {
                     }
                 }
             }
@@ -187,19 +220,6 @@ struct Opened
         }
         std::string openError;
         reader = Zip64Reader::tryOpen(readable(), &openError);
-        if (!reader && mode == Journal::ReadSettled && !settled) {
-            // Preview holds no lock, so a backup may have started appending
-            // after the journal was checked. Look once more before calling a
-            // busy backup unreadable.
-            try {
-                if (std::optional<JournalRecord> record = unfinishedUpdate(archivePath)) {
-                    readSettled(*record);
-                    reader = Zip64Reader::tryOpen(readable(), &openError);
-                }
-            } catch (const std::exception &) {
-                // Keep the original error.
-            }
-        }
         if (!reader) {
             error = "the backup is unreadable: " + openError;
             return false;
@@ -426,9 +446,11 @@ StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
     StickBackupDescription description;
     description.archivePath = archivePath;
     Opened opened;
-    // Listing only: never looks at the journal, so this is safe to run
-    // against a folder someone is backing up into right now.
-    if (!opened.open(archivePath, Opened::Journal::Ignore)) {
+    // Listing only: read-only, and an unfinished update is listed as the
+    // backup it will roll back to rather than as unreadable -- otherwise the
+    // Restore page could not offer it. Safe to run against a folder someone
+    // is backing up into right now.
+    if (!opened.open(archivePath, Opened::Journal::ReadSettled)) {
         description.error = opened.error;
         return description;
     }
@@ -519,14 +541,20 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     // BackupStick/CompactStickBackup/another restore on the same archive,
     // not just the restore's own writes.
     std::unique_ptr<infrastructure::backup::StickWriteLock> lock;
+    Opened opened;
     try {
         lock = std::make_unique<infrastructure::backup::StickWriteLock>(
             journal::lockPathFor(options.archivePath).string());
     } catch (const infrastructure::backup::StickBusyError &e) {
         summary.message = e.what();
         return summary;
+    } catch (const std::exception &) {
+        // The lock file cannot be created: the backup's folder is not
+        // writable (a read-only share, a write-protected folder). Nothing
+        // can be writing the archive there either, so reading it is safe;
+        // only a rollback, which would write, is refused.
+        opened.canWrite = false;
     }
-    Opened opened;
     if (!opened.open(options.archivePath, Opened::Journal::Recover)) {
         summary.message = opened.error;
         return summary;

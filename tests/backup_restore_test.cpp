@@ -545,6 +545,18 @@ int main()
         };
         protect(f.archive, true);
         protect(BackupStick::journalPathFor(f.archive), true);
+        // The folder too, like a read-only share: the restore cannot create
+        // its lock file there, and must still read the archive. The backup
+        // left one behind, and an existing file stays openable in a
+        // write-protected folder -- so it goes first, or the restore would
+        // lock it and never take the path this case is about.
+        const fs::path folder = f.archive.parent_path();
+        std::error_code folderEc;
+        fs::remove(seabass::infrastructure::stick_backup::journal::lockPathFor(f.archive), folderEc);
+        assert(!fs::exists(seabass::infrastructure::stick_backup::journal::lockPathFor(f.archive)));
+        fs::permissions(folder, fs::perms::owner_read | fs::perms::owner_exec | fs::perms::group_read | fs::perms::group_exec
+                                    | fs::perms::others_read | fs::perms::others_exec,
+                        fs::perm_options::replace, folderEc);
         bool enforced = true;
         try {
             PosixArchiveFile probe(f.archive, PosixArchiveFile::OpenMode::ReadWrite);
@@ -569,8 +581,11 @@ int main()
             VerifyOutcome verified = BackupStick::verify(f.archive);
             assert(verified.error.empty() && verified.ok && "a read-only backup verifies");
             assert(fs::file_size(f.archive) == sizeBefore && fs::last_write_time(f.archive) == timeBefore);
-            std::cout << "case read-only-archive (previews, restores and verifies without write access) OK\n";
+            std::cout << "case read-only-archive (previews, restores and verifies with neither the file nor its folder writable) OK\n";
         }
+        fs::permissions(folder, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                                    | fs::perms::others_read | fs::perms::others_exec,
+                        fs::perm_options::replace, folderEc);
         protect(f.archive, false);
         protect(BackupStick::journalPathFor(f.archive), false);
     }
@@ -606,6 +621,11 @@ int main()
         const std::uint64_t unfinishedLength = fs::file_size(f.archive);
         assert(unfinishedLength == goodLength + 4096);
 
+        const StickBackupDescription listed = RestoreStickBackup::describe(f.archive);
+        if (!listed.error.empty()) {
+            std::cerr << "listing an unfinished update: " << listed.error << "\n";
+        }
+        assert(listed.error.empty() && "the backup list offers it rather than calling it unreadable");
         RestorePreview preview = RestoreStickBackup::preview(f.restore);
         if (!preview.error.empty()) {
             std::cerr << "preview of an unfinished update: " << preview.error << "\n";
@@ -624,6 +644,27 @@ int main()
         RestorePreview after = RestoreStickBackup::preview(f.restore);
         assert(after.error.empty() && !after.rollsBackUnfinishedUpdate && after.filesToWrite == 0);
         std::cout << "case unfinished-update (preview reads past it untouched, restore rolls back) OK\n";
+    }
+
+
+    // ---- A corrupt leftover journal is cleared by the restore ----
+    // Nothing was appended, so there is nothing to roll back -- but left in
+    // place, every preview after it re-checks the archive's tail.
+    {
+        Fixture f("stale-journal");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const fs::path journalPath = BackupStick::journalPathFor(f.archive);
+        const std::uint64_t length = fs::file_size(f.archive);
+        {
+            std::ofstream out(journalPath, std::ios::binary | std::ios::trunc);
+            out << "not a journal record";
+        }
+        assert(RestoreStickBackup::preview(f.restore).error.empty());
+        assert(fs::file_size(journalPath) > 0 && "preview leaves the journal alone");
+        assert(RestoreStickBackup::execute(f.restore).status == RestoreSummary::Status::Restored);
+        assert(fs::file_size(journalPath) == 0 && "the restore, holding the lock, cleared it");
+        assert(fs::file_size(f.archive) == length && "and the archive itself was not touched");
+        std::cout << "case stale-journal (a corrupt leftover journal is cleared, the archive untouched) OK\n";
     }
 
     return 0;
