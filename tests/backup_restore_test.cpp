@@ -905,5 +905,64 @@ int main()
         }
     }
 
+
+    // ---- An exact restore that could not write everything removes nothing ----
+    // An extra can be the stick's own copy of a file whose backup copy failed
+    // to write, under a spelling of its name the restore does not recognise.
+    // Removing extras then would leave the stick with neither copy.
+    {
+        Fixture f("exact-with-write-error");
+        fs::create_directories(f.archive.parent_path());
+        std::vector<std::string> names;
+        {
+            PosixArchiveFile file(f.archive, PosixArchiveFile::OpenMode::ReadWrite);
+            Zip64Writer writer(file, {});
+            BackupManifest manifest;
+            manifest.stickLabel = "ONE";
+            manifest.createdAtUnix = 1'757'200'000;
+            for (int i = 0; i < 6; ++i) {
+                std::string name = "Contents/track" + std::to_string(i) + ".mp3";
+                seabass::infrastructure::hashing::Sha256Digest sha;
+                CentralEntry e = writer.addFileFromMemory(name, 1'700'000'000 + i, zip::bytesOf(pseudoRandom(2'000, static_cast<std::uint64_t>(i))), &sha);
+                manifest.rows.push_back({ManifestRow::Kind::File, name, e.size, e.mtimeUnix, sha, "", e.crc32});
+                names.push_back(name);
+            }
+            writer.finish(manifest.serialize(), std::string(ManifestEntryName), manifest.createdAtUnix);
+            file.barrier();
+        }
+        {
+            PosixArchiveFile file(f.archive, PosixArchiveFile::OpenMode::ReadWrite);
+            Zip64Reader reader = Zip64Reader::open(file);
+            std::string bytes = readFile(f.archive);
+            std::uint64_t at = reader.entries()[*reader.findEntry(names[0])].localHeaderOffset;
+            for (std::uint64_t b = at; b < at + 16; ++b) {
+                bytes[static_cast<std::size_t>(b)] = '\0';
+            }
+            std::ofstream(f.archive, std::ios::binary) << bytes;
+        }
+        // The stick's own copy of the track that will fail, under a name the
+        // restore does not match, and an ordinary stray.
+        writeFile(f.target / "Contents" / "track0-older-spelling.mp3", pseudoRandom(1'500, 99), 1'600'000'000);
+        writeFile(f.target / "stray.txt", "extra", 1'600'000'000);
+
+        RestoreOptions exact = f.restore;
+        exact.exact = true;
+        RestoreSummary summary = RestoreStickBackup::execute(exact);
+        assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
+        assert(summary.writeErrors.size() == 1);
+        assert(summary.extrasRemoved == 0);
+        assert(fs::exists(f.target / "Contents" / "track0-older-spelling.mp3") && "the stick's own copy survives");
+        assert(fs::exists(f.target / "stray.txt") && "no extra is removed after a failed write");
+        bool warned = false;
+        for (const std::string &warning : summary.warnings) {
+            warned = warned || warning.find("left in place") != std::string::npos;
+        }
+        assert(warned && "the restore says why the extras stayed");
+        for (std::size_t i = 1; i < names.size(); ++i) {
+            assert(fs::exists(f.target / pathFromUtf8(names[i])));
+        }
+        std::cout << "case exact-with-write-error (a restore that could not write everything removes nothing) OK\n";
+    }
+
     return 0;
 }

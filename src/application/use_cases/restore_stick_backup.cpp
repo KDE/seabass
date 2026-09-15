@@ -750,7 +750,15 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     }
     reporter.finish();
 
-    if (options.exact && !extras.empty()) {
+    if (options.exact && !extras.empty() && (!summary.writeErrors.empty() || !summary.rejected.empty())) {
+        // Removal is only safe once everything the backup holds has arrived.
+        // An extra can be the stick's own copy of a file whose backup copy
+        // just failed to write -- under a spelling of its name nothing here
+        // recognises -- and removing it would leave the stick with neither.
+        summary.warnings.push_back(std::to_string(extras.size())
+                                   + " file(s) or folder(s) not in the backup were left in place, because not "
+                                     "everything in the backup could be restored");
+    } else if (options.exact && !extras.empty()) {
         report(RestoreProgress::Phase::Removing);
         // Files first, then directories deepest-first so they are empty.
         std::sort(extras.begin(), extras.end(), [](const std::string &a, const std::string &b) { return a.size() > b.size(); });
