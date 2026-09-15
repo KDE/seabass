@@ -2023,6 +2023,12 @@ target_link_libraries(verify_anonymized_export PRIVATE seabass_core)
 add_executable(rig_restore tools/rig_restore.cpp)
 target_include_directories(rig_restore PRIVATE src)
 target_link_libraries(rig_restore PRIVATE seabass_core)
+
+# Release rig: the read-only paths on a restored test stick -- catalog counts,
+# Library Health, stray cues and duplicates, timed -- without writing to it.
+add_executable(rig_read tools/rig_read.cpp)
+target_include_directories(rig_read PRIVATE src)
+target_link_libraries(rig_read PRIVATE seabass_core)
 # Two different things, and the names now say which is which. The tool
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.
