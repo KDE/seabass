@@ -40,6 +40,8 @@ TestCase {
     Component { id: scanController; ScanController {} }
     Component { id: settingsController; SettingsController {} }
     Component { id: appSettings; AppSettingsController {} }
+    Component { id: cleanupComponent; CleanupController {} }
+    Component { id: addCueComponent; AddCueController {} }
 
     readonly property var fakePlayback: ({stop: function() {}, hasTrack: false, playing: false})
 
@@ -282,6 +284,211 @@ TestCase {
         tryCompare(s, "pendingCount", 0, 5000);
         compare(s.dirty, false);
         compare(ctrl.stagedCount, 0);
+    }
+
+    // ---- 8. Add a cue: rekordbox and its OneLibrary mirror, save, undo ----
+    // The one place Seabass writes a cue nobody had before. A memory cue on
+    // a rekordbox track without cues that OneLibrary lists too (same file):
+    // after Save a fresh read of both catalogs has it, after Undo neither.
+    readonly property double addedCueMs: 12345
+
+    function findTrack(ctrl, key, value) {
+        for (var i = 0; i < ctrl.tracks.trackCount(); ++i) {
+            var t = ctrl.tracks.trackAt(i);
+            if (t[key] === value) return t;
+        }
+        return null;
+    }
+
+    function addedCue(track) {
+        if (track === null) return null;
+        for (var c = 0; c < track.cues.length; ++c) {
+            var cue = track.cues[c];
+            if (cue.kind === "memory" && Math.abs(cue.positionMs - addedCueMs) < 50) return cue;
+        }
+        return null;
+    }
+
+    function test_08_addCueSaveUndo() {
+        var rekordbox = createTemporaryObject(scanController, testCase);
+        rekordbox.scan("rekordbox", rekordboxPath);
+        waitIdle(rekordbox, 300000);
+        if (!rekordbox.hasOneLibrary(rekordboxPath)) {
+            skip("no OneLibrary on this stick");
+        }
+        var oneLibrary = createTemporaryObject(scanController, testCase);
+        oneLibrary.scan("onelibrary", rekordboxPath);
+        waitIdle(oneLibrary, 300000);
+
+        var listed = {};
+        for (var i = 0; i < oneLibrary.tracks.trackCount(); ++i) {
+            listed[oneLibrary.tracks.trackAt(i).filePath] = true;
+        }
+        var target = null;
+        for (var j = 0; j < rekordbox.tracks.trackCount() && target === null; ++j) {
+            var t = rekordbox.tracks.trackAt(j);
+            if (t.cues.length === 0 && t.filePath.length > 0 && listed[t.filePath] === true) target = t;
+        }
+        verify(target !== null, "a rekordbox track without cues that OneLibrary lists too");
+        console.log("  track rekordbox id " + target.sourceId + ": " + target.artist + " - " + target.title);
+
+        var ctrl = createTemporaryObject(addCueComponent, testCase);
+        ctrl.addCue("rekordbox", rekordboxPath, target.sourceId, addedCueMs, "memory", 0, "", "rig W2", false, 0,
+                    target.title);
+        compare(ctrl.errorMessage, "");
+        compare(ctrl.pendingCuesFor(target.sourceId).length, 1);
+        var s = session();
+        tryCompare(s, "pendingCount", 1, 5000);
+        var summary = saveAndWait(false);
+        compare(summary.error, "");
+        compare(summary.written, 1);
+
+        rekordbox.scan("rekordbox", rekordboxPath);
+        waitIdle(rekordbox, 300000);
+        oneLibrary.scan("onelibrary", rekordboxPath);
+        waitIdle(oneLibrary, 300000);
+        var inRekordbox = addedCue(findTrack(rekordbox, "sourceId", target.sourceId));
+        var inOneLibrary = addedCue(findTrack(oneLibrary, "filePath", target.filePath));
+        console.log("  after save: rekordbox " + (inRekordbox ? inRekordbox.positionMs + " ms" : "no cue")
+                    + ", OneLibrary " + (inOneLibrary ? inOneLibrary.positionMs + " ms" : "no cue"));
+        verify(inRekordbox !== null, "rekordbox has the added cue");
+        verify(inOneLibrary !== null, "its OneLibrary mirror has it too");
+
+        undoAndWait();
+        rekordbox.scan("rekordbox", rekordboxPath);
+        waitIdle(rekordbox, 300000);
+        oneLibrary.scan("onelibrary", rekordboxPath);
+        waitIdle(oneLibrary, 300000);
+        var afterUndoRekordbox = findTrack(rekordbox, "sourceId", target.sourceId);
+        var afterUndoOneLibrary = findTrack(oneLibrary, "filePath", target.filePath);
+        console.log("  after undo: rekordbox cues " + afterUndoRekordbox.cues.length + ", OneLibrary cues "
+                    + afterUndoOneLibrary.cues.length);
+        compare(addedCue(afterUndoRekordbox), null);
+        compare(addedCue(afterUndoOneLibrary), null);
+        compare(afterUndoRekordbox.cues.length, 0);
+    }
+
+    // ---- 9. Clean Up: one duplicate group's extra copies, save, rescan, undo ----
+    // Counts, not rows: the group is no longer offered, its extra copies'
+    // rows are gone and their files wait in Delete Orphaned Files; undo
+    // brings every row back. The files themselves are only deleted there.
+    function test_09_cleanupOneGroupSaveUndo() {
+        var ctrl = createTemporaryObject(cleanupComponent, testCase);
+        ctrl.scan("rekordbox", rekordboxPath);
+        waitIdle(ctrl, 300000);
+        var groups = ctrl.plans.rowCount();
+        console.log("  duplicate groups offered: " + groups);
+        if (groups === 0) {
+            skip("no duplicate groups on this stick");
+        }
+        var tracks = createTemporaryObject(scanController, testCase);
+        tracks.scan("rekordbox", rekordboxPath);
+        waitIdle(tracks, 300000);
+        var rowsBefore = tracks.totalTrackCount;
+        var pendingBefore = ctrl.pendingDeletions.rowCount();
+
+        ctrl.setAllIncluded(false);
+        ctrl.setIncluded(0, true);
+        compare(ctrl.includedCount, 1);
+        ctrl.apply();
+        var s = session();
+        tryVerify(function() { return s.pendingCount === 1; }, 5000);
+        var summary = saveAndWait(false);
+        compare(summary.error, "");
+        compare(summary.written, 1);
+        waitIdle(ctrl, 300000);
+
+        ctrl.scan("rekordbox", rekordboxPath);
+        waitIdle(ctrl, 300000);
+        tracks.scan("rekordbox", rekordboxPath);
+        waitIdle(tracks, 300000);
+        console.log("  after save: groups " + groups + " -> " + ctrl.plans.rowCount() + ", rekordbox rows " + rowsBefore
+                    + " -> " + tracks.totalTrackCount + ", files waiting for deletion " + pendingBefore + " -> "
+                    + ctrl.pendingDeletions.rowCount());
+        compare(ctrl.plans.rowCount(), groups - 1);
+        verify(tracks.totalTrackCount < rowsBefore, "the extra copies' rows are gone");
+        verify(ctrl.pendingDeletions.rowCount() > pendingBefore, "their files wait in Delete Orphaned Files");
+
+        undoAndWait();
+        ctrl.scan("rekordbox", rekordboxPath);
+        waitIdle(ctrl, 300000);
+        tracks.scan("rekordbox", rekordboxPath);
+        waitIdle(tracks, 300000);
+        console.log("  after undo: groups " + ctrl.plans.rowCount() + ", rekordbox rows " + tracks.totalTrackCount
+                    + ", files waiting for deletion " + ctrl.pendingDeletions.rowCount());
+        compare(ctrl.plans.rowCount(), groups);
+        compare(tracks.totalTrackCount, rowsBefore);
+
+        // Undo brings the rows back but leaves the files listed in Delete
+        // Orphaned Files. Deleting them now must refuse every file a
+        // catalog references again -- or undo would have made the track
+        // playable only to lose its audio on the next delete.
+        var listed = ctrl.pendingDeletions.rowCount();
+        if (listed > pendingBefore) {
+            ctrl.setAllPendingDeletionIncluded(true);
+            var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "pendingDeletionsWriteFinished"});
+            ctrl.deleteSelectedPendingFiles();
+            tryVerify(function() { return spy.count > 0; }, 300000);
+            var deletion = spy.signalArguments[0][0];
+            console.log("  delete after undo: " + Live.summaryLine(deletion));
+            waitIdle(ctrl, 300000);
+            compare(deletion.written, 0, "no file a catalog references again is deleted");
+            tracks.scan("rekordbox", rekordboxPath);
+            waitIdle(tracks, 300000);
+            compare(tracks.totalTrackCount, rowsBefore);
+        }
+    }
+
+    // ---- 10. Library Health: repair, save, rescan, undo ----
+    // Needs something to repair. tools/rig-edits.sh plants a Repairable
+    // issue first (tools/rig_plant_repairable moves one copy of a cue-free
+    // duplicate aside) and puts the file back afterwards.
+    function test_10_libraryHealthRepairSaveUndo() {
+        var page = createTemporaryObject(healthPage, testCase, {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
+                                                                enginePath: enginePath, playbackController: fakePlayback});
+        var ctrl = Live.findByType(page, "LibraryConsistencyController");
+        verify(ctrl !== null);
+        waitIdle(ctrl, 300000);
+        var issuesBefore = ctrl.issues.rowCount();
+        var repairable = ctrl.repairableCount;
+        console.log("  issues: " + issuesBefore + ", repairable: " + repairable);
+        if (repairable === 0) {
+            skip("nothing repairable on this stick (tools/rig_plant_repairable plants one)");
+        }
+        var tracks = createTemporaryObject(scanController, testCase);
+        tracks.scan("rekordbox", rekordboxPath);
+        waitIdle(tracks, 300000);
+        var rowsBefore = tracks.totalTrackCount;
+
+        ctrl.repairAll();
+        var s = session();
+        tryVerify(function() { return s.pendingCount > 0; }, 5000);
+        shot(page, "live-health-repair-staged");
+        var summary = saveAndWait(false);
+        compare(summary.error, "");
+        verify(summary.written > 0, "the repair wrote something");
+        waitIdle(ctrl, 300000);
+
+        // Only a fresh read proves the repair: the issue is gone and the
+        // broken copy's row with it.
+        ctrl.scan(rekordboxPath, enginePath);
+        waitIdle(ctrl, 300000);
+        console.log("  rescan after repair: issues " + ctrl.issues.rowCount() + ", repairable " + ctrl.repairableCount);
+        compare(ctrl.repairableCount, 0);
+        tracks.scan("rekordbox", rekordboxPath);
+        waitIdle(tracks, 300000);
+        console.log("  rekordbox rows: " + rowsBefore + " -> " + tracks.totalTrackCount);
+        verify(tracks.totalTrackCount < rowsBefore, "the broken copy's row is gone");
+
+        undoAndWait();
+        ctrl.scan(rekordboxPath, enginePath);
+        waitIdle(ctrl, 300000);
+        console.log("  rescan after undo: issues " + ctrl.issues.rowCount() + ", repairable " + ctrl.repairableCount);
+        compare(ctrl.repairableCount, repairable);
+        compare(ctrl.issues.rowCount(), issuesBefore);
+        tracks.scan("rekordbox", rekordboxPath);
+        waitIdle(tracks, 300000);
+        compare(tracks.totalTrackCount, rowsBefore);
     }
 
     // ---- 7. Delete Orphaned Files: cancel before the first file ----

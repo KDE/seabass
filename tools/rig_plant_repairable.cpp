@@ -1,0 +1,160 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+// Release rig: give Library Health something to repair -- rig check W6.
+//
+//   rig_plant_repairable <stick root> --plant
+//   rig_plant_repairable <stick root> --restore
+//
+// --plant looks for a rekordbox duplicate pair (same artist, title and
+// length, as DuplicateTrackFinder groups them) where every copy has its
+// own audio file on the stick and no copy has cues, and moves one copy's
+// file into <stick root>/RIG-HIDDEN/ under its relative path. The move is
+// recorded in RIG-HIDDEN/planted.tsv. That copy's rows now point at a
+// missing file while its duplicate is healthy, which is the Repairable
+// case. Rows in OneLibrary or Engine for the same file break with it.
+//
+// --restore moves every recorded file back and removes RIG-HIDDEN.
+//
+// No catalog is touched: only one audio file moves, within the stick.
+//
+// The last line is "RIG RESULT: PASS" or "RIG RESULT: FAIL", and the exit
+// code matches.
+
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "domain/duplicate_cue_consolidation.hpp"
+#include "rig_catalog.hpp"
+
+namespace fs = std::filesystem;
+using namespace seabass;
+
+namespace
+{
+
+bool insideRoot(const fs::path &file, const fs::path &root)
+{
+    const fs::path relative = fs::relative(file, root);
+    return !relative.empty() && relative.begin()->string() != "..";
+}
+
+int restore(const fs::path &root)
+{
+    const fs::path hidden = root / "RIG-HIDDEN";
+    const fs::path record = hidden / "planted.tsv";
+    if (!fs::exists(record)) {
+        std::cout << "nothing planted on this stick\nRIG RESULT: PASS\n";
+        return 0;
+    }
+    std::ifstream in(record);
+    std::string line;
+    int moved = 0;
+    int bad = 0;
+    while (std::getline(in, line)) {
+        const std::size_t tab = line.find('\t');
+        if (tab == std::string::npos) {
+            continue;
+        }
+        const fs::path original = line.substr(0, tab);
+        const fs::path moveAside = hidden / line.substr(tab + 1, line.find('\t', tab + 1) - tab - 1);
+        if (fs::exists(moveAside) && !fs::exists(original)) {
+            fs::create_directories(original.parent_path());
+            fs::rename(moveAside, original);
+            std::cout << "moved back " << original.string() << "\n";
+            ++moved;
+        } else if (fs::exists(original) && !fs::exists(moveAside)) {
+            std::cout << "already back " << original.string() << "\n";
+        } else {
+            std::cout << "CANNOT RESTORE " << original.string() << " (hidden copy "
+                      << (fs::exists(moveAside) ? "present" : "missing") << ", original "
+                      << (fs::exists(original) ? "present" : "missing") << ")\n";
+            ++bad;
+        }
+    }
+    in.close();
+    if (bad == 0) {
+        fs::remove_all(hidden);
+    }
+    std::cout << "restored " << moved << " file(s)\nRIG RESULT: " << (bad == 0 ? "PASS" : "FAIL") << "\n";
+    return bad == 0 ? 0 : 1;
+}
+
+int plant(const fs::path &root)
+{
+    const fs::path hidden = root / "RIG-HIDDEN";
+    const fs::path record = hidden / "planted.tsv";
+    if (fs::exists(record)) {
+        std::cout << "already planted; run --restore first\nRIG RESULT: FAIL\n";
+        return 1;
+    }
+    std::cout << "reading rekordbox:\n";
+    const fs::path pioneer = root / "PIONEER";
+    infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+    const std::vector<domain::Track> tracks = application::ScanLibrary(reader).execute();
+    std::cout << "  " << tracks.size() << " tracks\n";
+
+    const std::vector<domain::DuplicateGroup> groups = domain::DuplicateTrackFinder::find(tracks);
+    std::size_t considered = 0;
+    for (const domain::DuplicateGroup &group : groups) {
+        if (group.tracks.size() < 2) {
+            continue;
+        }
+        ++considered;
+        bool usable = true;
+        std::set<std::string> files;
+        for (const domain::Track &track : group.tracks) {
+            if (!track.cues.empty() || track.filePath.empty() || !fs::is_regular_file(track.filePath)
+                || !insideRoot(track.filePath, root)) {
+                usable = false;
+                break;
+            }
+            files.insert(fs::weakly_canonical(track.filePath).string());
+        }
+        // Two rows for one file are not two copies: moving it would break
+        // both, and nothing healthy would be left to repair onto.
+        if (!usable || files.size() != group.tracks.size()) {
+            continue;
+        }
+        const domain::Track &survivor = group.tracks.front();
+        const domain::Track &victim = group.tracks.back();
+        const fs::path relative = fs::relative(victim.filePath, root);
+        const fs::path moveAside = hidden / relative;
+        fs::create_directories(moveAside.parent_path());
+        fs::rename(victim.filePath, moveAside);
+        std::ofstream(record, std::ios::app) << victim.filePath << '\t' << relative.generic_string() << '\t'
+                                             << victim.sourceId << '\t' << victim.title << '\n';
+        std::cout << "planted: \"" << victim.artist << " - " << victim.title << "\" (" << victim.durationSeconds
+                  << " s), " << group.tracks.size() << " copies without cues\n"
+                  << "  moved aside rekordbox id " << victim.sourceId << ": " << victim.filePath << "\n"
+                  << "  healthy copy rekordbox id " << survivor.sourceId << ": " << survivor.filePath << "\n"
+                  << "RIG RESULT: PASS\n";
+        return 0;
+    }
+    std::cout << "no duplicate group of separate files without cues (" << considered << " groups looked at)\n"
+              << "RIG RESULT: FAIL\n";
+    return 1;
+}
+
+}  // namespace
+
+int main(int argc, char **argv)
+{
+    const std::string mode = argc == 3 ? argv[2] : "";
+    if (mode != "--plant" && mode != "--restore") {
+        std::cerr << "usage: rig_plant_repairable <stick root> --plant|--restore\n";
+        return 2;
+    }
+    try {
+        return mode == "--plant" ? plant(argv[1]) : restore(argv[1]);
+    } catch (const std::exception &e) {
+        std::cout << "error: " << e.what() << "\nRIG RESULT: FAIL\n";
+        return 1;
+    }
+}

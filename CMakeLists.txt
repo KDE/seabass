@@ -2041,6 +2041,12 @@ target_link_libraries(rig_backup PRIVATE seabass_core)
 add_executable(rig_compact tools/rig_compact.cpp)
 target_include_directories(rig_compact PRIVATE src)
 target_link_libraries(rig_compact PRIVATE seabass_core)
+
+# Release rig: move one copy of a cue-free duplicate aside so Library Health
+# has something to repair, and put it back.
+add_executable(rig_plant_repairable tools/rig_plant_repairable.cpp)
+target_include_directories(rig_plant_repairable PRIVATE src)
+target_link_libraries(rig_plant_repairable PRIVATE seabass_core)
 # Two different things, and the names now say which is which. The tool
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.
