@@ -125,8 +125,8 @@ struct MetadataBackupPlan
     // as one row. Offering each copy made a backup that could never come
     // out current -- saving one made the other differ -- so only one
     // copy is offered, and none when another is current already. A copy
-    // whose length cannot be read counts here too when it carries no cues
-    // that copy or the store lacks.
+    // whose length cannot be read counts here too, once the store holds a
+    // row with its cues, rating and comment.
     int otherCopies = 0;
 };
 

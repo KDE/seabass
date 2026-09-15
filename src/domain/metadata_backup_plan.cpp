@@ -221,24 +221,25 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
     // A copy whose length cannot be read slips past both rules above:
     // matchTracks never pairs it while its key names another track on the
     // stick, so it arrives as new, and recordingOf() has no length to name
-    // it by. It is the same recording when it carries nothing that copy
-    // or the store does not already hold -- no cues, or a cue set equal to
-    // one of theirs -- and then it is counted as another copy. With cues of
-    // its own it is still offered: that is work to keep, and once stored
-    // its row holds those cues, so the next plan folds it too.
+    // it by. Nothing tells whether it is another copy of a stored recording
+    // or a recording of its own (the radio edit beside the extended mix),
+    // and store() gives it a row of its own. So it is offered until the
+    // store holds what it carries -- a row under its key with its cues, its
+    // rating and its comment -- and counted as another copy after that.
+    // Without cues only a row stored without a length qualifies: any row
+    // "holds" no cues, and folding into that one kept a real recording out
+    // of the store for good. Offering it once and folding it afterwards is
+    // what makes the list settle.
     std::map<std::string, int> stickCountByKey;
-    std::map<std::string, std::vector<const std::vector<CuePoint> *>> heldCuesByKey;
+    std::map<std::string, std::vector<const Track *>> storedByKey;
     for (const Track &stick : stickTracks) {
         if (const auto key = titleArtistKey(stick)) {
             stickCountByKey[*key]++;
-            if (stick.durationSeconds > 0.0) {
-                heldCuesByKey[*key].push_back(&stick.cues);
-            }
         }
     }
     for (const Track &stored : storedTracks) {
         if (const auto key = titleArtistKey(stored)) {
-            heldCuesByKey[*key].push_back(&stored.cues);
+            storedByKey[*key].push_back(&stored);
         }
     }
     const auto anotherCopyWithoutLength = [&](const MetadataBackupProposal &p) {
@@ -249,15 +250,16 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         if (!key || stickCountByKey[*key] < 2) {
             return false;
         }
-        const auto held = heldCuesByKey.find(*key);
-        if (held == heldCuesByKey.end()) {
+        const auto rows = storedByKey.find(*key);
+        if (rows == storedByKey.end()) {
             return false;
         }
-        if (p.stickTrack.cues.empty()) {
-            return true;
-        }
-        return std::any_of(held->second.begin(), held->second.end(),
-                           [&](const auto *cues) { return cueSetsEqual(*cues, p.stickTrack.cues); });
+        const Track &copy = p.stickTrack;
+        return std::any_of(rows->second.begin(), rows->second.end(), [&](const Track *row) {
+            const bool holdsIt =
+                cueSetsEqual(row->cues, copy.cues) && row->rating == copy.rating && row->comment == copy.comment;
+            return holdsIt && (!copy.cues.empty() || row->durationSeconds <= 0.0);
+        });
     };
 
     std::vector<MetadataBackupProposal> kept;

@@ -204,6 +204,9 @@ class MetadataBackupController : public QObject
     Q_PROPERTY(int tracksSeen READ tracksSeen NOTIFY analysisChanged)
     Q_PROPERTY(int alreadyCurrent READ alreadyCurrent NOTIFY analysisChanged)
     Q_PROPERTY(int withoutIdentity READ withoutIdentity NOTIFY analysisChanged)
+    // Further copies of a recording already listed or current: counted so
+    // the summary adds up (domain::MetadataBackupPlan::otherCopies).
+    Q_PROPERTY(int otherCopies READ otherCopies NOTIFY analysisChanged)
     // A scan that was cancelled (or failed) left no plan. The page has
     // to say so rather than sit on "Reading..." with an empty list.
     Q_PROPERTY(bool scanCancelled READ scanCancelled NOTIFY analysisChanged)
@@ -270,6 +273,7 @@ public:
     int tracksSeen() const { return m_tracksSeen; }
     int alreadyCurrent() const { return m_alreadyCurrent; }
     int withoutIdentity() const { return m_withoutIdentity; }
+    int otherCopies() const { return m_otherCopies; }
     bool scanCancelled() const { return m_scanCancelled; }
     QStringList catalogsUnreadable() const { return m_catalogsUnreadable; }
     QStringList playlistNames() const { return m_playlistNames; }
@@ -415,6 +419,7 @@ private:
     int m_tracksSeen = 0;
     int m_alreadyCurrent = 0;
     int m_withoutIdentity = 0;
+    int m_otherCopies = 0;
     qint64 m_artworkBytes = 0;
     QString m_search;
     QString m_playlist;

@@ -505,6 +505,12 @@ Page {
                                  : " tracks have too little to go on to be stored")
                              + " and were left out.";
                     }
+                    if (controller.otherCopies > 0) {
+                        line += " " + controller.otherCopies
+                             + (controller.otherCopies === 1
+                                 ? " further copy of a track already covered is left out."
+                                 : " further copies of tracks already covered are left out.");
+                    }
                     return line;
                 }
             }

@@ -593,6 +593,7 @@ void MetadataBackupController::onScanFinished()
     m_tracksSeen = result.plan.tracksSeen;
     m_alreadyCurrent = result.plan.alreadyCurrent;
     m_withoutIdentity = result.plan.withoutIdentity;
+    m_otherCopies = result.plan.otherCopies;
     m_playlistNames = result.playlistNames;
     m_playlistTrackCounts = result.playlistTrackCounts;
     m_proposalModel.setProposals(result.plan.proposals);

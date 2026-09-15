@@ -166,10 +166,31 @@ int main()
         assert(current.alreadyCurrent == 1);
         assert(current.otherCopies == 1);
 
-        // Neither is stored yet: one proposal, the copy with the length.
+        // Neither is stored yet: nothing says they are one recording, so
+        // both are offered, as store() would give them a row each; the next
+        // plan finds each current.
         const auto fresh = planMetadataBackup({withLength, noLength}, {}, StickWrittenRecently);
-        assert(only(fresh).stickTrack.sourceId == "42");
-        assert(fresh.otherCopies == 1);
+        assert(fresh.proposals.size() == 2);
+        assert(fresh.otherCopies == 0);
+
+        // A radio edit without cues or a length beside a stored extended
+        // mix is a recording of its own to store(); it must reach the store
+        // once rather than vanish as a copy on every scan.
+        Track radioEdit = noLength;
+        radioEdit.cues.clear();
+        const auto radio = planMetadataBackup({withLength, radioEdit}, {stored}, StickWrittenRecently);
+        assert(only(radio).stickTrack.sourceId == "43");
+        Track storedRadio = storedTrack("Zwielicht");
+        storedRadio.sourceId = "9";
+        storedRadio.durationSeconds = 0.0;
+        const auto radioSettled = planMetadataBackup({withLength, radioEdit}, {stored, storedRadio}, StickWrittenRecently);
+        assert(radioSettled.proposals.empty());
+
+        // Same cues as the stored row, but a rating it does not hold: offered.
+        Track rated = noLength;
+        rated.rating = 5;
+        const auto ratedPlan = planMetadataBackup({withLength, rated}, {stored}, StickWrittenRecently);
+        assert(only(ratedPlan).stickTrack.sourceId == "43");
 
         // The copy carries cues neither the store nor the other copy has:
         // real work, so it is offered.
