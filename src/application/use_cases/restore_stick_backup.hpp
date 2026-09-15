@@ -83,6 +83,11 @@ struct RestorePreview
     // healthy archive; see RestoreSummary::Status::Failed for what a large
     // count here does to execute().
     std::size_t unreadableEntries = 0;
+    // The last update of this backup did not finish (or is still running).
+    // The figures above describe the generation before it -- what the
+    // restore's rollback will leave -- and the restore will need write
+    // access to the backup file to roll it back.
+    bool rollsBackUnfinishedUpdate = false;
 };
 
 // What a backup file is, without planning a restore from it: enough to

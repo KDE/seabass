@@ -155,6 +155,18 @@ TestCase {
         compare(findChild(page, "openConfirmButton").enabled, false);
     }
 
+    // An unfinished update is restorable: the restore rolls it back. The page
+    // says so, and does not hold the Restore button back for it.
+    function test_unfinishedUpdateIsNotedAndStillRestorable() {
+        var plain = makePage([makeDisk({})]);
+        compare(findChild(plain, "rollbackNote").visible, false);
+        var page = makePage([makeDisk({})], {preview: {filesToWrite: 14, filesUnchanged: 1147, bytesToWrite: 500 * 1024 * 1024,
+                                                        extras: 0, targetHasEngineLibrary: false, freeBytes: 8 * 1024 * 1024 * 1024,
+                                                        enoughFreeSpace: true, rollsBackUnfinishedUpdate: true}});
+        compare(findChild(page, "rollbackNote").visible, true);
+        compare(findChild(page, "openConfirmButton").enabled, true);
+    }
+
     // A blank target with nothing at stake: no typing required.
     function test_confirmOnBlankTargetNeedsNoTypingAndCallsRestore() {
         var page = makePage([makeDisk({})]);

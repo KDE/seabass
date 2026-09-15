@@ -575,11 +575,14 @@ int main()
         protect(BackupStick::journalPathFor(f.archive), false);
     }
 
-    // ---- An unfinished update: preview refuses, restore rolls it back ----
+    // ---- An unfinished update: preview reads past it, restore rolls it back ----
     // What a crash or a still-running backup leaves: a journal recording
     // the last good length, and bytes past it that do not form a valid
     // archive tail. Preview used to "recover" -- truncate -- without the
-    // archive's lock, cutting a running backup short.
+    // archive's lock, cutting a running backup short. It must not truncate,
+    // and it must not refuse either: the restore is the one step that can
+    // roll the update back, so a preview that refused left the backup
+    // unrestorable from the app.
     {
         Fixture f("unfinished-update");
         assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
@@ -604,8 +607,12 @@ int main()
         assert(unfinishedLength == goodLength + 4096);
 
         RestorePreview preview = RestoreStickBackup::preview(f.restore);
-        assert(!preview.error.empty() && "preview reports an unfinished update");
-        assert(preview.error.find("did not finish") != std::string::npos);
+        if (!preview.error.empty()) {
+            std::cerr << "preview of an unfinished update: " << preview.error << "\n";
+        }
+        assert(preview.error.empty() && "an unfinished update still previews, as its last complete generation");
+        assert(preview.rollsBackUnfinishedUpdate && "and says the restore will roll it back");
+        assert(preview.filesToWrite > 0);
         assert(fs::file_size(f.archive) == unfinishedLength && "preview must not truncate the archive");
 
         RestoreSummary summary = RestoreStickBackup::execute(f.restore);
@@ -614,8 +621,9 @@ int main()
         }
         assert(summary.status == RestoreSummary::Status::Restored);
         assert(fs::file_size(f.archive) == goodLength && "the restore rolled the unfinished update back");
-        assert(RestoreStickBackup::preview(f.restore).error.empty() && "and preview reads it again afterwards");
-        std::cout << "case unfinished-update (preview refuses without touching it, restore rolls back) OK\n";
+        RestorePreview after = RestoreStickBackup::preview(f.restore);
+        assert(after.error.empty() && !after.rollsBackUnfinishedUpdate && after.filesToWrite == 0);
+        std::cout << "case unfinished-update (preview reads past it untouched, restore rolls back) OK\n";
     }
 
     return 0;

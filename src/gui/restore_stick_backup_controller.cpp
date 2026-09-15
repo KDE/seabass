@@ -329,6 +329,7 @@ void RestoreStickBackupController::onAnalyzeFinished()
             preview["targetHasEngineLibrary"] = p.targetHasEngineLibrary;
             preview["freeBytes"] = static_cast<qlonglong>(p.freeBytesAtTarget);
             preview["enoughFreeSpace"] = p.enoughFreeSpace;
+            preview["rollsBackUnfinishedUpdate"] = p.rollsBackUnfinishedUpdate;
         }
         m_preview = preview;
         if (result->targetGiven) {
