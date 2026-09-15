@@ -18,6 +18,7 @@
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 #include "infrastructure/stick_backup/archive_recovery.hpp"
+#include "infrastructure/stick_backup/archive_updater.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/restore_path_sanitizer.hpp"
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
@@ -78,27 +79,52 @@ struct Opened
     std::string error;
     std::size_t unreadableEntries = 0;
 
-    // `recover`: apply a leftover journal (truncating the archive back to
-    // its pre-update length) before reading. Only an operation the user
-    // actually asked for on this one archive may do that.
-    //
-    // Listing calls must pass false. Recovery is a write, and a backup
-    // that is *running* has a live journal by design -- so a listing pass
-    // that recovered would truncate an archive mid-write while
-    // BackupStick was still appending to it, leaving a file of the right
-    // length holding nothing but its trailer. That is not theoretical:
-    // BackupAdvisorController lists the backup folder on every stick
-    // assessment, and it destroyed a real 12 GB backup this way. See
+    enum class Journal
+    {
+        // Listing: read what is there and never look at the journal. Safe
+        // against a folder someone is backing up into right now.
+        Ignore,
+        // Preview: read-only as well, but an update that did not finish
+        // (or is still running) is reported rather than read past. The
+        // numbers would describe a half-written generation, and rolling it
+        // back is a write this call has no business making.
+        Refuse,
+        // The restore itself, under the archive's write lock: roll an
+        // unfinished update back first. Only then is write access needed.
+        Recover,
+    };
+
+    // Opens read-only whenever it can. Preview used to open read-write and
+    // recover like execute(): it could not read a write-protected backup at
+    // all, and it truncated an archive a running backup was still appending
+    // to -- the damage BackupAdvisorController once did to a real 12 GB
+    // backup through describe(). See
     // tests/backup_archive_concurrent_reader_test.cpp.
-    bool open(const fs::path &archivePath, bool recover)
+    bool open(const fs::path &archivePath, Journal mode)
     {
         try {
-            archive = std::make_unique<PosixArchiveFile>(
-                archivePath, recover ? PosixArchiveFile::OpenMode::ReadWrite : PosixArchiveFile::OpenMode::ReadOnly);
-            if (recover) {
-                journal = std::make_unique<PosixArchiveFile>(journal::journalPathFor(archivePath),
-                                                             PosixArchiveFile::OpenMode::ReadWrite);
-                recoverOnOpen(*archive, *journal);
+            archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadOnly);
+            if (mode != Journal::Ignore) {
+                const fs::path journalPath = journal::journalPathFor(archivePath);
+                std::error_code ec;
+                if (fs::exists(journalPath, ec) && fs::file_size(journalPath, ec) > 0) {
+                    const JournalState state =
+                        journal::read(PosixArchiveFile(journalPath, PosixArchiveFile::OpenMode::ReadOnly));
+                    const bool unfinished = state.kind == JournalState::Kind::Valid
+                        && (archive->size() < state.record.preLength
+                            || !verifyArchiveTail(*archive, state.record.preLength));
+                    if (unfinished && mode == Journal::Refuse) {
+                        error = "an update of this backup did not finish, or is still running. Wait for it to end, "
+                                "or open the backup on the Full Stick Backup page to roll it back, then try again";
+                        return false;
+                    }
+                    if (unfinished) {
+                        archive.reset();
+                        archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
+                        journal = std::make_unique<PosixArchiveFile>(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+                        recoverOnOpen(*archive, *journal);
+                    }
+                }
             }
         } catch (const std::exception &e) {
             error = std::string("could not open the backup: ") + e.what();
@@ -336,9 +362,9 @@ StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
     StickBackupDescription description;
     description.archivePath = archivePath;
     Opened opened;
-    // Listing only: never recovers, so this is safe to run against a
-    // folder someone is backing up into right now.
-    if (!opened.open(archivePath, false)) {
+    // Listing only: never looks at the journal, so this is safe to run
+    // against a folder someone is backing up into right now.
+    if (!opened.open(archivePath, Opened::Journal::Ignore)) {
         description.error = opened.error;
         return description;
     }
@@ -393,7 +419,7 @@ RestorePreview RestoreStickBackup::preview(const RestoreOptions &options)
 {
     RestorePreview preview;
     Opened opened;
-    if (!opened.open(options.archivePath, true)) {
+    if (!opened.open(options.archivePath, Opened::Journal::Refuse)) {
         preview.error = opened.error;
         return preview;
     }
@@ -436,7 +462,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         return summary;
     }
     Opened opened;
-    if (!opened.open(options.archivePath, true)) {
+    if (!opened.open(options.archivePath, Opened::Journal::Recover)) {
         summary.message = opened.error;
         return summary;
     }

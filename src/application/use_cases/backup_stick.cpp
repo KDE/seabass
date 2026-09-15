@@ -112,19 +112,26 @@ struct OpenedArchive
     bool open(const BackupStickOptions &options, bool recover)
     {
         std::error_code ec;
-        fs::create_directories(options.archivePath.parent_path(), ec);
         existedBefore = fs::exists(options.archivePath, ec) && fs::file_size(options.archivePath, ec) > 0;
+        if (!recover && !existedBefore) {
+            // Nothing to read yet (a first backup's preview, or verify of
+            // an archive that is not there). Opening read-write here used
+            // to create the file, and every preview of a stick that was
+            // never backed up left an empty .zip in the backup folder.
+            return true;
+        }
         try {
-            // Still opened read-write even when not recovering: a first
-            // backup's preview runs before the archive exists, and
-            // O_RDONLY will not create it. Nothing is written unless the
-            // caller recovers or runs an update -- it is recovery, not
-            // the open, that truncates.
-            archive = std::make_unique<PosixArchiveFile>(options.archivePath, PosixArchiveFile::OpenMode::ReadWrite);
             if (recover) {
+                fs::create_directories(options.archivePath.parent_path(), ec);
+                archive = std::make_unique<PosixArchiveFile>(options.archivePath, PosixArchiveFile::OpenMode::ReadWrite);
                 journal = std::make_unique<PosixArchiveFile>(BackupStick::journalPathFor(options.archivePath),
                                                              PosixArchiveFile::OpenMode::ReadWrite);
                 recoverOnOpen(*archive, *journal);
+            } else {
+                // Reading only, so read-only: a backup that is write
+                // protected (a reference copy, a read-only share) can
+                // still be previewed against and verified.
+                archive = std::make_unique<PosixArchiveFile>(options.archivePath, PosixArchiveFile::OpenMode::ReadOnly);
             }
         } catch (const std::exception &e) {
             error = std::string("could not open the backup archive: ") + e.what();
@@ -259,8 +266,19 @@ RunPlan planRun(const BackupStickOptions &options, const OpenedArchive &opened)
 
 std::uint64_t freeBytesAt(const fs::path &archivePath)
 {
+    // The backup folder need not exist yet: the first backup creates it,
+    // and a preview no longer does. Ask the nearest folder that exists --
+    // the volume the backup will land on.
     std::error_code ec;
-    fs::space_info info = fs::space(archivePath.parent_path(), ec);
+    fs::path folder = archivePath.parent_path();
+    while (!folder.empty() && !fs::exists(folder, ec)) {
+        const fs::path up = folder.parent_path();
+        if (up == folder) {
+            break;
+        }
+        folder = up;
+    }
+    fs::space_info info = fs::space(folder, ec);
     return ec ? 0 : info.available;
 }
 

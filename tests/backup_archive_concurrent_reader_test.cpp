@@ -274,6 +274,42 @@ int main()
         std::cout << "case 4 (preview during a backup leaves a good archive) OK\n";
     }
 
+    // ---- the restore side's preview, alongside a run ----
+    // The Restore page previews an archive to show what a restore would do.
+    // RestoreStickBackup::preview() still opened read-write and recovered
+    // after describe() and BackupStick::preview() had stopped -- without the
+    // archive's lock, so a run still appending lost its tail.
+    {
+        Fixture f("restore-preview-during-backup");
+        const fs::path target = f.root / "restore-target";
+        fs::create_directories(target);
+        RestoreOptions probe;
+        probe.archivePath = f.archive;
+        probe.targetRoot = target;
+        std::atomic<int> passes{0};
+        f.options.onProgress = [&](const BackupProgress &progress) {
+            if (progress.phase != BackupProgress::Phase::Reading || progress.filesDone < 3 || passes >= 3) {
+                return;
+            }
+            ++passes;
+            std::thread reader([&] { (void)RestoreStickBackup::preview(probe); });
+            reader.join();
+        };
+        BackupStickOutcome outcome = BackupStick::execute(f.options);
+        assert(passes > 0);
+        if (outcome.status != BackupOutcomeStatus::Complete) {
+            std::cerr << "backup did not complete: " << outcome.message << "\n";
+        }
+        assert(outcome.status == BackupOutcomeStatus::Complete);
+        VerifyOutcome verified = BackupStick::verify(f.archive);
+        if (!verified.error.empty()) {
+            std::cerr << "verify error: " << verified.error << "\n";
+        }
+        assert(verified.error.empty() && verified.ok);
+        assertNotHollow(f.archive);
+        std::cout << "case 5 (restore preview during a backup leaves a good archive) OK\n";
+    }
+
     std::cout << "All backup_archive_concurrent_reader tests passed." << std::endl;
     return 0;
 }

@@ -165,6 +165,10 @@ int main()
         BackupPreview preview = BackupStick::preview(f.options);
         assert(preview.error.empty());
         assert(!preview.archiveExists);
+        // A preview only reads. It used to open the archive read-write,
+        // which created it: every stick previewed but never backed up left
+        // an empty .zip in the backup folder.
+        assert(!fs::exists(f.archive) && "a first backup's preview creates no archive file");
         assert(preview.added == preview.entriesOnStick && preview.entriesOnStick > 0);
         assert(preview.databaseChanged);
         assert(preview.enoughFreeSpace);

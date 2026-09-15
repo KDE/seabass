@@ -17,6 +17,8 @@
 #include "application/use_cases/compact_stick_backup.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/stick_backup/archive_journal.hpp"
+#include "infrastructure/stick_backup/archive_updater.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/restore_path_sanitizer.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
@@ -524,5 +526,97 @@ int main()
     }
 
     std::cout << "all cases passed\n";
+
+    // ---- A write-protected backup restores ----
+    // A reference copy, a read-only share, a file marked read-only on
+    // Windows: restoring only reads the archive, so none of that may stop
+    // it. Preview and restore both opened it read-write before.
+    {
+        Fixture f("read-only-archive");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const auto sizeBefore = fs::file_size(f.archive);
+        const auto timeBefore = fs::last_write_time(f.archive);
+        const auto protect = [](const fs::path &p, bool readOnly) {
+            std::error_code ec;
+            if (!fs::exists(p, ec)) return;
+            fs::permissions(p, readOnly ? (fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read)
+                                        : (fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read),
+                            fs::perm_options::replace, ec);
+        };
+        protect(f.archive, true);
+        protect(BackupStick::journalPathFor(f.archive), true);
+        bool enforced = true;
+        try {
+            PosixArchiveFile probe(f.archive, PosixArchiveFile::OpenMode::ReadWrite);
+            enforced = false;  // running as root: permissions do not bind
+        } catch (const std::exception &) {
+        }
+        if (!enforced) {
+            std::cout << "case read-only-archive SKIPPED (write protection not enforced for this user)\n";
+        } else {
+            RestorePreview preview = RestoreStickBackup::preview(f.restore);
+            if (!preview.error.empty()) {
+                std::cerr << "preview of a read-only archive: " << preview.error << "\n";
+            }
+            assert(preview.error.empty() && "a read-only backup previews");
+            assert(preview.filesToWrite > 0);
+            RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+            if (summary.status != RestoreSummary::Status::Restored) {
+                std::cerr << "restore of a read-only archive: " << summary.message << "\n";
+            }
+            assert(summary.status == RestoreSummary::Status::Restored && "a read-only backup restores");
+            assert(RestoreStickBackup::preview(f.restore).filesToWrite == 0);
+            VerifyOutcome verified = BackupStick::verify(f.archive);
+            assert(verified.error.empty() && verified.ok && "a read-only backup verifies");
+            assert(fs::file_size(f.archive) == sizeBefore && fs::last_write_time(f.archive) == timeBefore);
+            std::cout << "case read-only-archive (previews, restores and verifies without write access) OK\n";
+        }
+        protect(f.archive, false);
+        protect(BackupStick::journalPathFor(f.archive), false);
+    }
+
+    // ---- An unfinished update: preview refuses, restore rolls it back ----
+    // What a crash or a still-running backup leaves: a journal recording
+    // the last good length, and bytes past it that do not form a valid
+    // archive tail. Preview used to "recover" -- truncate -- without the
+    // archive's lock, cutting a running backup short.
+    {
+        Fixture f("unfinished-update");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const std::uint64_t goodLength = fs::file_size(f.archive);
+        std::uint64_t eocd = 0;
+        {
+            PosixArchiveFile archive(f.archive, PosixArchiveFile::OpenMode::ReadOnly);
+            eocd = Zip64Reader::open(archive).layout().endOfCentralDirectoryOffset;
+        }
+        {
+            const fs::path journalPath = BackupStick::journalPathFor(f.archive);
+            std::error_code ec;
+            fs::remove(journalPath, ec);
+            PosixArchiveFile journalFile(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+            journal::write(journalFile, JournalRecord{goodLength, eocd});
+        }
+        {
+            std::ofstream out(f.archive, std::ios::binary | std::ios::app);
+            out << std::string(4096, 'x');
+        }
+        const std::uint64_t unfinishedLength = fs::file_size(f.archive);
+        assert(unfinishedLength == goodLength + 4096);
+
+        RestorePreview preview = RestoreStickBackup::preview(f.restore);
+        assert(!preview.error.empty() && "preview reports an unfinished update");
+        assert(preview.error.find("did not finish") != std::string::npos);
+        assert(fs::file_size(f.archive) == unfinishedLength && "preview must not truncate the archive");
+
+        RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+        if (summary.status != RestoreSummary::Status::Restored) {
+            std::cerr << "restore after an unfinished update: " << summary.message << "\n";
+        }
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(fs::file_size(f.archive) == goodLength && "the restore rolled the unfinished update back");
+        assert(RestoreStickBackup::preview(f.restore).error.empty() && "and preview reads it again afterwards");
+        std::cout << "case unfinished-update (preview refuses without touching it, restore rolls back) OK\n";
+    }
+
     return 0;
 }
