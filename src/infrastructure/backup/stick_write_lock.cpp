@@ -9,6 +9,7 @@
 #if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #elif defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -39,6 +40,21 @@ StickWriteLock::StickWriteLock(const std::string &lockFilePath) : m_fd(-1), m_pa
         m_fd = -1;
         throw StickBusyError(lockFilePath);
     }
+    // The file locked must still be the one at the path. A holder removing
+    // its lock file (releaseAndRemoveFile) unlinks it while it still holds
+    // the lock; opening it just before that and locking it just after would
+    // otherwise hold a lock on a deleted file that excludes nobody who opens
+    // the path next. Busy, not an error: the holder that removed it was
+    // there a moment ago.
+    struct stat held {};
+    struct stat named {};
+    if (::fstat(m_fd, &held) != 0 || ::stat(lockFilePath.c_str(), &named) != 0 || held.st_ino != named.st_ino
+        || held.st_dev != named.st_dev) {
+        ::flock(m_fd, LOCK_UN);
+        ::close(m_fd);
+        m_fd = -1;
+        throw StickBusyError(lockFilePath);
+    }
 }
 
 StickWriteLock::~StickWriteLock()
@@ -47,6 +63,17 @@ StickWriteLock::~StickWriteLock()
         ::flock(m_fd, LOCK_UN);
         ::close(m_fd);
     }
+}
+
+void StickWriteLock::releaseAndRemoveFile()
+{
+    if (m_fd < 0) {
+        return;
+    }
+    ::unlink(m_path.c_str());
+    ::flock(m_fd, LOCK_UN);
+    ::close(m_fd);
+    m_fd = -1;
 }
 
 #elif defined(_WIN32)
@@ -83,6 +110,20 @@ StickWriteLock::~StickWriteLock()
     }
 }
 
+void StickWriteLock::releaseAndRemoveFile()
+{
+    if (m_handle == nullptr) {
+        return;
+    }
+    HANDLE handle = static_cast<HANDLE>(m_handle);
+    OVERLAPPED overlapped = {};
+    ::UnlockFileEx(handle, 0, MAXDWORD, MAXDWORD, &overlapped);
+    ::CloseHandle(handle);
+    m_handle = nullptr;
+    // Fails, harmlessly, when another holder has the file open: it is theirs now.
+    ::DeleteFileA(m_path.c_str());
+}
+
 #else
 
 // No advisory-lock implementation for this platform yet. This
@@ -92,6 +133,7 @@ StickWriteLock::~StickWriteLock()
 // it's implemented.
 StickWriteLock::StickWriteLock(const std::string &lockFilePath) : m_fd(-1), m_path(lockFilePath) {}
 StickWriteLock::~StickWriteLock() = default;
+void StickWriteLock::releaseAndRemoveFile() {}
 
 #endif
 

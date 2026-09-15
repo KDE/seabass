@@ -12,6 +12,7 @@
 #include <string>
 
 #include "application/use_cases/backup_stick.hpp"
+#include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 #include "infrastructure/stick_backup/archive_updater.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
@@ -358,7 +359,13 @@ int main()
         assert(discarded.status == BackupOutcomeStatus::Discarded);
         assert(!fs::exists(f.archive));
         assert(!fs::exists(BackupStick::journalPathFor(f.archive)));
-        std::cout << "case 9 (cancel a first backup and discard: archive and journal removed) OK\n";
+        // Nor a lock file: it named a backup that never came to exist.
+        fs::path lockFile = f.archive;
+        lockFile += ".lock";
+        assert(!fs::exists(lockFile));
+        // And nothing is held: the path locks again.
+        seabass::infrastructure::backup::StickWriteLock again(lockFile.string());
+        std::cout << "case 9 (cancel a first backup and discard: archive, journal and lock file removed) OK\n";
     }
 
     // ---- Cancel an update, discard: previous backup byte-exact ----

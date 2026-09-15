@@ -379,10 +379,13 @@ BackupStickOutcome PendingBackup::discard()
         outcome.message = e.what();
         return outcome;
     }
-    m_impl->lock.reset();
     outcome.status = BackupOutcomeStatus::Discarded;
     outcome.archiveBytes = m_impl->opened.archive->size();
     if (m_impl->firstBackup) {
+        // Removed while the lock is still held, so nothing can open the
+        // archive between its removal and the release -- and then the lock
+        // file too, which would otherwise sit beside a backup that never
+        // came to exist.
         m_impl->updater.reset();
         m_impl->opened.reader.reset();
         m_impl->opened.archive.reset();
@@ -391,7 +394,11 @@ BackupStickOutcome PendingBackup::discard()
         fs::remove(m_impl->options.archivePath, ec);
         fs::remove(BackupStick::journalPathFor(m_impl->options.archivePath), ec);
         outcome.archiveBytes = 0;
+        if (m_impl->lock) {
+            m_impl->lock->releaseAndRemoveFile();
+        }
     }
+    m_impl->lock.reset();
     return outcome;
 }
 

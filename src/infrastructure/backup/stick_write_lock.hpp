@@ -44,6 +44,17 @@ public:
     explicit StickWriteLock(const std::string &lockFilePath);
     ~StickWriteLock();
 
+    // Releases the lock and deletes its file, for a holder that is removing
+    // the thing the lock guarded -- a first backup that was discarded leaves
+    // no archive, so it should leave no lock file beside it either. On
+    // POSIX the file is unlinked while still held, and every constructor
+    // checks that the file it locked is still the one at the path, so a
+    // lock taken on the deleted file cannot stand next to a new one. On
+    // Windows an open lock file cannot be deleted by anyone else, so it is
+    // deleted after the release, and not at all if another holder has
+    // opened it meanwhile. The object holds nothing afterwards.
+    void releaseAndRemoveFile();
+
     StickWriteLock(const StickWriteLock &) = delete;
     StickWriteLock &operator=(const StickWriteLock &) = delete;
 

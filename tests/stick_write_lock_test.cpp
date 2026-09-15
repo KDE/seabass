@@ -95,6 +95,22 @@ int main()
         std::cout << "case 5 (locks for different sticks don't contend) OK\n";
     }
 
+    // Removing the lock file: gone afterwards, the path locks again (a new
+    // file), and a lock still held on the old, deleted file is not the
+    // lock on the path.
+    {
+        std::string removedPath = (root / "discarded" / "stick.zip.lock").string();
+        {
+            StickWriteLock lock(removedPath);
+            assert(fs::exists(removedPath));
+            lock.releaseAndRemoveFile();
+            assert(!fs::exists(removedPath));
+        }
+        StickWriteLock again(removedPath);  // releaseAndRemoveFile left nothing held
+        assert(fs::exists(removedPath));
+        std::cout << "case 6 (releaseAndRemoveFile removes the file and holds nothing) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all cases passed\n";
     return 0;
