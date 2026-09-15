@@ -2198,7 +2198,10 @@ set(_seabass_flagged_targets "")
 foreach(_seabass_target IN LISTS _seabass_all_targets)
     if(_seabass_target MATCHES "_test$|_tests$")
         target_compile_options(${_seabass_target} PRIVATE
-            "$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>")
+            "$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>"
+            # See tests/msvc_assert_no_dialog.hpp: without this, a tripped
+            # assert() blocks forever on a modal dialog instead of failing.
+            "$<$<CXX_COMPILER_ID:MSVC>:/FI${CMAKE_SOURCE_DIR}/tests/msvc_assert_no_dialog.hpp>")
         list(APPEND _seabass_flagged_targets ${_seabass_target})
     endif()
 endforeach()
