@@ -40,15 +40,11 @@
 #include <string>
 #include <vector>
 
-#ifdef SEABASS_HAVE_QT_AUDIO
-#include <QCoreApplication>
-#endif
 
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "domain/library_fingerprint.hpp"
 #include "domain/track.hpp"
-#include "infrastructure/audio/duration_fill.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -90,9 +86,11 @@ const char *verdictName(domain::FingerprintSimilarity::Verdict verdict)
     return "cannot tell";
 }
 
-// The stick read the way the app reads it for a backup fingerprint
-// (gui::readLibraryFingerprint over LibraryCatalogCache::realScan):
-// rekordbox and Engine tracks together, each with missing lengths filled.
+// The stick's library fingerprint, for information: rekordbox and Engine
+// tracks together, as the app fingerprints them -- but without filling in
+// missing lengths. The fill probes audio files and writes its results to a
+// cache on the stick, and a check must not change what it checks: the
+// first rig run left that cache behind as two "extras".
 std::optional<domain::LibraryFingerprint> fingerprintStick(const fs::path &root)
 {
     std::vector<domain::Track> tracks;
@@ -101,7 +99,6 @@ std::optional<domain::LibraryFingerprint> fingerprintStick(const fs::path &root)
     if (fs::exists(pioneer / "rekordbox" / "export.pdb")) {
         infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
         std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
-        infrastructure::audio::fillTrackDurations(read, pioneer.string());
         std::cout << "  rekordbox: " << read.size() << " tracks\n";
         tracks.insert(tracks.end(), read.begin(), read.end());
         anyRead = true;
@@ -110,7 +107,6 @@ std::optional<domain::LibraryFingerprint> fingerprintStick(const fs::path &root)
     if (fs::exists(engine / "Database2" / "m.db") || fs::exists(engine / "m.db")) {
         infrastructure::engine::LibdjinteropEngineReader reader(engine.string());
         std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
-        infrastructure::audio::fillTrackDurations(read, engine.string());
         std::cout << "  engine: " << read.size() << " tracks\n";
         tracks.insert(tracks.end(), read.begin(), read.end());
         anyRead = true;
@@ -186,10 +182,6 @@ std::size_t checkCatalogFiles(const fs::path &archive, const fs::path &root, std
 
 int main(int argc, char **argv)
 {
-#ifdef SEABASS_HAVE_QT_AUDIO
-    // The duration probe is Qt Multimedia, which needs an application object.
-    QCoreApplication app(argc, argv);
-#endif
     if (argc < 3 || argc > 4 || (argc == 4 && std::string(argv[3]) != "--execute")) {
         std::cerr << "usage: rig_restore <archive.zip> <stick root> [--execute]\n";
         return 2;

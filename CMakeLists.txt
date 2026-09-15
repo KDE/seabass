@@ -2018,15 +2018,11 @@ target_include_directories(verify_anonymized_export PRIVATE src)
 target_link_libraries(verify_anonymized_export PRIVATE seabass_core)
 
 # Release rig: restore a reference full stick backup onto a test stick and
-# prove it arrived -- nothing left to restore, and the stick's fingerprint
-# matches the backup's. Reads the stick the way the app does, so it takes
-# the Qt Multimedia duration probe whenever the app would have it.
+# prove it arrived -- nothing left to restore, and every catalog file matches
+# the backup's manifest checksums. Reads only, apart from the restore itself.
 add_executable(rig_restore tools/rig_restore.cpp)
 target_include_directories(rig_restore PRIVATE src)
 target_link_libraries(rig_restore PRIVATE seabass_core)
-if(TARGET seabass_audio_qt)
-    target_link_libraries(rig_restore PRIVATE seabass_audio_qt)
-endif()
 # Two different things, and the names now say which is which. The tool
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.
