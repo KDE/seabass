@@ -115,12 +115,38 @@ add_subdirectory(third_party/libdjinterop)
 # than vendoring a JSON library for the same job. seabass_core itself
 # doesn't use this on WIN32 (it compiles libdjinterop's bundled
 # amalgamation directly instead, see the WIN32 branch below). This
-# find_package call now runs unconditionally purely so local_cue_store_test
-# (which links SQLite::SQLite3 directly, see tests/ below) has something
-# to link against on Windows too. MSYS2's UCRT64 environment ships a real
+# find_package call runs so local_cue_store_test (which links
+# SQLite::SQLite3 directly, see tests/ below) has something to link
+# against on Windows too. MSYS2's UCRT64 environment ships a real
 # sqlite3 package with proper find_package support, unlike the old
 # Ubuntu-hosted mingw cross-compile setup this project used before.
-find_package(SQLite3 REQUIRED)
+#
+# MSVC does not take this path at all. vcpkg's sqlite3 port builds a
+# DLL by default, so its headers declare every sqlite3_* symbol
+# __declspec(dllimport) -- and vcpkg's toolchain file adds its
+# installed/include directory to every target's search path globally,
+# ahead of libdjinterop's own PRIVATE include of its bundled amalgamation
+# for angle-bracket includes. libdjinterop's own .cpp files (via
+# sqlite_modern_cpp.h) see vcpkg's dllimport declarations while the
+# amalgamation's sqlite3.c -- compiled straight into DjInterop's own
+# target because SYSTEM_SQLITE is OFF above -- defines those same
+# symbols as plain (non-dllimport) exports, so the two disagree and
+# djinterop.lib's own internal calls fail to link with "unresolved
+# external symbol __imp_sqlite3_*" in any executable that links it.
+# Compiling the same amalgamation source again here, into a target of
+# our own aliased as SQLite::SQLite3, sidesteps vcpkg's sqlite3 (and
+# its conflicting header) for every consumer without touching the
+# pinned third_party/libdjinterop submodule.
+if(MSVC)
+    add_library(seabass_sqlite3_amalgamation STATIC
+        third_party/libdjinterop/ext/sqlite-amalgamation/sqlite3.c)
+    target_include_directories(seabass_sqlite3_amalgamation SYSTEM PUBLIC
+        third_party/libdjinterop/ext/sqlite-amalgamation)
+    target_compile_definitions(seabass_sqlite3_amalgamation PUBLIC SQLITE_OMIT_LOAD_EXTENSION)
+    add_library(SQLite::SQLite3 ALIAS seabass_sqlite3_amalgamation)
+else()
+    find_package(SQLite3 REQUIRED)
+endif()
 
 # A test that does not run is a failure, so a missing test dependency
 # stops the configure rather than quietly subtracting a target or turning
@@ -625,7 +651,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
     # answer. Writes only inside <stick>/.seabass-savebench/.
     add_executable(staged_save_bench tools/staged_save_bench.cpp)
     target_include_directories(staged_save_bench PRIVATE src)
-    target_link_libraries(staged_save_bench PRIVATE seabass_edit Qt6::Core)
+    # SQLite::SQLite3 here for the same reason as the libdjinterop_engine_*
+    # test targets above: DjInterop's own object files need sqlite3's
+    # symbols resolved from somewhere in the final link, and MSVC's linker,
+    # unlike MinGW's, does not reliably pull them from seabass_core's own
+    # bundled-amalgamation object file through two levels of static-library
+    # indirection (staged_save_bench -> seabass_edit -> seabass_core).
+    target_link_libraries(staged_save_bench PRIVATE seabass_edit Qt6::Core SQLite::SQLite3)
 
     add_subdirectory(src/gui)
     if(TARGET seabass_audio_qt)
@@ -803,7 +835,7 @@ add_executable(metadata_store_test tests/metadata_store_test.cpp)
 target_include_directories(metadata_store_test PRIVATE src)
 # Links SQLite directly as well: one case writes a database in an
 # earlier schema by hand, to prove the store moves it aside.
-target_link_libraries(metadata_store_test PRIVATE seabass_core)
+target_link_libraries(metadata_store_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME metadata_store_test COMMAND metadata_store_test)
 
 add_executable(no_em_dashes_test tests/no_em_dashes_test.cpp)
@@ -1059,7 +1091,7 @@ add_executable(cue_color_normalization_test
 )
 target_include_directories(cue_color_normalization_test PRIVATE src)
 target_link_libraries(cue_color_normalization_test PRIVATE DjInterop rekordbox_format kaitai_cpp_stl_runtime
-    ZLIB::ZLIB)
+    ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME cue_color_normalization_test COMMAND cue_color_normalization_test)
 
 # The analysis-path index decides which file a cue write lands in, so it
@@ -1471,6 +1503,16 @@ target_include_directories(rekordbox_cleanup_writer_test PRIVATE src)
 target_link_libraries(rekordbox_cleanup_writer_test PRIVATE rekordbox_format ZLIB::ZLIB)
 add_test(NAME rekordbox_cleanup_writer_test COMMAND rekordbox_cleanup_writer_test)
 
+# The four targets below build libdjinterop_engine_reader.cpp or
+# libdjinterop_engine_anonymizer.cpp directly (not through seabass_core,
+# which already gets sqlite3.h from the amalgamation source/include it
+# adds for itself in the WIN32 branch above -- PRIVATE, so it does not
+# reach these). Both files #include <sqlite3.h> straight, with nothing
+# here to satisfy it except SQLite::SQLite3's own include path. That
+# worked anyway under MinGW/MSYS2 purely by accident: GCC's ucrt64
+# toolchain always searches its own prefix's include/ by default, so
+# .../ucrt64/include/sqlite3.h resolved with no -I naming it. MSVC has
+# no equivalent implicit search path, and fails outright without this.
 add_executable(libdjinterop_engine_library_creator_test
     src/application/ports/progress_reporter.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
@@ -1481,7 +1523,7 @@ add_executable(libdjinterop_engine_library_creator_test
     tests/libdjinterop_engine_library_creator_test.cpp
 )
 target_include_directories(libdjinterop_engine_library_creator_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_library_creator_test PRIVATE DjInterop)
+target_link_libraries(libdjinterop_engine_library_creator_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_library_creator_test COMMAND libdjinterop_engine_library_creator_test)
 
 add_executable(libdjinterop_engine_sync_scratch_replace_test
@@ -1495,7 +1537,7 @@ add_executable(libdjinterop_engine_sync_scratch_replace_test
     tests/libdjinterop_engine_sync_scratch_replace_test.cpp
 )
 target_include_directories(libdjinterop_engine_sync_scratch_replace_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_sync_scratch_replace_test PRIVATE DjInterop)
+target_link_libraries(libdjinterop_engine_sync_scratch_replace_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_sync_scratch_replace_test COMMAND libdjinterop_engine_sync_scratch_replace_test)
 
 add_executable(libdjinterop_engine_loop_cue_test
@@ -1508,7 +1550,7 @@ add_executable(libdjinterop_engine_loop_cue_test
     tests/libdjinterop_engine_loop_cue_test.cpp
 )
 target_include_directories(libdjinterop_engine_loop_cue_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_loop_cue_test PRIVATE DjInterop)
+target_link_libraries(libdjinterop_engine_loop_cue_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_loop_cue_test COMMAND libdjinterop_engine_loop_cue_test)
 
 add_executable(libdjinterop_engine_cleanup_writer_test
@@ -1537,7 +1579,7 @@ add_executable(libdjinterop_engine_anonymizer_test
     tests/libdjinterop_engine_anonymizer_test.cpp
 )
 target_include_directories(libdjinterop_engine_anonymizer_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_anonymizer_test PRIVATE DjInterop)
+target_link_libraries(libdjinterop_engine_anonymizer_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_anonymizer_test COMMAND libdjinterop_engine_anonymizer_test)
 
 add_executable(anonymize_library_test tests/anonymize_library_test.cpp)
@@ -2052,6 +2094,54 @@ set_tests_properties(corpus_test PROPERTIES LABELS "integration")
 # test added later is covered without anyone remembering this exists; the
 # application keeps its NDEBUG, since only the tests depend on assert.
 # ---------------------------------------------------------------------------
+# MSVC test executables can't find their own DLLs at process launch,
+# unlike MinGW/MSYS2 builds where the same shell's PATH already carries
+# them -- confirmed directly: every Qt-linked test (seabass_qml_tests,
+# open_folder_test, edit_session_save_loop_test, ...) exits immediately
+# with 0xc0000135 (STATUS_DLL_NOT_FOUND) and no output under MSVC/ninja,
+# because C:/Qt/<ver>/msvc2022_64/bin is never on PATH for a test
+# process, only for whatever shell the developer happened to configure
+# from. The four onelibrary_* tests fail the same way for a second,
+# unrelated DLL: SqlCipherLibrary's constructor (sqlcipher_dyn.hpp)
+# LoadLibrary()s libsqlcipher-0.dll at runtime, which this project never
+# builds or vendors -- only MSYS2's UCRT64 environment ships it -- so an
+# uncaught std::runtime_error from that constructor aborts the process
+# before it prints anything.
+#
+# Derived from the already-found Qt6::Core target rather than
+# CMAKE_PREFIX_PATH directly, since IMPORTED_LOCATION is the one property
+# guaranteed to point at the actual DLL regardless of which config
+# (Release/Debug) got resolved.
+set(_seabass_test_path_dirs "")
+if(MSVC AND TARGET Qt6::Core)
+    foreach(_seabass_qt_loc_prop IMPORTED_LOCATION IMPORTED_LOCATION_RELEASE IMPORTED_LOCATION_DEBUG
+            IMPORTED_LOCATION_RELWITHDEBINFO IMPORTED_LOCATION_MINSIZEREL)
+        get_target_property(_seabass_qt_core_loc Qt6::Core ${_seabass_qt_loc_prop})
+        if(_seabass_qt_core_loc)
+            get_filename_component(_seabass_qt_bin_dir "${_seabass_qt_core_loc}" DIRECTORY)
+            list(APPEND _seabass_test_path_dirs "${_seabass_qt_bin_dir}")
+            break()
+        endif()
+    endforeach()
+    # Not derivable from any CMake target: sqlcipher is never linked,
+    # only ever dlopen()'d at runtime (see sqlcipher_dyn.hpp), so no
+    # find_package/imported target exists to introspect. Matches
+    # tools/deploy-windows.ps1's own $UcrtBin default for the same DLL.
+    set(SEABASS_SQLCIPHER_BIN_DIR "C:/msys64/ucrt64/bin" CACHE PATH
+        "Directory containing libsqlcipher-0.dll, for MSVC test runs")
+    if(EXISTS "${SEABASS_SQLCIPHER_BIN_DIR}/libsqlcipher-0.dll")
+        list(APPEND _seabass_test_path_dirs "${SEABASS_SQLCIPHER_BIN_DIR}")
+    endif()
+endif()
+if(_seabass_test_path_dirs)
+    list(JOIN _seabass_test_path_dirs ";" _seabass_test_path_prepend)
+    # A literal ";" inside one list element must be escaped, or CMake's
+    # own list(APPEND ...) below silently splits this single PATH value
+    # back into separate (nonsensical) environment-list entries -- PATH
+    # entries and CMake list items share the same separator character.
+    string(REPLACE ";" "\\;" _seabass_test_path_prepend "${_seabass_test_path_prepend};$ENV{PATH}")
+endif()
+
 # No test may write into the user's real ~/Seabass.
 #
 # Since the QML tests build the real controllers, a test run created
@@ -2096,6 +2186,9 @@ foreach(_seabass_test IN LISTS _seabass_all_tests)
     if(NOT _seabass_test_env MATCHES "APPDATA=")
         list(APPEND _seabass_test_env
             "APPDATA=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
+    endif()
+    if(_seabass_test_path_prepend AND NOT _seabass_test_env MATCHES "PATH=")
+        list(APPEND _seabass_test_env "PATH=${_seabass_test_path_prepend}")
     endif()
     set_tests_properties(${_seabass_test} PROPERTIES ENVIRONMENT "${_seabass_test_env}")
 endforeach()
