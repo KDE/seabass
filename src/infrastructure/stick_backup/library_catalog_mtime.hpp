@@ -11,8 +11,11 @@ namespace seabass::infrastructure::stick_backup
 {
 
 // When the library on a stick was last written: the newest mtime among
-// its catalog databases -- rekordbox's export.pdb, Engine's m.db and its
-// write-ahead log, and hm.db. Audio files are not consulted: adding a
+// its catalog databases -- rekordbox's export.pdb, OneLibrary's
+// exportLibrary.db and its write-ahead log, Engine's m.db and its
+// write-ahead log, and hm.db. OneLibrary counts because a cue edit on a
+// rekordbox stick writes it (and the analysis files) but not export.pdb.
+// Audio files are not consulted: adding a
 // track also rewrites the catalog, and the catalog is what an update
 // between two copies of a library is about. 0 when none of them exist
 // or can be stat'ed. Unix seconds; FAT keeps them at 2 s resolution.

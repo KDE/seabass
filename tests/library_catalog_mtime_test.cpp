@@ -46,6 +46,16 @@ int main()
     writeFile(root / "PIONEER" / "rekordbox" / "export.pdb", 1'700'000'000);
     assert(libraryCatalogModifiedAt(root) == 1'700'000'000);
 
+    // OneLibrary is a catalog too. A cue edit on a rekordbox stick writes the
+    // analysis files and exportLibrary.db and leaves export.pdb at the date
+    // of the last rekordbox export; ignoring it made an edited stick look
+    // older than its backup, and the stick list offered to put the backup
+    // back over the edit (found by the release rig).
+    writeFile(root / "PIONEER" / "rekordbox" / "exportLibrary.db", 1'700'000'050);
+    assert(libraryCatalogModifiedAt(root) == 1'700'000'050);
+    writeFile(root / "PIONEER" / "rekordbox" / "exportLibrary.db-wal", 1'700'000'060);
+    assert(libraryCatalogModifiedAt(root) == 1'700'000'060);
+
     // The newest of the databases wins, WAL included.
     writeFile(root / "Engine Library" / "Database2" / "m.db", 1'700'000'100);
     assert(libraryCatalogModifiedAt(root) == 1'700'000'100);

@@ -18,8 +18,16 @@ namespace fs = std::filesystem;
 std::int64_t libraryCatalogModifiedAt(const fs::path &stickRoot)
 {
     const fs::path engineMain = engine::engineMainDatabasePath(stickRoot);
+    // exportLibrary.db (OneLibrary) is a catalog too, and the one a Seabass
+    // cue edit on a rekordbox stick actually writes: the cues live in the
+    // analysis files and the OneLibrary mirror, while export.pdb keeps the
+    // date of the last rekordbox export. Without it, a stick edited after
+    // its backup looked older than that backup, and the stick list offered
+    // to put the backup back over the edits.
     const fs::path candidates[] = {
         stickRoot / "PIONEER" / "rekordbox" / "export.pdb",
+        stickRoot / "PIONEER" / "rekordbox" / "exportLibrary.db",
+        stickRoot / "PIONEER" / "rekordbox" / "exportLibrary.db-wal",
         engineMain,
         fs::path(engineMain.string() + "-wal"),
         engineMain.parent_path() / engine::HistoryDbName,
