@@ -590,8 +590,12 @@ TestCase {
         if (offered === 0) {
             skip("no matched track has anything to restore from the second stick");
         }
+        // The Restore Metadata page opens this stick's session through its
+        // EditSessionHost, which is what gives the session the library
+        // paths a save needs; without a page, the test opens it the same way.
+        var s = EditSessionRegistry.openSession(testCase.libraryId, stickLabel, rekordboxPath, "");
+        verify(s !== null);
         restore.stageAll();
-        var s = session();
         tryVerify(function() { return s.pendingCount === restore.stagedCount && s.pendingCount > 0; }, 10000);
         var staged = s.pendingCount;
         var summary = saveAndWait(false);
@@ -608,6 +612,7 @@ TestCase {
         tryVerify(function() { return !restore.busy; }, 600000);
         console.log("  after undo: " + restore.proposalCount + " proposals");
         compare(restore.proposalCount, offered);
+        EditSessionRegistry.closeSession(testCase.libraryId);
     }
 
     // ---- 7. Delete Orphaned Files: cancel before the first file ----
