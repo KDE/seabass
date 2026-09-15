@@ -268,7 +268,26 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
             const std::string contents = readWholeFile(source);
             std::int64_t mtime = 0;
             if (auto stamp = fs::last_write_time(source, ec); !ec) {
-                mtime = std::chrono::duration_cast<std::chrono::seconds>(stamp.time_since_epoch()).count();
+                // fs::file_time_type's epoch is unspecified pre-C++20 and,
+                // even now, implementation-defined in practice: libstdc++
+                // happens to share system_clock's Unix epoch, but MSVC's
+                // STL uses the Windows FILETIME epoch (1601) internally,
+                // so a raw time_since_epoch() here is only ever correct
+                // by accident on the platforms this project first shipped
+                // on. Confirmed directly on MSVC: it produced 2147483647
+                // (an int32 clamp of a wildly wrong ~13-trillion-second
+                // value), silently poisoning every mtime this store wrote
+                // and tripping Zip64Reader's DOS-vs-extended-timestamp
+                // consistency check on every restore. clock_cast() to
+                // system_clock is the same conversion this project
+                // already does everywhere else it needs a real Unix
+                // timestamp from fs::last_write_time() (see cli/main.cpp,
+                // stick_tree_walker.cpp's toUnixSeconds(), etc.) --
+                // inlined rather than reusing that helper, so this file
+                // does not gain a dependency on stick_tree_walker.cpp in
+                // every target that lists it directly.
+                const auto sysTime = std::chrono::clock_cast<std::chrono::system_clock>(stamp);
+                mtime = std::chrono::duration_cast<std::chrono::seconds>(sysTime.time_since_epoch()).count();
             }
             writer.addFileFromMemory(entryName, mtime,
                                      std::as_bytes(std::span<const char>(contents.data(), contents.size())),
