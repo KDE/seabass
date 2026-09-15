@@ -258,8 +258,29 @@ int main()
     const std::string configuredUnzip = configured(SEABASS_CONFIGURED_UNZIP);
     const std::string configuredSevenZip = configured(SEABASS_CONFIGURED_SEVENZIP);
 
+    // A minimal but genuinely valid archive -- just an End Of Central
+    // Directory record, zero entries -- to probe unzip with. "-v" (or any
+    // other flag) with no zipfile argument was the original probe, and it
+    // is a documented Info-ZIP feature on some builds (prints a version
+    // banner, exits 0) but not this one: MSYS2's unzip 6.0 always prints
+    // its usage message and exits 1 without a zipfile, on any invocation,
+    // flags or not. Confirmed directly. That made this test refuse to run
+    // on a machine where unzip works perfectly fine, for every real
+    // extraction later in this file -- locateTool's whole premise, "a
+    // name that resolves and a name that works are different things", cuts
+    // the other way here too: a tool that only responds to a shape of
+    // invocation the probe never tries is not actually missing.
+    const fs::path probeArchive = seabass::testing::scratchRoot() / "backup_archive_crossvalidation_probe.zip";
+    {
+        static constexpr char emptyZipEocd[22] = {
+            'P', 'K', 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        std::ofstream out(probeArchive, std::ios::binary | std::ios::trunc);
+        out.write(emptyZipEocd, sizeof emptyZipEocd);
+    }
+
     const std::string python = locateTool("SEABASS_PYTHON3", configuredPython, {"python3", "python"}, "--version");
-    const std::string unzip = locateTool("SEABASS_UNZIP", configuredUnzip, {"unzip"}, "-v");
+    const std::string unzip =
+        locateTool("SEABASS_UNZIP", configuredUnzip, {"unzip"}, "-v " + shellQuote(probeArchive.string()));
     const std::string sevenZip = locateTool("SEABASS_SEVENZIP", configuredSevenZip, {"7z", "7zz", "7za"}, "i");
 
     bool broken = refuseIfConfiguredButMissing("python3", configuredPython, python);
