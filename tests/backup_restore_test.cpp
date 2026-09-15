@@ -872,5 +872,38 @@ int main()
         std::cout << "case case-variant-extra (a letter-case variant of a backup path is not removed as an extra) OK\n";
     }
 
+
+    // ---- Exact mode asks the filesystem before removing an extra ----
+    // Folding names can only approximate what a filesystem treats as one name
+    // (exFAT folds scripts path keys do not; macOS folds NFC and NFD). So an
+    // extra is not removed when it is the very same file as one the backup
+    // holds. A hard link is the same situation on any filesystem: two names,
+    // one file.
+    {
+        Fixture f("same-file-extra");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const fs::path original = f.stick / "Contents" / "a.mp3";
+        const fs::path onTarget = f.target / "Contents" / "a.mp3";
+        fs::create_directories(onTarget.parent_path());
+        fs::copy_file(original, onTarget, fs::copy_options::overwrite_existing);
+        fs::last_write_time(onTarget, fs::last_write_time(original));
+        const fs::path alias = f.target / "Contents" / "alias-of-a.mp3";
+        std::error_code linkError;
+        fs::create_hard_link(onTarget, alias, linkError);
+        if (linkError) {
+            std::cout << "case same-file-extra SKIPPED (no hard links here: " << linkError.message() << ")\n";
+        } else {
+            writeFile(f.target / "CONTENTS", "a file named like a backup folder", 1'600'000'000);
+            RestoreOptions exact = f.restore;
+            exact.exact = true;
+            RestoreSummary summary = RestoreStickBackup::execute(exact);
+            assert(summary.status == RestoreSummary::Status::Restored);
+            assert(fs::exists(onTarget) && fs::exists(alias) && "a second name for a backup file is not removed");
+            assert(fs::equivalent(onTarget, alias));
+            assert(!fs::exists(f.target / "CONTENTS") && "a file named like a backup folder is an extra, not a match");
+            std::cout << "case same-file-extra (an extra that is the same file as a backup file is kept) OK\n";
+        }
+    }
+
     return 0;
 }

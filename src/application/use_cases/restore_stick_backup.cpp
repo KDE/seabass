@@ -266,6 +266,10 @@ struct RestorePlan
     std::uint64_t bytesToWrite = 0;
     std::uint64_t totalBytes = 0;
     std::set<std::string> backupPaths;  // relative paths (files and dirs) the backup contains
+    std::set<std::string> backupDirectories;  // the directories among them
+    // The files among them, by size: the candidates an extra could be the same
+    // file as (see extraIsBackupFile).
+    std::multimap<std::uint64_t, fs::path> backupFilesBySize;
 };
 
 RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifest, const fs::path &targetRoot)
@@ -295,9 +299,11 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
         planned.isDirectory = isDirectory || entry.isDirectory;
         plan.backupPaths.insert(pathToUtf8(*relative));
         if (planned.isDirectory) {
+            plan.backupDirectories.insert(pathToUtf8(*relative));
             plan.directories.push_back(std::move(planned));
             continue;
         }
+        plan.backupFilesBySize.emplace(entry.size, *relative);
         plan.totalBytes += entry.size;
         planned.size = entry.size;
         std::error_code ec;
@@ -360,29 +366,31 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
 
 // What exact mode removes: everything on the target the backup does not hold.
 //
-// Compared by normalizedPathKey, not byte for byte. DJ sticks are exFAT or
-// FAT32, where "Contents/ARTBAT" and "Contents/Artbat" are one folder: the
-// restore writes the backup's file into it, and a byte-exact comparison then
-// called the stick's spelling of that same file an extra and deleted it --
-// the track the restore had just written. On a case-sensitive target this
-// keeps a file that only differs in letter case instead, which is the safe
-// direction to be wrong in.
+// Compared by normalizedPathKey, not byte for byte, and only file with file,
+// directory with directory. DJ sticks are exFAT or FAT32, where
+// "Contents/ARTBAT" and "Contents/Artbat" are one folder: a byte-exact list
+// called the stick's spelling of a file the restore had just written an extra
+// and deleted it. The folding is an approximation of what a filesystem treats
+// as one name, though -- extraIsBackupFile asks the filesystem itself before
+// anything is removed.
 //
 // The folders holding the stick's own write lock are not extras either: the
 // walk skips the lock file itself, so they are never empty and removing them
 // could only fail.
-std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const std::set<std::string> &backupPaths)
+std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const RestorePlan &plan)
 {
-    std::set<std::string> backupKeys;
-    for (const std::string &path : backupPaths) {
-        backupKeys.insert(normalizedPathKey(path));
+    std::set<std::string> fileKeys;
+    std::set<std::string> directoryKeys;
+    for (const std::string &path : plan.backupPaths) {
+        (plan.backupDirectories.count(path) != 0 ? directoryKeys : fileKeys).insert(normalizedPathKey(path));
     }
     const std::string lockPath = "Seabass/backups/.write.lock";
     std::vector<std::string> extras;
     TreeWalk walk = walkStickTree(targetRoot, CancellationToken::none());
     for (const TreeEntry &entry : walk.entries) {
         const std::string &path = entry.relativePath;
-        if (backupKeys.count(normalizedPathKey(path)) != 0) {
+        const std::set<std::string> &keys = entry.isDirectory ? directoryKeys : fileKeys;
+        if (keys.count(normalizedPathKey(path)) != 0) {
             continue;
         }
         if (entry.isDirectory && lockPath.compare(0, path.size() + 1, path + "/") == 0) {
@@ -391,6 +399,28 @@ std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const std::s
         extras.push_back(path);
     }
     return extras;
+}
+
+// Whether the extra at `extraPath` is, on this filesystem, the very same file
+// as one the backup holds -- a name the filesystem folds together that
+// normalizedPathKey does not (letters beyond its tables, Greek final sigma,
+// NFC against NFD on macOS). Asked just before removal, after the restore has
+// written: removing it would remove the restored file.
+bool extraIsBackupFile(const fs::path &targetRoot, const fs::path &extraPath, const RestorePlan &plan)
+{
+    std::error_code ec;
+    const std::uintmax_t size = fs::file_size(longPathSafe(extraPath), ec);
+    if (ec) {
+        return false;
+    }
+    const auto [first, last] = plan.backupFilesBySize.equal_range(static_cast<std::uint64_t>(size));
+    for (auto it = first; it != last; ++it) {
+        if (fs::equivalent(longPathSafe(extraPath), longPathSafe(targetRoot / it->second), ec) && !ec) {
+            return true;
+        }
+        ec.clear();
+    }
+    return false;
 }
 
 std::uint64_t availableBytes(const fs::path &root)
@@ -574,7 +604,7 @@ RestorePreview RestoreStickBackup::preview(const RestoreOptions &options)
     preview.rejected = plan.rejected;
     std::error_code ec;
     if (fs::is_directory(options.targetRoot, ec)) {
-        preview.extras = extrasOnTarget(options.targetRoot, plan.backupPaths).size();
+        preview.extras = extrasOnTarget(options.targetRoot, plan).size();
         preview.targetHasEngineLibrary = fs::exists(engine::engineMainDatabasePath(options.targetRoot), ec);
         preview.freeBytesAtTarget = availableBytes(options.targetRoot);
         preview.enoughFreeSpace = preview.freeBytesAtTarget >= plan.bytesToWrite + options.freeSpaceMarginBytes;
@@ -644,7 +674,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     RestorePlan plan = planRestore(*opened.reader, *opened.manifest, options.targetRoot);
     summary.rejected = plan.rejected;
     summary.filesUnchanged = plan.unchanged;
-    std::vector<std::string> extras = options.exact ? extrasOnTarget(options.targetRoot, plan.backupPaths) : std::vector<std::string>{};
+    std::vector<std::string> extras = options.exact ? extrasOnTarget(options.targetRoot, plan) : std::vector<std::string>{};
 
     std::uint64_t freeBytes = availableBytes(options.targetRoot);
     if (freeBytes < plan.bytesToWrite + options.freeSpaceMarginBytes) {
@@ -726,10 +756,12 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         std::sort(extras.begin(), extras.end(), [](const std::string &a, const std::string &b) { return a.size() > b.size(); });
         for (const std::string &extra : extras) {
             fs::path target = options.targetRoot / pathFromUtf8(extra);
-            if (fs::is_directory(target, ec)) {
-                fs::remove(target, ec);  // only if empty by now
+            if (fs::is_directory(longPathSafe(target), ec)) {
+                fs::remove(longPathSafe(target), ec);  // only if empty by now
+            } else if (extraIsBackupFile(options.targetRoot, target, plan)) {
+                continue;  // the restored file itself, under a spelling of its name
             } else {
-                fs::remove(target, ec);
+                fs::remove(longPathSafe(target), ec);
             }
             if (ec) {
                 summary.warnings.push_back(extra + ": could not remove: " + ec.message());
