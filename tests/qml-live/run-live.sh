@@ -32,6 +32,7 @@ cli="$build/seabass-cli"
 export SEABASS_LIVE_STICK="$stick"
 export SEABASS_SCREENSHOT_DIR="$shots"
 export QT_QPA_PLATFORM=offscreen
+failed=0
 
 # Always a full "TestCase::function" name: a bare TestCase name makes
 # the QtQuickTest runner exit 1 without a word.
@@ -41,6 +42,10 @@ run() {  # name, extra env assignments...
     env "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 \
         | grep -E "^(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals)|^   (Actual|Expected|Loc)" \
         | sed 's/SeabassGuiQmlTests::[A-Za-z]*:://; s/^QDEBUG : [a-zA-Z0-9_]*() .\[34m[a-zA-Z0-9_]*.\[0m://'
+    # The test binary's own status, not the filter's: a pipeline ends with
+    # sed, which succeeds whatever the tests did, so a run full of FAILs
+    # used to exit 0 and a caller counted it as passed.
+    [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
 }
 
 # 1. The plain flows, one process per test function so a failure in one
@@ -97,3 +102,6 @@ if [ -n "$device" ]; then
 else
     echo "=== LiveStickPull skipped: no device given"
 fi
+
+# Non-zero when any test above failed.
+exit $failed

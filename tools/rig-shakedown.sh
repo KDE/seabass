@@ -39,7 +39,7 @@ refB="${RIG_REFERENCE_B:-$HOME/Seabass/e2e/backups/WHALESHARK2.zip}"
 prints="${RIG_REFERENCE_PRINTS:-$HOME/Seabass/e2e/reference-fingerprints.txt}"
 export QT_QPA_PLATFORM=offscreen
 
-mkdir -p "$out"
+mkdir -p "$out" "$out/shots"
 summary="$out/summary.tsv"
 : > "$summary"
 a="$(basename "$A")"
