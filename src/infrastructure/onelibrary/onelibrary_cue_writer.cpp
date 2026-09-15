@@ -370,6 +370,14 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
     refreshStalenessBaseline();
 }
 
+bool OneLibraryCueWriter::hasTrackAtPath(const std::string &filePath)
+{
+    checkNotStale();
+    SqlCipherStatement find(writeConnection(), "SELECT 1 FROM content WHERE path = ? LIMIT 1");
+    find.bindText(1, toContentPath(m_stickRoot, filePath));
+    return find.step();
+}
+
 void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doomedFilePath,
                                                            const std::string &survivorFilePath)
 {

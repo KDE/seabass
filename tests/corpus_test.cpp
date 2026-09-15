@@ -2276,6 +2276,112 @@ void caseLibraryHealthRepair(const DataSet &set, const fs::path &scratch, const 
     pass("matrix: a repair merges cues onto the survivor and removes the broken row");
 }
 
+// Matrix: Library Health's Repair All on a stick with OneLibrary. The same
+// broken file is listed there twice, once by rekordbox and once by its
+// OneLibrary mirror, so Repair All stages two repairs into one save. The
+// rekordbox one mirrors its row removal into OneLibrary first; the
+// OneLibrary one then has to find its row already gone and count that as
+// done. On a real stick it failed the save instead ("onelibrary: no
+// content row for path ..."), found by the release rig.
+void caseLibraryHealthRepairOnBothCatalogs(const DataSet &set, const fs::path &scratch, const Catalogs &catalogs)
+{
+    if (catalogs.rekordbox.size() < 30) {
+        std::cout << "    skipped matrix/repair on both catalogs: too few rekordbox tracks\n";
+        return;
+    }
+    const fs::path root = freshRekordboxCopy(set, scratch, "matrix-repair-both");
+    if (!infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root.string())) {
+        std::cout << "    skipped matrix/repair on both catalogs: this set has no OneLibrary\n";
+        fs::remove_all(root);
+        return;
+    }
+    auto filename = [](std::string path) {
+        while (!path.empty() && path.back() == ' ') {
+            path.pop_back();
+        }
+        return fs::path(path).filename().string();
+    };
+    const auto rekordbox = rescanRekordbox(root);
+    const std::vector<domain::Track> oneLibrary = infrastructure::onelibrary::OneLibraryReader(root.string()).readAll();
+
+    // Only files each catalog lists exactly once, so a row is found by
+    // its file name alone.
+    std::map<std::string, int> rekordboxNames;
+    std::map<std::string, int> oneLibraryNames;
+    for (const auto &t : rekordbox) {
+        ++rekordboxNames[filename(t.filePath)];
+    }
+    for (const auto &t : oneLibrary) {
+        ++oneLibraryNames[filename(t.filePath)];
+    }
+    auto oneLibraryRow = [&](const domain::Track &t) -> const domain::Track * {
+        const std::string name = filename(t.filePath);
+        if (name.empty() || rekordboxNames[name] != 1 || oneLibraryNames[name] != 1) {
+            return nullptr;
+        }
+        for (const auto &o : oneLibrary) {
+            if (filename(o.filePath) == name) {
+                return &o;
+            }
+        }
+        return nullptr;
+    };
+    const domain::Track *survivor = nullptr;
+    const domain::Track *broken = nullptr;
+    for (const auto &t : rekordbox) {
+        if (oneLibraryRow(t) == nullptr) {
+            continue;
+        }
+        if (survivor == nullptr) {
+            survivor = &t;
+        } else {
+            broken = &t;
+            break;
+        }
+    }
+    if (survivor == nullptr || broken == nullptr) {
+        std::cout << "    skipped matrix/repair on both catalogs: need two files both catalogs list once\n";
+        fs::remove_all(root);
+        return;
+    }
+    const std::string brokenId = broken->sourceId;
+    const std::string brokenName = filename(broken->filePath);
+    const std::string survivorName = filename(survivor->filePath);
+
+    domain::LibraryConsistencyIssue inRekordbox;
+    inRekordbox.kind = domain::LibraryConsistencyIssue::Kind::Repairable;
+    inRekordbox.survivor = *survivor;
+    inRekordbox.brokenGroup = {*broken};
+    domain::LibraryConsistencyIssue inOneLibrary;
+    inOneLibrary.kind = domain::LibraryConsistencyIssue::Kind::Repairable;
+    inOneLibrary.survivor = *oneLibraryRow(*survivor);
+    inOneLibrary.brokenGroup = {*oneLibraryRow(*broken)};
+
+    // In the order Repair All stages them: rekordbox's issues are listed
+    // before OneLibrary's.
+    const QString path = QString::fromStdString(root.string());
+    auto result = runChanges({std::make_shared<gui::RepairIssueChange>(path, inRekordbox, 1),
+                              std::make_shared<gui::RepairIssueChange>(path, inOneLibrary, 1)},
+                             root, {});
+    if (!check(result.error.isEmpty(), "repairing one file in both catalogs saved without error: "
+                                           + result.error.toStdString())) {
+        fs::remove_all(root);
+        return;
+    }
+    const auto rekordboxAfter = rescanRekordbox(root);
+    check(findTrack(rekordboxAfter, brokenId) == nullptr, "the broken rekordbox row is gone");
+    bool brokenListed = false;
+    bool survivorListed = false;
+    for (const auto &o : infrastructure::onelibrary::OneLibraryReader(root.string()).readAll()) {
+        brokenListed = brokenListed || filename(o.filePath) == brokenName;
+        survivorListed = survivorListed || filename(o.filePath) == survivorName;
+    }
+    check(!brokenListed, "the broken OneLibrary row is gone");
+    check(survivorListed, "the survivor's OneLibrary row is still there");
+    fs::remove_all(root);
+    pass("matrix: Repair All fixes one broken file in rekordbox and OneLibrary in one save");
+}
+
 // Matrix: a cleanup that has to write TWO catalogs. The whole point of
 // treating a file rather than a row as the unit of duplication is that one
 // file is listed by rekordbox and by Engine at once, and removing it means
@@ -2753,6 +2859,7 @@ void runMatrix(const DataSet &set, const fs::path &scratch, const Catalogs &cata
     caseCopyCues(set, scratch, catalogs, expected);
     caseLocalCueRestore(set, scratch, catalogs, expected);
     caseLibraryHealthRepair(set, scratch, catalogs, expected);
+    caseLibraryHealthRepairOnBothCatalogs(set, scratch, catalogs);
     caseCleanUpDuplicates(set, scratch, catalogs, expected);
     caseDeleteOrphan(set, scratch, catalogs, expected);
 #else

@@ -118,6 +118,12 @@ public:
     // (playlist, survivor) pair.
     void removeTrackByPathReplacingWith(const std::string &doomedFilePath, const std::string &survivorFilePath);
 
+    // True if a content row lists this (absolute) file path. For a caller
+    // whose row may already have gone earlier in the same save -- a
+    // rekordbox repair mirrors its row removal here -- and that must tell
+    // "already done" from "never there" before removing it.
+    bool hasTrackAtPath(const std::string &filePath);
+
     // The same removal for one content row, named by id. What a caller
     // holding row ids (Clean Up, whose plan was read from this database)
     // must use: a path can name more than one row, so resolving an id

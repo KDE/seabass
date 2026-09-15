@@ -203,6 +203,15 @@ ChangeOutcome RepairIssueChange::apply(SaveContext &ctx)
             ctx.log().record("consistency: merged cues onto survivor \"" + survivor.title + "\"");
         }
         for (const auto &broken : m_issue.brokenGroup) {
+            // A rekordbox stick with OneLibrary lists a broken file in both
+            // catalogs, so Repair All stages both repairs, and the rekordbox
+            // one mirrors its row removal here first. The row being gone is
+            // this repair already done, not a failure of the whole save.
+            if (!w.oneLibrary->hasTrackAtPath(broken.filePath)) {
+                w.session.noteItemApplied();
+                ctx.log().record("consistency: broken row \"" + broken.title + "\" already removed");
+                continue;
+            }
             w.oneLibrary->removeTrackByPathReplacingWith(broken.filePath, survivor.filePath);
             w.session.noteItemApplied();
             ctx.log().record("consistency: removed broken row \"" + broken.title + "\"");
