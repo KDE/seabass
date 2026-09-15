@@ -159,6 +159,51 @@ The QML test binary registers the same `SeabassGui` module as the app
 instantiated in a test; `tst_PagesCompile.qml` checks that every page
 at least compiles.
 
+## Release rig: real sticks, end to end
+
+Before a release, `tools/rig-shakedown.sh` runs every scripted check against
+two TEST sticks and two reference full stick backups: restoring a reference
+onto each stick, the read-only scans, edits saved and undone, full stick
+backups (incremental, cancelled and kept or discarded, compacted, refused
+while DJ software runs, restored onto the other stick), and Backup USB Stick
+between the two. It ends by proving both sticks are exact copies of their
+references again and the references were never written.
+
+```
+. ~/Seabass/e2e/env.sh        # a sandbox SEABASS_HOME and XDG_* profile
+SEABASS_BUILD_DIR=~/builds/seabass RIG_STICK_A=/media/you/TEST1 RIG_STICK_B=/media/you/TEST2 \
+    RIG_DEVICE_B=/dev/sdX1 RIG_REFERENCE_A=~/refs/A.zip RIG_REFERENCE_B=~/refs/B.zip \
+    tools/rig-shakedown.sh ~/rig-out
+```
+
+Both sticks are overwritten, several times. The references are only read;
+their size, modification time and manifest checksum are recorded before the
+run (`RIG_REFERENCE_PRINTS`) and compared after it. Each check writes
+`<out>/<check>.log` and a `PASS`/`FAIL` line to `<out>/summary.tsv`; a run of
+several hours that reports PASS in minutes is suspect, so read the logs.
+
+The pieces run on their own too, each ending in `RIG RESULT: PASS` or
+`FAIL` with a matching exit code:
+
+- `rig_restore <archive> <stick> [--execute]`: exact restore, then zero
+  changes left and every catalog file equal to the manifest's checksum.
+  Without `--execute` it only checks.
+- `rig_read <stick> [<archive>]`: catalog counts and the read-only scans,
+  timed, without writing to the stick.
+- `rig_backup <stick> <archive> [--expect ... | --expect-refused | --cancel-at P keep|discard]`
+  and `rig_compact <archive>`: a full stick backup verified, not hollow, and
+  compaction freeing exactly what it promised.
+- `rig_clone` and `rig_advise`: Create/Update Backup USB Stick between two
+  sticks, and what the stick list advises for each.
+- `tools/rig-edits.sh <stick> [baseline]`: add a cue, Clean Up one group and
+  a Library Health repair, each saved and undone (`rig_plant_repairable`
+  plants the repairable issue and puts the file back).
+- `tools/rig-clones.sh`: the two-stick Backup USB Stick checks.
+
+A stick pull is simulated by unmounting and remounting the device
+(`run-live.sh`); a pull in the middle of a save still needs someone at the
+machine.
+
 ## Testing against real libraries
 
 The donated-library corpus, what anonymizing keeps and what that costs a
