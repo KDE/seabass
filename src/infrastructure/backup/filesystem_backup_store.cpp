@@ -374,6 +374,26 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
         const fs::path target = resolveRecordedPath(originalPath);
         fs::create_directories(target.parent_path(), ec);
         const bool restored = writeFileDurablyAtomic(target.string(), contents);
+        // The file's own modification time too, not the moment of the
+        // restore. An undo that leaves "now" on every file it put back makes
+        // the stick look freshly edited: the metadata merge rule then takes
+        // the stick's side over the store, and the backup advice calls the
+        // stick the newest copy of its library. Backups taken before their
+        // times were recorded correctly carry 1980 or nothing; those are
+        // left alone rather than dated back to then.
+        if (restored) {
+            constexpr std::int64_t Year2000 = 946'684'800;
+            const std::int64_t recorded = reader->entries()[*index].mtimeUnix;
+            if (recorded > Year2000) {
+                std::error_code timeEc;
+                // Inline clock_cast, as the write side does, for the same
+                // reason: the file clock's epoch is not the Unix one (MSVC
+                // counts from 1601), and this file does not depend on
+                // stick_tree_walker.cpp.
+                const std::chrono::system_clock::time_point asSystem{std::chrono::seconds(recorded)};
+                fs::last_write_time(target, std::chrono::clock_cast<fs::file_time_type::clock>(asSystem), timeEc);
+            }
+        }
         if (restored && target.extension() == ".db") {
             // A database put back next to a -wal or -journal left by a
             // crash mid-save would have those frames replayed over it on

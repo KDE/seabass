@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -72,6 +74,34 @@ int main()
         auto afterRestore = store.list();
         assert(afterRestore.size() == 2);
         std::cout << "case 1 (backup + restore round trip, restore backs up what it overwrites) OK\n";
+    }
+
+    // Restore puts the file's modification time back, not the moment of the
+    // restore: an undo that dates every file "now" makes the stick look
+    // freshly edited to the metadata merge rule and the backup advice.
+    {
+        // Converted with clock_cast, as the store does, so this test builds
+        // without stick_tree_walker.cpp just like the store itself.
+        const auto fromUnixSeconds = [](std::int64_t seconds) {
+            return std::chrono::clock_cast<fs::file_time_type::clock>(
+                std::chrono::system_clock::time_point{std::chrono::seconds(seconds)});
+        };
+        const auto toUnixSeconds = [](fs::file_time_type time) {
+            return std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::clock_cast<std::chrono::system_clock>(time).time_since_epoch())
+                .count();
+        };
+        fs::path dated = root / "dated" / "export.pdb";
+        writeFile(dated, "as exported");
+        fs::last_write_time(dated, fromUnixSeconds(1'483'254'692));  // 2017-01-01, like a real export
+        FilesystemBackupStore store((root / "dated" / "Seabass" / "backups").string());
+        auto record = store.backup({dated.string()}, "add-cue");
+        writeFile(dated, "after the save");
+        assert(toUnixSeconds(fs::last_write_time(dated)) > 1'483'254'692);
+        assert(store.restore(record.id));
+        assert(readFile(dated) == "as exported");
+        assert(toUnixSeconds(fs::last_write_time(dated)) == 1'483'254'692);
+        std::cout << "case 1c (restore puts the modification time back too) OK\n";
     }
 
     // One record for many files: files added later join the same backup
