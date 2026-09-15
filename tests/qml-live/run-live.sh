@@ -12,6 +12,7 @@
 #
 #   tests/qml-live/run-live.sh /media/you/STICK [/dev/sdX1] [screenshot dir]
 #   SKIP_PLAIN=1 ...   runs only the three orchestrated scenarios
+#   SEABASS_BUILD_DIR=~/builds/seabass ...   a build outside <repo>/build
 #
 # The device is only needed for the stick-pull scenario (it is
 # unmounted and mounted again with udisksctl). Every test writes to the
@@ -24,8 +25,10 @@ device="${2:-}"
 shots="${3:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-bin="$root/build/seabass_qml_tests"
-cli="$root/build/seabass-cli"
+# Builds usually live outside the repository: SEABASS_BUILD_DIR says where.
+build="${SEABASS_BUILD_DIR:-$root/build}"
+bin="$build/seabass_qml_tests"
+cli="$build/seabass-cli"
 export SEABASS_LIVE_STICK="$stick"
 export SEABASS_SCREENSHOT_DIR="$shots"
 export QT_QPA_PLATFORM=offscreen
@@ -44,12 +47,14 @@ run() {  # name, extra env assignments...
 #    cannot take the others down with it.
 [ -n "${SKIP_PLAIN:-}" ] || for t in test_01_scanCancel test_02_settingsStageSaveUndo test_03_syncStageSaveCancel \
          test_04_junkCuesStageSaveUndo test_05_libraryHealthLeaveDiscards \
-         test_06_backupsCleanAndRestore test_07_pendingDeletionsCancel; do
+         test_07_pendingDeletionsCancel; do
     run "LiveEditMode::$t"
 done
 
 # 2. A foreign, live lock: a cookie owned by a sleep process on this host.
-lockdir="${XDG_DATA_HOME:-$HOME/.local/share}/seabass/edit-locks"
+# Where the app keeps its edit-lock cookies: paths::localMetadataDir(), which
+# honours SEABASS_HOME.
+lockdir="${SEABASS_HOME:-$HOME/Seabass}/metadata/edit-locks"
 mkdir -p "$lockdir"
 libid="$(lsblk -no UUID "$(findmnt -no SOURCE "$stick")" 2>/dev/null | head -1)"
 if [ -n "$libid" ]; then

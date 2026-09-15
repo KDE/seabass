@@ -183,7 +183,8 @@ TestCase {
     // ---- 3. Sync: stage every plan, save with an immediate cancel, discard the rest, undo ----
     function test_03_syncStageSaveCancel() {
         var page = createTemporaryObject(syncPage, testCase, {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
-                                                              enginePath: enginePath, playbackController: fakePlayback});
+                                                              enginePath: enginePath, playbackController: fakePlayback,
+                                                              appSettingsController: createTemporaryObject(appSettings, testCase)});
         var ctrl = Live.findByType(page, "SyncController");
         verify(ctrl !== null);
         waitIdle(ctrl, 300000);
@@ -222,7 +223,8 @@ TestCase {
     // ---- 4. Stray cues: stage all, save, undo ----
     function test_04_junkCuesStageSaveUndo() {
         var page = createTemporaryObject(junkPage, testCase, {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
-                                                              enginePath: enginePath});
+                                                              enginePath: enginePath,
+                                                              appSettingsController: createTemporaryObject(appSettings, testCase)});
         var ctrl = Live.findByType(page, "LibraryConsistencyController");
         verify(ctrl !== null);
         waitIdle(ctrl, 300000);
