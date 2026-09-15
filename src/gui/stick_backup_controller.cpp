@@ -468,6 +468,8 @@ QVariantMap StickBackupController::compactionPreflight()
     map["archiveBytes"] = static_cast<qlonglong>(pre.archiveBytes);
     map["liveBytes"] = static_cast<qlonglong>(pre.liveBytes);
     map["deadBytes"] = static_cast<qlonglong>(pre.deadBytes);
+    map["reclaimableBytes"] = static_cast<qlonglong>(pre.reclaimableBytes);
+    map["compactedBytes"] = static_cast<qlonglong>(pre.compactedBytes);
     map["ratio"] = pre.deadRatio;
     map["suggested"] = pre.suggested;
     map["requiredFreeBytes"] = static_cast<qlonglong>(pre.requiredFreeBytes);

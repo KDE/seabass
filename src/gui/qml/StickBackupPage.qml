@@ -235,7 +235,7 @@ Page {
             Button {
                 objectName: "compactAcceptButton"
                 text: "Compact"
-                enabled: compactDialog.preflight.enoughFreeSpace === true && compactDialog.preflight.deadBytes > 0
+                enabled: compactDialog.preflight.enoughFreeSpace === true && compactDialog.preflight.reclaimableBytes > 0
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
             Button { text: "Cancel"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
@@ -250,9 +250,13 @@ Page {
                 rowSpacing: 4
                 Label { text: "Reclaims"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
                 Label {
+                    objectName: "compactReclaimsLabel"
                     font.family: Theme.dataFamily
-                    text: Theme.humanBytes(compactDialog.preflight.deadBytes) + "  ("
-                        + Math.round((compactDialog.preflight.ratio || 0) * 100) + "%)"
+                    // What compacting frees exactly, not the dead bytes: the
+                    // rewritten central directory can be a little larger.
+                    text: Theme.humanBytes(compactDialog.preflight.reclaimableBytes || 0) + "  ("
+                        + Math.round((compactDialog.preflight.reclaimableBytes || 0)
+                                     / Math.max(1, compactDialog.preflight.archiveBytes || 0) * 100) + "%)"
                 }
                 Label { text: "Needs free space"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
                 Label {
@@ -569,8 +573,11 @@ Page {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: Theme.textMuted
+                            // Dead space, not a promise: what compacting frees
+                            // exactly is in the compact dialog, and can differ
+                            // by a few bytes per entry that moves across 4 GiB.
                             text: root.dead.deadBytes > 0
-                                ? Theme.humanBytes(root.dead.deadBytes) + " reclaimable (" + Math.round((root.dead.ratio || 0) * 100)
+                                ? Theme.humanBytes(root.dead.deadBytes) + " unused (" + Math.round((root.dead.ratio || 0) * 100)
                                   + "% of " + Theme.humanBytes(root.dead.archiveBytes) + ")"
                                   + (root.dead.suggested ? " -- worth compacting." : " -- not worth compacting yet.")
                                 : "No wasted space."

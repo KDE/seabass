@@ -22,6 +22,11 @@ struct CompactionPreflight
     std::uint64_t deadBytes = 0;
     double deadRatio = 0.0;
     bool suggested = false;  // past the design's threshold
+    // What compacting actually frees: the archive's size now minus its
+    // exact size afterwards. Can differ from deadBytes by a few bytes per
+    // entry that moves across 4 GiB (see compactedArchiveSize()).
+    std::uint64_t compactedBytes = 0;
+    std::uint64_t reclaimableBytes = 0;
     std::uint64_t requiredFreeBytes = 0;  // for the temporary copy
     std::uint64_t availableFreeBytes = 0;
     bool enoughFreeSpace = false;

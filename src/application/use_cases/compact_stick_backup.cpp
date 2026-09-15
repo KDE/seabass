@@ -150,7 +150,9 @@ CompactionPreflight CompactStickBackup::preflight(const fs::path &archivePath, s
     result.deadBytes = report.deadBytes;
     result.deadRatio = report.deadRatio();
     result.suggested = shouldSuggestCompaction(report);
-    result.requiredFreeBytes = result.liveBytes + freeSpaceMarginBytes;
+    result.compactedBytes = compactedArchiveSize(*opened.reader);
+    result.reclaimableBytes = report.fileSize > result.compactedBytes ? report.fileSize - result.compactedBytes : 0;
+    result.requiredFreeBytes = result.compactedBytes + freeSpaceMarginBytes;
     result.availableFreeBytes = availableBytes(archivePath);
     result.enoughFreeSpace = result.availableFreeBytes >= result.requiredFreeBytes;
     return result;
@@ -182,9 +184,12 @@ CompactionOutcome CompactStickBackup::execute(const CompactStickBackupOptions &o
     }
     DeadSpaceReport report = deadSpace(*opened.reader);
     outcome.bytesBefore = report.fileSize;
-    outcome.requiredFreeBytes = report.liveBytes + report.overheadBytes + options.freeSpaceMarginBytes;
+    const std::uint64_t compactedBytes = compactedArchiveSize(*opened.reader);
+    outcome.requiredFreeBytes = compactedBytes + options.freeSpaceMarginBytes;
     outcome.availableFreeBytes = availableBytes(options.archivePath);
-    if (report.deadBytes == 0) {
+    // Dead bytes alone do not make a smaller file: the rewritten central
+    // directory can outgrow a sliver of dead space.
+    if (report.deadBytes == 0 || compactedBytes >= report.fileSize) {
         outcome.status = CompactionOutcome::Status::NothingToReclaim;
         outcome.bytesAfter = report.fileSize;
         return outcome;

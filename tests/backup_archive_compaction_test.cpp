@@ -189,6 +189,7 @@ int main()
         assert(result.entries == reader.entries().size() - 1);
         assert(result.bytesAfter == compacted.size());
         assert(result.bytesBefore - result.bytesAfter == before.deadBytes);
+        assert(compactedArchiveSize(reader) == result.bytesAfter);
         assert(lastDone == lastTotal && lastTotal == 31'000 + 20'000 + 12'000);
 
         Zip64Reader after = Zip64Reader::open(compacted);
@@ -262,6 +263,8 @@ int main()
         options.archivePath = path;
         CompactionOutcome done = CompactStickBackup::execute(options);
         assert(done.status == CompactionOutcome::Status::Compacted);
+        assert(pre.compactedBytes == done.bytesAfter);
+        assert(pre.reclaimableBytes == done.bytesBefore - done.bytesAfter);
         assert(done.bytesBefore == original.size() && done.bytesAfter < done.bytesBefore);
         assert(fs::file_size(path) == done.bytesAfter);
         assert(!fs::exists(CompactStickBackup::temporaryPathFor(path)));
@@ -277,6 +280,43 @@ int main()
         assert(!CompactStickBackup::preflight(path).suggested);
         fs::remove_all(root);
         std::cout << "case 4 (on disk: preflight refusal leaves the file alone; compaction replaces atomically; stale temp cleaned; no-op afterwards) OK\n";
+    }
+
+    // ---- The compacted size follows the new layout, across 4 GiB too ----
+    {
+        // A first backup writes directories before the files; compaction
+        // writes in listing order, so a directory can move past 4 GiB and
+        // its central record grows by the 12-byte ZIP64 offset field. Only
+        // offsets and sizes decide record sizes, so the layout is sized
+        // without writing 5 GiB.
+        CentralEntry big;
+        big.name = "a/big.bin";
+        big.size = big.compressedSize = 5ull << 30;
+        CentralEntry dir;
+        dir.name = "b/";
+        dir.isDirectory = true;
+        CentralEntry manifestEntry;
+        manifestEntry.name = std::string(ManifestEntryName);
+        manifestEntry.size = manifestEntry.compressedSize = 100;
+
+        const std::uint64_t timestamp = 9;        // "UT" extra
+        const std::uint64_t localZip64 = 4 + 16;  // local ZIP64 extra announcing the descriptor
+        const std::uint64_t zip64Sizes = 4 + 16;  // central ZIP64 extra: both sizes
+        const std::uint64_t zip64Offset = 4 + 8;  // central ZIP64 extra: offset only
+        const std::uint64_t manifestName = manifestEntry.name.size();
+        const std::uint64_t locals = (30 + 9 + localZip64 + timestamp) + big.size + 24  // a/big.bin
+            + (30 + 2 + timestamp)                                                        // b/
+            + (30 + manifestName + localZip64 + timestamp) + 100 + 24;                    // manifest
+        const std::uint64_t trailer = 56 + 20 + 22;
+
+        // Listing order, as compaction writes it: b/ and the manifest sit past 4 GiB.
+        const std::uint64_t listed = compactedArchiveSize(std::vector<CentralEntry>{big, dir, manifestEntry});
+        assert(listed == locals + (46 + 9 + zip64Sizes + timestamp) + (46 + 2 + zip64Offset + timestamp)
+                             + (46 + manifestName + zip64Offset + timestamp) + trailer);
+        // Directory first, as a first backup writes it: b/ needs no offset field.
+        const std::uint64_t directoryFirst = compactedArchiveSize(std::vector<CentralEntry>{dir, big, manifestEntry});
+        assert(listed - directoryFirst == zip64Offset);
+        std::cout << "case 5 (compacted size follows the rewritten layout: a directory moved past 4 GiB costs 12 bytes) OK\n";
     }
 
     std::cout << "all cases passed\n";

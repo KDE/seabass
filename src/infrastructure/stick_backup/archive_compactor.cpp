@@ -4,6 +4,7 @@
 
 #include "infrastructure/stick_backup/archive_compactor.hpp"
 
+#include <optional>
 #include <unordered_map>
 
 #include "infrastructure/stick_backup/zip64_writer.hpp"
@@ -15,6 +16,45 @@ namespace seabass::infrastructure::stick_backup
 bool shouldSuggestCompaction(const DeadSpaceReport &report)
 {
     return report.deadBytes > 0 && (report.deadRatio() >= SuggestCompactionRatio || report.deadBytes >= SuggestCompactionBytes);
+}
+
+std::uint64_t compactedArchiveSize(const std::vector<CentralEntry> &entries)
+{
+    std::uint64_t offset = 0;
+    std::uint64_t centralDirectory = 0;
+    for (CentralEntry entry : entries) {
+        // As Zip64Writer rewrites it: files stored and followed by a data
+        // descriptor, directories as plain headers.
+        const bool isFile = !entry.isDirectory;
+        entry.localHeaderOffset = offset;
+        entry.method = zip::MethodStore;
+        entry.compressedSize = isFile ? entry.size : 0;
+        entry.hasDataDescriptor = isFile;
+        offset += Zip64Writer::localHeaderSize(entry, isFile);
+        if (isFile) {
+            offset += entry.size + zip::DataDescriptorSize;
+        }
+        centralDirectory += Zip64Writer::centralDirectoryEntrySize(entry);
+    }
+    return offset + centralDirectory + Zip64Writer::trailerSize();
+}
+
+std::uint64_t compactedArchiveSize(const Zip64Reader &source)
+{
+    std::vector<CentralEntry> order;
+    order.reserve(source.entries().size());
+    std::optional<CentralEntry> manifest;
+    for (const CentralEntry &entry : source.entries()) {
+        if (entry.name == ManifestEntryName) {
+            manifest = entry;
+        } else {
+            order.push_back(entry);
+        }
+    }
+    if (manifest) {
+        order.push_back(*manifest);
+    }
+    return compactedArchiveSize(order);
 }
 
 CompactionResult compactArchive(const Zip64Reader &source, const BackupManifest &manifest, ArchiveFile &destination,

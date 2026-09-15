@@ -52,7 +52,8 @@ TestCase {
             errorMessage: "",
             statusMessage: "",
             calls: [],
-            preflight: {deadBytes: 4.2 * 1024 * 1024 * 1024, ratio: 0.18, requiredFreeBytes: 19 * 1024 * 1024 * 1024,
+            preflight: {deadBytes: 4.2 * 1024 * 1024 * 1024, reclaimableBytes: 4.2 * 1024 * 1024 * 1024,
+                        archiveBytes: 25 * 1024 * 1024 * 1024, ratio: 0.18, requiredFreeBytes: 19 * 1024 * 1024 * 1024,
                         availableFreeBytes: 400 * 1024 * 1024 * 1024, enoughFreeSpace: true},
             configure: function(label, rb, engine, dir) { this.calls.push("configure:" + label + ":" + dir); },
             refresh: function() { this.calls.push("refresh"); },
@@ -221,13 +222,39 @@ TestCase {
         dialog.accept();
         verify(calls(page).indexOf("compact") >= 0);
 
-        var cramped = makePage({preflight: {deadBytes: 4 * 1024 * 1024 * 1024, ratio: 0.18,
+        var cramped = makePage({preflight: {deadBytes: 4 * 1024 * 1024 * 1024, reclaimableBytes: 4 * 1024 * 1024 * 1024,
+                                            archiveBytes: 25 * 1024 * 1024 * 1024, ratio: 0.18,
                                             requiredFreeBytes: 19 * 1024 * 1024 * 1024,
                                             availableFreeBytes: 8 * 1024 * 1024 * 1024, enoughFreeSpace: false}});
         findChild(cramped, "compactButton").clicked();
         var dialog2 = findChild(cramped, "compactDialog");
         tryVerify(function() { return dialog2.visible; });
         compare(findChild(cramped, "compactAcceptButton").enabled, false);
+    }
+
+    function test_compactDialogPromisesWhatCompactingFrees() {
+        // Dead bytes and what compacting frees differ when entries move
+        // across 4 GiB. A sliver of dead space that frees nothing does not
+        // offer to compact, and the dialog shows what compacting frees --
+        // 5 of 25 GiB, 20% -- not the 18% of dead space.
+        var nothing = makePage({preflight: {deadBytes: 1000, reclaimableBytes: 0, archiveBytes: 25 * 1024 * 1024 * 1024,
+                                            ratio: 0.0, requiredFreeBytes: 20 * 1024 * 1024 * 1024,
+                                            availableFreeBytes: 400 * 1024 * 1024 * 1024, enoughFreeSpace: true}});
+        findChild(nothing, "compactButton").clicked();
+        var dialog = findChild(nothing, "compactDialog");
+        tryVerify(function() { return dialog.visible; });
+        compare(findChild(nothing, "compactAcceptButton").enabled, false, "nothing to free, nothing to compact");
+
+        var page = makePage({preflight: {deadBytes: 4.5 * 1024 * 1024 * 1024, reclaimableBytes: 5 * 1024 * 1024 * 1024,
+                                         archiveBytes: 25 * 1024 * 1024 * 1024, ratio: 0.18,
+                                         requiredFreeBytes: 20 * 1024 * 1024 * 1024,
+                                         availableFreeBytes: 400 * 1024 * 1024 * 1024, enoughFreeSpace: true}});
+        findChild(page, "compactButton").clicked();
+        var dialog2 = findChild(page, "compactDialog");
+        tryVerify(function() { return dialog2.visible; });
+        var reclaims = findChild(page, "compactReclaimsLabel");
+        verify(reclaims !== null);
+        verify(reclaims.text.endsWith("(20%)"), reclaims.text);
     }
 
     function test_restoreHandsOffWithStickRootAndArchive() {

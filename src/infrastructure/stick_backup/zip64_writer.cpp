@@ -215,7 +215,7 @@ void Zip64Writer::requireNoOpenSink() const
     }
 }
 
-void Zip64Writer::writeLocalHeader(const CentralEntry &entry, bool withDataDescriptor)
+std::string Zip64Writer::localHeader(const CentralEntry &entry, bool withDataDescriptor)
 {
     if (entry.name.empty() || entry.name.size() > Max16) {
         throw ArchiveFormatError("entry name length out of range: " + entry.name.substr(0, 80));
@@ -240,7 +240,27 @@ void Zip64Writer::writeLocalHeader(const CentralEntry &entry, bool withDataDescr
     putU16(header, static_cast<std::uint16_t>(extra.size()));
     header += entry.name;
     header += extra;
-    appendToFile(m_file, header);
+    return header;
+}
+
+void Zip64Writer::writeLocalHeader(const CentralEntry &entry, bool withDataDescriptor)
+{
+    appendToFile(m_file, localHeader(entry, withDataDescriptor));
+}
+
+std::uint64_t Zip64Writer::localHeaderSize(const CentralEntry &entry, bool withDataDescriptor)
+{
+    return localHeader(entry, withDataDescriptor).size();
+}
+
+std::uint64_t Zip64Writer::centralDirectoryEntrySize(const CentralEntry &entry)
+{
+    return centralDirectoryEntry(entry).size();
+}
+
+std::uint64_t Zip64Writer::trailerSize()
+{
+    return Zip64EndOfCentralDirectorySize + Zip64LocatorSize + EndOfCentralDirectorySize;
 }
 
 Zip64Writer::EntrySink Zip64Writer::beginFile(std::string name, std::int64_t mtimeUnix, Compression compression)

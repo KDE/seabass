@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 #include "application/ports/cancellation_token.hpp"
 #include "infrastructure/stick_backup/archive_file.hpp"
@@ -44,5 +45,21 @@ struct CompactionResult
 CompactionResult compactArchive(const Zip64Reader &source, const BackupManifest &manifest, ArchiveFile &destination,
                                 application::CancellationToken cancel = application::CancellationToken::none(),
                                 const std::function<void(std::uint64_t, std::uint64_t)> &progress = {});
+
+// The exact size compactArchive() gives an archive whose entries, in the
+// order compaction writes them (the manifest last), are `entries`: each
+// entry stored, back to back from offset 0, followed by the central
+// directory those new offsets need and the trailer.
+//
+// Not the live bytes plus today's central directory: an entry that moves
+// across 4 GiB gains or loses the 12-byte ZIP64 offset field in its
+// central record, and compaction does move entries -- a first backup
+// writes every directory before the files, compaction writes them in
+// listing order. On a real 15 GiB stick backup that was 31824 bytes the
+// old estimate promised and compaction did not reclaim.
+std::uint64_t compactedArchiveSize(const std::vector<CentralEntry> &entries);
+
+// The same for `source`, in the order compactArchive() copies it.
+std::uint64_t compactedArchiveSize(const Zip64Reader &source);
 
 }  // namespace seabass::infrastructure::stick_backup

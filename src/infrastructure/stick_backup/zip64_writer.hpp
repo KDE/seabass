@@ -143,6 +143,16 @@ public:
     // spent afterwards.
     WriterBoundaries finish(std::string_view manifestBytes, std::string manifestName, std::int64_t manifestMtimeUnix);
 
+    // What the calls above lay down, measured without writing -- for
+    // predicting an archive's exact size (see compactedArchiveSize()). A
+    // header's size depends on the name and on whether a data descriptor
+    // follows; a central record's also on whether sizes or the offset
+    // need their ZIP64 fields, i.e. on where the entry sits.
+    static std::uint64_t localHeaderSize(const CentralEntry &entry, bool withDataDescriptor);
+    static std::uint64_t centralDirectoryEntrySize(const CentralEntry &entry);
+    // ZIP64 end record, locator and end record after the central directory.
+    static std::uint64_t trailerSize();
+
     // Drops the last `count` *new* entries from the list that finish()
     // will write. Their bytes stay in the file as dead space -- this is
     // how a torn database copy is retracted before the central directory
@@ -158,6 +168,7 @@ public:
 private:
     void requireNoOpenSink() const;
     void writeLocalHeader(const CentralEntry &entry, bool withDataDescriptor);
+    static std::string localHeader(const CentralEntry &entry, bool withDataDescriptor);
     static std::string centralDirectoryEntry(const CentralEntry &entry);
 
     ArchiveFile &m_file;
