@@ -42,6 +42,8 @@ TestCase {
     Component { id: appSettings; AppSettingsController {} }
     Component { id: cleanupComponent; CleanupController {} }
     Component { id: addCueComponent; AddCueController {} }
+    Component { id: metadataBackupComponent; MetadataBackupController {} }
+    Component { id: metadataRestoreComponent; MetadataRestoreController {} }
 
     readonly property var fakePlayback: ({stop: function() {}, hasTrack: false, playing: false})
 
@@ -489,6 +491,110 @@ TestCase {
         tracks.scan("rekordbox", rekordboxPath);
         waitIdle(tracks, 300000);
         compare(tracks.totalTrackCount, rowsBefore);
+    }
+
+    // ---- 11. For the two-stick checks: add a memory cue and keep it ----
+    // Runs only when SEABASS_RIG_KEEP_CUE_MS names a position (the runner
+    // exposes it as liveRigKeepCueMs): tools/rig-clones.sh changes one
+    // stick's library this way so the other stick has something to catch
+    // up on. Nothing here undoes it; the runner restores the stick.
+    function test_11_rigKeepCue() {
+        if (typeof liveRigKeepCueMs === "undefined" || liveRigKeepCueMs <= 0) {
+            skip("SEABASS_RIG_KEEP_CUE_MS is not set");
+        }
+        var rekordbox = createTemporaryObject(scanController, testCase);
+        rekordbox.scan("rekordbox", rekordboxPath);
+        waitIdle(rekordbox, 300000);
+        var target = null;
+        for (var i = 0; i < rekordbox.tracks.trackCount() && target === null; ++i) {
+            var t = rekordbox.tracks.trackAt(i);
+            if (t.filePath.length === 0) continue;
+            var taken = false;
+            for (var c = 0; c < t.cues.length; ++c) {
+                if (Math.abs(t.cues[c].positionMs - liveRigKeepCueMs) < 50) taken = true;
+            }
+            if (!taken) target = t;
+        }
+        verify(target !== null, "a track without a cue at that position");
+        console.log("  keeping a memory cue at " + liveRigKeepCueMs + " ms on rekordbox id " + target.sourceId + ": "
+                    + target.artist + " - " + target.title);
+        var ctrl = createTemporaryObject(addCueComponent, testCase);
+        ctrl.addCue("rekordbox", rekordboxPath, target.sourceId, liveRigKeepCueMs, "memory", 0, "", "rig kept", false, 0,
+                    target.title);
+        compare(ctrl.errorMessage, "");
+        var summary = saveAndWait(false);
+        compare(summary.error, "");
+        compare(summary.written, 1);
+        rekordbox.scan("rekordbox", rekordboxPath);
+        waitIdle(rekordbox, 300000);
+        var reread = findTrack(rekordbox, "sourceId", target.sourceId);
+        var found = false;
+        for (var k = 0; k < reread.cues.length; ++k) {
+            if (reread.cues[k].kind === "memory" && Math.abs(reread.cues[k].positionMs - liveRigKeepCueMs) < 50) found = true;
+        }
+        verify(found, "the kept cue reads back");
+    }
+
+    // ---- 12. Metadata backup from another stick, restored onto this one, undo ----
+    // Needs SEABASS_LIVE_SECOND_STICK (liveSecondStickRoot): its metadata
+    // goes into the local store, and the restore onto this stick offers it
+    // for the tracks both libraries have. A proposal only exists for a
+    // matched track, so what the save writes is matched tracks only; a
+    // rescan afterwards has less left to offer, and undo brings the offer
+    // back.
+    function test_12_metadataFromSecondStickSaveUndo() {
+        if (typeof liveSecondStickRoot === "undefined" || liveSecondStickRoot.length === 0) {
+            skip("SEABASS_LIVE_SECOND_STICK is not set");
+        }
+        var sourcePioneer = liveSecondStickRoot + "/PIONEER";
+        var sourceLabel = liveSecondStickRoot.substring(liveSecondStickRoot.lastIndexOf("/") + 1);
+        var sourceId = EditSessionRegistry.libraryIdForPath(sourcePioneer);
+        verify(sourceId.length > 0, "the second stick has a library id");
+
+        var backup = createTemporaryObject(metadataBackupComponent, testCase);
+        verify(backup.selectStick(sourcePioneer, sourceId, sourceLabel), "the second stick can be selected");
+        tryVerify(function() { return backup.hasScanned && !backup.busy; }, 600000);
+        compare(backup.errorMessage, "");
+        console.log("  backup from " + sourceLabel + ": " + backup.tracksSeen + " tracks seen, " + backup.proposalCount
+                    + " to add, " + backup.alreadyCurrent + " already in the store");
+        if (backup.proposalCount > 0) {
+            backup.stageAllForAdd();
+            compare(backup.stagedAddCount, backup.proposalCount);
+            var stored = createTemporaryObject(spyComponent, testCase, {target: backup, signalName: "saveCompleted"});
+            backup.save();
+            tryVerify(function() { return stored.count > 0; }, 600000);
+            compare(backup.errorMessage, "");
+            console.log("  store now holds " + backup.storedTrackCount + " tracks");
+        }
+
+        var restore = createTemporaryObject(metadataRestoreComponent, testCase);
+        restore.scan(rekordboxPath);
+        tryVerify(function() { return restore.hasScanned && !restore.busy; }, 600000);
+        compare(restore.errorMessage, "");
+        var offered = restore.proposalCount;
+        console.log("  restore onto " + stickLabel + ": " + restore.stickTrackCount + " tracks, " + offered
+                    + " proposals, " + restore.conflictCount + " conflicts (" + restore.conflictsLeftAlone + " left alone)");
+        if (offered === 0) {
+            skip("no matched track has anything to restore from the second stick");
+        }
+        restore.stageAll();
+        var s = session();
+        tryVerify(function() { return s.pendingCount === restore.stagedCount && s.pendingCount > 0; }, 10000);
+        var staged = s.pendingCount;
+        var summary = saveAndWait(false);
+        compare(summary.error, "");
+        compare(summary.written, staged);
+
+        restore.scan(rekordboxPath);
+        tryVerify(function() { return !restore.busy; }, 600000);
+        console.log("  after save: " + restore.proposalCount + " proposals left");
+        verify(restore.proposalCount < offered, "what was restored is no longer offered");
+
+        undoAndWait();
+        restore.scan(rekordboxPath);
+        tryVerify(function() { return !restore.busy; }, 600000);
+        console.log("  after undo: " + restore.proposalCount + " proposals");
+        compare(restore.proposalCount, offered);
     }
 
     // ---- 7. Delete Orphaned Files: cancel before the first file ----

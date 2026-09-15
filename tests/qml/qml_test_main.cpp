@@ -310,6 +310,16 @@ public slots:
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_GUARD"));
         engine->rootContext()->setContextProperty(QStringLiteral("liveStickPullRun"),
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_STICK_PULL"));
+        // tools/rig-clones.sh: where tst_LiveEditMode::test_11_rigKeepCue
+        // adds a memory cue it keeps, in ms (0: the test skips itself).
+        engine->rootContext()->setContextProperty(QStringLiteral("liveRigKeepCueMs"),
+                                                  qEnvironmentVariableIntValue("SEABASS_RIG_KEEP_CUE_MS"));
+        // A second (scratch) stick, for the flows that read one stick and
+        // write another -- metadata backed up from it, restored onto
+        // liveStickRoot. Empty: those tests skip themselves.
+        const char *secondStick = std::getenv("SEABASS_LIVE_SECOND_STICK");
+        engine->rootContext()->setContextProperty(QStringLiteral("liveSecondStickRoot"),
+                                                  secondStick != nullptr ? QString::fromLocal8Bit(secondStick) : QString());
         // The Breeze icons compiled into this binary, by name, read from
         // the resources rather than listed: tst_SeabassIcon loads each one
         // through Theme.iconUrl(), so a file registered under a different

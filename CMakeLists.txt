@@ -2047,6 +2047,15 @@ target_link_libraries(rig_compact PRIVATE seabass_core)
 add_executable(rig_plant_repairable tools/rig_plant_repairable.cpp)
 target_include_directories(rig_plant_repairable PRIVATE src)
 target_link_libraries(rig_plant_repairable PRIVATE seabass_core)
+
+# Release rig: Create / Update Backup USB Stick from one stick onto another,
+# and what the stick list advises for each mounted stick.
+add_executable(rig_clone tools/rig_clone.cpp)
+target_include_directories(rig_clone PRIVATE src)
+target_link_libraries(rig_clone PRIVATE seabass_core)
+add_executable(rig_advise tools/rig_advise.cpp)
+target_include_directories(rig_advise PRIVATE src)
+target_link_libraries(rig_advise PRIVATE seabass_core)
 # Two different things, and the names now say which is which. The tool
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.
