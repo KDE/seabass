@@ -95,9 +95,11 @@ public:
     // far more than the space it occupies, so this does nothing at all
     // until the stick is genuinely tight.
     //
-    // Automatic records only. What the user asked for is the user's, and
-    // the newest automatic record is kept whatever happens, because it is
-    // the one Undo Last Save needs.
+    // Automatic records only. What the user asked for is the user's. And
+    // every record this save made is kept, because together they are what
+    // Undo Last Save restores -- a save makes one per kind of change, so
+    // keeping only the newest automatic record could cut its own undo in
+    // half.
     //
     // Call only after a save that SUCCEEDED. After a failure or a cancel
     // the backups are precisely the thing that saves you.

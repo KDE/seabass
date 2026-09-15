@@ -108,7 +108,13 @@ std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
         // restore or listing.
         infrastructure::backup::StickWriteLock lock(
             infrastructure::backup::backupDirForStickRoot(stickRoot()) + "/.write.lock");
-        return archiveStore().releaseAutomaticBackups(headroom - space.freeBytes);
+        // Every record this save made, not only the newest: together they
+        // are the undo the user has just been offered.
+        std::set<std::string> thisSave;
+        for (const UndoableBackup &backup : m_backups) {
+            thisSave.insert(backup.id.toStdString());
+        }
+        return archiveStore().releaseAutomaticBackups(headroom - space.freeBytes, thisSave);
     } catch (const std::exception &) {
         // Another session holds the lock. Releasing space is an
         // opportunistic tidy-up, never the point of the save, so it is

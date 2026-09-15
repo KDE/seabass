@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <set>
 
+#include "gui/edit/changes/restore_backups_change.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/qt_progress_reporter.hpp"
@@ -26,39 +27,6 @@ namespace seabass::gui
 
 namespace
 {
-
-// The undo of one save: puts every file that save backed up back the way
-// it was, newest backup first. Unit "files" because that is what the
-// summary can honestly count.
-class RestoreBackupsChange : public PendingChange
-{
-public:
-    explicit RestoreBackupsChange(std::vector<UndoableBackup> backups) : m_backups(std::move(backups)) {}
-
-    QString id() const override { return QStringLiteral("undo:last-save"); }
-    QString description() const override
-    {
-        return QStringLiteral("Undo the last save (%1 backup(s))").arg(m_backups.size());
-    }
-    QString unit() const override { return QStringLiteral("undo steps"); }
-    QStringList formatsTouched() const override { return {"rekordbox", "engine", "onelibrary"}; }
-
-    ChangeOutcome apply(SaveContext &ctx) override
-    {
-        int restored = 0;
-        for (auto it = m_backups.rbegin(); it != m_backups.rend(); ++it) {
-            infrastructure::backup::FilesystemBackupStore store(it->backupDir.toStdString());
-            if (store.restore(it->id.toStdString())) {
-                restored++;
-            }
-        }
-        ctx.log().record("undo: restored " + std::to_string(restored) + " backup(s) of the last save");
-        return ChangeOutcome::success();
-    }
-
-private:
-    std::vector<UndoableBackup> m_backups;
-};
 
 // Bridges the worker's progress and status lines to the session on the
 // GUI thread (same lifetime rule as QtProgressReporter: owned by the

@@ -716,7 +716,7 @@ int runBackupsCommand(bool wantRekordbox, bool wantEngine, const std::optional<s
         auto locks = seabass::infrastructure::backup::acquireStickLocks({backupDirFor(resolved)});
         auto freed = store.prune(keepCount);
         Console::info("freed " + humanSize(freed) + " (kept up to " + std::to_string(keepCount) +
-                       " most recent backup(s))");
+                       " most recent automatic backup(s), and every backup you made yourself)");
         return resolved.ok ? 0 : 1;
     }
 

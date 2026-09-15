@@ -71,9 +71,19 @@ public:
     // TRIM (discard_max_bytes is 0), so freeing space returns nothing to
     // the flash controller and the device does not get faster. Nothing in
     // the UI should suggest otherwise.
-    std::uint64_t releaseAutomaticBackups(std::uint64_t bytesWanted);
+    //
+    // `spare` names records that must survive too: the ones the save that
+    // just finished made. A save makes one record per kind of change, so
+    // keeping only the newest could delete half of the very undo this
+    // exists to protect.
+    std::uint64_t releaseAutomaticBackups(std::uint64_t bytesWanted, const std::set<std::string> &spare = {});
     void setDescription(const std::string &id, const std::string &description) override;
     bool restore(const std::string &id) override;
+    // Whether restore(id) has what it needs: the record's directory, a
+    // manifest this build wrote with at least one entry, and its archive.
+    // For an undo that restores several records and must not start on the
+    // first unless every one of them is there.
+    bool isRestorable(const std::string &id) const;
     bool remove(const std::string &id) override;
 
 private:

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include <algorithm>
 #include <cassert>
 #include <map>
 #include <string>
@@ -478,6 +479,40 @@ int main()
         assert(store.releaseAutomaticBackups(0) == 0);
         assert(store.list().size() == before);
         std::cout << "case 20 (asking for no bytes deletes nothing) OK\n";
+    }
+
+    // A save makes one record per kind of change, and Undo Last Save needs
+    // all of them. The release right after that save is told which they
+    // are and takes neither, even though only one of them is the newest.
+    {
+        fs::path stick = root / "release-spare";
+        fs::path a = stick / "PIONEER" / "export.pdb";
+        fs::path b = stick / "PIONEER" / "USBANLZ" / "P001" / "ANLZ0000.EXT";
+        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+
+        writeFile(a, std::string(4096, 'o'));
+        writeFile(b, std::string(4096, 'o'));
+        // Ids are a timestamp and the label, so records made within one
+        // second sort by label. "auto-sync" sorts before the save's two,
+        // so it is the oldest whether or not the clock ticked in between.
+        auto older = store.backup({a.string()}, "auto-sync");
+        writeFile(a, std::string(4096, 'p'));
+        auto saveRepair = store.backup({a.string()}, "consistency-repair");
+        auto saveOrphans = store.backup({b.string()}, "consistency-delete-orphan");
+        const std::string newestOfSave = std::max(saveRepair.id, saveOrphans.id);
+        const std::string otherOfSave = std::min(saveRepair.id, saveOrphans.id);
+
+        store.releaseAutomaticBackups(1ull << 40, {saveRepair.id, saveOrphans.id});
+        assert(!fs::exists(older.path));  // not this save's, so it may go
+        assert(fs::exists(saveRepair.path));
+        assert(fs::exists(saveOrphans.path));
+
+        // Without being told, only the newest record survives -- which is
+        // exactly how a save used to lose half its undo.
+        store.releaseAutomaticBackups(1ull << 40);
+        assert(fs::exists((stick / "Seabass" / "backups" / newestOfSave)));
+        assert(!fs::exists((stick / "Seabass" / "backups" / otherOfSave)));
+        std::cout << "case 20b (the release spares every record of the save that just finished) OK\n";
     }
 
     // restore() takes a copy of what it is about to overwrite. The user

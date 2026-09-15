@@ -631,6 +631,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/device_setting_change.cpp
         src/gui/edit/changes/merge_cues_change.hpp
         src/gui/edit/changes/merge_cues_change.cpp
+        src/gui/edit/changes/restore_backups_change.hpp
+        src/gui/edit/changes/restore_backups_change.cpp
         src/gui/edit/changes/restore_metadata_change.hpp
         src/gui/edit/changes/restore_metadata_change.cpp
         src/gui/edit/changes/remove_junk_cue_change.hpp
@@ -1365,6 +1367,14 @@ if(TARGET Qt6::Core)
         target_link_libraries(failed_change_rollback_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME failed_change_rollback_test COMMAND failed_change_rollback_test)
+
+    add_executable(restore_backups_change_test tests/restore_backups_change_test.cpp)
+    target_include_directories(restore_backups_change_test PRIVATE src tests)
+    target_link_libraries(restore_backups_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(restore_backups_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME restore_backups_change_test COMMAND restore_backups_change_test)
 
     add_executable(add_cue_mirror_failure_test tests/add_cue_mirror_failure_test.cpp)
     target_include_directories(add_cue_mirror_failure_test PRIVATE src)

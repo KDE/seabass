@@ -485,7 +485,8 @@ std::uint64_t FilesystemBackupStore::prune(size_t keepCount)
     return freed;
 }
 
-std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytesWanted)
+std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytesWanted,
+                                                            const std::set<std::string> &spare)
 {
     if (bytesWanted == 0) {
         return 0;
@@ -496,16 +497,20 @@ std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytes
             automatic.push_back(std::move(record));
         }
     }
-    // The newest automatic record is the one Undo Last Save needs, so it
-    // is never released here. A stick tight enough that even that has to
-    // go is not a situation to resolve by quietly deleting the only undo
-    // the user has left.
+    // The newest automatic record is never released here, and neither is
+    // anything in `spare` -- the records of the save that just finished,
+    // which together are what Undo Last Save restores. A stick tight
+    // enough that even those have to go is not a situation to resolve by
+    // quietly deleting the only undo the user has left.
     if (automatic.size() <= 1) {
         return 0;
     }
 
     std::uint64_t freed = 0;
     for (size_t i = 0; i + 1 < automatic.size() && freed < bytesWanted; ++i) {
+        if (spare.contains(automatic[i].id)) {
+            continue;
+        }
         std::error_code ec;
         fs::remove_all(automatic[i].path, ec);
         if (!ec) {
@@ -524,6 +529,18 @@ void FilesystemBackupStore::setDescription(const std::string &id, const std::str
     }
     std::ofstream out(dir / DescriptionFileName, std::ios::trunc);
     out << description;
+}
+
+bool FilesystemBackupStore::isRestorable(const std::string &id) const
+{
+    const fs::path dir = fs::path(m_baseDirectory) / id;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) {
+        return false;
+    }
+    const Manifest manifest = readManifest(dir);
+    return !manifest.entries.empty() && manifest.version == ManifestFormatVersion
+           && fs::is_regular_file(dir / ArchiveFileName, ec);
 }
 
 bool FilesystemBackupStore::restore(const std::string &id)

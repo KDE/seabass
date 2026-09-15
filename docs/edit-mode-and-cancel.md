@@ -81,7 +81,9 @@ idle ----stage()---- editing ----save()---- writing
    item was applied; with zero items applied it is discarded.
 3. **Backups happen once per file per save** (`SaveContext::backupOnce`),
    and the set of backups made by one save is the unit "Undo Last Save"
-   restores (`RestoreBackupsChange`).
+   restores (`RestoreBackupsChange`). All or nothing: if any record of
+   that set is gone, nothing is restored and the undo says which; the
+   space release after a save never takes one of that save's records.
 4. **Reads that are cancelled leave nothing behind.** Readers throw
    `OperationCancelled` at the next track; `LibraryCatalogCache` never
    caches a scan that threw; the page pops and the next visit rescans.
