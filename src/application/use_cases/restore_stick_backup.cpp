@@ -114,14 +114,17 @@ struct Opened
 
     enum class Journal
     {
-        // Listing and preview: read-only. An update that did not finish (or
-        // is still running) is read past, as the generation before it --
-        // what the restore's rollback will leave -- and flagged, never
-        // truncated. Safe against a folder someone is backing up into now.
-        ReadSettled,
-        // The restore itself: roll an unfinished update back for real first,
-        // and clear a journal that outlived a finished one. Both need the
-        // archive's write lock (see canWrite) and write access.
+        // Listing: read-only, and cheap, because the backup list is read over
+        // and over while a backup runs. An archive that does not open from
+        // its end is read as the generation its last update started from.
+        List,
+        // Preview of one archive: read-only, but checks everything an update
+        // appended, so its figures are exactly what the restore will write.
+        Preview,
+        // The restore itself: with the lock, hand the journal to
+        // recoverOnOpen, which rolls an unfinished update back or clears a
+        // journal that outlived a finished one. Without the lock, or when
+        // the archive cannot be opened for writing, read like Preview.
         Recover,
     };
 
@@ -134,13 +137,11 @@ struct Opened
     const ArchiveFile &readable() const { return settled ? *settled : *archive; }
 
     // The journal record of an update that did not finish, if there is one.
-    // Read-only: looks at the journal, never clears it. Checks the bytes an
-    // update appended the way the rollback does -- an archive can open from
-    // its end and still be unfinished, when an update wrote its central
-    // directory and then failed its own verification. The check stays cheap
-    // for a backup that is still appending: verifyArchiveTail stops at the
-    // missing end record.
-    std::optional<JournalRecord> unfinishedUpdate(const fs::path &archivePath) const
+    // Read-only: looks at the journal, never clears it. `thorough` checks the
+    // bytes an update appended the way the rollback does -- an archive can
+    // open from its end and still be unfinished, when an update wrote its
+    // central directory and then failed its own verification.
+    std::optional<JournalRecord> unfinishedUpdate(const fs::path &archivePath, bool thorough) const
     {
         const fs::path journalPath = journal::journalPathFor(archivePath);
         std::error_code ec;
@@ -151,7 +152,17 @@ struct Opened
         if (state.kind != JournalState::Kind::Valid) {
             return std::nullopt;  // absent, or corrupt: nothing was appended
         }
-        if (archive->size() >= state.record.preLength && verifyArchiveTail(*archive, state.record.preLength)) {
+        if (archive->size() < state.record.preLength) {
+            return state.record;
+        }
+        // Listing settles for "opens from its end": a thorough check of a
+        // large first backup's journal would re-read the whole archive on
+        // every pass of the list. The rare update that wrote its central
+        // directory and then failed verification is listed as it opens, and
+        // its preview -- thorough -- shows the rollback.
+        const bool finished = thorough ? verifyArchiveTail(*archive, state.record.preLength)
+                                       : Zip64Reader::tryOpen(*archive).has_value();
+        if (finished) {
             return std::nullopt;  // the update finished; only its journal outlived it
         }
         return state.record;
@@ -177,33 +188,32 @@ struct Opened
         try {
             archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadOnly);
             const fs::path journalPath = journal::journalPathFor(archivePath);
-            std::optional<JournalRecord> record = unfinishedUpdate(archivePath);
-            if (record && (mode == Journal::ReadSettled || !canWrite)) {
-                // Preview and listing, or a restore from a folder nobody can
-                // write to: read the generation the update started from.
-                // Without the lock nothing may be rolled back, and nothing can
-                // be writing there either, so reading past it is what the
-                // preview promised.
-                readSettled(*record);
-            } else if (record) {
-                archive.reset();
-                archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
-                journal = std::make_unique<PosixArchiveFile>(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
-                recoverOnOpen(*archive, *journal);
-            } else if (mode == Journal::Recover && canWrite) {
-                // A journal that outlived a finished update, or a corrupt one
-                // (nothing was appended), is left for whoever writes next --
-                // but every preview until then re-checks the archive's tail
-                // from its offset, which for a first backup is the whole
-                // file. Clear it while the lock is held. Best effort: the
-                // restore does not depend on it.
-                std::error_code ec;
-                if (fs::exists(journalPath, ec) && fs::file_size(journalPath, ec) > 0) {
-                    try {
-                        PosixArchiveFile stale(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
-                        journal::clear(stale);
-                    } catch (const std::exception &) {
-                    }
+            std::error_code ec;
+            const bool journalPresent = fs::exists(journalPath, ec) && fs::file_size(journalPath, ec) > 0;
+            bool recovered = false;
+            if (mode == Journal::Recover && canWrite && journalPresent) {
+                std::unique_ptr<PosixArchiveFile> writableArchive;
+                std::unique_ptr<PosixArchiveFile> writableJournal;
+                try {
+                    writableArchive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
+                    writableJournal = std::make_unique<PosixArchiveFile>(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+                } catch (const std::exception &) {
+                    // A write-protected archive (or journal) in a writable
+                    // folder: roll nothing back, read what is settled.
+                    canWrite = false;
+                }
+                if (writableArchive && writableJournal) {
+                    archive = std::move(writableArchive);
+                    journal = std::move(writableJournal);
+                    // One pass: rolls an unfinished update back, or clears a
+                    // journal that outlived a finished one (or a corrupt one).
+                    recoverOnOpen(*archive, *journal);
+                    recovered = true;
+                }
+            }
+            if (!recovered && journalPresent) {
+                if (std::optional<JournalRecord> record = unfinishedUpdate(archivePath, mode != Journal::List)) {
+                    readSettled(*record);
                 }
             }
         } catch (const std::exception &e) {
@@ -464,7 +474,7 @@ StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
     // backup it will roll back to rather than as unreadable -- otherwise the
     // Restore page could not offer it. Safe to run against a folder someone
     // is backing up into right now.
-    if (!opened.open(archivePath, Opened::Journal::ReadSettled)) {
+    if (!opened.open(archivePath, Opened::Journal::List)) {
         description.error = opened.error;
         return description;
     }
@@ -473,7 +483,8 @@ StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
     description.status = opened.manifest->status;
     description.createdAtUnix = opened.manifest->createdAtUnix;
     description.entries = opened.manifest->rows.size();
-    description.archiveBytes = opened.archive->size();
+    // The settled size for an unfinished update: what a restore would read.
+    description.archiveBytes = opened.readable().size();
     description.libraryFingerprint = opened.manifest->libraryFingerprint;
     for (const ManifestRow &row : opened.manifest->rows) {
         if (!row.extra.empty()) {
@@ -519,7 +530,7 @@ RestorePreview RestoreStickBackup::preview(const RestoreOptions &options)
 {
     RestorePreview preview;
     Opened opened;
-    if (!opened.open(options.archivePath, Opened::Journal::ReadSettled)) {
+    if (!opened.open(options.archivePath, Opened::Journal::Preview)) {
         preview.error = opened.error;
         return preview;
     }

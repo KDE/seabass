@@ -556,15 +556,14 @@ Page {
                         }
                     }
                     // Not a reason to stop: the figures already describe what
-                    // the rollback will leave. Said here because the restore
-                    // then needs write access to the backup file itself.
+                    // will be restored -- the backup's last complete state.
                     Label {
                         objectName: "rollbackNote"
                         visible: root.preview.rollsBackUnfinishedUpdate === true
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: Theme.warnIcon
-                        text: "The last update of this backup did not finish. Restoring first rolls the backup back to its last complete state, which needs write access to the backup file."
+                        text: "The last update of this backup did not finish. Restoring uses the backup's last complete state, as shown above."
                     }
                     // The central directory is metadata, written once, up
                     // front -- it can list a perfectly plausible file count

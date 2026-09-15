@@ -757,5 +757,91 @@ int main()
         std::cout << "case failed-verification (an update that opens but does not verify is shown and restored as rolled back) OK\n";
     }
 
+
+    // ---- An unfinished update in a read-only archive file restores its settled generation ----
+    // A zip with the read-only attribute in an ordinary folder: the lock is
+    // taken, but the archive cannot be opened to roll back. The restore
+    // reads the generation preview showed instead of failing.
+    {
+        Fixture f("read-only-file-unfinished");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const std::uint64_t goodLength = fs::file_size(f.archive);
+        std::uint64_t eocd = 0;
+        {
+            PosixArchiveFile archive(f.archive, PosixArchiveFile::OpenMode::ReadOnly);
+            eocd = Zip64Reader::open(archive).layout().endOfCentralDirectoryOffset;
+        }
+        const fs::path journalPath = BackupStick::journalPathFor(f.archive);
+        {
+            std::error_code ec;
+            fs::remove(journalPath, ec);
+            PosixArchiveFile journalFile(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+            journal::write(journalFile, JournalRecord{goodLength, eocd});
+        }
+        {
+            std::ofstream out(f.archive, std::ios::binary | std::ios::app);
+            out << std::string(4096, 'x');
+        }
+        const std::uint64_t tornLength = fs::file_size(f.archive);
+        std::error_code ec;
+        fs::permissions(f.archive, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read,
+                        fs::perm_options::replace, ec);
+        bool enforced = true;
+        try {
+            PosixArchiveFile probe(f.archive, PosixArchiveFile::OpenMode::ReadWrite);
+            enforced = false;
+        } catch (const std::exception &) {
+        }
+        if (!enforced) {
+            std::cout << "case read-only-file-unfinished SKIPPED (write protection not enforced for this user)\n";
+        } else {
+            const StickBackupDescription listed = RestoreStickBackup::describe(f.archive);
+            assert(listed.error.empty() && listed.archiveBytes == goodLength && "listed at its settled size");
+            RestorePreview preview = RestoreStickBackup::preview(f.restore);
+            assert(preview.error.empty() && preview.rollsBackUnfinishedUpdate);
+            RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+            if (summary.status != RestoreSummary::Status::Restored) {
+                std::cerr << "restore of a read-only unfinished archive: " << summary.message << "\n";
+            }
+            assert(summary.status == RestoreSummary::Status::Restored && "restores the settled generation");
+            assert(fs::file_size(f.archive) == tornLength && "rolled nothing back: it could not");
+            assert(RestoreStickBackup::preview(f.restore).filesToWrite == 0);
+            std::cout << "case read-only-file-unfinished (a write-protected archive restores its settled generation) OK\n";
+        }
+        fs::permissions(f.archive, fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read,
+                        fs::perm_options::replace, ec);
+    }
+
+    // ---- A lock that cannot be taken in a writable folder is reported ----
+    // Only a folder nobody can write to may restore without the lock. A lock
+    // file that cannot be opened (another account's, say) in a folder that is
+    // writable must stop the restore, not let it run unlocked.
+    {
+        Fixture f("unopenable-lock");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const fs::path lockPath = seabass::infrastructure::stick_backup::journal::lockPathFor(f.archive);
+        {
+            std::ofstream touch(lockPath, std::ios::app);
+        }
+        std::error_code ec;
+        fs::permissions(lockPath, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read,
+                        fs::perm_options::replace, ec);
+        bool enforced = true;
+        {
+            std::ofstream probe(lockPath, std::ios::app);
+            enforced = !probe.is_open();
+        }
+        if (!enforced) {
+            std::cout << "case unopenable-lock SKIPPED (write protection not enforced for this user)\n";
+        } else {
+            RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+            assert(summary.status == RestoreSummary::Status::Failed);
+            assert(summary.message.find("could not lock the backup") != std::string::npos);
+            std::cout << "case unopenable-lock (a lock that cannot be opened in a writable folder stops the restore) OK\n";
+        }
+        fs::permissions(lockPath, fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read,
+                        fs::perm_options::replace, ec);
+    }
+
     return 0;
 }

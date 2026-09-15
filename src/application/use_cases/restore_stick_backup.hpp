@@ -84,9 +84,9 @@ struct RestorePreview
     // count here does to execute().
     std::size_t unreadableEntries = 0;
     // The last update of this backup did not finish (or is still running).
-    // The figures above describe the generation before it -- what the
-    // restore's rollback will leave -- and the restore will need write
-    // access to the backup file to roll it back.
+    // The figures above describe the generation before it: what the restore
+    // writes, rolling the update back first where it can write the backup,
+    // and reading past it where it cannot.
     bool rollsBackUnfinishedUpdate = false;
 };
 
