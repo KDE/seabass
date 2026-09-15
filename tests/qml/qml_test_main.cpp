@@ -314,6 +314,11 @@ public slots:
         // adds a memory cue it keeps, in ms (0: the test skips itself).
         engine->rootContext()->setContextProperty(QStringLiteral("liveRigKeepCueMs"),
                                                   qEnvironmentVariableIntValue("SEABASS_RIG_KEEP_CUE_MS"));
+        // tools/rig-edits.sh, after tools/rig_plant_repairable planted an
+        // issue: test_10 must find something to repair. A skip exits 0, so
+        // without this a plant Library Health did not see still read PASS.
+        engine->rootContext()->setContextProperty(QStringLiteral("liveRigRequireRepairable"),
+                                                  qEnvironmentVariableIsSet("SEABASS_RIG_REQUIRE_REPAIRABLE"));
         // A second (scratch) stick, for the flows that read one stick and
         // write another -- metadata backed up from it, restored onto
         // liveStickRoot. Empty: those tests skip themselves.

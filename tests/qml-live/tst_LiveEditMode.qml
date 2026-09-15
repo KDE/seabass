@@ -43,6 +43,18 @@ TestCase {
     Component { id: cleanupComponent; CleanupController {} }
     Component { id: addCueComponent; AddCueController {} }
     Component { id: metadataBackupComponent; MetadataBackupController {} }
+    // One row per file listed in Delete Orphaned Files: its path, and a way
+    // to tick just that row (test_09 must not select files other saves
+    // listed, which the delete would really remove).
+    Component {
+        id: pendingRowsComponent
+        Instantiator {
+            delegate: QtObject {
+                readonly property string path: model.filePath
+                function include(on) { model.included = on; }
+            }
+        }
+    }
     Component { id: metadataRestoreComponent; MetadataRestoreController {} }
 
     readonly property var fakePlayback: ({stop: function() {}, hasTrack: false, playing: false})
@@ -388,6 +400,12 @@ TestCase {
         waitIdle(tracks, 300000);
         var rowsBefore = tracks.totalTrackCount;
         var pendingBefore = ctrl.pendingDeletions.rowCount();
+        // Files other saves already listed, on this stick's own list.
+        var listedBefore = {};
+        var rowsBeforeSave = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
+        for (var b = 0; b < rowsBeforeSave.count; ++b) {
+            listedBefore[rowsBeforeSave.objectAt(b).path] = true;
+        }
 
         ctrl.setAllIncluded(false);
         ctrl.setIncluded(0, true);
@@ -427,7 +445,20 @@ TestCase {
         // playable only to lose its audio on the next delete.
         var listed = ctrl.pendingDeletions.rowCount();
         if (listed > pendingBefore) {
-            ctrl.setAllPendingDeletionIncluded(true);
+            // Only this save's files. Ticking every row also selected files
+            // other saves listed, which are still orphaned: the delete
+            // removed them for real and the check below then failed.
+            ctrl.setAllPendingDeletionIncluded(false);
+            var rowsAfterUndo = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
+            var ticked = 0;
+            for (var r = 0; r < rowsAfterUndo.count; ++r) {
+                var row = rowsAfterUndo.objectAt(r);
+                if (!listedBefore[row.path]) {
+                    row.include(true);
+                    ticked++;
+                }
+            }
+            compare(ticked, listed - pendingBefore, "every file this save listed, and no other");
             var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "pendingDeletionsWriteFinished"});
             ctrl.deleteSelectedPendingFiles();
             tryVerify(function() { return spy.count > 0; }, 300000);
@@ -455,6 +486,9 @@ TestCase {
         var repairable = ctrl.repairableCount;
         console.log("  issues: " + issuesBefore + ", repairable: " + repairable);
         if (repairable === 0) {
+            if (typeof liveRigRequireRepairable !== "undefined" && liveRigRequireRepairable) {
+                fail("an issue was planted, and Library Health finds nothing repairable");
+            }
             skip("nothing repairable on this stick (tools/rig_plant_repairable plants one)");
         }
         var tracks = createTemporaryObject(scanController, testCase);

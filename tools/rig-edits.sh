@@ -42,7 +42,8 @@ run LiveEditMode::test_09_cleanupOneGroupSaveUndo
 
 echo "=== planting a repairable Library Health issue"
 if "$build/rig_plant_repairable" "$stick" --plant; then
-    run LiveEditMode::test_10_libraryHealthRepairSaveUndo
+    # Planted, so there is something to repair: a skip would pass silently.
+    SEABASS_RIG_REQUIRE_REPAIRABLE=1 run LiveEditMode::test_10_libraryHealthRepairSaveUndo
 else
     failed=1
 fi

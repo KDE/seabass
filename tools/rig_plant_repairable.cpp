@@ -26,7 +26,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -108,18 +107,26 @@ int plant(const fs::path &root)
         }
         ++considered;
         bool usable = true;
-        std::set<std::string> files;
         for (const domain::Track &track : group.tracks) {
             if (!track.cues.empty() || track.filePath.empty() || !fs::is_regular_file(track.filePath)
                 || !insideRoot(track.filePath, root)) {
                 usable = false;
                 break;
             }
-            files.insert(fs::weakly_canonical(track.filePath).string());
         }
         // Two rows for one file are not two copies: moving it would break
-        // both, and nothing healthy would be left to repair onto.
-        if (!usable || files.size() != group.tracks.size()) {
+        // both, and nothing healthy would be left to repair onto. Asked of
+        // the filesystem, not the path strings: on exFAT and FAT32
+        // "Track.mp3" and "track.mp3" are one file.
+        for (std::size_t i = 0; usable && i < group.tracks.size(); ++i) {
+            for (std::size_t j = i + 1; usable && j < group.tracks.size(); ++j) {
+                std::error_code ec;
+                if (fs::equivalent(group.tracks[i].filePath, group.tracks[j].filePath, ec) || ec) {
+                    usable = false;
+                }
+            }
+        }
+        if (!usable) {
             continue;
         }
         const domain::Track &survivor = group.tracks.front();
