@@ -258,24 +258,33 @@ int main()
     const std::string configuredUnzip = configured(SEABASS_CONFIGURED_UNZIP);
     const std::string configuredSevenZip = configured(SEABASS_CONFIGURED_SEVENZIP);
 
-    // A minimal but genuinely valid archive -- just an End Of Central
-    // Directory record, zero entries -- to probe unzip with. "-v" (or any
-    // other flag) with no zipfile argument was the original probe, and it
-    // is a documented Info-ZIP feature on some builds (prints a version
-    // banner, exits 0) but not this one: MSYS2's unzip 6.0 always prints
-    // its usage message and exits 1 without a zipfile, on any invocation,
-    // flags or not. Confirmed directly. That made this test refuse to run
-    // on a machine where unzip works perfectly fine, for every real
-    // extraction later in this file -- locateTool's whole premise, "a
+    // A tiny but genuinely valid archive to probe unzip with: one empty,
+    // stored file, so every unzip build lists it and exits 0. Two probes
+    // failed before it. "-v" with no zipfile prints a version banner and
+    // exits 0 on Info-ZIP's Linux builds, but MSYS2's unzip 6.0 prints its
+    // usage and exits 1 without a zipfile, flags or not. An archive holding
+    // only an End Of Central Directory record fixed that one and broke
+    // Linux, where Info-ZIP warns "zipfile is empty" and exits 1. Both
+    // made this test refuse to run on a machine where unzip works for
+    // every real extraction later in this file -- locateTool's premise, "a
     // name that resolves and a name that works are different things", cuts
-    // the other way here too: a tool that only responds to a shape of
-    // invocation the probe never tries is not actually missing.
+    // the other way too: a tool that only answers a probe shaped the way
+    // its build likes is not missing.
     const fs::path probeArchive = seabass::testing::scratchRoot() / "backup_archive_crossvalidation_probe.zip";
     {
-        static constexpr char emptyZipEocd[22] = {
-            'P', 'K', 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        // Local header, central directory entry and end record for one
+        // empty stored file named probe.txt (CRC 0, sizes 0).
+        static constexpr unsigned char oneEmptyEntry[] = {
+            0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x70, 0x72,
+            0x6f, 0x62, 0x65, 0x2e, 0x74, 0x78, 0x74, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x00, 0x14, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x72, 0x6f, 0x62, 0x65, 0x2e, 0x74, 0x78, 0x74, 0x50, 0x4b,
+            0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x37, 0x00, 0x00, 0x00, 0x27, 0x00,
+            0x00, 0x00, 0x00, 0x00};
         std::ofstream out(probeArchive, std::ios::binary | std::ios::trunc);
-        out.write(emptyZipEocd, sizeof emptyZipEocd);
+        out.write(reinterpret_cast<const char *>(oneEmptyEntry), sizeof oneEmptyEntry);
     }
 
     const std::string python = locateTool("SEABASS_PYTHON3", configuredPython, {"python3", "python"}, "--version");
