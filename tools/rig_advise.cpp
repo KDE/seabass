@@ -14,8 +14,9 @@
 // the state, the backup it matched, the source it would clone or update
 // from, and whether the two copies diverged.
 //
-// With --expect it checks one stick's advice: STATE is the advice state
-// (Current, Outdated, BehindBackup, Restore, BackUpNew, ...), update= the
+// With --expect it checks one stick's advice: STATE is the advice state as
+// toString() spells it (no-backups, restore, back-up-new, current,
+// outdated, behind-backup, different-library), update= the
 // label of the stick it must offer to update from (or "none"), clone= the
 // stick an empty stick is offered to be created from (or "none"), and
 // "diverged" that the divergence warning is raised. Without "diverged" it

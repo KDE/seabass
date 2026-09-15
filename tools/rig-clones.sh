@@ -31,8 +31,10 @@ set -u
 A="${1:?stick A}"
 B="${2:?stick B}"
 backups="${3:?an empty backup directory}"
-referenceA="${4:?A's reference archive}"
-referenceB="${5:?B's reference archive}"
+# No apostrophes in these messages: inside "${...:?word}" bash takes one as
+# the start of a quote, and the next line vanishes into it.
+referenceA="${4:?reference archive for stick A}"
+referenceB="${5:?reference archive for stick B}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 build="${SEABASS_BUILD_DIR:-$root/build}"
@@ -80,22 +82,22 @@ done
 echo "a stray file the backup stick must keep" > "$B/RIG-STRAY.txt"
 sync
 
-step "C1a: $b is offered a copy of $a" advise "$b=NoBackups,clone=$a"
+step "C1a: $b is offered a copy of $a" advise "$b=no-backups,clone=$a"
 step "C5: create, cancelled during the backup" "$build/rig_clone" "$A" "$B" "$backups" --cancel-at 10
 step "C1: create, resuming" "$build/rig_clone" "$A" "$B" "$backups"
 step "C1: the stray file survives" stray_survives
-step "C1: both read as current" advise "$a=Current,update=none" "$b=Current,update=none"
+step "C1: both read as current" advise "$a=current,update=none" "$b=current,update=none"
 
 step "C2: a change on $a" keep_cue "$A" 30000
-step "C2: $b is offered the update" advise "$b=Current,update=$a"
+step "C2: $b is offered the update" advise "$b=current,update=$a"
 step "C2: update" "$build/rig_clone" "$A" "$B" "$backups"
-step "C2: both current again" advise "$a=Current,update=none" "$b=Current,update=none"
+step "C2: both current again" advise "$a=current,update=none" "$b=current,update=none"
 
 step "C3: a change on $b" keep_cue "$B" 45000
-step "C3: $a is offered the update" advise "$a=Current,update=$b"
+step "C3: $a is offered the update" advise "$a=current,update=$b"
 
 step "C4: another change on $a" keep_cue "$A" 60000
-step "C4: diverged, update still offered" advise "$b=Outdated,update=$a,diverged"
+step "C4: diverged, update still offered" advise "$b=outdated,update=$a,diverged"
 
 echo "=== end: restoring both sticks"
 rm -rf "$B/RIG-ASIDE" "$B/RIG-STRAY.txt"

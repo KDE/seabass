@@ -38,6 +38,7 @@
 #include "domain/library_fingerprint.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
@@ -105,8 +106,48 @@ void health(const Catalog &catalog)
 
 int main(int argc, char **argv)
 {
+    // --find TEXT: only list the tracks whose title, artist or file path
+    // contains TEXT, per catalog, with the path each one resolves to --
+    // for telling "this catalog has no row" from "it names the file
+    // differently".
+    if (argc == 4 && std::string(argv[2]) == "--find") {
+        const fs::path root = argv[1];
+        const std::string needle = argv[3];
+        const auto list = [&](const std::string &name, application::LibraryReader &reader) {
+            std::size_t found = 0;
+            for (const domain::Track &t : application::ScanLibrary(reader).execute()) {
+                if (t.title.find(needle) != std::string::npos || t.artist.find(needle) != std::string::npos
+                    || t.filePath.find(needle) != std::string::npos) {
+                    std::cout << "  " << name << " id " << t.sourceId << ": " << t.artist << " - " << t.title << "\n"
+                              << "    [" << t.filePath << "] " << t.cues.size() << " cues\n";
+                    ++found;
+                }
+            }
+            std::cout << name << ": " << found << " match(es)\n";
+        };
+        try {
+            const fs::path pioneer = root / "PIONEER";
+            if (fs::exists(pioneer / "rekordbox" / "export.pdb")) {
+                infrastructure::rekordbox::KaitaiRekordboxReader rekordbox(pioneer.string());
+                list("rekordbox", rekordbox);
+                if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer.string())) {
+                    infrastructure::onelibrary::OneLibraryReader oneLibrary(pioneer.string());
+                    list("onelibrary", oneLibrary);
+                }
+            }
+            const fs::path engine = root / "Engine Library";
+            if (fs::exists(engine / "Database2" / "m.db")) {
+                infrastructure::engine::LibdjinteropEngineReader engineReader(engine.string());
+                list("engine", engineReader);
+            }
+        } catch (const std::exception &e) {
+            std::cout << "error: " << e.what() << "\n";
+            return 1;
+        }
+        return 0;
+    }
     if (argc < 2 || argc > 3) {
-        std::cerr << "usage: rig_read <stick root> [<archive.zip>]\n";
+        std::cerr << "usage: rig_read <stick root> [<archive.zip>]\n       rig_read <stick root> --find TEXT\n";
         return 2;
     }
     const fs::path root = argv[1];

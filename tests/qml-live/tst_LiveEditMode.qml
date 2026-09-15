@@ -505,10 +505,23 @@ TestCase {
         var rekordbox = createTemporaryObject(scanController, testCase);
         rekordbox.scan("rekordbox", rekordboxPath);
         waitIdle(rekordbox, 300000);
+        // A track OneLibrary lists too: this test exists to change the
+        // library, not to find out what Add Cue does with a track only
+        // rekordbox knows (test_08 and the rig notes cover that).
+        var listed = {};
+        if (rekordbox.hasOneLibrary(rekordboxPath)) {
+            var oneLibrary = createTemporaryObject(scanController, testCase);
+            oneLibrary.scan("onelibrary", rekordboxPath);
+            waitIdle(oneLibrary, 300000);
+            for (var o = 0; o < oneLibrary.tracks.trackCount(); ++o) {
+                listed[oneLibrary.tracks.trackAt(o).filePath] = true;
+            }
+        }
         var target = null;
         for (var i = 0; i < rekordbox.tracks.trackCount() && target === null; ++i) {
             var t = rekordbox.tracks.trackAt(i);
             if (t.filePath.length === 0) continue;
+            if (rekordbox.hasOneLibrary(rekordboxPath) && listed[t.filePath] !== true) continue;
             var taken = false;
             for (var c = 0; c < t.cues.length; ++c) {
                 if (Math.abs(t.cues[c].positionMs - liveRigKeepCueMs) < 50) taken = true;
