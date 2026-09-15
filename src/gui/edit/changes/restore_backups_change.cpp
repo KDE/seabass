@@ -86,9 +86,11 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
             ids.insert(backup.id.toStdString());
         }
         const std::string stickRoot = infrastructure::paths::stickRootForCatalogPath(catalogPath.toStdString());
-        infrastructure::cleanup::PendingDeletionManifest(
-            infrastructure::paths::stickPendingDeletions(stickRoot).string())
-            .removeForBackups(ids);
+        const std::string pendingPath = infrastructure::paths::stickPendingDeletions(stickRoot).string();
+        // Rewritten inside this change, so a rollback of it puts the list
+        // back along with the catalogs.
+        ctx.protectForThisChange(pendingPath);
+        infrastructure::cleanup::PendingDeletionManifest(pendingPath).removeForBackups(ids);
     }
     return ChangeOutcome::success();
 }
