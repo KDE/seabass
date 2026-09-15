@@ -20,13 +20,14 @@ that use Boost.Filesystem fail to link. `QUIET` hides the diagnostic, and the
 `else()` branch that exists for exactly this case never runs.
 
 The patch gates on `Boost_filesystem_FOUND`/`Boost_system_FOUND` as well, and
-names the missing package in the message.
+says in the message which libraries are missing. Sent upstream as
+xsco/libdjinterop#200.
 
 Verified on Ubuntu 24.04, CMake 3.30.5, GCC 13.3.0:
 
 - Boost.Filesystem resolvable: all 12 targets build, `ctest` 12/12 in 7.2s.
 - Headers only: no test targets configured, `cmake --build` exits 0, and the
-  message says which package is missing.
+  message says which libraries are missing.
 
 Seabass builds these tests by default (`SEABASS_LIBDJINTEROP_TESTS=ON`) and
 requires the Boost component itself, so the trap cannot be reached from a
