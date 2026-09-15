@@ -163,12 +163,16 @@ check FB5-cancel-discard "$build/rig_backup" "$B" "$out/backups-fb/$b.zip" --can
 check FB4-cancel-keep-resume resume_after_keep
 check FB6-compact-B "$build/rig_compact" "$out/backups-fb/$b.zip"
 check FB8-restore-A-backup-onto-B "$build/rig_restore" "$out/backups-fb/$a.zip" "$B" --execute
+# The round is done with A's archive by now: deleting it is the check.
+check FB9-manage-backups-delete "$build/rig_delete_backup" "$out/backups-fb" "$out/backups-fb/$a.zip"
 check FB-restore-B-from-reference "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not back at its reference; stopping"; exit 1; }
 check FB-restore-A-from-reference "$build/rig_restore" "$refA" "$A" --execute || { echo "stick A is not back at its reference; stopping"; exit 1; }
 
 # ---- Backup USB Stick between the two --------------------------------
 mkdir -p "$out/backups-clone"
 check C1-C5-backup-usb-stick "$root/tools/rig-clones.sh" "$A" "$B" "$out/backups-clone" "$refA" "$refB"
+# C6: B's library does not fit on A. A preview only -- nothing is written.
+check C6-target-too-small "$build/rig_clone" "$B" "$A" "$out/backups-c6" --expect-too-small
 
 # ---- both sticks back where they started -----------------------------
 check X2-A-at-reference "$build/rig_restore" "$refA" "$A"

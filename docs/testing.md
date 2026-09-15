@@ -195,6 +195,13 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   compaction freeing exactly what it promised.
 - `rig_clone` and `rig_advise`: Create/Update Backup USB Stick between two
   sticks, and what the stick list advises for each.
+  `rig_clone --expect-too-small` checks only the preview: the target has no
+  room, which is what disables the card on the page, and nothing is written.
+- `rig_delete_backup <backup dir> <archive>`: Manage Backups deleting one
+  archive -- refused while a helper process holds the archive's write lock,
+  archive and journal gone afterwards, every other backup still listed
+  unchanged. It refuses an archive outside the folder it was given, so a
+  reference backup cannot be passed to it.
 - `tools/rig-edits.sh <stick> [baseline]`: add a cue, Clean Up one group and
   a Library Health repair, each saved and undone (`rig_plant_repairable`
   plants the repairable issue and puts the file back).

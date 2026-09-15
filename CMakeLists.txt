@@ -2048,6 +2048,12 @@ add_executable(rig_plant_repairable tools/rig_plant_repairable.cpp)
 target_include_directories(rig_plant_repairable PRIVATE src)
 target_link_libraries(rig_plant_repairable PRIVATE seabass_core)
 
+# Release rig: Manage Backups deletes one test archive -- refused while
+# another process is writing it, archive and journal gone afterwards.
+add_executable(rig_delete_backup tools/rig_delete_backup.cpp)
+target_include_directories(rig_delete_backup PRIVATE src)
+target_link_libraries(rig_delete_backup PRIVATE seabass_core)
+
 # Release rig: Create / Update Backup USB Stick from one stick onto another,
 # and what the stick list advises for each mounted stick.
 add_executable(rig_clone tools/rig_clone.cpp)

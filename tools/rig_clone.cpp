@@ -8,6 +8,7 @@
 //
 //   rig_clone <source root> <target root> <backup dir> [--exact]
 //   rig_clone <source root> <target root> <backup dir> --cancel-at PERCENT
+//   rig_clone <source root> <target root> <backup dir> --expect-too-small
 //
 // The clone backs the source up into its own archive in <backup dir>
 // (<source label>.zip, as the app names it) and restores that archive onto
@@ -17,6 +18,13 @@
 // - a restore preview of the target against the archive afterwards has no
 //   file left to write, and with --exact no extra file left to remove;
 // - every catalog file the archive records matches the target's.
+//
+// With --expect-too-small nothing runs at all: the preview must report
+// that the target has no room for the source's library, which is what
+// disables the card on the Backup USB Stick page (rig check C6). It
+// passes only when the preview says so and names the space it needs, so
+// a target that turns out to be big enough fails the check rather than
+// quietly cloning onto it.
 //
 // With --cancel-at the run is cancelled during the backup stage, once
 // PERCENT of the bytes to read are read. It passes when the run ends
@@ -97,7 +105,8 @@ TreeSnapshot snapshot(const fs::path &root)
 int main(int argc, char **argv)
 {
     const auto usage = [] {
-        std::cerr << "usage: rig_clone <source root> <target root> <backup dir> [--exact | --cancel-at PERCENT]\n";
+        std::cerr << "usage: rig_clone <source root> <target root> <backup dir> "
+                     "[--exact | --cancel-at PERCENT | --expect-too-small]\n";
         return 2;
     };
     if (argc < 4 || argc > 6) {
@@ -107,9 +116,12 @@ int main(int argc, char **argv)
     const fs::path target = argv[2];
     const fs::path backupDir = argv[3];
     bool exact = false;
+    bool expectTooSmall = false;
     int cancelAtPercent = 0;
     if (argc == 5 && std::string(argv[4]) == "--exact") {
         exact = true;
+    } else if (argc == 5 && std::string(argv[4]) == "--expect-too-small") {
+        expectTooSmall = true;
     } else if (argc == 6 && std::string(argv[4]) == "--cancel-at") {
         cancelAtPercent = std::atoi(argv[5]);
         if (cancelAtPercent < 1 || cancelAtPercent > 99) {
@@ -150,6 +162,16 @@ int main(int argc, char **argv)
                       << preview.restore->extras;
         }
         std::cout << "\n";
+        if (expectTooSmall) {
+            // Nothing is written in this mode: the preview alone is the
+            // check, and the target keeps whatever it holds.
+            const bool refused = !preview.enoughTargetSpace;
+            std::cout << "target space: needs " << gib(preview.bytesToTarget) << ", has "
+                      << gib(preview.targetFreeBytes) << " -> "
+                      << (refused ? "too small, as expected" : "BIG ENOUGH -- this target cannot check C6") << "\n";
+            std::cout << "RIG RESULT: " << (refused ? "PASS" : "FAIL") << "\n";
+            return refused ? 0 : 1;
+        }
         if (!preview.enoughTargetSpace) {
             std::cout << "RIG RESULT: FAIL\n";
             return 1;
