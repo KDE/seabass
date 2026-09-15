@@ -379,19 +379,32 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
 // could only fail.
 std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const RestorePlan &plan)
 {
-    std::set<std::string> fileKeys;
-    std::set<std::string> directoryKeys;
+    // Key -> the backup's own spelling, so a match that is only a match
+    // after folding can be put to the filesystem (below).
+    std::map<std::string, std::string> fileKeys;
+    std::map<std::string, std::string> directoryKeys;
     for (const std::string &path : plan.backupPaths) {
-        (plan.backupDirectories.count(path) != 0 ? directoryKeys : fileKeys).insert(normalizedPathKey(path));
+        (plan.backupDirectories.count(path) != 0 ? directoryKeys : fileKeys).emplace(normalizedPathKey(path), path);
     }
     const std::string lockPath = "Seabass/backups/.write.lock";
     std::vector<std::string> extras;
     TreeWalk walk = walkStickTree(targetRoot, CancellationToken::none());
     for (const TreeEntry &entry : walk.entries) {
         const std::string &path = entry.relativePath;
-        const std::set<std::string> &keys = entry.isDirectory ? directoryKeys : fileKeys;
-        if (keys.count(normalizedPathKey(path)) != 0) {
-            continue;
+        const std::map<std::string, std::string> &keys = entry.isDirectory ? directoryKeys : fileKeys;
+        if (const auto match = keys.find(normalizedPathKey(path)); match != keys.end()) {
+            // The backup's spelling, or another the filesystem resolves to
+            // the same file: on exFAT "CONTENTS/B.MP3" is the backup's
+            // "Contents/b.mp3". On a case-sensitive filesystem the two are
+            // separate files and the variant is a stale extra; skipping it
+            // on the key alone made an exact restore there not exact.
+            std::error_code ec;
+            if (match->second == path
+                || (fs::equivalent(longPathSafe(targetRoot / pathFromUtf8(path)),
+                                   longPathSafe(targetRoot / pathFromUtf8(match->second)), ec)
+                    && !ec)) {
+                continue;
+            }
         }
         if (entry.isDirectory && lockPath.compare(0, path.size() + 1, path + "/") == 0) {
             continue;

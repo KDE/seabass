@@ -844,32 +844,40 @@ int main()
     }
 
 
-    // ---- Exact mode never removes a file the backup holds in other letter case ----
+    // ---- Exact mode removes a letter-case variant only where it is a file of its own ----
     // On exFAT/FAT32 "Contents/ARTBAT/x.mp3" and "Contents/Artbat/x.mp3" are
     // one file: the restore writes the backup's copy into it, and a
-    // case-sensitive extras list then deleted it as an extra. On this
-    // (case-sensitive) scratch filesystem the two are distinct files, so the
-    // test pins the decision itself: a case variant of a backup path is not an
-    // extra and survives an exact restore.
+    // case-sensitive extras list then deleted it as an extra. On a
+    // case-sensitive filesystem (ext4, a local folder) they are two files,
+    // and the variant is stale: keeping it made an exact restore not exact.
+    // The filesystem decides, so the test expects whichever this one does.
     {
         Fixture f("case-variant-extra");
         assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        writeFile(f.target / "case-probe", "", 1'600'000'000);
+        const bool foldsCase = fs::exists(f.target / "CASE-PROBE");
+        fs::remove(f.target / "case-probe");
         writeFile(f.target / "CONTENTS" / "SUB" / "B.MP3", "the old library's spelling", 1'600'000'000);
         writeFile(f.target / "Seabass" / "backups" / ".write.lock", "", 1'600'000'000);
         writeFile(f.target / "stray.txt", "really extra", 1'600'000'000);
         RestorePreview preview = RestoreStickBackup::preview(f.restore);
         assert(preview.error.empty());
-        assert(preview.extras == 1 && "only the real stray counts: not the case variant, not the lock's folders");
+        if (foldsCase) {
+            assert(preview.extras == 1 && "only the real stray counts: not the case variant, not the lock's folders");
+        } else {
+            assert(preview.extras == 4 && "the stray, and the variant with its two folders: files of their own here");
+        }
         RestoreOptions exact = f.restore;
         exact.exact = true;
         RestoreSummary summary = RestoreStickBackup::execute(exact);
         assert(summary.status == RestoreSummary::Status::Restored);
-        assert(fs::exists(f.target / "CONTENTS" / "SUB" / "B.MP3") && "the case variant of a backup file is kept");
+        assert(fs::exists(f.target / "CONTENTS" / "SUB" / "B.MP3") == foldsCase
+               && "kept where it is the restored file, removed where it is a stale file of its own");
         assert(!fs::exists(f.target / "stray.txt") && "a real extra is still removed");
         for (const std::string &warning : summary.warnings) {
             assert(warning.find("Seabass") == std::string::npos && "no failed removal of the lock's folders");
         }
-        std::cout << "case case-variant-extra (a letter-case variant of a backup path is not removed as an extra) OK\n";
+        std::cout << "case case-variant-extra (a letter-case variant is removed only where the filesystem keeps it apart) OK\n";
     }
 
 
