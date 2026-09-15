@@ -18,6 +18,7 @@
 #include <span>
 #include <system_error>
 
+#include "application/path_key.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/hashing/sha256.hpp"
@@ -357,14 +358,37 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
     return plan;
 }
 
+// What exact mode removes: everything on the target the backup does not hold.
+//
+// Compared by normalizedPathKey, not byte for byte. DJ sticks are exFAT or
+// FAT32, where "Contents/ARTBAT" and "Contents/Artbat" are one folder: the
+// restore writes the backup's file into it, and a byte-exact comparison then
+// called the stick's spelling of that same file an extra and deleted it --
+// the track the restore had just written. On a case-sensitive target this
+// keeps a file that only differs in letter case instead, which is the safe
+// direction to be wrong in.
+//
+// The folders holding the stick's own write lock are not extras either: the
+// walk skips the lock file itself, so they are never empty and removing them
+// could only fail.
 std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const std::set<std::string> &backupPaths)
 {
+    std::set<std::string> backupKeys;
+    for (const std::string &path : backupPaths) {
+        backupKeys.insert(normalizedPathKey(path));
+    }
+    const std::string lockPath = "Seabass/backups/.write.lock";
     std::vector<std::string> extras;
     TreeWalk walk = walkStickTree(targetRoot, CancellationToken::none());
     for (const TreeEntry &entry : walk.entries) {
-        if (backupPaths.count(entry.relativePath) == 0) {
-            extras.push_back(entry.relativePath);
+        const std::string &path = entry.relativePath;
+        if (backupKeys.count(normalizedPathKey(path)) != 0) {
+            continue;
         }
+        if (entry.isDirectory && lockPath.compare(0, path.size() + 1, path + "/") == 0) {
+            continue;
+        }
+        extras.push_back(path);
     }
     return extras;
 }
