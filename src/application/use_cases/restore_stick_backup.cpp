@@ -7,6 +7,9 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <string>
+#include <fstream>
+#include <chrono>
 #include <cstdlib>
 #include <map>
 #include <memory>
@@ -124,23 +127,20 @@ struct Opened
 
     // Set by execute(): whether it holds the archive's write lock. A folder
     // nobody can write to cannot hold the lock file -- nor a backup writing
-    // into it -- so the restore still reads the archive, but must not roll
-    // anything back.
+    // into it -- so the restore still reads the archive (its settled
+    // generation, if an update did not finish) but rolls nothing back.
     bool canWrite = true;
 
     const ArchiveFile &readable() const { return settled ? *settled : *archive; }
 
     // The journal record of an update that did not finish, if there is one.
-    // Read-only: looks at the journal, never clears it.
-    //
-    // `thorough` checks every byte appended since the journal's offset, as
-    // the rollback itself does. Listing and preview pass false and settle
-    // for the cheap test instead: an update writes its central directory
-    // last, so an archive that still opens from its end has finished. That
-    // matters because the backup list is read over and over while a backup
-    // runs, and for a first backup the journal's offset is 0 -- a thorough
-    // check there would re-read the whole growing archive on every pass.
-    std::optional<JournalRecord> unfinishedUpdate(const fs::path &archivePath, bool thorough) const
+    // Read-only: looks at the journal, never clears it. Checks the bytes an
+    // update appended the way the rollback does -- an archive can open from
+    // its end and still be unfinished, when an update wrote its central
+    // directory and then failed its own verification. The check stays cheap
+    // for a backup that is still appending: verifyArchiveTail stops at the
+    // missing end record.
+    std::optional<JournalRecord> unfinishedUpdate(const fs::path &archivePath) const
     {
         const fs::path journalPath = journal::journalPathFor(archivePath);
         std::error_code ec;
@@ -151,12 +151,7 @@ struct Opened
         if (state.kind != JournalState::Kind::Valid) {
             return std::nullopt;  // absent, or corrupt: nothing was appended
         }
-        if (archive->size() < state.record.preLength) {
-            return state.record;
-        }
-        const bool finished = thorough ? verifyArchiveTail(*archive, state.record.preLength)
-                                       : Zip64Reader::tryOpen(*archive).has_value();
-        if (finished) {
+        if (archive->size() >= state.record.preLength && verifyArchiveTail(*archive, state.record.preLength)) {
             return std::nullopt;  // the update finished; only its journal outlived it
         }
         return state.record;
@@ -182,13 +177,14 @@ struct Opened
         try {
             archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadOnly);
             const fs::path journalPath = journal::journalPathFor(archivePath);
-            std::optional<JournalRecord> record = unfinishedUpdate(archivePath, mode == Journal::Recover);
-            if (record && mode == Journal::ReadSettled) {
+            std::optional<JournalRecord> record = unfinishedUpdate(archivePath);
+            if (record && (mode == Journal::ReadSettled || !canWrite)) {
+                // Preview and listing, or a restore from a folder nobody can
+                // write to: read the generation the update started from.
+                // Without the lock nothing may be rolled back, and nothing can
+                // be writing there either, so reading past it is what the
+                // preview promised.
                 readSettled(*record);
-            } else if (record && !canWrite) {
-                error = "the last update of this backup did not finish, and the folder it is in cannot be written "
-                        "to, so it cannot be rolled back";
-                return false;
             } else if (record) {
                 archive.reset();
                 archive = std::make_unique<PosixArchiveFile>(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
@@ -439,6 +435,24 @@ std::string writeEntry(const Zip64Reader &reader, const PlannedEntry &planned, c
     return {};
 }
 
+// Whether a new file can be created in `folder`: the only portable test,
+// since permission bits say nothing on Windows or on a read-only mount.
+// Creates and removes one uniquely named empty file; only asked after the
+// lock file itself could not be created there.
+bool folderIsWritable(const fs::path &folder)
+{
+    const fs::path probe = folder / (".seabass-write-probe-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    {
+        std::ofstream out(probe, std::ios::binary);
+        if (!out.is_open()) {
+            return false;
+        }
+    }
+    std::error_code ec;
+    fs::remove(probe, ec);
+    return true;
+}
+
 }  // namespace
 
 StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
@@ -548,11 +562,16 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     } catch (const infrastructure::backup::StickBusyError &e) {
         summary.message = e.what();
         return summary;
-    } catch (const std::exception &) {
-        // The lock file cannot be created: the backup's folder is not
-        // writable (a read-only share, a write-protected folder). Nothing
-        // can be writing the archive there either, so reading it is safe;
-        // only a rollback, which would write, is refused.
+    } catch (const std::exception &e) {
+        // Only a folder nobody can write to (a read-only share, a
+        // write-protected folder) may do without the lock: nothing can be
+        // writing the archive there either. Any other failure -- a full
+        // disk, a lock file another account owns -- is reported, not
+        // quietly run unlocked beside a backup that may hold the lock.
+        if (folderIsWritable(options.archivePath.parent_path())) {
+            summary.message = std::string("could not lock the backup: ") + e.what();
+            return summary;
+        }
         opened.canWrite = false;
     }
     if (!opened.open(options.archivePath, Opened::Journal::Recover)) {

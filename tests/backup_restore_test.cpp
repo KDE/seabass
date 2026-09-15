@@ -557,6 +557,19 @@ int main()
         fs::permissions(folder, fs::perms::owner_read | fs::perms::owner_exec | fs::perms::group_read | fs::perms::group_exec
                                     | fs::perms::others_read | fs::perms::others_exec,
                         fs::perm_options::replace, folderEc);
+        // Windows maps this to the read-only attribute, which does not stop
+        // files being created in a folder: say so rather than print a pass
+        // for a path that did not run.
+        bool folderEnforced = true;
+        {
+            const fs::path probe = folder / "probe.tmp";
+            std::ofstream out(probe);
+            if (out.is_open()) {
+                folderEnforced = false;
+                out.close();
+                fs::remove(probe, folderEc);
+            }
+        }
         bool enforced = true;
         try {
             PosixArchiveFile probe(f.archive, PosixArchiveFile::OpenMode::ReadWrite);
@@ -581,7 +594,9 @@ int main()
             VerifyOutcome verified = BackupStick::verify(f.archive);
             assert(verified.error.empty() && verified.ok && "a read-only backup verifies");
             assert(fs::file_size(f.archive) == sizeBefore && fs::last_write_time(f.archive) == timeBefore);
-            std::cout << "case read-only-archive (previews, restores and verifies with neither the file nor its folder writable) OK\n";
+            std::cout << (folderEnforced
+                              ? "case read-only-archive (previews, restores and verifies with neither the file nor its folder writable) OK\n"
+                              : "case read-only-archive (previews, restores and verifies a read-only file; folder protection not enforced here) OK\n");
         }
         fs::permissions(folder, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
                                     | fs::perms::others_read | fs::perms::others_exec,
@@ -665,6 +680,81 @@ int main()
         assert(fs::file_size(journalPath) == 0 && "the restore, holding the lock, cleared it");
         assert(fs::file_size(f.archive) == length && "and the archive itself was not touched");
         std::cout << "case stale-journal (a corrupt leftover journal is cleared, the archive untouched) OK\n";
+    }
+
+
+    // ---- A finished update's leftover journal is cleared too ----
+    // A valid record whose update did in fact complete (the journal just
+    // outlived it): checked thoroughly, not rolled back, then cleared.
+    {
+        Fixture f("finished-update-journal");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const fs::path journalPath = BackupStick::journalPathFor(f.archive);
+        const std::uint64_t length = fs::file_size(f.archive);
+        {
+            std::error_code ec;
+            fs::remove(journalPath, ec);
+            PosixArchiveFile journalFile(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+            journal::write(journalFile, JournalRecord{0, 0});  // a first backup that finished
+        }
+        RestorePreview preview = RestoreStickBackup::preview(f.restore);
+        assert(preview.error.empty() && !preview.rollsBackUnfinishedUpdate);
+        assert(RestoreStickBackup::execute(f.restore).status == RestoreSummary::Status::Restored);
+        assert(fs::file_size(journalPath) == 0 && "the finished update's journal was cleared");
+        assert(fs::file_size(f.archive) == length && "and nothing was rolled back");
+        std::cout << "case finished-update-journal (a finished update's journal is cleared, nothing rolled back) OK\n";
+    }
+
+    // ---- An update that opens but fails verification is still unfinished ----
+    // The commit writes the new central directory, then verifies what it
+    // appended; a failure there leaves an archive that opens from its end
+    // beside a valid journal. Listing and preview must show the generation
+    // the restore will actually roll back to, not the failed one.
+    {
+        Fixture f("failed-verification");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        const std::uint64_t firstLength = fs::file_size(f.archive);
+        std::uint64_t firstEocd = 0;
+        {
+            PosixArchiveFile archive(f.archive, PosixArchiveFile::OpenMode::ReadOnly);
+            firstEocd = Zip64Reader::open(archive).layout().endOfCentralDirectoryOffset;
+        }
+        writeFile(f.stick / "Contents" / "new.mp3", pseudoRandom(60'000, 9), 1'700'000'100);
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        assert(fs::file_size(f.archive) > firstLength);
+        {
+            const fs::path journalPath = BackupStick::journalPathFor(f.archive);
+            std::error_code ec;
+            fs::remove(journalPath, ec);
+            PosixArchiveFile journalFile(journalPath, PosixArchiveFile::OpenMode::ReadWrite);
+            journal::write(journalFile, JournalRecord{firstLength, firstEocd});
+        }
+        {
+            // One flipped byte inside the appended data: the archive still
+            // opens from its end, but the appended entries do not verify.
+            std::fstream io(f.archive, std::ios::binary | std::ios::in | std::ios::out);
+            io.seekg(static_cast<std::streamoff>(firstLength + 200));
+            char byte = 0;
+            io.read(&byte, 1);
+            io.seekp(static_cast<std::streamoff>(firstLength + 200));
+            byte = static_cast<char>(byte ^ 0x5a);
+            io.write(&byte, 1);
+        }
+        {
+            PosixArchiveFile archive(f.archive, PosixArchiveFile::OpenMode::ReadOnly);
+            assert(Zip64Reader::tryOpen(archive).has_value() && "the test needs an archive that opens from its end");
+            assert(!verifyArchiveTail(archive, firstLength) && "and whose appended data does not verify");
+        }
+        const std::uint64_t failedLength = fs::file_size(f.archive);
+        assert(RestoreStickBackup::describe(f.archive).error.empty());
+        RestorePreview preview = RestoreStickBackup::preview(f.restore);
+        assert(preview.error.empty());
+        assert(preview.rollsBackUnfinishedUpdate && "preview says the failed update will be rolled back");
+        assert(fs::file_size(f.archive) == failedLength && "without touching the archive");
+        RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(fs::file_size(f.archive) == firstLength && "the restore rolled back to the generation preview showed");
+        std::cout << "case failed-verification (an update that opens but does not verify is shown and restored as rolled back) OK\n";
     }
 
     return 0;
