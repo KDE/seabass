@@ -397,6 +397,48 @@ int main()
         std::cout << "case 14 (a truncated archive refuses to restore) OK\n";
     }
 
+    // A record that cannot give back every file restores none of them.
+    // Undo Last Save takes true for "all of it is back"; returning true once
+    // any one file was written left a stick half in each state while the
+    // undo reported success.
+    {
+        fs::path stick = root / "arch-one-bad-entry";
+        fs::path a = stick / "PIONEER" / "export.pdb";
+        fs::path b = stick / "PIONEER" / "USBANLZ" / "ANLZ0000.EXT";
+        std::string payload;
+        for (int i = 0; i < 4096; ++i) {
+            payload.push_back(static_cast<char>((i * 7919) % 251));
+        }
+        writeFile(a, payload);
+        writeFile(b, "analysis before");
+        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+        auto record = store.backup({a.string(), b.string()}, "sync");
+
+        // Damage the first entry's data, inside the archive, past its header.
+        fs::path archive = fs::path(record.path) / "backup.zip";
+        std::fstream zip(archive, std::ios::in | std::ios::out | std::ios::binary);
+        char header[30];
+        zip.read(header, 30);
+        const auto u16 = [&](int at) {
+            return static_cast<unsigned char>(header[at]) | (static_cast<unsigned char>(header[at + 1]) << 8);
+        };
+        const std::streamoff damageAt = 30 + u16(26) + u16(28) + 64;
+        char byte = 0;
+        zip.seekg(damageAt);
+        zip.read(&byte, 1);
+        byte = static_cast<char>(byte ^ 0x5a);
+        zip.seekp(damageAt);
+        zip.write(&byte, 1);
+        zip.close();
+
+        writeFile(a, "pdb now");
+        writeFile(b, "analysis now");
+        assert(!store.restore(record.id));
+        assert(readFile(a) == "pdb now");
+        assert(readFile(b) == "analysis now" && "the intact entry is not restored on its own");
+        std::cout << "case 14b (one damaged entry: the record restores nothing and says so) OK\n";
+    }
+
     // --- who owns a backup, and therefore who may delete it -----------
     //
     // Automatic records are Seabass's own safety copies and Seabass may

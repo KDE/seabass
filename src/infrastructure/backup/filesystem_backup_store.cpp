@@ -16,7 +16,9 @@
 #include <format>
 #include <fstream>
 #include <set>
+#include <exception>
 #include <optional>
+#include <vector>
 #include <span>
 #include <sstream>
 
@@ -359,18 +361,43 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
     for (const auto &[entryName, originalPath] : entries) {
         inArchive.insert(resolveRecordedPath(originalPath));
     }
-    bool anyRestored = false;
+    // Every entry is found and checked before anything is written. A record
+    // restores whole or not at all: Undo Last Save takes true for "all of
+    // it is back", and this used to return true once any one file was
+    // written -- skipping an entry that was missing or failed its checksum --
+    // which left a stick half in each state behind a successful undo.
+    // Refusing a mismatch still holds too: bytes that fail their own
+    // checksum are never written over a live file.
+    std::vector<std::size_t> indexes;
+    indexes.reserve(entries.size());
     for (const auto &[entryName, originalPath] : entries) {
         auto index = reader->findEntry(entryName);
         if (!index.has_value()) {
+            return false;
+        }
+        try {
+            if (!reader->verifyCrc(*index)) {
+                return false;
+            }
+        } catch (const std::exception &) {
+            return false;  // damaged beyond inflating
+        }
+        indexes.push_back(*index);
+    }
+
+    // A write that fails part-way still reports false, so the caller rolls
+    // back what did land (Undo Last Save protects every file first).
+    bool allRestored = !entries.empty();
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto &[entryName, originalPath] = entries[i];
+        const std::optional<std::size_t> index = indexes[i];
+        std::string contents;
+        try {
+            contents = reader->readEntryToString(*index);
+        } catch (const std::exception &) {
+            allRestored = false;
             continue;
         }
-        // Refuse a mismatch rather than write bytes that failed their own
-        // checksum over a live file -- exactly the case restore exists for.
-        if (!reader->verifyCrc(*index)) {
-            continue;
-        }
-        const std::string contents = reader->readEntryToString(*index);
         const fs::path target = resolveRecordedPath(originalPath);
         fs::create_directories(target.parent_path(), ec);
         const bool restored = writeFileDurablyAtomic(target.string(), contents);
@@ -409,9 +436,9 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
                 }
             }
         }
-        anyRestored = restored || anyRestored;
+        allRestored = restored && allRestored;
     }
-    return anyRestored;
+    return allRestored;
 }
 
 FilesystemBackupStore::DirectoryState &FilesystemBackupStore::stateFor(const fs::path &dir)
