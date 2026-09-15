@@ -2035,6 +2035,12 @@ target_link_libraries(rig_read PRIVATE seabass_core)
 add_executable(rig_backup tools/rig_backup.cpp)
 target_include_directories(rig_backup PRIVATE src)
 target_link_libraries(rig_backup PRIVATE seabass_core)
+
+# Release rig: compact a full stick backup; it must shrink by exactly the dead
+# space it reported and still verify with the same entries.
+add_executable(rig_compact tools/rig_compact.cpp)
+target_include_directories(rig_compact PRIVATE src)
+target_link_libraries(rig_compact PRIVATE seabass_core)
 # Two different things, and the names now say which is which. The tool
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.

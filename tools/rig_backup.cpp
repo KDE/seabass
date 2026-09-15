@@ -8,6 +8,7 @@
 //   rig_backup <stick root> <archive.zip>
 //   rig_backup <stick root> <archive.zip> --expect ADDED,CHANGED,REMOVED,BYTES
 //   rig_backup <stick root> <archive.zip> --expect-refused
+//   rig_backup <stick root> <archive.zip> --cancel-at PERCENT keep|discard
 //
 // A run passes when all of these hold:
 //
@@ -25,6 +26,13 @@
 // With --expect-refused the run must be refused because rekordbox or
 // Engine DJ is running (FB7), and the archive must be left as it was.
 //
+// With --cancel-at the run is cancelled once PERCENT of the bytes to read
+// are read, and the stopped run is then kept or discarded. Keep (FB4) must
+// commit an archive that verifies and leaves the rest to a later run -- a
+// plain rig_backup, which then has to complete. Discard (FB5) must leave
+// the archive as it was before the run (no file at all for a first backup)
+// and no unfinished journal.
+//
 // The stick is only read. The fingerprint stored in the manifest is taken
 // without the duration fill (see rig_catalog.hpp), so the tool leaves no
 // cache on the stick.
@@ -35,6 +43,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <exception>
 #include <filesystem>
@@ -135,25 +144,35 @@ ArchiveState archiveState(const fs::path &archive)
 int main(int argc, char **argv)
 {
     const auto usage = [] {
-        std::cerr << "usage: rig_backup <stick root> <archive.zip> [--expect ADDED,CHANGED,REMOVED,BYTES | --expect-refused]\n";
+        std::cerr << "usage: rig_backup <stick root> <archive.zip>"
+                     " [--expect ADDED,CHANGED,REMOVED,BYTES | --expect-refused | --cancel-at PERCENT keep|discard]\n";
         return 2;
     };
-    if (argc != 3 && argc != 4 && argc != 5) {
+    if (argc < 3) {
         return usage();
     }
     const fs::path root = argv[1];
     const fs::path archive = argv[2];
     std::optional<Expected> expected;
     bool expectRefused = false;
-    if (argc == 4 && std::string(argv[3]) == "--expect-refused") {
-        expectRefused = true;
-    } else if (argc == 5 && std::string(argv[3]) == "--expect") {
-        expected = parseExpected(argv[4]);
-        if (!expected) {
+    int cancelAtPercent = 0;
+    bool keepPartial = false;
+    if (argc > 3) {
+        const std::string mode = argv[3];
+        if (argc == 4 && mode == "--expect-refused") {
+            expectRefused = true;
+        } else if (argc == 5 && mode == "--expect") {
+            expected = parseExpected(argv[4]);
+        } else if (argc == 6 && mode == "--cancel-at") {
+            cancelAtPercent = std::atoi(argv[4]);
+            keepPartial = std::string(argv[5]) == "keep";
+            if (!keepPartial && std::string(argv[5]) != "discard") {
+                cancelAtPercent = 0;
+            }
+        }
+        if (!expectRefused && !expected && (cancelAtPercent < 1 || cancelAtPercent > 99)) {
             return usage();
         }
-    } else if (argc != 3) {
-        return usage();
     }
     bool pass = true;
 
@@ -223,8 +242,15 @@ int main(int argc, char **argv)
         options.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
         int lastPhase = -1;
         int lastPercent = -1;
+        application::CancellationToken cancel;
+        options.cancel = cancel;
         options.onProgress = [&](const application::BackupProgress &p) {
             const int phase = static_cast<int>(p.phase);
+            if (cancelAtPercent > 0 && !cancel.cancelled() && p.phase == application::BackupProgress::Phase::Reading
+                && p.bytesTotal > 0 && 100 * p.bytesDone >= static_cast<std::uint64_t>(cancelAtPercent) * p.bytesTotal) {
+                std::cout << timestamp() << " cancelling at " << p.bytesDone << " of " << p.bytesTotal << " bytes\n" << std::flush;
+                cancel.cancel();
+            }
             const int percent = p.bytesTotal > 0 ? static_cast<int>(100 * p.bytesDone / p.bytesTotal) : 0;
             if (phase != lastPhase || percent >= lastPercent + 5) {
                 static const char *names[] = {"scanning", "reading", "database", "writing", "verifying"};
@@ -236,6 +262,7 @@ int main(int argc, char **argv)
             }
         };
 
+        const ArchiveState beforeRun = archiveState(archive);
         std::cout << timestamp() << " backing up\n" << std::flush;
         const application::BackupStickOutcome outcome = application::BackupStick::execute(options);
         std::cout << timestamp() << " backup " << statusName(outcome.status) << ": added " << outcome.added << ", changed "
@@ -248,6 +275,46 @@ int main(int argc, char **argv)
         }
         for (const std::string &warning : outcome.warnings) {
             std::cout << "  warning: " << warning << "\n";
+        }
+        if (cancelAtPercent > 0) {
+            if (outcome.status != BackupOutcomeStatus::Cancelled || !outcome.pending) {
+                std::cout << "expected a stopped run waiting for keep or discard\nRIG RESULT: FAIL\n";
+                return 1;
+            }
+            const application::BackupStickOutcome decided = keepPartial ? outcome.pending->keep() : outcome.pending->discard();
+            std::cout << timestamp() << " " << (keepPartial ? "keep" : "discard") << ": " << statusName(decided.status)
+                      << ", added " << decided.added << ", archive " << gib(decided.archiveBytes) << "\n";
+            if (!decided.message.empty()) {
+                std::cout << "  " << decided.message << "\n";
+            }
+            // An empty journal is a settled archive; only a non-empty one is
+            // an unfinished update the next open would have to roll back.
+            std::error_code error;
+            const fs::path journal = application::BackupStick::journalPathFor(archive);
+            const bool journalPending = fs::exists(journal, error) && fs::file_size(journal, error) > 0;
+            const ArchiveState afterDecision = archiveState(archive);
+            std::cout << "archive " << (afterDecision.exists ? "exists, " + std::to_string(afterDecision.size) + " bytes" : "absent")
+                      << " (before the run: "
+                      << (beforeRun.exists ? "existed, " + std::to_string(beforeRun.size) + " bytes" : "absent") << "); journal "
+                      << (journalPending ? "UNFINISHED" : "settled") << "\n";
+            if (keepPartial) {
+                const application::VerifyOutcome verified = application::BackupStick::verify(archive);
+                std::cout << timestamp() << " verify " << (verified.ok ? "VERIFIED" : "FAILED") << ": " << verified.entriesChecked
+                          << " entries, status " << infrastructure::stick_backup::toString(verified.status) << "\n";
+                // A fresh token: the run's own is cancelled, and a preview
+                // walking with it stops at once and reports nothing left.
+                options.cancel = application::CancellationToken::none();
+                const application::BackupPreview rest = application::BackupStick::preview(options);
+                std::cout << "left for the next run: added " << rest.added << ", changed " << rest.changed << ", "
+                          << rest.bytesToRead << " bytes to read\n";
+                pass = decided.status == BackupOutcomeStatus::KeptPartial && !journalPending && verified.ok && rest.error.empty()
+                    && rest.added + rest.changed > 0;
+            } else {
+                const bool asBefore = afterDecision.exists == beforeRun.exists && afterDecision.size == beforeRun.size;
+                pass = decided.status == BackupOutcomeStatus::Discarded && !journalPending && asBefore;
+            }
+            std::cout << "RIG RESULT: " << (pass ? "PASS" : "FAIL") << "\n";
+            return pass ? 0 : 1;
         }
         const bool nothingExpected = expected && expected->added == 0 && expected->changed == 0 && expected->removed == 0;
         const bool finished = outcome.status == BackupOutcomeStatus::Complete
