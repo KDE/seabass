@@ -144,6 +144,51 @@ int main()
         std::cout << "case 1b (two copies of one recording: one proposal, none when one is current and the other adds nothing) OK\n";
     }
 
+    // ---- a second copy whose length cannot be read --------------------
+    // matchTracks never pairs it (its key names two tracks on the stick),
+    // so it used to be offered as new on every run, and storing it
+    // disturbed the recording's row. Seen on a real stick 17 times over.
+    {
+        Track withLength = stickTrack("Zwielicht");
+        withLength.cues = {hotCue(1, 1000.0)};
+        Track noLength = stickTrack("Zwielicht");
+        noLength.sourceId = "43";
+        noLength.filename = "Zwielicht-2.mp3";
+        noLength.filePath = "/media/RV2/Contents/Kalte Nacht/Copies/Zwielicht-2.mp3";
+        noLength.durationSeconds = 0.0;
+        noLength.cues = withLength.cues;
+        Track stored = storedTrack("Zwielicht");
+        stored.cues = withLength.cues;
+
+        // The store holds the recording: the copy adds nothing, so nothing is offered.
+        const auto current = planMetadataBackup({withLength, noLength}, {stored}, StickWrittenRecently);
+        assert(current.proposals.empty());
+        assert(current.alreadyCurrent == 1);
+        assert(current.otherCopies == 1);
+
+        // Neither is stored yet: one proposal, the copy with the length.
+        const auto fresh = planMetadataBackup({withLength, noLength}, {}, StickWrittenRecently);
+        assert(only(fresh).stickTrack.sourceId == "42");
+        assert(fresh.otherCopies == 1);
+
+        // The copy carries cues neither the store nor the other copy has:
+        // real work, so it is offered.
+        Track ownCues = noLength;
+        ownCues.cues = {hotCue(1, 7000.0)};
+        const auto own = planMetadataBackup({withLength, ownCues}, {stored}, StickWrittenRecently);
+        assert(only(own).stickTrack.sourceId == "43");
+        assert(only(own).isNew);
+
+        // Once stored as a row of its own, the list settles.
+        Track storedCopy = storedTrack("Zwielicht");
+        storedCopy.sourceId = "8";
+        storedCopy.durationSeconds = 0.0;
+        storedCopy.cues = ownCues.cues;
+        const auto settled = planMetadataBackup({withLength, ownCues}, {stored, storedCopy}, StickWrittenRecently);
+        assert(settled.proposals.empty());
+        std::cout << "case 1c (a second copy without a length is offered only for cues nobody holds) OK\n";
+    }
+
     // ---- already current -------------------------------------------
     {
         Track stick = stickTrack("Zwielicht");

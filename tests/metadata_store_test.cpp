@@ -865,5 +865,49 @@ int main()
         std::cout << "case 18c (a re-backup of two unknown-length mixes reuses their rows) OK\n";
     }
 
+    // ---- case 19: a copy whose length cannot be read, stored alone ----
+    // Seen on a real stick: 17 recordings filed twice, one copy with a
+    // length and one without. Whether the key names one track or two is a
+    // fact about the stick, so it must not change with what was ticked.
+    {
+        const fs::path db19 = root / "local-19" / "metadata.db";
+        MetadataStore metadata(db19);
+        Track withLength = sampleTrack(stick, "Contents/Kalte Nacht/Neunzehn.mp3", "Neunzehn");
+        withLength.cues = {hotCue(1, 1000.0)};
+        Track noLength = sampleTrack(stick, "Contents/Kalte Nacht/Copies/Neunzehn-2.mp3", "Neunzehn");
+        noLength.durationSeconds = 0.0;
+        noLength.cues = {hotCue(1, 7000.0)};
+
+        MetadataSource source = sourceFor(stick);
+        source.wholeStick = {withLength, noLength};
+        store(metadata, {withLength}, source);
+        assert(metadata.trackCount() == 1);
+
+        store(metadata, {noLength}, source);
+        assert(metadata.trackCount() == 2 && "the key names two tracks on the stick: the copy without a length gets its own row");
+        const auto rows = metadata.browse("", 10, 0);
+        bool withLengthKept = false;
+        for (const auto &row : rows) {
+            if (row.relativePath == "Contents/Kalte Nacht/Neunzehn.mp3") {
+                withLengthKept = row.cueCount == 1 && row.durationSeconds > 0.0;
+            }
+        }
+        assert(withLengthKept && "the recording's own row keeps its file and its cues");
+        std::cout << "case 19 (a no-length copy stored alone does not merge into its recording's row) OK\n";
+    }
+
+    // ---- case 20: a cover the stick no longer holds -------------------
+    {
+        const fs::path present = root / "present-cover.jpg";
+        const fs::path empty = root / "empty-cover.jpg";
+        writeFile(present, "JPEGDATA");
+        writeFile(empty, "");
+        assert(MetadataStore::canTakeArtwork(present.string()));
+        assert(!MetadataStore::canTakeArtwork((stick / "PIONEER" / "Artwork" / "gone.jpg").string()));
+        assert(!MetadataStore::canTakeArtwork(empty.string()));
+        assert(!MetadataStore::canTakeArtwork(""));
+        std::cout << "case 20 (a missing or empty cover cannot be taken in) OK\n";
+    }
+
     return 0;
 }

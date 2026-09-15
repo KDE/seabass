@@ -218,9 +218,55 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         }
         return "new:" + *key + "|" + std::to_string(std::lround(p.stickTrack.durationSeconds));
     };
+    // A copy whose length cannot be read slips past both rules above:
+    // matchTracks never pairs it while its key names another track on the
+    // stick, so it arrives as new, and recordingOf() has no length to name
+    // it by. It is the same recording when it carries nothing that copy
+    // or the store does not already hold -- no cues, or a cue set equal to
+    // one of theirs -- and then it is counted as another copy. With cues of
+    // its own it is still offered: that is work to keep, and once stored
+    // its row holds those cues, so the next plan folds it too.
+    std::map<std::string, int> stickCountByKey;
+    std::map<std::string, std::vector<const std::vector<CuePoint> *>> heldCuesByKey;
+    for (const Track &stick : stickTracks) {
+        if (const auto key = titleArtistKey(stick)) {
+            stickCountByKey[*key]++;
+            if (stick.durationSeconds > 0.0) {
+                heldCuesByKey[*key].push_back(&stick.cues);
+            }
+        }
+    }
+    for (const Track &stored : storedTracks) {
+        if (const auto key = titleArtistKey(stored)) {
+            heldCuesByKey[*key].push_back(&stored.cues);
+        }
+    }
+    const auto anotherCopyWithoutLength = [&](const MetadataBackupProposal &p) {
+        if (!p.isNew || p.stickTrack.durationSeconds > 0.0) {
+            return false;
+        }
+        const auto key = titleArtistKey(p.stickTrack);
+        if (!key || stickCountByKey[*key] < 2) {
+            return false;
+        }
+        const auto held = heldCuesByKey.find(*key);
+        if (held == heldCuesByKey.end()) {
+            return false;
+        }
+        if (p.stickTrack.cues.empty()) {
+            return true;
+        }
+        return std::any_of(held->second.begin(), held->second.end(),
+                           [&](const auto *cues) { return cueSetsEqual(*cues, p.stickTrack.cues); });
+    };
+
     std::vector<MetadataBackupProposal> kept;
     std::map<std::string, std::size_t> keptAt;
     for (auto &proposal : plan.proposals) {
+        if (anotherCopyWithoutLength(proposal)) {
+            plan.otherCopies++;
+            continue;
+        }
         const std::string recording = recordingOf(proposal);
         if (!recording.empty()) {
             const bool addsCues =

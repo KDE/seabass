@@ -68,7 +68,16 @@ MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProg
                 rows.insert(rows.end(), (*catalog)->begin(), (*catalog)->end());
             }
         }
-        const auto stickTracks = application::collapseCatalogRows(rows);
+        auto stickTracks = application::collapseCatalogRows(rows);
+        // A cover the catalog names but the stick no longer holds would be
+        // offered on every run: store() finds nothing to copy, so the row
+        // never gets one. Seen on a real stick. Dropped here, before the
+        // plan, so the plan stays free of filesystem questions.
+        for (auto &track : stickTracks) {
+            if (!track.artworkPath.empty() && !MetadataStore::canTakeArtwork(track.artworkPath)) {
+                track.artworkPath.clear();
+            }
+        }
 
         // Playlists to filter by, counted off the collapsed files rather
         // than the raw rows: a track three catalogs list belongs to its
@@ -107,6 +116,9 @@ MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProg
         // files rather than assumed.
         result.plan =
             domain::planMetadataBackup(stickTracks, storedTracks, catalogsLastModified(libraryPath.toStdString()));
+        // Kept for the save: store() asks how many tracks on the stick
+        // share a key, which is not something the ticked ones can answer.
+        result.stickTracks = stickTracks;
 
         for (auto &proposal : result.plan.proposals) {
             if (proposal.storedId.empty()) {
@@ -140,8 +152,9 @@ MetadataBackupScanResult runScanTask(QString libraryPath, std::shared_ptr<QtProg
 // by the scan the user has been looking at, and reading again would let
 // the list they ticked and the write they authorised disagree about a
 // stick edited in between.
-MetadataBackupTaskResult runStoreTask(std::vector<domain::Track> tracks, QString libraryPath, QString libraryId,
-                                       QString stickLabel, std::shared_ptr<QtProgressReporter> reporter,
+MetadataBackupTaskResult runStoreTask(std::vector<domain::Track> tracks, std::vector<domain::Track> wholeStick,
+                                       QString libraryPath, QString libraryId, QString stickLabel,
+                                       std::shared_ptr<QtProgressReporter> reporter,
                                        application::CancellationToken cancel)
 {
     MetadataBackupTaskResult result;
@@ -155,6 +168,7 @@ MetadataBackupTaskResult runStoreTask(std::vector<domain::Track> tracks, QString
         // an entry was stored, and a catalog's mtime is the only date a
         // stick offers.
         source.catalogModifiedAt = catalogsLastModified(libraryPath.toStdString());
+        source.wholeStick = std::move(wholeStick);
 
         MetadataStore store;
         result.summary = store.store(tracks, source, *reporter, cancel);
@@ -550,6 +564,7 @@ void MetadataBackupController::onScanFinished()
     const MetadataBackupScanResult result = m_scanWatcher.result();
     setBusy(false);
     setCurrentPhase({});
+    m_stickTracks = result.stickTracks;
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
         m_scanCancelled = true;  // there is no plan, and the page must not pretend one is coming
@@ -697,9 +712,10 @@ void MetadataBackupController::beginSave()
     // Awake for the whole backup: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Backing up metadata to this computer"));
     m_saveWatcher.setFuture(QtConcurrent::run(
-        [keepAwake, tracks, libraryPath = m_sourceLibraryPath, libraryId = m_sourceLibraryId,
-         stickLabel = m_sourceStickLabel, reporter = makeReporter(), cancel = m_cancel]() {
-            return runStoreTask(tracks, libraryPath, libraryId, stickLabel, reporter, cancel);
+        [keepAwake, tracks, wholeStick = m_stickTracks, libraryPath = m_sourceLibraryPath,
+         libraryId = m_sourceLibraryId, stickLabel = m_sourceStickLabel, reporter = makeReporter(),
+         cancel = m_cancel]() {
+            return runStoreTask(tracks, wholeStick, libraryPath, libraryId, stickLabel, reporter, cancel);
         }));
 }
 

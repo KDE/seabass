@@ -126,6 +126,8 @@ struct MetadataBackupTaskResult
 struct MetadataBackupScanResult
 {
     domain::MetadataBackupPlan plan;
+    // Every track read from the stick, for the save (MetadataSource::wholeStick).
+    std::vector<domain::Track> stickTracks;
     QStringList playlistNames;
     QVariantMap playlistTrackCounts;
     int storedTrackCount = 0;
@@ -428,6 +430,8 @@ private:
     QString m_sourceLibraryPath;
     QString m_sourceLibraryId;
     QString m_sourceStickLabel;
+    // The last scan's whole stick reading; see MetadataBackupScanResult.
+    std::vector<domain::Track> m_stickTracks;
 };
 
 }  // namespace seabass::gui

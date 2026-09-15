@@ -35,6 +35,14 @@ struct MetadataSource
     // so editing a cue touches that file and nothing else. Per-stick
     // rather than per-track, because nothing finer than that exists.
     std::int64_t catalogModifiedAt = 0;
+    // Every track read from the stick, staged or not; empty when the
+    // tracks handed to store() are the whole stick. store() needs it to
+    // tell whether a key names one track or two, and that is a fact about
+    // the stick, never about which of its tracks were ticked: counted over
+    // the batch, a copy whose length cannot be read merged into its
+    // recording's row when stored alone and got a row of its own when
+    // stored beside the other copy, so the backup list never settled.
+    std::vector<domain::Track> wholeStick;
 };
 
 struct MetadataBackupSummary
@@ -103,6 +111,12 @@ public:
     // first use. An explicit path is accepted for tests, and artwork then
     // lives in an "artwork" directory beside it.
     explicit MetadataStore(std::filesystem::path databasePath = defaultDatabasePath());
+
+    // Whether store() could take in the cover at `path`: a file with
+    // something in it. A catalog can name a cover the stick no longer
+    // holds, and a plan that offered it would offer it on every run,
+    // because store() finds nothing to copy and the row never gets one.
+    static bool canTakeArtwork(const std::string &path);
     ~MetadataStore() override;
 
     MetadataStore(const MetadataStore &) = delete;

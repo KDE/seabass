@@ -260,6 +260,18 @@ int MetadataStore::storedTrackCountIfPresent(fs::path databasePath)
     return count;
 }
 
+bool MetadataStore::canTakeArtwork(const std::string &path)
+{
+    if (path.empty()) {
+        return false;
+    }
+    // intakeArtwork() reads the whole file and takes nothing from an
+    // empty one; this asks the same question without reading it.
+    std::error_code ec;
+    const fs::path file(path);
+    return fs::is_regular_file(file, ec) && fs::file_size(file, ec) > 0 && !ec;
+}
+
 fs::path MetadataStore::artworkDir() const
 {
     return m_databasePath.parent_path() / "artwork";
@@ -588,14 +600,21 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         }
     } guard{m_db};
 
-    // How many tracks in this batch share each key. An incoming track whose
+    // How many tracks on the stick share each key. An incoming track whose
     // length cannot be read may only land on an existing row when nothing
-    // else in the batch is asking for that row too -- two unknown-length
-    // tracks under one artist and title are the radio edit and the
-    // extended mix, and letting both merge into one row is the mix-up.
+    // else on the stick could be that row -- two unknown-length tracks
+    // under one artist and title are the radio edit and the extended mix,
+    // and letting both merge into one row is the mix-up.
+    //
+    // Counted over the whole stick when the caller has it, because what
+    // was ticked is not a fact about the track: counted over the batch, a
+    // copy stored alone merged into its recording's row and rewrote its
+    // file and playlists, and the same copy stored beside the other got a
+    // row of its own. The names below still say "batch"; they count the
+    // stick whenever the source carries it.
     std::map<std::string, int> batchCountByMatchKey;
     std::map<std::string, int> batchCountByFallbackKey;
-    for (const Track &incoming : tracks) {
+    for (const Track &incoming : source.wholeStick.empty() ? tracks : source.wholeStick) {
         if (const std::string key = titleArtistMatchKey(incoming); !key.empty()) {
             batchCountByMatchKey[key]++;
         }
