@@ -111,6 +111,28 @@ TestCase {
         compare(dialog.footer.alignment & Qt.AlignRight, Qt.AlignRight);
     }
 
+    function test_frameAndTextShareOnePalette() {
+        // The message is drawn in Theme colours, so the frame behind it
+        // must be too. Left to the style, the frame followed the system
+        // colour scheme while the text stayed Kelp's light grey: on a light
+        // scheme the headline was all but invisible, and under Material
+        // offscreen the body had no background at all and the text sat on
+        // top of whatever the dialog covered.
+        var dialog = createTemporaryObject(messageComponent, testCase,
+                                           {title: "Delete This Backup?", headline: "It cannot be undone."});
+        dialog.open();
+        tryVerify(function() { return dialog.opened; });
+        verify(dialog.background !== null);
+        verify(Qt.colorEqual(dialog.background.color, Theme.surface), "the frame is Theme.surface");
+        verify(dialog.header !== null);
+        compare(dialog.header.text, "Delete This Backup?");
+        verify(Qt.colorEqual(dialog.header.color, Theme.text), "the title is Theme.text");
+        verify(Qt.colorEqual(findByObjectName(dialog, "messageLabel").color, Theme.text));
+        verify(!dialog.footer.background || !dialog.footer.background.visible,
+               "the button row draws no band of its own");
+        dialog.close();
+    }
+
     function test_severityPicksTheBadge_data() {
         return [
             {tag: "info", severity: SeabassDialog.Info, glyph: "i"},

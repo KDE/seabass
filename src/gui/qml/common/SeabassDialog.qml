@@ -76,6 +76,34 @@ Dialog {
     anchors.centerIn: parent
     modal: true
     width: 520
+    padding: Theme.cardPadding
+
+    // --- One palette for the whole dialog ---
+    //
+    // The message, the badge and the content are drawn in Theme colours,
+    // so the frame, the title and the button row are too. Left to the
+    // style, they followed the system colour scheme instead: on a light
+    // scheme the frame came out white under Kelp's light grey text, and
+    // the headline was all but invisible; under Material rendered
+    // offscreen the body had no background at all, so the message sat on
+    // top of whatever the dialog covered. Only the buttons stay the
+    // style's, like every other button in the app.
+    background: Rectangle {
+        color: Theme.surface
+        border.color: Theme.border
+        border.width: 1
+        radius: 6 * Theme.iconScale
+    }
+    header: Label {
+        text: root.title
+        visible: text.length > 0
+        color: Theme.text
+        font.pointSize: Theme.fontMedium
+        elide: Text.ElideRight
+        leftPadding: Theme.cardPadding
+        rightPadding: Theme.cardPadding
+        topPadding: Theme.cardPadding
+    }
 
     // Every Seabass dialog puts its buttons on the right, inset from the
     // edge. Enforced here rather than left to each footer, so a derived
@@ -92,6 +120,14 @@ Dialog {
         }
         if (root.footer.alignment !== undefined) {
             root.footer.alignment = Qt.AlignRight | Qt.AlignVCenter;
+        }
+        // The frame above is the dialog's one background; a style that
+        // paints the button row as a band of its own would split it.
+        // Hidden rather than replaced: assigning null (or another item)
+        // orphans the style's background, whose own bindings to its parent
+        // then throw on every layout pass (Fusion does exactly that).
+        if (root.footer.background) {
+            root.footer.background.visible = false;
         }
         if (root.footer.rightPadding !== undefined) {
             root.footer.rightPadding = 16 * Theme.iconScale;
