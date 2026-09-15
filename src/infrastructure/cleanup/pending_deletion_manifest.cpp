@@ -162,6 +162,27 @@ void PendingDeletionManifest::removeProcessed(const std::set<std::string> &proce
     ofs << rewritten.str();
 }
 
+void PendingDeletionManifest::removeForBackups(const std::set<std::string> &backupIds)
+{
+    if (backupIds.empty()) {
+        return;
+    }
+    std::ostringstream rewritten;
+    bool anyRemoved = false;
+    for (const auto &entry : list()) {
+        if (!entry.backupId.empty() && backupIds.contains(entry.backupId)) {
+            anyRemoved = true;
+            continue;
+        }
+        rewritten << serializeLine(entry);
+    }
+    if (!anyRemoved) {
+        return;
+    }
+    std::ofstream ofs(m_manifestPath, std::ofstream::trunc);
+    ofs << rewritten.str();
+}
+
 std::vector<PendingDeletion> PendingDeletionManifest::list() const
 {
     std::vector<PendingDeletion> result;

@@ -26,6 +26,8 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
+#include "infrastructure/cleanup/pending_deletion_manifest.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -140,6 +142,33 @@ int main()
         assert(read(saved.pdb) == "pdb-after");
         assert(read(saved.anlz) == "anlz-after");  // its backup is there, and it still stays as it is
         std::cout << "case 2 (a missing backup stops the whole undo and is named) OK\n";
+    }
+
+    // 3. The files a Clean Up save put in Delete Orphaned Files come off the
+    //    list with the undo that brings their rows back; an entry another
+    //    save made stays.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_restore_backups_orphans");
+        const SavedStick saved(scratch.path);
+        using seabass::infrastructure::cleanup::PendingDeletion;
+        using seabass::infrastructure::cleanup::PendingDeletionManifest;
+        PendingDeletionManifest manifest(seabass::infrastructure::paths::stickPendingDeletions(scratch.path).string());
+        PendingDeletion ofThisSave;
+        ofThisSave.format = "rekordbox";
+        ofThisSave.filePath = (scratch.path / "Contents" / "copy.mp3").string();
+        ofThisSave.backupId = saved.pdbRecord;
+        manifest.append(ofThisSave);
+        PendingDeletion ofAnotherSave = ofThisSave;
+        ofAnotherSave.filePath = (scratch.path / "Contents" / "older.mp3").string();
+        ofAnotherSave.backupId = "20260101T000000-duplicate-file-cleanup";
+        manifest.append(ofAnotherSave);
+
+        const SaveLoopResult result = runUndo(saved);
+        assert(result.error.isEmpty());
+        const auto left = manifest.list();
+        assert(left.size() == 1);
+        assert(left.front().filePath == ofAnotherSave.filePath);
+        std::cout << "case 3 (undo takes its save's files back off Delete Orphaned Files) OK\n";
     }
 
     std::cout << "restore_backups_change_test: all cases passed\n";

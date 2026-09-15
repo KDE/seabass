@@ -4,6 +4,11 @@
 
 #include "gui/edit/changes/restore_backups_change.hpp"
 
+#include <set>
+
+#include "infrastructure/cleanup/pending_deletion_manifest.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
+
 #include <QStringList>
 
 #include <string>
@@ -68,6 +73,23 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
         restored++;
     }
     ctx.log().record("undo: restored " + std::to_string(restored) + " backup(s) of the last save");
+
+    // A Clean Up save listed the files of the rows it removed in Delete
+    // Orphaned Files, each entry naming the backup that holds those rows.
+    // The rows are back now, so those files are not orphaned any more;
+    // left listed, the page offered to delete files the library uses again
+    // (deleting them was refused, but the list said otherwise).
+    const QString &catalogPath = ctx.rekordboxPath().isEmpty() ? ctx.enginePath() : ctx.rekordboxPath();
+    if (!catalogPath.isEmpty()) {
+        std::set<std::string> ids;
+        for (const UndoableBackup &backup : m_backups) {
+            ids.insert(backup.id.toStdString());
+        }
+        const std::string stickRoot = infrastructure::paths::stickRootForCatalogPath(catalogPath.toStdString());
+        infrastructure::cleanup::PendingDeletionManifest(
+            infrastructure::paths::stickPendingDeletions(stickRoot).string())
+            .removeForBackups(ids);
+    }
     return ChangeOutcome::success();
 }
 

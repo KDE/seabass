@@ -58,6 +58,13 @@ public:
     // processedFilePaths actually match an existing entry.
     void removeProcessed(const std::set<std::string> &processedFilePaths);
 
+    // Rewrites the manifest, dropping every entry the save behind one of
+    // `backupIds` recorded -- for Undo Last Save, which puts those catalog
+    // rows back, so their files are no longer orphaned and must not wait
+    // in Delete Orphaned Files. Entries without a backup id (a stray file
+    // no catalog ever named) are kept. A no-op when nothing matches.
+    void removeForBackups(const std::set<std::string> &backupIds);
+
 private:
     std::string m_manifestPath;
 };
