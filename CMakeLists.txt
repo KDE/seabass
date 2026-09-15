@@ -2029,6 +2029,12 @@ target_link_libraries(rig_restore PRIVATE seabass_core)
 add_executable(rig_read tools/rig_read.cpp)
 target_include_directories(rig_read PRIVATE src)
 target_link_libraries(rig_read PRIVATE seabass_core)
+
+# Release rig: a full stick backup as the app takes it, then verified, checked
+# for holes, previewed for leftovers and compared with the stick's catalogs.
+add_executable(rig_backup tools/rig_backup.cpp)
+target_include_directories(rig_backup PRIVATE src)
+target_link_libraries(rig_backup PRIVATE seabass_core)
 # Two different things, and the names now say which is which. The tool
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.
