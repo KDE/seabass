@@ -218,12 +218,23 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
     // restores every file this change declared (runSaveLoop and
     // SaveContext::rollBackChange), so the two formats stay in agreement
     // rather than half the library holding a cue the other half lacks.
+    //
+    // A file OneLibrary does not list at all is not a disagreement: there
+    // is no Device Library Plus copy of the track to keep in step, and a
+    // player reading only that database does not show the track either.
+    // Refusing it made Add Cue impossible for every such track -- 635 of
+    // 1118 on a real stick.
     if (m_format == "rekordbox" && !track->filePath.empty()
         && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneerRoot)) {
         try {
-            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot), "add-cue");
-            sharedOneLibraryWriter(ctx, pioneerRoot).writeCuesForPath(track->filePath, cues);
-            ctx.log().record("add-cue: also wrote into OneLibrary");
+            auto &oneLibrary = sharedOneLibraryWriter(ctx, pioneerRoot);
+            if (!oneLibrary.hasTrackAtPath(track->filePath)) {
+                ctx.log().record("add-cue: OneLibrary does not list this file; nothing to mirror");
+            } else {
+                ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot), "add-cue");
+                oneLibrary.writeCuesForPath(track->filePath, cues);
+                ctx.log().record("add-cue: also wrote into OneLibrary");
+            }
         } catch (const std::exception &e) {
             ctx.log().record(std::string("add-cue: OneLibrary write failed: ") + e.what());
             return ChangeOutcome::failure(

@@ -2276,6 +2276,87 @@ void caseLibraryHealthRepair(const DataSet &set, const fs::path &scratch, const 
     pass("matrix: a repair merges cues onto the survivor and removes the broken row");
 }
 
+// Matrix: Add Cue on a rekordbox track OneLibrary does not list. Real
+// sticks have many (a OneLibrary of 483 tracks beside a DeviceLibrary of
+// 1118). There is no Device Library Plus copy to keep in step, so the cue
+// is written to rekordbox and the save succeeds; it used to fail the whole
+// save with "no content row for path", found by the release rig.
+//
+// The committed fixture's OneLibrary lists every track, so the case makes
+// one unlisted first: it removes a track's OneLibrary row on the scratch
+// copy, exactly the state those real sticks are in.
+void caseAddCueOnTrackOneLibraryDoesNotList(const DataSet &set, const fs::path &scratch, const Catalogs &catalogs)
+{
+    if (catalogs.rekordbox.empty() || !set.rekordboxRoot
+        || !infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*set.rekordboxRoot)) {
+        std::cout << "    skipped matrix/add cue without a OneLibrary row: no rekordbox with OneLibrary\n";
+        return;
+    }
+    const fs::path root = freshRekordboxCopy(set, scratch, "matrix-addcue-unlisted");
+    auto filename = [](std::string path) {
+        while (!path.empty() && path.back() == ' ') {
+            path.pop_back();
+        }
+        return fs::path(path).filename().string();
+    };
+    std::map<std::string, int> listed;
+    const std::vector<domain::Track> oneLibrary = infrastructure::onelibrary::OneLibraryReader(root.string()).readAll();
+    for (const auto &t : oneLibrary) {
+        ++listed[filename(t.filePath)];
+    }
+    const auto tracks = rescanRekordbox(root);
+    const domain::Track *target = nullptr;
+    for (const auto &t : tracks) {
+        const std::string name = filename(t.filePath);
+        if (t.cues.empty() && !name.empty() && listed[name] == 1) {
+            target = &t;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        std::cout << "    skipped matrix/add cue without a OneLibrary row: no uncued track OneLibrary lists once\n";
+        fs::remove_all(root);
+        return;
+    }
+    const std::string id = target->sourceId;
+    const std::string name = filename(target->filePath);
+    for (const auto &t : oneLibrary) {
+        if (filename(t.filePath) == name) {
+            infrastructure::onelibrary::OneLibraryCueWriter(root.string()).removeTrackByPath(t.filePath);
+            break;
+        }
+    }
+    bool stillListed = false;
+    for (const auto &t : infrastructure::onelibrary::OneLibraryReader(root.string()).readAll()) {
+        stillListed = stillListed || filename(t.filePath) == name;
+    }
+    if (!check(!stillListed, "the setup removed the track's OneLibrary row")) {
+        fs::remove_all(root);
+        return;
+    }
+
+    auto change = std::make_shared<gui::AddCueChange>("rekordbox", QString::fromStdString(root.string()),
+                                                      QString::fromStdString(id), 33000.0, "memory", 0, "", "",
+                                                      false, 0.0, QString::fromStdString(target->title));
+    auto result = runChanges({change}, root, {});
+    if (!check(result.error.isEmpty(), "adding a cue to a track OneLibrary does not list saved without error: "
+                                           + result.error.toStdString())) {
+        fs::remove_all(root);
+        return;
+    }
+    const auto after = rescanRekordbox(root);
+    const domain::Track *reread = findTrack(after, id);
+    bool landed = false;
+    if (reread != nullptr) {
+        for (const auto &c : reread->cues) {
+            landed = landed || (c.kind == domain::CuePoint::Kind::Memory && samePosition(c.positionMs, 33000.0));
+        }
+    }
+    check(landed, "the cue is on the rekordbox track");
+    fs::remove_all(root);
+    pass("matrix: Add Cue writes a track OneLibrary does not list, and skips the mirror");
+}
+
 // Matrix: Library Health's Repair All on a stick with OneLibrary. The same
 // broken file is listed there twice, once by rekordbox and once by its
 // OneLibrary mirror, so Repair All stages two repairs into one save. The
@@ -2860,6 +2941,7 @@ void runMatrix(const DataSet &set, const fs::path &scratch, const Catalogs &cata
     caseLocalCueRestore(set, scratch, catalogs, expected);
     caseLibraryHealthRepair(set, scratch, catalogs, expected);
     caseLibraryHealthRepairOnBothCatalogs(set, scratch, catalogs);
+    caseAddCueOnTrackOneLibraryDoesNotList(set, scratch, catalogs);
     caseCleanUpDuplicates(set, scratch, catalogs, expected);
     caseDeleteOrphan(set, scratch, catalogs, expected);
 #else
