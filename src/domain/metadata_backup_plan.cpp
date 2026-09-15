@@ -4,6 +4,11 @@
 
 #include "domain/metadata_backup_plan.hpp"
 
+#include <map>
+#include <set>
+
+#include "domain/track_matching.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -107,6 +112,8 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
     // tracks sitting where they actually are, instead of every new track
     // bunched at one end by an accident of how matching returns pairs.
     std::unordered_map<const Track *, const Track *> storedFor;
+    // Stored rows some stick copy already matches exactly (see the end).
+    std::set<std::string> currentStoredIds;
     const auto matched = matchTracks(stickTracks, storedTracks);
     storedFor.reserve(matched.size());
     for (const auto &[stick, stored] : matched) {
@@ -188,8 +195,53 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
             plan.proposals.push_back(std::move(proposal));
         } else {
             plan.alreadyCurrent++;
+            currentStoredIds.insert(stored->sourceId);
         }
     }
+
+    // The store keeps one row per recording. Two files on the stick that
+    // are one recording -- matched to the same stored row, or both new
+    // under the same artist, title and length -- used to be offered one
+    // each; storing both left the row holding whichever went last, so the
+    // next plan offered the other again, on every run. One is offered: the
+    // one with the most cues, as the richest copy. When a copy is already
+    // current, another is offered only if it adds cues beyond what the
+    // store holds -- cues set on that copy since are real work to keep, and
+    // once stored that copy is the current one, so the list still settles.
+    const auto recordingOf = [](const MetadataBackupProposal &p) -> std::string {
+        if (!p.storedId.empty()) {
+            return "stored:" + p.storedId;
+        }
+        const auto key = titleArtistKey(p.stickTrack);
+        if (!key || p.stickTrack.durationSeconds <= 0.0) {
+            return {};  // nothing that safely names one recording
+        }
+        return "new:" + *key + "|" + std::to_string(std::lround(p.stickTrack.durationSeconds));
+    };
+    std::vector<MetadataBackupProposal> kept;
+    std::map<std::string, std::size_t> keptAt;
+    for (auto &proposal : plan.proposals) {
+        const std::string recording = recordingOf(proposal);
+        if (!recording.empty()) {
+            const bool addsCues =
+                proposal.cuesOffered && static_cast<int>(proposal.stickTrack.cues.size()) > proposal.storedCueCount;
+            if (!proposal.storedId.empty() && currentStoredIds.contains(proposal.storedId) && !addsCues) {
+                plan.otherCopies++;
+                continue;
+            }
+            const auto it = keptAt.find(recording);
+            if (it != keptAt.end()) {
+                if (proposal.stickTrack.cues.size() > kept[it->second].stickTrack.cues.size()) {
+                    kept[it->second] = std::move(proposal);
+                }
+                plan.otherCopies++;
+                continue;
+            }
+            keptAt.emplace(recording, kept.size());
+        }
+        kept.push_back(std::move(proposal));
+    }
+    plan.proposals = std::move(kept);
 
     return plan;
 }

@@ -97,6 +97,53 @@ int main()
         std::cout << "case 1 (new to the store: everything is offered, nothing conflicts) OK\n";
     }
 
+    // ---- the same recording twice on the stick ------------------------
+    // The store keeps one row per recording. Offering both copies made a
+    // backup that never came out current: saving one made the other differ.
+    {
+        Track first = stickTrack("Zwielicht");
+        first.cues = {hotCue(1, 1000.0)};
+        Track second = stickTrack("Zwielicht");
+        second.sourceId = "43";
+        second.filename = "Zwielicht (1).mp3";
+        second.filePath = "/media/RV2/Contents/Kalte Nacht/Copies/Zwielicht (1).mp3";
+        second.cues = {hotCue(1, 1000.0), hotCue(2, 2000.0)};
+        Track stored = storedTrack("Zwielicht");
+        stored.cues = second.cues;
+
+        // One copy is what the store holds: nothing to offer, the other is counted.
+        const auto current = planMetadataBackup({first, second}, {stored}, StickWrittenRecently);
+        assert(current.proposals.empty());
+        assert(current.alreadyCurrent == 1);
+        assert(current.otherCopies == 1);
+
+        // Neither is: one proposal, the copy with more cues.
+        stored.cues.clear();
+        const auto neither = planMetadataBackup({first, second}, {stored}, StickWrittenRecently);
+        const auto &p = only(neither);
+        assert(p.stickTrack.sourceId == "43");
+        assert(neither.otherCopies == 1);
+
+        // Both new: one proposal, so the store gets one row and the next
+        // plan finds that copy current.
+        const auto fresh = planMetadataBackup({first, second}, {}, StickWrittenRecently);
+        assert(only(fresh).isNew);
+        assert(only(fresh).stickTrack.sourceId == "43");
+        assert(fresh.otherCopies == 1);
+        // One copy is current, and the other has cues set since: those are
+        // real work, so that copy is still offered.
+        Track withMore = second;
+        withMore.cues = {hotCue(1, 1000.0), hotCue(2, 2000.0), hotCue(3, 3000.0)};
+        const auto more = planMetadataBackup({first, withMore}, {[&] {
+                                                 Track s = storedTrack("Zwielicht");
+                                                 s.cues = first.cues;
+                                                 return s;
+                                             }()},
+                                             StickWrittenRecently);
+        assert(only(more).stickTrack.cues.size() == 3);
+        std::cout << "case 1b (two copies of one recording: one proposal, none when one is current and the other adds nothing) OK\n";
+    }
+
     // ---- already current -------------------------------------------
     {
         Track stick = stickTrack("Zwielicht");

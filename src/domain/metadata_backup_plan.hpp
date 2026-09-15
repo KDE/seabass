@@ -120,6 +120,12 @@ struct MetadataBackupPlan
     // the row by later. Not an error, and counted separately so the
     // totals add up.
     int withoutIdentity = 0;
+    // Further copies of a track already on the list or already current:
+    // the same recording filed twice on the stick, which the store keeps
+    // as one row. Offering each copy made a backup that could never come
+    // out current -- saving one made the other differ -- so only one
+    // copy is offered, and none when another is current already.
+    int otherCopies = 0;
 };
 
 // Pairs each stick track with its stored copy and works out what storing
