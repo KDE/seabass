@@ -23,12 +23,10 @@ function findByType(root, typeName) {
     // CPU for nine minutes inside objectToString/methodMatch/memcmp with the
     // GC chasing the string garbage, on a page whose graph is perfectly
     // ordinary. It was 76 s when the page was smaller.
-    var seen = [];
+    var seen = new Set();
     function beenHere(obj) {
-        for (var s = 0; s < seen.length; ++s) {
-            if (seen[s] === obj) return true;
-        }
-        seen.push(obj);
+        if (seen.has(obj)) return true;
+        seen.add(obj);
         return false;
     }
     function walk(obj) {
@@ -73,15 +71,14 @@ function findByObjectName(root, name, seen) {
     // Same overlapping-graph problem findByType has: children and resources
     // reach the same objects, so without this the walk re-enters subtrees
     // once per path into them.
-    seen = seen || [];
-    for (var s = 0; s < seen.length; ++s) {
-        if (seen[s] === root) return null;
-    }
-    seen.push(root);
+    seen = seen || new Set();
+    if (seen.has(root)) return null;
+    seen.add(root);
     if (root.objectName === name) return root;
     var kids = [];
     if (root.contentItem) kids.push(root.contentItem);
     if (root.footer) kids.push(root.footer);
+    if (root.header) kids.push(root.header);  // findByType looks here; this did not
     var children = root.children ? root.children : [];
     for (var i = 0; i < children.length; ++i) kids.push(children[i]);
     var resources = root.resources ? root.resources : [];

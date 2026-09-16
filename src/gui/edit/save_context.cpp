@@ -400,12 +400,25 @@ std::optional<QString> SaveContext::rollBackChange()
         }
     }
     // The -shm indexes a -wal that was just replaced; SQLite rebuilds it.
+    // And the -wal itself is folded: the writers were destroyed before the
+    // restore (above), so nothing else will, and the restored log holds the
+    // committed rows of every change before the one that failed -- which
+    // the summary still reports as applied.
     for (const Checkpoint &checkpoint : m_checkpoints) {
         const std::string suffix = "-wal";
         if (checkpoint.original.size() > suffix.size()
             && checkpoint.original.compare(checkpoint.original.size() - suffix.size(), suffix.size(), suffix) == 0) {
             std::error_code ec;
-            fs::remove(checkpoint.original.substr(0, checkpoint.original.size() - suffix.size()) + "-shm", ec);
+            const std::string db = checkpoint.original.substr(0, checkpoint.original.size() - suffix.size());
+            fs::remove(db + "-shm", ec);
+            if (fs::path(db).filename() == "exportLibrary.db") {
+                const std::uint64_t left = seabass::infrastructure::onelibrary::OneLibraryCueWriter::foldLogOf(db);
+                if (left > 0 && hasStick()) {
+                    log().record("save: after the rollback Device Library Plus kept " + std::to_string(left)
+                                 + " bytes in its write-ahead log; the rows of the changes that did apply are "
+                                   "not in exportLibrary.db until something folds it");
+                }
+            }
         }
     }
     if (hasStick()) {

@@ -183,14 +183,19 @@ public:
     // leaving committed cues in a sidecar that every reader of the
     // database alone cannot see, with no error anywhere.
     //
-    // Throws if frames remain after the checkpoint: rows stranded in a
-    // log are exactly what the save must not report as written.
     // A no-op when this writer never opened anything.
     // Throws OneLibraryLogNotFolded when the library is not one file
     // afterwards -- on any save, cancelled or not. Never an error type: the
     // rows are committed, and a save reported as unapplied gets applied
     // twice.
     void finishWriting();
+
+    // For a database that was just put back from a backup together with
+    // its -wal: open, checkpoint, close, and say how many bytes of log are
+    // still beside it (0 when it is one file again). A rolled-back save
+    // destroys its writers before restoring files, so nothing else folds
+    // the log the restore brought back.
+    static std::uint64_t foldLogOf(const std::string &dbPath);
 
 private:
     // The two connections this writer works through, opened on first use

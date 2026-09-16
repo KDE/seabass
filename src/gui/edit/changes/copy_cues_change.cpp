@@ -43,7 +43,7 @@ struct DuplicatesFormatContext
 // (OneLibraryCueWriterAdapter's own comment explains why sourceId alone
 // isn't enough for this format).
 std::unique_ptr<DuplicatesFormatContext> makeContext(
-    const QString &format, const QString &path,
+    SaveContext &saveCtx, const QString &format, const QString &path,
     const std::unordered_map<std::string, std::string> &oneLibrarySourceIdToPath)
 {
     auto ctx = std::make_unique<DuplicatesFormatContext>();
@@ -52,7 +52,11 @@ std::unique_ptr<DuplicatesFormatContext> makeContext(
         ctx->writer = std::make_unique<infrastructure::rekordbox::RekordboxCueWriter>(pioneerRoot);
     } else if (format == "onelibrary") {
         std::string pioneerRoot = path.toStdString();  // same PIONEER root rekordbox uses, see scan()'s own comment
-        ctx->writer = std::make_unique<OneLibraryCueWriterAdapter>(pioneerRoot, oneLibrarySourceIdToPath);
+        auto adapter = std::make_unique<OneLibraryCueWriterAdapter>(pioneerRoot, oneLibrarySourceIdToPath);
+        // Through the save's writer, like every other OneLibrary write in a
+        // save: the adapter's private fallback is never checkpointed.
+        adapter->useSharedWriter(sharedOneLibraryWriter(saveCtx, pioneerRoot));
+        ctx->writer = std::move(adapter);
     } else {
         std::string engineLibraryPath = path.toStdString();
         ctx->writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
@@ -125,7 +129,7 @@ ChangeOutcome CopyCuesChange::apply(SaveContext &ctx)
         key += ":" + m_groupKey.toStdString();  // the adapter is bound to this group's tracks
     }
     DuplicatesFormatContext &format = ctx.shared<DuplicatesFormatContext>(
-        key, [&]() { return makeContext(m_format, m_path, oneLibrarySourceIdToPath); });
+        key, [&]() { return makeContext(ctx, m_format, m_path, oneLibrarySourceIdToPath); });
 
     for (const auto &target : m_op.targets) {
         for (const auto &file :

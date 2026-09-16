@@ -696,6 +696,33 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
     refreshStalenessBaseline();
 }
 
+std::uint64_t OneLibraryCueWriter::foldLogOf(const std::string &dbPath)
+{
+    std::error_code ec;
+    if (!fs::is_regular_file(dbPath, ec) || ec) {
+        return 0;  // nothing to fold into
+    }
+    try {
+        SqlCipherLibrary lib;
+        SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
+        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        try {
+            db.exec("PRAGMA busy_timeout = 1000;");
+            SqlCipherStatement checkpoint(db, "PRAGMA wal_checkpoint(TRUNCATE);");
+            checkpoint.step();
+        } catch (const std::exception &) {
+        }
+    } catch (const std::exception &) {
+        // Cannot even open it: the measurement below still says what is left.
+    }
+    const fs::path wal = fs::path(dbPath + "-wal");
+    if (!fs::exists(wal, ec) || ec) {
+        return 0;
+    }
+    const std::uintmax_t left = fs::file_size(wal, ec);
+    return ec ? 0 : left;
+}
+
 void OneLibraryCueWriter::finishWriting()
 {
     // Never opened: nothing was mirrored in this save, so there is no log of
@@ -711,7 +738,15 @@ void OneLibraryCueWriter::finishWriting()
     // either failing good saves or warning about them. What matters is not
     // why the fold did not happen but whether it did.
     m_verifyDb.reset();
-    m_writeDb->exec("PRAGMA busy_timeout = 5000;");
+    // Advisory, and inside its own try: exec() throws on any non-OK rc,
+    // and a throw here would reach runFinishHooks as an ERROR -- the one
+    // outcome this function must never produce. 1 s, not 5: the pragma
+    // makes each checkpoint attempt block on the busy handler already, so
+    // three attempts at 5 s froze the GUI at "Finishing" for 15 s.
+    try {
+        m_writeDb->exec("PRAGMA busy_timeout = 1000;");
+    } catch (const std::exception &) {
+    }
     bool folded = false;
     for (int attempt = 0; attempt < 3 && !folded; ++attempt) {
         try {
@@ -734,9 +769,22 @@ void OneLibraryCueWriter::finishWriting()
     const fs::path wal = fs::path(m_dbPath + "-wal");
     const fs::path shm = fs::path(m_dbPath + "-shm");
     std::error_code ec;
+    // The database itself first. fs::exists clears its error code for a
+    // path that is simply not there, so on a stick that went away after
+    // the last commit the -wal reads as "absent" -- which looked like the
+    // clean outcome, and reported "Done" for rows that live only in a log
+    // on a device that is gone.
+    std::error_code dbEc;
+    const bool dbThere = fs::is_regular_file(m_dbPath, dbEc) && !dbEc;
     const bool walThere = fs::exists(wal, ec);
-    const std::uintmax_t remaining = (!ec && walThere) ? fs::file_size(wal, ec) : 0;
-    if (!ec && remaining == 0) {
+    std::uintmax_t remaining = 0;
+    if (!ec && walThere) {
+        remaining = fs::file_size(wal, ec);
+        if (ec) {
+            remaining = 0;  // file_size's failure value is uintmax_t(-1), not a byte count
+        }
+    }
+    if (dbThere && !ec && remaining == 0) {
         // The library is one file again. A -wal that is simply gone is the
         // ordinary outcome, not a fault: the close folded it.
         fs::remove(wal, ec);
@@ -749,12 +797,13 @@ void OneLibraryCueWriter::finishWriting()
     // save as unapplied would have the user save again and apply the same
     // removals twice.
     throw OneLibraryLogNotFolded(
-        remaining > 0
-            ? "Device Library Plus kept " + std::to_string(remaining)
-                  + " bytes in its write-ahead log; those rows are not in exportLibrary.db and a player reading "
-                    "it would not see them"
-            : std::string("could not tell whether Device Library Plus still has a write-ahead log beside "
-                          "exportLibrary.db, so the save cannot say its rows are in the library"));
+        !dbThere ? std::string("exportLibrary.db is no longer where Device Library Plus wrote it, so the save "
+                               "cannot say its rows are in the library (did the stick go away?)")
+        : ec     ? std::string("could not tell whether Device Library Plus still has a write-ahead log beside "
+                               "exportLibrary.db, so the save cannot say its rows are in the library")
+                 : "Device Library Plus kept " + std::to_string(remaining)
+                       + " bytes in its write-ahead log; those rows are not in exportLibrary.db and a player "
+                         "reading it would not see them");
 }
 
 }  // namespace seabass::infrastructure::onelibrary

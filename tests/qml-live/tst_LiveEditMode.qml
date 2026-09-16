@@ -95,6 +95,9 @@ TestCase {
         tryVerify(function() { return spy.count > 0; }, 300000);
         var summary = spy.signalArguments[0][0];
         console.log("  save: " + Live.summaryLine(summary));
+        // A warning is not an error and the changes stand -- but on the rig
+        // it is a check that did not fully succeed, and those are failures.
+        compare(summary.warning === undefined ? "" : summary.warning, "", "the save left nothing unfinished");
         return summary;
     }
 
@@ -105,6 +108,7 @@ TestCase {
         tryVerify(function() { return spy.count > 0; }, 300000);
         var summary = spy.signalArguments[0][0];
         console.log("  undo: " + Live.summaryLine(summary));
+        compare(summary.warning === undefined ? "" : summary.warning, "", "the undo left nothing unfinished");
         compare(summary.error, "");
         return summary;
     }
@@ -885,7 +889,11 @@ TestCase {
                 planter.setAllIncluded(false);
                 var pick = -1;
                 for (var row = 0; row < planter.plans.rowCount(); ++row) {
-                    var who = planter.plans.data(planter.plans.index(row, 0), Qt.UserRole + 1);
+                    // .sourceId, a string: the role itself is the survivor's
+                    // summary map, and a map as a JS key is "[object Object]"
+                    // for every group -- which made this loop try one.
+                    var survivor = planter.plans.data(planter.plans.index(row, 0), Qt.UserRole + 1);
+                    var who = survivor && survivor.sourceId ? survivor.sourceId : ("row" + row);
                     if (!triedSurvivors[who]) {
                         triedSurvivors[who] = true;
                         pick = row;

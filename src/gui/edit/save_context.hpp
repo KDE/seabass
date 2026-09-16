@@ -175,15 +175,15 @@ public:
 
     void onFinish(std::function<void(bool ok)> hook);
     // Runs every hook once, creation order; a throwing hook does not stop
-    // the rest. Returns the first hook error, if any.
-    // .first: a hook failed and what it was committing did not land, so
-    // the caller must report every change as still pending. .second: the
-    // changes DID land and only a tidy-up failed (a write-ahead log that
-    // could not be folded) -- worth telling the user, never worth making
-    // them save again, which would apply the same removals twice.
+    // the rest.
     struct FinishOutcome
     {
+        // A hook failed and what it was committing did not land: the caller
+        // must report every change as still pending.
         std::optional<QString> error;
+        // The changes DID land and only a tidy-up failed (a write-ahead log
+        // that would not fold): worth telling the user, never worth making
+        // them save again, which would apply the same removals twice.
         std::optional<QString> warning;
     };
     FinishOutcome runFinishHooks(bool ok);

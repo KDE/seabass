@@ -69,17 +69,14 @@ std::vector<BackupTarget> DeleteOrphanChange::filesToBackup(SaveContext &ctx) co
 ChangeOutcome DeleteOrphanChange::apply(SaveContext &ctx)
 {
     std::string root = m_path.toStdString();
-    struct Writer
-    {
-        explicit Writer(const std::string &pioneerRoot) : writer(pioneerRoot) {}
-        infrastructure::onelibrary::OneLibraryCueWriter writer;
-    };
-    Writer &w = ctx.shared<Writer>("orphan:onelibrary", [&]() {
-        ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "consistency-delete-orphan");
-        return std::make_unique<Writer>(root);
-    });
+    // The save's one writer for this database, not a private one under its
+    // own key: a private writer never saw finishWriting(), so its rows were
+    // folded only by SQLite at ~SaveContext -- after the summary had already
+    // said "Done", with no measurement and no warning if that fold failed.
+    ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "consistency-delete-orphan");
+    auto &writer = sharedOneLibraryWriter(ctx, root);
     for (const auto &broken : m_issue.brokenGroup) {
-        w.writer.removeTrackByPath(broken.filePath);
+        writer.removeTrackByPath(broken.filePath);
         ctx.log().record("consistency: deleted orphaned OneLibrary row \"" + broken.title + "\"");
     }
     return ChangeOutcome::success();
