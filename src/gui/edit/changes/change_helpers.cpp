@@ -139,9 +139,27 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
     // features staging into the same library in one save must share the
     // connection, not open a second one against the same file.
     const std::string key = "onelibrary-writer:" + pioneerRoot;
-    return ctx.shared<infrastructure::onelibrary::OneLibraryCueWriter>(key, [&]() {
+    // The checkpoint hangs off creation, not off FormatWriteSession: this
+    // format never gets a scratch copy (hint = 0, see below), so that
+    // session's commit() returns before it could do anything, and it
+    // holds no reference to this writer. make() runs once per key per
+    // save, so the hook is registered once however many features mirror.
+    bool created = false;
+    auto &writer = ctx.shared<infrastructure::onelibrary::OneLibraryCueWriter>(key, [&]() {
+        created = true;
         return std::make_unique<infrastructure::onelibrary::OneLibraryCueWriter>(pioneerRoot, realStickRoot);
     });
+    if (created) {
+        // Only on a save that worked. After a failure the rollback puts
+        // the database and its sidecars back as they were, and folding a
+        // log into a file that is about to be replaced helps nobody.
+        ctx.onFinish([&writer](bool ok) {
+            if (ok) {
+                writer.finishWriting();
+            }
+        });
+    }
+    return writer;
 }
 
 infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveContext &ctx,

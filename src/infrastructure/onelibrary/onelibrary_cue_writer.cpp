@@ -681,4 +681,38 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
     refreshStalenessBaseline();
 }
 
+void OneLibraryCueWriter::finishWriting()
+{
+    // Never opened: nothing was mirrored in this save, so there is no log
+    // of ours to fold and no sidecar of ours to remove.
+    if (!m_writeDb) {
+        return;
+    }
+    // TRUNCATE rather than PASSIVE: PASSIVE gives up silently when a
+    // reader is in the way, which would leave exactly the stranded frames
+    // this exists to prevent. The verify connection is this writer's own
+    // and is closed first so it cannot be that reader.
+    m_verifyDb.reset();
+    m_writeDb->exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    // The -shm indexes the log and cannot be removed while any handle is
+    // open, so the connections go before the files do.
+    m_writeDb.reset();
+
+    const fs::path wal = fs::path(m_dbPath + "-wal");
+    const fs::path shm = fs::path(m_dbPath + "-shm");
+    std::error_code ec;
+    const std::uintmax_t remaining = fs::exists(wal, ec) ? fs::file_size(wal, ec) : 0;
+    if (ec) {
+        return;  // cannot read it: say nothing rather than guess
+    }
+    if (remaining > 0) {
+        throw std::runtime_error("Device Library Plus kept " + std::to_string(remaining)
+                                 + " bytes in its write-ahead log after the save; those rows are not in "
+                                   "exportLibrary.db and a player reading it would not see them");
+    }
+    fs::remove(wal, ec);
+    fs::remove(shm, ec);
+    refreshStalenessBaseline();
+}
+
 }  // namespace seabass::infrastructure::onelibrary

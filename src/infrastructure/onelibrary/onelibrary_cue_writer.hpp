@@ -162,6 +162,22 @@ public:
     void propagateMissingFieldsForPath(const std::string &donorFilePath, const std::string &targetFilePath,
                                         bool copyBpm, bool copyKey, bool copyArtwork);
 
+    // Folds the write-ahead log back into exportLibrary.db and closes the
+    // connections, so the library a save leaves behind is one file.
+    //
+    // exportLibrary.db runs in WAL mode, and until this existed nothing
+    // here ever checkpointed: the rows reached the database only because
+    // SQLite folds the log when the last connection closes. That is
+    // SQLite's guarantee, not ours, and it is one a future writer that
+    // holds a connection open past the save would quietly withdraw --
+    // leaving committed cues in a sidecar that every reader of the
+    // database alone cannot see, with no error anywhere.
+    //
+    // Throws if frames remain after the checkpoint: rows stranded in a
+    // log are exactly what the save must not report as written.
+    // A no-op when this writer never opened anything.
+    void finishWriting();
+
 private:
     // The two connections this writer works through, opened on first use
     // and then kept.
