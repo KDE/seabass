@@ -319,6 +319,24 @@ public slots:
         // without this a plant Library Health did not see still read PASS.
         engine->rootContext()->setContextProperty(QStringLiteral("liveRigRequireRepairable"),
                                                   qEnvironmentVariableIsSet("SEABASS_RIG_REQUIRE_REPAIRABLE"));
+        // tools/rig-shakedown.sh, W8: the delete-orphaned-files check
+        // removes audio files for good and leaves the stick changed, so it
+        // only runs where the runner restores the stick afterwards.
+        engine->rootContext()->setContextProperty(QStringLiteral("liveRigDeleteOrphans"),
+                                                  qEnvironmentVariableIsSet("SEABASS_RIG_DELETE_ORPHANS"));
+        // tests/qml-live/tst_LivePages.qml, R5: the folder whose entries
+        // link to the reference backups, so Manage Backups can be pointed
+        // at them without naming a path in the test.
+        const char *referenceDir = std::getenv("SEABASS_RIG_REFERENCE_DIR");
+        engine->rootContext()->setContextProperty(QStringLiteral("liveRigReferenceDir"),
+                                                  referenceDir != nullptr ? QString::fromLocal8Bit(referenceDir)
+                                                                          : QString());
+        // tests/qml-live/tst_LiveFullStick.qml, F4: the runner has filled
+        // the stick to within a few MB of full and will delete the filler
+        // afterwards. Without this the check skips, because a save that
+        // fits proves nothing about a stick that is out of room.
+        engine->rootContext()->setContextProperty(QStringLiteral("liveRigFullStick"),
+                                                  qEnvironmentVariableIsSet("SEABASS_RIG_FULL_STICK"));
         // A second (scratch) stick, for the flows that read one stick and
         // write another -- metadata backed up from it, restored onto
         // liveStickRoot. Empty: those tests skip themselves.

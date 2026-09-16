@@ -45,3 +45,38 @@ function summaryLine(summary) {
     return summary.written + " of " + summary.total + " " + summary.unit + " " + (summary.verb || "written")
         + (summary.cancelled ? " (cancelled)" : "") + (summary.error ? " error: " + summary.error : "");
 }
+
+// Whether a file is still on the stick, for a check that deletes for good
+// (tst_LiveEditMode's W8). XMLHttpRequest is the only file probe QML has
+// without a helper type, and a HEAD on a file:// URL answers it: status 0
+// with no response for a path that is not there, 200 or 0-with-response
+// for one that is.
+// The item with this objectName anywhere under root -- the dialogs the
+// pages own are reached this way (tst_LiveQuit's F5).
+function findByObjectName(root, name) {
+    if (!root) return null;
+    if (root.objectName === name) return root;
+    var kids = [];
+    if (root.contentItem) kids.push(root.contentItem);
+    if (root.footer) kids.push(root.footer);
+    var children = root.children ? root.children : [];
+    for (var i = 0; i < children.length; ++i) kids.push(children[i]);
+    var resources = root.resources ? root.resources : [];
+    for (var r = 0; r < resources.length; ++r) kids.push(resources[r]);
+    for (var k = 0; k < kids.length; ++k) {
+        var found = findByObjectName(kids[k], name);
+        if (found) return found;
+    }
+    return null;
+}
+
+function fileExists(absolutePath) {
+    var request = new XMLHttpRequest();
+    try {
+        request.open("GET", "file://" + absolutePath, false);
+        request.send(null);
+    } catch (e) {
+        return false;
+    }
+    return request.status === 200 || (request.status === 0 && request.responseText.length > 0);
+}

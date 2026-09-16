@@ -472,6 +472,87 @@ TestCase {
         }
     }
 
+    // ---- 13. Delete Orphaned Files: cancel part-way, then finish ----
+    // Rig check W8. test_07 only ever cancels, and skips whenever the
+    // stick lists nothing -- which, since undo learnt to take a Clean
+    // Up's files back off the list, is always. So this plants the state
+    // itself: one Clean Up group saved and NOT undone, which is what puts
+    // real files on the list. The runner restores the stick from its
+    // reference afterwards, because this check deletes audio for real.
+    function test_13_pendingDeletionsCancelThenComplete() {
+        if (typeof liveRigDeleteOrphans === "undefined" || !liveRigDeleteOrphans) {
+            skip("SEABASS_RIG_DELETE_ORPHANS is not set: this one deletes files for good");
+        }
+        var cleanup = createTemporaryObject(cleanupComponent, testCase);
+        cleanup.scan("rekordbox", rekordboxPath);
+        waitIdle(cleanup, 300000);
+        var pendingBefore = cleanup.pendingDeletions.rowCount();
+        if (cleanup.plans.rowCount() === 0) {
+            skip("no duplicate groups on this stick to plant a deletion with");
+        }
+
+        // Plant: clean up two groups, so there is more than one file to
+        // leave behind when the delete is cancelled.
+        cleanup.setAllIncluded(false);
+        cleanup.setIncluded(0, true);
+        cleanup.setIncluded(1, true);
+        var planted = cleanup.includedCount;
+        verify(planted >= 1, "at least one group staged");
+        cleanup.apply();
+        var s = session();
+        tryVerify(function() { return s.pendingCount === planted; }, 10000);
+        var saved = saveAndWait(false);
+        compare(saved.error, "");
+        waitIdle(cleanup, 300000);
+        cleanup.refreshPendingDeletions();
+        tryVerify(function() { return cleanup.pendingDeletions.rowCount() > pendingBefore; }, 10000);
+        var listed = cleanup.pendingDeletions.rowCount();
+        console.log("  planted " + planted + " group(s); files waiting for deletion: " + pendingBefore + " -> " + listed);
+
+        // Cancel: tick everything, start, stop it immediately.
+        cleanup.setAllPendingDeletionIncluded(true);
+        var cancelSpy = createTemporaryObject(spyComponent, testCase,
+                                              {target: cleanup, signalName: "pendingDeletionsWriteFinished"});
+        cleanup.deleteSelectedPendingFiles();
+        compare(cleanup.writing, true);
+        cleanup.cancelWrite();
+        tryVerify(function() { return cancelSpy.count > 0; }, 300000);
+        var cancelled = cancelSpy.signalArguments[0][0];
+        console.log("  cancelled delete: " + Live.summaryLine(cancelled));
+        compare(cancelled.error, "");
+        waitIdle(cleanup, 300000);
+        cleanup.refreshPendingDeletions();
+        var leftListed = cleanup.pendingDeletions.rowCount();
+        console.log("  still listed after the cancel: " + leftListed + " of " + listed);
+        verify(leftListed === listed - cancelled.written,
+               "what the cancel did not delete is still listed");
+        verify(leftListed > 0 || cancelled.written === listed,
+               "a cancel that deleted nothing must leave everything listed");
+
+        // Finish: the rest go, and exactly the rest.
+        var pathsBefore = createTemporaryObject(pendingRowsComponent, testCase, {model: cleanup.pendingDeletions});
+        var doomed = [];
+        for (var i = 0; i < pathsBefore.count; ++i) {
+            doomed.push(pathsBefore.objectAt(i).path);
+        }
+        cleanup.setAllPendingDeletionIncluded(true);
+        var finishSpy = createTemporaryObject(spyComponent, testCase,
+                                              {target: cleanup, signalName: "pendingDeletionsWriteFinished"});
+        cleanup.deleteSelectedPendingFiles();
+        tryVerify(function() { return finishSpy.count > 0; }, 600000);
+        var finished = finishSpy.signalArguments[0][0];
+        console.log("  completed delete: " + Live.summaryLine(finished));
+        compare(finished.error, "");
+        compare(finished.written, doomed.length);
+        waitIdle(cleanup, 300000);
+        cleanup.refreshPendingDeletions();
+        compare(cleanup.pendingDeletions.rowCount(), pendingBefore);
+        for (var d = 0; d < doomed.length; ++d) {
+            verify(!Live.fileExists(doomed[d]), "deleted for real: " + doomed[d]);
+        }
+        EditSessionRegistry.closeSession(testCase.libraryId);
+    }
+
     // ---- 10. Library Health: repair, save, rescan, undo ----
     // Needs something to repair. tools/rig-edits.sh plants a Repairable
     // issue first (tools/rig_plant_repairable moves one copy of a cue-free

@@ -42,6 +42,8 @@ export RIG_REFERENCE_A="$refA" RIG_REFERENCE_B="$refB"
 export QT_QPA_PLATFORM=offscreen
 
 mkdir -p "$out" "$out/shots"
+# For S3: what the everyday profile looks like before the run.
+stat -c '%n %s %Y' "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata" 2>/dev/null > "$out/real-profile-before.txt"
 summary="$out/summary.tsv"
 : > "$summary"
 a="$(basename "$A")"
@@ -67,7 +69,39 @@ catalogs() {  # stick -> sha256sum lines of its catalog files
 }
 
 unchanged_catalogs() {  # stick -- against the baseline taken after the restores
-    grep -F "$1/" "$out/catalog-baseline.txt" | sha256sum -c
+    # A write-ahead log is part of the baseline but not part of the
+    # library: SQLite checkpoints it into the database and removes it,
+    # which a save followed by an undo really does. A missing -wal whose
+    # database still matches is therefore not a change to the catalogs,
+    # and failing on it would have the rig crying wolf on every round.
+    # Anything else -- a changed byte, a missing database -- still fails.
+    local checked=0
+    local bad=0
+    while read -r sum file; do
+        if [ ! -e "$file" ]; then
+            case "$file" in
+                *-wal|*-journal|*-shm)
+                    local main="${file%-*}"
+                    if grep -qF " $main" <(grep -F "$1/" "$out/catalog-baseline.txt") && [ -f "$main" ]; then
+                        echo "$file: gone (checkpointed into $(basename "$main"))"
+                        continue
+                    fi
+                    ;;
+            esac
+            echo "$file: MISSING"
+            bad=1
+            continue
+        fi
+        checked=$((checked + 1))
+        if [ "$(sha256sum "$file" | cut -d" " -f1)" = "$sum" ]; then
+            echo "$file: OK"
+        else
+            echo "$file: DIFFERS"
+            bad=1
+        fi
+    done < <(grep -F "$1/" "$out/catalog-baseline.txt")
+    echo "$checked catalog file(s) compared"
+    return $bad
 }
 
 references_unchanged() {
@@ -85,6 +119,97 @@ references_unchanged() {
 
 suite() {
     ctest --test-dir "$build" -j6 --timeout 900 --output-on-failure
+}
+
+# S2: the folder the app is pointed at holds links to the references, and
+# the originals themselves cannot be written.
+reference_links() {
+    local ok=0
+    for ref in "$refA" "$refB"; do
+        local link="$(dirname "$refA")/$(basename "$ref")"
+        [ -L "$link" ] || { echo "$link is not a link"; ok=1; }
+        local target; target="$(readlink -f "$link" 2>/dev/null)"
+        [ -f "$target" ] || { echo "$link points nowhere"; ok=1; }
+        [ ! -w "$target" ] || { echo "$target is writable"; ok=1; }
+        echo "$link -> $target ($(stat -Lc %A "$target"), $(stat -Lc %s "$target") bytes)"
+    done
+    return $ok
+}
+
+# S3: settings, metadata store and edit locks come from the throwaway
+# profile. Proven by what the run wrote there, and by the everyday
+# profile being untouched: the runner records it before and after.
+sandbox_profile() {
+    local ok=0
+    echo "SEABASS_HOME=$SEABASS_HOME"
+    echo "XDG_CONFIG_HOME=$XDG_CONFIG_HOME"
+    echo "XDG_DATA_HOME=$XDG_DATA_HOME"
+    case "$SEABASS_HOME" in "$HOME/Seabass/e2e"*) ;; *) echo "SEABASS_HOME is not the sandbox"; ok=1;; esac
+    case "$XDG_CONFIG_HOME" in "$HOME/Seabass/e2e"*) ;; *) echo "XDG_CONFIG_HOME is not the sandbox"; ok=1;; esac
+    [ -f "$XDG_CONFIG_HOME/seabass/seabass.conf" ] || { echo "no settings in the sandbox"; ok=1; }
+    [ -d "$SEABASS_HOME/metadata" ] || { echo "no metadata store in the sandbox"; ok=1; }
+    stat -c '%n %s %Y' "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata" 2>/dev/null > "$out/real-profile-after.txt"
+    if [ -s "$out/real-profile-before.txt" ]; then
+        diff "$out/real-profile-before.txt" "$out/real-profile-after.txt" \
+            && echo "the everyday profile is exactly as it was" \
+            || { echo "THE EVERYDAY PROFILE CHANGED"; ok=1; }
+    fi
+    return $ok
+}
+
+# W8: deletes audio for good, so the stick is restored right after.
+delete_orphans() {
+    SEABASS_RIG_DELETE_ORPHANS=1 live_test LiveEditMode::test_13_pendingDeletionsCancelThenComplete
+}
+
+# One test function per process, by its FULL name: a bare TestCase name
+# makes the QtQuickTest runner exit 0 without running a thing, which is a
+# check that silently passes -- the worst kind this rig can have.
+live_test() {
+    local failed=0
+    for name in "$@"; do
+        echo "=== $name"
+        "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$name" || failed=1
+    done
+    return $failed
+}
+
+# R2 and R5: read-only pages. R5 is pointed at the folder of links.
+live_pages() {
+    SEABASS_RIG_REFERENCE_DIR="$(dirname "$refA")" \
+        live_test LivePages::test_01_statisticsLoads LivePages::test_02_performanceLoads \
+                  LivePages::test_03_manageBackupsListsTheReferences \
+        && unchanged_catalogs "$B"
+}
+
+# F5: leaving with unsaved changes, both ways out.
+quit_with_changes() {
+    live_test LiveQuit::test_01_discardLeavesTheStickAlone LiveQuit::test_02_saveThenLeaveWritesEverything \
+        && unchanged_catalogs "$B"
+}
+
+# F4: fill the stick to within a few MB, try to save, then put the space
+# back whatever happened -- the filler is removed even on a failure.
+full_stick() {
+    local filler="$B/RIG-FILLER.bin"
+    local free_kb; free_kb=$(/bin/df -kP "$B" | awk 'NR==2 {print $4}')
+    local leave_kb=6144
+    local size_kb=$((free_kb - leave_kb))
+    local rc=0
+    if [ "$size_kb" -lt 1024 ]; then
+        echo "stick already has less than $leave_kb KB free; nothing to fill"
+        return 1
+    fi
+    echo "filling $B: $free_kb KB free -> leaving about $leave_kb KB"
+    dd if=/dev/zero of="$filler" bs=1M count=$((size_kb / 1024)) status=none || true
+    sync
+    /bin/df -hP "$B" | tail -1
+    SEABASS_RIG_FULL_STICK=1 live_test LiveFullStick::test_saveOnAFullStickFailsCleanly || rc=1
+    rm -f "$filler"
+    sync
+    echo "filler removed; $(/bin/df -hP "$B" | awk 'NR==2 {print $4}') free again"
+    unchanged_catalogs "$B" || rc=1
+    return $rc
 }
 
 cli_sync_dry_run() {
@@ -136,6 +261,8 @@ resume_after_keep() {
 
 # ---- setup and suite -------------------------------------------------
 check S1-suite suite
+check S2-reference-links reference_links
+check S3-sandboxed-profile sandbox_profile
 check S4-references-unchanged references_unchanged
 
 # ---- restores onto the test sticks -----------------------------------
@@ -146,6 +273,7 @@ check B3-restore-B "$build/rig_restore" "$refB" "$B" --execute || { echo "stick 
 # ---- reads -----------------------------------------------------------
 check R1-R3-read-A "$build/rig_read" "$A" "$refA"
 check R1-R3-read-B "$build/rig_read" "$B" "$refB"
+check R2-R5-pages live_pages
 check R4-sync-dry-run cli_sync_dry_run
 check R6-catalogs-after-reads bash -c "grep -F '$A/' '$out/catalog-baseline.txt' | sha256sum -c && grep -F '$B/' '$out/catalog-baseline.txt' | sha256sum -c"
 
@@ -153,6 +281,8 @@ check R6-catalogs-after-reads bash -c "grep -F '$A/' '$out/catalog-baseline.txt'
 check W1-W3-W4-F1-F2-F3-live live_edit_mode
 check W2-W5-W6-edits "$root/tools/rig-edits.sh" "$B" "$out/catalog-baseline.txt"
 check W7-metadata-between-sticks metadata_between_sticks
+check F5-quit-with-unsaved-changes quit_with_changes
+check W9-saves-left-backups "$build/rig_save_backups" "$B" --expect-at-least 3
 
 # ---- full stick backups ----------------------------------------------
 mkdir -p "$out/backups-fb"
@@ -167,6 +297,11 @@ check FB6-compact-B "$build/rig_compact" "$out/backups-fb/$b.zip"
 check FB8-restore-A-backup-onto-B "$build/rig_restore" "$out/backups-fb/$a.zip" "$B" --execute
 # The round is done with A's archive by now: deleting it is the check.
 check FB9-manage-backups-delete "$build/rig_delete_backup" "$out/backups-fb" "$out/backups-fb/$a.zip"
+# These two leave the stick changed on purpose -- W8 deletes audio for
+# good, F4 fills the stick up -- so they run last, right before the
+# restores below put both sticks back at their references.
+check W8-delete-orphans delete_orphans
+check F4-stick-fills-up full_stick
 check FB-restore-B-from-reference "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not back at its reference; stopping"; exit 1; }
 check FB-restore-A-from-reference "$build/rig_restore" "$refA" "$A" --execute || { echo "stick A is not back at its reference; stopping"; exit 1; }
 

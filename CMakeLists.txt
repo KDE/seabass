@@ -2048,6 +2048,12 @@ add_executable(rig_plant_repairable tools/rig_plant_repairable.cpp)
 target_include_directories(rig_plant_repairable PRIVATE src)
 target_link_libraries(rig_plant_repairable PRIVATE seabass_core)
 
+# Release rig: every save left an automatic backup on the stick, and each
+# one is restorable.
+add_executable(rig_save_backups tools/rig_save_backups.cpp)
+target_include_directories(rig_save_backups PRIVATE src)
+target_link_libraries(rig_save_backups PRIVATE seabass_core)
+
 # Release rig: Manage Backups deletes one test archive -- refused while
 # another process is writing it, archive and journal gone afterwards.
 add_executable(rig_delete_backup tools/rig_delete_backup.cpp)
