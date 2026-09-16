@@ -124,6 +124,77 @@ interactive session to answer the UAC prompt. Verified end-to-end on a
 real machine: build -> deploy -> `ISCC.exe` -> silent install -> smoke-run
 `seabass-cli.exe` from the install dir -> silent uninstall, all clean.
 
+## Building with MSVC (alternative to MSYS2/MinGW)
+
+Seabass also builds with the MSVC toolset, using vcpkg for the non-Qt
+dependencies and a separate Qt6 install (the official Qt installer, not
+vcpkg's own Qt port) for Qt itself:
+
+```powershell
+& "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+cmake -S . -B build-msvc -G Ninja `
+    -DCMAKE_BUILD_TYPE=Debug `
+    -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake `
+    -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
+cmake --build build-msvc
+```
+
+Two MSVC-only gaps CMakeLists.txt now handles for you automatically, no
+manual step needed, but worth knowing about if a test still won't run:
+
+- **Every test process needs Qt's and sqlcipher's DLLs on `PATH`.**
+  Unlike a MinGW/MSYS2 shell (where both already sit on `PATH`), nothing
+  puts them there for an MSVC-built test process by default -- every
+  Qt-linked test crashed with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) and
+  the four `onelibrary_*` tests failed the same way for sqlcipher's DLL,
+  until this got fixed. `CMakeLists.txt`'s per-test `ENVIRONMENT` loop
+  now prepends both, derived from the already-found `Qt6::Core` target
+  and (for sqlcipher) `SEABASS_SQLCIPHER_BIN_DIR`, which defaults to
+  `C:/msys64/ucrt64/bin` -- override it with `-DSEABASS_SQLCIPHER_BIN_DIR=...`
+  if your MSYS2 install lives somewhere else.
+- **A tripped `assert()` must fail, not hang.** MSVC's CRT opens a modal
+  "Debug Assertion Failed!" dialog for a failing `assert()` by default,
+  which blocks forever under `ctest` with nobody there to click Abort --
+  confirmed directly, two genuinely-failing tests sat until `ctest`'s own
+  `--timeout` killed them instead of failing in under a second.
+  `tests/msvc_assert_no_dialog.hpp` is force-included (`/FI`) into every
+  `*_test`/`*_tests` target specifically to redirect this to stderr
+  instead, and also forces stdout unbuffered (ctest's own output capture
+  puts a redirected stdout into fully-buffered mode, which silently drops
+  anything never explicitly flushed before the process exits).
+
+### Smart App Control makes `ctest` flaky, not the code
+
+Windows 11's Smart App Control (Settings > Privacy & security > Windows
+security > App & browser control) blocks a freshly-built, unsigned test
+binary from launching at all -- `ctest` reports it as `BAD_COMMAND` with
+no output; running the same `.exe` directly shows the real message,
+*"blocked by your organization's Device Guard policy"* (SAC's own dialog
+text is generic and does not name itself). Confirmed directly via
+`Get-WinEvent -LogName Microsoft-Windows-CodeIntegrity/Operational`: the
+event is literally titled "Smart App Control Block Details".
+
+This is a per-file cloud-reputation check, not a fixed rule, so it is
+genuinely nondeterministic: a *different* handful of test binaries gets
+blocked on each run, and relinking a binary (even with no source change,
+just a fresh PE timestamp) is enough to change its hash and get a fresh
+verdict. A blocked binary is not a real failure -- run `ctest` with a
+per-test retry so a transient block does not need a human to notice and
+re-run it by hand:
+
+```
+ctest --repeat until-pass:3
+```
+
+This only adds cost to tests that actually fail (each test still runs
+once and stops there if it passes), so it is safe to use as the default
+invocation rather than something reached for after the fact.
+
+Turning Smart App Control off entirely (in the Settings page above) is
+the only way to stop it from evaluating new binaries at all, but Microsoft
+only lets it go **off**, not back on, short of reinstalling Windows -- not
+a call to make just to quiet down a local test build.
+
 ## Known gaps
 
 - Unit tests: build and run fine, but see the Debug-vs-Release
