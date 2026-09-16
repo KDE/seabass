@@ -11,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 
+#include "application/path_key.hpp"
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 
@@ -138,7 +139,12 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
     // Keyed on the database being written, not on the feature: two
     // features staging into the same library in one save must share the
     // connection, not open a second one against the same file.
-    const std::string key = "onelibrary-writer:" + pioneerRoot;
+    // normalizedPathKey, not the raw string: callers reach this by several
+    // routes (m_path, session.writeRoot(), realRoot, fc.pioneerRoot), and a
+    // trailing slash or any other spelling would open a second writer
+    // against one exportLibrary.db -- the staleness abort this exists to
+    // prevent, on somebody else's machine.
+    const std::string key = "onelibrary-writer:" + application::normalizedPathKey(pioneerRoot);
     // The checkpoint hangs off creation, not off FormatWriteSession: this
     // format never gets a scratch copy (hint = 0, see below), so that
     // session's commit() returns before it could do anything, and it
@@ -162,11 +168,12 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
         // line elsewhere could change, and this should not be the thing
         // that turns into a use-after-free when it does.
         ctx.onFinish([&ctx, key](bool ok) {
-            if (!ok) {
-                return;
-            }
             if (auto *live = ctx.sharedIfPresent<infrastructure::onelibrary::OneLibraryCueWriter>(key)) {
-                live->finishWriting();
+                // Folded on both paths: a cancelled save still reports the
+                // changes that landed before it as applied, and their rows
+                // belong in the database, not in a log. Only a clean save
+                // is strict about frames that will not fold.
+                live->finishWriting(ok);
             }
         });
     }

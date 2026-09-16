@@ -873,8 +873,8 @@ TestCase {
             planter.apply();
             var ps = session();
             tryVerify(function() { return ps.pendingCount === planter.stagedCount && ps.pendingCount > 0; }, 10000);
-            var planted = saveAndWait(false);
-            compare(planted.error, "");
+            var plantSave = saveAndWait(false);
+            compare(plantSave.error, "");
             waitIdle(planter, 300000);
             ctrl.refreshPendingDeletions();
             waitIdle(ctrl, 300000);
@@ -885,7 +885,20 @@ TestCase {
             verify(count > 0, "the planted Clean Up save listed a file for deletion");
             planted = true;
         }
-        ctrl.setAllPendingDeletionIncluded(true);
+        // Only this check's own row, never setAllPendingDeletionIncluded:
+        // the cancel below is a race against the worker, and a lost race
+        // deletes the audio for good. undoLastSave() puts catalog rows
+        // back, not media -- and unchanged_catalogs() only checksums the
+        // catalogs, so the rig would call the stick clean while a file it
+        // lists is gone.
+        ctrl.setAllPendingDeletionIncluded(false);
+        var rows = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
+        var ticked = 0;
+        for (var r = 0; r < rows.count && ticked < 1; ++r) {
+            rows.objectAt(r).include(true);
+            ticked = 1;
+        }
+        verify(ticked === 1, "one pending row ticked to cancel the delete of");
         var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "pendingDeletionsWriteFinished"});
         ctrl.deleteSelectedPendingFiles();
         compare(ctrl.writing, true);

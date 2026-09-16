@@ -105,7 +105,7 @@ int main()
 
         MergeCuesChange change("engine", root, candidate);
         assert(change.apply(ctx).ok);
-        assert(!ctx.runFinishHooks(true));
+        assert(!ctx.runFinishHooks(true).error);
     }
 
     seabass::infrastructure::engine::LibdjinteropEngineReader after(engineRoot.string());

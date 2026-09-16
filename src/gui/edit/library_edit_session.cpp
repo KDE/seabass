@@ -358,6 +358,10 @@ void LibraryEditSession::onSaveFinished()
         {"verb", m_savingVerb},
         {"cancelled", result.cancelled},
         {"error", result.error},
+        // Distinct from error on purpose: the save worked and the changes
+        // stand; something after them did not, and the user should hear it
+        // without being told to save again.
+        {"warning", result.warning},
         {"failedId", result.failedId},
     };
 

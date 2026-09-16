@@ -85,7 +85,7 @@ int main()
         session.noteItemApplied();
         assert(readFile(db).size() == 1024 * 1024);  // untouched so far
         auto hookError = ctx.runFinishHooks(true);
-        assert(!hookError);
+        assert(!hookError.error);
         assert(readFile(db) == "new-content");
         auto backups = ctx.takeBackups();
         assert(backups.size() == 1);
@@ -107,7 +107,7 @@ int main()
             });
             writeFile(fs::path(session.writeRoot()) / "Database2" / "m.db", "one-item");
             session.noteItemApplied();
-            assert(!ctx.runFinishHooks(false));
+            assert(!ctx.runFinishHooks(false).error);
             assert(readFile(db) == "one-item");
         }
         {
@@ -117,7 +117,7 @@ int main()
             });
             std::string scratchRoot = session.writeRoot();
             writeFile(fs::path(scratchRoot) / "Database2" / "m.db", "never-applied");
-            assert(!ctx.runFinishHooks(false));
+            assert(!ctx.runFinishHooks(false).error);
             assert(readFile(db) == "one-item");
             // The scratch directory is gone once the context is.
             (void)scratchRoot;
@@ -133,7 +133,7 @@ int main()
         FormatWriteSession session("engine", engine.string(), 1, "test", ctx);
         assert(!session.usesScratch());
         assert(session.writeRoot() == session.realRoot());
-        assert(!ctx.runFinishHooks(true));
+        assert(!ctx.runFinishHooks(true).error);
         std::cout << "case 4 (direct writes for a small batch) OK\n";
     }
 

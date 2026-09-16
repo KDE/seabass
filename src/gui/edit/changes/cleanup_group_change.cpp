@@ -102,9 +102,15 @@ CleanupFormatContext makeContext(const QString &format, const QString &path, Sav
         // to fold at close. pioneerRoot, never effectivePath: OneLibrary is
         // pinned to hint = 0 and never gets a scratch copy, so the shared
         // writer is always the one against the real stick.
-        adapter->useSharedWriter(sharedOneLibraryWriter(saveCtx, pioneerRoot, realStickRoot));
+        auto &shared = sharedOneLibraryWriter(saveCtx, pioneerRoot, realStickRoot);
+        adapter->useSharedWriter(shared);
         ctx.cueWriter = std::move(adapter);
-        ctx.cleanupWriter = std::make_unique<OneLibraryCleanupWriterAdapter>(effectivePath, realStickRoot);
+        auto cleanupAdapter = std::make_unique<OneLibraryCleanupWriterAdapter>(effectivePath, realStickRoot);
+        // Through the same writer: a private one here closes the only
+        // connection when it goes, folding the log and moving the file out
+        // from under the shared writer's staleness baseline.
+        cleanupAdapter->useSharedWriter(shared);
+        ctx.cleanupWriter = std::move(cleanupAdapter);
     }
     return ctx;
 }

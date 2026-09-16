@@ -176,7 +176,17 @@ public:
     void onFinish(std::function<void(bool ok)> hook);
     // Runs every hook once, creation order; a throwing hook does not stop
     // the rest. Returns the first hook error, if any.
-    std::optional<QString> runFinishHooks(bool ok);
+    // .first: a hook failed and what it was committing did not land, so
+    // the caller must report every change as still pending. .second: the
+    // changes DID land and only a tidy-up failed (a write-ahead log that
+    // could not be folded) -- worth telling the user, never worth making
+    // them save again, which would apply the same removals twice.
+    struct FinishOutcome
+    {
+        std::optional<QString> error;
+        std::optional<QString> warning;
+    };
+    FinishOutcome runFinishHooks(bool ok);
 
     std::vector<UndoableBackup> takeBackups();
 

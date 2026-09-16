@@ -91,12 +91,19 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     ctx.status(QStringLiteral("Finishing"));
     // ok means "the whole batch went through"; a cancel or a failure hands
     // the hooks false so a scratch copy commits only what completed.
-    if (auto hookError = ctx.runFinishHooks(result.error.isEmpty() && !result.cancelled)) {
+    const auto finish = ctx.runFinishHooks(result.error.isEmpty() && !result.cancelled);
+    if (finish.warning && result.error.isEmpty()) {
+        // Everything landed; a tidy-up did not. Said out loud, but the
+        // changes stay applied -- clearing them would have the user save
+        // the same removals twice.
+        result.warning = *finish.warning;
+    }
+    if (finish.error) {
         // Whatever the hooks were committing did not land: report every
         // change as still pending rather than guess which did.
         result.appliedIds.clear();
         if (result.error.isEmpty()) {
-            result.error = *hookError;
+            result.error = *finish.error;
         }
     }
     // Only after the whole batch went through, and only if the stick is

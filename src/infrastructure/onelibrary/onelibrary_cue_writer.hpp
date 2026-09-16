@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <stdexcept>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,6 +41,15 @@ namespace seabass::infrastructure::onelibrary
 // operation, see cleanup_controller.cpp's call site. Keeping every
 // backup for one user-facing operation under one BackupStore/manifest is
 // what makes Undo actually cover everything touched.
+// Thrown when a save's rows are committed but the write-ahead log could
+// not be folded. The distinction matters: the changes DID land, so a save
+// loop must not report them as still pending and invite a second apply.
+class OneLibraryLogNotFolded : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class OneLibraryCueWriter
 {
 public:
@@ -176,7 +186,9 @@ public:
     // Throws if frames remain after the checkpoint: rows stranded in a
     // log are exactly what the save must not report as written.
     // A no-op when this writer never opened anything.
-    void finishWriting();
+    // strict: throw if frames remain (a clean save). A cancelled save
+    // folds what landed but never fails over the fold.
+    void finishWriting(bool strict = true);
 
 private:
     // The two connections this writer works through, opened on first use
@@ -203,6 +215,9 @@ private:
     SqlCipherDb &writeConnection();
     SqlCipherDb &verifyConnection();
 
+    // Set once finishWriting() has folded and closed: the baseline this
+    // writer holds no longer describes the file.
+    bool m_finished = false;
     std::unique_ptr<SqlCipherLibrary> m_lib;
     std::unique_ptr<SqlCipherDb> m_writeDb;
     std::unique_ptr<SqlCipherDb> m_verifyDb;

@@ -1,10 +1,11 @@
-#include <chrono>
-#include <thread>
 // SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+
+#include <chrono>
+#include <thread>
 
 #include <zlib.h>
 
@@ -683,8 +684,9 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
     refreshStalenessBaseline();
 }
 
-void OneLibraryCueWriter::finishWriting()
+void OneLibraryCueWriter::finishWriting(bool strict)
 {
+    m_finished = true;
     // Never opened: nothing was mirrored in this save, so there is no log
     // of ours to fold and no sidecar of ours to remove.
     if (!m_writeDb) {
@@ -704,8 +706,17 @@ void OneLibraryCueWriter::finishWriting()
     m_writeDb->exec("PRAGMA busy_timeout = 5000;");
     bool folded = false;
     for (int attempt = 0; attempt < 3 && !folded; ++attempt) {
-        SqlCipherStatement checkpoint(*m_writeDb, "PRAGMA wal_checkpoint(TRUNCATE);");
-        folded = checkpoint.step() ? checkpoint.columnInt64(0) == 0 : false;
+        try {
+            // Inside the try on purpose: the pragma usually answers with a
+            // row, but sqlite3_step can return SQLITE_BUSY outright when
+            // another connection holds the database -- which throws, and
+            // uncaught that escaped on the first attempt, so the retries
+            // this loop exists for never happened.
+            SqlCipherStatement checkpoint(*m_writeDb, "PRAGMA wal_checkpoint(TRUNCATE);");
+            folded = checkpoint.step() && checkpoint.columnInt64(0) == 0;
+        } catch (const std::exception &) {
+            folded = false;
+        }
         if (!folded && attempt + 1 < 3) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
@@ -731,8 +742,13 @@ void OneLibraryCueWriter::finishWriting()
         throw std::runtime_error("could not read the size of Device Library Plus's write-ahead log, so the save "
                                  "cannot say its rows are in the library");
     }
+    if (remaining > 0 && !strict) {
+        // A cancelled save folds what landed but never fails over it.
+        fs::remove(shm, ec);
+        return;
+    }
     if (remaining > 0) {
-        throw std::runtime_error("Device Library Plus kept " + std::to_string(remaining)
+        throw OneLibraryLogNotFolded("Device Library Plus kept " + std::to_string(remaining)
                                  + " bytes in its write-ahead log after the save; those rows are not in "
                                    "exportLibrary.db and a player reading it would not see them");
     }

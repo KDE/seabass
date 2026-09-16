@@ -134,8 +134,22 @@ public:
     // under two content rows, and resolving an id back through its path
     // removed whichever of them came first -- then failed the save when
     // the file was still listed.
+    // The save's one writer for this database, same contract as
+    // OneLibraryCueWriterAdapter::useSharedWriter(). Without it this
+    // adapter built a writer per call and destroyed it again, which
+    // closed the only connection: SQLite then folded the log into
+    // exportLibrary.db and removed the sidecars, so the file no longer
+    // matched the baseline the shared writer took in its constructor and
+    // the next group's cue write threw "changed since this writer was
+    // opened". One writer per database means this one too.
+    void useSharedWriter(infrastructure::onelibrary::OneLibraryCueWriter &shared) { m_shared = &shared; }
+
     void removeTrackReplacingWith(const std::string &doomedTrackId, const std::string &survivorTrackId) override
     {
+        if (m_shared) {
+            m_shared->removeTrackByIdReplacingWith(std::stoll(doomedTrackId), std::stoll(survivorTrackId));
+            return;
+        }
         infrastructure::onelibrary::OneLibraryCueWriter writer(m_pioneerRoot, m_realStickRoot);
         writer.removeTrackByIdReplacingWith(std::stoll(doomedTrackId), std::stoll(survivorTrackId));
     }
@@ -143,6 +157,8 @@ public:
 private:
     std::string m_pioneerRoot;
     std::optional<std::string> m_realStickRoot;
+    // Owned by the save (SaveContext::shared) when one is set.
+    infrastructure::onelibrary::OneLibraryCueWriter *m_shared = nullptr;
 };
 
 }  // namespace seabass::gui

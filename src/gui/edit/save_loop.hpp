@@ -23,6 +23,11 @@ struct SaveLoopResult
     QStringList appliedIds;  // in order; a change here is fully on the stick
     QString failedId;        // the change that failed, if any (it and everything after it stay pending)
     QString error;           // empty unless a change or a finish hook failed
+    // Everything landed, but a tidy-up after it did not -- a write-ahead
+    // log that would not fold. Not an error: the changes ARE applied, and
+    // reporting them as pending would have the user save again and apply
+    // the same removals twice.
+    QString warning;
     bool cancelled = false;  // stopped between two changes on request
     std::vector<UndoableBackup> backups;
     // Bytes freed by releasing old automatic backups after this save,

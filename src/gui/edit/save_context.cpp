@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/edit/save_context.hpp"
+
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include <algorithm>
 #include <fstream>
@@ -433,23 +435,32 @@ void SaveContext::onFinish(std::function<void(bool)> hook)
     m_finishHooks.push_back(std::move(hook));
 }
 
-std::optional<QString> SaveContext::runFinishHooks(bool ok)
+SaveContext::FinishOutcome SaveContext::runFinishHooks(bool ok)
 {
+    FinishOutcome outcome;
     if (m_hooksRan) {
-        return std::nullopt;
+        return outcome;
     }
     m_hooksRan = true;
-    std::optional<QString> firstError;
     for (auto &hook : m_finishHooks) {
         try {
             hook(ok);
+        } catch (const seabass::infrastructure::onelibrary::OneLibraryLogNotFolded &e) {
+            // The rows are committed; only the fold is missing, and the
+            // connections are closed so SQLite folds it at last close
+            // anyway. Saying "nothing was applied" here would have the
+            // user save again and apply every removal a second time.
+            log().record(std::string("save: ") + e.what());
+            if (!outcome.warning) {
+                outcome.warning = QString::fromStdString(e.what());
+            }
         } catch (const std::exception &e) {
-            if (!firstError) {
-                firstError = QString::fromStdString(e.what());
+            if (!outcome.error) {
+                outcome.error = QString::fromStdString(e.what());
             }
         }
     }
-    return firstError;
+    return outcome;
 }
 
 std::vector<UndoableBackup> SaveContext::takeBackups()

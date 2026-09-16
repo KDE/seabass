@@ -169,7 +169,7 @@ void applyChange(const Fixture &fixture, const MetadataRestoreProposal &proposal
     RestoreMetadataChange change("onelibrary", root, "1", proposal);
     const ChangeOutcome outcome = change.apply(ctx);
     assert(outcome.ok);
-    assert(!ctx.runFinishHooks(true));
+    assert(!ctx.runFinishHooks(true).error);
 }
 
 }  // namespace
@@ -343,7 +343,7 @@ int main()
                                                  QString::fromStdString(proposal.stickTrack.sourceId), proposal);
                     assert(change.apply(ctx).ok);
                 }
-                assert(!ctx.runFinishHooks(true));
+                assert(!ctx.runFinishHooks(true).error);
             }
             return seabass::infrastructure::WorkCounters::instance().snapshot().encryptedDatabaseOpens;
         };
@@ -426,7 +426,7 @@ int main()
 
             RestoreMetadataChange change("rekordbox", root, QString::fromStdString(targetId), proposal);
             assert(change.apply(ctx).ok);
-            assert(!ctx.runFinishHooks(true));
+            assert(!ctx.runFinishHooks(true).error);
         }
 
         // Off the stick's own file, through a reader that knows nothing
@@ -482,7 +482,7 @@ int main()
             assert(change.apply(ctx).ok);
             // ok == false: the save was cancelled or failed after this
             // track went through.
-            assert(!ctx.runFinishHooks(false));
+            assert(!ctx.runFinishHooks(false).error);
         }
         assert(cueCount(fixture.pioneerRoot.string()) == 1);
         std::cout << "case 8: OneLibrary declines the scratch copy, and a cancel keeps the write\n";
@@ -541,7 +541,7 @@ int main()
             assert(change.apply(ctx).ok);
             // ok == false: a later track in the same batch failed, or the
             // DJ cancelled. This one already committed its rating.
-            assert(!ctx.runFinishHooks(false));
+            assert(!ctx.runFinishHooks(false).error);
         }
 
         seabass::infrastructure::rekordbox::KaitaiRekordboxReader after(pioneer.string());
