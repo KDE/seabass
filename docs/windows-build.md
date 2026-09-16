@@ -178,17 +178,25 @@ This is a per-file cloud-reputation check, not a fixed rule, so it is
 genuinely nondeterministic: a *different* handful of test binaries gets
 blocked on each run, and relinking a binary (even with no source change,
 just a fresh PE timestamp) is enough to change its hash and get a fresh
-verdict. A blocked binary is not a real failure -- run `ctest` with a
-per-test retry so a transient block does not need a human to notice and
-re-run it by hand:
+verdict.
+
+A blocked binary is not a real failure, but neither `ctest --repeat
+until-pass:<n>` nor `ctest --rerun-failed` actually retries it -- tried
+both, confirmed directly: `--repeat` only re-runs a test that ran and
+returned a real failing exit code, and a `BAD_COMMAND` (the process
+never started at all) doesn't count as that; `--rerun-failed` re-ran
+the *entire* suite from scratch rather than the tests that actually
+failed last time, for reasons not yet understood. What does work,
+because it's exactly what cleared every block found so far: re-run
+just the named tests that came back `BAD_COMMAND`:
 
 ```
-ctest --repeat until-pass:3
+ctest -R "^(the_blocked_test|another_one)$"
 ```
 
-This only adds cost to tests that actually fail (each test still runs
-once and stops there if it passes), so it is safe to use as the default
-invocation rather than something reached for after the fact.
+Usually one re-run is enough; if a test is still blocked, running it
+again a little later (SAC's own verdict can also just take a moment to
+catch up) or rebuilding it (changing its hash) both worked in practice.
 
 Turning Smart App Control off entirely (in the Settings page above) is
 the only way to stop it from evaluating new binaries at all, but Microsoft
