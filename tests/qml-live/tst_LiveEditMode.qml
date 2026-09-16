@@ -567,6 +567,10 @@ TestCase {
         var cancelSpy = createTemporaryObject(spyComponent, testCase,
                                               {target: cleanup, signalName: "pendingDeletionsWriteFinished"});
         cleanup.deleteSelectedPendingFiles();
+        // Proof it started: deleteSelectedPendingFiles() also returns in
+        // silence when the edit lock is refused, and cancelWrite() is then
+        // a no-op -- a clear failure here beats a five-minute timeout.
+        verify(cleanup.writing === true || cancelSpy.count > 0, "the delete started");
         cleanup.cancelWrite();
         tryVerify(function() { return cancelSpy.count > 0; }, 300000);
         var cancelled = cancelSpy.signalArguments[0][0];
@@ -575,9 +579,12 @@ TestCase {
         // through the `cancelled` flag, or through the message, depending
         // on whether the run had started deleting -- and it deletes fewer
         // files than were listed. Not an error either way.
-        verify(cancelled.cancelled === true || cancelled.error.length > 0 || cancelled.written === listed,
-               "a stopped delete says it stopped");
-        verify(cancelled.written <= listed, "a stopped delete never deletes more than was listed");
+        // Either it stopped in time, or it was already through -- with one
+        // or two files the worker often is. Both are fine; silently
+        // deleting more than was ticked is not.
+        verify(cancelled.cancelled === true || cancelled.error.length > 0 || cancelled.written === doomed.length,
+               "a stopped delete says it stopped, or had already finished");
+        verify(cancelled.written <= doomed.length, "it never deletes more than was ticked");
         waitIdle(cleanup, 300000);
         cleanup.refreshPendingDeletions();
         var leftListed = cleanup.pendingDeletions.rowCount();
@@ -585,7 +592,6 @@ TestCase {
                     + " (the cancel deleted " + cancelled.written + ")");
         verify(leftListed === listed - cancelled.written,
                "exactly what the cancel did not delete is still listed");
-        verify(leftListed > 0, "the cancel left files for the second half of this check");
 
         // Finish: the rest of this save's files go, and only those. Ticking
         // everything would sweep up entries other saves left listed, which
@@ -599,6 +605,19 @@ TestCase {
                 left.include(true);
                 stillDoomed.push(left.path);
             }
+        }
+        if (stillDoomed.length === 0) {
+            // The cancel was too late and everything already went. Nothing
+            // left to finish -- and asking the app to delete an empty
+            // selection returns without a signal, which would have been a
+            // ten-minute wait for nothing.
+            console.log("  the cancel came too late: all " + doomed.length + " files were already deleted");
+            for (var g = 0; g < doomed.length; ++g) {
+                verify(!Live.fileExists(doomed[g]), "deleted for real: " + doomed[g]);
+            }
+            compare(cleanup.pendingDeletions.rowCount(), pendingBefore);
+            EditSessionRegistry.closeSession(testCase.libraryId);
+            return;
         }
         var finishSpy = createTemporaryObject(spyComponent, testCase,
                                               {target: cleanup, signalName: "pendingDeletionsWriteFinished"});

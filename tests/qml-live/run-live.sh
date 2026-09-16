@@ -82,7 +82,10 @@ if [ -n "$libid" ]; then
     kill "$holder" 2>/dev/null
     rm -f "$lockdir/$libid.json"
 else
+    # The harness's own skips count too: a scenario that did not run has
+    # proved nothing, whoever decided to leave it out.
     echo "=== LiveLock skipped: could not read the stick's filesystem UUID"
+    failed=1
 fi
 
 # 3. The process guard and the CLI probe. A copy of sleep named rekordbox
@@ -109,6 +112,7 @@ if [ -n "$device" ]; then
     udisksctl mount -b "$device" >/dev/null 2>&1 || true
 else
     echo "=== LiveStickPull skipped: no device given"
+    failed=1
 fi
 
 # Non-zero when any test above failed.

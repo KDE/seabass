@@ -31,8 +31,8 @@ TestCase {
     property string libraryId: ""
 
     Component { id: spyComponent; SignalSpy {} }
-    Component { id: appSettings; AppSettingsController {} }
-    Component { id: junkPage; JunkCuePage { width: 1100; height: 820 } }
+    Component { id: scanController; ScanController {} }
+    Component { id: addCueComponent; AddCueController {} }
 
     function test_saveOnAFullStickFailsCleanly() {
         if (typeof liveRigFullStick === "undefined" || !liveRigFullStick) {
@@ -40,16 +40,22 @@ TestCase {
         }
         verify(stickRoot.length > 0, "SEABASS_LIVE_STICK names the stick this runs against");
         testCase.libraryId = EditSessionRegistry.libraryIdForPath(rekordboxPath);
-        var page = createTemporaryObject(junkPage, testCase,
-                                         {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
-                                          enginePath: enginePath,
-                                          appSettingsController: createTemporaryObject(appSettings, testCase)});
-        var ctrl = Live.findByType(page, "LibraryConsistencyController");
-        verify(ctrl !== null);
-        tryVerify(function() { return ctrl.busy === false; }, 300000);
-        if (ctrl.junkCues.rowCount() === 0) {
-            skip("no stray cues on this stick to stage");
+        // Adding a cue, not removing stray ones: every library can take a
+        // cue, while stray cues are a property of one particular stick --
+        // staging those made this check skip on the very stick the rig
+        // fills, and a skip here proves nothing.
+        var rekordbox = createTemporaryObject(scanController, testCase);
+        rekordbox.scan("rekordbox", rekordboxPath);
+        tryVerify(function() { return rekordbox.busy === false; }, 300000);
+        var target = null;
+        for (var j = 0; j < rekordbox.tracks.trackCount() && target === null; ++j) {
+            var t = rekordbox.tracks.trackAt(j);
+            if (t.cues.length === 0 && t.filePath.length > 0) {
+                target = t;
+            }
         }
+        verify(target !== null, "a rekordbox track without cues to add one to");
+        console.log("  track rekordbox id " + target.sourceId + ": " + target.artist + " - " + target.title);
 
         var s = EditSessionRegistry.openSession(testCase.libraryId, stickLabel, rekordboxPath, enginePath);
         verify(s !== null);
@@ -62,7 +68,10 @@ TestCase {
         verify(s.stickBytesFree > 0 && s.stickBytesFree < 512 * 1024 * 1024,
                "the stick really is nearly full before the save (free: " + s.stickBytesFree + " bytes)");
 
-        ctrl.removeAllJunkCues();
+        var adder = createTemporaryObject(addCueComponent, testCase);
+        adder.addCue("rekordbox", rekordboxPath, target.sourceId, 30000, "memory", 0, "", "rig F4", false, 0,
+                     target.title);
+        compare(adder.errorMessage, "");
         tryVerify(function() { return s.pendingCount > 0; }, 10000);
         var staged = s.pendingCount;
 
@@ -89,13 +98,11 @@ TestCase {
         }
 
         // The catalogs must still read, whatever happened.
-        var readBack = Live.findByType(createTemporaryObject(junkPage, testCase,
-                                                            {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
-                                                             enginePath: enginePath,
-                                                             appSettingsController: createTemporaryObject(appSettings, testCase)}), "LibraryConsistencyController");
+        var readBack = createTemporaryObject(scanController, testCase);
+        readBack.scan("rekordbox", rekordboxPath);
         tryVerify(function() { return readBack.busy === false; }, 300000);
-        compare(readBack.errorMessage, "");
-        console.log("  catalogs still read after the attempt");
+        verify(readBack.tracks.trackCount() > 0, "the catalogs still read after the attempt");
+        console.log("  catalogs still read: " + readBack.tracks.trackCount() + " tracks");
 
         // Leave nothing staged behind for the checks that follow.
         if (s.dirty === true) {

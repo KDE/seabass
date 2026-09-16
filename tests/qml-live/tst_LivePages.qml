@@ -108,10 +108,11 @@ TestCase {
                 verify(entry.label.length > 0, "the backup names its stick");
                 verify(entry.bytes > 0, "the backup has a size");
                 verify(entry.entries > 0, "the backup lists entries");
-                // -1 means the backup recorded no fingerprint (an older
-                // one), which is not a fault of the listing.
-                verify(entry.trackCount > 0 || entry.trackCount === -1,
-                       "the backup's library has tracks, or records no count");
+                // The rig's references are its own artifacts and do carry a
+                // fingerprint: -1 here would mean the listing stopped
+                // reading it, which is exactly the regression to catch.
+                verify(entry.trackCount > 0,
+                       "the backup records its library's track count (-1 means none was read)");
             }
         }
         verify(readable >= 2, "both reference backups are listed and readable");

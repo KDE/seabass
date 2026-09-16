@@ -29,6 +29,8 @@ TestCase {
     property string libraryId: ""
 
     Component { id: spyComponent; SignalSpy {} }
+    Component { id: scanController; ScanController {} }
+    Component { id: addCueComponent; AddCueController {} }
     Component { id: appSettings; AppSettingsController {} }
     Component { id: junkPage; JunkCuePage { width: 1100; height: 820 } }
 
@@ -36,16 +38,26 @@ TestCase {
         return EditSessionRegistry.sessionFor(testCase.libraryId, stickLabel);
     }
 
-    function stageStrayCues(page) {
-        var ctrl = Live.findByType(page, "LibraryConsistencyController");
-        verify(ctrl !== null, "the page made its controller");
-        tryVerify(function() { return ctrl.busy === false; }, 300000);
-        if (ctrl.junkCues.rowCount() === 0) {
-            return null;
+    // Stages one added cue and returns the track it went on. Adding a cue
+    // works on any library; staging stray cues only works on a stick that
+    // happens to have some, and this check may not skip.
+    function stageAnAddedCue() {
+        var rekordbox = createTemporaryObject(scanController, testCase);
+        rekordbox.scan("rekordbox", rekordboxPath);
+        tryVerify(function() { return rekordbox.busy === false; }, 300000);
+        var target = null;
+        for (var j = 0; j < rekordbox.tracks.trackCount() && target === null; ++j) {
+            var t = rekordbox.tracks.trackAt(j);
+            if (t.cues.length === 0 && t.filePath.length > 0) {
+                target = t;
+            }
         }
-        // Staged the way the page stages them: every stray cue at once.
-        ctrl.removeAllJunkCues();
-        return ctrl;
+        verify(target !== null, "a rekordbox track without cues to add one to");
+        var adder = createTemporaryObject(addCueComponent, testCase);
+        adder.addCue("rekordbox", rekordboxPath, target.sourceId, 30000, "memory", 0, "", "rig F5", false, 0,
+                     target.title);
+        compare(adder.errorMessage, "");
+        return target;
     }
 
     function test_01_discardLeavesTheStickAlone() {
@@ -57,10 +69,7 @@ TestCase {
                                          {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
                                           enginePath: enginePath,
                                           appSettingsController: createTemporaryObject(appSettings, testCase)});
-        var ctrl = stageStrayCues(page);
-        if (ctrl === null) {
-            skip("no stray cues on this stick to stage");
-        }
+        stageAnAddedCue();
         var s = session();
         tryVerify(function() { return s !== null && s.pendingCount > 0; }, 10000);
         var staged = s.pendingCount;
@@ -96,10 +105,7 @@ TestCase {
                                          {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
                                           enginePath: enginePath,
                                           appSettingsController: createTemporaryObject(appSettings, testCase)});
-        var ctrl = stageStrayCues(page);
-        if (ctrl === null) {
-            skip("no stray cues on this stick to stage");
-        }
+        stageAnAddedCue();
         var s = session();
         tryVerify(function() { return s !== null && s.pendingCount > 0; }, 10000);
         var staged = s.pendingCount;

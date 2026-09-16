@@ -42,7 +42,27 @@ export RIG_REFERENCE_A="$refA" RIG_REFERENCE_B="$refB"
 export QT_QPA_PLATFORM=offscreen
 
 mkdir -p "$out" "$out/shots"
+# F4 writes gigabytes to stick A. An interrupt between the fill and its
+# removal would leave the stick full for every later check and for the
+# next round; this costs nothing when there is no filler.
+trap 'rm -f "$A/RIG-FILLER.bin" "$B/RIG-FILLER.bin" 2>/dev/null' EXIT
 # For S3: what the everyday profile looks like before the run.
+# The everyday profile, listed so that a file APPEARING counts as a change
+# too: the run creating ~/.config/seabass/seabass.conf is the damage this
+# looks for, and "not there" has to be recorded as plainly as a size.
+# Defined here, before its first use: bash resolves a function when the
+# call runs, so a definition further down would have left the baseline
+# empty and failed S3 and X4 on every round.
+real_profile_now() {
+    for path in "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata"; do
+        if [ -e "$path" ]; then
+            stat -c '%n %s %Y' "$path"
+        else
+            echo "$path ABSENT"
+        fi
+    done
+}
+
 real_profile_now > "$out/real-profile-before.txt"
 summary="$out/summary.tsv"
 : > "$summary"
@@ -57,10 +77,10 @@ check() {
     local name="$1"; shift
     echo "$(date +%T) === $name"
     if "$@" > "$out/$name.log" 2>&1; then
-        if grep -qE "^SKIP|SKIPPED" "$out/$name.log"; then
+        if grep -qE "^SKIP|^ *SKIPPED" "$out/$name.log"; then
             printf '%s\tFAIL\n' "$name" >> "$summary"
             echo "$(date +%T) --- $name: FAIL (it skipped; see $out/$name.log)"
-            grep -E "^SKIP|SKIPPED" "$out/$name.log" | head -5
+            grep -E "^SKIP|^ *SKIPPED" "$out/$name.log" | head -5
             return 1
         fi
         printf '%s\tPASS\n' "$name" >> "$summary"
@@ -177,18 +197,6 @@ sandbox_profile() {
     return $ok
 }
 
-# The everyday profile, listed so that a file APPEARING counts as a change
-# too: the run creating ~/.config/seabass/seabass.conf is the damage this
-# looks for, and "not there" has to be recorded as plainly as a size.
-real_profile_now() {
-    for path in "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata"; do
-        if [ -e "$path" ]; then
-            stat -c '%n %s %Y' "$path"
-        else
-            echo "$path ABSENT"
-        fi
-    done
-}
 
 # Run again at the very end of the round: S3 alone only proves the profile
 # was untouched by the three checks before it.
@@ -213,7 +221,10 @@ live_test() {
     # set") and, before check() learnt to fail on a skip, wrote PASS having
     # run nothing. run-live.sh and rig-edits.sh export it themselves; these
     # checks call the binary directly and must too.
-    export SEABASS_LIVE_STICK="$B"
+    # B by default, but a caller that names a stick keeps it: F4 fills A
+    # and must run against A, and an unconditional export here beat its
+    # prefix -- so F4 tested the stick that was never filled.
+    export SEABASS_LIVE_STICK="${SEABASS_LIVE_STICK:-$B}"
     for name in "$@"; do
         echo "=== $name"
         local log="$out/live-${name//:/_}.txt"
@@ -249,7 +260,9 @@ full_stick() {
     # the better part of an hour for exactly the same proof.
     local filler="$A/RIG-FILLER.bin"
     local free_kb; free_kb=$(/bin/df -kP "$A" | awk 'NR==2 {print $4}')
-    local leave_kb=6144
+    # About a megabyte: less than the backup of export.pdb alone, so a
+    # save on this stick cannot fit however small the change is.
+    local leave_kb=1024
     local size_kb=$((free_kb - leave_kb))
     local rc=0
     if [ "$size_kb" -lt 1024 ]; then
