@@ -283,7 +283,10 @@ TestCase {
         waitIdle(ctrl, 300000);
         console.log("  issues: " + ctrl.issues.rowCount() + ", repairable: " + ctrl.repairableCount);
         if (ctrl.repairableCount === 0) {
-            skip("nothing repairable on this stick");
+            if (typeof liveRigRequireRepairable !== "undefined" && liveRigRequireRepairable) {
+                fail("an issue was planted, and Library Health finds nothing repairable");
+            }
+            skip("nothing repairable on this stick (tools/rig_plant_repairable plants one)");
         }
         ctrl.repairAll();
         var s = session();
@@ -836,7 +839,34 @@ TestCase {
         var count = ctrl.pendingDeletions.rowCount();
         console.log("  pending deletions listed: " + count);
         if (count === 0) {
-            skip("no pending deletions on this stick");
+            // Plant one rather than skip: a tidy stick is not a reason to
+            // prove nothing. A Clean Up save orphans a file and lists it,
+            // which is exactly the state this check cancels a delete in.
+            // It destroys a real duplicate copy -- the rig restores the
+            // stick from its reference afterwards, which is what makes
+            // planting affordable here.
+            console.log("  nothing listed: planting a deletion with a Clean Up save");
+            var planter = createTemporaryObject(cleanupComponent, testCase);
+            planter.scan("rekordbox", rekordboxPath);
+            waitIdle(planter, 300000);
+            verify(planter.plans.rowCount() > 0,
+                   "a duplicate group to plant a deletion with (nothing to plant from)");
+            planter.setAllIncluded(false);
+            planter.setIncluded(0, true);
+            verify(planter.includedCount > 0, "one group staged to plant with");
+            planter.apply();
+            var ps = session();
+            tryVerify(function() { return ps.pendingCount === planter.stagedCount && ps.pendingCount > 0; }, 10000);
+            var planted = saveAndWait(false);
+            compare(planted.error, "");
+            waitIdle(planter, 300000);
+            ctrl.refreshPendingDeletions();
+            waitIdle(ctrl, 300000);
+            count = ctrl.pendingDeletions.rowCount();
+            console.log("  planted, pending deletions listed: " + count);
+            // No skip on the way out: if the save orphaned nothing there is
+            // something to look at, not something to pass over.
+            verify(count > 0, "the planted Clean Up save listed a file for deletion");
         }
         ctrl.setAllPendingDeletionIncluded(true);
         var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "pendingDeletionsWriteFinished"});
@@ -847,9 +877,17 @@ TestCase {
         tryVerify(function() { return spy.count > 0; }, 300000);
         var summary = spy.signalArguments[0][0];
         console.log("  delete: " + Live.summaryLine(summary));
-        compare(summary.error, "");
         compare(summary.unit, "files");
-        verify(summary.cancelled || summary.written === summary.total, "either stopped at the cancel or already through");
+        // Not compare(error, ""): the worker raises OperationCancelled, so a
+        // cancel that lands before the first file is written comes back as
+        // 0 of 0 with "operation cancelled" on it. That was invisible while
+        // this check leaned on whatever the stick happened to carry -- with
+        // enough entries the cancel always arrived mid-run. Planting exactly
+        // one made it deterministic. Same contract W8 states: a stopped
+        // delete says it stopped, or it had already finished.
+        verify(summary.cancelled === true || summary.error.length > 0 || summary.written === summary.total,
+               "a stopped delete says it stopped, or had already finished");
+        verify(summary.written <= summary.total, "it never deletes more than was ticked");
         waitIdle(ctrl);
         tryCompare(findChild(page, "summaryDialog"), "opened", true, 5000);
         shot(page, "live-pending-cancelled");

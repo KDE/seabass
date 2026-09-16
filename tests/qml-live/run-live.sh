@@ -63,10 +63,26 @@ run() {  # name, extra env assignments...
 # 1. The plain flows, one process per test function so a failure in one
 #    cannot take the others down with it.
 [ -n "${SKIP_PLAIN:-}" ] || for t in test_01_scanCancel test_02_settingsStageSaveUndo test_03_syncStageSaveCancel \
-         test_04_junkCuesStageSaveUndo test_05_libraryHealthLeaveDiscards \
-         test_07_pendingDeletionsCancel; do
+         test_04_junkCuesStageSaveUndo test_07_pendingDeletionsCancel; do
     run "LiveEditMode::$t"
 done
+
+# test_05 needs a damaged library, which a healthy stick does not have and
+# the test cannot make for itself: rig_plant_repairable moves one copy of a
+# cue-free duplicate aside, the same way rig-edits.sh sets up test_10. With
+# something planted a skip would be a silent pass, so it is required to run.
+if [ -z "${SKIP_PLAIN:-}" ]; then
+    echo "=== planting a repairable Library Health issue for test_05"
+    if "$build/rig_plant_repairable" "$stick" --plant; then
+        run "LiveEditMode::test_05_libraryHealthLeaveDiscards" SEABASS_RIG_REQUIRE_REPAIRABLE=1
+    else
+        echo "   could not plant a repairable issue, so test_05 proves nothing"
+        failed=1
+    fi
+    # Back even if the test failed: the next check compares this stick
+    # against its reference.
+    "$build/rig_plant_repairable" "$stick" --restore || failed=1
+fi
 
 # 2. A foreign, live lock: a cookie owned by a sleep process on this host.
 # Where the app keeps its edit-lock cookies: paths::localMetadataDir(), which
