@@ -343,11 +343,14 @@ int main()
         const fs::path stickLog = stick / "Seabass" / "seabass.log";
         assert(fs::exists(stickLog, ec) && "the save logs to the stick");
         const std::string logText = read(stickLog);
-        if (logText.find("write-ahead log") == std::string::npos) {
-            std::cerr << "case 5: the rollback said nothing about the log:\n" << logText << "\n";
+        // The fold's own line, not "write-ahead log": the move-aside and
+        // could-not-tell lines say that too, and a regression into either
+        // branch would still have passed.
+        const bool folded = logText.find("after the rollback exportLibrary.db kept") != std::string::npos;
+        if (!folded) {
+            std::cerr << "case 5: the rollback did not report the fold:\n" << logText << "\n";
         }
-        assert(logText.find("write-ahead log") != std::string::npos
-               && "the rollback measures the database the save wrote, whatever the failure touched");
+        assert(folded && "the rollback measures the database the save wrote, whatever the failure touched");
         assert(cueCount(dbPath, 1) == 1);
         std::cout << "case 5 (a database an earlier change wrote is folded even when the failure is elsewhere) OK\n";
     }
@@ -375,20 +378,24 @@ int main()
             }),
             std::make_shared<ScriptedChange>("b", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
                 sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "Two.mp3").string(), cues);
-                // The directory goes read-only, so putting the database back
-                // fails the way a full or unwritable stick makes it fail.
+                // Only the database's put-back must fail -- its -wal has to go
+                // back fine, so the stick ends up with an old log beside a
+                // database of another generation. A non-empty directory where
+                // the file was makes the rename onto it fail, and nothing else.
+                // (A read-only directory fails both, which leaves a pair that
+                // is still self-consistent and proves nothing.)
                 std::error_code ec;
-                fs::permissions(dbPath.parent_path(), fs::perms::owner_read | fs::perms::owner_exec,
-                                fs::perm_options::replace, ec);
+                fs::remove(dbPath, ec);
+                fs::create_directory(dbPath, ec);
+                write(dbPath / "occupied", "x");
                 return ChangeOutcome::failure("Device Library Plus refused the next write");
             }),
         };
         auto result = runSaveLoop(changes, ctx);
         std::error_code ec;
-        fs::permissions(dbPath.parent_path(),
-                        fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
-                        fs::perm_options::replace, ec);
         assert(!result.error.isEmpty());
+        // The asymmetry this case exists for really happened.
+        assert(fs::is_directory(dbPath, ec) && "the database did not go back");
         // Not folded: the log and the database are from different
         // generations, and checkpointing one into the other mixes them.
         // Asserted, not printed: the stick's own log is where the skip is
@@ -397,11 +404,18 @@ int main()
         const fs::path stickLog = stick / "Seabass" / "seabass.log";
         assert(fs::exists(stickLog, ec) && "the save logs to the stick");
         const std::string logText = read(stickLog);
-        if (logText.find("leaving") == std::string::npos) {
-            std::cerr << "case 6: the rollback did not say it left the log alone:\n" << logText << "\n";
+        // Out of SQLite's reach, not merely unfolded: a live -wal beside the
+        // wrong generation is replayed into it on the next open.
+        const fs::path wal = fs::path(dbPath.string() + "-wal");
+        const fs::path stale = fs::path(dbPath.string() + "-wal.seabass-stale");
+        if (fs::exists(wal, ec) || !fs::exists(stale, ec)) {
+            std::cerr << "case 6: wal live=" << fs::exists(wal, ec) << " stale=" << fs::exists(stale, ec)
+                      << "\n" << logText << "\n";
         }
-        assert(logText.find("leaving") != std::string::npos
-               && "a database that could not be put back must not be folded");
+        assert(!fs::exists(wal, ec) && "no live log is left beside a database of another generation");
+        assert(fs::exists(stale, ec) && "the log is kept, renamed, not destroyed");
+        assert(logText.find("aside as .seabass-stale") != std::string::npos
+               && "the stick log says what was moved");
         std::cout << "case 6 (a database that could not be put back is left unfolded) OK\n";
     }
 

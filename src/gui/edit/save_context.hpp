@@ -179,8 +179,11 @@ public:
     // without this class knowing any format's filenames -- and so the fold
     // follows the WRITER's database rather than whatever the change that
     // happened to fail had protected.
+    // `wrote` is asked before the writers are destroyed on a rollback, so
+    // the fold never opens a database the save only looked at.
     void noteWalDatabase(const std::string &dbPath,
-                         std::function<std::optional<std::uint64_t>(const std::string &)> fold);
+                         std::function<std::optional<std::uint64_t>(const std::string &)> fold,
+                         std::function<bool()> wrote);
 
     void onFinish(std::function<void(bool ok)> hook);
     // Runs every hook once, creation order; a throwing hook does not stop
@@ -223,6 +226,7 @@ private:
     {
         std::string path;
         std::function<std::optional<std::uint64_t>(const std::string &)> fold;
+        std::function<bool()> wrote;
     };
     std::map<std::string, WalDatabase> m_walDatabases;  // normalizedPathKey -> how to fold it
     std::vector<std::function<void(bool)>> m_finishHooks;

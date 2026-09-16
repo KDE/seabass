@@ -190,6 +190,11 @@ public:
     // twice.
     void finishWriting();
 
+    // Whether this writer opened its write connection -- i.e. wrote, or was
+    // about to. A save that only created the writer to ask existsFor() or
+    // hasTrackAtPath() has nothing of its own in the log.
+    bool hasWritten() const { return m_writeDb != nullptr; }
+
     // For a database that was just put back from a backup together with
     // its -wal: open, checkpoint, close, and say how many bytes of log are
     // still beside it (0 when it is one file again). A rolled-back save

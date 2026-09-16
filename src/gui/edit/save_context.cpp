@@ -365,6 +365,15 @@ void SaveContext::endChange()
 
 std::optional<QString> SaveContext::rollBackChange()
 {
+    // Which registered databases this save actually wrote -- asked now,
+    // because the next line destroys the writers that know.
+    std::set<std::string> written;
+    for (const auto &[key, database] : m_walDatabases) {
+        if (database.wrote && database.wrote()) {
+            written.insert(key);
+        }
+    }
+
     // Writers first. A SQLite connection that closes checkpoints its WAL
     // into the database, so closing one after the restore would write the
     // failed change straight back over it.
@@ -372,10 +381,8 @@ std::optional<QString> SaveContext::rollBackChange()
 
     std::optional<QString> firstError;
     int putBack = 0;
-    // Which files did NOT go back. A database whose own file or log is in
-    // here must not be folded below: its .db is from one generation and its
-    // -wal from another, and checkpointing one over the other mixes them --
-    // where leaving them alone keeps the state inert and recoverable.
+    // Which files did NOT go back. A database with any of its set in here
+    // has its .db from one generation beside sidecars from another.
     std::set<std::string> notPutBack;
     for (auto it = m_checkpoints.rbegin(); it != m_checkpoints.rend(); ++it) {
         try {
@@ -422,15 +429,50 @@ std::optional<QString> SaveContext::rollBackChange()
     // destroyed before the restore (above), so their close did whatever
     // passive checkpoint it could and nothing will try again.
     for (const auto &[key, database] : m_walDatabases) {
-        if (notPutBack.contains(key)
-            || notPutBack.contains(application::normalizedPathKey(database.path + "-wal"))) {
-            // One generation of database beside another's log: folding here
-            // writes the older log's pages over the newer file.
-            if (hasStick()) {
-                log().record("save: leaving " + fs::path(database.path).filename().string()
-                             + "'s write-ahead log alone -- the rollback could not put the database back, and "
-                               "folding one generation's log into another's file would mix them");
+        const bool mixed = notPutBack.contains(key)
+                           || notPutBack.contains(application::normalizedPathKey(database.path + "-wal"))
+                           || notPutBack.contains(application::normalizedPathKey(database.path + "-journal"));
+        if (mixed) {
+            // One generation's database beside another's sidecars. Leaving
+            // them in place is NOT inert: SQLite replays a valid -wal (or
+            // rolls back a -journal) into whatever .db sits beside it on the
+            // next open, with no cross-check -- and something opens it within
+            // seconds. So the sidecars are renamed out of SQLite's reach.
+            // Renamed rather than removed, the way FilesystemBackupStore
+            // treats a restore's stale sidecars but keeping the bytes: this
+            // path is already a failure, and nothing here should destroy
+            // what someone may still want back.
+            std::vector<std::string> moved;
+            for (const char *suffix : {"-wal", "-shm", "-journal"}) {
+                const fs::path side = fs::path(database.path + suffix);
+                std::error_code ec;
+                if (!fs::exists(side, ec) || ec) {
+                    continue;
+                }
+                fs::path stale = side;
+                stale += ".seabass-stale";
+                fs::remove(stale, ec);
+                fs::rename(side, stale, ec);
+                if (!ec) {
+                    moved.push_back(side.filename().string());
+                }
             }
+            if (!moved.empty() && hasStick()) {
+                std::string list;
+                for (const std::string &name : moved) {
+                    list += (list.empty() ? "" : ", ") + name;
+                }
+                log().record("save: moved " + list + " aside as .seabass-stale -- the rollback could not put "
+                             + fs::path(database.path).filename().string()
+                             + " back in step with them, and SQLite would replay them into the wrong generation "
+                               "on the next open. The backup taken before this save holds the state to go back to.");
+            }
+            continue;
+        }
+        if (!written.contains(key)) {
+            // The save never opened this database for writing, so there is
+            // no log of its own to fold -- and opening it read-write here
+            // would touch a log someone else (a player) may have left.
             continue;
         }
         const std::optional<std::uint64_t> left = database.fold(database.path);
@@ -471,9 +513,11 @@ void SaveContext::onChangeEnd(std::function<void(bool)> hook)
 }
 
 void SaveContext::noteWalDatabase(const std::string &dbPath,
-                                  std::function<std::optional<std::uint64_t>(const std::string &)> fold)
+                                  std::function<std::optional<std::uint64_t>(const std::string &)> fold,
+                                  std::function<bool()> wrote)
 {
-    m_walDatabases.insert({application::normalizedPathKey(dbPath), WalDatabase{dbPath, std::move(fold)}});
+    m_walDatabases.insert(
+        {application::normalizedPathKey(dbPath), WalDatabase{dbPath, std::move(fold), std::move(wrote)}});
 }
 
 void SaveContext::onFinish(std::function<void(bool)> hook)
