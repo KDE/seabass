@@ -116,7 +116,9 @@ SeabassDialog {
             visible: text.length > 0
             color: dialog.error.length > 0 ? Theme.danger : Theme.textMuted
             text: dialog.error.length > 0 ? "Then: " + dialog.error
-                : (dialog.warning.length > 0 && !dialog.cancelled) ? dialog.warning
+                : (dialog.warning.length > 0 && dialog.cancelled)
+                    ? "Stopped at your request. " + dialog.warning
+                : dialog.warning.length > 0 ? dialog.warning
                 : dialog.detail.length > 0 ? dialog.detail
                 : dialog.cancelled ? "Stopped at your request. Everything up to here is complete; the rest was not touched."
                 : ""

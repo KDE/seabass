@@ -161,6 +161,11 @@ SqlCipherDb &OneLibraryCueWriter::writeConnection()
 
 SqlCipherDb &OneLibraryCueWriter::verifyConnection()
 {
+    if (m_finished) {
+        // Read-only or not, opening a WAL database recreates the -shm and
+        // -wal that finishWriting() just removed.
+        throw std::runtime_error("onelibrary: this writer has finished for the save; a new one is needed to read back");
+    }
     if (!m_lib) {
         m_lib = std::make_unique<SqlCipherLibrary>();
     }
@@ -751,18 +756,33 @@ std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
     const fs::path shm = fs::path(m_dbPath + "-shm");
     std::error_code ec;
     const bool walThere = fs::exists(wal, ec);
+    if (!ec && !walThere && !checkpointFault.empty()) {
+        // No log to measure, but the checkpoint threw: the stick went away
+        // after the commit, or the sidecar was taken out from under us.
+        // Reporting a clean save here is the one outcome worse than saying
+        // so -- and it must stay the warning type, because the rows are
+        // committed and telling the user nothing was applied would have
+        // them save the same removals twice.
+        m_finished = true;
+        throw OneLibraryLogNotFolded("Device Library Plus could not fold its write-ahead log and it is no longer "
+                                     "there to check (the checkpoint reported: " + checkpointFault + ")");
+    }
     if (ec) {
         // Cannot even tell whether a log is there -- the stick went away,
         // or came back read-only. That is the one state this must not
         // bless: a save reporting everything written while its rows may
         // be sitting in a file nobody can read.
-        throw std::runtime_error("could not tell whether Device Library Plus still has a write-ahead log beside "
-                                 "exportLibrary.db, so the save cannot say its rows are in the library");
+        // The warning type, not an error: the rows are committed, and an
+        // error here clears appliedIds and invites a second apply of the
+        // same removals -- by the same argument that a fault the code
+        // cannot tell apart must not void a finished save.
+        throw OneLibraryLogNotFolded("could not tell whether Device Library Plus still has a write-ahead log beside "
+                                     "exportLibrary.db, so the save cannot say its rows are in the library");
     }
     const std::uintmax_t remaining = walThere ? fs::file_size(wal, ec) : 0;
     if (ec) {
-        throw std::runtime_error("could not read the size of Device Library Plus's write-ahead log, so the save "
-                                 "cannot say its rows are in the library");
+        throw OneLibraryLogNotFolded("could not read the size of Device Library Plus's write-ahead log, so the save "
+                                     "cannot say its rows are in the library");
     }
     if (remaining > 0 && !strict) {
         if (!checkpointFault.empty()) {

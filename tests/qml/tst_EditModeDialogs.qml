@@ -172,6 +172,9 @@ TestCase {
         compare(dialog.severity, SeabassDialog.Warning);
         compare(findByObjectName(dialog, "detailLabel").text,
                 "Device Library Plus kept 4152 bytes in its write-ahead log");
+        // Carried is not shown: the whole point of this round was a value
+        // the summary held and no dialog rendered.
+        compare(findByObjectName(dialog, "detailLabel").visible, true);
         dialog.close();
 
         // And a cancel outranks it: "Stopped at your request" is the more
@@ -180,7 +183,13 @@ TestCase {
                      warning: "Device Library Plus kept 4152 bytes in its write-ahead log"});
         tryCompare(dialog, "opened", true);
         compare(dialog.title, "Cancelled");
-        verify(findByObjectName(dialog, "detailLabel").text.indexOf("Stopped at your request") === 0);
+        // Warning, not Info: a plain cancel has always been Warning here
+        // (see the severity ternary), and a cancel carrying a warning is
+        // certainly not milder than one without.
+        compare(dialog.severity, SeabassDialog.Warning);
+        var bothText = findByObjectName(dialog, "detailLabel").text;
+        verify(bothText.indexOf("Stopped at your request") === 0, "the cancel comes first");
+        verify(bothText.indexOf("write-ahead log") > 0, "and the warning is not dropped");
         dialog.close();
     }
 

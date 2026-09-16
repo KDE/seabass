@@ -246,12 +246,7 @@ TestCase {
         waitIdle(ctrl, 300000);
         var count = ctrl.junkCues.rowCount();
         console.log("  stray cues: " + count);
-        // Not just an empty list: a stick carrying another check's orphans
-        // (test_09 leaves some listed on purpose, test_13 leaves its
-        // remainder) has nothing THIS check may safely cancel, and ticking
-        // someone else's file risks real audio on a lost race. So plant
-        // whenever there is no candidate of our own.
-        if (count === 0 || Object.keys(plantedPaths).length === 0) {
+        if (count === 0) {
             skip("no stray cues on this stick");
         }
         ctrl.removeAllJunkCues();
@@ -881,7 +876,8 @@ TestCase {
             // save itself is the only honest test, and an attempt that
             // lists nothing is undone before the next one.
             var plantedGroups = 0;
-            for (var attempt = 0; attempt < 6 && count === 0; ++attempt) {
+            var attempts = Math.min(6, planter.plans.rowCount());
+            for (var attempt = 0; attempt < attempts && count === 0; ++attempt) {
                 planter.setAllIncluded(false);
                 planter.setIncluded(attempt, true);
                 if (planter.includedCount === 0) {
@@ -912,12 +908,17 @@ TestCase {
                 // so a failed attempt never leaves the stick off reference.
                 console.log("  group " + attempt + " cleaned up but orphaned nothing; undoing");
                 var undoAttempt = session();
-                if (undoAttempt !== null && undoAttempt.canUndo === true) {
-                    var undone = createTemporaryObject(spyComponent, testCase,
-                                                      {target: undoAttempt, signalName: "saveFinished"});
-                    undoAttempt.undoLastSave();
-                    tryVerify(function() { return undone.count > 0; }, 600000);
+                if (undoAttempt === null || undoAttempt.canUndo !== true) {
+                    // Six applied clean-ups could otherwise stay on the stick
+                    // and the round would end dirty with no clue which check
+                    // did it.
+                    fail("an attempt that orphaned nothing cannot be undone; the stick is off its reference");
                 }
+                var undone = createTemporaryObject(spyComponent, testCase,
+                                                  {target: undoAttempt, signalName: "saveFinished"});
+                undoAttempt.undoLastSave();
+                tryVerify(function() { return undone.count > 0; }, 600000);
+                compare(undone.signalArguments[0][0].error, "", "the undo of a fruitless attempt worked");
                 planter.scan("rekordbox", rekordboxPath);
                 waitIdle(planter, 300000);
             }
