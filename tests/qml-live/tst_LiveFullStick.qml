@@ -50,22 +50,36 @@ TestCase {
         var target = null;
         for (var j = 0; j < rekordbox.tracks.trackCount() && target === null; ++j) {
             var t = rekordbox.tracks.trackAt(j);
-            if (t.cues.length === 0 && t.filePath.length > 0) {
+            // Any track will do: this adds a memory cue at 30000 ms and
+            // asserts nothing about what was there before, so demanding a
+            // cue-free track only made the check fail on libraries where
+            // every track has cues -- a property of the stick, not the app.
+            if (t.filePath.length > 0) {
                 target = t;
             }
         }
-        verify(target !== null, "a rekordbox track without cues to add one to");
+        verify(target !== null, "a rekordbox track to add a cue to");
         console.log("  track rekordbox id " + target.sourceId + ": " + target.artist + " - " + target.title);
 
         var s = EditSessionRegistry.openSession(testCase.libraryId, stickLabel, rekordboxPath, enginePath);
         verify(s !== null);
+        // openSession() -> setLibraryPaths() hands the measurement to a
+        // worker thread and returns at once, so the numbers are not there
+        // yet on the next line -- reading them straight away gets the
+        // zeros the session starts with, which is what made this check
+        // report "0 bytes of 0". Wait for the answer instead. On a real
+        // stick that walk stats thousands of analysis files, so give it
+        // room; running out of it fails, as a stick we cannot measure
+        // deserves.
+        tryVerify(function() { return s.stickBytesCapacity > 0; }, 300000,
+                  "the session measured the stick");
         console.log("  free on the stick before the save: " + s.stickBytesFree + " bytes of " + s.stickBytesCapacity);
-        // The whole point of this check is a stick with no room. A session
-        // that measured nothing (0 of 0), or a stick with gigabytes free,
-        // means the fill did not take -- and a save that then fits proves
-        // nothing at all. Fail here rather than pass on the else-branch.
-        verify(s.stickBytesCapacity > 0, "the session measured the stick");
-        verify(s.stickBytesFree > 0 && s.stickBytesFree < 512 * 1024 * 1024,
+        // The whole point of this check is a stick with no room. Gigabytes
+        // free means the fill did not take -- and a save that then fits
+        // proves nothing at all. Fail here rather than pass on the
+        // else-branch. No lower bound: a stick that is exactly full is the
+        // strongest form of the condition, not a failure of it.
+        verify(s.stickBytesFree < 512 * 1024 * 1024,
                "the stick really is nearly full before the save (free: " + s.stickBytesFree + " bytes)");
 
         var adder = createTemporaryObject(addCueComponent, testCase);
@@ -113,7 +127,22 @@ TestCase {
             var undone = createTemporaryObject(spyComponent, testCase, {target: s, signalName: "saveFinished"});
             s.undoLastSave();
             tryVerify(function() { return undone.count > 0; }, 600000);
-            console.log("  undone: " + Live.summaryLine(undone.signalArguments[0][0]));
+            var undo = undone.signalArguments[0][0];
+            console.log("  undone: " + Live.summaryLine(undo));
+            // This was a bare console.log, so an undo that wrote 0 of 1 and
+            // carried an error still read as PASS. On a stick this full the
+            // undo may genuinely fail -- restoring writes files, and there
+            // is no room -- but then it has to fail whole: either it put
+            // everything back, or it put nothing back and says so.
+            verify(undo.error.length > 0 || undo.written > 0,
+                   "the undo either restored something or said why it could not");
+            compare(EditSessionRegistry.anyWriting, false);
+            // Whatever it decided, the catalogs are still readable and the
+            // stick is not left half-written.
+            var afterUndo = createTemporaryObject(scanController, testCase);
+            afterUndo.scan("rekordbox", rekordboxPath);
+            tryVerify(function() { return afterUndo.busy === false; }, 300000);
+            verify(afterUndo.tracks.trackCount() > 0, "the catalogs still read after the undo");
         }
         EditSessionRegistry.closeSession(testCase.libraryId);
     }

@@ -209,14 +209,15 @@ sandbox_profile_still_clean() {
 
 # W8: deletes audio for good, so the stick is restored right after.
 delete_orphans() {
-    SEABASS_RIG_DELETE_ORPHANS=1 live_test LiveEditMode::test_13_pendingDeletionsCancelThenComplete
+    SEABASS_RIG_DELETE_ORPHANS=1 live_test "$B" LiveEditMode::test_13_pendingDeletionsCancelThenComplete
 }
 
 # One test function per process, by its FULL name: a bare TestCase name
 # makes the QtQuickTest runner exit 0 without running a thing, which is a
 # check that silently passes -- the worst kind this rig can have.
-live_test() {
+live_test() {  # <stick> <full test name>...
     local failed=0
+    local stick="$1"; shift
     # Without this every live test skips itself ("SEABASS_LIVE_STICK is not
     # set") and, before check() learnt to fail on a skip, wrote PASS having
     # run nothing. run-live.sh and rig-edits.sh export it themselves; these
@@ -224,7 +225,7 @@ live_test() {
     # B by default, but a caller that names a stick keeps it: F4 fills A
     # and must run against A, and an unconditional export here beat its
     # prefix -- so F4 tested the stick that was never filled.
-    export SEABASS_LIVE_STICK="${SEABASS_LIVE_STICK:-$B}"
+    export SEABASS_LIVE_STICK="$stick"
     for name in "$@"; do
         echo "=== $name"
         local log="$out/live-${name//:/_}.txt"
@@ -241,14 +242,14 @@ live_test() {
 # R2 and R5: read-only pages. R5 is pointed at the folder of links.
 live_pages() {
     SEABASS_RIG_REFERENCE_DIR="$(dirname "$refA")" \
-        live_test LivePages::test_01_statisticsLoads LivePages::test_02_performanceLoads \
+        live_test "$B" LivePages::test_01_statisticsLoads LivePages::test_02_performanceLoads \
                   LivePages::test_03_manageBackupsListsTheReferences \
         && unchanged_catalogs "$B"
 }
 
 # F5: leaving with unsaved changes, both ways out.
 quit_with_changes() {
-    live_test LiveQuit::test_01_discardLeavesTheStickAlone LiveQuit::test_02_saveThenLeaveWritesEverything \
+    live_test "$B" LiveQuit::test_01_discardLeavesTheStickAlone LiveQuit::test_02_saveThenLeaveWritesEverything \
         && unchanged_catalogs "$B"
 }
 
@@ -260,13 +261,18 @@ full_stick() {
     # the better part of an hour for exactly the same proof.
     local filler="$A/RIG-FILLER.bin"
     local free_kb; free_kb=$(/bin/df -kP "$A" | awk 'NR==2 {print $4}')
-    # About a megabyte: less than the backup of export.pdb alone, so a
-    # save on this stick cannot fit however small the change is.
-    local leave_kb=1024
+    # Under a quarter megabyte, and measured rather than assumed: the
+    # backup this save writes is about 460 KB (the analysis file plus
+    # exportLibrary.db), so a megabyte of slack let the save succeed and
+    # F4 proved the opposite of its name. Below the backup's own size the
+    # save has to refuse, which is the outcome this check exists for.
+    local leave_kb=256
     local size_kb=$((free_kb - leave_kb))
     local rc=0
-    if [ "$size_kb" -lt 1024 ]; then
-        echo "stick already has less than $leave_kb KB free; nothing to fill"
+    if [ "$size_kb" -lt "$leave_kb" ]; then
+        # What the stick actually has, not the margin: this is the one
+        # path that gives up on F4, so it should not misdescribe why.
+        echo "$A has $free_kb KB free, too little to fill down to $leave_kb KB; F4 cannot be proven here"
         return 1
     fi
     echo "filling $A: $free_kb KB free -> leaving about $leave_kb KB"
@@ -283,7 +289,7 @@ full_stick() {
         sync
         return 1
     fi
-    SEABASS_RIG_FULL_STICK=1 SEABASS_LIVE_STICK="$A" live_test LiveFullStick::test_saveOnAFullStickFailsCleanly || rc=1
+    SEABASS_RIG_FULL_STICK=1 live_test "$A" LiveFullStick::test_saveOnAFullStickFailsCleanly || rc=1
     rm -f "$filler"
     sync
     echo "filler removed; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free again"

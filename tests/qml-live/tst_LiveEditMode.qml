@@ -611,13 +611,18 @@ TestCase {
             // left to finish -- and asking the app to delete an empty
             // selection returns without a signal, which would have been a
             // ten-minute wait for nothing.
-            console.log("  the cancel came too late: all " + doomed.length + " files were already deleted");
             for (var g = 0; g < doomed.length; ++g) {
                 verify(!Live.fileExists(doomed[g]), "deleted for real: " + doomed[g]);
             }
             compare(cleanup.pendingDeletions.rowCount(), pendingBefore);
             EditSessionRegistry.closeSession(testCase.libraryId);
-            return;
+            // Half of what this check is named for -- resume, then finish
+            // exactly the rest -- did not run. Returning quietly wrote PASS
+            // for it, and a cancelWrite() that regressed to a no-op would
+            // land here on every run and never be seen. skip() is the one
+            // marker both runners already count as a failure.
+            skip("the cancel came too late: all " + doomed.length + " files had gone, so the "
+                 + "resume-and-finish half never ran");
         }
         var finishSpy = createTemporaryObject(spyComponent, testCase,
                                               {target: cleanup, signalName: "pendingDeletionsWriteFinished"});

@@ -98,6 +98,7 @@ TestCase {
         var listed = backups.backups;
         console.log("  " + listed.length + " backup(s) in " + liveRigReferenceDir);
         var readable = 0;
+        var withFingerprint = 0;
         for (var i = 0; i < listed.length; ++i) {
             var entry = listed[i];
             console.log("    " + entry.fileName + ": stick " + entry.label + ", " + entry.status + ", "
@@ -108,14 +109,20 @@ TestCase {
                 verify(entry.label.length > 0, "the backup names its stick");
                 verify(entry.bytes > 0, "the backup has a size");
                 verify(entry.entries > 0, "the backup lists entries");
-                // The rig's references are its own artifacts and do carry a
-                // fingerprint: -1 here would mean the listing stopped
-                // reading it, which is exactly the regression to catch.
-                verify(entry.trackCount > 0,
-                       "the backup records its library's track count (-1 means none was read)");
+                // The two references do carry a fingerprint, so if the
+                // listing stops reading them this count drops and the
+                // check below fails. Not asserted per entry: this folder
+                // also holds whole-stick archives the rig wrote itself,
+                // and an older one without a fingerprint is not a
+                // regression in the page.
+                if (entry.trackCount > 0) {
+                    withFingerprint++;
+                }
             }
         }
         verify(readable >= 2, "both reference backups are listed and readable");
+        verify(withFingerprint >= 2,
+               "at least the two references report a track count (-1 everywhere means none was read)");
 
         // Browsing opens the archive read-only: the page hands the path to
         // openArchivePaths, and nothing about the archive changes.

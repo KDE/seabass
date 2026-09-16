@@ -10,18 +10,18 @@
 # foreign lock cookie, a fake rekordbox process, the stick going away).
 # See docs/testing.md, "Live tests against a real stick".
 #
-#   tests/qml-live/run-live.sh /media/you/STICK [/dev/sdX1] [screenshot dir]
+#   tests/qml-live/run-live.sh /media/you/STICK /dev/sdX1 [screenshot dir]
 #   SKIP_PLAIN=1 ...   runs only the three orchestrated scenarios
 #   SEABASS_BUILD_DIR=~/builds/seabass ...   a build outside <repo>/build
 #
-# The device is only needed for the stick-pull scenario (it is
-# unmounted and mounted again with udisksctl). Every test writes to the
-# stick through the normal backup path; do not point this at a stick
-# you cannot afford to restore.
+# The device is required: the stick-pull scenario unmounts and mounts it
+# again with udisksctl, and a bundle that leaves that scenario out has not
+# run. Every test writes to the stick through the normal backup path; do
+# not point this at a stick you cannot afford to restore.
 set -u
 
 stick="${1:?mount point of the scratch stick}"
-device="${2:-}"
+device="${2:?device of the scratch stick, e.g. /dev/sdb1 -- the stick-pull scenario needs it}"
 shots="${3:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
@@ -40,8 +40,11 @@ failed=0
 # see the build, and a check that did not run must never read as green.
 run() {  # name, extra env assignments...
     local name="$1"; shift
+    # Its own file: $out belongs to rig-shakedown.sh and does not exist
+    # here, so under set -u naming it killed this script at its first test.
+    local log; log="$(mktemp)"
     echo "=== $name"
-    env "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 | tee "$out/last-run.txt" \
+    env "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 | tee "$log" \
         | grep -E "^(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals)|^   (Actual|Expected|Loc)" \
         | sed 's/SeabassGuiQmlTests::[A-Za-z]*:://; s/^QDEBUG : [a-zA-Z0-9_]*() .\[34m[a-zA-Z0-9_]*.\[0m://'
     # The test binary's own status, not the filter's: a pipeline ends with
@@ -50,10 +53,11 @@ run() {  # name, extra env assignments...
     [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
     # And a skip: QtTest exits 0 for it, but a test that did not run has
     # proved nothing.
-    if grep -q "^SKIP" "$out/last-run.txt" 2>/dev/null; then
+    if grep -q "^SKIP" "$log" 2>/dev/null; then
         echo "   SKIPPED, which counts as a failure here"
         failed=1
     fi
+    rm -f "$log"
 }
 
 # 1. The plain flows, one process per test function so a failure in one

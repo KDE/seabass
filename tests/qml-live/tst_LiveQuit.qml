@@ -41,18 +41,33 @@ TestCase {
     // Stages one added cue and returns the track it went on. Adding a cue
     // works on any library; staging stray cues only works on a stick that
     // happens to have some, and this check may not skip.
-    function stageAnAddedCue() {
+    function stageAnAddedCue(page) {
+        // The page kicks off its own scan from Component.onCompleted, on a
+        // worker thread reading the very catalogs this is about to stage a
+        // change in -- and test_02 then saves over export.pdb underneath
+        // it. The stray-cue staging this replaced waited for that scan;
+        // the replacement dropped the wait, which would show up as an
+        // intermittent F5 on a big library rather than as a clean failure.
+        if (page) {
+            var pageScan = Live.findByType(page, "LibraryConsistencyController");
+            verify(pageScan !== null, "the page has its consistency controller");
+            tryVerify(function() { return pageScan.busy === false; }, 300000);
+        }
         var rekordbox = createTemporaryObject(scanController, testCase);
         rekordbox.scan("rekordbox", rekordboxPath);
         tryVerify(function() { return rekordbox.busy === false; }, 300000);
         var target = null;
         for (var j = 0; j < rekordbox.tracks.trackCount() && target === null; ++j) {
             var t = rekordbox.tracks.trackAt(j);
-            if (t.cues.length === 0 && t.filePath.length > 0) {
+            // Any track: this adds a memory cue at 30000 ms and asserts
+            // nothing about what was there before, so demanding a cue-free
+            // track only made the check fail on libraries where every
+            // track has cues -- a property of the stick, not the app.
+            if (t.filePath.length > 0) {
                 target = t;
             }
         }
-        verify(target !== null, "a rekordbox track without cues to add one to");
+        verify(target !== null, "a rekordbox track to add a cue to");
         var adder = createTemporaryObject(addCueComponent, testCase);
         adder.addCue("rekordbox", rekordboxPath, target.sourceId, 30000, "memory", 0, "", "rig F5", false, 0,
                      target.title);
@@ -69,7 +84,7 @@ TestCase {
                                          {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
                                           enginePath: enginePath,
                                           appSettingsController: createTemporaryObject(appSettings, testCase)});
-        stageAnAddedCue();
+        stageAnAddedCue(page);
         var s = session();
         tryVerify(function() { return s !== null && s.pendingCount > 0; }, 10000);
         var staged = s.pendingCount;
@@ -105,7 +120,7 @@ TestCase {
                                          {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
                                           enginePath: enginePath,
                                           appSettingsController: createTemporaryObject(appSettings, testCase)});
-        stageAnAddedCue();
+        stageAnAddedCue(page);
         var s = session();
         tryVerify(function() { return s !== null && s.pendingCount > 0; }, 10000);
         var staged = s.pendingCount;
