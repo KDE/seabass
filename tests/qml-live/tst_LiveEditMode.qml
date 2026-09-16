@@ -513,7 +513,10 @@ TestCase {
         verify(staged >= 1, "at least one group staged");
         cleanup.apply();
         var s = session();
-        tryVerify(function() { return s.pendingCount === staged; }, 10000);
+        // stagedCount, not includedCount: apply() skips a plan whose
+        // survivor another plan already staged, so pendingCount can land
+        // below the number of ticks.
+        tryVerify(function() { return s.pendingCount === cleanup.stagedCount && s.pendingCount > 0; }, 10000);
         var saved = saveAndWait(false);
         compare(saved.error, "");
         waitIdle(cleanup, 300000);
@@ -546,12 +549,24 @@ TestCase {
                  + "(this check deletes the copies it plants)");
         }
 
-        // Cancel: tick everything, start, stop it immediately.
-        cleanup.setAllPendingDeletionIncluded(true);
+        // Cancel: tick only what this save orphaned, start, and stop it.
+        // The worker can be through before the cancel lands -- with one
+        // file it usually is -- so a finished run is accepted below rather
+        // than demanded to be still writing here.
+        cleanup.setAllPendingDeletionIncluded(false);
+        var toDelete = createTemporaryObject(pendingRowsComponent, testCase, {model: cleanup.pendingDeletions});
+        var doomed = [];
+        for (var t = 0; t < toDelete.count; ++t) {
+            var row = toDelete.objectAt(t);
+            if (!listedBefore[row.path]) {
+                row.include(true);
+                doomed.push(row.path);
+            }
+        }
+        compare(doomed.length, planted);
         var cancelSpy = createTemporaryObject(spyComponent, testCase,
                                               {target: cleanup, signalName: "pendingDeletionsWriteFinished"});
         cleanup.deleteSelectedPendingFiles();
-        compare(cleanup.writing, true);
         cleanup.cancelWrite();
         tryVerify(function() { return cancelSpy.count > 0; }, 300000);
         var cancelled = cancelSpy.signalArguments[0][0];
@@ -572,13 +587,19 @@ TestCase {
                "exactly what the cancel did not delete is still listed");
         verify(leftListed > 0, "the cancel left files for the second half of this check");
 
-        // Finish: the rest go, and exactly the rest.
-        var pathsBefore = createTemporaryObject(pendingRowsComponent, testCase, {model: cleanup.pendingDeletions});
-        var doomed = [];
-        for (var i = 0; i < pathsBefore.count; ++i) {
-            doomed.push(pathsBefore.objectAt(i).path);
+        // Finish: the rest of this save's files go, and only those. Ticking
+        // everything would sweep up entries other saves left listed, which
+        // are still orphaned and are not this check's to delete.
+        cleanup.setAllPendingDeletionIncluded(false);
+        var remaining = createTemporaryObject(pendingRowsComponent, testCase, {model: cleanup.pendingDeletions});
+        var stillDoomed = [];
+        for (var i = 0; i < remaining.count; ++i) {
+            var left = remaining.objectAt(i);
+            if (!listedBefore[left.path]) {
+                left.include(true);
+                stillDoomed.push(left.path);
+            }
         }
-        cleanup.setAllPendingDeletionIncluded(true);
         var finishSpy = createTemporaryObject(spyComponent, testCase,
                                               {target: cleanup, signalName: "pendingDeletionsWriteFinished"});
         cleanup.deleteSelectedPendingFiles();
@@ -586,9 +607,11 @@ TestCase {
         var finished = finishSpy.signalArguments[0][0];
         console.log("  completed delete: " + Live.summaryLine(finished));
         compare(finished.error, "");
-        compare(finished.written, doomed.length);
+        compare(finished.written, stillDoomed.length);
         waitIdle(cleanup, 300000);
         cleanup.refreshPendingDeletions();
+        // Back to what was listed before this check ran: its own files are
+        // gone, everything another save listed is untouched.
         compare(cleanup.pendingDeletions.rowCount(), pendingBefore);
         for (var d = 0; d < doomed.length; ++d) {
             verify(!Live.fileExists(doomed[d]), "deleted for real: " + doomed[d]);

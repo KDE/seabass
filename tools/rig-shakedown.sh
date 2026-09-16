@@ -43,17 +43,26 @@ export QT_QPA_PLATFORM=offscreen
 
 mkdir -p "$out" "$out/shots"
 # For S3: what the everyday profile looks like before the run.
-stat -c '%n %s %Y' "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata" 2>/dev/null > "$out/real-profile-before.txt"
+real_profile_now > "$out/real-profile-before.txt"
 summary="$out/summary.tsv"
 : > "$summary"
 a="$(basename "$A")"
 b="$(basename "$B")"
 
-# check NAME COMMAND... -- runs it into NAME.log; PASS when it exits 0.
+# check NAME COMMAND... -- runs it into NAME.log; PASS when it exits 0 AND
+# nothing inside it skipped. A skipped test proves nothing, and QtTest
+# exits 0 for one, so a check that skips would otherwise read as green --
+# the one thing this rig must never do before a release.
 check() {
     local name="$1"; shift
     echo "$(date +%T) === $name"
     if "$@" > "$out/$name.log" 2>&1; then
+        if grep -qE "^SKIP|SKIPPED" "$out/$name.log"; then
+            printf '%s\tFAIL\n' "$name" >> "$summary"
+            echo "$(date +%T) --- $name: FAIL (it skipped; see $out/$name.log)"
+            grep -E "^SKIP|SKIPPED" "$out/$name.log" | head -5
+            return 1
+        fi
         printf '%s\tPASS\n' "$name" >> "$summary"
         echo "$(date +%T) --- $name: PASS"
         return 0
@@ -101,6 +110,13 @@ unchanged_catalogs() {  # stick -- against the baseline taken after the restores
         fi
     done < <(grep -F "$1/" "$out/catalog-baseline.txt")
     echo "$checked catalog file(s) compared"
+    if [ "$checked" -eq 0 ]; then
+        # The old one-liner failed here by accident (sha256sum -c refuses an
+        # empty list); this one has to say so on purpose, or a baseline that
+        # matches nothing turns every catalog check into a no-op.
+        echo "NO catalog files matched the baseline for $1 -- nothing was compared"
+        bad=1
+    fi
     return $bad
 }
 
@@ -141,20 +157,46 @@ reference_links() {
 # profile being untouched: the runner records it before and after.
 sandbox_profile() {
     local ok=0
-    echo "SEABASS_HOME=$SEABASS_HOME"
-    echo "XDG_CONFIG_HOME=$XDG_CONFIG_HOME"
-    echo "XDG_DATA_HOME=$XDG_DATA_HOME"
-    case "$SEABASS_HOME" in "$HOME/Seabass/e2e"*) ;; *) echo "SEABASS_HOME is not the sandbox"; ok=1;; esac
-    case "$XDG_CONFIG_HOME" in "$HOME/Seabass/e2e"*) ;; *) echo "XDG_CONFIG_HOME is not the sandbox"; ok=1;; esac
-    [ -f "$XDG_CONFIG_HOME/seabass/seabass.conf" ] || { echo "no settings in the sandbox"; ok=1; }
-    [ -d "$SEABASS_HOME/metadata" ] || { echo "no metadata store in the sandbox"; ok=1; }
-    stat -c '%n %s %Y' "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata" 2>/dev/null > "$out/real-profile-after.txt"
-    if [ -s "$out/real-profile-before.txt" ]; then
-        diff "$out/real-profile-before.txt" "$out/real-profile-after.txt" \
-            && echo "the everyday profile is exactly as it was" \
-            || { echo "THE EVERYDAY PROFILE CHANGED"; ok=1; }
-    fi
+    # Unguarded expansions would abort the whole run under `set -u` -- and
+    # XDG_DATA_HOME in particular is routinely unset.
+    local home="${SEABASS_HOME:-}"
+    local config="${XDG_CONFIG_HOME:-}"
+    local data="${XDG_DATA_HOME:-}"
+    echo "SEABASS_HOME=$home"
+    echo "XDG_CONFIG_HOME=$config"
+    echo "XDG_DATA_HOME=$data"
+    case "$home" in "$HOME/Seabass/e2e"*) ;; *) echo "SEABASS_HOME is not the sandbox"; ok=1;; esac
+    case "$config" in "$HOME/Seabass/e2e"*) ;; *) echo "XDG_CONFIG_HOME is not the sandbox"; ok=1;; esac
+    case "$data" in "$HOME/Seabass/e2e"*) ;; *) echo "XDG_DATA_HOME is not the sandbox"; ok=1;; esac
+    [ -f "$config/seabass/seabass.conf" ] || { echo "no settings in the sandbox"; ok=1; }
+    [ -d "$home/metadata" ] || { echo "no metadata store in the sandbox"; ok=1; }
+    real_profile_now > "$out/real-profile-after.txt"
+    diff "$out/real-profile-before.txt" "$out/real-profile-after.txt" \
+        && echo "the everyday profile is exactly as it was" \
+        || { echo "THE EVERYDAY PROFILE CHANGED"; ok=1; }
     return $ok
+}
+
+# The everyday profile, listed so that a file APPEARING counts as a change
+# too: the run creating ~/.config/seabass/seabass.conf is the damage this
+# looks for, and "not there" has to be recorded as plainly as a size.
+real_profile_now() {
+    for path in "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata"; do
+        if [ -e "$path" ]; then
+            stat -c '%n %s %Y' "$path"
+        else
+            echo "$path ABSENT"
+        fi
+    done
+}
+
+# Run again at the very end of the round: S3 alone only proves the profile
+# was untouched by the three checks before it.
+sandbox_profile_still_clean() {
+    real_profile_now > "$out/real-profile-end.txt"
+    diff "$out/real-profile-before.txt" "$out/real-profile-end.txt" \
+        && echo "the everyday profile is still exactly as it was" \
+        || { echo "THE EVERYDAY PROFILE CHANGED DURING THE ROUND"; return 1; }
 }
 
 # W8: deletes audio for good, so the stick is restored right after.
@@ -167,9 +209,20 @@ delete_orphans() {
 # check that silently passes -- the worst kind this rig can have.
 live_test() {
     local failed=0
+    # Without this every live test skips itself ("SEABASS_LIVE_STICK is not
+    # set") and, before check() learnt to fail on a skip, wrote PASS having
+    # run nothing. run-live.sh and rig-edits.sh export it themselves; these
+    # checks call the binary directly and must too.
+    export SEABASS_LIVE_STICK="$B"
     for name in "$@"; do
         echo "=== $name"
-        "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$name" || failed=1
+        local log="$out/live-${name//:/_}.txt"
+        "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$name" 2>&1 | tee "$log"
+        [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
+        if grep -q "^SKIP" "$log"; then
+            echo "   SKIPPED, which counts as a failure here"
+            failed=1
+        fi
     done
     return $failed
 }
@@ -191,8 +244,11 @@ quit_with_changes() {
 # F4: fill the stick to within a few MB, try to save, then put the space
 # back whatever happened -- the filler is removed even on a failure.
 full_stick() {
-    local filler="$B/RIG-FILLER.bin"
-    local free_kb; free_kb=$(/bin/df -kP "$B" | awk 'NR==2 {print $4}')
+    # Stick A, deliberately: exFAT has no fallocate, so the filler is
+    # written for real, and A's spare gigabytes cost minutes where B's cost
+    # the better part of an hour for exactly the same proof.
+    local filler="$A/RIG-FILLER.bin"
+    local free_kb; free_kb=$(/bin/df -kP "$A" | awk 'NR==2 {print $4}')
     local leave_kb=6144
     local size_kb=$((free_kb - leave_kb))
     local rc=0
@@ -200,15 +256,25 @@ full_stick() {
         echo "stick already has less than $leave_kb KB free; nothing to fill"
         return 1
     fi
-    echo "filling $B: $free_kb KB free -> leaving about $leave_kb KB"
+    echo "filling $A: $free_kb KB free -> leaving about $leave_kb KB"
     dd if=/dev/zero of="$filler" bs=1M count=$((size_kb / 1024)) status=none || true
     sync
-    /bin/df -hP "$B" | tail -1
-    SEABASS_RIG_FULL_STICK=1 live_test LiveFullStick::test_saveOnAFullStickFailsCleanly || rc=1
+    /bin/df -hP "$A" | tail -1
+    local left_kb; left_kb=$(/bin/df -kP "$A" | awk 'NR==2 {print $4}')
+    if [ "$left_kb" -gt $((leave_kb * 4)) ]; then
+        # The fill did not take, so a save that fits proves nothing about a
+        # full stick. Said out loud rather than passed over: dd's own error
+        # is swallowed so the filler is always removed.
+        echo "the stick still has $left_kb KB free: the fill failed, F4 cannot be proven"
+        rm -f "$filler"
+        sync
+        return 1
+    fi
+    SEABASS_RIG_FULL_STICK=1 SEABASS_LIVE_STICK="$A" live_test LiveFullStick::test_saveOnAFullStickFailsCleanly || rc=1
     rm -f "$filler"
     sync
-    echo "filler removed; $(/bin/df -hP "$B" | awk 'NR==2 {print $4}') free again"
-    unchanged_catalogs "$B" || rc=1
+    echo "filler removed; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free again"
+    unchanged_catalogs "$A" || rc=1
     return $rc
 }
 
@@ -316,6 +382,9 @@ check C6-target-too-small "$build/rig_clone" "$B" "$A" "$out/backups-c6" --expec
 check X2-A-at-reference "$build/rig_restore" "$refA" "$A"
 check X2-B-at-reference "$build/rig_restore" "$refB" "$B"
 check X1-references-unchanged references_unchanged
+# S3 again, at the end: the three checks before it prove nothing about the
+# thirty that followed.
+check X4-everyday-profile-untouched sandbox_profile_still_clean
 
 echo
 cat "$summary"

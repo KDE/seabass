@@ -38,6 +38,7 @@ TestCase {
         if (typeof liveRigFullStick === "undefined" || !liveRigFullStick) {
             skip("SEABASS_RIG_FULL_STICK is not set: the rig fills the stick for this one");
         }
+        verify(stickRoot.length > 0, "SEABASS_LIVE_STICK names the stick this runs against");
         testCase.libraryId = EditSessionRegistry.libraryIdForPath(rekordboxPath);
         var page = createTemporaryObject(junkPage, testCase,
                                          {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
@@ -53,7 +54,13 @@ TestCase {
         var s = EditSessionRegistry.openSession(testCase.libraryId, stickLabel, rekordboxPath, enginePath);
         verify(s !== null);
         console.log("  free on the stick before the save: " + s.stickBytesFree + " bytes of " + s.stickBytesCapacity);
-        verify(s.stickBytesFree >= 0, "the session measured the stick");
+        // The whole point of this check is a stick with no room. A session
+        // that measured nothing (0 of 0), or a stick with gigabytes free,
+        // means the fill did not take -- and a save that then fits proves
+        // nothing at all. Fail here rather than pass on the else-branch.
+        verify(s.stickBytesCapacity > 0, "the session measured the stick");
+        verify(s.stickBytesFree > 0 && s.stickBytesFree < 512 * 1024 * 1024,
+               "the stick really is nearly full before the save (free: " + s.stickBytesFree + " bytes)");
 
         ctrl.removeAllJunkCues();
         tryVerify(function() { return s.pendingCount > 0; }, 10000);
@@ -71,11 +78,14 @@ TestCase {
         // leave the save half applied.
         if (summary.error.length > 0) {
             console.log("  refused or stopped: " + summary.error);
-            verify(summary.error.length > 0, "the failure says what happened");
             compare(EditSessionRegistry.anyWriting, false);
+            compare(s.dirty, true, "a refused save keeps its changes staged rather than losing them");
         } else {
-            console.log("  the save fitted after all: " + summary.written + " of " + staged);
+            // Allowed, but only because the save genuinely fitted in what
+            // little was left: everything staged has to have been written.
+            console.log("  the save fitted in the remaining space: " + summary.written + " of " + staged);
             compare(summary.written, staged);
+            compare(s.dirty, false);
         }
 
         // The catalogs must still read, whatever happened.

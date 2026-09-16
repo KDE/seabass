@@ -36,16 +36,24 @@ failed=0
 
 # Always a full "TestCase::function" name: a bare TestCase name makes
 # the QtQuickTest runner exit 1 without a word.
+# A skipped test is a failure here: this is the last gate before people
+# see the build, and a check that did not run must never read as green.
 run() {  # name, extra env assignments...
     local name="$1"; shift
     echo "=== $name"
-    env "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 \
+    env "$@" stdbuf -oL "$bin" -input "$here" "$name" 2>&1 | tee "$out/last-run.txt" \
         | grep -E "^(PASS|FAIL|SKIP|QDEBUG|XFAIL|Totals)|^   (Actual|Expected|Loc)" \
         | sed 's/SeabassGuiQmlTests::[A-Za-z]*:://; s/^QDEBUG : [a-zA-Z0-9_]*() .\[34m[a-zA-Z0-9_]*.\[0m://'
     # The test binary's own status, not the filter's: a pipeline ends with
     # sed, which succeeds whatever the tests did, so a run full of FAILs
     # used to exit 0 and a caller counted it as passed.
     [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
+    # And a skip: QtTest exits 0 for it, but a test that did not run has
+    # proved nothing.
+    if grep -q "^SKIP" "$out/last-run.txt" 2>/dev/null; then
+        echo "   SKIPPED, which counts as a failure here"
+        failed=1
+    fi
 }
 
 # 1. The plain flows, one process per test function so a failure in one

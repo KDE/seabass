@@ -46,11 +46,6 @@ function summaryLine(summary) {
         + (summary.cancelled ? " (cancelled)" : "") + (summary.error ? " error: " + summary.error : "");
 }
 
-// Whether a file is still on the stick, for a check that deletes for good
-// (tst_LiveEditMode's W8). XMLHttpRequest is the only file probe QML has
-// without a helper type, and a HEAD on a file:// URL answers it: status 0
-// with no response for a path that is not there, 200 or 0-with-response
-// for one that is.
 // The item with this objectName anywhere under root -- the dialogs the
 // pages own are reached this way (tst_LiveQuit's F5).
 function findByObjectName(root, name) {
@@ -70,15 +65,23 @@ function findByObjectName(root, name) {
     return null;
 }
 
+// Whether a file is still on the stick, for a check that deletes for good
+// (tst_LiveEditMode's W8). XMLHttpRequest is the only file probe QML has
+// without a helper type. HEAD, not GET: the answer is whether the file is
+// there, and a GET would read every surviving file into memory to find out.
+//
+// An empty file exists: judging by the response body called a truncated
+// file deleted, which is precisely the difference W8 is asking about. The
+// status is what decides, and reading it can throw for a path that is not
+// there -- so every step sits inside the try, where a throw is the answer.
 function fileExists(absolutePath) {
-    // Reading the status can throw "Invalid state" for a file that is not
-    // there, as well as open()/send() themselves, so every step is inside
-    // the try: a throw IS the answer this asks for.
     try {
         var request = new XMLHttpRequest();
-        request.open("GET", "file://" + absolutePath, false);
+        request.open("HEAD", "file://" + absolutePath, false);
         request.send(null);
-        return request.status === 200 || (request.status === 0 && request.responseText.length > 0);
+        // Local files answer 0 (no HTTP status) when they opened, 404 when
+        // the path is not there; some builds report 200 instead.
+        return request.status === 0 || request.status === 200;
     } catch (e) {
         return false;
     }

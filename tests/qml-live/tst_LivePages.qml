@@ -108,7 +108,10 @@ TestCase {
                 verify(entry.label.length > 0, "the backup names its stick");
                 verify(entry.bytes > 0, "the backup has a size");
                 verify(entry.entries > 0, "the backup lists entries");
-                verify(entry.trackCount > 0, "the backup's library has tracks");
+                // -1 means the backup recorded no fingerprint (an older
+                // one), which is not a fault of the listing.
+                verify(entry.trackCount > 0 || entry.trackCount === -1,
+                       "the backup's library has tracks, or records no count");
             }
         }
         verify(readable >= 2, "both reference backups are listed and readable");

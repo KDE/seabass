@@ -34,7 +34,15 @@ failed=0
 
 run() {  # full "TestCase::function" name
     echo "=== $1"
-    "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$1" || failed=1
+    local log; log="$(mktemp)"
+    "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$1" 2>&1 | tee "$log"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
+    # A skip proves nothing, and QtTest exits 0 for it.
+    if grep -q "^SKIP" "$log"; then
+        echo "   SKIPPED, which counts as a failure here"
+        failed=1
+    fi
+    rm -f "$log"
 }
 
 run LiveEditMode::test_08_addCueSaveUndo
