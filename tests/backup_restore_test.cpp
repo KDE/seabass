@@ -898,8 +898,21 @@ int main()
         const fs::path alias = f.target / "Contents" / "alias-of-a.mp3";
         std::error_code linkError;
         fs::create_hard_link(onTarget, alias, linkError);
+        // "CONTENTS" here is meant to be a file of its own, distinct from
+        // the real "Contents" folder above, colliding only in name -- the
+        // whole point being that the restore must tell the two apart. On
+        // a case-folding filesystem they are not distinct at all: "CONTENTS"
+        // and "Contents" are the same directory entry, so there is no
+        // separate file left to assert about. Confirmed directly on
+        // Windows/NTFS: fs::exists(.../"CONTENTS") saw the real "Contents"
+        // folder created a few lines up and never went false, in a scenario
+        // this test cannot construct here rather than a real bug.
+        const bool foldsCase = fs::exists(f.target / "cOnTeNtS");
         if (linkError) {
             std::cout << "case same-file-extra SKIPPED (no hard links here: " << linkError.message() << ")\n";
+        } else if (foldsCase) {
+            std::cout << "case same-file-extra SKIPPED (this filesystem folds case, so a file named like "
+                         "the Contents folder is that folder)\n";
         } else {
             writeFile(f.target / "CONTENTS", "a file named like a backup folder", 1'600'000'000);
             RestoreOptions exact = f.restore;
