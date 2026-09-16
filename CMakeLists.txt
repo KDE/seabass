@@ -798,8 +798,25 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # controllers, and AppSettingsController is backed by QSettings --
         # without this a test could read, or a future one write, the
         # developer's own Seabass settings.
-        set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT
-            "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+        set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+        # MSVC only: the offscreen platform's font backend needs pointing
+        # at real font files explicitly on Windows, unlike the "windows"
+        # platform (which uses DirectWrite directly, no directory needed)
+        # or MSYS2's Qt (whose offscreen plugin resolves fonts through the
+        # fontconfig it's built against). Without this, EVERY glyph in
+        # every QML test renders as a same-width tofu box -- confirmed
+        # directly with a screenshot -- which is indistinguishable from
+        # the app itself at a glance but silently wrecks every pixel
+        # measurement downstream (text width, centering, elision): seven
+        # pixel-measurement cases across five pages failed on Windows
+        # this way, some by over a hundred pixels, none of them a real
+        # layout bug. Confirmed fixed with the same screenshot once this
+        # was set. $ENV{SystemRoot} rather than a literal C:/Windows,
+        # since that's not guaranteed on every Windows install.
+        if(MSVC)
+            list(APPEND _seabass_qml_test_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
+        endif()
+        set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT "${_seabass_qml_test_env}")
     else()
         message(STATUS "SEABASS_TESTS=OFF: seabass_qml_tests not built")
     endif()
