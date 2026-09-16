@@ -385,6 +385,14 @@ check FB9-manage-backups-delete "$build/rig_delete_backup" "$out/backups-fb" "$o
 # These two leave the stick changed on purpose -- W8 deletes audio for
 # good, F4 fills the stick up -- so they run last, right before the
 # restores below put both sticks back at their references.
+#
+# But B is not at its reference here: FB8 has just restored A's archive
+# onto it. W8 cleans up duplicates on B through both catalogs, and on a
+# stick carrying A's library over B's files a group's survivor has no
+# Device Library Plus row -- which Clean Up deliberately refuses, so W8
+# failed every full round for a reason that has nothing to do with it.
+# Its first full round (round 4) is where that showed.
+check W8-B-at-reference-first "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B could not be put back before W8; stopping"; exit 1; }
 check W8-delete-orphans delete_orphans
 check F4-stick-fills-up full_stick
 check FB-restore-B-from-reference "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not back at its reference; stopping"; exit 1; }
