@@ -830,6 +830,12 @@ TestCase {
 
     // ---- 7. Delete Orphaned Files: cancel before the first file ----
     function test_07_pendingDeletionsCancel() {
+        // Whether this run had to make its own precondition. A planted
+        // Clean Up save removes duplicate rows and merges their cues onto
+        // the survivor, so the stick no longer matches the reference the
+        // rig compares it against after the bundle (rig-shakedown.sh's
+        // unchanged_catalogs). It is undone at the end.
+        var planted = false;
         var page = createTemporaryObject(pendingPage, testCase, {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
                                                                  enginePath: enginePath,
                                                                  appSettingsController: createTemporaryObject(appSettings, testCase)});
@@ -851,9 +857,19 @@ TestCase {
             waitIdle(planter, 300000);
             verify(planter.plans.rowCount() > 0,
                    "a duplicate group to plant a deletion with (nothing to plant from)");
+            // Ticking group 0 and hoping is what test_13 deliberately does
+            // not do: a group is staged only when nothing about it is
+            // ambiguous, so the first row can tick to nothing while a
+            // usable group sits two rows down.
             planter.setAllIncluded(false);
-            planter.setIncluded(0, true);
-            verify(planter.includedCount > 0, "one group staged to plant with");
+            var plantedGroups = 0;
+            for (var g = 0; g < planter.plans.rowCount() && plantedGroups < 1; ++g) {
+                planter.setIncluded(g, true);
+                if (planter.includedCount > plantedGroups) {
+                    plantedGroups = planter.includedCount;
+                }
+            }
+            verify(plantedGroups > 0, "one group staged to plant with");
             planter.apply();
             var ps = session();
             tryVerify(function() { return ps.pendingCount === planter.stagedCount && ps.pendingCount > 0; }, 10000);
@@ -867,6 +883,7 @@ TestCase {
             // No skip on the way out: if the save orphaned nothing there is
             // something to look at, not something to pass over.
             verify(count > 0, "the planted Clean Up save listed a file for deletion");
+            planted = true;
         }
         ctrl.setAllPendingDeletionIncluded(true);
         var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "pendingDeletionsWriteFinished"});
@@ -885,12 +902,34 @@ TestCase {
         // enough entries the cancel always arrived mid-run. Planting exactly
         // one made it deterministic. Same contract W8 states: a stopped
         // delete says it stopped, or it had already finished.
-        verify(summary.cancelled === true || summary.error.length > 0 || summary.written === summary.total,
-               "a stopped delete says it stopped, or had already finished");
+        // "operation cancelled" specifically, not any error: a real I/O
+        // failure ("could not delete X: permission denied") would satisfy
+        // a bare error.length check and hide exactly what this is here to
+        // catch.
+        verify(summary.cancelled === true
+                   || summary.error.indexOf("cancel") >= 0
+                   || summary.written === summary.total,
+               "a stopped delete says it stopped, or had already finished (got: " + summary.error + ")");
         verify(summary.written <= summary.total, "it never deletes more than was ticked");
         waitIdle(ctrl);
         tryCompare(findChild(page, "summaryDialog"), "opened", true, 5000);
         shot(page, "live-pending-cancelled");
         compare(EditSessionRegistry.anyWriting, false);
+
+        // Put the library back if this run planted its own deletion: every
+        // other check in the round compares this stick against its
+        // reference, and a Clean Up save left standing fails all of them.
+        if (planted) {
+            var s = session();
+            if (s !== null && s.canUndo === true) {
+                var undone = createTemporaryObject(spyComponent, testCase, {target: s, signalName: "saveFinished"});
+                s.undoLastSave();
+                tryVerify(function() { return undone.count > 0; }, 600000);
+                console.log("  planted save undone: " + Live.summaryLine(undone.signalArguments[0][0]));
+                compare(undone.signalArguments[0][0].error, "");
+            } else {
+                fail("the planted Clean Up save cannot be undone, so the stick is left off its reference");
+            }
+        }
     }
 }

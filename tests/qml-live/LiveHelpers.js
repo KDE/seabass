@@ -13,8 +13,27 @@
 // object as "ClassName(0x...)", which is what this keys on.
 function findByType(root, typeName) {
     var found = null;
+    // Every object visited once. A QML item graph reaches the same object
+    // through several of the lists below -- `children` and `data` overlap by
+    // construction, and `contentItem`'s subtree is also in `contentData` --
+    // so without this the walk re-enters whole subtrees once per path that
+    // reaches them, and each visit pays a String(obj) that runs
+    // QMetaObject::indexOfMethod over the type's whole method table.
+    // Measured with eu-stack and perf on 2026-09-16: a live test sat at 100%
+    // CPU for nine minutes inside objectToString/methodMatch/memcmp with the
+    // GC chasing the string garbage, on a page whose graph is perfectly
+    // ordinary. It was 76 s when the page was smaller.
+    var seen = [];
+    function beenHere(obj) {
+        for (var s = 0; s < seen.length; ++s) {
+            if (seen[s] === obj) return true;
+        }
+        seen.push(obj);
+        return false;
+    }
     function walk(obj) {
         if (found !== null || obj === null || obj === undefined) return;
+        if (beenHere(obj)) return;
         // C++ types print namespaced ("seabass::gui::SettingsController(0x..)"),
         // QML component types with a suffix ("BackBreadcrumb_QMLTYPE_12(0x..)").
         var name = String(obj);
@@ -48,8 +67,16 @@ function summaryLine(summary) {
 
 // The item with this objectName anywhere under root -- the dialogs the
 // pages own are reached this way (tst_LiveQuit's F5).
-function findByObjectName(root, name) {
+function findByObjectName(root, name, seen) {
     if (!root) return null;
+    // Same overlapping-graph problem findByType has: children and resources
+    // reach the same objects, so without this the walk re-enters subtrees
+    // once per path into them.
+    seen = seen || [];
+    for (var s = 0; s < seen.length; ++s) {
+        if (seen[s] === root) return null;
+    }
+    seen.push(root);
     if (root.objectName === name) return root;
     var kids = [];
     if (root.contentItem) kids.push(root.contentItem);
@@ -59,7 +86,7 @@ function findByObjectName(root, name) {
     var resources = root.resources ? root.resources : [];
     for (var r = 0; r < resources.length; ++r) kids.push(resources[r]);
     for (var k = 0; k < kids.length; ++k) {
-        var found = findByObjectName(kids[k], name);
+        var found = findByObjectName(kids[k], name, seen);
         if (found) return found;
     }
     return null;

@@ -30,6 +30,11 @@ build="${SEABASS_BUILD_DIR:-$root/build}"
 bin="$build/seabass_qml_tests"
 cli="$build/seabass-cli"
 export SEABASS_LIVE_STICK="$stick"
+# Made here, not assumed: a directory that does not exist makes every
+# screenshot throw, and grabImage().save() throwing inside a test fails it
+# with "Can't save to ..." -- which reads like a product fault and cost a
+# whole bundle run. Empty stays empty (screenshots off).
+[ -z "$shots" ] || mkdir -p "$shots"
 export SEABASS_SCREENSHOT_DIR="$shots"
 export QT_QPA_PLATFORM=offscreen
 failed=0
@@ -60,13 +65,6 @@ run() {  # name, extra env assignments...
     rm -f "$log"
 }
 
-# 1. The plain flows, one process per test function so a failure in one
-#    cannot take the others down with it.
-[ -n "${SKIP_PLAIN:-}" ] || for t in test_01_scanCancel test_02_settingsStageSaveUndo test_03_syncStageSaveCancel \
-         test_04_junkCuesStageSaveUndo test_07_pendingDeletionsCancel; do
-    run "LiveEditMode::$t"
-done
-
 # test_05 needs a damaged library, which a healthy stick does not have and
 # the test cannot make for itself: rig_plant_repairable moves one copy of a
 # cue-free duplicate aside, the same way rig-edits.sh sets up test_10. With
@@ -83,6 +81,13 @@ if [ -z "${SKIP_PLAIN:-}" ]; then
     # against its reference.
     "$build/rig_plant_repairable" "$stick" --restore || failed=1
 fi
+
+# 1. The plain flows, one process per test function so a failure in one
+#    cannot take the others down with it.
+[ -n "${SKIP_PLAIN:-}" ] || for t in test_01_scanCancel test_02_settingsStageSaveUndo test_03_syncStageSaveCancel \
+         test_04_junkCuesStageSaveUndo test_07_pendingDeletionsCancel; do
+    run "LiveEditMode::$t"
+done
 
 # 2. A foreign, live lock: a cookie owned by a sleep process on this host.
 # Where the app keeps its edit-lock cookies: paths::localMetadataDir(), which
