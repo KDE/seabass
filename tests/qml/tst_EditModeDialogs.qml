@@ -155,6 +155,35 @@ TestCase {
         dialog.close();
     }
 
+    // Everything was written and something after it was not finished -- a
+    // write-ahead log that would not fold. The save is NOT reported as
+    // failed (that would have the user save again and apply the same
+    // removals twice), so this is the only thing that tells them at all.
+    // It went unrendered once already: the summary carried the key and no
+    // dialog read it, which showed the state as a silent "Done".
+    function test_summaryDialogShowsAWarningWithoutCallingItAFailure() {
+        var dialog = createTemporaryObject(summaryComponent, testCase);
+        dialog.show({written: 3, total: 3, unit: "groups", verb: "cleaned up", cancelled: false, error: "",
+                     warning: "Device Library Plus kept 4152 bytes in its write-ahead log"});
+        tryCompare(dialog, "opened", true);
+        // Complete counts read without the "n of n" -- see test_countSentenceShapes(complete).
+        compare(findByObjectName(dialog, "countLabel").text, "3 groups cleaned up.");
+        compare(dialog.title, "Done, with something left over");
+        compare(dialog.severity, SeabassDialog.Warning);
+        compare(findByObjectName(dialog, "detailLabel").text,
+                "Device Library Plus kept 4152 bytes in its write-ahead log");
+        dialog.close();
+
+        // And a cancel outranks it: "Stopped at your request" is the more
+        // important fact, so a summary carrying both still reads Cancelled.
+        dialog.show({written: 1, total: 8, unit: "groups", cancelled: true, error: "",
+                     warning: "Device Library Plus kept 4152 bytes in its write-ahead log"});
+        tryCompare(dialog, "opened", true);
+        compare(dialog.title, "Cancelled");
+        verify(findByObjectName(dialog, "detailLabel").text.indexOf("Stopped at your request") === 0);
+        dialog.close();
+    }
+
     function test_lockedLibraryDialogDefaultsToStayingSafe() {
         var dialog = createTemporaryObject(lockedComponent, testCase);
         var spy = createTemporaryObject(spyComponent, testCase, {target: dialog, signalName: "removeLockRequested"});

@@ -178,8 +178,13 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
                 // fold says so on the stick's own log rather than silently.
                 const std::uint64_t left = live->finishWriting(ok);
                 if (left > 0) {
+                    // "did not complete", not "cancelled": ok is false for a
+                    // save that failed as well as one the user stopped.
                     ctx.log().record("save: Device Library Plus kept " + std::to_string(left)
-                                     + " bytes in its write-ahead log after a cancelled save");
+                                     + " bytes in its write-ahead log after a save that did not complete"
+                                     + (live->unfoldedFault().empty()
+                                            ? std::string()
+                                            : " (the checkpoint reported: " + live->unfoldedFault() + ")"));
                 }
             }
         });

@@ -74,12 +74,12 @@ SeabassDialog {
     }
 
     severity: dialog.error.length > 0 ? SeabassDialog.Error
-        : dialog.warning.length > 0 ? SeabassDialog.Warning
+        : (dialog.warning.length > 0 && !dialog.cancelled) ? SeabassDialog.Warning
         : dialog.cancelled ? SeabassDialog.Warning
         : SeabassDialog.Info
     closePolicy: Popup.NoAutoClose
     title: dialog.error.length > 0 ? "Stopped with an error"
-        : dialog.warning.length > 0 ? "Done, with something left over"
+        : (dialog.warning.length > 0 && !dialog.cancelled) ? "Done, with something left over"
         : dialog.cancelled ? "Cancelled"
         : "Done"
 
@@ -116,7 +116,7 @@ SeabassDialog {
             visible: text.length > 0
             color: dialog.error.length > 0 ? Theme.danger : Theme.textMuted
             text: dialog.error.length > 0 ? "Then: " + dialog.error
-                : dialog.warning.length > 0 ? dialog.warning
+                : (dialog.warning.length > 0 && !dialog.cancelled) ? dialog.warning
                 : dialog.detail.length > 0 ? dialog.detail
                 : dialog.cancelled ? "Stopped at your request. Everything up to here is complete; the rest was not touched."
                 : ""

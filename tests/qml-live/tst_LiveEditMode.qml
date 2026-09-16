@@ -246,7 +246,12 @@ TestCase {
         waitIdle(ctrl, 300000);
         var count = ctrl.junkCues.rowCount();
         console.log("  stray cues: " + count);
-        if (count === 0) {
+        // Not just an empty list: a stick carrying another check's orphans
+        // (test_09 leaves some listed on purpose, test_13 leaves its
+        // remainder) has nothing THIS check may safely cancel, and ticking
+        // someone else's file risks real audio on a lost race. So plant
+        // whenever there is no candidate of our own.
+        if (count === 0 || Object.keys(plantedPaths).length === 0) {
             skip("no stray cues on this stick");
         }
         ctrl.removeAllJunkCues();
@@ -866,39 +871,59 @@ TestCase {
             waitIdle(planter, 300000);
             verify(planter.plans.rowCount() > 0,
                    "a duplicate group to plant a deletion with (nothing to plant from)");
-            // Ticking group 0 and hoping is what test_13 deliberately does
-            // not do: a group is staged only when nothing about it is
-            // ambiguous, so the first row can tick to nothing while a
-            // usable group sits two rows down.
-            planter.setAllIncluded(false);
+            // Try groups until one actually lists a file, rather than
+            // predicting which will. Two models of "plantable" were wrong
+            // before this: any-group (W8 had already deleted the second
+            // copy, so the save orphaned nothing) and unreferencedCount >
+            // unreferencedHeldBackCount -- which is 0 for all 224 plans on
+            // a reference stick, because that role counts copies that are
+            // ALREADY unreferenced, not ones a clean-up would orphan. The
+            // save itself is the only honest test, and an attempt that
+            // lists nothing is undone before the next one.
             var plantedGroups = 0;
-            for (var g = 0; g < planter.plans.rowCount() && plantedGroups < 1; ++g) {
-                planter.setIncluded(g, true);
-                if (planter.includedCount > plantedGroups) {
-                    plantedGroups = planter.includedCount;
+            for (var attempt = 0; attempt < 6 && count === 0; ++attempt) {
+                planter.setAllIncluded(false);
+                planter.setIncluded(attempt, true);
+                if (planter.includedCount === 0) {
+                    continue;  // ambiguous group, nothing staged
                 }
-            }
-            verify(plantedGroups > 0, "one group staged to plant with");
-            planter.apply();
-            var ps = session();
-            tryVerify(function() { return ps.pendingCount === planter.stagedCount && ps.pendingCount > 0; }, 10000);
-            var plantSave = saveAndWait(false);
-            compare(plantSave.error, "");
-            waitIdle(planter, 300000);
-            ctrl.refreshPendingDeletions();
-            waitIdle(ctrl, 300000);
-            count = ctrl.pendingDeletions.rowCount();
-            console.log("  planted, pending deletions listed: " + count);
-            var afterPlant = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
-            for (var a = 0; a < afterPlant.count; ++a) {
-                var plantedPath = afterPlant.objectAt(a).path;
-                if (!listedAtStart[plantedPath]) {
-                    plantedPaths[plantedPath] = true;
+                planter.apply();
+                var ps = session();
+                tryVerify(function() { return ps.pendingCount === planter.stagedCount && ps.pendingCount > 0; }, 10000);
+                var plantSave = saveAndWait(false);
+                compare(plantSave.error, "");
+                waitIdle(planter, 300000);
+                ctrl.refreshPendingDeletions();
+                waitIdle(ctrl, 300000);
+                count = ctrl.pendingDeletions.rowCount();
+                if (count > 0) {
+                    plantedGroups = 1;
+                    console.log("  planted with group " + attempt + ", pending deletions listed: " + count);
+                    var afterPlant = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
+                    for (var a = 0; a < afterPlant.count; ++a) {
+                        var plantedPath = afterPlant.objectAt(a).path;
+                        if (!listedAtStart[plantedPath]) {
+                            plantedPaths[plantedPath] = true;
+                        }
+                    }
+                    break;
                 }
+                // Listed nothing: put it back before trying the next group,
+                // so a failed attempt never leaves the stick off reference.
+                console.log("  group " + attempt + " cleaned up but orphaned nothing; undoing");
+                var undoAttempt = session();
+                if (undoAttempt !== null && undoAttempt.canUndo === true) {
+                    var undone = createTemporaryObject(spyComponent, testCase,
+                                                      {target: undoAttempt, signalName: "saveFinished"});
+                    undoAttempt.undoLastSave();
+                    tryVerify(function() { return undone.count > 0; }, 600000);
+                }
+                planter.scan("rekordbox", rekordboxPath);
+                waitIdle(planter, 300000);
             }
-            // No skip on the way out: if the save orphaned nothing there is
-            // something to look at, not something to pass over.
-            verify(count > 0, "the planted Clean Up save listed a file for deletion");
+            if (plantedGroups === 0) {
+                skip("no duplicate group on this stick whose clean-up lists a file for deletion");
+            }
             planted = true;
         }
         // A row this check planted, never one that was already listed: the

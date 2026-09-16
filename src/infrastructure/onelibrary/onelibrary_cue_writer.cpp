@@ -713,6 +713,7 @@ std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
     bool folded = false;
     std::string checkpointFault;
     for (int attempt = 0; attempt < 3 && !folded; ++attempt) {
+        checkpointFault.clear();  // the last attempt's answer, not the first's
         try {
             // Inside the try on purpose: the pragma usually answers with a
             // row, but sqlite3_step can return SQLITE_BUSY outright when
@@ -722,10 +723,14 @@ std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
             SqlCipherStatement checkpoint(*m_writeDb, "PRAGMA wal_checkpoint(TRUNCATE);");
             folded = checkpoint.step() && checkpoint.columnInt64(0) == 0;
         } catch (const std::exception &e) {
-            // Remembered, not swallowed: a checkpoint that is merely BUSY
-            // is what the retries are for, but a corrupt database, an I/O
-            // error or a stick that went away must stay an error rather
-            // than being downgraded to "the log did not fold".
+            // Remembered so the message can say what went wrong -- but not
+            // used to decide error-versus-warning. SqlCipherStatement turns
+            // every non-ROW rc into one generic exception, SQLITE_BUSY
+            // included, and BUSY is precisely what these retries are for.
+            // Classifying on that string would turn ordinary contention
+            // into a failed save, and a save whose rows are committed must
+            // never be reported as unapplied: the user would save again and
+            // apply every removal twice.
             folded = false;
             checkpointFault = e.what();
         }
@@ -736,6 +741,11 @@ std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
     // The -shm indexes the log and cannot be removed while any handle is
     // open, so the connections go before the files do.
     m_writeDb.reset();
+    // From here the baseline no longer describes the file and there is no
+    // connection left: every exit below is "finished", including the ones
+    // that return early or throw, which is what writeConnection() refuses
+    // to reopen after.
+    m_finished = true;
 
     const fs::path wal = fs::path(m_dbPath + "-wal");
     const fs::path shm = fs::path(m_dbPath + "-shm");
@@ -755,6 +765,9 @@ std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
                                  "cannot say its rows are in the library");
     }
     if (remaining > 0 && !strict) {
+        if (!checkpointFault.empty()) {
+            m_unfoldedFault = checkpointFault;
+        }
         // A cancelled save folds what landed but never fails over it. The
         // -shm stays: it indexes the log, and a reader that has to rebuild
         // one needs write access to the directory -- on a read-only mount,
@@ -762,19 +775,20 @@ std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
         // the frames harder to recover rather than easier.
         return remaining;
     }
-    if (remaining > 0 && !checkpointFault.empty()) {
-        throw std::runtime_error("Device Library Plus could not fold its write-ahead log: " + checkpointFault);
-    }
     if (remaining > 0) {
+        // Always the warning type, whatever the cause: the rows ARE
+        // committed. Naming the fault in the message keeps the cause
+        // visible without telling the user nothing was applied.
         throw OneLibraryLogNotFolded("Device Library Plus kept " + std::to_string(remaining)
                                  + " bytes in its write-ahead log after the save; those rows are not in "
-                                   "exportLibrary.db and a player reading it would not see them");
+                                   "exportLibrary.db and a player reading it would not see them"
+                                 + (checkpointFault.empty() ? std::string()
+                                                            : " (the checkpoint reported: " + checkpointFault + ")"));
     }
     fs::remove(wal, ec);
     fs::remove(shm, ec);
     // Only once it really is finished: set on entry it was also true down
     // every throwing path, which is the opposite of what it records.
-    m_finished = true;
     return 0;
     // No refreshStalenessBaseline() here: the connections are closed and
     // this writer can never write again, so re-reading the whole database
