@@ -876,10 +876,26 @@ TestCase {
             // save itself is the only honest test, and an attempt that
             // lists nothing is undone before the next one.
             var plantedGroups = 0;
-            var attempts = Math.min(6, planter.plans.rowCount());
-            for (var attempt = 0; attempt < attempts && count === 0; ++attempt) {
+            // Keyed by survivor, not by row index: each fruitless attempt
+            // rescans, which rebuilds the model -- an index then addresses a
+            // different group, so one could be retried while another was
+            // never tried at all.
+            var triedSurvivors = {};
+            for (var attempt = 0; attempt < 6 && count === 0; ++attempt) {
                 planter.setAllIncluded(false);
-                planter.setIncluded(attempt, true);
+                var pick = -1;
+                for (var row = 0; row < planter.plans.rowCount(); ++row) {
+                    var who = planter.plans.data(planter.plans.index(row, 0), Qt.UserRole + 1);
+                    if (!triedSurvivors[who]) {
+                        triedSurvivors[who] = true;
+                        pick = row;
+                        break;
+                    }
+                }
+                if (pick < 0) {
+                    break;  // every group tried
+                }
+                planter.setIncluded(pick, true);
                 if (planter.includedCount === 0) {
                     continue;  // ambiguous group, nothing staged
                 }
@@ -908,12 +924,15 @@ TestCase {
                 // so a failed attempt never leaves the stick off reference.
                 console.log("  group " + attempt + " cleaned up but orphaned nothing; undoing");
                 var undoAttempt = session();
-                if (undoAttempt === null || undoAttempt.canUndo !== true) {
-                    // Six applied clean-ups could otherwise stay on the stick
-                    // and the round would end dirty with no clue which check
-                    // did it.
-                    fail("an attempt that orphaned nothing cannot be undone; the stick is off its reference");
+                if (plantSave.written === 0) {
+                    continue;  // nothing was written, so there is nothing to put back
                 }
+                if (undoAttempt === null) {
+                    fail("an attempt that wrote cannot be undone: no session; the stick is off its reference");
+                }
+                // canUndo is set when the save's backups land; give it the
+                // moment rather than depending on signal order.
+                tryVerify(function() { return undoAttempt.canUndo === true; }, 10000);
                 var undone = createTemporaryObject(spyComponent, testCase,
                                                   {target: undoAttempt, signalName: "saveFinished"});
                 undoAttempt.undoLastSave();

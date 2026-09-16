@@ -186,14 +186,11 @@ public:
     // Throws if frames remain after the checkpoint: rows stranded in a
     // log are exactly what the save must not report as written.
     // A no-op when this writer never opened anything.
-    // strict: throw if frames remain (a clean save). A cancelled save
-    // folds what landed but never fails over the fold -- it returns the
-    // bytes it could not fold instead, for a caller with somewhere to
-    // record them. 0 means the library is one file again.
-    std::uint64_t finishWriting(bool strict = true);
-    // Why the log could not be folded on a non-strict finish, empty when
-    // there was no fault beyond plain contention.
-    const std::string &unfoldedFault() const { return m_unfoldedFault; }
+    // Throws OneLibraryLogNotFolded when the library is not one file
+    // afterwards -- on any save, cancelled or not. Never an error type: the
+    // rows are committed, and a save reported as unapplied gets applied
+    // twice.
+    void finishWriting();
 
 private:
     // The two connections this writer works through, opened on first use
@@ -223,9 +220,6 @@ private:
     // Set once finishWriting() has folded and closed: the baseline this
     // writer holds no longer describes the file.
     bool m_finished = false;
-    // What the checkpoint reported when a non-strict finish could not fold,
-    // for a caller with somewhere to record it.
-    std::string m_unfoldedFault;
     std::unique_ptr<SqlCipherLibrary> m_lib;
     std::unique_ptr<SqlCipherDb> m_writeDb;
     std::unique_ptr<SqlCipherDb> m_verifyDb;

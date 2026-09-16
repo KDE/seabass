@@ -696,125 +696,65 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
     refreshStalenessBaseline();
 }
 
-std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
+void OneLibraryCueWriter::finishWriting()
 {
-    // Never opened: nothing was mirrored in this save, so there is no log
-    // of ours to fold and no sidecar of ours to remove.
+    // Never opened: nothing was mirrored in this save, so there is no log of
+    // ours to fold and no sidecar of ours to remove.
     if (!m_writeDb) {
-        return 0;
+        return;
     }
-    // TRUNCATE rather than PASSIVE: PASSIVE gives up silently when a
-    // reader is in the way, which would leave exactly the stranded frames
-    // this exists to prevent. The verify connection is this writer's own
-    // and is closed first so it cannot be that reader.
-    m_verifyDb.reset();
 
-    // The pragma's answer is a ROW -- (busy, log, checkpointed) -- not an
-    // error code: a blocked checkpoint returns busy=1 and SQLITE_OK, so
-    // exec() would report success while leaving every frame in place.
-    // Read the row, and give a reader that is merely mid-statement time to
-    // finish rather than calling one moment's contention a failed save.
+    // One rule, deliberately: after this, either the library is one file or
+    // the caller hears about it. Five review rounds went into trying to tell
+    // a busy checkpoint from a broken one -- SqlCipherStatement reports every
+    // non-ROW result the same way, so every attempt at classifying ended up
+    // either failing good saves or warning about them. What matters is not
+    // why the fold did not happen but whether it did.
+    m_verifyDb.reset();
     m_writeDb->exec("PRAGMA busy_timeout = 5000;");
     bool folded = false;
-    std::string checkpointFault;
     for (int attempt = 0; attempt < 3 && !folded; ++attempt) {
-        checkpointFault.clear();  // the last attempt's answer, not the first's
         try {
-            // Inside the try on purpose: the pragma usually answers with a
-            // row, but sqlite3_step can return SQLITE_BUSY outright when
-            // another connection holds the database -- which throws, and
-            // uncaught that escaped on the first attempt, so the retries
-            // this loop exists for never happened.
             SqlCipherStatement checkpoint(*m_writeDb, "PRAGMA wal_checkpoint(TRUNCATE);");
             folded = checkpoint.step() && checkpoint.columnInt64(0) == 0;
-        } catch (const std::exception &e) {
-            // Remembered so the message can say what went wrong -- but not
-            // used to decide error-versus-warning. SqlCipherStatement turns
-            // every non-ROW rc into one generic exception, SQLITE_BUSY
-            // included, and BUSY is precisely what these retries are for.
-            // Classifying on that string would turn ordinary contention
-            // into a failed save, and a save whose rows are committed must
-            // never be reported as unapplied: the user would save again and
-            // apply every removal twice.
-            folded = false;
-            checkpointFault = e.what();
+        } catch (const std::exception &) {
+            folded = false;  // busy is the common case and is what the retries are for
         }
         if (!folded && attempt + 1 < 3) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
     }
-    // The -shm indexes the log and cannot be removed while any handle is
-    // open, so the connections go before the files do.
+
+    // The last connection closing is itself a checkpoint: SQLite folds the
+    // log and removes both sidecars. So this is where the answer is decided,
+    // not in the loop above.
     m_writeDb.reset();
-    // From here the baseline no longer describes the file and there is no
-    // connection left: every exit below is "finished", including the ones
-    // that return early or throw, which is what writeConnection() refuses
-    // to reopen after.
     m_finished = true;
 
     const fs::path wal = fs::path(m_dbPath + "-wal");
     const fs::path shm = fs::path(m_dbPath + "-shm");
     std::error_code ec;
     const bool walThere = fs::exists(wal, ec);
-    if (!ec && !walThere && !checkpointFault.empty()) {
-        // No log to measure, but the checkpoint threw: the stick went away
-        // after the commit, or the sidecar was taken out from under us.
-        // Reporting a clean save here is the one outcome worse than saying
-        // so -- and it must stay the warning type, because the rows are
-        // committed and telling the user nothing was applied would have
-        // them save the same removals twice.
-        m_finished = true;
-        throw OneLibraryLogNotFolded("Device Library Plus could not fold its write-ahead log and it is no longer "
-                                     "there to check (the checkpoint reported: " + checkpointFault + ")");
+    const std::uintmax_t remaining = (!ec && walThere) ? fs::file_size(wal, ec) : 0;
+    if (!ec && remaining == 0) {
+        // The library is one file again. A -wal that is simply gone is the
+        // ordinary outcome, not a fault: the close folded it.
+        fs::remove(wal, ec);
+        fs::remove(shm, ec);
+        return;
     }
-    if (ec) {
-        // Cannot even tell whether a log is there -- the stick went away,
-        // or came back read-only. That is the one state this must not
-        // bless: a save reporting everything written while its rows may
-        // be sitting in a file nobody can read.
-        // The warning type, not an error: the rows are committed, and an
-        // error here clears appliedIds and invites a second apply of the
-        // same removals -- by the same argument that a fault the code
-        // cannot tell apart must not void a finished save.
-        throw OneLibraryLogNotFolded("could not tell whether Device Library Plus still has a write-ahead log beside "
-                                     "exportLibrary.db, so the save cannot say its rows are in the library");
-    }
-    const std::uintmax_t remaining = walThere ? fs::file_size(wal, ec) : 0;
-    if (ec) {
-        throw OneLibraryLogNotFolded("could not read the size of Device Library Plus's write-ahead log, so the save "
-                                     "cannot say its rows are in the library");
-    }
-    if (remaining > 0 && !strict) {
-        if (!checkpointFault.empty()) {
-            m_unfoldedFault = checkpointFault;
-        }
-        // A cancelled save folds what landed but never fails over it. The
-        // -shm stays: it indexes the log, and a reader that has to rebuild
-        // one needs write access to the directory -- on a read-only mount,
-        // or for a player that will not create sidecars, removing it makes
-        // the frames harder to recover rather than easier.
-        return remaining;
-    }
-    if (remaining > 0) {
-        // Always the warning type, whatever the cause: the rows ARE
-        // committed. Naming the fault in the message keeps the cause
-        // visible without telling the user nothing was applied.
-        throw OneLibraryLogNotFolded("Device Library Plus kept " + std::to_string(remaining)
-                                 + " bytes in its write-ahead log after the save; those rows are not in "
-                                   "exportLibrary.db and a player reading it would not see them"
-                                 + (checkpointFault.empty() ? std::string()
-                                                            : " (the checkpoint reported: " + checkpointFault + ")"));
-    }
-    fs::remove(wal, ec);
-    fs::remove(shm, ec);
-    // Only once it really is finished: set on entry it was also true down
-    // every throwing path, which is the opposite of what it records.
-    return 0;
-    // No refreshStalenessBaseline() here: the connections are closed and
-    // this writer can never write again, so re-reading the whole database
-    // off the stick buys nothing -- and computeChecksum() throws when the
-    // file cannot be opened, which from inside a finish hook would report
-    // a save that fully succeeded as failed.
+
+    // Frames left, or a log we cannot measure. Always the warning type,
+    // never an error: the rows are committed either way, and reporting the
+    // save as unapplied would have the user save again and apply the same
+    // removals twice.
+    throw OneLibraryLogNotFolded(
+        remaining > 0
+            ? "Device Library Plus kept " + std::to_string(remaining)
+                  + " bytes in its write-ahead log; those rows are not in exportLibrary.db and a player reading "
+                    "it would not see them"
+            : std::string("could not tell whether Device Library Plus still has a write-ahead log beside "
+                          "exportLibrary.db, so the save cannot say its rows are in the library"));
 }
 
 }  // namespace seabass::infrastructure::onelibrary

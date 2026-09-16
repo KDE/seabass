@@ -446,14 +446,13 @@ SaveContext::FinishOutcome SaveContext::runFinishHooks(bool ok)
         try {
             hook(ok);
         } catch (const seabass::infrastructure::onelibrary::OneLibraryLogNotFolded &e) {
-            // The rows are committed; only the fold is missing. Note what
-            // this does NOT claim: finishWriting() has already closed both
-            // connections, so nothing of ours will fold the log later --
-            // the frames sit outside exportLibrary.db until something else
-            // opens and checkpoints it, which is why this is said out loud
-            // rather than passed over. What it must not do is report the
-            // save as unapplied: that would have the user save again and
-            // apply every removal a second time.
+            // The rows are committed; only the fold is missing. Nothing of
+            // ours will fold it later -- finishWriting() has already closed
+            // every connection -- so the frames sit outside exportLibrary.db
+            // until something else opens and checkpoints it. Hence saying so
+            // out loud. What it must never do is report the save as
+            // unapplied: that would have the user save again and apply every
+            // removal a second time.
             log().record(std::string("save: ") + e.what());
             if (!outcome.warning) {
                 outcome.warning = QString::fromStdString(e.what());

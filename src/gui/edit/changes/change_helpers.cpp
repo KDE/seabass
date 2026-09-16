@@ -169,23 +169,12 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
         // that turns into a use-after-free when it does.
         ctx.onFinish([&ctx, key](bool ok) {
             if (auto *live = ctx.sharedIfPresent<infrastructure::onelibrary::OneLibraryCueWriter>(key)) {
-                // Folded on both paths: a cancelled save still reports the
-                // changes that landed before it as applied, and their rows
-                // belong in the database, not in a log. Only a clean save
-                // is strict about frames that will not fold.
-                // The writer has no logger of its own, so the leftover it
-                // reports is recorded here: a cancelled save that could not
-                // fold says so on the stick's own log rather than silently.
-                const std::uint64_t left = live->finishWriting(ok);
-                if (left > 0) {
-                    // "did not complete", not "cancelled": ok is false for a
-                    // save that failed as well as one the user stopped.
-                    ctx.log().record("save: Device Library Plus kept " + std::to_string(left)
-                                     + " bytes in its write-ahead log after a save that did not complete"
-                                     + (live->unfoldedFault().empty()
-                                            ? std::string()
-                                            : " (the checkpoint reported: " + live->unfoldedFault() + ")"));
-                }
+                // Folded on every path, cancelled or not: rows that landed
+                // belong in the database rather than in a log, and a fold
+                // that did not happen is a warning the save carries either
+                // way. ok is unused now -- the answer does not depend on it.
+                (void)ok;
+                live->finishWriting();
             }
         });
     }
