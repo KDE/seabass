@@ -371,14 +371,31 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                     }
                     std::string trackFilePath = sqlText(rowTrack->file_path());
                     if (!trackFilePath.empty()) {
-                        track.filePath = stickRoot + trackFilePath;
+                        // make_preferred(): trackFilePath is rekordbox's own
+                        // forward-slash convention regardless of platform,
+                        // while stickRoot (built from a real fs::path, see
+                        // above) is already native. The plain concatenation
+                        // this used to be is a fine path for actual file
+                        // I/O -- Windows accepts either slash -- but not for
+                        // string equality, which is exactly how this same
+                        // path gets matched against OneLibraryReader's own
+                        // (already-normalized, see its own make_preferred()
+                        // call) filePath elsewhere: onelibrary_wal_checkpoint_
+                        // test's cross-catalog match silently found nothing
+                        // on Windows and every downstream assertion failed
+                        // on a fixture precondition instead, confirmed
+                        // directly. The same mismatch this project already
+                        // fixed once for OneLibraryReader::readAll(), missed
+                        // here.
+                        track.filePath = std::filesystem::path(stickRoot + trackFilePath).make_preferred().string();
                         std::error_code ec;
                         auto size = std::filesystem::file_size(track.filePath, ec);
                         track.fileSizeBytes = ec ? 0 : size;
                     }
                     auto artworkIt = artworkPathById.find(rowTrack->artwork_id());
                     if (artworkIt != artworkPathById.end() && !artworkIt->second.empty()) {
-                        track.artworkPath = stickRoot + artworkIt->second;
+                        track.artworkPath =
+                            std::filesystem::path(stickRoot + artworkIt->second).make_preferred().string();
                     }
                     track.durationSeconds = rowTrack->duration();
                     track.bpm = rowTrack->tempo() / 100.0;
