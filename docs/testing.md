@@ -203,9 +203,12 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   the same size and modification time. It deletes for real, so it refuses
   an archive outside the folder it was given, one that is or sits beside a
   reference named in `RIG_REFERENCE_A`/`RIG_REFERENCE_B`, one it cannot
-  write, and one Manage Backups cannot read as a backup. The reference
-  paths must be given (a full run exports them), or it refuses to delete
-  anything at all unless `--no-reference-guard` says otherwise.
+  write, and one Manage Backups cannot read as a backup. Both
+  `RIG_REFERENCE_A` and `RIG_REFERENCE_B` must be given (a full run exports
+  them), or it refuses to delete anything at all unless
+  `--no-reference-guard` says otherwise. It needs `fork()` to hold the lock
+  for the refusal, so it refuses on platforms without one rather than
+  deleting with that half of the check unproven.
 - `tools/rig-edits.sh <stick> [baseline]`: add a cue, Clean Up one group and
   a Library Health repair, each saved and undone (`rig_plant_repairable`
   plants the repairable issue and puts the file back).

@@ -123,14 +123,12 @@ bool insideDirectory(const fs::path &file, const fs::path &directory)
     if (fileEc || dirEc) {
         return false;
     }
+    // Resolved, deliberately: a symlink lying in the folder but pointing
+    // out of it is not in the folder, and this tool deletes. (A reference
+    // reached that way is named as a reference first: the reference guards
+    // run before this one.)
     const fs::path relative = fs::relative(canonicalFile, canonicalDir, relativeEc);
-    if (!relativeEc && !relative.empty() && relative.begin()->string() != "..") {
-        return true;
-    }
-    // A symlink sitting in the folder counts as inside it: it resolves
-    // somewhere else entirely, and the name given on the command line is
-    // what the caller meant.
-    return insideDirectoryLexically(file, directory);
+    return !relativeEc && !relative.empty() && relative.begin()->string() != "..";
 }
 
 // A reference given as a symlink names one folder and resolves into
@@ -138,18 +136,19 @@ bool insideDirectory(const fs::path &file, const fs::path &directory)
 // the one a mistyped argument reaches, the folder it resolves into is
 // where the file really lives.
 //
-// Whether any reference path is configured at all. Without one this tool
-// has no idea which archives are references, so it refuses to run rather
-// than offer protection it does not have.
+// Both reference paths, or none: with only one set the other reference is
+// unguarded by name while the tool would still report itself as guarded.
+// Without them this tool cannot tell a reference from a test archive, so
+// it refuses to run rather than offer protection it does not have.
 bool referencePathsGiven()
 {
     for (const char *variable : {"RIG_REFERENCE_A", "RIG_REFERENCE_B"}) {
         const char *value = std::getenv(variable);
-        if (value != nullptr && *value != '\0') {
-            return true;
+        if (value == nullptr || *value == '\0') {
+            return false;
         }
     }
-    return false;
+    return true;
 }
 
 // A reference backup, by name: the rig's references are given in
@@ -170,17 +169,26 @@ bool isAReference(const fs::path &archive)
         if (value == nullptr || *value == '\0') {
             continue;
         }
-        const fs::path given(value);
+        // Made absolute before anything is compared: a bare "REF.zip" has
+        // no parent at all, and an empty base makes every relative path
+        // look like it sits beside a reference.
+        std::error_code absoluteEc;
+        const fs::path given = fs::absolute(fs::path(value), absoluteEc);
         std::error_code referenceEc;
         const fs::path resolved = fs::weakly_canonical(given, referenceEc);
-        if (referenceEc) {
+        if (absoluteEc || referenceEc) {
             return true;
         }
-        if (canonicalArchive == resolved || archive.lexically_normal() == given.lexically_normal()) {
+        std::error_code archiveAbsoluteEc;
+        const fs::path archiveAsGiven = fs::absolute(archive, archiveAbsoluteEc);
+        if (archiveAbsoluteEc) {
+            return true;
+        }
+        if (canonicalArchive == resolved || archiveAsGiven.lexically_normal() == given.lexically_normal()) {
             return true;
         }
         if (insideDirectory(canonicalArchive, resolved.parent_path())
-            || insideDirectoryLexically(archive, given.parent_path())) {
+            || insideDirectoryLexically(archiveAsGiven, given.parent_path())) {
             return true;
         }
     }
@@ -202,8 +210,9 @@ int main(int argc, char **argv)
 
     try {
         if (!skipReferenceGuard && !referencePathsGiven()) {
-            std::cout << "refusing: no RIG_REFERENCE_A/RIG_REFERENCE_B given, so this cannot tell a reference backup "
-                         "from a test one (pass --no-reference-guard to delete anyway)\nRIG RESULT: FAIL\n";
+            std::cout << "refusing: RIG_REFERENCE_A and RIG_REFERENCE_B must both name a reference backup, or this "
+                         "cannot tell a reference from a test one (pass --no-reference-guard to delete anyway)"
+                         "\nRIG RESULT: FAIL\n";
             return 1;
         }
         if (!skipReferenceGuard && isAReference(archive)) {
@@ -309,9 +318,31 @@ int main(int argc, char **argv)
         } else {
             std::cout << "the lock holder never took the lock: the refusal was not checked\n";
         }
+        // Bounded like the handshake above: a child wedged in open()/flock()
+        // on an unresponsive stick ignores SIGTERM in uninterruptible sleep,
+        // and an unbounded wait here would hang the release run the poll()
+        // was added to protect.
         kill(helper, SIGTERM);
         int helperStatus = 0;
-        waitpid(helper, &helperStatus, 0);
+        bool reaped = false;
+        for (int attempt = 0; attempt < 100 && !reaped; ++attempt) {
+            const pid_t done = waitpid(helper, &helperStatus, WNOHANG);
+            if (done == helper) {
+                reaped = true;
+                break;
+            }
+            if (done < 0) {
+                break;
+            }
+            if (attempt == 50) {
+                kill(helper, SIGKILL);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (!reaped) {
+            std::cout << "the lock holder would not end; refusing to delete anything\nRIG RESULT: FAIL\n";
+            return 1;
+        }
         const bool helperBehaved = helperHasIt && WIFSIGNALED(helperStatus);
         if (helperHasIt && !helperBehaved) {
             std::cout << "the lock holder ended on its own (status " << helperStatus
@@ -324,7 +355,12 @@ int main(int argc, char **argv)
             return 1;
         }
 #else
-        std::cout << "the busy case needs fork(); skipped on this platform\n";
+        // No fork(): the refusal under a held lock cannot be proven here,
+        // and a check that deletes without proving it would report PASS for
+        // the one thing FB9 exists to show.
+        std::cout << "the busy case needs fork(), which this platform has not; FB9 cannot be proven here\n"
+                  << "RIG RESULT: FAIL\n";
+        return 1;
 #endif
 
         const DeleteStickBackupResult deleted = ManageStickBackups::remove(archive);
