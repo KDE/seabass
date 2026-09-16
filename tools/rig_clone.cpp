@@ -22,10 +22,13 @@
 // With --expect-too-small nothing runs at all: the preview must report
 // that the target has no room for the source's library, which is what
 // disables the card on the Backup USB Stick page (rig check C6). It
-// passes only when the target's free space is actually known and
-// actually smaller than what the source needs -- CloneStick reports zero
-// free bytes when it cannot stat the target at all, which would otherwise
-// make this check pass on a broken rig rather than on a full stick.
+// passes only when the preview refuses for want of room and the source
+// really has something to copy. The arithmetic is the app's own --
+// CloneStick keeps a free-space margin on top of the bytes to write -- so
+// a target whose free space lands inside that margin, which the page
+// refuses too, is refused here rather than called big enough. A target
+// that is not a mounted drive at all fails earlier, on preview.error, so
+// this does not have to second-guess the free-space figure.
 //
 // With --cancel-at the run is cancelled during the backup stage, once
 // PERCENT of the bytes to read are read. It passes when the run ends
@@ -166,14 +169,13 @@ int main(int argc, char **argv)
         if (expectTooSmall) {
             // Nothing is written in this mode: the preview alone is the
             // check, and the target keeps whatever it holds.
-            const bool measured = preview.targetFreeBytes > 0 && preview.bytesToTarget > 0;
-            const bool refused =
-                !preview.enoughTargetSpace && measured && preview.bytesToTarget > preview.targetFreeBytes;
-            std::cout << "target space: needs " << gib(preview.bytesToTarget) << ", has "
+            const bool somethingToCopy = preview.bytesToTarget > 0;
+            const bool refused = !preview.enoughTargetSpace && somethingToCopy;
+            std::cout << "target space: needs " << gib(preview.bytesToTarget) << " plus the app's margin, has "
                       << gib(preview.targetFreeBytes) << " -> "
                       << (refused ? "too small, as expected"
-                                  : (measured ? "BIG ENOUGH -- this target cannot check C6"
-                                              : "NOT MEASURED -- free space or source size came back zero"))
+                                  : (somethingToCopy ? "BIG ENOUGH -- this target cannot check C6"
+                                                     : "NOTHING TO COPY -- the source scanned to zero bytes"))
                       << "\n";
             std::cout << "RIG RESULT: " << (refused ? "PASS" : "FAIL") << "\n";
             return refused ? 0 : 1;

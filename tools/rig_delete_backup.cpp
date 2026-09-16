@@ -4,7 +4,7 @@
 
 // Release rig: Manage Backups deletes a full stick backup -- rig check FB9.
 //
-//   rig_delete_backup <backup dir> <archive>
+//   rig_delete_backup <backup dir> <archive> [--no-reference-guard]
 //
 // This tool deletes for real, so it refuses anything it is not sure of:
 // an archive outside <backup dir>, an archive that is (or lies beside)
@@ -43,6 +43,7 @@
 
 #if !defined(_WIN32)
 #include <csignal>
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -102,6 +103,14 @@ std::map<std::string, Listed> listing(const fs::path &directory)
     return out;
 }
 
+// Containment without resolving anything, for a name that must be taken
+// as written (see isAReference, and symlinked archives below).
+bool insideDirectoryLexically(const fs::path &file, const fs::path &directory)
+{
+    const fs::path relative = file.lexically_normal().lexically_relative(directory.lexically_normal());
+    return !relative.empty() && relative.begin()->string() != "..";
+}
+
 // Each call gets its own error_code: sharing one let a failure to
 // canonicalise the first path be overwritten by the next call's success.
 bool insideDirectory(const fs::path &file, const fs::path &directory)
@@ -115,28 +124,63 @@ bool insideDirectory(const fs::path &file, const fs::path &directory)
         return false;
     }
     const fs::path relative = fs::relative(canonicalFile, canonicalDir, relativeEc);
-    return !relativeEc && !relative.empty() && relative.begin()->string() != "..";
+    if (!relativeEc && !relative.empty() && relative.begin()->string() != "..") {
+        return true;
+    }
+    // A symlink sitting in the folder counts as inside it: it resolves
+    // somewhere else entirely, and the name given on the command line is
+    // what the caller meant.
+    return insideDirectoryLexically(file, directory);
+}
+
+// A reference given as a symlink names one folder and resolves into
+// another, and BOTH have to be protected -- the folder in the variable is
+// the one a mistyped argument reaches, the folder it resolves into is
+// where the file really lives.
+//
+// Whether any reference path is configured at all. Without one this tool
+// has no idea which archives are references, so it refuses to run rather
+// than offer protection it does not have.
+bool referencePathsGiven()
+{
+    for (const char *variable : {"RIG_REFERENCE_A", "RIG_REFERENCE_B"}) {
+        const char *value = std::getenv(variable);
+        if (value != nullptr && *value != '\0') {
+            return true;
+        }
+    }
+    return false;
 }
 
 // A reference backup, by name: the rig's references are given in
 // RIG_REFERENCE_A and RIG_REFERENCE_B (rig-shakedown.sh exports them).
-// Both the file itself and anything in its folder count, because the
-// folder is what a mistyped argument reaches.
+// The file itself and anything in its folder count, both as written and
+// as resolved, because the rig's references are symlinks into another
+// folder: guarding only the resolved side left the folder the variable
+// actually names -- the one a mistyped argument reaches -- unguarded.
 bool isAReference(const fs::path &archive)
 {
+    std::error_code archiveEc;
+    const fs::path canonicalArchive = fs::weakly_canonical(archive, archiveEc);
+    if (archiveEc) {
+        return true;  // cannot tell: refuse rather than delete
+    }
     for (const char *variable : {"RIG_REFERENCE_A", "RIG_REFERENCE_B"}) {
         const char *value = std::getenv(variable);
         if (value == nullptr || *value == '\0') {
             continue;
         }
+        const fs::path given(value);
         std::error_code referenceEc;
-        std::error_code archiveEc;
-        const fs::path reference = fs::weakly_canonical(fs::path(value), referenceEc);
-        const fs::path canonicalArchive = fs::weakly_canonical(archive, archiveEc);
-        if (referenceEc || archiveEc) {
-            return true;  // cannot tell: refuse rather than delete
+        const fs::path resolved = fs::weakly_canonical(given, referenceEc);
+        if (referenceEc) {
+            return true;
         }
-        if (canonicalArchive == reference || insideDirectory(canonicalArchive, reference.parent_path())) {
+        if (canonicalArchive == resolved || archive.lexically_normal() == given.lexically_normal()) {
+            return true;
+        }
+        if (insideDirectory(canonicalArchive, resolved.parent_path())
+            || insideDirectoryLexically(archive, given.parent_path())) {
             return true;
         }
     }
@@ -147,8 +191,9 @@ bool isAReference(const fs::path &archive)
 
 int main(int argc, char **argv)
 {
-    if (argc != 3) {
-        std::cerr << "usage: rig_delete_backup <backup dir> <archive>\n";
+    const bool skipReferenceGuard = argc == 4 && std::string(argv[3]) == "--no-reference-guard";
+    if (argc != 3 && !skipReferenceGuard) {
+        std::cerr << "usage: rig_delete_backup <backup dir> <archive> [--no-reference-guard]\n";
         return 2;
     }
     const fs::path directory = argv[1];
@@ -156,13 +201,20 @@ int main(int argc, char **argv)
     bool pass = true;
 
     try {
-        if (!insideDirectory(archive, directory)) {
-            std::cout << "refusing: " << archive.string() << " is not inside " << directory.string()
+        if (!skipReferenceGuard && !referencePathsGiven()) {
+            std::cout << "refusing: no RIG_REFERENCE_A/RIG_REFERENCE_B given, so this cannot tell a reference backup "
+                         "from a test one (pass --no-reference-guard to delete anyway)\nRIG RESULT: FAIL\n";
+            return 1;
+        }
+        if (!skipReferenceGuard && isAReference(archive)) {
+            std::cout << "refusing: " << archive.string() << " is a reference backup (or sits beside one)"
                       << "\nRIG RESULT: FAIL\n";
             return 1;
         }
-        if (isAReference(archive)) {
-            std::cout << "refusing: " << archive.string() << " is a reference backup (or sits beside one)"
+        // After the reference guards, so a reference is named as one
+        // rather than reported as merely out of place.
+        if (!insideDirectory(archive, directory)) {
+            std::cout << "refusing: " << archive.string() << " is not inside " << directory.string()
                       << "\nRIG RESULT: FAIL\n";
             return 1;
         }
@@ -174,9 +226,16 @@ int main(int argc, char **argv)
         // A reference is kept read-only; refusing here costs nothing and
         // catches a reference this build was not told about. It is not
         // protection in itself: fs::remove only needs a writable parent.
+        // Asked of the OS rather than read off the mode bits, which say
+        // nothing about whether THIS user may write the file.
+#if defined(_WIN32)
         std::error_code writableEc;
         const fs::perms permissions = fs::status(archive, writableEc).permissions();
-        if (writableEc || (permissions & fs::perms::owner_write) == fs::perms::none) {
+        const bool writable = !writableEc && (permissions & fs::perms::owner_write) != fs::perms::none;
+#else
+        const bool writable = ::access(archive.c_str(), W_OK) == 0;
+#endif
+        if (!writable) {
             std::cout << "refusing: " << archive.string() << " is read-only, so it is not this rig's to delete"
                       << "\nRIG RESULT: FAIL\n";
             return 1;
@@ -231,8 +290,13 @@ int main(int argc, char **argv)
             return 1;
         }
         close(ready[1]);
+        // Bounded: a helper stuck in open()/flock() on an unresponsive
+        // stick would otherwise hang the whole release run here, where the
+        // old code at least gave up after its (racy) 700 ms.
         char token = 0;
-        const bool helperHasIt = read(ready[0], &token, 1) == 1 && token == 'L';
+        pollfd waitFor{ready[0], POLLIN, 0};
+        const int readyNow = poll(&waitFor, 1, 10000);
+        const bool helperHasIt = readyNow == 1 && read(ready[0], &token, 1) == 1 && token == 'L';
         close(ready[0]);
         bool busyRefused = false;
         bool stillThere = false;
@@ -253,7 +317,12 @@ int main(int argc, char **argv)
             std::cout << "the lock holder ended on its own (status " << helperStatus
                       << "), so it may not have held the lock throughout\n";
         }
-        pass = pass && busyRefused && stillThere && helperBehaved;
+        if (!busyRefused || !stillThere || !helperBehaved) {
+            // Nothing is deleted after an inconclusive probe: the archive
+            // this check is about is exactly what a free lock would destroy.
+            std::cout << "refusing to delete: the refusal under a held lock was not proven\nRIG RESULT: FAIL\n";
+            return 1;
+        }
 #else
         std::cout << "the busy case needs fork(); skipped on this platform\n";
 #endif
