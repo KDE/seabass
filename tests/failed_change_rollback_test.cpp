@@ -104,6 +104,21 @@ int64_t cueCount(const fs::path &dbPath, int64_t contentId)
 // the SaveContext, whose operation log keeps Seabass/seabass.log open for
 // as long as it lives. POSIX removes an open file; Windows refuses ("used
 // by another process"), and a remove_all() inside the block threw there.
+// The minimal WAL exportLibrary.db both rollback cases write through.
+void makeWalFixture(const std::filesystem::path &dbPath)
+{
+    SqlCipherLibrary lib;
+    SqlCipherDb db(lib, dbPath.string(), /*readOnly=*/false);
+    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("CREATE TABLE content(content_id integer primary key, title varchar, path varchar);");
+    db.exec("CREATE TABLE cue(cue_id integer primary key, content_id integer, kind integer, "
+            "colorTableIndex integer, cueComment varchar, isActiveLoop integer, inUsec integer, "
+            "outUsec integer);");
+    db.exec("CREATE TABLE hotCueBankList_cue(hotCueBankList_id integer, cue_id integer, sequenceNo integer);");
+    db.exec("INSERT INTO content VALUES (1, 'One', '/Contents/One.mp3'), (2, 'Two', '/Contents/Two.mp3');");
+}
+
 struct ScratchStick
 {
     fs::path path;
@@ -270,6 +285,124 @@ int main()
         assert(cueCount(dbPath, 1) == 2);
         assert(cueCount(dbPath, 2) == 0);
         std::cout << "case 4 (a WAL database is put back with its writer closed first) OK\n";
+    }
+
+    // 5. The change that fails never touched the WAL database, but an
+    //    earlier one wrote it. The rollback's fold used to be keyed to the
+    //    FAILING change's protected files, so nothing folded here: change
+    //    a's rows were reported applied while they sat in a -wal that a
+    //    player reading exportLibrary.db alone would not see.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_wal_other");
+        const fs::path &stick = scratch.path;
+        fs::path pioneer = stick / "PIONEER";
+        fs::create_directories(pioneer / "rekordbox");
+        const fs::path dbPath = OneLibraryCueWriter::dbPathFor(pioneer.string());
+        makeWalFixture(dbPath);
+        const fs::path unrelated = stick / "unrelated.txt";
+        write(unrelated, "before");
+
+        const std::vector<domain::CuePoint> cues = {
+            domain::CuePoint{domain::CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+        };
+        // A reader with an open read transaction for the whole save. WAL
+        // allows one writer alongside readers, so change a still writes --
+        // but the writer's close-time checkpoint is PASSIVE, takes no busy
+        // handler and gives up, which is the state finding 1 is about: in a
+        // quiet test SQLite folds the log on close by itself and the check
+        // would pass with the fold deleted.
+        SqlCipherLibrary readerLib;
+        SqlCipherDb reader(readerLib, dbPath.string(), /*readOnly=*/true);
+        reader.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        SqlCipherStatement holdOpen(reader, "SELECT content_id, title FROM content;");
+        assert(holdOpen.step() && "the reader holds a read transaction open across the save");
+
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneer.string()), {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "One.mp3").string(), cues);
+                return ChangeOutcome::success();
+            }),
+            // Declares only the unrelated file: exportLibrary.db is nowhere
+            // in this change's checkpoints.
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{unrelated.string()}, [&](SaveContext &) {
+                write(unrelated, "after");
+                return ChangeOutcome::failure("something else refused");
+            }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        assert(result.appliedIds == QStringList{"a"});
+        assert(read(unrelated) == "before");
+
+        // The rollback looked at the database this save WROTE, not at what
+        // the failing change protected, and said what it found. Without that
+        // the log is silent and a's rows sit in a -wal while the summary
+        // reports them applied.
+        std::error_code ec;
+        const fs::path stickLog = stick / "Seabass" / "seabass.log";
+        assert(fs::exists(stickLog, ec) && "the save logs to the stick");
+        const std::string logText = read(stickLog);
+        if (logText.find("write-ahead log") == std::string::npos) {
+            std::cerr << "case 5: the rollback said nothing about the log:\n" << logText << "\n";
+        }
+        assert(logText.find("write-ahead log") != std::string::npos
+               && "the rollback measures the database the save wrote, whatever the failure touched");
+        assert(cueCount(dbPath, 1) == 1);
+        std::cout << "case 5 (a database an earlier change wrote is folded even when the failure is elsewhere) OK\n";
+    }
+
+    // 6. The database itself could not be put back. Folding then writes one
+    //    generation's log over another's file and mixes them; leaving both
+    //    alone keeps the state inert and recoverable. The fold must not run.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_wal_stuck");
+        const fs::path &stick = scratch.path;
+        fs::path pioneer = stick / "PIONEER";
+        fs::create_directories(pioneer / "rekordbox");
+        const fs::path dbPath = OneLibraryCueWriter::dbPathFor(pioneer.string());
+        makeWalFixture(dbPath);
+
+        const std::vector<domain::CuePoint> cues = {
+            domain::CuePoint{domain::CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+        };
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneer.string()), {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "One.mp3").string(), cues);
+                return ChangeOutcome::success();
+            }),
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "Two.mp3").string(), cues);
+                // The directory goes read-only, so putting the database back
+                // fails the way a full or unwritable stick makes it fail.
+                std::error_code ec;
+                fs::permissions(dbPath.parent_path(), fs::perms::owner_read | fs::perms::owner_exec,
+                                fs::perm_options::replace, ec);
+                return ChangeOutcome::failure("Device Library Plus refused the next write");
+            }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        std::error_code ec;
+        fs::permissions(dbPath.parent_path(),
+                        fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec,
+                        fs::perm_options::replace, ec);
+        assert(!result.error.isEmpty());
+        // Not folded: the log and the database are from different
+        // generations, and checkpointing one into the other mixes them.
+        // Asserted, not printed: the stick's own log is where the skip is
+        // observable, and a fold that quietly did nothing would look the
+        // same as one that was correctly skipped.
+        const fs::path stickLog = stick / "Seabass" / "seabass.log";
+        assert(fs::exists(stickLog, ec) && "the save logs to the stick");
+        const std::string logText = read(stickLog);
+        if (logText.find("leaving") == std::string::npos) {
+            std::cerr << "case 6: the rollback did not say it left the log alone:\n" << logText << "\n";
+        }
+        assert(logText.find("leaving") != std::string::npos
+               && "a database that could not be put back must not be folded");
+        std::cout << "case 6 (a database that could not be put back is left unfolded) OK\n";
     }
 
     std::cout << "failed_change_rollback_test: all cases passed\n";

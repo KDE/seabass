@@ -696,11 +696,11 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
     refreshStalenessBaseline();
 }
 
-std::uint64_t OneLibraryCueWriter::foldLogOf(const std::string &dbPath)
+std::optional<std::uint64_t> OneLibraryCueWriter::foldLogOf(const std::string &dbPath)
 {
     std::error_code ec;
     if (!fs::is_regular_file(dbPath, ec) || ec) {
-        return 0;  // nothing to fold into
+        return std::nullopt;  // no database to fold into, or it cannot be looked at
     }
     try {
         SqlCipherLibrary lib;
@@ -716,11 +716,15 @@ std::uint64_t OneLibraryCueWriter::foldLogOf(const std::string &dbPath)
         // Cannot even open it: the measurement below still says what is left.
     }
     const fs::path wal = fs::path(dbPath + "-wal");
-    if (!fs::exists(wal, ec) || ec) {
-        return 0;
+    const bool walThere = fs::exists(wal, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    if (!walThere) {
+        return 0;  // one file again
     }
     const std::uintmax_t left = fs::file_size(wal, ec);
-    return ec ? 0 : left;
+    return ec ? std::optional<std::uint64_t>{} : std::optional<std::uint64_t>{left};
 }
 
 void OneLibraryCueWriter::finishWriting()

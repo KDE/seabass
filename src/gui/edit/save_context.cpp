@@ -372,6 +372,11 @@ std::optional<QString> SaveContext::rollBackChange()
 
     std::optional<QString> firstError;
     int putBack = 0;
+    // Which files did NOT go back. A database whose own file or log is in
+    // here must not be folded below: its .db is from one generation and its
+    // -wal from another, and checkpointing one over the other mixes them --
+    // where leaving them alone keeps the state inert and recoverable.
+    std::set<std::string> notPutBack;
     for (auto it = m_checkpoints.rbegin(); it != m_checkpoints.rend(); ++it) {
         try {
             std::error_code ec;
@@ -394,31 +399,53 @@ std::optional<QString> SaveContext::rollBackChange()
             }
             ++putBack;
         } catch (const std::exception &e) {
+            notPutBack.insert(application::normalizedPathKey(it->original));
             if (!firstError) {
                 firstError = QString::fromStdString(e.what());
             }
         }
     }
     // The -shm indexes a -wal that was just replaced; SQLite rebuilds it.
-    // And the -wal itself is folded: the writers were destroyed before the
-    // restore (above), so nothing else will, and the restored log holds the
-    // committed rows of every change before the one that failed -- which
-    // the summary still reports as applied.
     for (const Checkpoint &checkpoint : m_checkpoints) {
         const std::string suffix = "-wal";
         if (checkpoint.original.size() > suffix.size()
             && checkpoint.original.compare(checkpoint.original.size() - suffix.size(), suffix.size(), suffix) == 0) {
             std::error_code ec;
-            const std::string db = checkpoint.original.substr(0, checkpoint.original.size() - suffix.size());
-            fs::remove(db + "-shm", ec);
-            if (fs::path(db).filename() == "exportLibrary.db") {
-                const std::uint64_t left = seabass::infrastructure::onelibrary::OneLibraryCueWriter::foldLogOf(db);
-                if (left > 0 && hasStick()) {
-                    log().record("save: after the rollback Device Library Plus kept " + std::to_string(left)
-                                 + " bytes in its write-ahead log; the rows of the changes that did apply are "
-                                   "not in exportLibrary.db until something folds it");
-                }
+            fs::remove(checkpoint.original.substr(0, checkpoint.original.size() - suffix.size()) + "-shm", ec);
+        }
+    }
+
+    // Then the logs themselves. Keyed on the databases this save WROTE, not
+    // on the files the failing change protected: a save whose OneLibrary
+    // rows came from earlier changes leaves a log nobody folds when the
+    // change that fails never touched that database. The writers were
+    // destroyed before the restore (above), so their close did whatever
+    // passive checkpoint it could and nothing will try again.
+    for (const auto &[key, database] : m_walDatabases) {
+        if (notPutBack.contains(key)
+            || notPutBack.contains(application::normalizedPathKey(database.path + "-wal"))) {
+            // One generation of database beside another's log: folding here
+            // writes the older log's pages over the newer file.
+            if (hasStick()) {
+                log().record("save: leaving " + fs::path(database.path).filename().string()
+                             + "'s write-ahead log alone -- the rollback could not put the database back, and "
+                               "folding one generation's log into another's file would mix them");
             }
+            continue;
+        }
+        const std::optional<std::uint64_t> left = database.fold(database.path);
+        if (!hasStick()) {
+            continue;
+        }
+        if (!left) {
+            log().record("save: after the rollback, could not tell whether "
+                         + fs::path(database.path).filename().string()
+                         + " still has a write-ahead log beside it");
+        } else if (*left > 0) {
+            log().record("save: after the rollback " + fs::path(database.path).filename().string()
+                         + " kept " + std::to_string(*left)
+                         + " bytes in its write-ahead log; the rows of the changes that did apply are not in it "
+                           "until something folds them");
         }
     }
     if (hasStick()) {
@@ -441,6 +468,12 @@ std::optional<QString> SaveContext::rollBackChange()
 void SaveContext::onChangeEnd(std::function<void(bool)> hook)
 {
     m_changeEndHooks.push_back(std::move(hook));
+}
+
+void SaveContext::noteWalDatabase(const std::string &dbPath,
+                                  std::function<std::optional<std::uint64_t>(const std::string &)> fold)
+{
+    m_walDatabases.insert({application::normalizedPathKey(dbPath), WalDatabase{dbPath, std::move(fold)}});
 }
 
 void SaveContext::onFinish(std::function<void(bool)> hook)

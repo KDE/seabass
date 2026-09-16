@@ -173,6 +173,15 @@ public:
     // back.
     void onChangeEnd(std::function<void(bool landed)> hook);
 
+    // A database this save wrote through a connection that keeps a
+    // write-ahead log, and how to fold it. Registered by whoever opens the
+    // writer, so a rolled-back save can fold what its restore brought back
+    // without this class knowing any format's filenames -- and so the fold
+    // follows the WRITER's database rather than whatever the change that
+    // happened to fail had protected.
+    void noteWalDatabase(const std::string &dbPath,
+                         std::function<std::optional<std::uint64_t>(const std::string &)> fold);
+
     void onFinish(std::function<void(bool ok)> hook);
     // Runs every hook once, creation order; a throwing hook does not stop
     // the rest.
@@ -210,6 +219,12 @@ private:
     // before the sessions whose scratch copies they may hold open.
     std::map<std::string, std::shared_ptr<void>> m_wholeSaveShared;
     std::map<std::string, std::shared_ptr<void>> m_shared;
+    struct WalDatabase
+    {
+        std::string path;
+        std::function<std::optional<std::uint64_t>(const std::string &)> fold;
+    };
+    std::map<std::string, WalDatabase> m_walDatabases;  // normalizedPathKey -> how to fold it
     std::vector<std::function<void(bool)>> m_finishHooks;
     bool m_hooksRan = false;
 

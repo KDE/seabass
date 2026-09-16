@@ -156,6 +156,12 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
         return std::make_unique<infrastructure::onelibrary::OneLibraryCueWriter>(pioneerRoot, realStickRoot);
     });
     if (created) {
+        // So a rolled-back save folds THIS database, whatever the change
+        // that failed happened to touch.
+        ctx.noteWalDatabase(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot),
+                            [](const std::string &db) {
+                                return infrastructure::onelibrary::OneLibraryCueWriter::foldLogOf(db);
+                            });
         // Looked up by key rather than captured by reference: a rolled
         // back change destroys every shared() writer (SaveContext::
         // rollBackChange) before the hooks run, so on that path there is

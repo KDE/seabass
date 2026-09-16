@@ -195,7 +195,11 @@ public:
     // still beside it (0 when it is one file again). A rolled-back save
     // destroys its writers before restoring files, so nothing else folds
     // the log the restore brought back.
-    static std::uint64_t foldLogOf(const std::string &dbPath);
+    // nullopt when it cannot tell (the database is gone, or the log cannot
+    // be measured); 0 when the database is one file again; otherwise the
+    // bytes still in the log. Collapsing all three to 0 made "nothing left"
+    // and "could not look" indistinguishable to the caller that logs it.
+    static std::optional<std::uint64_t> foldLogOf(const std::string &dbPath);
 
 private:
     // The two connections this writer works through, opened on first use
