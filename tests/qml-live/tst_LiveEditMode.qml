@@ -486,28 +486,53 @@ TestCase {
         var cleanup = createTemporaryObject(cleanupComponent, testCase);
         cleanup.scan("rekordbox", rekordboxPath);
         waitIdle(cleanup, 300000);
-        var pendingBefore = cleanup.pendingDeletions.rowCount();
         if (cleanup.plans.rowCount() === 0) {
             skip("no duplicate groups on this stick to plant a deletion with");
         }
+        // What is already listed, by path: an earlier run of this check
+        // can have left entries behind, and counting alone cannot tell
+        // those from the ones this run is about to make.
+        var listedBefore = {};
+        var before = createTemporaryObject(pendingRowsComponent, testCase, {model: cleanup.pendingDeletions});
+        for (var b = 0; b < before.count; ++b) {
+            listedBefore[before.objectAt(b).path] = true;
+        }
+        var pendingBefore = before.count;
 
-        // Plant: clean up two groups, so there is more than one file to
-        // leave behind when the delete is cancelled.
+        // Plant: two groups, so the cancel has more than one file to leave
+        // behind. Groups are staged by default only when nothing about
+        // them is ambiguous, which is exactly the kind that orphans a file.
         cleanup.setAllIncluded(false);
-        cleanup.setIncluded(0, true);
-        cleanup.setIncluded(1, true);
-        var planted = cleanup.includedCount;
-        verify(planted >= 1, "at least one group staged");
+        var staged = 0;
+        for (var g = 0; g < cleanup.plans.rowCount() && staged < 2; ++g) {
+            cleanup.setIncluded(g, true);
+            if (cleanup.includedCount > staged) {
+                staged = cleanup.includedCount;
+            }
+        }
+        verify(staged >= 1, "at least one group staged");
         cleanup.apply();
         var s = session();
-        tryVerify(function() { return s.pendingCount === planted; }, 10000);
+        tryVerify(function() { return s.pendingCount === staged; }, 10000);
         var saved = saveAndWait(false);
         compare(saved.error, "");
         waitIdle(cleanup, 300000);
         cleanup.refreshPendingDeletions();
-        tryVerify(function() { return cleanup.pendingDeletions.rowCount() > pendingBefore; }, 10000);
+
+        // The list has to have gained a file this save orphaned; a group
+        // whose copies were already removed adds nothing, and a check that
+        // accepted that would be testing the previous run's leftovers.
+        var afterSave = createTemporaryObject(pendingRowsComponent, testCase, {model: cleanup.pendingDeletions});
+        var planted = 0;
+        for (var a = 0; a < afterSave.count; ++a) {
+            if (!listedBefore[afterSave.objectAt(a).path]) {
+                planted++;
+            }
+        }
         var listed = cleanup.pendingDeletions.rowCount();
-        console.log("  planted " + planted + " group(s); files waiting for deletion: " + pendingBefore + " -> " + listed);
+        console.log("  cleaned up " + staged + " group(s); files waiting for deletion: " + pendingBefore + " -> "
+                    + listed + " (" + planted + " new)");
+        verify(planted > 0, "this save orphaned at least one file");
 
         // Cancel: tick everything, start, stop it immediately.
         cleanup.setAllPendingDeletionIncluded(true);
@@ -519,7 +544,10 @@ TestCase {
         tryVerify(function() { return cancelSpy.count > 0; }, 300000);
         var cancelled = cancelSpy.signalArguments[0][0];
         console.log("  cancelled delete: " + Live.summaryLine(cancelled));
-        compare(cancelled.error, "");
+        // A cancelled write says so, in `cancelled` and in the message it
+        // carries; that is not an error, and test_07 reads it the same way.
+        verify(cancelled.cancelled === true || cancelled.written === listed,
+               "the write reports the cancel, or had already finished");
         waitIdle(cleanup, 300000);
         cleanup.refreshPendingDeletions();
         var leftListed = cleanup.pendingDeletions.rowCount();
