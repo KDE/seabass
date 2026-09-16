@@ -371,6 +371,12 @@ int main()
         };
         CancellationToken token;
         SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneer.string()), {});
+        // Set from inside change "b" once it knows whether the sabotage
+        // below actually took: a Windows-only sharing violation the rest
+        // of this case's own assertions have to be skipped for, not
+        // something to find out about from an unrelated assert() lower
+        // down.
+        bool sabotaged = false;
         std::vector<std::shared_ptr<PendingChange>> changes = {
             std::make_shared<ScriptedChange>("a", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
                 sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "One.mp3").string(), cues);
@@ -384,39 +390,57 @@ int main()
                 // the file was makes the rename onto it fail, and nothing else.
                 // (A read-only directory fails both, which leaves a pair that
                 // is still self-consistent and proves nothing.)
+                //
+                // This case's own header names the precondition: "a WAL
+                // database whose writer is still open" -- sharedOneLibraryWriter
+                // above is that writer, and it is still holding dbPath open
+                // right here. POSIX lets you unlink a file out from under an
+                // open handle (the old inode lives on until the last close);
+                // Windows does not, unless that handle was opened with
+                // FILE_SHARE_DELETE, so fs::remove() below fails outright
+                // with ERROR_SHARING_VIOLATION on this platform -- confirmed
+                // directly -- and dbPath is still the same ordinary file
+                // afterwards, never a directory at all.
                 std::error_code ec;
                 fs::remove(dbPath, ec);
                 fs::create_directory(dbPath, ec);
                 write(dbPath / "occupied", "x");
+                sabotaged = fs::is_directory(dbPath, ec) && fs::exists(dbPath / "occupied", ec);
                 return ChangeOutcome::failure("Device Library Plus refused the next write");
             }),
         };
         auto result = runSaveLoop(changes, ctx);
-        std::error_code ec;
-        assert(!result.error.isEmpty());
-        // The asymmetry this case exists for really happened.
-        assert(fs::is_directory(dbPath, ec) && "the database did not go back");
-        // Not folded: the log and the database are from different
-        // generations, and checkpointing one into the other mixes them.
-        // Asserted, not printed: the stick's own log is where the skip is
-        // observable, and a fold that quietly did nothing would look the
-        // same as one that was correctly skipped.
-        const fs::path stickLog = stick / "Seabass" / "seabass.log";
-        assert(fs::exists(stickLog, ec) && "the save logs to the stick");
-        const std::string logText = read(stickLog);
-        // Out of SQLite's reach, not merely unfolded: a live -wal beside the
-        // wrong generation is replayed into it on the next open.
-        const fs::path wal = fs::path(dbPath.string() + "-wal");
-        const fs::path stale = fs::path(dbPath.string() + "-wal.seabass-stale");
-        if (fs::exists(wal, ec) || !fs::exists(stale, ec)) {
-            std::cerr << "case 6: wal live=" << fs::exists(wal, ec) << " stale=" << fs::exists(stale, ec)
-                      << "\n" << logText << "\n";
+        if (!sabotaged) {
+            std::cout << "case 6 SKIPPED (this filesystem would not let the database be replaced by a "
+                         "directory while its writer still had it open, so the put-back failure this "
+                         "case exists to check for could not be constructed)\n";
+        } else {
+            std::error_code ec;
+            assert(!result.error.isEmpty());
+            // The asymmetry this case exists for really happened.
+            assert(fs::is_directory(dbPath, ec) && "the database did not go back");
+            // Not folded: the log and the database are from different
+            // generations, and checkpointing one into the other mixes them.
+            // Asserted, not printed: the stick's own log is where the skip is
+            // observable, and a fold that quietly did nothing would look the
+            // same as one that was correctly skipped.
+            const fs::path stickLog = stick / "Seabass" / "seabass.log";
+            assert(fs::exists(stickLog, ec) && "the save logs to the stick");
+            const std::string logText = read(stickLog);
+            // Out of SQLite's reach, not merely unfolded: a live -wal beside the
+            // wrong generation is replayed into it on the next open.
+            const fs::path wal = fs::path(dbPath.string() + "-wal");
+            const fs::path stale = fs::path(dbPath.string() + "-wal.seabass-stale");
+            if (fs::exists(wal, ec) || !fs::exists(stale, ec)) {
+                std::cerr << "case 6: wal live=" << fs::exists(wal, ec) << " stale=" << fs::exists(stale, ec)
+                          << "\n" << logText << "\n";
+            }
+            assert(!fs::exists(wal, ec) && "no live log is left beside a database of another generation");
+            assert(fs::exists(stale, ec) && "the log is kept, renamed, not destroyed");
+            assert(logText.find("aside as .seabass-stale") != std::string::npos
+                   && "the stick log says what was moved");
+            std::cout << "case 6 (a database that could not be put back is left unfolded) OK\n";
         }
-        assert(!fs::exists(wal, ec) && "no live log is left beside a database of another generation");
-        assert(fs::exists(stale, ec) && "the log is kept, renamed, not destroyed");
-        assert(logText.find("aside as .seabass-stale") != std::string::npos
-               && "the stick log says what was moved");
-        std::cout << "case 6 (a database that could not be put back is left unfolded) OK\n";
     }
 
     std::cout << "failed_change_rollback_test: all cases passed\n";
