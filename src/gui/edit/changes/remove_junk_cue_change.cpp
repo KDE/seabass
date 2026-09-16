@@ -71,14 +71,20 @@ struct JunkCueWriterContext
             engine = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineSession->writeRoot());
         } else {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "junk-cue-cleanup");
-            oneLibrary = std::make_unique<infrastructure::onelibrary::OneLibraryCueWriter>(root);
+            // The save's shared writer, not one of this change's own: a
+            // second instance against the same database pays another key
+            // derivation, trips its own staleness guard, and is never
+            // checkpointed -- its rows reach the file only when SQLite
+            // folds the log at close.
+            oneLibrary = &sharedOneLibraryWriter(ctx, root);
         }
     }
 
     std::unique_ptr<infrastructure::rekordbox::RekordboxCueWriter> rekordbox;
     std::unique_ptr<infrastructure::engine::LibdjinteropEngineCueWriter> engine;
     FormatWriteSession *engineSession = nullptr;
-    std::unique_ptr<infrastructure::onelibrary::OneLibraryCueWriter> oneLibrary;
+    // Owned by the save (SaveContext::shared), not by this context.
+    infrastructure::onelibrary::OneLibraryCueWriter *oneLibrary = nullptr;
     bool hasOneLibrary = false;
 };
 

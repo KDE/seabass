@@ -129,6 +129,17 @@ public:
         return *static_cast<T *>(it->second.get());
     }
 
+    // The shared() resource for this key if it is still here, nullptr if
+    // it never existed or a rolled-back change closed it. For a finish
+    // hook, which runs after rollBackChange() may have cleared them all
+    // and must not hold a reference across that.
+    template <typename T>
+    T *sharedIfPresent(const std::string &key)
+    {
+        auto it = m_shared.find(key);
+        return it == m_shared.end() ? nullptr : static_cast<T *>(it->second.get());
+    }
+
     // shared(), for a resource that has to outlive a rolled-back change: a
     // FormatWriteSession, whose commit still has to carry the changes that
     // landed before the one that failed. rollBackChange() closes every

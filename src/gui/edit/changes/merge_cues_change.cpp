@@ -48,7 +48,10 @@ struct LocalCueWriterContext
             if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root)) {
                 ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "local-restore");
                 try {
-                    mirror = std::make_unique<infrastructure::onelibrary::OneLibraryCueWriter>(root);
+                    // The save's shared writer: see sharedOneLibraryWriter.
+                    // A second instance against one database trips the
+                    // staleness guard and never gets checkpointed.
+                    mirror = &sharedOneLibraryWriter(ctx, root);
                 } catch (const std::exception &e) {
                     ctx.log().record(std::string("local-restore: could not open OneLibrary: ") + e.what());
                 }
@@ -73,7 +76,8 @@ struct LocalCueWriterContext
     }
 
     std::unique_ptr<application::CueWriter> writer;
-    std::unique_ptr<infrastructure::onelibrary::OneLibraryCueWriter> mirror;
+    // Owned by the save (SaveContext::shared), not by this context.
+    infrastructure::onelibrary::OneLibraryCueWriter *mirror = nullptr;
     // Engine only: the session that decides where m.db is written this save.
     FormatWriteSession *engineSession = nullptr;
 };

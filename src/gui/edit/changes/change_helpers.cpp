@@ -153,9 +153,20 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
         // Only on a save that worked. After a failure the rollback puts
         // the database and its sidecars back as they were, and folding a
         // log into a file that is about to be replaced helps nobody.
-        ctx.onFinish([&writer](bool ok) {
-            if (ok) {
-                writer.finishWriting();
+        //
+        // Looked up by key rather than captured by reference: a rolled
+        // back change destroys every shared() writer (SaveContext::
+        // rollBackChange), and a captured reference would dangle. Today
+        // that path always ends the save with an error, so ok would be
+        // false and the reference never read -- but that is a policy one
+        // line elsewhere could change, and this should not be the thing
+        // that turns into a use-after-free when it does.
+        ctx.onFinish([&ctx, key](bool ok) {
+            if (!ok) {
+                return;
+            }
+            if (auto *live = ctx.sharedIfPresent<infrastructure::onelibrary::OneLibraryCueWriter>(key)) {
+                live->finishWriting();
             }
         });
     }

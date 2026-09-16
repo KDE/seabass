@@ -1,3 +1,5 @@
+#include <chrono>
+#include <thread>
 // SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
@@ -693,7 +695,21 @@ void OneLibraryCueWriter::finishWriting()
     // this exists to prevent. The verify connection is this writer's own
     // and is closed first so it cannot be that reader.
     m_verifyDb.reset();
-    m_writeDb->exec("PRAGMA wal_checkpoint(TRUNCATE);");
+
+    // The pragma's answer is a ROW -- (busy, log, checkpointed) -- not an
+    // error code: a blocked checkpoint returns busy=1 and SQLITE_OK, so
+    // exec() would report success while leaving every frame in place.
+    // Read the row, and give a reader that is merely mid-statement time to
+    // finish rather than calling one moment's contention a failed save.
+    m_writeDb->exec("PRAGMA busy_timeout = 5000;");
+    bool folded = false;
+    for (int attempt = 0; attempt < 3 && !folded; ++attempt) {
+        SqlCipherStatement checkpoint(*m_writeDb, "PRAGMA wal_checkpoint(TRUNCATE);");
+        folded = checkpoint.step() ? checkpoint.columnInt64(0) == 0 : false;
+        if (!folded && attempt + 1 < 3) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
     // The -shm indexes the log and cannot be removed while any handle is
     // open, so the connections go before the files do.
     m_writeDb.reset();
@@ -701,9 +717,19 @@ void OneLibraryCueWriter::finishWriting()
     const fs::path wal = fs::path(m_dbPath + "-wal");
     const fs::path shm = fs::path(m_dbPath + "-shm");
     std::error_code ec;
-    const std::uintmax_t remaining = fs::exists(wal, ec) ? fs::file_size(wal, ec) : 0;
+    const bool walThere = fs::exists(wal, ec);
     if (ec) {
-        return;  // cannot read it: say nothing rather than guess
+        // Cannot even tell whether a log is there -- the stick went away,
+        // or came back read-only. That is the one state this must not
+        // bless: a save reporting everything written while its rows may
+        // be sitting in a file nobody can read.
+        throw std::runtime_error("could not tell whether Device Library Plus still has a write-ahead log beside "
+                                 "exportLibrary.db, so the save cannot say its rows are in the library");
+    }
+    const std::uintmax_t remaining = walThere ? fs::file_size(wal, ec) : 0;
+    if (ec) {
+        throw std::runtime_error("could not read the size of Device Library Plus's write-ahead log, so the save "
+                                 "cannot say its rows are in the library");
     }
     if (remaining > 0) {
         throw std::runtime_error("Device Library Plus kept " + std::to_string(remaining)
@@ -712,7 +738,11 @@ void OneLibraryCueWriter::finishWriting()
     }
     fs::remove(wal, ec);
     fs::remove(shm, ec);
-    refreshStalenessBaseline();
+    // No refreshStalenessBaseline() here: the connections are closed and
+    // this writer can never write again, so re-reading the whole database
+    // off the stick buys nothing -- and computeChecksum() throws when the
+    // file cannot be opened, which from inside a finish hook would report
+    // a save that fully succeeded as failed.
 }
 
 }  // namespace seabass::infrastructure::onelibrary

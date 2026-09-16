@@ -107,16 +107,47 @@ Target findTarget(const fs::path &pioneerRoot)
     return {};
 }
 
-SaveLoopResult addCueThroughSave(const fs::path &pioneerRoot, const Target &target)
+// What the save left beside exportLibrary.db, sampled while the
+// SaveContext is still alive.
+//
+// The sampling point is the whole test. Taken after the context is
+// destroyed, SQLite's own last-connection close has already folded the
+// log and removed both sidecars, so every assertion below holds with
+// finishWriting() deleted -- which is exactly how this check passed
+// before it tested anything. Inside this scope the writers are still
+// open, and only the finish hook can have cleaned up.
+struct SaveOutcome
+{
+    SaveLoopResult result;
+    bool walPresent = false;
+    std::uintmax_t walBytes = 0;
+    bool shmPresent = false;
+};
+
+SaveOutcome addCueThroughSave(const fs::path &pioneerRoot, const Target &target)
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
     const QString root = QString::fromStdString(pioneerRoot.string());
-    SaveContext ctx(token, noProgress, {}, root, {});
-    std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
-        QStringLiteral("rekordbox"), root, QString::fromStdString(target.sourceId), 1234.0, QStringLiteral("hot"),
-        target.freeSlot, QStringLiteral("#FF0000"), QString(), false, 0.0, QString::fromStdString(target.title))};
-    return runSaveLoop(changes, ctx);
+    const fs::path db = pioneerRoot / "rekordbox" / "exportLibrary.db";
+    SaveOutcome outcome;
+    {
+        SaveContext ctx(token, noProgress, {}, root, {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
+            QStringLiteral("rekordbox"), root, QString::fromStdString(target.sourceId), 1234.0,
+            QStringLiteral("hot"), target.freeSlot, QStringLiteral("#FF0000"), QString(), false, 0.0,
+            QString::fromStdString(target.title))};
+        outcome.result = runSaveLoop(changes, ctx);
+        // Still inside ctx's scope: the shared writers it owns are open,
+        // and the finish hooks have already run (runSaveLoop calls them).
+        const fs::path wal = fs::path(db.string() + "-wal");
+        const fs::path shm = fs::path(db.string() + "-shm");
+        std::error_code ec;
+        outcome.walPresent = fs::exists(wal, ec);
+        outcome.walBytes = outcome.walPresent ? fs::file_size(wal, ec) : 0;
+        outcome.shmPresent = fs::exists(shm, ec);
+    }
+    return outcome;
 }
 
 // Cue rows in Device Library Plus, read through its own connection. The
@@ -152,17 +183,20 @@ int main()
     const fs::path shm = fs::path(db.string() + "-shm");
 
     const int cuesBefore = mirroredCueCount(db);
-    const SaveLoopResult result = addCueThroughSave(pioneerRoot, target);
+    const SaveOutcome outcome = addCueThroughSave(pioneerRoot, target);
+    const SaveLoopResult &result = outcome.result;
+    if (!result.error.isEmpty()) {
+        std::cerr << "the save failed: " << result.error.toStdString() << "\n";
+    }
     assert(result.error.isEmpty() && "the save itself must succeed");
     assert(result.appliedIds.size() == 1);
 
-    // Sidecars first, cue count second, and the order matters: counting
-    // opens a connection to a WAL database, which creates -wal and -shm
-    // again. Reading them before asserting on them measured this test's
-    // own probe rather than the save.
-    const bool walAfterSave = fs::exists(wal);
-    const std::uintmax_t walBytesAfterSave = sizeOf(wal);
-    const bool shmAfterSave = fs::exists(shm);
+    // Sampled inside the save's own scope, not here: counting cues opens
+    // a connection to a WAL database and recreates both sidecars, and the
+    // context's destruction folds the log by itself.
+    const bool walAfterSave = outcome.walPresent;
+    const std::uintmax_t walBytesAfterSave = outcome.walBytes;
+    const bool shmAfterSave = outcome.shmPresent;
 
     // The save really did go through Device Library Plus. Without this the
     // -wal assertions below would pass on a save that never opened the

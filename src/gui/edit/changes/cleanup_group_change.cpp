@@ -63,7 +63,7 @@ struct CleanupFormatContext
 // deliberately NOT redirected: it writes small per-track .ANLZ files,
 // not the shared export.pdb, so staging buys it nothing (same reasoning
 // as SyncPlanChange's rekordbox branch).
-CleanupFormatContext makeContext(const QString &format, const QString &path,
+CleanupFormatContext makeContext(const QString &format, const QString &path, SaveContext &saveCtx,
                                  const std::unordered_map<std::string, std::string> &oneLibrarySourceIdToPath = {},
                                  std::optional<std::string> writeRoot = std::nullopt)
 {
@@ -92,8 +92,18 @@ CleanupFormatContext makeContext(const QString &format, const QString &path,
         std::string pioneerRoot = path.toStdString();
         std::string effectivePath = writeRoot.value_or(pioneerRoot);
         std::string realStickRoot = fs::path(pioneerRoot).parent_path().string();
-        ctx.cueWriter =
+        auto adapter =
             std::make_unique<OneLibraryCueWriterAdapter>(effectivePath, oneLibrarySourceIdToPath, realStickRoot);
+        // Through the save's one writer for this database, like
+        // RestoreMetadataChange. Without it this adapter opened its own,
+        // which pays a second SQLCipher key derivation, throws its
+        // staleness guard the moment the shared writer writes, and -- since
+        // nothing checkpoints it -- leaves the write-ahead log for SQLite
+        // to fold at close. pioneerRoot, never effectivePath: OneLibrary is
+        // pinned to hint = 0 and never gets a scratch copy, so the shared
+        // writer is always the one against the real stick.
+        adapter->useSharedWriter(sharedOneLibraryWriter(saveCtx, pioneerRoot, realStickRoot));
+        ctx.cueWriter = std::move(adapter);
         ctx.cleanupWriter = std::make_unique<OneLibraryCleanupWriterAdapter>(effectivePath, realStickRoot);
     }
     return ctx;
@@ -117,7 +127,7 @@ struct CleanupWriterContext
         if (session.usesScratch()) {
             writeRoot = session.writeRoot();
         }
-        context = makeContext(format, path, oneLibrarySourceIdToPath, writeRoot);
+        context = makeContext(format, path, ctx, oneLibrarySourceIdToPath, writeRoot);
         effectiveRoot = session.writeRoot();
         realStickRootForOneLib = fs::path(path.toStdString()).parent_path().string();
         // Named in every pending-deletion entry, so the review page can
