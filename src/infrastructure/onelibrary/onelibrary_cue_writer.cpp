@@ -142,6 +142,13 @@ void OneLibraryCueWriter::refreshStalenessBaseline()
 
 SqlCipherDb &OneLibraryCueWriter::writeConnection()
 {
+    if (m_finished) {
+        // Reopening here would recreate the -wal and -shm finishWriting()
+        // just removed, and the baseline this writer holds no longer
+        // describes the file, so the next write would fail with a
+        // staleness error that blames the wrong thing.
+        throw std::runtime_error("onelibrary: this writer has finished for the save; a new one is needed to write again");
+    }
     if (!m_lib) {
         m_lib = std::make_unique<SqlCipherLibrary>();
     }
@@ -684,13 +691,12 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
     refreshStalenessBaseline();
 }
 
-void OneLibraryCueWriter::finishWriting(bool strict)
+std::uint64_t OneLibraryCueWriter::finishWriting(bool strict)
 {
-    m_finished = true;
     // Never opened: nothing was mirrored in this save, so there is no log
     // of ours to fold and no sidecar of ours to remove.
     if (!m_writeDb) {
-        return;
+        return 0;
     }
     // TRUNCATE rather than PASSIVE: PASSIVE gives up silently when a
     // reader is in the way, which would leave exactly the stranded frames
@@ -705,6 +711,7 @@ void OneLibraryCueWriter::finishWriting(bool strict)
     // finish rather than calling one moment's contention a failed save.
     m_writeDb->exec("PRAGMA busy_timeout = 5000;");
     bool folded = false;
+    std::string checkpointFault;
     for (int attempt = 0; attempt < 3 && !folded; ++attempt) {
         try {
             // Inside the try on purpose: the pragma usually answers with a
@@ -714,8 +721,13 @@ void OneLibraryCueWriter::finishWriting(bool strict)
             // this loop exists for never happened.
             SqlCipherStatement checkpoint(*m_writeDb, "PRAGMA wal_checkpoint(TRUNCATE);");
             folded = checkpoint.step() && checkpoint.columnInt64(0) == 0;
-        } catch (const std::exception &) {
+        } catch (const std::exception &e) {
+            // Remembered, not swallowed: a checkpoint that is merely BUSY
+            // is what the retries are for, but a corrupt database, an I/O
+            // error or a stick that went away must stay an error rather
+            // than being downgraded to "the log did not fold".
             folded = false;
+            checkpointFault = e.what();
         }
         if (!folded && attempt + 1 < 3) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -743,9 +755,15 @@ void OneLibraryCueWriter::finishWriting(bool strict)
                                  "cannot say its rows are in the library");
     }
     if (remaining > 0 && !strict) {
-        // A cancelled save folds what landed but never fails over it.
-        fs::remove(shm, ec);
-        return;
+        // A cancelled save folds what landed but never fails over it. The
+        // -shm stays: it indexes the log, and a reader that has to rebuild
+        // one needs write access to the directory -- on a read-only mount,
+        // or for a player that will not create sidecars, removing it makes
+        // the frames harder to recover rather than easier.
+        return remaining;
+    }
+    if (remaining > 0 && !checkpointFault.empty()) {
+        throw std::runtime_error("Device Library Plus could not fold its write-ahead log: " + checkpointFault);
     }
     if (remaining > 0) {
         throw OneLibraryLogNotFolded("Device Library Plus kept " + std::to_string(remaining)
@@ -754,6 +772,10 @@ void OneLibraryCueWriter::finishWriting(bool strict)
     }
     fs::remove(wal, ec);
     fs::remove(shm, ec);
+    // Only once it really is finished: set on entry it was also true down
+    // every throwing path, which is the opposite of what it records.
+    m_finished = true;
+    return 0;
     // No refreshStalenessBaseline() here: the connections are closed and
     // this writer can never write again, so re-reading the whole database
     // off the stick buys nothing -- and computeChecksum() throws when the

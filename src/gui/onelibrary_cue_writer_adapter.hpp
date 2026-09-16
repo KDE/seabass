@@ -146,12 +146,15 @@ public:
 
     void removeTrackReplacingWith(const std::string &doomedTrackId, const std::string &survivorTrackId) override
     {
-        if (m_shared) {
-            m_shared->removeTrackByIdReplacingWith(std::stoll(doomedTrackId), std::stoll(survivorTrackId));
-            return;
+        // No private fallback, unlike the cue adapter: a writer built here
+        // and destroyed per call closes the only connection, folds the log
+        // and moves exportLibrary.db out from under the shared writer's
+        // baseline -- the bug this sharing exists to fix. Every caller is
+        // inside a save and has one to give.
+        if (!m_shared) {
+            throw std::runtime_error("onelibrary cleanup: this adapter needs the save's writer (useSharedWriter)");
         }
-        infrastructure::onelibrary::OneLibraryCueWriter writer(m_pioneerRoot, m_realStickRoot);
-        writer.removeTrackByIdReplacingWith(std::stoll(doomedTrackId), std::stoll(survivorTrackId));
+        m_shared->removeTrackByIdReplacingWith(std::stoll(doomedTrackId), std::stoll(survivorTrackId));
     }
 
 private:

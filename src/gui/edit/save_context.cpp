@@ -446,10 +446,14 @@ SaveContext::FinishOutcome SaveContext::runFinishHooks(bool ok)
         try {
             hook(ok);
         } catch (const seabass::infrastructure::onelibrary::OneLibraryLogNotFolded &e) {
-            // The rows are committed; only the fold is missing, and the
-            // connections are closed so SQLite folds it at last close
-            // anyway. Saying "nothing was applied" here would have the
-            // user save again and apply every removal a second time.
+            // The rows are committed; only the fold is missing. Note what
+            // this does NOT claim: finishWriting() has already closed both
+            // connections, so nothing of ours will fold the log later --
+            // the frames sit outside exportLibrary.db until something else
+            // opens and checkpoints it, which is why this is said out loud
+            // rather than passed over. What it must not do is report the
+            // save as unapplied: that would have the user save again and
+            // apply every removal a second time.
             log().record(std::string("save: ") + e.what());
             if (!outcome.warning) {
                 outcome.warning = QString::fromStdString(e.what());

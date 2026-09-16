@@ -187,8 +187,10 @@ public:
     // log are exactly what the save must not report as written.
     // A no-op when this writer never opened anything.
     // strict: throw if frames remain (a clean save). A cancelled save
-    // folds what landed but never fails over the fold.
-    void finishWriting(bool strict = true);
+    // folds what landed but never fails over the fold -- it returns the
+    // bytes it could not fold instead, for a caller with somewhere to
+    // record them. 0 means the library is one file again.
+    std::uint64_t finishWriting(bool strict = true);
 
 private:
     // The two connections this writer works through, opened on first use

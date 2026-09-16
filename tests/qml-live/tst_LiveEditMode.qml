@@ -836,6 +836,11 @@ TestCase {
         // rig compares it against after the bundle (rig-shakedown.sh's
         // unchanged_catalogs). It is undone at the end.
         var planted = false;
+        // What the stick listed before this check touched anything, and
+        // what the plant added on top: the cancel below must only ever tick
+        // a file this check created.
+        var listedAtStart = {};
+        var plantedPaths = {};
         var page = createTemporaryObject(pendingPage, testCase, {stickLabel: stickLabel, rekordboxPath: rekordboxPath,
                                                                  enginePath: enginePath,
                                                                  appSettingsController: createTemporaryObject(appSettings, testCase)});
@@ -844,6 +849,10 @@ TestCase {
         waitIdle(ctrl);
         var count = ctrl.pendingDeletions.rowCount();
         console.log("  pending deletions listed: " + count);
+        var atStart = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
+        for (var b = 0; b < atStart.count; ++b) {
+            listedAtStart[atStart.objectAt(b).path] = true;
+        }
         if (count === 0) {
             // Plant one rather than skip: a tidy stick is not a reason to
             // prove nothing. A Clean Up save orphans a file and lists it,
@@ -880,25 +889,40 @@ TestCase {
             waitIdle(ctrl, 300000);
             count = ctrl.pendingDeletions.rowCount();
             console.log("  planted, pending deletions listed: " + count);
+            var afterPlant = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
+            for (var a = 0; a < afterPlant.count; ++a) {
+                var plantedPath = afterPlant.objectAt(a).path;
+                if (!listedAtStart[plantedPath]) {
+                    plantedPaths[plantedPath] = true;
+                }
+            }
             // No skip on the way out: if the save orphaned nothing there is
             // something to look at, not something to pass over.
             verify(count > 0, "the planted Clean Up save listed a file for deletion");
             planted = true;
         }
-        // Only this check's own row, never setAllPendingDeletionIncluded:
-        // the cancel below is a race against the worker, and a lost race
+        // A row this check planted, never one that was already listed: the
+        // cancel below is a race against the worker, and a lost race
         // deletes the audio for good. undoLastSave() puts catalog rows
         // back, not media -- and unchanged_catalogs() only checksums the
         // catalogs, so the rig would call the stick clean while a file it
-        // lists is gone.
+        // lists is gone. Ticking row 0 risked exactly that on a stick that
+        // already carried orphans.
         ctrl.setAllPendingDeletionIncluded(false);
         var rows = createTemporaryObject(pendingRowsComponent, testCase, {model: ctrl.pendingDeletions});
         var ticked = 0;
         for (var r = 0; r < rows.count && ticked < 1; ++r) {
-            rows.objectAt(r).include(true);
-            ticked = 1;
+            var candidate = rows.objectAt(r);
+            if (plantedPaths[candidate.path] === true) {
+                candidate.include(true);
+                ticked = 1;
+            }
         }
-        verify(ticked === 1, "one pending row ticked to cancel the delete of");
+        if (ticked === 0) {
+            // Everything listed predates this check: cancelling a delete of
+            // one of those risks real audio for nothing.
+            skip("no pending deletion this check planted, so none it may safely cancel");
+        }
         var spy = createTemporaryObject(spyComponent, testCase, {target: ctrl, signalName: "pendingDeletionsWriteFinished"});
         ctrl.deleteSelectedPendingFiles();
         compare(ctrl.writing, true);

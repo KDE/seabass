@@ -62,7 +62,8 @@ function findByType(root, typeName) {
 
 function summaryLine(summary) {
     return summary.written + " of " + summary.total + " " + summary.unit + " " + (summary.verb || "written")
-        + (summary.cancelled ? " (cancelled)" : "") + (summary.error ? " error: " + summary.error : "");
+        + (summary.cancelled ? " (cancelled)" : "") + (summary.error ? " error: " + summary.error : "")
+        + (summary.warning ? " warning: " + summary.warning : "");
 }
 
 // The item with this objectName anywhere under root -- the dialogs the

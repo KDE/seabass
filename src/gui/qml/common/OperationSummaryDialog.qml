@@ -26,6 +26,11 @@ SeabassDialog {
     readonly property string verb: dialog.summary.verb !== undefined ? dialog.summary.verb : "written"
     readonly property bool cancelled: dialog.summary.cancelled === true
     readonly property string error: dialog.summary.error !== undefined ? dialog.summary.error : ""
+    // Everything was written, but something after it was not finished --
+    // a write-ahead log that would not fold. Never "Done" in silence:
+    // before this existed the same state was reported as an error, and a
+    // warning nobody renders is worse than the error it replaced.
+    readonly property string warning: dialog.summary.warning !== undefined ? dialog.summary.warning : ""
     readonly property string detail: dialog.summary.detail !== undefined ? dialog.summary.detail : ""
 
     // "27 cues removed." when everything staged went through, and
@@ -69,10 +74,12 @@ SeabassDialog {
     }
 
     severity: dialog.error.length > 0 ? SeabassDialog.Error
+        : dialog.warning.length > 0 ? SeabassDialog.Warning
         : dialog.cancelled ? SeabassDialog.Warning
         : SeabassDialog.Info
     closePolicy: Popup.NoAutoClose
     title: dialog.error.length > 0 ? "Stopped with an error"
+        : dialog.warning.length > 0 ? "Done, with something left over"
         : dialog.cancelled ? "Cancelled"
         : "Done"
 
@@ -109,6 +116,7 @@ SeabassDialog {
             visible: text.length > 0
             color: dialog.error.length > 0 ? Theme.danger : Theme.textMuted
             text: dialog.error.length > 0 ? "Then: " + dialog.error
+                : dialog.warning.length > 0 ? dialog.warning
                 : dialog.detail.length > 0 ? dialog.detail
                 : dialog.cancelled ? "Stopped at your request. Everything up to here is complete; the rest was not touched."
                 : ""

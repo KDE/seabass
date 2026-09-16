@@ -173,7 +173,14 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
                 // changes that landed before it as applied, and their rows
                 // belong in the database, not in a log. Only a clean save
                 // is strict about frames that will not fold.
-                live->finishWriting(ok);
+                // The writer has no logger of its own, so the leftover it
+                // reports is recorded here: a cancelled save that could not
+                // fold says so on the stick's own log rather than silently.
+                const std::uint64_t left = live->finishWriting(ok);
+                if (left > 0) {
+                    ctx.log().record("save: Device Library Plus kept " + std::to_string(left)
+                                     + " bytes in its write-ahead log after a cancelled save");
+                }
             }
         });
     }

@@ -92,7 +92,10 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // ok means "the whole batch went through"; a cancel or a failure hands
     // the hooks false so a scratch copy commits only what completed.
     const auto finish = ctx.runFinishHooks(result.error.isEmpty() && !result.cancelled);
-    if (finish.warning && result.error.isEmpty()) {
+    // Only when nothing actually failed: a warning saying "the changes are
+    // applied, do not save again" beside an error that clears appliedIds
+    // would contradict itself.
+    if (finish.warning && !finish.error && result.error.isEmpty()) {
         // Everything landed; a tidy-up did not. Said out loud, but the
         // changes stay applied -- clearing them would have the user save
         // the same removals twice.
