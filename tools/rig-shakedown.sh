@@ -37,6 +37,8 @@ deviceB="${RIG_DEVICE_B:-/dev/sdc1}"
 refA="${RIG_REFERENCE_A:-$HOME/Seabass/e2e/backups/CORSAIR.zip}"
 refB="${RIG_REFERENCE_B:-$HOME/Seabass/e2e/backups/WHALESHARK2.zip}"
 prints="${RIG_REFERENCE_PRINTS:-$HOME/Seabass/e2e/reference-fingerprints.txt}"
+# rig_delete_backup refuses to delete anything at these paths or beside them.
+export RIG_REFERENCE_A="$refA" RIG_REFERENCE_B="$refB"
 export QT_QPA_PLATFORM=offscreen
 
 mkdir -p "$out" "$out/shots"
@@ -172,6 +174,7 @@ check FB-restore-A-from-reference "$build/rig_restore" "$refA" "$A" --execute ||
 mkdir -p "$out/backups-clone"
 check C1-C5-backup-usb-stick "$root/tools/rig-clones.sh" "$A" "$B" "$out/backups-clone" "$refA" "$refB"
 # C6: B's library does not fit on A. A preview only -- nothing is written.
+mkdir -p "$out/backups-c6"
 check C6-target-too-small "$build/rig_clone" "$B" "$A" "$out/backups-c6" --expect-too-small
 
 # ---- both sticks back where they started -----------------------------

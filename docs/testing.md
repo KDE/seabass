@@ -199,9 +199,11 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   room, which is what disables the card on the page, and nothing is written.
 - `rig_delete_backup <backup dir> <archive>`: Manage Backups deleting one
   archive -- refused while a helper process holds the archive's write lock,
-  archive and journal gone afterwards, every other backup still listed
-  unchanged. It refuses an archive outside the folder it was given, so a
-  reference backup cannot be passed to it.
+  archive and journal gone afterwards, every other backup still there with
+  the same size and modification time. It deletes for real, so it refuses
+  an archive outside the folder it was given, one that is or sits beside a
+  reference named in `RIG_REFERENCE_A`/`RIG_REFERENCE_B`, one it cannot
+  write, and one Manage Backups cannot read as a backup.
 - `tools/rig-edits.sh <stick> [baseline]`: add a cue, Clean Up one group and
   a Library Health repair, each saved and undone (`rig_plant_repairable`
   plants the repairable issue and puts the file back).

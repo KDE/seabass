@@ -22,9 +22,10 @@
 // With --expect-too-small nothing runs at all: the preview must report
 // that the target has no room for the source's library, which is what
 // disables the card on the Backup USB Stick page (rig check C6). It
-// passes only when the preview says so and names the space it needs, so
-// a target that turns out to be big enough fails the check rather than
-// quietly cloning onto it.
+// passes only when the target's free space is actually known and
+// actually smaller than what the source needs -- CloneStick reports zero
+// free bytes when it cannot stat the target at all, which would otherwise
+// make this check pass on a broken rig rather than on a full stick.
 //
 // With --cancel-at the run is cancelled during the backup stage, once
 // PERCENT of the bytes to read are read. It passes when the run ends
@@ -165,10 +166,15 @@ int main(int argc, char **argv)
         if (expectTooSmall) {
             // Nothing is written in this mode: the preview alone is the
             // check, and the target keeps whatever it holds.
-            const bool refused = !preview.enoughTargetSpace;
+            const bool measured = preview.targetFreeBytes > 0 && preview.bytesToTarget > 0;
+            const bool refused =
+                !preview.enoughTargetSpace && measured && preview.bytesToTarget > preview.targetFreeBytes;
             std::cout << "target space: needs " << gib(preview.bytesToTarget) << ", has "
                       << gib(preview.targetFreeBytes) << " -> "
-                      << (refused ? "too small, as expected" : "BIG ENOUGH -- this target cannot check C6") << "\n";
+                      << (refused ? "too small, as expected"
+                                  : (measured ? "BIG ENOUGH -- this target cannot check C6"
+                                              : "NOT MEASURED -- free space or source size came back zero"))
+                      << "\n";
             std::cout << "RIG RESULT: " << (refused ? "PASS" : "FAIL") << "\n";
             return refused ? 0 : 1;
         }
