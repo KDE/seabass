@@ -214,9 +214,35 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   plants the repairable issue and puts the file back).
 - `tools/rig-clones.sh`: the two-stick Backup USB Stick checks.
 
+The live QML tests carry the checks that need real pages rather than a
+tool, one test function per process (a bare `TestCase` name makes the
+runner exit 0 without running anything):
+
+- `tst_LivePages.qml`: Statistics and Stick Performance load with figures
+  that fit the library, and Manage Backups lists both reference backups
+  with their stick, size and counts and browses one read-only. The
+  performance page is only ever measured here -- its write test, its
+  scratch-file variant and the wear check all write to the stick.
+- `tst_LiveQuit.qml`: leaving with unsaved changes, both ways out. Discard
+  must leave the catalogs alone; Save must write everything staged and
+  only then leave. The saved change is undone again.
+- `tst_LiveFullStick.qml`, with `SEABASS_RIG_FULL_STICK`: a save on a
+  stick with a few MB left. `rig-shakedown.sh` fills the stick with a
+  filler file first and deletes it afterwards whatever happened, so no
+  second, smaller stick is needed.
+- `tst_LiveEditMode.qml`'s `test_13`, with `SEABASS_RIG_DELETE_ORPHANS`:
+  Delete Orphaned Files, cancelled part-way and then finished. It plants
+  its own list by saving a Clean Up and not undoing it, and deletes audio
+  for good, so the runner restores the stick right afterwards.
+
+`tools/rig_save_backups <stick>` lists the automatic backups a round's
+saves left on the stick and asks the store whether each is restorable.
+
 A stick pull is simulated by unmounting and remounting the device
 (`run-live.sh`); a pull in the middle of a save still needs someone at the
-machine.
+machine. What is left for a person: playing a restored stick on Pioneer
+or Denon hardware, the Windows run with a physical replug, and filing an
+issue for whatever failed.
 
 ## Testing against real libraries
 
