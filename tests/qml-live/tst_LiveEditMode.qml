@@ -532,7 +532,19 @@ TestCase {
         var listed = cleanup.pendingDeletions.rowCount();
         console.log("  cleaned up " + staged + " group(s); files waiting for deletion: " + pendingBefore + " -> "
                     + listed + " (" + planted + " new)");
-        verify(planted > 0, "this save orphaned at least one file");
+        if (planted === 0) {
+            // Nothing was orphaned, so there is nothing to cancel or
+            // finish. The usual cause is this check having run once
+            // already: it deletes the extra copies for good, and the
+            // groups then have nothing left to remove.
+            //
+            // A failure, not a skip: the rig arms this check only on a
+            // stick it has just restored, so there is no honest way for it
+            // to find nothing -- and the runner counts a skipped test as a
+            // pass, which is how a check quietly stops checking.
+            fail("no extra copies left to orphan on this stick: restore it before running W8 "
+                 + "(this check deletes the copies it plants)");
+        }
 
         // Cancel: tick everything, start, stop it immediately.
         cleanup.setAllPendingDeletionIncluded(true);
@@ -544,18 +556,21 @@ TestCase {
         tryVerify(function() { return cancelSpy.count > 0; }, 300000);
         var cancelled = cancelSpy.signalArguments[0][0];
         console.log("  cancelled delete: " + Live.summaryLine(cancelled));
-        // A cancelled write says so, in `cancelled` and in the message it
-        // carries; that is not an error, and test_07 reads it the same way.
-        verify(cancelled.cancelled === true || cancelled.written === listed,
-               "the write reports the cancel, or had already finished");
+        // What the app guarantees when a delete is stopped: it says so --
+        // through the `cancelled` flag, or through the message, depending
+        // on whether the run had started deleting -- and it deletes fewer
+        // files than were listed. Not an error either way.
+        verify(cancelled.cancelled === true || cancelled.error.length > 0 || cancelled.written === listed,
+               "a stopped delete says it stopped");
+        verify(cancelled.written <= listed, "a stopped delete never deletes more than was listed");
         waitIdle(cleanup, 300000);
         cleanup.refreshPendingDeletions();
         var leftListed = cleanup.pendingDeletions.rowCount();
-        console.log("  still listed after the cancel: " + leftListed + " of " + listed);
+        console.log("  still listed after the cancel: " + leftListed + " of " + listed
+                    + " (the cancel deleted " + cancelled.written + ")");
         verify(leftListed === listed - cancelled.written,
-               "what the cancel did not delete is still listed");
-        verify(leftListed > 0 || cancelled.written === listed,
-               "a cancel that deleted nothing must leave everything listed");
+               "exactly what the cancel did not delete is still listed");
+        verify(leftListed > 0, "the cancel left files for the second half of this check");
 
         // Finish: the rest go, and exactly the rest.
         var pathsBefore = createTemporaryObject(pendingRowsComponent, testCase, {model: cleanup.pendingDeletions});

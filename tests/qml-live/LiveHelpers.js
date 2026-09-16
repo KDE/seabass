@@ -71,12 +71,15 @@ function findByObjectName(root, name) {
 }
 
 function fileExists(absolutePath) {
-    var request = new XMLHttpRequest();
+    // Reading the status can throw "Invalid state" for a file that is not
+    // there, as well as open()/send() themselves, so every step is inside
+    // the try: a throw IS the answer this asks for.
     try {
+        var request = new XMLHttpRequest();
         request.open("GET", "file://" + absolutePath, false);
         request.send(null);
+        return request.status === 200 || (request.status === 0 && request.responseText.length > 0);
     } catch (e) {
         return false;
     }
-    return request.status === 200 || (request.status === 0 && request.responseText.length > 0);
 }
