@@ -2079,6 +2079,13 @@ add_executable(rig_read tools/rig_read.cpp)
 target_include_directories(rig_read PRIVATE src)
 target_link_libraries(rig_read PRIVATE seabass_core)
 
+# Create Engine Library, headless: build a candidate library from a stick's
+# rekordbox export into a folder, at a chosen schema generation, and read it
+# back. The feature is otherwise GUI-only and needs real hardware to judge.
+add_executable(make_engine_library tools/make_engine_library.cpp)
+target_include_directories(make_engine_library PRIVATE src)
+target_link_libraries(make_engine_library PRIVATE seabass_core)
+
 # Release rig: a full stick backup as the app takes it, then verified, checked
 # for holes, previewed for leftovers and compared with the stick's catalogs.
 add_executable(rig_backup tools/rig_backup.cpp)

@@ -9,11 +9,14 @@
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
+#include <string>
 
 #include <djinterop/djinterop.hpp>
 #include <djinterop/engine/engine.hpp>
+#include <sqlite3.h>
 
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
+#include "infrastructure/local/sqlite_statement.hpp"
 #include "infrastructure/scratch_dir_guard.hpp"
 
 namespace seabass::infrastructure::engine
@@ -96,6 +99,96 @@ int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<d
         snapshot.main_cue = *earliestMemoryCueMs / 1000.0 * DefaultSampleRate;
     }
     return hotCuesSet + (earliestMemoryCueMs ? 1 : 0);
+}
+
+// Puts the Information row back at id 1, where Engine keeps it.
+//
+// The Information table is the first thing anything reading an Engine
+// library looks at -- it is where the schema version lives, and
+// libdjinterop's own detect_schema() reads it. Every library Engine
+// itself writes holds exactly one row there, at id 1: confirmed against
+// a Denon-written stick and against the database a Prime 4 creates for
+// itself.
+//
+// libdjinterop's 3.0.2 creator does not. schema_3_0_2::create() seeds
+// the AUTOINCREMENT counter for the table ("INSERT INTO sqlite_sequence
+// VALUES('Information',1)") *before* inserting the row, so the row lands
+// at id 2 and the counter reads 2. No other schema version in that file
+// does this, and 3.0.2 is exactly the schema current Denon hardware
+// uses. A Prime 4 rejected a library created this way as corrupt, and
+// stopped rejecting it once the row was renumbered -- which is why this
+// is corrected here rather than left to the caller to notice.
+//
+// Done with plain SQL because libdjinterop exposes no way to reach the
+// row: the id is not part of any public API. Runs against the scratch
+// copy, before a single byte is written to the destination.
+//
+// Returns an error message, or an empty string when the row is where it
+// belongs (including when it already was, so a fixed or newly vendored
+// libdjinterop makes this a no-op rather than a second bug).
+std::string putInformationRowAtIdOne(const std::filesystem::path &databaseDirectory)
+{
+    // Two layouts: the 1.x generation keeps m.db at the library root, 2.x
+    // and 3.x put it under Database2. Both carry the Information table, so
+    // look for the one that is actually there rather than assuming.
+    std::filesystem::path databaseFile = databaseDirectory / "Database2" / "m.db";
+    std::error_code ec;
+    if (!std::filesystem::exists(databaseFile, ec)) {
+        databaseFile = databaseDirectory / "m.db";
+    }
+    if (!std::filesystem::exists(databaseFile, ec)) {
+        return "the new Engine database was not written where it was expected.";
+    }
+    const std::string dbPath = databaseFile.string();
+    sqlite3 *db = nullptr;
+    // READWRITE without CREATE: a wrong path must fail here, not leave a
+    // stray empty database behind for the copy to carry onto the stick.
+    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+        const std::string message = db ? sqlite3_errmsg(db) : "could not open the new database";
+        sqlite3_close(db);
+        return "could not open the new Engine database to check its Information row: " + message;
+    }
+    const auto run = [db](const char *sql) -> std::string {
+        char *error = nullptr;
+        if (sqlite3_exec(db, sql, nullptr, nullptr, &error) == SQLITE_OK) {
+            return {};
+        }
+        const std::string message = error ? error : "unknown error";
+        sqlite3_free(error);
+        return message;
+    };
+    // One statement each, so a database that already has it right is
+    // left completely untouched.
+    std::string failure = run("UPDATE Information SET id = 1 WHERE id <> 1 "
+                              "AND (SELECT count(*) FROM Information) = 1;");
+    if (failure.empty()) {
+        failure = run("UPDATE sqlite_sequence SET seq = 1 WHERE name = 'Information' AND seq <> 1;");
+    }
+
+    // Verify rather than assume: this exists precisely because a library
+    // that looks fine to us can still be refused by the hardware, so the
+    // one thing it fixes is checked before the copy proceeds.
+    std::string verified;
+    if (failure.empty()) {
+        local::Statement check(db, "SELECT count(*), coalesce(min(id), 0) FROM Information;",
+                                "Engine library creator");
+        if (check.step()) {
+            const int rows = check.columnInt(0);
+            const int firstId = check.columnInt(1);
+            if (rows != 1 || firstId != 1) {
+                verified = "the new Engine database has " + std::to_string(rows) +
+                            " Information row(s), the first at id " + std::to_string(firstId) +
+                            " -- Engine expects exactly one, at id 1.";
+            }
+        } else {
+            verified = "could not read back the new Engine database's Information row.";
+        }
+    }
+    sqlite3_close(db);
+    if (!failure.empty()) {
+        return "could not correct the new Engine database's Information row: " + failure;
+    }
+    return verified;
 }
 
 }  // namespace
@@ -225,6 +318,16 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
             // with it, any pending journal) before the raw files underneath
             // are copied below -- copying while the connection is still open
             // would risk copying an inconsistent file.
+        }
+
+        // Still on the scratch copy, with the connection closed: the one
+        // correction that decides whether real hardware will accept this
+        // library at all. A failure here stops before the copy, so the
+        // destination keeps whatever it had (nothing) rather than
+        // receiving a library the player would refuse.
+        if (std::string informationRow = putInformationRowAtIdOne(scratchDir); !informationRow.empty()) {
+            result.errorMessage = informationRow;
+            return result;
         }
 
         // One pass of large sequential writes onto the real target, instead

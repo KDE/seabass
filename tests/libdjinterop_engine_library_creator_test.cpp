@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <iostream>
 
+#include <sqlite3.h>
+
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
@@ -131,8 +133,52 @@ int main()
         std::cout << "case 3 (track with no local file is skipped) OK\n";
     }
 
-    fs::remove_all(root);
-    std::cout << "All libdjinterop_engine_library_creator tests passed.\n";
+    // Case 4: the Information row is where Engine keeps it -- exactly one,
+    // at id 1 -- at every schema generation this feature offers.
+    //
+    // Not a detail. That table is where the schema version lives, so it is
+    // the first thing anything reading the library looks at, and a Prime 4
+    // rejected a real stick as corrupt over it. libdjinterop's 3.0.2
+    // creator seeds the table's AUTOINCREMENT counter before inserting the
+    // row, landing it at id 2; the creator corrects that afterwards. This
+    // is the regression guard for both halves: the correction, and the
+    // fact that the other generations never needed it.
+    {
+        const EngineSchemaGeneration generations[] = {EngineSchemaGeneration::V1, EngineSchemaGeneration::V2,
+                                                       EngineSchemaGeneration::V3};
+        int which = 0;
+        for (EngineSchemaGeneration generation : generations) {
+            fs::path path = root / ("Engine Library gen" + std::to_string(++which));
+            std::vector<Track> tracks = {makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string())};
+            auto result = EngineLibraryCreator::create(path.string(), tracks, generation);
+            assert(result.errorMessage.empty());
+            assert(result.tracksCreated == 1);
+
+            // 1.x keeps m.db at the library root, 2.x and 3.x under Database2.
+            fs::path dbFile = path / "Database2" / "m.db";
+            if (!fs::exists(dbFile)) {
+                dbFile = path / "m.db";
+            }
+            assert(fs::exists(dbFile));
+
+            sqlite3 *db = nullptr;
+            const std::string dbPath = dbFile.string();
+            assert(sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+            sqlite3_stmt *stmt = nullptr;
+            assert(sqlite3_prepare_v2(db, "SELECT count(*), coalesce(min(id), 0) FROM Information;", -1, &stmt,
+                                       nullptr)
+                   == SQLITE_OK);
+            assert(sqlite3_step(stmt) == SQLITE_ROW);
+            const int rows = sqlite3_column_int(stmt, 0);
+            const int firstId = sqlite3_column_int(stmt, 1);
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            assert(rows == 1);
+            assert(firstId == 1);
+        }
+        std::cout << "case 4 (Information row at id 1, every schema generation) OK\n";
+    }
+
     // Cancel between two tracks: nothing at all lands on the target
     // (the scratch build is thrown away), and the result says so.
     {
@@ -153,6 +199,9 @@ int main()
         assert(!fs::exists(cancelledPath));
         std::cout << "case (cancelled build: nothing created on the target) OK\n";
     }
+
+    fs::remove_all(root);
+    std::cout << "All libdjinterop_engine_library_creator tests passed.\n";
 
     return 0;
 }
