@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Seabass
 Upstream-Contact: Sebastian Kügler <sebas@kde.org>
-Source: https://invent.kde.org/sebas/seabass
+Source: https://invent.kde.org/multimedia/seabass
 
 # Files that cannot carry an SPDX header -- because they are binary, because
 # they are vendored and must stay byte-identical to upstream, or because

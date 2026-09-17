@@ -6,7 +6,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # Seabass
 
-Seabass's home is on [KDE Invent](https://invent.kde.org/sebas/seabass);
+Seabass's home is on [KDE Invent](https://invent.kde.org/multimedia/seabass);
 the [GitHub mirror](https://github.com/sebasje/seabass) exists for wider
 reach, but KDE Invent is the canonical repository. The mirror used to live
 at `sebasje/djconvert`, which is now an archived pointer to this one.
