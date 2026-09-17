@@ -38,9 +38,16 @@ using ErrmsgFn = const char *(*)(sqlite3 *);
 void *const SqliteTransient = reinterpret_cast<void *>(-1);
 
 #ifdef _WIN32
+// MSYS2's name first, then the one the Craft build ships
+// (craft-blueprint/libs/sqlcipher4).
 void *loadLibrary()
 {
-    return LoadLibraryA("libsqlcipher-0.dll");
+    for (const char *name : {"libsqlcipher-0.dll", "libsqlcipher.dll"}) {
+        if (HMODULE mod = LoadLibraryA(name)) {
+            return mod;
+        }
+    }
+    return nullptr;
 }
 void *resolveSymbol(void *mod, const char *name)
 {
@@ -52,8 +59,8 @@ void unloadLibrary(void *mod)
 }
 const char *libraryNotFoundHint()
 {
-    return "could not load libsqlcipher-0.dll -- is the mingw-w64-ucrt-x86_64-sqlcipher package's "
-           "DLL on PATH or next to the executable?";
+    return "could not load libsqlcipher-0.dll or libsqlcipher.dll -- is the mingw-w64-ucrt-x86_64-sqlcipher "
+           "package's DLL (or Craft's) on PATH or next to the executable?";
 }
 #elif defined(__APPLE__)
 // The copy a packaged Seabass.app carries in Contents/Frameworks first

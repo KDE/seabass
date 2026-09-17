@@ -36,13 +36,10 @@ class subinfo(info.infoclass):
         # as a runtime dependency for exactly that reason, so Craft's
         # packaging step still bundles the DLL even though nothing in
         # the CMake build itself links against it.
-        # SQLCipher 4, because rekordbox writes that format; on Windows
-        # still craft-blueprints-kde's 3.4.2, which cannot read it (see
+        # SQLCipher 4, because rekordbox writes that format; Craft's own
+        # libs/sqlcipher is 3.4.2, which cannot read it (see
         # craft-blueprint/libs/sqlcipher4).
-        if CraftCore.compiler.isWindows:
-            self.runtimeDependencies["libs/sqlcipher"] = None
-        else:
-            self.runtimeDependencies["libs/sqlcipher4"] = None
+        self.runtimeDependencies["libs/sqlcipher4"] = None
         # Optional: Seabass's own CMakeLists.txt falls back to
         # application::NullTrackMetadataProbe when TagLib isn't found.
         self.runtimeDependencies["libs/taglib"] = None

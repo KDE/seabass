@@ -13,8 +13,9 @@
 # SQLite. Seabass loads it at runtime (sqlcipher_dyn.cpp); nothing links
 # against it.
 #
-# Unix only for now: Windows builds SQLCipher through Makefile.msc, which
-# this blueprint does not drive, and still uses libs/sqlcipher.
+# Unix builds with autosetup; MSVC with Makefile.msc, producing
+# libsqlcipher.dll (sqlcipher_dyn.cpp tries that name after MSYS2's
+# libsqlcipher-0.dll). MinGW is not handled.
 
 import glob
 import os
@@ -24,13 +25,11 @@ import info
 import utils
 from CraftCore import CraftCore
 from Package.AutoToolsPackageBase import AutoToolsPackageBase
+from Package.MSBuildPackageBase import MSBuildPackageBase
 from Utils import CraftHash
 
 
 class subinfo(info.infoclass):
-    def registerOptions(self):
-        self.parent.package.categoryInfo.platforms = CraftCore.compiler.Platforms.NotWindows
-
     def setTargets(self):
         self.description = "SQLite extension providing 256-bit AES encryption, version 4"
         self.webpage = "https://www.zetetic.net/sqlcipher/"
@@ -45,11 +44,27 @@ class subinfo(info.infoclass):
         self.runtimeDependencies["virtual/base"] = None
         self.runtimeDependencies["libs/openssl"] = None
         self.runtimeDependencies["libs/zlib"] = None
-        # The build generates sources with tclsh; nothing uses Tcl at runtime.
-        self.buildDependencies["libs/tcl"] = None
+        # The Unix build generates sources with tclsh; nothing uses Tcl at
+        # runtime. Makefile.msc builds its own jimsh for that instead.
+        if not CraftCore.compiler.isMSVC():
+            self.buildDependencies["libs/tcl"] = None
 
 
-class Package(AutoToolsPackageBase):
+# Same feature set on every platform; SQLITE_EXTRA_INIT/SHUTDOWN are what
+# SQLCipher 4.7+ needs to register its codec.
+FEATURE_DEFINES = [
+    "-DSQLITE_HAS_CODEC",
+    "-DSQLITE_ENABLE_JSON1",
+    "-DSQLITE_ENABLE_FTS3",
+    "-DSQLITE_ENABLE_FTS3_PARENTHESIS",
+    "-DSQLITE_ENABLE_FTS5",
+    "-DSQLITE_ENABLE_COLUMN_METADATA",
+    "-DSQLITE_EXTRA_INIT=sqlcipher_extra_init",
+    "-DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown",
+]
+
+
+class PackageAutotools(AutoToolsPackageBase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         opts = self.subinfo.options
@@ -65,13 +80,8 @@ class Package(AutoToolsPackageBase):
             "--with-tempstore=yes",
             "--dll-basename=libsqlcipher",
         ]
-        # The same set Homebrew uses; SQLITE_EXTRA_INIT/SHUTDOWN are what
-        # SQLCipher 4.7+ needs to register its codec.
-        opts.configure.cflags += (
-            " -DSQLITE_HAS_CODEC -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_FTS3"
-            " -DSQLITE_ENABLE_FTS3_PARENTHESIS -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_COLUMN_METADATA"
-            " -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
-        )
+        # The same set Homebrew uses.
+        opts.configure.cflags += " " + " ".join(FEATURE_DEFINES)
         opts.configure.ldflags += " -lcrypto"
         # --disable-tcl leaves the Makefile's TCLSH_CMD at "false", which
         # the code generation steps still call.
@@ -129,3 +139,69 @@ class Package(AutoToolsPackageBase):
             if path.exists():
                 path.unlink()
         return super().postInstall()
+
+
+class PackageMSVC(MSBuildPackageBase):
+    """SQLCipher's documented MSVC build: `nmake /f Makefile.msc dll`,
+    OpenSSL from Craft, the DLL named so it cannot be taken for SQLite's."""
+
+    def configure(self):
+        return True
+
+    def _nmakeArgs(self):
+        craftRoot = CraftCore.standardDirs.craftRoot()
+        defines = FEATURE_DEFINES + ["-DSQLITE_TEMP_STORE=2", f"-I{craftRoot / 'include'}"]
+        return [
+            "nmake",
+            "/f",
+            "Makefile.msc",
+            "dll",
+            "USE_AMALGAMATION=1",
+            "NO_TCL=1",
+            # The CRT the rest of Craft links, and the one KMyMoney's
+            # libs/sqlcipher needed to stop crashing.
+            "USE_CRT_DLL=1",
+            "SQLITE3DLL=libsqlcipher.dll",
+            "SQLITE3LIB=libsqlcipher.lib",
+            "SQLITE3EXE=sqlcipher.exe",
+            f"OPTS={' '.join(defines)}",
+            # Command-line macros replace the makefile's own, so rpcrt4.lib
+            # (which it adds) is repeated here.
+            f"LTLIBPATHS=/LIBPATH:{craftRoot / 'lib'}",
+            "LTLIBS=rpcrt4.lib libcrypto.lib",
+        ]
+
+    def make(self):
+        self.enterSourceDir()
+        return utils.system(self._nmakeArgs(), cwd=self.sourceDir())
+
+    def install(self):
+        self.cleanImage()
+        src = Path(self.sourceDir())
+        image = Path(self.installDir())
+        for sub in ["bin", "lib", "include/sqlcipher"]:
+            (image / sub).mkdir(parents=True, exist_ok=True)
+        copies = [
+            (src / "libsqlcipher.dll", image / "bin" / "libsqlcipher.dll"),
+            (src / "libsqlcipher.lib", image / "lib" / "libsqlcipher.lib"),
+            (src / "sqlite3.h", image / "include" / "sqlcipher" / "sqlite3.h"),
+            (src / "sqlite3ext.h", image / "include" / "sqlcipher" / "sqlite3ext.h"),
+        ]
+        for source, dest in copies:
+            if not utils.copyFile(source, dest, linkOnly=False):
+                return False
+        pdb = src / "libsqlcipher.pdb"
+        if pdb.exists() and not utils.copyFile(pdb, image / "bin" / "libsqlcipher.pdb", linkOnly=False):
+            return False
+        return True
+
+
+if CraftCore.compiler.isMSVC():
+
+    class Package(PackageMSVC):
+        pass
+
+else:
+
+    class Package(PackageAutotools):
+        pass
