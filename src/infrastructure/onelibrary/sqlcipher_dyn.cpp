@@ -54,12 +54,14 @@ const char *libraryNotFoundHint()
            "DLL on PATH or next to the executable?";
 }
 #elif defined(__APPLE__)
-// The bare names find a copy bundled next to the app or on the dyld search
-// path; Homebrew's own prefix (Apple Silicon, then Intel) is not on that
-// path, so it is tried explicitly after them.
+// The copy a packaged Seabass.app carries in Contents/Frameworks first
+// (nothing links it, so no rpath points there), then the bare names for
+// the dyld search path, then Homebrew's prefix (Apple Silicon, then
+// Intel), which is not on that path.
 void *loadLibrary()
 {
-    for (const char *name : {"libsqlcipher.0.dylib", "libsqlcipher.dylib",
+    for (const char *name : {"@executable_path/../Frameworks/libsqlcipher.0.dylib",
+                             "libsqlcipher.0.dylib", "libsqlcipher.dylib",
                              "/opt/homebrew/opt/sqlcipher/lib/libsqlcipher.0.dylib",
                              "/usr/local/opt/sqlcipher/lib/libsqlcipher.0.dylib"}) {
         if (void *mod = dlopen(name, RTLD_NOW)) {

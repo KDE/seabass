@@ -4,6 +4,7 @@
 
 qt_add_executable(seabass
     WIN32
+    MACOSX_BUNDLE
     main.cpp
 )
 if(WIN32)
@@ -12,6 +13,17 @@ if(WIN32)
     # Regenerate both, from the repository root, with:
     #   python3 tools/flatten_logo.py
     target_sources(seabass PRIVATE win/app_icon.rc)
+endif()
+if(APPLE)
+    # The same icon as an .icns (also written by tools/flatten_logo.py),
+    # copied into the bundle's Resources and named by Info.plist.
+    target_sources(seabass PRIVATE mac/app_icon.icns)
+    set_source_files_properties(mac/app_icon.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(seabass PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "Seabass"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.kde.seabass"
+        MACOSX_BUNDLE_ICON_FILE "app_icon.icns"
+        MACOSX_BUNDLE_COPYRIGHT "© 2026 Sebastian Kügler")
 endif()
 
 # `pragma Singleton` alone isn't enough for this Qt version's
@@ -320,4 +332,11 @@ endif()
 # Every QML file is compiled straight into this binary via Qt's qmlcache
 # mechanism (see the .rcc/qmlcache/*.cpp objects this target builds) --
 # nothing loose to install alongside it.
-install(TARGETS seabass RUNTIME DESTINATION bin)
+# On macOS the target is an app bundle; KDE_INSTALL_BUNDLEDIR is what
+# Craft passes for where its packager looks for one.
+if(NOT DEFINED KDE_INSTALL_BUNDLEDIR)
+    set(KDE_INSTALL_BUNDLEDIR "Applications/KDE")
+endif()
+install(TARGETS seabass
+    RUNTIME DESTINATION bin
+    BUNDLE DESTINATION ${KDE_INSTALL_BUNDLEDIR})

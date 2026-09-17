@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 import info
+from CraftCore import CraftCore
 
 
 class subinfo(info.infoclass):
@@ -63,4 +64,6 @@ class Package(CMakePackageBase):
         # Keep the two real entry points; drop whatever else CMake put
         # in bin/ (test binaries, etc.) out of the packaged installer.
         self.addExecutableFilter(r"(bin|libexec)/(?!(seabass|seabass-cli)).*")
+        if CraftCore.compiler.isMacOS:
+            self.blacklist_file.append(self.blueprintDir() / "blacklist_mac.txt")
         return CMakePackageBase.createPackage(self)

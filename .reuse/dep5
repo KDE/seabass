@@ -49,6 +49,7 @@ License: EPL-2.0 OR MPL-2.0 OR LGPL-3.0-only
 # --- Artwork and binaries ------------------------------------------------
 Files: src/gui/qml/icons/seabass_soundbass.svg
  src/gui/win/app_icon.ico
+ src/gui/mac/app_icon.icns
 Copyright: 2026 Sebastian Kügler <sebas@kde.org>
 License: CC-BY-SA-4.0
 

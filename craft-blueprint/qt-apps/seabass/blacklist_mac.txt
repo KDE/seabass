@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Tcl comes in as a build dependency of libs/sqlcipher (its amalgamation
+# is generated with tclsh); nothing at runtime uses it, and its script
+# directory under lib/ is not a bundle codesign accepts in Frameworks.
+lib/tcl8/.*
+lib/tcl8\.6/.*
+lib/libtcl.*
+bin/tclsh.*

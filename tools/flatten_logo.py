@@ -15,6 +15,7 @@ This script owns the geometry and emits every form the mark ships in:
   * src/gui/qml/icons/seabass_soundbass.svg -- the app icon, window icon
     and the Now Playing watermark.
   * src/gui/win/app_icon.ico               -- the .exe icon on Windows.
+  * src/gui/mac/app_icon.icns              -- the app bundle icon on macOS.
   * --website DIR                          -- the same SVG plus the PNG
     favicon/apple-touch set for the website repository.
 
@@ -34,7 +35,7 @@ it, because the gaps between bars are transparent -- an overlapping fin
 would show through them.
 
 Run from the repository root; no dependencies beyond the standard library,
-except Pillow for --ico/--website (raster output).
+except Pillow for the .ico, .icns and --website (raster output).
 """
 
 from __future__ import annotations
@@ -441,6 +442,9 @@ def render(shapes, scale, ox, oy, size: int, supersample: int = 8):
 
 PNG_SIZES = [16, 32, 48, 64, 128, 180, 192, 256, 512, 1024]
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
+# Pillow's ICNS writer picks the slots it needs from these, up to 1024 for
+# the 512@2x Retina entry.
+ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 
 # iOS ignores the alpha channel on an apple-touch-icon and composites what
 # is left over black. The body's deep tone is near-black navy, so a
@@ -458,6 +462,7 @@ def main() -> None:
         help="also write DIR/assets/seabass.svg and DIR/assets/icons/seabass-<n>.png",
     )
     parser.add_argument("--no-ico", action="store_true", help="skip src/gui/win/app_icon.ico")
+    parser.add_argument("--no-icns", action="store_true", help="skip src/gui/mac/app_icon.icns")
     args = parser.parse_args()
 
     shapes = build_shapes()
@@ -475,6 +480,12 @@ def main() -> None:
         images[-1].save(ico, format="ICO", sizes=[(s, s) for s in ICO_SIZES],
                         append_images=images[:-1])
         print(f"wrote {ico} ({', '.join(str(s) for s in ICO_SIZES)})")
+
+    if not args.no_icns:
+        icns = Path("src/gui/mac/app_icon.icns")
+        images = [render(shapes, scale, ox, oy, s) for s in ICNS_SIZES]
+        images[-1].save(icns, format="ICNS", append_images=images[:-1])
+        print(f"wrote {icns} ({', '.join(str(s) for s in ICNS_SIZES)})")
 
     if args.website:
         # Finding 3: create the directories before writing anything, so a
