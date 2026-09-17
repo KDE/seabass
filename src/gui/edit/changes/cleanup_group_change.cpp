@@ -591,6 +591,17 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                 }
                 log.record("cleanup: also propagated missing bpm/key/artwork into OneLibrary (id="
                            + plan.survivor.sourceId + ")");
+            } catch (const infrastructure::onelibrary::OneLibraryRowMissing &e) {
+                // OneLibrary does not list this file, so there is nothing
+                // to mirror and nothing in disagreement: a stick's three
+                // catalogs need not hold the same rows, and on real
+                // sticks they do not. Treated as a failure this aborted a
+                // whole Clean Up that had nothing to do with OneLibrary --
+                // 41 tracks removed from two catalogs, the save stopped,
+                // and the one thing actually missing was a row that was
+                // never there.
+                log.record("cleanup: OneLibrary does not list \"" + plan.survivor.title
+                           + "\", so there was nothing to propagate: " + e.what());
             } catch (const std::exception &e) {
                 log.record("cleanup: OneLibrary field propagation failed for \"" + plan.survivor.title
                            + "\": " + e.what());
@@ -646,6 +657,9 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                 sharedOneLibraryWriter(ctx, fc.pioneerRoot)
                     .removeTrackByPathReplacingWith(doomed.filePath, plan.survivor.filePath);
                 log.record("cleanup: also removed OneLibrary row for id=" + doomed.sourceId);
+            } catch (const infrastructure::onelibrary::OneLibraryRowMissing &e) {
+                log.record("cleanup: OneLibrary does not list \"" + doomed.title + "\", nothing to remove: "
+                           + e.what());
             } catch (const std::exception &e) {
                 log.record("cleanup: OneLibrary row removal failed for \"" + doomed.title + "\": " + e.what());
             }

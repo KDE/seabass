@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
 #include <djinterop/djinterop.hpp>
+#include <sqlite3.h>
 
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
 
@@ -131,6 +133,59 @@ int main()
         }
         assert(threw);
         std::cout << "case 3 (nonexistent doomed/survivor id throws) OK\n";
+    }
+
+    // Removing a track takes its performance data with it. The schema
+    // declares ON DELETE CASCADE, but SQLite only enforces a foreign key
+    // when the connection sets `PRAGMA foreign_keys = ON`, which the
+    // vendored library never does -- so the row survived its track. A real
+    // stick carried nine of them, waveforms and cues belonging to tracks
+    // that no longer existed.
+    {
+        fs::path fourth = root.parent_path() / "cleanup_writer_perfdata";
+        fs::remove_all(fourth);
+        fs::create_directories(fourth);
+        auto db = djinterop::engine::create_database(fourth.string(), djinterop::engine::latest_v2_schema);
+
+        djinterop::track_snapshot doomedSnapshot;
+        doomedSnapshot.title = "Doomed";
+        doomedSnapshot.relative_path = "doomed.mp3";
+        auto doomed = db.create_track(doomedSnapshot);
+        djinterop::track_snapshot survivorSnapshot;
+        survivorSnapshot.title = "Survivor";
+        survivorSnapshot.relative_path = "survivor.mp3";
+        auto survivor = db.create_track(survivorSnapshot);
+        const std::int64_t doomedId = doomed.id();
+
+        LibdjinteropEngineCleanupWriter writer(fourth.string());
+        writer.removeTrackReplacingWith(std::to_string(doomedId), std::to_string(survivor.id()));
+
+        sqlite3 *raw = nullptr;
+        const std::string dbPath = (fourth / "Database2" / "m.db").string();
+        assert(sqlite3_open_v2(dbPath.c_str(), &raw, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(raw, "SELECT count(*) FROM PerformanceData WHERE trackId = ?;", -1, &stmt,
+                                   nullptr)
+               == SQLITE_OK);
+        sqlite3_bind_int64(stmt, 1, doomedId);
+        assert(sqlite3_step(stmt) == SQLITE_ROW);
+        const int leftBehind = sqlite3_column_int(stmt, 0);
+        sqlite3_finalize(stmt);
+
+        // And the survivor keeps its own, which is the other half: this
+        // must delete one row, not every row.
+        stmt = nullptr;
+        assert(sqlite3_prepare_v2(raw, "SELECT count(*) FROM PerformanceData;", -1, &stmt, nullptr) == SQLITE_OK);
+        assert(sqlite3_step(stmt) == SQLITE_ROW);
+        const int remaining = sqlite3_column_int(stmt, 0);
+        sqlite3_finalize(stmt);
+        sqlite3_close(raw);
+
+        assert(leftBehind == 0);
+        assert(remaining == 1);
+        fs::remove_all(fourth);
+        std::cout << "case 4 (the doomed track's performance data goes with it) OK\n";
     }
 
     std::cout << "all cases passed\n";

@@ -73,7 +73,7 @@ std::vector<int64_t> contentIdsAt(SqlCipherDb &db, const std::string &contentPat
         ids.push_back(find.columnInt64(0));
     }
     if (ids.empty()) {
-        throw std::runtime_error("onelibrary: no content row for path " + contentPath);
+        throw OneLibraryRowMissing("onelibrary: no content row for path " + contentPath);
     }
     return ids;
 }
@@ -430,10 +430,10 @@ void OneLibraryCueWriter::removeTrackByIdReplacingWith(int64_t doomedContentId, 
 
     SqlCipherDb &db = writeConnection();
     if (!rowExists(db, doomedContentId)) {
-        throw std::runtime_error("onelibrary: no content row id=" + std::to_string(doomedContentId));
+        throw OneLibraryRowMissing("onelibrary: no content row id=" + std::to_string(doomedContentId));
     }
     if (!rowExists(db, survivorContentId)) {
-        throw std::runtime_error("onelibrary: no content row id=" + std::to_string(survivorContentId));
+        throw OneLibraryRowMissing("onelibrary: no content row id=" + std::to_string(survivorContentId));
     }
     {
         db.exec("BEGIN IMMEDIATE;");

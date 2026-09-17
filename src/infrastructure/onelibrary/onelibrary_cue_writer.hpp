@@ -50,6 +50,25 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// Thrown when OneLibrary simply does not list a file.
+//
+// Not a failure of the write, and usually not a fault at all: a stick's
+// three catalogs do not have to hold the same rows, and in practice they
+// often do not -- on a real stick, every duplicate copy that Clean Up
+// went after existed in DeviceLibrary and in Engine but had no
+// exportLibrary.db row at all. A caller mirroring a change into
+// OneLibrary has nothing to mirror for such a file, which is different
+// from a write that was attempted and went wrong, and different again
+// from a database that could not be opened.
+//
+// Its own type rather than a message to match on: the one caller that
+// must tell these apart was aborting an entire save over it.
+class OneLibraryRowMissing : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class OneLibraryCueWriter
 {
 public:

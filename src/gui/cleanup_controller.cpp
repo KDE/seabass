@@ -551,8 +551,15 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
                     break;
                 case Status::Deleted:
                     deleted++;
-                    log.record("cleanup: deleted orphaned duplicate file (backup " + outcome.entry.backupId +
-                                ") -> " + outcome.entry.filePath);
+                    // Names the backup for what it is. "deleted ...
+                    // (backup <id>)" reads as "a copy of this file is in
+                    // that backup", and no backup holds audio: the
+                    // archives cover the library databases, and the file
+                    // itself is gone for good, which is what the
+                    // confirmation dialog says too.
+                    log.record("cleanup: permanently deleted orphaned duplicate file -> " + outcome.entry.filePath
+                                + " (no copy kept; backup " + outcome.entry.backupId
+                                + " holds the library edit that orphaned it, not the file)");
                     break;
                 case Status::Failed:
                     failed++;

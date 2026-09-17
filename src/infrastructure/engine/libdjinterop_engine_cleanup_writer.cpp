@@ -4,15 +4,35 @@
 
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
 
+#include <filesystem>
 #include <stdexcept>
+#include <string>
 
 #include <djinterop/djinterop.hpp>
+#include <sqlite3.h>
 
 namespace seabass::infrastructure::engine
 {
 
 namespace
 {
+
+// Where the database sits: 1.x keeps m.db at the library root, 2.x and
+// 3.x under Database2. Empty when neither is there.
+std::string engineDatabaseFile(const std::string &engineLibraryPath)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path candidate = fs::path(engineLibraryPath) / "Database2" / "m.db";
+    if (fs::exists(candidate, ec)) {
+        return candidate.string();
+    }
+    candidate = fs::path(engineLibraryPath) / "m.db";
+    if (fs::exists(candidate, ec)) {
+        return candidate.string();
+    }
+    return {};
+}
 
 // If `pl` contains `doomed`, rebuilds its track list with `doomed`
 // replaced by `survivor` (or just dropped, if survivor was already
@@ -101,7 +121,40 @@ void LibdjinteropEngineCleanupWriter::removeTrackReplacingWith(const std::string
         reassignPlaylistMembership(root, *doomed, *survivor);
     }
 
+    const int64_t doomedId = doomed->id();
     db.remove_track(*doomed);
+
+    // And the track's PerformanceData row, which nothing else deletes.
+    //
+    // The schema declares it "FOREIGN KEY(trackId) REFERENCES Track(id) ON
+    // DELETE CASCADE", and libdjinterop's own track_table::remove() says
+    // in a comment that other references "should automatically be cleared"
+    // by it -- but SQLite only enforces a declared foreign key when
+    // `PRAGMA foreign_keys = ON` is set on the connection, which that
+    // library never does anywhere. This is the same mistaken assumption
+    // the playlist walk above exists for, and it leaves exactly the same
+    // kind of debris: on a real stick, nine rows of waveform, beatgrid and
+    // cue data belonging to tracks that no longer existed, reported by
+    // `PRAGMA foreign_key_check`.
+    //
+    // Done through sqlite directly because libdjinterop exposes no way to
+    // reach performance data for a track that has just been deleted.
+    sqlite3 *raw = nullptr;
+    const std::string dbPath = engineDatabaseFile(m_engineLibraryPath);
+    if (dbPath.empty() || sqlite3_open_v2(dbPath.c_str(), &raw, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+        sqlite3_close(raw);
+        // The track itself is gone, which is what the caller asked for;
+        // an orphaned row is untidy, not lost data, and is not worth
+        // failing a save that has already written to the stick.
+        return;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(raw, "DELETE FROM PerformanceData WHERE trackId = ?;", -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, doomedId);
+        sqlite3_step(stmt);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(raw);
 }
 
 }  // namespace seabass::infrastructure::engine

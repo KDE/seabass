@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <fstream>
 #include <filesystem>
 #include <iostream>
 
@@ -102,6 +103,41 @@ int main()
         manifest.removeProcessed({"/no/such/path"});
         assert(manifest.list().size() == 2);
         std::cout << "case 4 (removeProcessed drops matches, preserves timestamps, no-ops otherwise) OK\n";
+    }
+
+    // A line that names no file is dropped on read, and a rewrite takes
+    // it off the disk. Without this, one unreadable line became an empty
+    // entry that every rewrite wrote back: a real stick carried 1707 of
+    // them, 141 KB of records naming nothing, which can never be matched
+    // or cleared.
+    {
+        {
+            std::ofstream ofs(manifestPath.string(), std::ofstream::app);
+            ofs << R"({"timestampUtc":"","format":"","filePath":"","title":"","artist":"","backupId":""})" << "\n";
+            ofs << "not json at all\n";
+            ofs << R"({"timestampUtc":"2026-09-17T10:00:00Z","format":"rekordbox","filePath":"/Volumes/STICK/ok.mp3",)"
+                << R"("title":"Kept","artist":"Someone","backupId":"b1"})" << "\n";
+        }
+        PendingDeletionManifest manifest(manifestPath.string());
+        auto listed = manifest.list();
+        assert(listed.size() == 3);  // the two real ones from case 4, plus the good line just added
+        for (const auto &entry : listed) {
+            assert(!entry.filePath.empty());
+        }
+
+        // The rewrite keeps only what list() returned, so the blank line
+        // is gone from the file as well, not merely ignored.
+        manifest.removeProcessed({"/Volumes/STICK/ok.mp3"});
+        std::ifstream ifs(manifestPath.string());
+        std::string line;
+        int lines = 0;
+        while (std::getline(ifs, line)) {
+            assert(line.find(R"("filePath":"")") == std::string::npos);
+            ++lines;
+        }
+        assert(lines == 2);
+        assert(manifest.list().size() == 2);
+        std::cout << "case 5 (a record naming no file is dropped, and a rewrite removes it) OK\n";
     }
 
     std::cout << "all cases passed\n";

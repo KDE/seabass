@@ -1620,7 +1620,7 @@ add_executable(libdjinterop_engine_cleanup_writer_test
     tests/libdjinterop_engine_cleanup_writer_test.cpp
 )
 target_include_directories(libdjinterop_engine_cleanup_writer_test PRIVATE src)
-target_link_libraries(libdjinterop_engine_cleanup_writer_test PRIVATE DjInterop)
+target_link_libraries(libdjinterop_engine_cleanup_writer_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_cleanup_writer_test COMMAND libdjinterop_engine_cleanup_writer_test)
 
 add_executable(duplicate_cleanup_interruption_test

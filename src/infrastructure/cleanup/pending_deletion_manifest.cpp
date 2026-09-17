@@ -195,10 +195,22 @@ std::vector<PendingDeletion> PendingDeletionManifest::list() const
         if (line.empty()) {
             continue;
         }
+        // A line without a file path names nothing, so it can never be
+        // matched, acted on, or cleared -- and because removeProcessed()
+        // and removeForBackups() rewrite every entry they keep, one bad
+        // line would be written back in that empty form for good. A real
+        // stick was found carrying 1707 records, every one of them blank:
+        // the file had grown to 141 KB of nothing while the deletions it
+        // was supposed to record were gone. Dropped on read instead, so a
+        // rewrite quietly cleans them out.
+        const std::optional<std::string> filePath = extractField(line, "filePath");
+        if (!filePath || filePath->empty()) {
+            continue;
+        }
         PendingDeletion entry;
         entry.timestampUtc = extractField(line, "timestampUtc").value_or("");
         entry.format = extractField(line, "format").value_or("");
-        entry.filePath = extractField(line, "filePath").value_or("");
+        entry.filePath = *filePath;
         entry.title = extractField(line, "title").value_or("");
         entry.artist = extractField(line, "artist").value_or("");
         entry.backupId = extractField(line, "backupId").value_or("");
