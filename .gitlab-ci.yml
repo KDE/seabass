@@ -8,11 +8,30 @@
 stages:
 - test
 - secret-detection
+- deploy
 sast:
   stage: test
 include:
 - template: Security/SAST.gitlab-ci.yml
 - template: Security/Secret-Detection.gitlab-ci.yml
+# Craft/MSVC Windows build+installer, same toolchain verified locally.
+# The `craft_windows_qt6_x86_64` job it defines only runs automatically
+# on mainline KDE repos ($KDECI_SECURE_SERVICES_KEY); everywhere else,
+# including here, it appears as a manual pipeline job -- exactly what's
+# needed to test the Craft build on KDE's real Windows CI runners without
+# requiring mainline status or signing to be set up first.
+#
+# The qt-apps/seabass blueprint (craft-blueprint/qt-apps/seabass/) ships
+# inside this repo rather than craft-blueprints-community, so CI doesn't
+# depend on an upstream contribution landing first -- confirmed locally
+# that Craft resolves a blueprint from an arbitrary [Blueprints]
+# Locations entry with no dependency on the community repo at all. Not
+# yet confirmed end to end on a real KDE CI run: CraftMaster's own
+# .craft.ini config-override still needs to point Locations at this
+# checkout's craft-blueprint/ dir, which the job doesn't do yet. Upstream
+# to craft-blueprints-community once this has a real CI run behind it.
+- project: sysadmin/ci-utilities
+  file: /gitlab-templates/craft-windows-x86-64-qt6.yml
 variables:
   SECRET_DETECTION_ENABLED: 'true'
 secret_detection:
