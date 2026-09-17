@@ -5,6 +5,8 @@
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/work_counters.hpp"
 
+#include <cstdlib>
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -163,6 +165,47 @@ SqlCipherLibrary::SqlCipherLibrary()
         resolve<ColumnTypeFn>(mod, "sqlite3_column_type"),
         resolve<ErrmsgFn>(mod, "sqlite3_errmsg"),
     };
+    try {
+        requireCipherMajorVersion(4);
+    } catch (...) {
+        delete m_fns;
+        m_fns = nullptr;
+        unloadLibrary(m_module);
+        m_module = nullptr;
+        throw;
+    }
+}
+
+// rekordbox writes exportLibrary.db in SQLCipher 4's format, which an
+// older SQLCipher cannot decrypt: it reports "file is not a database",
+// which reads like a damaged stick. Craft's libs/sqlcipher is 3.4.2, and a
+// build that bundled it shipped exactly that. Asked of the library
+// itself, on a throwaway in-memory database, so the message names the
+// real cause.
+void SqlCipherLibrary::requireCipherMajorVersion(int major) const
+{
+    sqlite3 *db = nullptr;
+    std::string version;
+    if (open(":memory:", &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) == SQLITE_OK) {
+        sqlite3_stmt *stmt = nullptr;
+        if (prepare(db, "PRAGMA cipher_version;", &stmt) == SQLITE_OK && stmt) {
+            if (step(stmt) == SQLITE_ROW) {
+                version = columnText(stmt, 0);
+            }
+            finalize(stmt);
+        }
+    }
+    if (db) {
+        close(db);
+    }
+    // "4.19.0 community"; an empty answer means plain SQLite, no codec.
+    int found = version.empty() ? 0 : std::atoi(version.c_str());
+    if (found < major) {
+        const std::string foundText = version.empty() ? std::string("no cipher support") : version;
+        throw std::runtime_error("the SQLCipher library found (" + foundText
+                                 + ") is too old to read rekordbox's OneLibrary; SQLCipher "
+                                 + std::to_string(major) + " or later is needed");
+    }
 }
 
 SqlCipherLibrary::~SqlCipherLibrary()

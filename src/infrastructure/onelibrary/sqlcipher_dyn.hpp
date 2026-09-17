@@ -70,6 +70,10 @@ public:
     std::string errmsg(sqlite3 *db) const;
 
 private:
+    // Throws unless the loaded library reports at least this SQLCipher
+    // major version.
+    void requireCipherMajorVersion(int major) const;
+
     void *m_module = nullptr;
     struct Fns;
     Fns *m_fns = nullptr;
