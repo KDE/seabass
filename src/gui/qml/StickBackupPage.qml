@@ -147,15 +147,54 @@ Page {
             + (root.hasBackup ? ", which leaves the previous backup exactly as it was."
                               : " and remove the partial backup file.")
         detailText: "Nothing on the stick is affected either way."
+        // Said out loud, because nothing else here gets it right.
+        // SeabassDialog marks the LAST button when a dialog names no
+        // default, on the assumption that the way out is declared last --
+        // true of every other footer, and false of this one, where the
+        // last button is the destructive answer.
+        //
+        // Reapplied on every open because selectFooterButton() assigns
+        // `highlighted` on every footer button as focus moves, which
+        // discards any binding a Button declared for itself. (Qt is not
+        // the culprit: DialogButtonBox never touches `highlighted`.)
+        // `focus: true` on the safe button is what makes the default hold
+        // by construction rather than by being declared first, the way
+        // MessageDialog does it.
+        function applyDefaultButton() {
+            keepPartialButton.highlighted = true;
+            discardPartialButton.highlighted = false;
+        }
+        Component.onCompleted: cancelDecisionDialog.applyDefaultButton()
+        // Both this and SeabassDialog's own onOpened run -- a derived
+        // handler for the same signal does not replace the base file's --
+        // so the focus call below is a deliberate duplicate. Qt.callLater
+        // coalesces the two into one.
+        onOpened: {
+            cancelDecisionDialog.applyDefaultButton();
+            Qt.callLater(cancelDecisionDialog.focusDefaultFooterButton);
+        }
         footer: DialogButtonBox {
             Button {
+                id: keepPartialButton
                 objectName: "keepPartialButton"
                 text: "Keep for Later"
+                focus: true
+                Keys.onReturnPressed: cancelDecisionDialog.activateFooterSelection()
+                Keys.onEnterPressed: cancelDecisionDialog.activateFooterSelection()
+                Keys.onLeftPressed: cancelDecisionDialog.moveFooterSelection(-1)
+                Keys.onRightPressed: cancelDecisionDialog.moveFooterSelection(1)
+                onActiveFocusChanged: if (activeFocus) cancelDecisionDialog.selectFooterButton(keepPartialButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
             Button {
+                id: discardPartialButton
                 objectName: "discardPartialButton"
                 text: root.hasBackup ? "Discard This Update" : "Delete Partial Backup"
+                Keys.onReturnPressed: cancelDecisionDialog.activateFooterSelection()
+                Keys.onEnterPressed: cancelDecisionDialog.activateFooterSelection()
+                Keys.onLeftPressed: cancelDecisionDialog.moveFooterSelection(-1)
+                Keys.onRightPressed: cancelDecisionDialog.moveFooterSelection(1)
+                onActiveFocusChanged: if (activeFocus) cancelDecisionDialog.selectFooterButton(discardPartialButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
                 onClicked: {
                     cancelDecisionDialog.close();
@@ -170,12 +209,28 @@ Page {
     //
     // A decision, not a message: a backup whose files do not match what was
     // written is worse than none, because the next restore would put them
-    // back. Delete is the default. Keep exists because deleting means the
-    // next backup copies the whole stick again, which for one damaged file
-    // on a large stick is a lot to pay -- but keeping it must not sound
-    // like a repair, because an incremental backup only re-copies files
-    // that changed on the stick, and a damaged copy of an unchanged file
-    // stays damaged.
+    // back. Delete is the recommended answer. Keep exists because deleting
+    // means the next backup copies the whole stick again, which for one
+    // damaged file on a large stick is a lot to pay -- but keeping it must
+    // not sound like a repair, because an incremental backup only
+    // re-copies files that changed on the stick, and a damaged copy of an
+    // unchanged file stays damaged.
+    //
+    // Delete is the keyboard default too, deliberately, and this is the
+    // one dialog in the app where Return performs a destructive action.
+    // MessageDialog moves the default to Cancel whenever `destructive`
+    // is set; this dialog does not use it, and does not follow it.
+    //
+    // The reasoning is the headline's: a backup whose contents do not
+    // match what was written is worse than no backup, because a restore
+    // would put the damaged files back, and nothing records the failed
+    // verification -- a kept archive goes on showing VERIFIED and is
+    // offered as a good backup later. Deleting is expensive and cannot
+    // be undone; keeping is quiet and misleading. The expensive answer
+    // is the recoverable one.
+    //
+    // Worth revisiting if a failed verification is ever recorded on the
+    // archive, because then keeping it stops being the quiet answer.
     SeabassDialog {
         id: verifyFailedDialog
         objectName: "verifyFailedDialog"
@@ -187,19 +242,19 @@ Page {
         detailText: "Delete Backup removes it; the next backup copies the whole stick again. Keep Failed Backup "
             + "saves copying everything again, but the next backup only copies files that changed on the "
             + "stick, so damaged files in it may stay damaged. Run Verify again before relying on it."
-        // DialogButtonBox writes its buttons' `highlighted` itself, so a
-        // declared `highlighted: true` is gone by the time anyone sees it --
-        // Delete looked like the default in the source and was not one on
-        // screen. MessageDialog documents the same trap; the default is
-        // assigned instead, on completion and again every time the dialog
-        // opens, because the box writes to it again on every show.
+        // Assigned rather than declared: selectFooterButton() writes
+        // `highlighted` on every footer button as focus moves, so a
+        // declared `highlighted: true` is discarded the first time anyone
+        // tabs or arrows. Reapplied on every open for the same reason.
         function applyDefaultButton() {
             deleteFailedBackupButton.highlighted = true;
             keepFailedBackupButton.highlighted = false;
         }
         Component.onCompleted: verifyFailedDialog.applyDefaultButton()
-        // Replaces SeabassDialog's own onOpened, so its focus call is
-        // repeated here rather than assumed.
+        // Both this and SeabassDialog's own onOpened run -- a derived
+        // handler for the same signal does not replace the base file's --
+        // so the focus call below is a deliberate duplicate. Qt.callLater
+        // coalesces the two into one.
         onOpened: {
             verifyFailedDialog.applyDefaultButton();
             Qt.callLater(verifyFailedDialog.focusDefaultFooterButton);
@@ -209,12 +264,23 @@ Page {
                 id: deleteFailedBackupButton
                 objectName: "deleteFailedBackupButton"
                 text: "Delete Backup"
+                focus: true
+                Keys.onReturnPressed: verifyFailedDialog.activateFooterSelection()
+                Keys.onEnterPressed: verifyFailedDialog.activateFooterSelection()
+                Keys.onLeftPressed: verifyFailedDialog.moveFooterSelection(-1)
+                Keys.onRightPressed: verifyFailedDialog.moveFooterSelection(1)
+                onActiveFocusChanged: if (activeFocus) verifyFailedDialog.selectFooterButton(deleteFailedBackupButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
             Button {
                 id: keepFailedBackupButton
                 objectName: "keepFailedBackupButton"
                 text: "Keep Failed Backup"
+                Keys.onReturnPressed: verifyFailedDialog.activateFooterSelection()
+                Keys.onEnterPressed: verifyFailedDialog.activateFooterSelection()
+                Keys.onLeftPressed: verifyFailedDialog.moveFooterSelection(-1)
+                Keys.onRightPressed: verifyFailedDialog.moveFooterSelection(1)
+                onActiveFocusChanged: if (activeFocus) verifyFailedDialog.selectFooterButton(keepFailedBackupButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
         }
@@ -232,12 +298,36 @@ Page {
         detailText: "Every file is checked against its checksum on the way."
         footer: DialogButtonBox {
             Button {
+                id: compactAcceptButton
                 objectName: "compactAcceptButton"
                 text: "Compact"
+                // Unlike the other two, this dialog only ever opens
+                // because the user asked for it, so Return confirming is
+                // what they came for. Pinned with focus rather than left
+                // to declaration order. When the button is disabled --
+                // no room, or nothing to reclaim -- footerButtons() skips
+                // it and the default falls to Cancel, so Return cannot
+                // start a compaction the button itself refuses.
+                focus: true
                 enabled: compactDialog.preflight.enoughFreeSpace === true && compactDialog.preflight.reclaimableBytes > 0
+                Keys.onReturnPressed: compactDialog.activateFooterSelection()
+                Keys.onEnterPressed: compactDialog.activateFooterSelection()
+                Keys.onLeftPressed: compactDialog.moveFooterSelection(-1)
+                Keys.onRightPressed: compactDialog.moveFooterSelection(1)
+                onActiveFocusChanged: if (activeFocus) compactDialog.selectFooterButton(compactAcceptButton)
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
-            Button { text: "Cancel"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+            Button {
+                id: compactCancelButton
+                objectName: "compactCancelButton"
+                text: "Cancel"
+                Keys.onReturnPressed: compactDialog.activateFooterSelection()
+                Keys.onEnterPressed: compactDialog.activateFooterSelection()
+                Keys.onLeftPressed: compactDialog.moveFooterSelection(-1)
+                Keys.onRightPressed: compactDialog.moveFooterSelection(1)
+                onActiveFocusChanged: if (activeFocus) compactDialog.selectFooterButton(compactCancelButton)
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
         }
         onAccepted: root.controller.compact()
         ColumnLayout {

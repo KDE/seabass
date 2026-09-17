@@ -194,8 +194,8 @@ TestCase {
 
     // A backup that failed verification is a decision, not a message: its
     // files do not match what was written, and a restore would put them
-    // back. Delete is the default -- the highlighted button, and what Return
-    // does -- and Keep deletes nothing.
+    // back. Delete is the default -- the highlighted button, and what
+    // Return does -- and Keep deletes nothing.
     function test_verifyFailedDialogDefaultsToDeleteAndKeepDeletesNothing() {
         var page = makePage({});
         var dialog = findChild(page, "verifyFailedDialog");
@@ -206,7 +206,7 @@ TestCase {
         compare(dialog.closePolicy, 0);  // Popup.NoAutoClose: it has to be answered
         verify(dialog.title.indexOf("corrupt") >= 0, "the dialog must say the backup is likely corrupt");
         // Waited for rather than read at once: the highlight is assigned
-        // when the dialog opens, after DialogButtonBox has written its own.
+        // when the dialog opens, not while it is being built.
         tryCompare(findChild(page, "deleteFailedBackupButton"), "highlighted", true);
         tryCompare(findChild(page, "keepFailedBackupButton"), "highlighted", false);
         dialog.accept();
@@ -264,6 +264,145 @@ TestCase {
         var reclaims = findChild(page, "compactReclaimsLabel");
         verify(reclaims !== null);
         verify(reclaims.text.endsWith("(20%)"), reclaims.text);
+    }
+
+    // Return answers these dialogs, and answers them with the button the
+    // dialog is showing as its default.
+    //
+    // The three dialogs here supply their own footers, and SeabassDialog's
+    // key handling lives on the footer buttons, not on the dialog -- a
+    // Dialog is a Popup, and Keys cannot attach to one. A footer that
+    // forgets it leaves a dialog that looks answerable from the keyboard,
+    // highlight and all, and silently is not.
+    //
+    // Waits for the HIGHLIGHTED button to hold focus, not for any button.
+    // The default is focused by a Qt.callLater when the dialog opens, so
+    // a test that presses as soon as something has focus presses before
+    // that has run, and measures the box's own initial focus instead of
+    // the dialog's answer. That version of this test passed while the
+    // shipped behaviour was the opposite one.
+    function defaultButtonOf(dialog) {
+        var list = dialog.footerButtons();
+        for (var i = 0; i < list.length; ++i) {
+            if (list[i].highlighted) {
+                return list[i];
+            }
+        }
+        return list.length > 0 ? list[list.length - 1] : null;
+    }
+
+    function pressReturnOn(dialog) {
+        tryVerify(function() { return dialog.visible; });
+        tryVerify(function() {
+            var target = defaultButtonOf(dialog);
+            return target !== null && target.activeFocus;
+        }, 5000, "the dialog must put focus on the button it is showing as the default");
+        keyClick(Qt.Key_Return);
+    }
+
+    // Exact, not a substring of the joined list: "compactionPreflight"
+    // contains "compact", so a substring check on this page passes
+    // whether or not the compaction ever started.
+    function called(page, name) {
+        return page.controller.calls.indexOf(name) >= 0;
+    }
+
+    // The one dialog in the app where Return performs a destructive
+    // action, deliberately: a backup whose contents do not match what was
+    // written is worse than no backup, and nothing records the failed
+    // verification, so a kept archive goes on showing VERIFIED and is
+    // offered as a good backup later. See the dialog's own comment.
+    function test_returnTakesTheDefaultOnTheVerifyFailedDialog() {
+        var page = makePage({});
+        var dialog = findChild(page, "verifyFailedDialog");
+        dialog.detail = "3 files in the backup did not match what was written.";
+        dialog.open();
+        pressReturnOn(dialog);
+        verify(called(page, "deleteBackup"), "Return must delete the backup, the marked default");
+    }
+
+    // Keeping it is one arrow key away, and deletes nothing.
+    function test_theVerifyFailedDialogCanStillKeepFromTheKeyboard() {
+        var page = makePage({});
+        var dialog = findChild(page, "verifyFailedDialog");
+        dialog.detail = "x";
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        var keep = findChild(page, "keepFailedBackupButton");
+        tryVerify(function() { return findChild(page, "deleteFailedBackupButton").activeFocus; }, 5000);
+        keyClick(Qt.Key_Right);
+        tryVerify(function() { return keep.activeFocus; }, 5000, "Right must reach Keep Failed Backup");
+        compare(keep.highlighted, true, "and the highlight must follow it");
+        keyClick(Qt.Key_Return);
+        verify(!called(page, "deleteBackup"), "Return on Keep Failed Backup must delete nothing");
+    }
+
+    // The one that matters most: the way out is declared LAST in this
+    // footer, and SeabassDialog's fallback marks the last button when a
+    // dialog names no default. Here the last button is the destructive
+    // answer, so the dialog has to name its default, or Return throws the
+    // partial backup away.
+    function test_returnKeepsThePartialBackupRatherThanDiscardingIt() {
+        var page = makePage({pendingCancelDecision: true});
+        var dialog = findChild(page, "cancelDecisionDialog");
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        tryCompare(findChild(page, "keepPartialButton"), "highlighted", true);
+        tryCompare(findChild(page, "discardPartialButton"), "highlighted", false);
+        pressReturnOn(dialog);
+        verify(called(page, "keepPartial"), "Return must keep the partial backup");
+        verify(!called(page, "discardPartial"), "Return must never reach the destructive button");
+    }
+
+    // Compact is the default here because the button says so with
+    // `focus: true`, not because anything highlights it for free --
+    // DialogButtonBox never touches `highlighted`. This is also the one
+    // of the three with no applyDefaultButton() behind it, so dropping
+    // that one line hands Return to Cancel in silence.
+    function test_returnOnTheCompactDialogConfirms() {
+        var page = makePage({});
+        findChild(page, "compactButton").clicked();
+        var dialog = findChild(page, "compactDialog");
+        tryVerify(function() { return dialog.visible; });
+        tryCompare(findChild(page, "compactAcceptButton"), "highlighted", true);
+        pressReturnOn(dialog);
+        verify(called(page, "compact"), "Return must start the compaction it is showing as the default");
+    }
+
+    // ...but never when the button itself refuses. footerButtons() skips a
+    // disabled button, so the default falls to Cancel and Return cannot
+    // start a compaction there is no room for.
+    function test_returnCannotCompactWhenTheButtonIsDisabled() {
+        var page = makePage({preflight: {deadBytes: 4.2 * 1024 * 1024 * 1024,
+                                         reclaimableBytes: 4.2 * 1024 * 1024 * 1024,
+                                         archiveBytes: 25 * 1024 * 1024 * 1024, ratio: 0.18,
+                                         requiredFreeBytes: 19 * 1024 * 1024 * 1024,
+                                         availableFreeBytes: 1 * 1024 * 1024 * 1024, enoughFreeSpace: false}});
+        findChild(page, "compactButton").clicked();
+        var dialog = findChild(page, "compactDialog");
+        tryVerify(function() { return dialog.visible; });
+        tryCompare(findChild(page, "compactAcceptButton"), "enabled", false);
+        pressReturnOn(dialog);
+        verify(!called(page, "compact"), "Return must not start a compaction the button refuses");
+    }
+
+    // The highlight is what the user reads, and focus is what Return
+    // acts on, so the two must never disagree. The footer's own contents
+    // are a ListView, which will move focus on an arrow key without
+    // touching the highlight if it is allowed to see the key first.
+    function test_arrowKeysMoveTheHighlightWithTheFocus() {
+        var page = makePage({});
+        var dialog = findChild(page, "verifyFailedDialog");
+        dialog.detail = "x";
+        dialog.open();
+        tryVerify(function() { return dialog.visible; });
+        var del = findChild(page, "deleteFailedBackupButton");
+        var keep = findChild(page, "keepFailedBackupButton");
+        tryVerify(function() { return del.activeFocus; }, 5000);
+        keyClick(Qt.Key_Right);
+        tryVerify(function() { return keep.activeFocus; }, 5000, "Right must move the focus");
+        compare(keep.highlighted, true, "and the highlight must come with it");
+        compare(del.highlighted, false, "the old default must stop looking like the default");
     }
 
     function test_restoreHandsOffWithStickRootAndArchive() {

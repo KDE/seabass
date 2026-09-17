@@ -232,6 +232,68 @@ TestCase {
         compare(findChild(dialog, "acceptButton").enabled, false, "the default can be switched off");
     }
 
+    // The shared dialog is answered by Return, not only by clicking.
+    //
+    // The arrow keys were covered here and Return was not, which is how
+    // three dialogs on the backup page came to ignore it unnoticed. These
+    // press the key rather than calling accept()/reject(), so they fail
+    // if the handling on the footer buttons is ever dropped.
+    //
+    // Waits for the HIGHLIGHTED button to hold focus, not for any button:
+    // the default is focused by a Qt.callLater when the dialog opens, so
+    // pressing as soon as something has focus measures the box's initial
+    // focus instead of the dialog's answer. On a non-destructive dialog
+    // the two coincide and the weaker wait passes for the wrong reason.
+    function pressReturnOnDialog(dialog) {
+        tryVerify(function() { return dialog.opened; });
+        tryVerify(function() {
+            var list = dialog.footerButtons();
+            var target = null;
+            for (var i = 0; i < list.length; ++i) {
+                if (list[i].highlighted) {
+                    target = list[i];
+                }
+            }
+            if (target === null) {
+                target = list.length > 0 ? list[list.length - 1] : null;
+            }
+            return target !== null && target.activeFocus;
+        }, 5000, "the dialog must put focus on the button it is showing as the default");
+        keyClick(Qt.Key_Return);
+    }
+
+    function test_returnTakesTheDefault() {
+        var dialog = createTemporaryObject(messageComponent, testCase,
+                                           {title: "Stage?", acceptText: "Stage 3"});
+        var accepts = 0;
+        dialog.accepted.connect(function() { accepts++; });
+        dialog.open();
+        pressReturnOnDialog(dialog);
+        compare(accepts, 1, "Return must take the default");
+    }
+
+    // The case the default logic exists for. `destructive` moves the
+    // default to Cancel, and until now nothing checked that Return went
+    // with it -- only that the highlight did. A dialog that highlights
+    // Cancel and deletes on Return is worse than one that never moved the
+    // highlight at all.
+    function test_returnOnADestructiveDialogRejects() {
+        var dialog = createTemporaryObject(messageComponent, testCase, {
+            title: "Delete This Backup?",
+            headline: "This permanently deletes this one backup copy.",
+            acceptText: "Delete",
+            destructive: true
+        });
+        var accepts = 0;
+        var rejects = 0;
+        dialog.accepted.connect(function() { accepts++; });
+        dialog.rejected.connect(function() { rejects++; });
+        dialog.open();
+        pressReturnOnDialog(dialog);
+        compare(accepts, 0, "Return must not delete");
+        compare(rejects, 1, "Return must take Cancel, the default a destructive dialog moves to");
+    }
+
     function test_acknowledgementHidesCancel() {
         // Opened first: `visible` is inherited, so every button of a closed
         // dialog reports false and the assertion would pass for free.
