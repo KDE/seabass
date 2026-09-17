@@ -13,6 +13,9 @@
 #include "domain/track.hpp"
 #include "infrastructure/local/duration_cache.hpp"
 
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_duration_probe.hpp"
+#endif
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include "infrastructure/audio/qt_multimedia_duration_probe.hpp"
 #endif
@@ -45,7 +48,16 @@ inline application::FillMissingDurationsResult fillTrackDurations(std::vector<do
     const std::string stickRoot = std::filesystem::path(libraryPath).parent_path().string();
     local::DurationCache cache(stickRoot);
 
-#ifdef SEABASS_HAVE_QT_AUDIO
+    // TagLib first wherever it is compiled in: synchronous, header-only
+    // reads, and the same answer on every platform. The Qt probe needs a
+    // running event loop and a working platform backend, and on macOS
+    // QMediaPlayer never finishes loading at all -- every file cost its
+    // five-second timeout and returned nothing (found by the rig,
+    // 2026-09-17). Where neither is built the null probe keeps every
+    // caller's shape.
+#if defined(SEABASS_HAVE_TAGLIB)
+    TagLibDurationProbe probe;
+#elif defined(SEABASS_HAVE_QT_AUDIO)
     QtMultimediaDurationProbe probe;
 #else
     application::NullTrackDurationProbe probe;

@@ -566,7 +566,9 @@ find_package(Qt6 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts
 # below, and independent of it: a build can have either, both or
 # neither.
 if(TAGLIB_FOUND OR TARGET TagLib::tag)
-    add_library(seabass_taglib STATIC src/infrastructure/audio/taglib_metadata_probe.cpp)
+    add_library(seabass_taglib STATIC
+        src/infrastructure/audio/taglib_metadata_probe.cpp
+        src/infrastructure/audio/taglib_duration_probe.cpp)
     target_include_directories(seabass_taglib PUBLIC src)
     if(TARGET PkgConfig::TAGLIB)
         target_link_libraries(seabass_taglib PUBLIC PkgConfig::TAGLIB)
@@ -918,6 +920,10 @@ if(TARGET seabass_taglib)
     add_executable(taglib_metadata_probe_test tests/taglib_metadata_probe_test.cpp)
     target_link_libraries(taglib_metadata_probe_test PRIVATE seabass_taglib)
     add_test(NAME taglib_metadata_probe_test COMMAND taglib_metadata_probe_test)
+
+    add_executable(taglib_duration_probe_test tests/taglib_duration_probe_test.cpp)
+    target_link_libraries(taglib_duration_probe_test PRIVATE seabass_taglib)
+    add_test(NAME taglib_duration_probe_test COMMAND taglib_duration_probe_test)
 
     # The whole unreferenced-file scan, composed the way the GUI
     # composes it -- which is only meaningful with a real probe behind
