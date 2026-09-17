@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 
 namespace seabass::infrastructure::media
 {
@@ -207,6 +208,14 @@ bool isRemovableStickDisk(const MacDiskDescription &wholeDisk)
     }
     if (wholeDisk.protocol == "USB") {
         return true;
+    }
+    // Test rigs only: a mounted disk image stands in for a stick, so the
+    // end-to-end checks can run with one USB port. Never set in normal
+    // use -- a user's mounted .dmg files are not sticks.
+    if (const char *images = std::getenv("SEABASS_ACCEPT_DISK_IMAGES"); images && std::string(images) == "1") {
+        if (wholeDisk.protocol == "Disk Image" || wholeDisk.protocol == "Virtual Interface") {
+            return true;
+        }
     }
     // A built-in SDXC reader is "internal" as a device, but the card in it
     // is removable media -- that flag is what separates it from anything
