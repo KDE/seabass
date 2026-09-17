@@ -1575,6 +1575,7 @@ add_test(NAME rekordbox_cleanup_writer_test COMMAND rekordbox_cleanup_writer_tes
 add_executable(libdjinterop_engine_library_creator_test
     src/application/ports/progress_reporter.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
+    src/infrastructure/hashing/sha256.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/engine/libdjinterop_engine_reader.cpp
@@ -1590,6 +1591,7 @@ add_executable(libdjinterop_engine_sync_scratch_replace_test
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
+    src/infrastructure/hashing/sha256.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_reader.cpp
     src/infrastructure/engine/rekordbox_key_parser.cpp
@@ -1602,6 +1604,7 @@ add_test(NAME libdjinterop_engine_sync_scratch_replace_test COMMAND libdjinterop
 add_executable(libdjinterop_engine_loop_cue_test
     src/application/ports/progress_reporter.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
+    src/infrastructure/hashing/sha256.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/engine/libdjinterop_engine_reader.cpp

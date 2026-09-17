@@ -6,12 +6,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -20,6 +22,7 @@
 #include <sqlite3.h>
 
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
+#include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/local/sqlite_statement.hpp"
 #include "infrastructure/scratch_dir_guard.hpp"
 
@@ -203,6 +206,161 @@ int createPlaylists(djinterop::database &db, const PlaylistMembers &members,
     return created;
 }
 
+// Where libdjinterop put the database: the 1.x generation keeps m.db at
+// the library root, 2.x and 3.x under Database2. Empty if neither is
+// there.
+std::filesystem::path engineDatabaseFile(const std::filesystem::path &databaseDirectory)
+{
+    std::error_code ec;
+    std::filesystem::path candidate = databaseDirectory / "Database2" / "m.db";
+    if (std::filesystem::exists(candidate, ec)) {
+        return candidate;
+    }
+    candidate = databaseDirectory / "m.db";
+    if (std::filesystem::exists(candidate, ec)) {
+        return candidate;
+    }
+    return {};
+}
+
+// base64url, unpadded -- how Engine spells a hash when it becomes a file
+// name under Artwork/.
+std::string base64Url(std::span<const std::uint8_t> bytes)
+{
+    static constexpr char Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    size_t i = 0;
+    for (; i + 2 < bytes.size(); i += 3) {
+        const std::uint32_t triple = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+        out += Alphabet[(triple >> 18) & 0x3F];
+        out += Alphabet[(triple >> 12) & 0x3F];
+        out += Alphabet[(triple >> 6) & 0x3F];
+        out += Alphabet[triple & 0x3F];
+    }
+    if (i + 1 == bytes.size()) {
+        const std::uint32_t triple = bytes[i] << 16;
+        out += Alphabet[(triple >> 18) & 0x3F];
+        out += Alphabet[(triple >> 12) & 0x3F];
+    } else if (i + 2 == bytes.size()) {
+        const std::uint32_t triple = (bytes[i] << 16) | (bytes[i + 1] << 8);
+        out += Alphabet[(triple >> 18) & 0x3F];
+        out += Alphabet[(triple >> 12) & 0x3F];
+        out += Alphabet[(triple >> 6) & 0x3F];
+    }
+    return out;
+}
+
+// Gives the new library its cover art, the way Engine itself stores it.
+//
+// Engine does not embed artwork in the database. Its AlbumArt row carries
+// a 20-byte hash as a blob, and the image lives at
+// "Artwork/<that hash, base64url>.jpg" inside the library: on a
+// Denon-written stick every one of the 87 files under Artwork/ is named
+// by exactly that encoding of its row's hash. (The same table also holds
+// rows whose "hash" is really an "image://fileart//<absolute path>"
+// string left over from an import; not one track on that stick points at
+// one, so they are bookkeeping, and an absolute path with a mount point
+// in it would not survive being plugged into a different machine
+// anyway.)
+//
+// libdjinterop cannot do any of this -- its album_art API is unfinished
+// and track_snapshot has no artwork field at all -- so it is plain SQL
+// plus a file copy, against the scratch build.
+//
+// The source is whatever the rekordbox side already resolved for each
+// track, which is a file sitting on the same stick. One image usually
+// covers a whole album, so images are written once per distinct hash and
+// the rows share it.
+//
+// Returns how many tracks ended up with art, or -1 if the database could
+// not be opened at all. An individual unreadable image is skipped: art is
+// the least important thing here, and losing one cover is not worth
+// failing a library whose tracks are otherwise ready to play.
+int copyArtworkInto(const std::filesystem::path &databaseDirectory,
+                     const std::map<std::string, std::string> &artworkByTrackPath)
+{
+    if (artworkByTrackPath.empty()) {
+        return 0;
+    }
+    const std::filesystem::path databaseFile = engineDatabaseFile(databaseDirectory);
+    if (databaseFile.empty()) {
+        return -1;
+    }
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(databaseFile.string().c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+
+    const std::filesystem::path artworkDir = databaseDirectory / "Artwork";
+    std::error_code ec;
+    std::filesystem::create_directories(artworkDir, ec);
+
+    std::map<std::string, std::int64_t> albumArtIdBySource;  // source image -> row it got
+    int given = 0;
+    sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+    for (const auto &[trackPath, source] : artworkByTrackPath) {
+        std::int64_t albumArtId = 0;
+        if (auto seen = albumArtIdBySource.find(source); seen != albumArtIdBySource.end()) {
+            albumArtId = seen->second;
+        } else {
+            std::ifstream image(source, std::ios::binary);
+            if (!image) {
+                continue;
+            }
+            const std::string bytes((std::istreambuf_iterator<char>(image)), std::istreambuf_iterator<char>());
+            if (bytes.empty()) {
+                continue;
+            }
+            // 20 bytes, because that is the width Engine's own rows use.
+            const auto full = hashing::Sha256::of(std::as_bytes(std::span(bytes)));
+            const std::span<const std::uint8_t> shortened(full.data(), 20);
+            const std::string name = base64Url(shortened);
+            const std::string extension =
+                std::filesystem::path(source).extension().empty() ? ".jpg"
+                                                                   : std::filesystem::path(source).extension().string();
+
+            std::ofstream copy(artworkDir / (name + extension), std::ios::binary);
+            if (!copy) {
+                continue;
+            }
+            copy.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            copy.close();
+
+            try {
+                local::Statement insert(db, "INSERT INTO AlbumArt (hash, albumArt) VALUES (?, NULL);",
+                                         "Engine library creator");
+                // A blob, which is how Engine's own rows store it -- not
+                // text, even though the column is declared TEXT.
+                insert.bindBlob(1, std::string(reinterpret_cast<const char *>(shortened.data()), shortened.size()));
+                insert.run();
+            } catch (const std::exception &) {
+                continue;
+            }
+            albumArtId = sqlite3_last_insert_rowid(db);
+            albumArtIdBySource.insert({source, albumArtId});
+        }
+
+        // The path is what identifies the row: it is unique by schema
+        // constraint, and it is what was just written for this track.
+        try {
+            local::Statement point(db, "UPDATE Track SET albumArtId = ? WHERE path = ?;", "Engine library creator");
+            point.bindInt64(1, albumArtId);
+            point.bind(2, trackPath);
+            point.run();
+            if (sqlite3_changes(db) > 0) {
+                ++given;
+            }
+        } catch (const std::exception &) {
+            continue;
+        }
+    }
+    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    sqlite3_close(db);
+    return given;
+}
+
 // Puts the Information row back at id 1, where Engine keeps it.
 //
 // The Information table is the first thing anything reading an Engine
@@ -230,15 +388,8 @@ int createPlaylists(djinterop::database &db, const PlaylistMembers &members,
 // libdjinterop makes this a no-op rather than a second bug).
 std::string putInformationRowAtIdOne(const std::filesystem::path &databaseDirectory)
 {
-    // Two layouts: the 1.x generation keeps m.db at the library root, 2.x
-    // and 3.x put it under Database2. Both carry the Information table, so
-    // look for the one that is actually there rather than assuming.
-    std::filesystem::path databaseFile = databaseDirectory / "Database2" / "m.db";
-    std::error_code ec;
-    if (!std::filesystem::exists(databaseFile, ec)) {
-        databaseFile = databaseDirectory / "m.db";
-    }
-    if (!std::filesystem::exists(databaseFile, ec)) {
+    const std::filesystem::path databaseFile = engineDatabaseFile(databaseDirectory);
+    if (databaseFile.empty()) {
         return "the new Engine database was not written where it was expected.";
     }
     const std::string dbPath = databaseFile.string();
@@ -333,6 +484,11 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
     fs::remove_all(scratchDir, cleanupBeforeStart);
     ScratchDirGuard scratchGuard{scratchDir};
 
+    // Each created track's path in the new library, against the image the
+    // rekordbox side already resolved for it. Outlives the block below,
+    // because the art is written once that database connection is closed.
+    std::map<std::string, std::string> artworkByTrackPath;
+
     try {
         {
             auto db = djinterop::engine::create_database(scratchDir.string(), schemaFor(schemaGeneration));
@@ -415,6 +571,12 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
 
                 djinterop::track created = db.create_track(snapshot);
                 result.tracksCreated++;
+                if (!track.artworkPath.empty()) {
+                    std::error_code artEc;
+                    if (fs::exists(track.artworkPath, artEc)) {
+                        artworkByTrackPath[snapshot.relative_path.value_or("")] = track.artworkPath;
+                    }
+                }
                 for (const domain::PlaylistMembership &membership : track.playlists) {
                     if (!membership.name.empty()) {
                         playlistMembers[membership.name].push_back({membership.position, created});
@@ -440,6 +602,12 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
             result.errorMessage = informationRow;
             return result;
         }
+
+        // Cover art, also on the scratch copy. Unlike the row above this
+        // is not a condition of the library working: a failure here costs
+        // the covers, so it is reported as a count rather than an error.
+        const int artworkGiven = copyArtworkInto(scratchDir, artworkByTrackPath);
+        result.artworkCopied = artworkGiven < 0 ? 0 : artworkGiven;
 
         // One pass of large sequential writes onto the real target, instead
         // of the many small fsync'd writes the per-track loop above would

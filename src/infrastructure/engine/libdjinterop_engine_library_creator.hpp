@@ -34,6 +34,7 @@ struct EngineLibraryCreationResult
     int tracksSkipped = 0;  // e.g. no resolved local file to reference
     int cuesCopied = 0;
     int playlistsCreated = 0;  // folders included; they are playlists too
+    int artworkCopied = 0;     // tracks that ended up with a cover
     int tracksTotal = 0;       // what was asked for, created or not
     bool cancelled = false;    // stopped via the token; nothing was written to `directory`
     std::string errorMessage;  // empty on success
@@ -61,10 +62,16 @@ struct EngineLibraryCreationResult
 // that section), and the source's playlists, rebuilt with their folder
 // structure and each track at the position the source recorded.
 //
-// Deliberately NOT carried over in this version: album art (libdjinterop's
-// own album_art API is unfinished -- see its header, marked "TODO -
-// implement rest of album_art class" -- and track_snapshot has no
-// artwork field at all), a real per-beat grid, waveform data (reading
+// Cover art comes across too, written the way Engine stores it rather
+// than through libdjinterop, whose album_art API is unfinished (its
+// header is marked "TODO - implement rest of album_art class") and whose
+// track_snapshot has no artwork field at all: the image goes under the
+// library's own Artwork/ folder, named by its hash, with a matching
+// AlbumArt row. The source is the cover the rekordbox side already
+// resolved, which is a file on the same stick.
+//
+// Deliberately NOT carried over in this version: a real per-beat grid,
+// waveform data (reading
 // rekordbox's own waveform preview already works elsewhere in this
 // project, but no rekordbox->Engine waveform format conversion exists
 // yet). A player therefore shows these tracks without artwork: confirmed
