@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 // Shared by the live tests in this directory (see docs/testing.md,
-// "Live tests against a real stick"). Plain JS: TestCase functions are
-// not shareable across tst_*.qml files.
+// "Live tests against a real stick") and, for the stick list's rows and
+// cards, by tests/qml/tst_StickListPage.qml. Plain JS: TestCase functions
+// are not shareable across tst_*.qml files.
 .pragma library
 
 // The first QObject under `root` whose C++ class name starts with
@@ -12,50 +13,17 @@
 // itself (SettingsPage's SettingsController, ...). QML prints a C++
 // object as "ClassName(0x...)", which is what this keys on.
 function findByType(root, typeName) {
-    var found = null;
-    // Every object visited once. A QML item graph reaches the same object
-    // through several of the lists below -- `children` and `data` overlap by
-    // construction, and `contentItem`'s subtree is also in `contentData` --
-    // so without this the walk re-enters whole subtrees once per path that
-    // reaches them, and each visit pays a String(obj) that runs
-    // QMetaObject::indexOfMethod over the type's whole method table.
-    // Measured with eu-stack and perf on 2026-09-16: a live test sat at 100%
-    // CPU for nine minutes inside objectToString/methodMatch/memcmp with the
-    // GC chasing the string garbage, on a page whose graph is perfectly
-    // ordinary. It was 76 s when the page was smaller.
-    var seen = new Set();
-    function beenHere(obj) {
-        if (seen.has(obj)) return true;
-        seen.add(obj);
-        return false;
-    }
-    function walk(obj) {
-        if (found !== null || obj === null || obj === undefined) return;
-        if (beenHere(obj)) return;
-        // C++ types print namespaced ("seabass::gui::SettingsController(0x..)"),
-        // QML component types with a suffix ("BackBreadcrumb_QMLTYPE_12(0x..)").
+    // C++ types print namespaced ("seabass::gui::SettingsController(0x..)"),
+    // QML component types with a suffix ("BackBreadcrumb_QMLTYPE_12(0x..)").
+    // Each String(obj) runs QMetaObject::indexOfMethod over the type's
+    // whole method table, which is why find() visits every object once:
+    // measured with eu-stack and perf on 2026-09-16, a walk that re-entered
+    // subtrees sat at 100% CPU for nine minutes on an ordinary page.
+    return find(root, function(obj) {
         var name = String(obj);
-        if (name.indexOf(typeName + "(") === 0 || name.indexOf("::" + typeName + "(") >= 0
-            || name.indexOf(typeName + "_QMLTYPE_") === 0) {
-            found = obj;
-            return;
-        }
-        // A Page/Dialog puts declared objects into contentData, an Item
-        // into data/resources/children.
-        var lists = [obj.contentData, obj.resources, obj.children, obj.data];
-        for (var l = 0; l < lists.length && found === null; ++l) {
-            var list = lists[l];
-            if (list === undefined || list === null) continue;
-            for (var i = 0; i < list.length && found === null; ++i) {
-                walk(list[i]);
-            }
-        }
-        if (found === null && obj.contentItem !== undefined && obj.contentItem !== null) walk(obj.contentItem);
-        if (found === null && obj.footer !== undefined && obj.footer !== null) walk(obj.footer);
-        if (found === null && obj.header !== undefined && obj.header !== null) walk(obj.header);
-    }
-    walk(root);
-    return found;
+        return name.indexOf(typeName + "(") === 0 || name.indexOf("::" + typeName + "(") >= 0
+            || name.indexOf(typeName + "_QMLTYPE_") === 0;
+    });
 }
 
 function summaryLine(summary) {
@@ -64,30 +32,63 @@ function summaryLine(summary) {
         + (summary.warning ? " warning: " + summary.warning : "");
 }
 
+// The objects one step under an item, the way the page's object graph
+// really hangs together: children and resources reach the same objects
+// by different paths, and a Control's contentItem, header and footer are
+// not reliably among its children. Every finder here walks this one
+// list, with a visited set so no subtree is entered twice.
+function under(item) {
+    var kids = [];
+    // A Page/Dialog puts declared objects into contentData, an Item into
+    // data/resources/children; the lists overlap, and find()'s visited
+    // set is what keeps the overlap from costing a second walk.
+    var lists = [item.contentData, item.resources, item.children, item.data];
+    for (var l = 0; l < lists.length; ++l) {
+        var list = lists[l];
+        if (list === undefined || list === null) continue;
+        for (var i = 0; i < list.length; ++i) kids.push(list[i]);
+    }
+    if (item.contentItem) kids.push(item.contentItem);
+    if (item.footer) kids.push(item.footer);
+    if (item.header) kids.push(item.header);
+    return kids;
+}
+// The first object under root (root included) the predicate accepts.
+function find(root, accept) {
+    var seen = new Set();
+    function walk(item) {
+        if (!item || seen.has(item)) return null;
+        seen.add(item);
+        if (accept(item)) return item;
+        var kids = under(item);
+        for (var k = 0; k < kids.length; ++k) {
+            var found = walk(kids[k]);
+            if (found) return found;
+        }
+        return null;
+    }
+    return walk(root);
+}
+// Every object under root the predicate accepts, in no particular order
+// (a ListView builds its rows in refill order, not model order); the
+// walk does not descend into an accepted object.
+function findAll(root, accept) {
+    var seen = new Set();
+    var out = [];
+    function walk(item) {
+        if (!item || seen.has(item)) return;
+        seen.add(item);
+        if (accept(item)) { out.push(item); return; }
+        var kids = under(item);
+        for (var k = 0; k < kids.length; ++k) walk(kids[k]);
+    }
+    walk(root);
+    return out;
+}
 // The item with this objectName anywhere under root -- the dialogs the
 // pages own are reached this way (tst_LiveQuit's F5).
-function findByObjectName(root, name, seen) {
-    if (!root) return null;
-    // Same overlapping-graph problem findByType has: children and resources
-    // reach the same objects, so without this the walk re-enters subtrees
-    // once per path into them.
-    seen = seen || new Set();
-    if (seen.has(root)) return null;
-    seen.add(root);
-    if (root.objectName === name) return root;
-    var kids = [];
-    if (root.contentItem) kids.push(root.contentItem);
-    if (root.footer) kids.push(root.footer);
-    if (root.header) kids.push(root.header);  // findByType looks here; this did not
-    var children = root.children ? root.children : [];
-    for (var i = 0; i < children.length; ++i) kids.push(children[i]);
-    var resources = root.resources ? root.resources : [];
-    for (var r = 0; r < resources.length; ++r) kids.push(resources[r]);
-    for (var k = 0; k < kids.length; ++k) {
-        var found = findByObjectName(kids[k], name, seen);
-        if (found) return found;
-    }
-    return null;
+function findByObjectName(root, name) {
+    return find(root, function(item) { return item.objectName === name; });
 }
 
 // Whether a file is still on the stick, for a check that deletes for good
@@ -110,4 +111,36 @@ function fileExists(absolutePath) {
     } catch (e) {
         return false;
     }
+}
+
+// StickListPage's list and rows, by the objectNames the page gives them
+// ("stickList", "stickRow:<mount point>" -- or the device path for a
+// stick that is not mounted), and a row's cards by their title, the
+// ActionCard's own cardTitle: tst_StickListPage and tst_LiveLock share
+// these, so one place knows how the page is built.
+function stickList(page) {
+    return findByObjectName(page, "stickList");
+}
+function stickRow(page, mountPointOrDevice) {
+    return findByObjectName(page, "stickRow:" + mountPointOrDevice);
+}
+// Every row the list has built -- a ListView instantiates only the rows
+// near its viewport -- in no particular order.
+function stickRows(page) {
+    return findAll(page, function(item) {
+        return typeof item.objectName === "string" && item.objectName.indexOf("stickRow:") === 0;
+    });
+}
+// An ActionCard by its exact title under a row.
+function cardIn(row, title) {
+    return find(row, function(item) { return item.cardTitle !== undefined && String(item.cardTitle) === title; });
+}
+function cardInRow(page, mountPointOrDevice, title) {
+    var row = stickRow(page, mountPointOrDevice);
+    return row ? cardIn(row, title) : null;
+}
+// A row's own control (eject, close) by objectName.
+function objectInRow(page, mountPointOrDevice, objectName) {
+    var row = stickRow(page, mountPointOrDevice);
+    return row ? findByObjectName(row, objectName) : null;
 }

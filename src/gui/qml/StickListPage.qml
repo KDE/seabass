@@ -517,6 +517,9 @@ Page {
         }
 
         ListView {
+            // Named for the tests, which reach rows and cards through these
+            // rather than by guessing at the delegate's properties.
+            objectName: "stickList"
             Layout.fillWidth: true
             Layout.fillHeight: true
             model: root.mediaController.sticks
@@ -535,6 +538,10 @@ Page {
             // same plain-Rectangle pattern for exactly that reason.
             delegate: Rectangle {
                 id: delegateRoot
+                // The mount point, or the device for a stick that is not
+                // mounted (its mount point is empty, and every unmounted
+                // stick would share one name).
+                objectName: "stickRow:" + (mountPoint.length > 0 ? mountPoint : devicePath)
                 width: ListView.view.width
                 height: contentColumn.implicitHeight + 24
                 color: Theme.surface

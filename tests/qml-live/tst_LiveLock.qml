@@ -90,7 +90,7 @@ TestCase {
         // below a 900 px window lands outside it and opens nothing (the
         // round's first re-run).
         var list = null;
-        tryVerify(function() { list = stickListView(page, media); return list !== null && list.count > 0; }, 30000,
+        tryVerify(function() { list = Live.stickList(page); return list !== null && list.count > 0; }, 30000,
                   "the page lists the sticks");
         // The row comes from the model, not from the rows the ListView
         // has instantiated (only those near its viewport), and the list
@@ -99,21 +99,31 @@ TestCase {
         var row = -1;
         tryVerify(function() { row = rowIndexOf(media, list, libraryId); return row >= 0; }, 30000,
                   "the locked library is in the stick model (" + list.count + " listed)");
+        // The rows are named by the mount point as the model spells it.
+        const lockedMount = String(media.sticks.get(row).mountPoint);
         list.positionViewAtIndex(row, ListView.Center);
         waitForRendering(list);
         var card = null;
-        tryVerify(function() { card = cardFor(page, "Housekeeping", libraryId); return card !== null; }, 30000,
-                  "the locked library's row has a Housekeeping card");
+        tryVerify(function() { card = Live.cardInRow(page, lockedMount, "Housekeeping"); return card !== null; }, 30000,
+                  "the locked stick's row has a Housekeeping card");
         keepInsideList(list, card);
-        var rows = cardsWithRows(page, "Housekeeping");
-        console.log("  sticks listed: " + rows.map(function(h) { return h.row.label; }).join(", ") + "; locked: " + stickLabel);
+        // Every row built, whatever the window holds: a ListView keeps
+        // only the rows near its viewport (plus 320 px), and a third
+        // medium would sit outside that.
+        list.cacheBuffer = Math.max(list.cacheBuffer, list.contentHeight);
+        // Rows in the buffer incubate asynchronously, one per frame or so:
+        // wait for them rather than count what happens to exist.
+        tryVerify(function() { return Live.stickRows(page).length === list.count; }, 30000,
+                  "every stick's row is built");
+        var rows = Live.stickRows(page);
+        console.log("  sticks listed: " + rows.map(function(r) { return r.label; }).join(", ") + "; locked: " + stickLabel);
         tryCompare(card, "readOnly", true, 10000);
         compare(findChild(card, "readOnlyBadge").visible, true);
-        compare(cardFor(page, "Browse Library", libraryId).readOnly, false);
+        compare(Live.cardInRow(page, lockedMount, "Browse Library").readOnly, false);
         // The lock is this library's alone: any other stick's cards stay
         // writable, which the first-card version could never have told.
-        rows.filter(function(h) { return String(h.row.libraryId) !== libraryId; }).forEach(function(h) {
-            compare(h.card.readOnly, false, h.row.label + "'s Housekeeping card stays writable");
+        rows.filter(function(r) { return String(r.mountPoint) !== lockedMount; }).forEach(function(r) {
+            compare(Live.cardIn(r, "Housekeeping").readOnly, false, r.label + "'s Housekeeping card stays writable");
         });
         shot(page, "live-stick-list-read-only");
 
@@ -129,49 +139,15 @@ TestCase {
         EditSessionRegistry.mediaController = null;
     }
 
-    // The list of sticks on the page: the ListView bound to the media
-    // controller's model, whatever other lists the page holds.
-    function stickListView(root, media) {
-        var found = null;
-        function walk(item) {
-            if (found !== null || !item) return;
-            if (item.positionViewAtIndex !== undefined && item.model === media.sticks) { found = item; return; }
-            for (var i = 0; i < item.children.length; ++i) walk(item.children[i]);
-        }
-        walk(root);
-        return found;
-    }
-    // Every card with this title the page has instantiated, with the
-    // stick row (StickListPage's delegateRoot, the nearest ancestor that
-    // carries a libraryId) it sits in.
-    function cardsWithRows(root, title) {
-        var all = [];
-        function rowOf(item) {
-            for (var p = item; p && p !== root; p = p.parent) {
-                if (p.libraryId !== undefined) return p;
-            }
-            return null;
-        }
-        function walk(item) {
-            if (!item) return;
-            if (item.cardTitle !== undefined && String(item.cardTitle) === title) {
-                var row = rowOf(item);
-                if (row !== null) all.push({card: item, row: row});
-                return;
-            }
-            for (var i = 0; i < item.children.length; ++i) walk(item.children[i]);
-        }
-        walk(root);
-        return all;
-    }
-    function cardFor(root, title, libraryId) {
-        var hits = cardsWithRows(root, title).filter(function(h) { return String(h.row.libraryId) === libraryId; });
-        return hits.length > 0 ? hits[0].card : null;
-    }
-    // The model row of a library, whether or not the list has built it.
+    // The model row of the locked library, whether or not the list has
+    // built it: by library id, so however the stick's path was spelled on
+    // the command line (a symlink, a trailing slash) the row is found.
     function rowIndexOf(media, list, libraryId) {
         for (var i = 0; i < list.count; ++i) {
-            if (String(media.sticks.get(i).libraryId) === libraryId) return i;
+            const mountPoint = String(media.sticks.get(i).mountPoint);
+            if (mountPoint.length > 0 && EditSessionRegistry.libraryIdForPath(mountPoint + "/PIONEER") === libraryId) {
+                return i;
+            }
         }
         return -1;
     }

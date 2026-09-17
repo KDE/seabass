@@ -151,7 +151,9 @@ live `sleep` for the lock scenario, runs a copy of `sleep` named
 `rekordbox` for the guard, calls `seabass-cli` while the test holds the
 lock, and unmounts/remounts the device for the stick-pull scenario.
 `LiveHelpers.js` has `findByType()` for reaching the controller a page
-created for itself. Results and screenshots from the 2026-09-07 run on
+created for itself, `findByObjectName()`, and the stick list's row and
+card finders (`stickRow()`, `cardInRow()`, `objectInRow()`), which
+`tests/qml/tst_StickListPage.qml` imports across directories as well. Results and screenshots from the 2026-09-07 run on
 the RV2 stick are noted in `docs/edit-mode-and-cancel.md`.
 
 The QML test binary registers the same `SeabassGui` module as the app

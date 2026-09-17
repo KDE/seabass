@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "../qml-live/LiveHelpers.js" as Live
 
 // StickListPage.qml headless with fake controllers: which cards an empty
 // stick and a library stick show once the backup advisor has spoken, and
@@ -75,57 +76,13 @@ TestCase {
         return page;
     }
 
-    // ActionCards are instantiated per delegate; find the one whose title
-    // starts with `title` under the delegate for `mountPoint`.
+    // Rows and cards by the objectNames StickListPage gives them, shared
+    // with the live tests: one place that knows how the page is built.
     function findCard(page, mountPoint, title) {
-        var found = null;
-        function walk(item) {
-            if (found !== null) return;
-            if (item.cardTitle !== undefined && String(item.cardTitle).indexOf(title) === 0
-                && delegateMount(item) === mountPoint) {
-                found = item;
-                return;
-            }
-            for (var i = 0; i < item.children.length; ++i) {
-                walk(item.children[i]);
-            }
-        }
-        function delegateMount(item) {
-            var p = item;
-            while (p) {
-                if (p.mountPoint !== undefined && p.hasKnownLibrary !== undefined) return p.mountPoint;
-                p = p.parent;
-            }
-            return "";
-        }
-        walk(page);
-        return found;
+        return Live.cardInRow(page, mountPoint, title);
     }
-
-    // Same idea as findCard(), for the objectName'd row controls
-    // (eject/mount button) rather than an ActionCard's title.
     function findRowObject(page, mountPoint, objectName) {
-        var found = null;
-        function walk(item) {
-            if (found !== null) return;
-            if (item.objectName === objectName && delegateMount(item) === mountPoint) {
-                found = item;
-                return;
-            }
-            for (var i = 0; i < item.children.length; ++i) {
-                walk(item.children[i]);
-            }
-        }
-        function delegateMount(item) {
-            var p = item;
-            while (p) {
-                if (p.mountPoint !== undefined && p.hasKnownLibrary !== undefined) return p.mountPoint;
-                p = p.parent;
-            }
-            return "";
-        }
-        walk(page);
-        return found;
+        return Live.objectInRow(page, mountPoint, objectName);
     }
 
     function saveScreenshot(page, name) {
@@ -278,9 +235,9 @@ TestCase {
                            enoughSpace: true, detail: "SPARE holds a newer copy of this library.", rekordboxPath: "", enginePath: ""}});
         var page = makePage([makeStick({})], advice);
         var card = findCard(page, "/media/MAIN", "Backups");
+        verify(findCard(page, "/media/MAIN", "Update Stick") === null);
         verify(card !== null);
         verify(card.cardSubtitle.indexOf("Newer copy on SPARE") === 0);
-        verify(findCard(page, "/media/MAIN", "Update Stick") === null);
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "backupsHubRequested"});
         card.clicked();
         compare(spy.count, 1);
@@ -578,14 +535,7 @@ TestCase {
 
     // Finds the first descendant with `objectName`, anywhere on the page.
     function findByName(page, objectName) {
-        var found = null;
-        function walk(item) {
-            if (found !== null) return;
-            if (item.objectName === objectName) { found = item; return; }
-            for (var i = 0; i < item.children.length; ++i) walk(item.children[i]);
-        }
-        walk(page);
-        return found;
+        return Live.findByObjectName(page, objectName);
     }
 
     function test_theNoStickToolsStepAsideOnceAStickIsIn() {
@@ -739,6 +689,20 @@ TestCase {
         var label = findByName(page, "unmountedLabel");
         verify(label !== null, "the unmounted label must exist");
         compare(label.text, "(not mounted)");
+    }
+
+    // A stick that is not mounted has no mount point, so its row is named
+    // by its device: two unmounted sticks must not share one name, or the
+    // finders would hand back whichever row was built first.
+    function test_anUnmountedStickRowIsNamedByItsDevice() {
+        var page = makePage([makeStick({label: "MAIN", mounted: false, mountPoint: "", devicePath: "/dev/sdb1"}),
+                             makeStick({label: "SPARE", mounted: false, mountPoint: "", devicePath: "/dev/sdc1"})], {});
+        var main = Live.stickRow(page, "/dev/sdb1");
+        var spare = Live.stickRow(page, "/dev/sdc1");
+        verify(main !== null && spare !== null && main !== spare, "each unmounted stick has its own row");
+        compare(main.label, "MAIN");
+        compare(spare.label, "SPARE");
+        compare(Live.stickRows(page).length, 2);
     }
 
     function test_aMountedStickSaysNothingAboutUnplugging() {
