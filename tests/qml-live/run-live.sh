@@ -118,8 +118,10 @@ fi
 # 3. The process guard and the CLI probe. A copy of sleep named rekordbox
 #    is what the detector sees; it is killed 25 s in, and the CLI runs
 #    while the test still holds the lock.
-cp /bin/sleep /tmp/rekordbox
-/tmp/rekordbox 300 & fake=$!
+# The rig builds this one (tools/rig_fake_dj.cpp) rather than copying a
+# system binary: macOS kills a copy of one outright, so the guard check
+# used to prove nothing there.
+"$build/rekordbox" 300 & fake=$!
 ( sleep 25; kill "$fake" 2>/dev/null
   sleep 8
   echo "--- CLI while the GUI holds the lock:"
@@ -128,7 +130,6 @@ cp /bin/sleep /tmp/rekordbox
   "$cli" backups --engine "$stick/Engine Library" --clean --keep 1000 --force 2>&1 | sed 's/^/    /' ) &
 run "LiveGuard::test_guardBlocksWhileEditingAndCliIsRefused" SEABASS_LIVE_GUARD=1
 wait
-rm -f /tmp/rekordbox
 
 # 4. The stick goes away while editing.
 if [ -n "$device" ]; then

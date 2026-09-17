@@ -2119,6 +2119,11 @@ add_executable(rig_save_backups tools/rig_save_backups.cpp)
 target_include_directories(rig_save_backups PRIVATE src)
 target_link_libraries(rig_save_backups PRIVATE seabass_core)
 
+# A process the DJ-software guard recognises, for the rig's refusal checks
+# (see tools/rig_fake_dj.cpp): named for what the detector matches.
+add_executable(rig_fake_dj tools/rig_fake_dj.cpp)
+set_target_properties(rig_fake_dj PROPERTIES OUTPUT_NAME rekordbox)
+
 # Release rig: Manage Backups deletes one test archive -- refused while
 # another process is writing it, archive and journal gone afterwards.
 add_executable(rig_delete_backup tools/rig_delete_backup.cpp)

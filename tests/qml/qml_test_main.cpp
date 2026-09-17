@@ -308,6 +308,11 @@ public slots:
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_LOCKED"));
         engine->rootContext()->setContextProperty(QStringLiteral("liveGuardRun"),
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_GUARD"));
+        // A mounted disk image standing in for a stick (docs/testing.md):
+        // it has no hardware serial, so checks that assert how a stick was
+        // re-identified have to expect one step less.
+        engine->rootContext()->setContextProperty(QStringLiteral("liveStickIsDiskImage"),
+                                                  qgetenv("SEABASS_ACCEPT_DISK_IMAGES") == "1");
         engine->rootContext()->setContextProperty(QStringLiteral("liveStickPullRun"),
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_STICK_PULL"));
         // tools/rig-clones.sh: where tst_LiveEditMode::test_11_rigKeepCue

@@ -83,7 +83,17 @@ TestCase {
         console.log("  gone; waiting for the same stick to come back");
         tryCompare(s, "stickPresent", true, 90000);
         console.log("  back, matched by " + s.stickIdentityStrength);
-        compare(s.stickIdentityStrength, "hardware");
+        // A real stick is matched by its hardware serial. A disk image
+        // (SEABASS_ACCEPT_DISK_IMAGES, see docs/testing.md) has none, and
+        // its volume UUID is the strongest identity there is for it --
+        // still a match that survives the remount, which is what this
+        // checks. Only a run that opted into images may fall back.
+        if (typeof liveStickIsDiskImage !== "undefined" && liveStickIsDiskImage) {
+            verify(s.stickIdentityStrength === "hardware" || s.stickIdentityStrength === "filesystem",
+                   "a disk image must still be matched by its filesystem identity, got " + s.stickIdentityStrength);
+        } else {
+            compare(s.stickIdentityStrength, "hardware");
+        }
         tryCompare(findChild(dialog, "understoodButton"), "enabled", true, 5000);
         shot(page, "live-stick-returned");
         findChild(dialog, "understoodButton").clicked();

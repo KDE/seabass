@@ -60,9 +60,19 @@ unmount_device() {  # <device>
     fi
 }
 
+# Puts a device back after unmount_device(). On macOS a disk image standing
+# in for a stick disappears entirely when its last volume is unmounted --
+# the image detaches, unlike a real stick, and its /dev node is gone -- so
+# the images named in RIG_STICK_IMAGES (space separated .sparseimage paths)
+# are re-attached before the plain mount is tried.
 mount_device() {  # <device>
     if [ "$rig_os" = "Darwin" ]; then
-        diskutil mount "$1" >/dev/null 2>&1
+        if [ ! -e "$1" ]; then
+            for image in ${RIG_STICK_IMAGES:-}; do
+                [ -f "$image" ] && hdiutil attach -nobrowse "$image" >/dev/null 2>&1
+            done
+        fi
+        diskutil mount "$1" >/dev/null 2>&1 || [ -e "$1" ]
     else
         udisksctl mount -b "$1" >/dev/null 2>&1
     fi

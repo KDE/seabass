@@ -426,9 +426,9 @@ metadata_between_sticks() {
 }
 
 refused_while_dj_software_runs() {
-    mkdir -p "$out/fake"
-    cp /bin/sleep "$out/fake/rekordbox"
-    "$out/fake/rekordbox" 120 &
+    # tools/rig_fake_dj.cpp, built as "rekordbox": a copy of a system
+    # binary is killed on macOS, which left this check proving nothing.
+    "$build/rekordbox" 120 &
     local fake=$!
     sleep 1
     "$build/rig_backup" "$B" "$out/backups-fb/$b.zip" --expect-refused
