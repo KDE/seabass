@@ -40,6 +40,20 @@ Page {
         // EditSessionHost's backupLocationDeclined for why it must.
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "library-health"
+        // The page does one thing, so the button says it. "Save" is the
+        // default for a page that edits several kinds of thing; here the
+        // only staged change is a stray cue being removed.
+        //
+        // The label is about this page, not about the session. Library
+        // Health shares the "library-health" feature name, and it stages
+        // missing-file repairs and orphan deletions as well as stray-cue
+        // removals. Anything left unsaved there is still in this session,
+        // so a button saying "Clean Up" writes those too, and it is live
+        // on arrival even though nothing was staged here. The pending
+        // list and the tooltip still name every change; the label does
+        // not. Library Health's own save keeps saying "Save", because
+        // that page really does stage several kinds of change.
+        saveLabel: "Clean Up"
         anchors.fill: parent
         libraryId: typeof EditSessionRegistry !== "undefined"
             ? EditSessionRegistry.libraryIdForPath(root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath) : ""
