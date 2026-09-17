@@ -14,6 +14,15 @@
 rig_os="$(uname -s)"
 
 if [ "$rig_os" = "Darwin" ]; then
+    # Homebrew's own bin too: cmake and ctest live there, not in /usr/bin,
+    # and a round started from a shell without it failed its first check
+    # ("ctest: command not found") having built nothing.
+    for brewbin in /opt/homebrew/bin /usr/local/bin; do
+        case ":$PATH:" in
+            *":$brewbin:"*) ;;
+            *) [ -d "$brewbin" ] && PATH="$brewbin:$PATH" ;;
+        esac
+    done
     for gnubin in /opt/homebrew/opt/coreutils/libexec/gnubin /opt/homebrew/opt/findutils/libexec/gnubin \
                   /usr/local/opt/coreutils/libexec/gnubin /usr/local/opt/findutils/libexec/gnubin; do
         [ -d "$gnubin" ] && PATH="$gnubin:$PATH"
@@ -22,6 +31,10 @@ if [ "$rig_os" = "Darwin" ]; then
     # Both packages, checked by what the scripts use: BSD xargs rejects -d,
     # and a catalog listing that comes out empty would make every catalog
     # comparison of a round pass having compared nothing.
+    if ! command -v ctest >/dev/null; then
+        echo "rig-platform.sh: ctest is not on PATH (brew install cmake)" >&2
+        exit 1
+    fi
     if ! stat -c %s / >/dev/null 2>&1 || ! command -v stdbuf >/dev/null \
         || ! xargs --version 2>/dev/null | grep -q GNU || ! find --version 2>/dev/null | grep -q GNU; then
         echo "rig-platform.sh: GNU coreutils/findutils are needed on macOS (brew install coreutils findutils)" >&2
