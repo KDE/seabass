@@ -204,15 +204,19 @@ find_package(Threads REQUIRED)
 #
 # find_package(TagLib) only works with TagLib 2.x, which ships a CMake
 # config; 1.x (what Debian/Ubuntu's libtag1-dev and MSYS2's
-# mingw-w64-ucrt-x86_64-taglib still provide) ships only taglib.pc, so
-# pkg-config is tried first and is the path that actually resolves on
-# both platforms today.
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(TAGLIB QUIET IMPORTED_TARGET taglib)
-endif()
-if(NOT TAGLIB_FOUND)
-    find_package(TagLib QUIET)
+# mingw-w64-ucrt-x86_64-taglib still provide) ships only taglib.pc. The
+# CMake config is tried first: TagLib 2.x's own taglib.pc hardcodes
+# "-lz" in its Libs line regardless of platform, which pkg-config turns
+# into a bare "z" library search -- fine on MSYS2/Linux where a libz.a
+# or -lz-compatible zlib exists, but a link error on MSVC/Craft, whose
+# zlib import library is named zlib.lib. find_package(TagLib) uses the
+# CMake-exported TagLib::tag target instead, which has no such bug.
+find_package(TagLib QUIET)
+if(NOT TARGET TagLib::tag)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(TAGLIB QUIET IMPORTED_TARGET taglib)
+    endif()
 endif()
 
 add_library(kaitai_cpp_stl_runtime STATIC
