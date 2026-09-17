@@ -701,6 +701,14 @@ ApplicationWindow {
                 stackView.pop(null);
                 stackView.get(0).openBackupArchive(archivePath);
             }
+            // Straight to the restore page with this archive chosen, and
+            // the drive it came from if that drive is plugged in. Nothing
+            // is written until that page's own preview and confirmation.
+            onRestoreRequested: (archivePath, mountPoint, label) => stackView.push(restoreStickBackupPageComponent, {
+                preselectedArchivePath: archivePath,
+                preselectedMountPoint: mountPoint,
+                preselectedLabel: label,
+            })
         }
     }
 

@@ -172,12 +172,59 @@ TestCase {
     }
 
     function test_aBackupOpenForBrowsingCannotBeDeleted() {
-        var media = {sticks: [{isBrowsedBackup: true, mountPoint: "/cache/main"},
-                              {isBrowsedBackup: false, mountPoint: "/media/SPARE"}]};
+        var media = {sticks: [{isBrowsedBackup: true, isFolder: false, mounted: true, mountPoint: "/cache/main",
+                               label: "MAIN", libraryId: "uuid-main"},
+                              {isBrowsedBackup: false, isFolder: false, mounted: true, mountPoint: "/media/SPARE",
+                               label: "SPARE", libraryId: "uuid-spare"}]};
         var page = makePage(makeController(), {mediaController: media});
         compare(page.controller.openArchivePaths, ["/home/u/Backups/MAIN.zip"]);
         compare(findChild(row(page, 0), "deleteButton").enabled, false);
         compare(findChild(row(page, 1), "deleteButton").enabled, true);
+    }
+
+    // Restore is offered per backup, and aims at the drive that backup
+    // came from when it is plugged in -- matched by identifier, not by
+    // name, so two sticks called MAIN cannot be confused for each other.
+    function test_restoreAimsAtTheStickTheBackupCameFrom() {
+        var media = {sticks: [{isBrowsedBackup: false, isFolder: false, mounted: true,
+                               mountPoint: "/media/SPARE", label: "SPARE", libraryId: "uuid-spare"},
+                              {isBrowsedBackup: false, isFolder: false, mounted: true,
+                               mountPoint: "/media/MAIN", label: "MAIN", libraryId: "uuid-main"}]};
+        var page = makePage(makeController(), {mediaController: media, stickLabel: "MAIN"});
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreRequested"});
+
+        mouseClick(findChild(row(page, 1), "restoreButton"));
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "/home/u/Backups/SPARE.zip");
+        compare(spy.signalArguments[0][1], "/media/SPARE", "SPARE's backup aims at SPARE, not at the open stick");
+        compare(spy.signalArguments[0][2], "SPARE");
+    }
+
+    // A backup whose stick is not plugged in falls back to the stick this
+    // page was opened for, and to nothing at all when there is none: a
+    // whole-drive write is not something to aim at a guess.
+    function test_restoreFallsBackAndThenGivesUp() {
+        var media = {sticks: [{isBrowsedBackup: false, isFolder: false, mounted: true,
+                               mountPoint: "/media/MAIN", label: "MAIN", libraryId: "uuid-main"}]};
+        var page = makePage(makeController(), {mediaController: media, stickLabel: "MAIN"});
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreRequested"});
+
+        // SPARE is not plugged in, so the open stick is the fallback.
+        mouseClick(findChild(row(page, 1), "restoreButton"));
+        compare(spy.signalArguments[0][1], "/media/MAIN");
+
+        var alone = makePage(makeController(), {mediaController: {sticks: []}});
+        var spyAlone = createTemporaryObject(spyComponent, testCase, {target: alone, signalName: "restoreRequested"});
+        mouseClick(findChild(row(alone, 1), "restoreButton"));
+        compare(spyAlone.signalArguments[0][1], "", "no drive plugged in: let the restore page ask");
+    }
+
+    // An unreadable backup has nothing to restore from, the same reason
+    // it cannot be browsed.
+    function test_anUnreadableBackupCannotBeRestored() {
+        var page = makePage(makeController());
+        compare(findChild(row(page, 2), "restoreButton").enabled, false);
+        compare(findChild(row(page, 0), "restoreButton").enabled, true);
     }
 
     function test_browseHandsTheArchiveOn() {

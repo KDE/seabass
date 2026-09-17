@@ -12,6 +12,14 @@ import SeabassGui
 // holds; it can be browsed (without unpacking it) or deleted. Reached from
 // a stick's Backups page -- that stick's backup is listed first -- and
 // from Home's menu, with no stick at all.
+//
+// Restore lives here too, because this is where people look for it. The
+// other ways in are all conditional -- the stick list's card only shows
+// while no stick is plugged in, the per-stick card only for a stick with
+// no library on it, and the Backups hub's Update Stick only when a newer
+// copy is already known -- so a stick that is plugged in, has a library
+// and has no newer backup offered no visible route at all. That is
+// exactly the case where someone wants to put a backup back.
 Page {
     id: root
     // A FullBackupsController; a plain object in the tests.
@@ -35,10 +43,47 @@ Page {
     }
     property bool configured: false
     signal browseRequested(string archivePath)
+    // The archive to write, and the drive to write it onto if one is an
+    // obvious match. Both are only a starting point: the restore page
+    // lists every drive and every backup, and any of them can be chosen.
+    signal restoreRequested(string archivePath, string mountPoint, string label)
     // What refreshOpenArchives last found, kept here as well as on the
     // controller: the rows bind to this, which changes exactly when the
     // page recomputes it.
     property var openArchives: []
+
+    // The drive this backup most likely belongs on, if it is plugged in.
+    //
+    // A backup records the identifier of the stick it came from, and a
+    // detected stick reports the same value as its libraryId (see
+    // StickIdentity: the two are defined to agree), so the right default
+    // is the stick this backup was taken from. Failing that, the stick
+    // this page was opened for. Failing that, nothing -- better to let
+    // the restore page ask than to aim a whole-drive write at a guess.
+    //
+    // Folder libraries and open backups are never offered: neither is a
+    // drive that can be written.
+    function defaultTargetFor(backup) {
+        var model = root.mediaController ? root.mediaController.sticks : null;
+        if (model === null || model === undefined) {
+            return {mountPoint: "", label: ""};
+        }
+        var count = model.length !== undefined ? model.length : model.rowCount();
+        var fallback = null;
+        for (var i = 0; i < count; ++i) {
+            var row = model.length !== undefined ? model[i] : model.get(i);
+            if (row.isFolder || row.isBrowsedBackup || row.mounted === false) {
+                continue;
+            }
+            if (backup.identifier && backup.identifier.length > 0 && row.libraryId === backup.identifier) {
+                return {mountPoint: row.mountPoint, label: row.label};
+            }
+            if (fallback === null && root.stickLabel.length > 0 && row.label === root.stickLabel) {
+                fallback = {mountPoint: row.mountPoint, label: row.label};
+            }
+        }
+        return fallback !== null ? fallback : {mountPoint: "", label: ""};
+    }
 
     function refreshOpenArchives() {
         var open = [];
@@ -289,6 +334,21 @@ Page {
                         ToolTip.visible: hovered
                         ToolTip.text: "Open this backup in Browse Library, without unpacking it. Read-only; it also stays on the Home page like a stick."
                         onClicked: root.browseRequested(backupRow.modelData.archivePath)
+                    }
+                    Button {
+                        objectName: "restoreButton"
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "Restore…"
+                        icon.source: Theme.iconUrl("document-revert")
+                        enabled: backupRow.readable && root.controller.deleting !== true
+                        ToolTip.visible: hovered
+                        ToolTip.text: backupRow.readable
+                            ? "Write this backup onto a drive. The next page shows exactly what it would do first."
+                            : "This backup cannot be read, so there is nothing to restore from it"
+                        onClicked: {
+                            var target = root.defaultTargetFor(backupRow.modelData);
+                            root.restoreRequested(backupRow.modelData.archivePath, target.mountPoint, target.label);
+                        }
                     }
                     Button {
                         objectName: "deleteButton"
