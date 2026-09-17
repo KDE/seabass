@@ -52,7 +52,11 @@ inline std::filesystem::path scratchRoot()
     std::filesystem::path root = std::filesystem::temp_directory_path() / ("seabass-test-" + std::to_string(pid));
     std::error_code ec;
     std::filesystem::create_directories(root, ec);
-    return root;
+    // Canonical, because production code canonicalises the paths it is
+    // handed and tests compare against what they passed in: macOS's temp
+    // directory lives under /var, a symlink to /private/var.
+    auto canonical = std::filesystem::canonical(root, ec);
+    return ec ? root : canonical;
 }
 
 // Points SEABASS_HOME at a directory under the test's scratch tree unless
