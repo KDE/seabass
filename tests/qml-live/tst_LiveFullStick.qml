@@ -74,13 +74,12 @@ TestCase {
         tryVerify(function() { return s.stickBytesCapacity > 0; }, 300000,
                   "the session measured the stick");
         console.log("  free on the stick before the save: " + s.stickBytesFree + " bytes of " + s.stickBytesCapacity);
-        // The whole point of this check is a stick with no room. Gigabytes
-        // free means the fill did not take -- and a save that then fits
-        // proves nothing at all. Fail here rather than pass on the
-        // else-branch. No lower bound: a stick that is exactly full is the
-        // strongest form of the condition, not a failure of it.
-        verify(s.stickBytesFree < 512 * 1024 * 1024,
-               "the stick really is nearly full before the save (free: " + s.stickBytesFree + " bytes)");
+        // No threshold here: how full is full enough depends on the backup
+        // this save writes, and the one assertion that matters is at the
+        // end -- a save that fitted fails the check. (A 512 MB bound used
+        // to stand here, and could not tell a full stick from one with
+        // room to spare; the rig already refuses to run this on a stick
+        // its fill left room on.)
 
         var adder = createTemporaryObject(addCueComponent, testCase);
         adder.addCue("rekordbox", rekordboxPath, target.sourceId, 30000, "memory", 0, "", "rig F4", false, 0,
@@ -95,19 +94,23 @@ TestCase {
         var summary = finished.signalArguments[0][0];
         console.log("  save on a full stick: " + Live.summaryLine(summary));
 
-        // Either outcome is allowed, and both must be clean: the save may
-        // refuse up front (the backup would not fit) or fail part-way. What
-        // it may never do is report success while the stick is full, or
-        // leave the save half applied.
+        // The save must refuse up front (the backup would not fit) or fail
+        // part-way, cleanly: never report success while the stick is full,
+        // never leave the save half applied. A save that fitted used to be
+        // "allowed, since it genuinely fitted" -- and round 4 passed on
+        // that branch with 928 KB free, having tested a stick with room on
+        // it. It is now a failure, recorded after the clean-up below so a
+        // standalone run still takes its cue off the stick where it can.
+        var saveFitted = false;
         if (summary.error.length > 0) {
             console.log("  refused or stopped: " + summary.error);
             compare(EditSessionRegistry.anyWriting, false);
             compare(s.dirty, true, "a refused save keeps its changes staged rather than losing them");
         } else {
-            // Allowed, but only because the save genuinely fitted in what
-            // little was left: everything staged has to have been written.
-            console.log("  the save fitted in the remaining space: " + summary.written + " of " + staged);
-            compare(summary.written, staged);
+            saveFitted = true;
+            console.log("  the save FITTED (" + s.stickBytesFree + " bytes were free before it): " + summary.written
+                        + " of " + staged + " written -- the stick was not full enough for this check");
+            compare(summary.written, staged, "a save that reports success wrote everything it staged");
             compare(s.dirty, false);
         }
 
@@ -145,5 +148,6 @@ TestCase {
             verify(afterUndo.tracks.trackCount() > 0, "the catalogs still read after the undo");
         }
         EditSessionRegistry.closeSession(testCase.libraryId);
+        verify(!saveFitted, "the save fitted, so the stick was not full: the fill left too much room (see above)");
     }
 }

@@ -73,8 +73,32 @@ b="$(basename "$B")"
 # nothing inside it skipped. A skipped test proves nothing, and QtTest
 # exits 0 for one, so a check that skips would otherwise read as green --
 # the one thing this rig must never do before a release.
+# RIG_ONLY="F4-stick-fills-up W8-delete-orphans" re-runs just those checks,
+# after a fix say; the rest are neither run nor recorded, so the summary
+# lists only what ran. Two things are never filtered: the restores that put
+# a stick back at its reference (a partial run that skipped them left B off
+# its reference, and the baseline would then be taken from a dirty stick),
+# and the end of the run, which fails when a name matched nothing -- a typo
+# must not read as a green run of zero checks.
+rig_only_names() { printf '%s' "${RIG_ONLY:-}" | tr ',\t\n' '   '; }
+rig_wants() {  # <check name> -> 0 when this run includes it
+    [ -z "${RIG_ONLY:-}" ] && return 0
+    # The restores from a REFERENCE only: FB8 also restores, from an
+    # archive FB1 makes, and ran unasked against a missing one.
+    [[ "$1" == B?-restore-? || "$1" == *-from-reference || "$1" == *-at-reference* ]] && return 0
+    [[ " $(rig_only_names) " == *" $1 "* ]]
+}
+if [ -n "${RIG_ONLY:-}" ] && [ -z "$(rig_only_names | tr -d ' ')" ]; then
+    echo "RIG_ONLY is set but names no check"
+    echo "RIG RESULT: FAIL"
+    exit 1
+fi
+ran=""
+
 check() {
     local name="$1"; shift
+    rig_wants "$name" || return 0
+    ran="$ran $name"
     echo "$(date +%T) === $name"
     if "$@" > "$out/$name.log" 2>&1; then
         if grep -qE "^SKIP|^ *SKIPPED" "$out/$name.log"; then
@@ -226,6 +250,10 @@ live_test() {  # <stick> <full test name>...
     # and must run against A, and an unconditional export here beat its
     # prefix -- so F4 tested the stick that was never filled.
     export SEABASS_LIVE_STICK="$stick"
+    # local, or this loop overwrites check()'s own $name through bash's
+    # dynamic scoping, and the summary then lists a bundle under its last
+    # sub-test ("LivePages::test_03" for R2-R5) -- round 4 read that way.
+    local name
     for name in "$@"; do
         echo "=== $name"
         local log="$out/live-${name//:/_}.txt"
@@ -255,12 +283,14 @@ quit_with_changes() {
 
 # F4: fill the stick to within a few MB, try to save, then put the space
 # back whatever happened -- the filler is removed even on a failure.
+free_kb_of() { /bin/df -kP "$1" | awk 'NR==2 {print $4}'; }
+
 full_stick() {
     # Stick A, deliberately: exFAT has no fallocate, so the filler is
     # written for real, and A's spare gigabytes cost minutes where B's cost
     # the better part of an hour for exactly the same proof.
     local filler="$A/RIG-FILLER.bin"
-    local free_kb; free_kb=$(/bin/df -kP "$A" | awk 'NR==2 {print $4}')
+    local free_kb; free_kb=$(free_kb_of "$A")
     # Under a quarter megabyte, and measured rather than assumed: the
     # backup this save writes is about 460 KB (the analysis file plus
     # exportLibrary.db), so a megabyte of slack let the save succeed and
@@ -278,9 +308,22 @@ full_stick() {
     echo "filling $A: $free_kb KB free -> leaving about $leave_kb KB"
     dd if=/dev/zero of="$filler" bs=1M count=$((size_kb / 1024)) status=none || true
     sync
+    # bs=1M rounds the filler down by up to a megabyte, and the old limit
+    # of four times the margin let that through: round 4 was left with
+    # 928 KB, room enough for the save's 460 KB backup, so the save fitted
+    # and F4 passed having tested a stick with space on it. Top up in
+    # cluster-sized steps (exFAT on these sticks: 32 KiB) to the margin,
+    # then measure again; the limit is one cluster of rounding, no more.
+    local left_kb; left_kb=$(free_kb_of "$A")
+    if [ "$left_kb" -gt "$leave_kb" ]; then
+        dd if=/dev/zero of="$filler" bs=32K count=$(((left_kb - leave_kb) / 32)) \
+            oflag=append conv=notrunc status=none || true
+        sync
+        left_kb=$(free_kb_of "$A")
+    fi
     /bin/df -hP "$A" | tail -1
-    local left_kb; left_kb=$(/bin/df -kP "$A" | awk 'NR==2 {print $4}')
-    if [ "$left_kb" -gt $((leave_kb * 4)) ]; then
+    echo "left on $A after the fill: $left_kb KB (target $leave_kb KB)"
+    if [ "$left_kb" -gt $((leave_kb + 32)) ]; then
         # The fill did not take, so a save that fits proves nothing about a
         # full stick. Said out loud rather than passed over: dd's own error
         # is swallowed so the filler is always removed.
@@ -289,7 +332,18 @@ full_stick() {
         sync
         return 1
     fi
+    # A save refused for lack of space must leave no backup record behind:
+    # the one it started, a truncated backup.zip with no manifest, used
+    # to stay, and Manage Backups listed it as an empty entry. Records are
+    # directories; the save's .write.lock beside them is a file and stays.
+    local records_before; records_before=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     SEABASS_RIG_FULL_STICK=1 live_test "$A" LiveFullStick::test_saveOnAFullStickFailsCleanly || rc=1
+    local records_after; records_after=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+    if [ "$records_after" -ne "$records_before" ]; then
+        echo "the refused save left a backup record behind: $records_before -> $records_after entries in $A/Seabass/backups"
+        find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d -newer "$filler" 2>/dev/null | head -3
+        rc=1
+    fi
     rm -f "$filler"
     sync
     echo "filler removed; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free again"
@@ -324,6 +378,13 @@ refused_while_dj_software_runs() {
     return $rc
 }
 
+# FB1, with FB3's seed files put on A first so FB3 has something to
+# change: part of the check body, so RIG_ONLY filters the seeding with
+# the backup and a seed failure is FB1's, not FB3's.
+backup_a_seeded() {
+    seed_fb3 && "$build/rig_backup" "$A" "$out/backups-fb/$a.zip"
+}
+
 seed_fb3() {
     mkdir -p "$A/RIG-FB3"
     head -c 1048576 /dev/urandom > "$A/RIG-FB3/change-me.bin"
@@ -332,6 +393,10 @@ seed_fb3() {
 }
 
 change_fb3() {
+    if [ ! -d "$A/RIG-FB3" ] || [ ! -f "$out/backups-fb/$a.zip" ]; then
+        echo "FB3 changes FB1's seed files and increments FB1's archive: run FB1-FB2-backup-A with it"
+        return 1
+    fi
     sleep 2
     head -c 1048576 /dev/urandom > "$A/RIG-FB3/change-me.bin"
     rm -f "$A/RIG-FB3/remove-me.bin"
@@ -371,8 +436,7 @@ check W9-saves-left-backups "$build/rig_save_backups" "$B" --expect-at-least 3
 
 # ---- full stick backups ----------------------------------------------
 mkdir -p "$out/backups-fb"
-seed_fb3
-check FB1-FB2-backup-A "$build/rig_backup" "$A" "$out/backups-fb/$a.zip"
+check FB1-FB2-backup-A backup_a_seeded
 check FB3-incremental change_fb3
 check FB6-compact-A "$build/rig_compact" "$out/backups-fb/$a.zip"
 check FB7-refused-while-dj-software-runs refused_while_dj_software_runs
@@ -413,6 +477,19 @@ check X1-references-unchanged references_unchanged
 # thirty that followed.
 check X4-everyday-profile-untouched sandbox_profile_still_clean
 
+set -f  # a name like F4-* must be reported as typed, not glob-expanded
+for wanted in $(rig_only_names); do
+    if [[ " $ran " != *" $wanted "* ]]; then
+        echo "RIG_ONLY names '$wanted', which is no check of this rig"
+        printf '%s\tFAIL\n' "$wanted" >> "$summary"
+    fi
+done
+set +f
+if [ ! -s "$summary" ]; then
+    echo "no check ran"
+    echo "RIG RESULT: FAIL"
+    exit 1
+fi
 echo
 cat "$summary"
 if grep -q "FAIL" "$summary"; then

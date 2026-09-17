@@ -79,11 +79,42 @@ TestCase {
             appSettingsController: createTemporaryObject(appSettings, testCase),
             backupAdvisor: createTemporaryObject(advisor, testCase),
         });
+        // Both test sticks are plugged in during a round, and the page
+        // lists them in udev's enumeration order -- which a replug
+        // changes. Round 4 took the first Housekeeping card on the page,
+        // RV2's, and found it (rightly) not locked while the lock was on
+        // A4-128GB's. So the cards are found under the row of the library
+        // this test locked, never by title alone; and the row is put on
+        // screen first, because a ListView only instantiates the rows
+        // near its viewport, and because a click at the centre of a card
+        // below a 900 px window lands outside it and opens nothing (the
+        // round's first re-run).
+        var list = null;
+        tryVerify(function() { list = stickListView(page, media); return list !== null && list.count > 0; }, 30000,
+                  "the page lists the sticks");
+        // The row comes from the model, not from the rows the ListView
+        // has instantiated (only those near its viewport), and the list
+        // is positioned once: waitForRendering() on a list that does not
+        // move waits out a whole frame interval, seconds under offscreen.
+        var row = -1;
+        tryVerify(function() { row = rowIndexOf(media, list, libraryId); return row >= 0; }, 30000,
+                  "the locked library is in the stick model (" + list.count + " listed)");
+        list.positionViewAtIndex(row, ListView.Center);
+        waitForRendering(list);
         var card = null;
-        tryVerify(function() { card = findCardByTitle(page, "Housekeeping"); return card !== null; }, 30000);
+        tryVerify(function() { card = cardFor(page, "Housekeeping", libraryId); return card !== null; }, 30000,
+                  "the locked library's row has a Housekeeping card");
+        keepInsideList(list, card);
+        var rows = cardsWithRows(page, "Housekeeping");
+        console.log("  sticks listed: " + rows.map(function(h) { return h.row.label; }).join(", ") + "; locked: " + stickLabel);
         tryCompare(card, "readOnly", true, 10000);
         compare(findChild(card, "readOnlyBadge").visible, true);
-        compare(findCardByTitle(page, "Browse Library").readOnly, false);
+        compare(cardFor(page, "Browse Library", libraryId).readOnly, false);
+        // The lock is this library's alone: any other stick's cards stay
+        // writable, which the first-card version could never have told.
+        rows.filter(function(h) { return String(h.row.libraryId) !== libraryId; }).forEach(function(h) {
+            compare(h.card.readOnly, false, h.row.label + "'s Housekeeping card stays writable");
+        });
         shot(page, "live-stick-list-read-only");
 
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "duplicateTracksHubRequested"});
@@ -98,15 +129,67 @@ TestCase {
         EditSessionRegistry.mediaController = null;
     }
 
-    function findCardByTitle(root, title) {
+    // The list of sticks on the page: the ListView bound to the media
+    // controller's model, whatever other lists the page holds.
+    function stickListView(root, media) {
         var found = null;
         function walk(item) {
             if (found !== null || !item) return;
-            if (item.cardTitle !== undefined && String(item.cardTitle) === title) { found = item; return; }
+            if (item.positionViewAtIndex !== undefined && item.model === media.sticks) { found = item; return; }
             for (var i = 0; i < item.children.length; ++i) walk(item.children[i]);
         }
         walk(root);
         return found;
+    }
+    // Every card with this title the page has instantiated, with the
+    // stick row (StickListPage's delegateRoot, the nearest ancestor that
+    // carries a libraryId) it sits in.
+    function cardsWithRows(root, title) {
+        var all = [];
+        function rowOf(item) {
+            for (var p = item; p && p !== root; p = p.parent) {
+                if (p.libraryId !== undefined) return p;
+            }
+            return null;
+        }
+        function walk(item) {
+            if (!item) return;
+            if (item.cardTitle !== undefined && String(item.cardTitle) === title) {
+                var row = rowOf(item);
+                if (row !== null) all.push({card: item, row: row});
+                return;
+            }
+            for (var i = 0; i < item.children.length; ++i) walk(item.children[i]);
+        }
+        walk(root);
+        return all;
+    }
+    function cardFor(root, title, libraryId) {
+        var hits = cardsWithRows(root, title).filter(function(h) { return String(h.row.libraryId) === libraryId; });
+        return hits.length > 0 ? hits[0].card : null;
+    }
+    // The model row of a library, whether or not the list has built it.
+    function rowIndexOf(media, list, libraryId) {
+        for (var i = 0; i < list.count; ++i) {
+            if (String(media.sticks.get(i).libraryId) === libraryId) return i;
+        }
+        return -1;
+    }
+    // A click can only be trusted on a card inside the list's viewport
+    // (it clips, below the page header): a card between the two is drawn
+    // nowhere and a click on it goes nowhere. A row taller than the
+    // viewport gets the card itself centred.
+    function keepInsideList(list, card) {
+        var inList = card.mapToItem(list, 0, 0);
+        if (inList.y < 0 || inList.y + card.height > list.height) {
+            var y = card.mapToItem(list.contentItem, 0, 0).y;
+            list.contentY = Math.max(0, Math.min(y - (list.height - card.height) / 2, list.contentHeight - list.height));
+            waitForRendering(list);
+            inList = card.mapToItem(list, 0, 0);
+        }
+        verify(inList.y >= 0 && inList.y + card.height <= list.height,
+               "the card is inside the list's viewport (y " + inList.y + ", height " + card.height
+               + ", viewport " + list.height + ")");
     }
 
     function test_02_firstStageRefusedThenRemoveLock() {
