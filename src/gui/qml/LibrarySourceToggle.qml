@@ -103,15 +103,16 @@ ComboBox {
 
     // A catalog's glyph beside its name, both centred in the row as the
     // name always was, and the glyph then moved so its ink is centred on
-    // the name's capitals. The glyphs come from Noto Sans Symbols2, whose
-    // metrics are not the UI font's: centring the two text boxes left every
+    // the name's capitals. The glyphs come from Noto Sans Symbols2 (bundled,
+    // see Theme.symbolFamily), whose metrics are not the UI font's:
+    // centring the two text boxes left every
     // glyph 1.5 to 2.5 px above the name, and sitting both on one baseline
     // instead lifted the whole text about 2 px in the box (both measured in
     // tst_LibrarySourceToggle.qml).
     component CatalogGlyph: Label {
         id: glyphLabel
         required property Item nameLabel
-        font.family: "Noto Sans Symbols2"
+        font.family: Theme.symbolFamily
         color: Theme.text
         Layout.alignment: Qt.AlignVCenter
         TextMetrics { id: glyphInk; font: glyphLabel.font; text: glyphLabel.text }

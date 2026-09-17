@@ -85,6 +85,12 @@ License: CC-BY-SA-4.0
 # Copied unmodified from KDE's breeze-icons by tools/update-breeze-icons.sh,
 # which lists each file's upstream path. Unmodified so they can be refreshed
 # from a newer release; the app tints them when drawing.
+Files: src/gui/qml/fonts/NotoSansSymbols2-Seabass.ttf
+Copyright: 2017 Google Inc.
+License: OFL-1.1
+Comment: Subset of Noto Sans Symbols2 2.003 to U+25C8, U+25CE and U+2B21
+ (pyftsubset, all name IDs and layout features kept).
+
 Files: src/gui/qml/icons/breeze/*
 Copyright: 2014-2026 The KDE Visual Design Group and breeze-icons contributors
 License: LGPL-3.0-or-later

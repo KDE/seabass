@@ -34,7 +34,7 @@ RowLayout {
             spacing: 4
             Label {
                 text: btn.glyph
-                font.family: "Noto Sans Symbols2"
+                font.family: Theme.symbolFamily
                 color: btn.checked ? Theme.text : btn.palette.buttonText
             }
             Label {

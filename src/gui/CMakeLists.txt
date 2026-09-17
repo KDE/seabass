@@ -253,6 +253,12 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/view-sort-descending.svg
     qml/icons/breeze/window-close.svg
 )
+# The three catalog glyphs (LibrarySourceToggle, FormatToggle), subset
+# from Noto Sans Symbols2 so they render the same on every platform
+# instead of in whatever fallback font the system picks.
+set(SEABASS_GUI_FONTS
+    qml/fonts/NotoSansSymbols2-Seabass.ttf
+)
 # Relative here (qt_add_qml_module derives each file's resource path from
 # its path relative to the calling directory); the parent gets them
 # re-rooted so the test module in the top-level directory resolves them.
@@ -260,10 +266,13 @@ set(SEABASS_GUI_QML_FILES_FROM_ROOT ${SEABASS_GUI_QML_FILES})
 list(TRANSFORM SEABASS_GUI_QML_FILES_FROM_ROOT PREPEND "src/gui/")
 set(SEABASS_GUI_ICONS_FROM_ROOT ${SEABASS_GUI_ICONS})
 list(TRANSFORM SEABASS_GUI_ICONS_FROM_ROOT PREPEND "src/gui/")
+set(SEABASS_GUI_FONTS_FROM_ROOT ${SEABASS_GUI_FONTS})
+list(TRANSFORM SEABASS_GUI_FONTS_FROM_ROOT PREPEND "src/gui/")
 set(SEABASS_GUI_SOURCES_FROM_ROOT ${SEABASS_GUI_SOURCES})
 list(TRANSFORM SEABASS_GUI_SOURCES_FROM_ROOT PREPEND "src/gui/")
 set(SEABASS_GUI_QML_FILES_FROM_ROOT ${SEABASS_GUI_QML_FILES_FROM_ROOT} PARENT_SCOPE)
 set(SEABASS_GUI_ICONS_FROM_ROOT ${SEABASS_GUI_ICONS_FROM_ROOT} PARENT_SCOPE)
+set(SEABASS_GUI_FONTS_FROM_ROOT ${SEABASS_GUI_FONTS_FROM_ROOT} PARENT_SCOPE)
 set(SEABASS_GUI_SOURCES_FROM_ROOT ${SEABASS_GUI_SOURCES_FROM_ROOT} PARENT_SCOPE)
 
 qt_add_qml_module(seabass
@@ -274,6 +283,7 @@ qt_add_qml_module(seabass
     RESOURCES
         qml/icons/seabass_soundbass.svg
         ${SEABASS_GUI_ICONS}
+        ${SEABASS_GUI_FONTS}
     SOURCES
         ${SEABASS_GUI_SOURCES}
 )

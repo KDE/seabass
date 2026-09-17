@@ -409,6 +409,15 @@ QtObject {
     readonly property int cardTitleWeight: Font.DemiBold
     readonly property real cardTitleSize: baseFontPointSize * 1.15
     readonly property string dataFamily: "IBM Plex Mono"
+    // The catalog glyphs (LibrarySourceToggle, FormatToggle): the one face
+    // that is bundled, a three-glyph subset of Noto Sans Symbols2, because
+    // their centring is measured against its metrics and a system
+    // fallback (macOS and Windows have no Noto) puts them off by pixels.
+    readonly property FontLoader symbolFont: FontLoader {
+        source: "qrc:/qt/qml/SeabassGui/qml/fonts/NotoSansSymbols2-Seabass.ttf"
+    }
+    readonly property string symbolFamily: symbolFont.status === FontLoader.Ready
+        ? symbolFont.font.family : "Noto Sans Symbols2"
     readonly property real dataSize: baseFontPointSize * 1.8
     readonly property real tableHeaderSize: baseFontPointSize * 0.85
 

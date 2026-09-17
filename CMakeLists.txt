@@ -757,7 +757,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # screenshot and mistrusts it.
         set_source_files_properties(src/gui/qml/icons/seabass_soundbass.svg
             PROPERTIES QT_RESOURCE_ALIAS qml/icons/seabass_soundbass.svg)
-        foreach(icon IN LISTS SEABASS_GUI_ICONS_FROM_ROOT)
+        foreach(icon IN LISTS SEABASS_GUI_ICONS_FROM_ROOT SEABASS_GUI_FONTS_FROM_ROOT)
             string(REPLACE "src/gui/" "" iconAlias "${icon}")
             set_source_files_properties(${icon} PROPERTIES QT_RESOURCE_ALIAS ${iconAlias})
         endforeach()
@@ -769,6 +769,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
             RESOURCES
                 src/gui/qml/icons/seabass_soundbass.svg
                 ${SEABASS_GUI_ICONS_FROM_ROOT}
+                ${SEABASS_GUI_FONTS_FROM_ROOT}
             SOURCES
                 ${SEABASS_GUI_SOURCES_FROM_ROOT}
         )
