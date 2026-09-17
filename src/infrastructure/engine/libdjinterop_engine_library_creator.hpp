@@ -35,6 +35,7 @@ struct EngineLibraryCreationResult
     int cuesCopied = 0;
     int playlistsCreated = 0;  // folders included; they are playlists too
     int artworkCopied = 0;     // tracks that ended up with a cover
+    int tracksLeftForDeviceAnalysis = 0;  // tracks the player is asked to analyse itself
     int tracksTotal = 0;       // what was asked for, created or not
     bool cancelled = false;    // stopped via the token; nothing was written to `directory`
     std::string errorMessage;  // empty on success
@@ -71,11 +72,14 @@ struct EngineLibraryCreationResult
 // resolved, which is a file on the same stick.
 //
 // Deliberately NOT carried over in this version: a real per-beat grid,
-// waveform data (reading
-// rekordbox's own waveform preview already works elsewhere in this
-// project, but no rekordbox->Engine waveform format conversion exists
-// yet). A player therefore shows these tracks without artwork: confirmed
-// on a Prime 4, which plays them perfectly and displays no cover.
+// and waveform data (reading rekordbox's own waveform preview already
+// works elsewhere in this project, but no rekordbox->Engine waveform
+// format conversion exists yet). Rather than leave the player with an
+// empty waveform for ever, the created tracks are handed to it the way
+// Engine's own rekordbox import hands over its own: marked unanalysed,
+// with the analysis columns empty, so the player runs its own analysis
+// and draws the waveform with Denon's algorithms. The beatgrid is part
+// of that analysis and is recomputed with it.
 class EngineLibraryCreator
 {
 public:

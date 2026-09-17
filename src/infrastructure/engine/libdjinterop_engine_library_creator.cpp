@@ -361,6 +361,101 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
     return given;
 }
 
+// Hands the waveform to the player, by leaving the tracks looking
+// exactly like the ones Engine's own rekordbox import leaves behind.
+//
+// This project has no rekordbox->Engine waveform conversion, so every
+// track it creates reaches the stick without one. libdjinterop writes a
+// PerformanceData row for each track anyway and marks it analysed
+// (v3/track_impl.cpp hard-codes is_analyzed = true), so the player
+// believes the analysis is already done, never runs its own, and shows
+// an empty waveform for ever. That is the whole reason a created
+// library plays fine but draws nothing.
+//
+// A Denon-written stick shows what the other state looks like: of its
+// 1566 tracks, 1219 are imported-but-not-yet-analysed, and every one of
+// them has isAnalyzed = 0 with NULL in trackData, overviewWaveFormData
+// and beatData, while quickCues and loops still carry the cues the
+// import brought over. The remaining 347 have been analysed on the
+// device and have all three columns filled in. So the player treats
+// that combination as work still to do, and it keeps the cues.
+//
+// The beatgrid goes with them, because it lives in beatData. The player
+// recomputes it while analysing, as it does for its own imports, and
+// ours was only ever a two-point approximation from BPM and duration
+// anyway. Everything the player cannot derive stays where it is: title,
+// artist, bpm, key, rating, length and the cues.
+//
+// When this project can convert a real waveform, this pass has to
+// become conditional on not having one, rather than unconditional as it
+// is here.
+//
+// Returns the number of tracks handed over, or -1 if the database could
+// not be opened. A failure costs the waveform display and nothing else,
+// so it is reported as a count rather than as an error, the same way
+// cover art is.
+int markTracksForDeviceAnalysis(const std::filesystem::path &databaseDirectory)
+{
+    const std::filesystem::path databaseFile = engineDatabaseFile(databaseDirectory);
+    if (databaseFile.empty()) {
+        return -1;
+    }
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(databaseFile.string().c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    const auto run = [db](const char *sql) {
+        return sqlite3_exec(db, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+    };
+
+    // 2.x and 3.x only. A 1.x library keeps its performance data -- the
+    // flag included -- in a second database file beside this one, and no
+    // 1.x hardware has been available to check what a track waiting for
+    // analysis looks like there, so those libraries are left exactly as
+    // libdjinterop wrote them.
+    //
+    // Prepared by hand rather than through local::Statement: that one
+    // throws when a statement will not prepare, and an exception leaving
+    // here would close nothing and turn a missing waveform into a failed
+    // creation with nothing copied to the stick -- the opposite of what
+    // this function promises.
+    bool v2OrLater = false;
+    {
+        sqlite3_stmt *shape = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT count(*) FROM pragma_table_info('Track') WHERE name = 'isAnalyzed';",
+                                -1, &shape, nullptr)
+                == SQLITE_OK
+            && sqlite3_step(shape) == SQLITE_ROW) {
+            v2OrLater = sqlite3_column_int(shape, 0) == 1;
+        }
+        sqlite3_finalize(shape);
+    }
+    if (!v2OrLater) {
+        sqlite3_close(db);
+        return 0;
+    }
+
+    // The blobs first: a track that is already marked unanalysed while
+    // still carrying analysis data would be the one state the player has
+    // never been observed in.
+    int marked = -1;
+    if (run("BEGIN;") &&
+        run("UPDATE PerformanceData SET trackData = NULL, overviewWaveFormData = NULL, "
+            "beatData = NULL;") &&
+        run("UPDATE Track SET isAnalyzed = 0;")) {
+        marked = sqlite3_changes(db);
+        if (!run("COMMIT;")) {
+            marked = -1;
+        }
+    }
+    if (marked < 0) {
+        run("ROLLBACK;");
+    }
+    sqlite3_close(db);
+    return marked;
+}
+
 // Puts the Information row back at id 1, where Engine keeps it.
 //
 // The Information table is the first thing anything reading an Engine
@@ -608,6 +703,12 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
         // the covers, so it is reported as a count rather than an error.
         const int artworkGiven = copyArtworkInto(scratchDir, artworkByTrackPath);
         result.artworkCopied = artworkGiven < 0 ? 0 : artworkGiven;
+
+        // Also on the scratch copy, and also not a condition of the
+        // library working: without this the player believes every track
+        // has already been analysed and draws an empty waveform.
+        const int marked = markTracksForDeviceAnalysis(scratchDir);
+        result.tracksLeftForDeviceAnalysis = marked < 0 ? 0 : marked;
 
         // One pass of large sequential writes onto the real target, instead
         // of the many small fsync'd writes the per-track loop above would

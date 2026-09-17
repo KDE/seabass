@@ -226,6 +226,65 @@ int main()
         std::cout << "case 5 (playlists, their folders and their order) OK\n";
     }
 
+    // The player is asked to do the analysis itself. This project has no
+    // waveform to give -- no rekordbox->Engine waveform conversion exists
+    // yet -- and libdjinterop marks every track it creates as analysed,
+    // which leaves a player believing there is nothing to do and drawing
+    // an empty waveform for ever. A created library therefore goes out in
+    // the state Engine's own rekordbox import leaves behind: unanalysed,
+    // with the analysis columns empty and the cues still there.
+    {
+        const EngineSchemaGeneration modern[] = {EngineSchemaGeneration::V2, EngineSchemaGeneration::V3};
+        int which = 0;
+        for (EngineSchemaGeneration generation : modern) {
+            fs::path path = root / ("Engine Library analysis" + std::to_string(++which));
+            std::vector<Track> tracks = {makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string())};
+            auto result = EngineLibraryCreator::create(path.string(), tracks, generation);
+            assert(result.errorMessage.empty());
+            assert(result.tracksCreated == 1);
+            assert(result.tracksLeftForDeviceAnalysis == result.tracksCreated);
+
+            sqlite3 *db = nullptr;
+            const std::string dbPath = (path / "Database2" / "m.db").string();
+            assert(sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+            const auto count = [db](const char *sql) {
+                sqlite3_stmt *stmt = nullptr;
+                assert(sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK);
+                assert(sqlite3_step(stmt) == SQLITE_ROW);
+                const int value = sqlite3_column_int(stmt, 0);
+                sqlite3_finalize(stmt);
+                return value;
+            };
+            assert(count("SELECT count(*) FROM Track;") == 1);
+            assert(count("SELECT count(*) FROM Track WHERE isAnalyzed <> 0;") == 0);
+            assert(count("SELECT count(*) FROM PerformanceData WHERE trackData IS NOT NULL "
+                          "OR overviewWaveFormData IS NOT NULL OR beatData IS NOT NULL;")
+                   == 0);
+            // The cues are not analysis output and must survive it.
+            assert(count("SELECT count(*) FROM PerformanceData WHERE quickCues IS NOT NULL;") == 1);
+            sqlite3_close(db);
+
+            // And the library still reads back, NULL analysis columns and all,
+            // exactly as a Denon-written stick full of them does.
+            LibdjinteropEngineReader reader(path.string());
+            auto readBack = seabass::application::ScanLibrary(reader).execute();
+            assert(readBack.size() == 1);
+            assert(readBack.front().title == "Song One");
+            assert(readBack.front().cues.size() == 2);
+        }
+
+        // A 1.x library keeps this flag somewhere else entirely, and no 1.x
+        // hardware has been available to check it, so it is left alone --
+        // and says so rather than claiming tracks it did not touch.
+        fs::path v1Path = root / "Engine Library analysis v1";
+        std::vector<Track> v1Tracks = {makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string())};
+        auto v1Result = EngineLibraryCreator::create(v1Path.string(), v1Tracks, EngineSchemaGeneration::V1);
+        assert(v1Result.errorMessage.empty());
+        assert(v1Result.tracksCreated == 1);
+        assert(v1Result.tracksLeftForDeviceAnalysis == 0);
+        std::cout << "case (tracks handed to the player for analysis) OK\n";
+    }
+
     // Cancel between two tracks: nothing at all lands on the target
     // (the scratch build is thrown away), and the result says so.
     {
