@@ -17,6 +17,12 @@
 
 #include <libudev.h>
 #include <memory>
+#elif defined(__APPLE__)
+#include <sys/mount.h>
+#include <sys/param.h>
+#include <sys/statvfs.h>
+
+#include "infrastructure/media/macos_disk_description.hpp"
 #elif defined(_WIN32)
 #include <windows.h>
 #endif
@@ -208,6 +214,49 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
         std::snprintf(text, sizeof(text), "%08X", static_cast<unsigned int>(volumeSerial));
         info.stickIdentifier = text;
     } else {
+        info.stickIdentifier = fallbackIdentifier(stickLabel, info.totalBytes);
+    }
+    return info;
+}
+
+#elif defined(__APPLE__)
+
+// statfs names the filesystem and the device behind a mount point, and
+// DiskArbitration (the same description the locator reads) knows the
+// volume's UUID and the drive's serial. Without this the whole struct was
+// zeroes: every stick identified as "<label>-0", the weakest identity
+// there is, so two sticks sharing a label were one stick to the edit
+// locks and to every backup record written on a Mac.
+StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std::string &stickLabel)
+{
+    StickHardwareInfo info;
+
+    struct statfs fs{};
+    if (::statfs(mountPoint.c_str(), &fs) == 0) {
+        info.filesystem = lower(fs.f_fstypename);  // "msdos", "exfat", "apfs"
+    }
+    {
+        struct statvfs vfs{};
+        if (::statvfs(mountPoint.c_str(), &vfs) == 0) {
+            info.totalBytes = static_cast<std::uint64_t>(vfs.f_blocks) * vfs.f_frsize;
+            info.freeBytes = static_cast<std::uint64_t>(vfs.f_bavail) * vfs.f_frsize;
+            info.clusterBytes = vfs.f_frsize;
+        }
+    }
+    if (fs.f_mntfromname[0] != '\0') {
+        if (const auto bsdName = media::bsdNameFromDevicePath(fs.f_mntfromname)) {
+            if (const auto disk = media::describeDisk(*bsdName)) {
+                if (!disk->volumeUuid.empty()) {
+                    info.stickIdentifier = disk->volumeUuid;
+                }
+            }
+        }
+    }
+    // The USB link speed has no equivalent of sysfs's "speed" attribute
+    // here; IOKit reports a device's speed class rather than the
+    // negotiated rate, so the performance page says nothing instead of
+    // guessing.
+    if (info.stickIdentifier.empty()) {
         info.stickIdentifier = fallbackIdentifier(stickLabel, info.totalBytes);
     }
     return info;
