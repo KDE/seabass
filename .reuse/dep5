@@ -55,6 +55,7 @@ License: CC-BY-SA-4.0
 # --- Configuration with no comment syntax we can rely on -----------------
 Files: .gitignore
  .gitlab-ci.yml
+ .craft.ini
  docs/design/stick-backup-mockups/canvas.json
  docs/design/stick-performance-mockups/canvas.json
 Copyright: 2026 Sebastian Kügler <sebas@kde.org>
