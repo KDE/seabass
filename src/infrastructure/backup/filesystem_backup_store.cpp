@@ -4,6 +4,7 @@
 
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 
+#include "infrastructure/backup/stick_space.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/file_clock.hpp"
 #include "infrastructure/work_counters.hpp"
@@ -15,6 +16,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <limits>
+#include <map>
+#include <memory>
 #include <fstream>
 #include <set>
 #include <exception>
@@ -136,6 +140,11 @@ Manifest readManifest(const fs::path &dir)
     return manifest;
 }
 
+std::string megabytes(std::uint64_t bytes)
+{
+    return std::format("{:.1f}", static_cast<double>(bytes) / (1024.0 * 1024.0));
+}
+
 std::string originValue(BackupOrigin origin)
 {
     return origin == BackupOrigin::UserRequested ? "user" : "automatic";
@@ -231,6 +240,13 @@ void sweepDeadRecords(const fs::path &base)
 }
 
 }  // namespace
+
+struct FilesystemBackupStore::OpenedArchive
+{
+    std::unique_ptr<stick_backup::PosixArchiveFile> file;
+    std::optional<stick_backup::Zip64Reader> reader;  // points into *file
+    std::vector<std::size_t> indexes;                 // one per manifest entry, in order
+};
 
 // The stick this store lives on: baseDirectory is <stick>/Seabass/backups.
 fs::path FilesystemBackupStore::stickRoot() const
@@ -481,86 +497,51 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     return record;
 }
 
-bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
-                                               const std::vector<std::pair<std::string, std::string>> &entries)
+bool FilesystemBackupStore::restoreFromArchive(const OpenedArchive &opened,
+                                               const std::vector<std::pair<std::string, std::string>> &entries,
+                                               std::string *failure, std::size_t *filesWritten)
 {
+    *filesWritten = 0;
     std::error_code ec;
-    if (!fs::exists(dir / ArchiveFileName, ec)) {
-        return false;
-    }
-    stick_backup::PosixArchiveFile file(dir / ArchiveFileName,
-                                        stick_backup::PosixArchiveFile::OpenMode::ReadOnly);
-    std::string error;
-    auto reader = stick_backup::Zip64Reader::tryOpen(file, &error);
-    if (!reader.has_value()) {
-        return false;  // damaged archive: say so rather than restore a prefix
-    }
-
     std::set<fs::path> inArchive;
     for (const auto &[entryName, originalPath] : entries) {
         inArchive.insert(resolveRecordedPath(originalPath));
     }
-    // Every entry is found and checked before anything is written. A record
-    // restores whole or not at all: Undo Last Save takes true for "all of
-    // it is back", and this used to return true once any one file was
-    // written -- skipping an entry that was missing or failed its checksum --
-    // which left a stick half in each state behind a successful undo.
-    // Refusing a mismatch still holds too: bytes that fail their own
-    // checksum are never written over a live file.
-    std::vector<std::size_t> indexes;
-    indexes.reserve(entries.size());
-    for (const auto &[entryName, originalPath] : entries) {
-        auto index = reader->findEntry(entryName);
-        if (!index.has_value()) {
-            return false;
-        }
-        try {
-            if (!reader->verifyCrc(*index)) {
-                return false;
-            }
-        } catch (const std::exception &) {
-            return false;  // damaged beyond inflating
-        }
-        indexes.push_back(*index);
-    }
-
-    // A write that fails part-way still reports false, so the caller rolls
-    // back what did land (Undo Last Save protects every file first).
-    bool allRestored = !entries.empty();
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const auto &[entryName, originalPath] = entries[i];
-        const std::optional<std::size_t> index = indexes[i];
+        const std::size_t index = opened.indexes[i];
+        // Stopped at the first failure, so the reason names it: going on
+        // would let a later, different failure overwrite the reason (a
+        // stick out of room reported as a damaged backup) and put back
+        // more files the caller then has to roll back.
         std::string contents;
         try {
-            contents = reader->readEntryToString(*index);
-        } catch (const std::exception &) {
-            allRestored = false;
-            continue;
+            contents = opened.reader->readEntryToString(index);
+        } catch (const std::exception &e) {
+            *failure = entryName + " in the backup's archive cannot be read: " + e.what();
+            return false;
         }
         const fs::path target = resolveRecordedPath(originalPath);
         fs::create_directories(target.parent_path(), ec);
-        const bool restored = writeFileDurablyAtomic(target.string(), contents);
-        // The file's own modification time too, not the moment of the
-        // restore. An undo that leaves "now" on every file it put back makes
-        // the stick look freshly edited: the metadata merge rule then takes
-        // the stick's side over the store, and the backup advice calls the
-        // stick the newest copy of its library. Backups taken before their
-        // times were recorded correctly carry 1980 or nothing; those are
-        // left alone rather than dated back to then.
-        if (restored) {
-            constexpr std::int64_t Year2000 = 946'684'800;
-            const std::int64_t recorded = reader->entries()[*index].mtimeUnix;
-            if (recorded > Year2000) {
-                std::error_code timeEc;
-                // Header-only toFileClock(), as the write side does, for
-                // the same reason: the file clock's epoch is not the Unix
-                // one (MSVC counts from 1601), and this file does not
-                // depend on stick_tree_walker.cpp.
-                const std::chrono::system_clock::time_point asSystem{std::chrono::seconds(recorded)};
-                fs::last_write_time(target, infrastructure::toFileClock(asSystem), timeEc);
-            }
+        if (!writeFileDurablyAtomic(target.string(), contents)) {
+            // A write, not a read: the archive was fine, the volume was not.
+            *failure = "could not write " + target.string() + " (" + megabytes(availableBytes(target.parent_path()))
+                       + " MB free there)";
+            return false;
         }
-        if (restored && target.extension() == ".db") {
+        ++*filesWritten;
+        constexpr std::int64_t Year2000 = 946'684'800;
+        const std::int64_t recorded = opened.reader->entries()[index].mtimeUnix;
+        if (recorded > Year2000) {
+            std::error_code timeEc;
+            // Inline clock_cast, as the write side does, for the same
+            // reason: the file clock's epoch is not the Unix one (MSVC
+            // counts from 1601), and this file does not depend on
+            // stick_tree_walker.cpp.
+            const std::chrono::system_clock::time_point asSystem{std::chrono::seconds(recorded)};
+            fs::last_write_time(target, std::chrono::clock_cast<fs::file_time_type::clock>(asSystem), timeEc);
+        }
+        if (target.extension() == ".db") {
             // A database put back next to a -wal or -journal left by a
             // crash mid-save would have those frames replayed over it on
             // the next open: the restore silently undone, or worse, a
@@ -575,9 +556,8 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
                 }
             }
         }
-        allRestored = restored && allRestored;
     }
-    return allRestored;
+    return true;
 }
 
 FilesystemBackupStore::DirectoryState &FilesystemBackupStore::stateFor(const fs::path &dir)
@@ -741,18 +721,33 @@ bool FilesystemBackupStore::isRestorable(const std::string &id) const
 
 bool FilesystemBackupStore::restore(const std::string &id)
 {
+    m_lastRestoreError.clear();
+    m_lastPreRestoreId.reset();
     fs::path dir = fs::path(m_baseDirectory) / id;
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
+        m_lastRestoreError = "backup " + id + " is not on the stick";
         return false;
     }
     auto manifest = readManifest(dir);
     if (manifest.entries.empty()) {
+        m_lastRestoreError = "backup " + id + " lists no files";
         return false;  // nothing was ever backed up for this id
     }
     if (manifest.version != ManifestFormatVersion) {
         // Not a shape this build wrote: refuse rather than misinterpret
         // it. This is the only reason the version line still exists.
+        m_lastRestoreError = "backup " + id + " is not a record this build wrote";
+        return false;
+    }
+
+    // The archive first, before anything is copied or written: a backup
+    // that is missing, damaged or short of an entry is refused with
+    // nothing else done -- the pre-restore copy below used to be made
+    // first, and stayed on the stick, a permanent record of files that
+    // were never touched.
+    OpenedArchive opened;
+    if (!openArchive(dir, manifest.entries, &m_lastRestoreError, opened)) {
         return false;
     }
 
@@ -768,13 +763,154 @@ bool FilesystemBackupStore::restore(const std::string &id)
             currentPaths.push_back(target.string());
         }
     }
+
+    // Refused up front when the stick cannot hold it: putting the files
+    // back writes each one whole beside the old (writeFileDurablyAtomic,
+    // a temporary file then a rename) and first keeps a copy of what it
+    // overwrites, so the room it needs is known before it starts. On a
+    // nearly full stick that copy used to be the thing that made the
+    // restore impossible, and the failure then read as a damaged backup
+    // (issue #27). Measured on every volume involved -- the backups
+    // directory's, and each target's, since a recorded path can be
+    // absolute and off the stick -- and the smallest counts.
+    // A volume that cannot be measured is left out rather than read as
+    // full: before this check existed such a restore simply ran, and a
+    // write that then fails still says so.
+    const std::uint64_t needed = restoreSpaceNeeded(manifest.entries, opened);
+    std::optional<std::uint64_t> available;
+    const auto measure = [&](const fs::path &path) {
+        std::error_code spaceEc;
+        const fs::space_info space = fs::space(path, spaceEc);
+        if (!spaceEc) {
+            available = std::min<std::uint64_t>(available.value_or(space.available), space.available);
+        }
+    };
+    measure(m_baseDirectory);
+    for (const std::string &path : currentPaths) {
+        measure(fs::path(path).parent_path());
+    }
+    if (available && *available < needed) {
+        m_lastRestoreError = std::format("not enough space on the stick to put {} file(s) back: needs about {} MB, {} MB free",
+                                         manifest.entries.size(), megabytes(needed), megabytes(*available));
+        return false;
+    }
+    // Only now inflate every entry to check it: a record refused for space
+    // (a large sync, on a USB 2 stick) is refused without that wait.
+    if (!verifyArchive(manifest.entries, &m_lastRestoreError, opened)) {
+        return false;
+    }
     if (!currentPaths.empty()) {
         // The user asked for this restore, so the copy of what it is
         // about to overwrite is theirs and Seabass never releases it.
-        backup(currentPaths, "pre-restore", BackupOrigin::UserRequested);
+        try {
+            m_lastPreRestoreId = backup(currentPaths, "pre-restore", BackupOrigin::UserRequested).id;
+        } catch (const std::exception &e) {
+            m_lastRestoreError = std::string("could not keep a copy of what the restore would overwrite: ") + e.what();
+            return false;
+        }
     }
 
-    return restoreFromArchive(dir, manifest.entries);
+    std::size_t filesWritten = 0;
+    const bool restored = restoreFromArchive(opened, manifest.entries, &m_lastRestoreError, &filesWritten);
+    if (!restored && filesWritten == 0 && m_lastPreRestoreId) {
+        // Nothing was overwritten, so the copy protects nothing -- and on
+        // a stick that has just run out of room it would be the thing
+        // taking the room. Once a file has been put back it stays: it is
+        // the last safe state if the caller's rollback fails too.
+        remove(*m_lastPreRestoreId);
+        m_lastPreRestoreId.reset();
+    }
+    return restored;
+}
+
+bool FilesystemBackupStore::openArchive(const fs::path &dir, const std::vector<std::pair<std::string, std::string>> &entries,
+                                        std::string *failure, OpenedArchive &opened) const
+{
+    std::error_code ec;
+    if (!fs::exists(dir / ArchiveFileName, ec)) {
+        *failure = "the backup's archive is missing";
+        return false;
+    }
+    try {
+        opened.file = std::make_unique<stick_backup::PosixArchiveFile>(dir / ArchiveFileName,
+                                                                        stick_backup::PosixArchiveFile::OpenMode::ReadOnly);
+        std::string openError;
+        opened.reader = stick_backup::Zip64Reader::tryOpen(*opened.file, &openError);
+        if (!opened.reader.has_value()) {
+            *failure = "the backup's archive is damaged: " + openError;
+            return false;
+        }
+        for (const auto &[entryName, originalPath] : entries) {
+            auto index = opened.reader->findEntry(entryName);
+            if (!index.has_value()) {
+                *failure = "the backup's archive lacks " + entryName;
+                return false;
+            }
+            opened.indexes.push_back(*index);
+        }
+    } catch (const std::exception &e) {
+        *failure = std::string("the backup's archive cannot be read: ") + e.what();
+        return false;
+    }
+    return true;
+}
+
+bool FilesystemBackupStore::verifyArchive(const std::vector<std::pair<std::string, std::string>> &entries,
+                                          std::string *failure, const OpenedArchive &opened) const
+{
+    try {
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            if (!opened.reader->verifyCrc(opened.indexes[i])) {
+                *failure = entries[i].first + " in the backup's archive is damaged (checksum)";
+                return false;
+            }
+        }
+    } catch (const std::exception &e) {
+        *failure = std::string("the backup's archive cannot be read: ") + e.what();
+        return false;
+    }
+    return true;
+}
+
+std::uint64_t FilesystemBackupStore::restoreSpaceNeeded(const std::vector<std::pair<std::string, std::string>> &entries,
+                                                        const OpenedArchive &opened) const
+{
+    // A plain sum of what comes back plus what is there now overstated the
+    // peak by about half -- the pre-restore copy is deflated, and each file
+    // is renamed into place before the next temporary is written -- and
+    // refused undos that would have fitted. The bound here is what the
+    // peak cannot exceed: the copy at the files' own size, one temporary
+    // file the size of the largest entry, the growth of the files that
+    // come back bigger, and a margin for the record's own files and the
+    // clusters each written file rounds up to -- per file, since a sync
+    // record holds hundreds and a cue record two.
+    constexpr std::uint64_t HeadroomBase = 256 * 1024;
+    constexpr std::uint64_t HeadroomPerFile = 64 * 1024;
+    std::error_code ec;
+    std::uint64_t current = 0;
+    std::uint64_t largest = 0;
+    std::uint64_t growth = 0;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const std::uint64_t comesBack = opened.reader->entries()[opened.indexes[i]].size;
+        const fs::path target = resolveRecordedPath(entries[i].second);
+        const std::uint64_t thereNow = fs::is_regular_file(target, ec) ? fs::file_size(target, ec) : 0;
+        current += thereNow;
+        largest = std::max(largest, comesBack);
+        growth += comesBack > thereNow ? comesBack - thereNow : 0;
+    }
+    return current + largest + growth + HeadroomBase + HeadroomPerFile * entries.size();
+}
+
+std::optional<std::uint64_t> FilesystemBackupStore::restoreSpaceNeeded(const std::string &id) const
+{
+    const fs::path dir = fs::path(m_baseDirectory) / id;
+    const Manifest manifest = readManifest(dir);
+    OpenedArchive opened;
+    std::string ignored;
+    if (!openArchive(dir, manifest.entries, &ignored, opened)) {
+        return std::nullopt;  // a figure without the archive's sizes would read as a real one
+    }
+    return restoreSpaceNeeded(manifest.entries, opened);
 }
 
 bool FilesystemBackupStore::remove(const std::string &id)

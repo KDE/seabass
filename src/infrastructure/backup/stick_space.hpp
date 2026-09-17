@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <system_error>
 
 namespace seabass::infrastructure::backup
 {
@@ -49,5 +50,15 @@ struct StickSpace
 // back all zeros, which reads as "nothing to warn about" rather than as a
 // warning nobody can act on.
 StickSpace measureStickSpace(const std::filesystem::path &stickRoot);
+
+// The bytes a write at `path` can use, 0 when the volume cannot be asked:
+// for a caller that would rather refuse than write on a guess. (Stick
+// restore uses it; clone, compact and backup still carry their own.)
+inline std::uint64_t availableBytes(const std::filesystem::path &path)
+{
+    std::error_code ec;
+    const std::filesystem::space_info info = std::filesystem::space(path, ec);
+    return ec ? 0 : info.available;
+}
 
 }  // namespace seabass::infrastructure::backup

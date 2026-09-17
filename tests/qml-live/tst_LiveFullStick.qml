@@ -34,10 +34,10 @@ TestCase {
     Component { id: scanController; ScanController {} }
     Component { id: addCueComponent; AddCueController {} }
 
-    function test_saveOnAFullStickFailsCleanly() {
-        if (typeof liveRigFullStick === "undefined" || !liveRigFullStick) {
-            skip("SEABASS_RIG_FULL_STICK is not set: the rig fills the stick for this one");
-        }
+    // Shared by both checks: the stick's rekordbox library scanned, one
+    // track picked, a session opened and measured, a memory cue staged,
+    // and the save run. What the save did is the checks' business.
+    function stageOneCueAndSave() {
         verify(stickRoot.length > 0, "SEABASS_LIVE_STICK names the stick this runs against");
         testCase.libraryId = EditSessionRegistry.libraryIdForPath(rekordboxPath);
         // Adding a cue, not removing stray ones: every library can take a
@@ -93,6 +93,15 @@ TestCase {
         tryVerify(function() { return finished.count > 0; }, 900000);
         var summary = finished.signalArguments[0][0];
         console.log("  save on a full stick: " + Live.summaryLine(summary));
+        return {s: s, staged: staged, summary: summary, target: target};
+    }
+
+    function test_saveOnAFullStickFailsCleanly() {
+        if (typeof liveRigFullStick === "undefined" || !liveRigFullStick) {
+            skip("SEABASS_RIG_FULL_STICK is not set: the rig fills the stick for this one");
+        }
+        var run = stageOneCueAndSave();
+        var s = run.s, staged = run.staged, summary = run.summary;
 
         // The save must refuse up front (the backup would not fit) or fail
         // part-way, cleanly: never report success while the stick is full,
@@ -149,5 +158,54 @@ TestCase {
         }
         EditSessionRegistry.closeSession(testCase.libraryId);
         verify(!saveFitted, "the save fitted, so the stick was not full: the fill left too much room (see above)");
+    }
+
+    // Issue #27: a save that fitted, and an undo that may not. The rig's
+    // second fill leaves room for the save (about 1.2 MB) and not
+    // necessarily for its undo, which keeps a copy of what it overwrites
+    // and then writes the files back beside the old ones. Either the undo
+    // goes through whole, or it is refused for space up front -- saying
+    // so, never "could not read the backup", and leaving the catalogs
+    // readable and the save as it was.
+    function test_undoOnANearlyFullStick() {
+        if (typeof liveRigFullStick === "undefined" || !liveRigFullStick) {
+            skip("SEABASS_RIG_FULL_STICK is not set: the rig fills the stick for this one");
+        }
+        var run = stageOneCueAndSave();
+        var s = run.s, summary = run.summary;
+        // This is the undo's check, so the save has to have fitted: the
+        // rig leaves room for it on this pass on purpose.
+        compare(summary.error, "", "the save fitted (the rig's second fill leaves room for it)");
+        compare(summary.written, run.staged);
+        verify(s.canUndo === true, "the save left something to undo");
+
+        var undone = createTemporaryObject(spyComponent, testCase, {target: s, signalName: "saveFinished"});
+        s.undoLastSave();
+        tryVerify(function() { return undone.count > 0; }, 600000);
+        var undo = undone.signalArguments[0][0];
+        console.log("  undo on a nearly full stick: " + Live.summaryLine(undo));
+        compare(EditSessionRegistry.anyWriting, false);
+
+        var readBack = createTemporaryObject(scanController, testCase);
+        readBack.scan("rekordbox", rekordboxPath);
+        tryVerify(function() { return readBack.busy === false; }, 300000);
+        verify(readBack.tracks.trackCount() > 0, "the catalogs still read after the undo");
+        console.log("  catalogs still read: " + readBack.tracks.trackCount() + " tracks");
+
+        if (undo.error.length > 0) {
+            verify(undo.error.indexOf("not enough space") >= 0 || undo.error.indexOf("could not write") >= 0
+                   || undo.error.indexOf("could not keep a copy") >= 0,
+                   "an undo that fails on a full stick says the stick is the problem: " + undo.error);
+            verify(undo.error.indexOf("could not read") < 0 && undo.error.indexOf("damaged") < 0,
+                   "and does not blame the backup: " + undo.error);
+            console.log("  refused cleanly; the save stays and the stick's reference restore follows");
+        } else {
+            // A whole undo, or nothing: the runner then checks the catalogs
+            // against the baseline, which a whole undo returns them to.
+            compare(undo.written, undo.total, "an undo that reports success put everything back");
+            verify(undo.written > 0);
+            console.log("  the undo fitted; the catalogs are compared with the baseline next");
+        }
+        EditSessionRegistry.closeSession(testCase.libraryId);
     }
 }

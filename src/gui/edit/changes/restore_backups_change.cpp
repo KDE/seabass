@@ -12,6 +12,7 @@
 #include <QStringList>
 
 #include <string>
+#include <vector>
 
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
@@ -65,10 +66,17 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
     for (auto it = m_backups.rbegin(); it != m_backups.rend(); ++it) {
         infrastructure::backup::FilesystemBackupStore store(it->backupDir.toStdString());
         if (!store.restore(it->id.toStdString())) {
+            // The pre-restore copies of the records that did go through
+            // stay: the save loop rolls those files back next, and if that
+            // fails too the copies are the only record of what was there.
+            // The store removes a copy itself only when its restore wrote
+            // nothing at all.
+            // The store says what went wrong -- a damaged archive and a
+            // stick with no room for the files read the same "false" and
+            // used to be reported alike, as an unreadable backup (#27).
             return ChangeOutcome::failure(
-                QStringLiteral("Undo Last Save could not read backup %1, so it stopped; nothing it had restored "
-                               "was kept.")
-                    .arg(it->id));
+                QStringLiteral("Undo Last Save stopped at backup %1: %2. Nothing it had restored was kept.")
+                    .arg(it->id, QString::fromStdString(store.lastRestoreError())));
         }
         restored++;
     }

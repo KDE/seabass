@@ -814,6 +814,64 @@ int main()
         assert(threw && "an unreadable archive is not appended to");
         assert(readFile(manifest) == manifestBeforeRefusal);
         std::cout << "case: an unreadable archive is not appended to OK\n";
+
+        // Issue #27: restore() says why it failed, and a write that fails
+        // is not reported as a backup that could not be read. Undo on a
+        // nearly full stick used to make its pre-restore copy, run out of
+        // space putting the files back, and tell the user the backup was
+        // unreadable while the archive was intact. The space a restore
+        // needs -- what comes back plus what is there now -- is known
+        // before anything is written, so a stick without it is refused
+        // up front; the arithmetic is checked here, the refusal needs a
+        // full stick (the release rig's F4).
+        {
+            fs::path spaceRoot = root / "space";
+            fs::path big = spaceRoot / "m.db";
+            fs::path small = spaceRoot / "export.pdb";
+            const std::string bigContents = seabass::testing::incompressible(64 * 1024, 3);
+            writeFile(big, bigContents);
+            writeFile(small, std::string(1000, 'p'));
+            FilesystemBackupStore spaceStore((spaceRoot / "Seabass" / "backups").string());
+            auto record = spaceStore.backup({big.string(), small.string()}, "sync");
+            writeFile(big, "ten bytes!");
+            writeFile(small, std::string(20, 'q'));
+            // The peak's upper bound: the copy of what is there now (30
+            // bytes), one temporary the size of the largest entry, the
+            // growth of both files, and the margin.
+            assert(*spaceStore.restoreSpaceNeeded(record.id)
+                       == (10 + 20) + 64 * 1024 + ((64 * 1024 - 10) + (1000 - 20)) + 256 * 1024 + 2 * 64 * 1024
+                   && "what the restore can need at its peak");
+
+            // The files that come back are bigger than the write limit,
+            // the copy of what is there now is not: the pre-restore record
+            // is made, the write back fails, and the reason says so and
+            // names the file. What was there stays whole.
+            const auto xfszHere = signal(SIGXFSZ, SIG_IGN);
+            limitWritesTo(8 * 1024);
+            const bool restored = spaceStore.restore(record.id);
+            liftTheLimit();
+            signal(SIGXFSZ, xfszHere);
+            assert(!restored);
+            std::cout << "  restore refused as arranged: " << spaceStore.lastRestoreError() << '\n';
+            assert(spaceStore.lastRestoreError().find("could not write") != std::string::npos);
+            assert(spaceStore.lastRestoreError().find("m.db") != std::string::npos);
+            assert(readFile(big) == "ten bytes!" && "a failed write leaves the file as it was");
+            assert(spaceStore.list().size() == 1
+                   && "the pre-restore copy is removed again: nothing was overwritten, so it protects nothing");
+            assert(spaceStore.restore(record.id) && readFile(big) == bigContents && "with room again it restores");
+
+            // A damaged archive reads as damaged, not as a write problem --
+            // and is refused before any pre-restore copy is made.
+            const std::size_t recordsBefore = spaceStore.list().size();
+            {
+                std::ofstream tail(fs::path(record.path) / "backup.zip", std::ios::app | std::ios::binary);
+                tail << "trailing bytes";
+            }
+            assert(!spaceStore.restore(record.id));
+            assert(spaceStore.lastRestoreError().find("damaged") != std::string::npos);
+            assert(spaceStore.list().size() == recordsBefore && "a refused restore makes no pre-restore copy");
+            std::cout << "case: a restore says whether the backup or the stick was the problem OK\n";
+        }
     }
 #endif
 

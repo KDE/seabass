@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -79,6 +80,21 @@ public:
     std::uint64_t releaseAutomaticBackups(std::uint64_t bytesWanted, const std::set<std::string> &spare = {});
     void setDescription(const std::string &id, const std::string &description) override;
     bool restore(const std::string &id) override;
+    // Why the last restore() returned false, for the caller's message: a
+    // backup that could not be read is not a stick that has no room for
+    // its files, and the user is told which (issue #27).
+    const std::string &lastRestoreError() const { return m_lastRestoreError; }
+    // The pre-restore record the last restore() made, if it made one and
+    // kept it.
+    const std::optional<std::string> &lastPreRestoreId() const { return m_lastPreRestoreId; }
+    // The space a restore(id) needs on the stick (nullopt when its archive
+    // cannot be opened), as an upper bound of
+    // its peak: the copy of what is there now (the pre-restore record,
+    // deflated, so at most the files' own size), the largest file written
+    // whole beside its old copy before the rename, the growth of files
+    // that come back bigger, and a margin for the record's own files and
+    // cluster rounding.
+    std::optional<std::uint64_t> restoreSpaceNeeded(const std::string &id) const;
     // Whether restore(id) has what it needs: the record's directory, a
     // manifest this build wrote with at least one entry, and its archive.
     // For an undo that restores several records and must not start on the
@@ -91,8 +107,21 @@ private:
     // restores after the stick comes back at a different mount point or
     // drive letter. See CurrentManifestFormatVersion in the .cpp.
     std::filesystem::path stickRoot() const;
-    bool restoreFromArchive(const std::filesystem::path &dir,
-                            const std::vector<std::pair<std::string, std::string>> &entries);
+    // A record's archive, opened once for a restore: the file, the reader
+    // on it, and the index of every manifest entry, each verified. Read
+    // once, since verifying inflates every entry and a sync record can
+    // hold hundreds of megabytes.
+    struct OpenedArchive;
+    // Opens the archive and finds every entry (cheap: the central
+    // directory only); verifyArchive() then inflates each to check it.
+    bool openArchive(const std::filesystem::path &dir, const std::vector<std::pair<std::string, std::string>> &entries,
+                     std::string *failure, OpenedArchive &opened) const;
+    bool verifyArchive(const std::vector<std::pair<std::string, std::string>> &entries, std::string *failure,
+                       const OpenedArchive &opened) const;
+    std::uint64_t restoreSpaceNeeded(const std::vector<std::pair<std::string, std::string>> &entries,
+                                     const OpenedArchive &opened) const;
+    bool restoreFromArchive(const OpenedArchive &opened, const std::vector<std::pair<std::string, std::string>> &entries,
+                            std::string *failure, std::size_t *filesWritten);
     // Appends `filePaths` to the archive in `dir`, returns the entry
     // name / recorded path pairs actually written and the archive's new
     // size. Shared by backup() and addToArchive().
@@ -102,6 +131,8 @@ private:
     std::filesystem::path resolveRecordedPath(const std::string &recorded) const;
 
     std::string m_baseDirectory;
+    std::string m_lastRestoreError;
+    std::optional<std::string> m_lastPreRestoreId;
 
     // Per backup directory: the names already taken in it, and the bytes
     // it holds. Both exist to keep a save linear in the number of files

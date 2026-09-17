@@ -303,7 +303,8 @@ quit_with_changes() {
 # back whatever happened -- the filler is removed even on a failure.
 free_kb_of() { /bin/df -kP "$1" | awk 'NR==2 {print $4}'; }
 
-full_stick() {
+fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep the filler for the next pass: 0|1>
+    local leave_kb="$1" test="$2" records_may_appear="$3" keep_filler="$4"
     # Stick A, deliberately: exFAT has no fallocate, so the filler is
     # written for real, and A's spare gigabytes cost minutes where B's cost
     # the better part of an hour for exactly the same proof.
@@ -314,18 +315,33 @@ full_stick() {
     # exportLibrary.db), so a megabyte of slack let the save succeed and
     # F4 proved the opposite of its name. Below the backup's own size the
     # save has to refuse, which is the outcome this check exists for.
-    local leave_kb=256
     local size_kb=$((free_kb - leave_kb))
     local rc=0
-    if [ "$size_kb" -lt "$leave_kb" ]; then
+    if [ -f "$filler" ] && [ "$free_kb" -lt "$leave_kb" ]; then
+        # The filler from the pass before, shrunk to the new margin: exFAT
+        # shrinks a file in place, where writing 13 GB again costs eleven
+        # minutes over USB 2 for less than a megabyte of difference. (Seen
+        # before the "too little to fill" guard below, which the kept
+        # filler would trip: 256 KB free IS too little to fill from.)
+        echo "shrinking the filler from the pass before: $free_kb KB free -> leaving about $leave_kb KB"
+        truncate -s -$((leave_kb - free_kb))K "$filler" || true
+        sync
+    elif [ "$size_kb" -lt "$leave_kb" ]; then
         # What the stick actually has, not the margin: this is the one
-        # path that gives up on F4, so it should not misdescribe why.
+        # path that gives up on F4, so it should not misdescribe why. A
+        # filler left from a pass before goes too, or the restore that
+        # follows finds a full stick.
         echo "$A has $free_kb KB free, too little to fill down to $leave_kb KB; F4 cannot be proven here"
+        rm -f "$filler"
+        sync
         return 1
+    else
+        echo "filling $A: $free_kb KB free -> leaving about $leave_kb KB"
+        # Appending: a filler kept from a pass whose margin was larger
+        # grows rather than being cut to nothing and written again.
+        dd if=/dev/zero of="$filler" bs=1M count=$((size_kb / 1024)) oflag=append conv=notrunc status=none || true
+        sync
     fi
-    echo "filling $A: $free_kb KB free -> leaving about $leave_kb KB"
-    dd if=/dev/zero of="$filler" bs=1M count=$((size_kb / 1024)) status=none || true
-    sync
     # bs=1M rounds the filler down by up to a megabyte, and the old limit
     # of four times the margin let that through: round 4 was left with
     # 928 KB, room enough for the save's 460 KB backup, so the save fitted
@@ -355,18 +371,44 @@ full_stick() {
     # to stay, and Manage Backups listed it as an empty entry. Records are
     # directories; the save's .write.lock beside them is a file and stays.
     local records_before; records_before=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
-    SEABASS_RIG_FULL_STICK=1 live_test "$A" LiveFullStick::test_saveOnAFullStickFailsCleanly || rc=1
+    SEABASS_RIG_FULL_STICK=1 live_test "$A" "$test" || rc=1
     local records_after; records_after=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
-    if [ "$records_after" -ne "$records_before" ]; then
+    if [ "$records_may_appear" -eq 0 ] && [ "$records_after" -ne "$records_before" ]; then
         echo "the refused save left a backup record behind: $records_before -> $records_after entries in $A/Seabass/backups"
         find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d -newer "$filler" 2>/dev/null | head -3
         rc=1
     fi
-    rm -f "$filler"
-    sync
-    echo "filler removed; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free again"
+    if [ "$keep_filler" -eq 1 ]; then
+        echo "filler kept for the next pass; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free"
+    else
+        rm -f "$filler"
+        sync
+        echo "filler removed; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free again"
+    fi
     unchanged_catalogs "$A" || rc=1
     return $rc
+}
+
+# F4: fill to under a quarter megabyte and the save has to refuse -- the
+# backup it writes first is about 460 KB (measured; the margin is below
+# that on purpose, see fill_and_run).
+full_stick() {
+    local keep=0
+    rig_wants F4-undo-on-a-nearly-full-stick && keep=1
+    fill_and_run 256 LiveFullStick::test_saveOnAFullStickFailsCleanly 0 "$keep"
+}
+
+# Issue #27: the same stick filled to leave room for the save and not
+# for the undo. The save needs about 1.3 MB: its backup record (460 KB),
+# the checkpoint copies of the two files it writes (520 KB) and one
+# temporary (330 KB); 1.2 MB fitted it once and refused it a cluster
+# later, so 1.6 MB. The undo then finds about 1.1 MB and needs about
+# 1.25 MB (the copy of what it overwrites, one temporary, the margin),
+# so it is refused for space up front, saying so -- a refusal that
+# blamed the backup is what #27 was. Records may appear: the save's own,
+# and the undo's pre-restore copy if it ever gets that far.
+full_stick_undo() {
+    fill_and_run 1600 LiveFullStick::test_undoOnANearlyFullStick 1 0
 }
 
 cli_sync_dry_run() {
@@ -477,6 +519,7 @@ check FB9-manage-backups-delete "$build/rig_delete_backup" "$out/backups-fb" "$o
 check W8-B-at-reference-first "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B could not be put back before W8; stopping"; exit 1; }
 check W8-delete-orphans delete_orphans
 check F4-stick-fills-up full_stick
+check F4-undo-on-a-nearly-full-stick full_stick_undo
 check FB-restore-B-from-reference "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not back at its reference; stopping"; exit 1; }
 check FB-restore-A-from-reference "$build/rig_restore" "$refA" "$A" --execute || { echo "stick A is not back at its reference; stopping"; exit 1; }
 

@@ -4,6 +4,8 @@
 
 #include "application/use_cases/restore_stick_backup.hpp"
 
+#include "infrastructure/backup/stick_space.hpp"
+
 #include <zlib.h>
 
 #include <algorithm>
@@ -436,12 +438,7 @@ bool extraIsBackupFile(const fs::path &targetRoot, const fs::path &extraPath, co
     return false;
 }
 
-std::uint64_t availableBytes(const fs::path &root)
-{
-    std::error_code ec;
-    fs::space_info info = fs::space(root, ec);
-    return ec ? 0 : info.available;
-}
+using infrastructure::backup::availableBytes;
 
 // Streams one entry to `destination` via a temporary sibling, verifying
 // both the CRC from the central directory and the SHA-256 from the
