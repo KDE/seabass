@@ -61,6 +61,15 @@ Files: .gitignore
 Copyright: 2026 Sebastian Kügler <sebas@kde.org>
 License: CC0-1.0
 
+# --- Generated design-tool export -----------------------------------------
+# A self-contained HTML export of the same USB Stick Performance design
+# canvas as docs/design/stick-performance-mockups/canvas.json, missed when
+# that one was annotated. Not hand-edited, so annotated here rather than
+# with an inline header even though HTML comments would work fine.
+Files: mockups/usb-stick-performance.html
+Copyright: 2026 Sebastian Kügler <sebas@kde.org>
+License: CC0-1.0
+
 # --- PENDING A DECISION --------------------------------------------------
 # A 5.9 MB phone photo at the repository root, referenced by no code or
 # document, and carrying a full GPS IFD (latitude, longitude, altitude and
