@@ -7,7 +7,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// "Create Backup USB Stick from X" (experimental): copies the library on
+// "Create Backup USB Stick from X": copies the library on
 // one mounted stick onto another. Also "Update TARGET from X" when the
 // target already holds an older copy of the same library. Two stages on
 // one worker, both of them the trusted paths that already exist: an

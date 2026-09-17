@@ -25,17 +25,8 @@ TestCase {
         ScanPage {}
     }
 
-    // The classic layout, with its playlist column: Matching (experimental)
-    // swaps that column for a sidebar pane, and the switch is a setting the
-    // rest of the suite may have left on in this run's shared sandbox.
-    property bool experimentalWas: false
-    function initTestCase() {
-        experimentalWas = realAppSettings.experimentalFeaturesEnabled;
-        realAppSettings.experimentalFeaturesEnabled = false;
-    }
-    function cleanupTestCase() {
-        realAppSettings.experimentalFeaturesEnabled = experimentalWas;
-    }
+    // Matching graduated on 2026-09-17, so its sidebar pane is the layout
+    // every run gets, whatever the experimental setting says.
 
     function makePage() {
         var page = createTemporaryObject(pageComponent, testCase, {
@@ -64,13 +55,20 @@ TestCase {
     // One left line: the search field and the list below it -- the
     // playlist column, which is the list's left edge -- start at the same
     // x. The list used to run to the window edge, 16 px left of the search.
-    function test_searchFieldLinesUpWithTheList() {
+    // One left line for the page. Since Matching graduated (2026-09-17) the
+    // header row starts with the sidebar's own pill button rather than the
+    // search field, and the playlists sidebar -- open by default, where the
+    // classic playlist column used to be -- is the list's left edge.
+    function test_theHeaderAndTheListShareOneLeftLine() {
         var page = makePage();
+        var pill = findChild(page, "playlistSidebarButton");
         var search = findChild(page, "searchField");
-        var pane = findChild(page, "playlistPane");
-        verify(search !== null && pane !== null);
-        compare(pane.visible, true, "the playlist column is the list's left edge");
-        compare(Math.round(search.mapToItem(page, 0, 0).x), Math.round(pane.mapToItem(page, 0, 0).x));
-        compare(Math.round(pane.mapToItem(page, 0, 0).x), Theme.pageMargin);
+        var sidebar = findChild(page, "playlistSidebar");
+        verify(pill !== null && search !== null && sidebar !== null);
+        compare(sidebar.visible, true, "the playlists sidebar is the list's left edge");
+        compare(Math.round(pill.mapToItem(page, 0, 0).x), Math.round(sidebar.mapToItem(page, 0, 0).x));
+        compare(Math.round(sidebar.mapToItem(page, 0, 0).x), Theme.pageMargin);
+        verify(search.mapToItem(page, 0, 0).x > pill.mapToItem(page, 0, 0).x,
+               "the search field follows the pill in the same row");
     }
 }

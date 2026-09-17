@@ -7,7 +7,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// The Matching panel (Experimental, see docs/experimental-features.md):
+// The Matching panel (PREVIEW, see docs/experimental-features.md):
 // finds tracks compatible in key/BPM/
 // rating with whichever Browse row was last marked as the anchor (via
 // that row's own edit button), scoped to This Playlist -- a filter here

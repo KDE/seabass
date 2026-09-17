@@ -159,8 +159,7 @@ Page {
                 }
             }
 
-            // Where full stick backups go (experimental feature, so the
-            // section follows the toggle below). One `<stick label>.zip` per
+            // Where full stick backups go. One `<stick label>.zip` per
             // stick, in a place the user can find and open with 7-Zip/unzip.
             ColumnLayout {
                 spacing: 6 * Theme.iconScale

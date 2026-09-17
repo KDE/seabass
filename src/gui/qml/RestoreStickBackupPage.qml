@@ -8,7 +8,7 @@ import QtQuick.Dialogs
 import QtQuick.Layouts
 import SeabassGui
 
-// Top-level "Restore a Stick Backup" (experimental). Lives next to Format
+// Top-level "Restore a Stick Backup". Lives next to Format
 // USB Stick rather than under a stick, because the disaster case is a
 // lost or dead stick and a fresh blank one -- which the per-stick card
 // grid structurally never shows. The per-stick backup page pushes this

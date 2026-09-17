@@ -7,8 +7,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// Per-stick "Full Stick Backup" (see docs/stick-backup-plan.md; graduated
-// from experimental on 2026-09-17, restoring is still experimental). Backs the
+// Per-stick "Full Stick Backup" (see docs/stick-backup-plan.md; backing up
+// and restoring both graduated from experimental on 2026-09-17). Backs the
 // whole stick up into one browsable .zip on this computer and keeps it
 // current incrementally; restore hands off to RestoreStickBackupPage
 // with this stick preselected.
@@ -601,11 +601,8 @@ Page {
             }
 
             // ---- Restore ----
-            // Still experimental (docs/experimental-features.md), unlike the
-            // backup above it: it overwrites files on the stick.
             Frame {
                 objectName: "restoreSection"
-                visible: root.appSettingsController.experimentalFeaturesEnabled === true
                 Layout.fillWidth: true
                 opacity: root.hasBackup && root.controller.busy !== true ? 1.0 : 0.55
                 RowLayout {

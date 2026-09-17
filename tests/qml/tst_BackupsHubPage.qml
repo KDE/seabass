@@ -154,11 +154,18 @@ TestCase {
         compare(restore.signalArguments[0][2], "/b/MAIN.zip");
     }
 
-    // Full Stick Backup graduated from experimental on 2026-09-17: it and
-    // Manage Backups are there regardless of the flag.
-    function test_fullStickBackupShownWithoutExperimentalFeatures() {
-        var page = makePage({}, {appSettingsController: {experimentalFeaturesEnabled: false}});
+    // Every card on this hub graduated from experimental on 2026-09-17, so
+    // none of them answers to the flag any more.
+    function test_everyCardIsShownWithoutExperimentalFeatures() {
+        var advice = {};
+        advice["/media/MAIN"] = {state: "outdated", detail: "The library has changed since its last backup.",
+            cloneSource: noSource(), diverged: false,
+            updateSource: {kind: "disk", label: "MAIN", mountPoint: "", backupPath: "/b/MAIN.zip",
+                           modifiedAt: "2026-09-06T10:00:00", enoughSpace: true,
+                           detail: "The newest backup is newer than this stick."}};
+        var page = makePage(advice, {appSettingsController: {experimentalFeaturesEnabled: false}});
         compare(findChild(page, "fullStickBackupCard").visible, true);
         compare(findChild(page, "manageBackupsCard").visible, true);
+        compare(findChild(page, "updateStickCard").visible, true);
     }
 }

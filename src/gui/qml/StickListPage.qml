@@ -507,8 +507,6 @@ Page {
                     cardTitle: "Restore a Stick Backup"
                     cardSubtitle: "Put a stick backup from this computer onto any drive"
                     cardIcon: "document-revert"
-                    experimental: true
-                    experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
                     // No stick preselected: the page itself lists every
                     // mounted drive and every backup on disk to choose from.
                     onClicked: root.restoreStickBackupRequested("", "", "")
@@ -968,23 +966,13 @@ Page {
                             cardTitle: "USB Stick Performance"
                             cardSubtitle: "Measure the stick the way a player reads it, per player generation"
                             cardIcon: "speedometer"
-                            // See docs/experimental-features.md: the
-                            // measurement only reads, but the optional
-                            // write test on the page is a write path
-                            // nobody has run against real hardware yet.
-                            experimental: true
-                            experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
                             // Needs no library: a stick with any files on
                             // it is measured on those, a blank one on
                             // throwaway files the page writes and removes.
                             // A browsed backup or an opened folder is on
                             // this computer, and measuring it would say
                             // nothing about any stick.
-                            // Restating the experimental gate: a visible
-                            // binding of our own replaces ActionCard's
-                            // default, which is where the gate lives.
                             visible: delegateRoot.mounted && !delegateRoot.isBrowsedBackup && !delegateRoot.isFolder
-                                && (!experimental || experimentalFeaturesEnabled)
                             onClicked: root.stickPerformanceRequested(delegateRoot.label, delegateRoot.rekordboxPath,
                                                                       delegateRoot.enginePath, delegateRoot.mountPoint)
                         }
@@ -1037,7 +1025,12 @@ Page {
                             // `writable` already implies hasKnownLibrary
                             // (hasKnownLibrary && !isBrowsedBackup), so
                             // the two compose without repeating it.
+                            // The experimental gate restated: a visible
+                            // binding of our own replaces ActionCard's
+                            // default, which is where the gate lives, and
+                            // this is the one card still behind it.
                             visible: delegateRoot.writable && !delegateRoot.hasEngine
+                                && (!experimental || experimentalFeaturesEnabled)
                             enabled: delegateRoot.hasRekordbox
                             onClicked: root.engineLibraryCreatorRequested(delegateRoot.label, delegateRoot.rekordboxPath)
                         }
@@ -1094,13 +1087,10 @@ Page {
                             visible: !delegateRoot.isFolder
                             cardSubtitle: "Erase and prepare this drive for CDJs, XDJs, and Denon Engine players"
                             cardIcon: "edit-delete-shred"
-                            // Experimental (see docs/experimental-features.md):
-                            // the first feature here that can permanently
-                            // erase a drive, not just modify/consolidate
-                            // library data on one -- wants real use before
-                            // graduating.
-                            experimental: true
-                            experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
+                            // The one action here that can permanently erase a
+                            // drive, not just modify or consolidate library
+                            // data on one, so it keeps its own warnings and
+                            // its type-to-confirm dialog.
                             // Available for every stick regardless of
                             // hasKnownLibrary -- unlike every other card
                             // here, this is the one action meant for a
@@ -1137,12 +1127,10 @@ Page {
                                     ? "Restore " + delegateRoot.advice.backupLabel + "'s library onto this stick"
                                     : "No known stick backups yet -- browse for a backup file to restore")
                             cardIcon: "edit-copy"
-                            // Experimental with the stick backup it is built
-                            // on: either a copy of another mounted stick's
-                            // own current library, or an existing backup
-                            // from this computer, written onto this stick.
-                            experimental: true
-                            experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
+                            // Built on the stick backup: either a copy of
+                            // another mounted stick's own current library,
+                            // or an existing backup from this computer,
+                            // written onto this stick.
                             // Only for a stick with nothing recognizable on
                             // it: the disaster case is a blank replacement
                             // drive. A stick that already has a library

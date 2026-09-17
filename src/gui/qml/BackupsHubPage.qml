@@ -144,8 +144,8 @@ Page {
                     ? "Full stick backup is up to date"
                     : "Back up the whole stick into one file on this computer")
             cardIcon: "archive-insert"
-            // Graduated 2026-09-17 (docs/experimental-features.md); restoring
-            // and updating a stick from the backup are still experimental.
+            // Graduated 2026-09-17 (docs/experimental-features.md), with
+            // restoring and updating a stick from the backup.
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.fullStickBackupRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
         }
@@ -157,8 +157,6 @@ Page {
             cardSubtitle: root.updateSource !== null ? root.updateSource.detail : ""
             cardSubtitleIcon: root.updateSource !== null && root.advice.diverged === true ? "dialog-warning" : ""
             cardIcon: "view-refresh"
-            experimental: true
-            experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
             // A newer copy of this stick's library exists: on another
             // mounted stick (copied via its backup) or as the disk backup
             // itself (restored).
@@ -166,7 +164,6 @@ Page {
             // the stick" onto it would, in exact mode, delete whatever
             // that local folder holds that the stick does not.
             visible: root.updateSource !== null && root.devicePath.length > 0
-                && (!experimental || experimentalFeaturesEnabled)
             enabled: root.updateSource !== null && root.updateSource.enoughSpace !== false
             onClicked: {
                 if (root.updateSource.kind === "stick") {

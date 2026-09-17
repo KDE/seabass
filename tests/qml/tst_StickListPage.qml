@@ -174,14 +174,22 @@ TestCase {
         compare(spy.signalArguments[0][3], "/media/SPARE");
     }
 
-    // The card is experimental: with the setting off it must not show,
-    // even though its own visible binding replaces ActionCard's default.
-    function test_performanceCardHonoursTheExperimentalGate() {
+    // Graduated on 2026-09-17: the card is there with the experimental
+    // setting off, and so is every other card that used to be gated. Only
+    // Create Engine Library still answers to the setting.
+    function test_onlyCreateEngineLibraryAnswersToTheExperimentalSetting() {
         var settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
-        var page = makePage([makeStick({})], {}, {appSettingsController: settings});
-        var card = findCard(page, "/media/MAIN", "USB Stick Performance");
-        verify(card === null || !card.visible, "performance card shown with experimental features off");
+        var page = makePage([makeStick({hasEngine: false, enginePath: ""})], {},
+                            {appSettingsController: settings});
+        var shown = ["USB Stick Performance", "Format USB Stick", "Metadata Backup"];
+        for (var i = 0; i < shown.length; ++i) {
+            var card = findCard(page, "/media/MAIN", shown[i]);
+            verify(card !== null && card.visible, shown[i] + " must not be behind the experimental setting");
+            compare(card.experimental, false, shown[i] + " must not be marked experimental");
+        }
+        var engine = findCard(page, "/media/MAIN", "Create Engine Library");
+        verify(engine === null || !engine.visible, "Create Engine Library must stay behind the setting");
     }
 
     function test_emptyStickOffersCloneFromThePeer() {

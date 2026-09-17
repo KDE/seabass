@@ -124,18 +124,22 @@ Page {
     // the panel's own "This Playlist" chip (when it's on); the anchor
     // properties below track whichever Browse row's edit button was last
     // clicked, read by MatchingPage to find compatible tracks. ----
-    readonly property bool matchingEnabled: root.appSettingsController.experimentalFeaturesEnabled
-    // Closed by default even when the feature is on -- only the edit
-    // button (or the panel's own close button) toggles it, so turning on
-    // Experimental features doesn't itself change what Browse looks like
-    // until a track is actually being edited.
+    // Matching graduated from experimental on 2026-09-17, so this page has
+    // one layout: the playlists sidebar and the panel, no classic playlist
+    // column behind a setting. The panel still wears its own PREVIEW badge,
+    // because the search side is real and the write side is not (no format
+    // has a playlist writer yet). See docs/experimental-features.md.
+    //
+    // Closed by default -- only the edit button (or the panel's own close
+    // button) toggles it, so arriving in Browse doesn't open it until a
+    // track is actually being edited.
     property bool matchingPanelOpen: false
     // The track details column: opened by clicking a row, closed by its
     // own button. Sits between the track list and the Matching panel.
     property bool trackPanelOpen: false
-    // Starts open (matching the classic left Pane it replaces, which is
-    // always visible) -- the header pill collapses/expands it, unlike
-    // matchingPanelOpen above which starts collapsed.
+    // Starts open, like the playlist column it replaced -- the header pill
+    // collapses and expands it, unlike matchingPanelOpen above, which starts
+    // collapsed.
     property bool playlistSidebarOpen: true
     readonly property string currentPlaylistLabel: root.selectedPlaylistIndex === 0
         ? "All tracks" : (scanController.playlistNames[root.selectedPlaylistIndex - 1] ?? "All tracks")
@@ -272,7 +276,7 @@ Page {
                 Layout.fillWidth: true
                 spacing: 12
                 ToolButton {
-                    visible: root.matchingEnabled
+                    objectName: "playlistSidebarButton"
                     text: root.currentPlaylistLabel
                     icon.source: Theme.iconUrl(root.playlistSidebarOpen ? "sidebar-collapse-left" : "sidebar-expand-left")
                     icon.color: Theme.text
@@ -370,33 +374,6 @@ Page {
         anchors.rightMargin: Theme.pageMargin
         spacing: 0
 
-        // Left pane: playlists -- only when Matching (Experimental)
-        // is off. When it's on, this same list lives in a collapsible
-        // SplitView pane instead (see the SplitView below), freeing this
-        // column for the new panel.
-        Pane {
-            objectName: "playlistPane"
-            visible: !root.matchingEnabled
-            Layout.preferredWidth: 220
-            Layout.fillHeight: true
-            padding: 0
-
-            PlaylistListView {
-                anchors.fill: parent
-                scanController: scanController
-                searchQuery: searchField.text
-                selectedIndex: root.selectedPlaylistIndex
-                onPlaylistPicked: (index, name) => root.selectPlaylist(index, name)
-            }
-        }
-
-        Rectangle {
-            visible: !root.matchingEnabled
-            Layout.preferredWidth: 1
-            Layout.fillHeight: true
-            color: Theme.borderSubtle
-        }
-
         // Right pane (tracks) and the Matching panel share a
         // SplitView so their relative widths are user-resizable via a
         // drag handle -- previously a fixed root.width-derived split,
@@ -412,13 +389,13 @@ Page {
                 color: SplitHandle.pressed || SplitHandle.hovered ? Theme.accent : Theme.borderSubtle
             }
 
-        // Playlists sidebar (Experimental only) -- a real, resizable
-        // SplitView pane instead of the off-canvas Drawer this replaced:
-        // collapsible via the header's own pill button rather than an
-        // overlay you have to close before doing anything else. Same
-        // PlaylistListView the classic left Pane above uses.
+        // Playlists sidebar -- a real, resizable SplitView pane instead of
+        // the off-canvas Drawer this replaced: collapsible via the header's
+        // own pill button rather than an overlay you have to close before
+        // doing anything else.
         Pane {
-            visible: root.matchingEnabled && root.playlistSidebarOpen
+            objectName: "playlistSidebar"
+            visible: root.playlistSidebarOpen
             SplitView.preferredWidth: 240
             SplitView.minimumWidth: 160
             padding: 0
@@ -465,8 +442,7 @@ Page {
                 // here before this comment existed.
                 Label {
                     text: ""
-                    Layout.preferredWidth: root.matchingEnabled
-                        ? Theme.iconSizeSmall * 2 + 8 : Theme.iconSizeSmall
+                    Layout.preferredWidth: Theme.iconSizeSmall * 2 + 8
                 }
             }
 
@@ -726,7 +702,6 @@ Page {
                         }
                         ToolButton {
                             id: editButton
-                            visible: root.matchingEnabled
                             display: AbstractButton.IconOnly
                             text: "Find matching tracks"
                             icon.source: Theme.iconUrl("edit-find")
@@ -1020,7 +995,7 @@ Page {
 
         MatchingPage {
             id: matchingPage
-            visible: root.matchingEnabled && root.matchingPanelOpen
+            visible: root.matchingPanelOpen
             SplitView.preferredWidth: Math.max(420, root.width * 0.38)
             SplitView.minimumWidth: 420
             scanController: scanController

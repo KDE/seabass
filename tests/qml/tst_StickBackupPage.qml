@@ -84,14 +84,12 @@ TestCase {
         });
     }
 
-    // Backing up graduated from experimental; restoring from this page did
-    // not, so the backup is offered with the flag off and the restore is not.
-    function test_restoreStaysExperimental() {
+    // Backing up and restoring both graduated from experimental
+    // (2026-09-17), so this page offers both with the flag off.
+    function test_backupAndRestoreAreOfferedWithoutTheExperimentalFlag() {
         var page = makePage({}, false);
-        compare(findChild(page, "restoreSection").visible, false);
         compare(findChild(page, "backUpFrame").visible, true);
-        var withFlag = makePage({}, true);
-        compare(findChild(withFlag, "restoreSection").visible, true);
+        compare(findChild(page, "restoreSection").visible, true);
     }
 
     function calls(page) {
