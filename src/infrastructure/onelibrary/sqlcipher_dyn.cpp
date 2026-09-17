@@ -6,6 +6,7 @@
 #include "infrastructure/work_counters.hpp"
 
 #include <cstdlib>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -40,14 +41,13 @@ void *const SqliteTransient = reinterpret_cast<void *>(-1);
 #ifdef _WIN32
 // MSYS2's name first, then the one the Craft build ships
 // (craft-blueprint/libs/sqlcipher4).
-void *loadLibrary()
+std::vector<const char *> candidateNames()
 {
-    for (const char *name : {"libsqlcipher-0.dll", "libsqlcipher.dll"}) {
-        if (HMODULE mod = LoadLibraryA(name)) {
-            return mod;
-        }
-    }
-    return nullptr;
+    return {"libsqlcipher-0.dll", "libsqlcipher.dll"};
+}
+void *openLibrary(const char *name)
+{
+    return LoadLibraryA(name);
 }
 void *resolveSymbol(void *mod, const char *name)
 {
@@ -67,17 +67,15 @@ const char *libraryNotFoundHint()
 // (nothing links it, so no rpath points there), then the bare names for
 // the dyld search path, then Homebrew's prefix (Apple Silicon, then
 // Intel), which is not on that path.
-void *loadLibrary()
+std::vector<const char *> candidateNames()
 {
-    for (const char *name : {"@executable_path/../Frameworks/libsqlcipher.0.dylib",
-                             "libsqlcipher.0.dylib", "libsqlcipher.dylib",
-                             "/opt/homebrew/opt/sqlcipher/lib/libsqlcipher.0.dylib",
-                             "/usr/local/opt/sqlcipher/lib/libsqlcipher.0.dylib"}) {
-        if (void *mod = dlopen(name, RTLD_NOW)) {
-            return mod;
-        }
-    }
-    return nullptr;
+    return {"@executable_path/../Frameworks/libsqlcipher.0.dylib", "libsqlcipher.0.dylib", "libsqlcipher.dylib",
+            "/opt/homebrew/opt/sqlcipher/lib/libsqlcipher.0.dylib",
+            "/usr/local/opt/sqlcipher/lib/libsqlcipher.0.dylib"};
+}
+void *openLibrary(const char *name)
+{
+    return dlopen(name, RTLD_NOW);
 }
 void *resolveSymbol(void *mod, const char *name)
 {
@@ -96,15 +94,16 @@ const char *libraryNotFoundHint()
 // Distros disagree on the installed soname (Debian/Ubuntu's libsqlcipher1
 // package ships "libsqlcipher.so.1"; other packagings use ".so.0"; the
 // unversioned "libsqlcipher.so" symlink only exists if the *-dev package
-// is installed) -- try each in turn rather than hard-coding one.
-void *loadLibrary()
+// is installed) -- try each in turn rather than hard-coding one. A system
+// upgraded across Debian releases can hold libsqlcipher0 (3.x) beside
+// libsqlcipher1 (4.x), which is why a too-old one does not end the search.
+std::vector<const char *> candidateNames()
 {
-    for (const char *name : {"libsqlcipher.so.0", "libsqlcipher.so.1", "libsqlcipher.so"}) {
-        if (void *mod = dlopen(name, RTLD_NOW)) {
-            return mod;
-        }
-    }
-    return nullptr;
+    return {"libsqlcipher.so.0", "libsqlcipher.so.1", "libsqlcipher.so"};
+}
+void *openLibrary(const char *name)
+{
+    return dlopen(name, RTLD_NOW);
 }
 void *resolveSymbol(void *mod, const char *name)
 {
@@ -152,35 +151,57 @@ struct SqlCipherLibrary::Fns
 
 SqlCipherLibrary::SqlCipherLibrary()
 {
-    void *mod = loadLibrary();
-    if (!mod) {
-        throw std::runtime_error(libraryNotFoundHint());
-    }
-    m_module = mod;
-    m_fns = new Fns{
-        resolve<OpenV2Fn>(mod, "sqlite3_open_v2"),
-        resolve<CloseFn>(mod, "sqlite3_close"),
-        resolve<ExecFn>(mod, "sqlite3_exec"),
-        resolve<PrepareV2Fn>(mod, "sqlite3_prepare_v2"),
-        resolve<StepFn>(mod, "sqlite3_step"),
-        resolve<FinalizeFn>(mod, "sqlite3_finalize"),
-        resolve<BindInt64Fn>(mod, "sqlite3_bind_int64"),
-        resolve<BindTextFn>(mod, "sqlite3_bind_text"),
-        resolve<BindNullFn>(mod, "sqlite3_bind_null"),
-        resolve<ColumnInt64Fn>(mod, "sqlite3_column_int64"),
-        resolve<ColumnTextFn>(mod, "sqlite3_column_text"),
-        resolve<ColumnTypeFn>(mod, "sqlite3_column_type"),
-        resolve<ErrmsgFn>(mod, "sqlite3_errmsg"),
-    };
-    try {
-        requireCipherMajorVersion(4);
-    } catch (...) {
+    // The first candidate that loads, has every symbol and is SQLCipher 4
+    // or newer. One that falls short is closed and the next tried, so an
+    // old copy earlier on the list cannot hide a good one after it; when
+    // none qualifies the error names the most useful reason.
+    std::string tooOld;
+    std::string missingSymbol;
+    for (const char *name : candidateNames()) {
+        void *mod = openLibrary(name);
+        if (!mod) {
+            continue;
+        }
+        m_module = mod;
+        try {
+            m_fns = new Fns{
+                resolve<OpenV2Fn>(mod, "sqlite3_open_v2"),
+                resolve<CloseFn>(mod, "sqlite3_close"),
+                resolve<ExecFn>(mod, "sqlite3_exec"),
+                resolve<PrepareV2Fn>(mod, "sqlite3_prepare_v2"),
+                resolve<StepFn>(mod, "sqlite3_step"),
+                resolve<FinalizeFn>(mod, "sqlite3_finalize"),
+                resolve<BindInt64Fn>(mod, "sqlite3_bind_int64"),
+                resolve<BindTextFn>(mod, "sqlite3_bind_text"),
+                resolve<BindNullFn>(mod, "sqlite3_bind_null"),
+                resolve<ColumnInt64Fn>(mod, "sqlite3_column_int64"),
+                resolve<ColumnTextFn>(mod, "sqlite3_column_text"),
+                resolve<ColumnTypeFn>(mod, "sqlite3_column_type"),
+                resolve<ErrmsgFn>(mod, "sqlite3_errmsg"),
+            };
+        } catch (const std::exception &e) {
+            missingSymbol = e.what();
+            unloadLibrary(mod);
+            m_module = nullptr;
+            continue;
+        }
+        const std::string versionProblem = cipherVersionProblem(4);
+        if (versionProblem.empty()) {
+            return;
+        }
+        tooOld = versionProblem;
         delete m_fns;
         m_fns = nullptr;
-        unloadLibrary(m_module);
+        unloadLibrary(mod);
         m_module = nullptr;
-        throw;
     }
+    if (!tooOld.empty()) {
+        throw std::runtime_error(tooOld);
+    }
+    if (!missingSymbol.empty()) {
+        throw std::runtime_error(missingSymbol);
+    }
+    throw std::runtime_error(libraryNotFoundHint());
 }
 
 // rekordbox writes exportLibrary.db in SQLCipher 4's format, which an
@@ -188,8 +209,8 @@ SqlCipherLibrary::SqlCipherLibrary()
 // which reads like a damaged stick. Craft's libs/sqlcipher is 3.4.2, and a
 // build that bundled it shipped exactly that. Asked of the library
 // itself, on a throwaway in-memory database, so the message names the
-// real cause.
-void SqlCipherLibrary::requireCipherMajorVersion(int major) const
+// real cause. Empty when the library is new enough.
+std::string SqlCipherLibrary::cipherVersionProblem(int major) const
 {
     sqlite3 *db = nullptr;
     std::string version;
@@ -207,12 +228,12 @@ void SqlCipherLibrary::requireCipherMajorVersion(int major) const
     }
     // "4.19.0 community"; an empty answer means plain SQLite, no codec.
     int found = version.empty() ? 0 : std::atoi(version.c_str());
-    if (found < major) {
-        const std::string foundText = version.empty() ? std::string("no cipher support") : version;
-        throw std::runtime_error("the SQLCipher library found (" + foundText
-                                 + ") is too old to read rekordbox's OneLibrary; SQLCipher "
-                                 + std::to_string(major) + " or later is needed");
+    if (found >= major) {
+        return {};
     }
+    const std::string foundText = version.empty() ? std::string("no cipher support") : version;
+    return "the SQLCipher library found (" + foundText + ") is too old to read rekordbox's OneLibrary; SQLCipher "
+           + std::to_string(major) + " or later is needed";
 }
 
 SqlCipherLibrary::~SqlCipherLibrary()

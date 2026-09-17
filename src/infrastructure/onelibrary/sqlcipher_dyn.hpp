@@ -42,11 +42,13 @@ constexpr int SQLITE_OPEN_CREATE = 0x00000004;
 constexpr int SQLITE_INTEGER = 1;
 constexpr int SQLITE_NULL = 5;
 
-// Loads libsqlcipher-0.dll (searched next to the running executable and
-// on the system PATH) and resolves the handful of C-API entry points
-// this module needs. Throws std::runtime_error if the DLL or any symbol
-// can't be found. One process-wide instance is enough; SqlCipherDb below
-// takes a reference to it rather than loading the library itself.
+// Loads the first SQLCipher 4 library among the platform's candidate names
+// (libsqlcipher-0.dll/libsqlcipher.dll, libsqlcipher.0.dylib,
+// libsqlcipher.so.*) and resolves the handful of C-API entry points this
+// module needs. Throws std::runtime_error when none loads, has every
+// symbol and is new enough. One process-wide instance is enough;
+// SqlCipherDb below takes a reference to it rather than loading the
+// library itself.
 class SqlCipherLibrary
 {
 public:
@@ -70,9 +72,9 @@ public:
     std::string errmsg(sqlite3 *db) const;
 
 private:
-    // Throws unless the loaded library reports at least this SQLCipher
-    // major version.
-    void requireCipherMajorVersion(int major) const;
+    // Empty when the loaded library reports at least this SQLCipher major
+    // version, otherwise the message to give.
+    std::string cipherVersionProblem(int major) const;
 
     void *m_module = nullptr;
     struct Fns;
