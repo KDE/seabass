@@ -377,6 +377,11 @@ int main()
         // something to find out about from an unrelated assert() lower
         // down.
         bool sabotaged = false;
+        // Kept apart from `sabotaged`: only a platform refusing the removal
+        // may skip this case. Change "a" failing, so that "b" never ran,
+        // or the sabotage missing for any other reason, is a failure.
+        bool bRan = false;
+        bool removalRefused = false;
         std::vector<std::shared_ptr<PendingChange>> changes = {
             std::make_shared<ScriptedChange>("a", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
                 sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "One.mp3").string(), cues);
@@ -401,8 +406,10 @@ int main()
                 // with ERROR_SHARING_VIOLATION on this platform -- confirmed
                 // directly -- and dbPath is still the same ordinary file
                 // afterwards, never a directory at all.
+                bRan = true;
                 std::error_code ec;
                 fs::remove(dbPath, ec);
+                removalRefused = static_cast<bool>(ec);
                 fs::create_directory(dbPath, ec);
                 write(dbPath / "occupied", "x");
                 sabotaged = fs::is_directory(dbPath, ec) && fs::exists(dbPath / "occupied", ec);
@@ -410,6 +417,8 @@ int main()
             }),
         };
         auto result = runSaveLoop(changes, ctx);
+        assert(bRan && "change b never ran, so nothing in this case was checked");
+        assert((sabotaged || removalRefused) && "the sabotage failed for a reason other than the platform refusing it");
         if (!sabotaged) {
             std::cout << "case 6 SKIPPED (this filesystem would not let the database be replaced by a "
                          "directory while its writer still had it open, so the put-back failure this "
