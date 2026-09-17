@@ -12,8 +12,7 @@ namespace seabass::domain
 
 // The filesystem to format a USB stick as. Deliberately just these two --
 // every CDJ/XDJ/Engine OS player either reads FAT32 or exFAT, nothing
-// else, and this project has no macOS host build to make HFS+ meaningful
-// to offer, so GPT/HFS+/NTFS are all out of scope.
+// else, so GPT/HFS+/NTFS are all out of scope, on macOS too.
 enum class UsbFilesystem
 {
     Fat32,

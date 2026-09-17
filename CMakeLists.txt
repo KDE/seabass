@@ -253,6 +253,11 @@ if(MINGW)
     # libiconv.a instead, for a self-contained portable exe.
     find_library(WIN_ICONV_STATIC_LIB NAMES libiconv.a PATHS /usr/x86_64-w64-mingw32/lib REQUIRED)
     target_link_libraries(kaitai_cpp_stl_runtime PUBLIC ${WIN_ICONV_STATIC_LIB})
+elseif(APPLE)
+    # macOS ships iconv as its own libiconv rather than inside libc as
+    # glibc does, so it has to be linked explicitly.
+    find_package(Iconv REQUIRED)
+    target_link_libraries(kaitai_cpp_stl_runtime PUBLIC Iconv::Iconv)
 elseif(MSVC)
     # MSVC has no iconv() at all (no POSIX C runtime layer providing
     # one), unlike mingw-w64's win-iconv above. libiconv itself (e.g.
@@ -424,7 +429,7 @@ endif()
 # --- -- the only part of seabass_core with no single cross-platform ---
 # --- implementation, since "how do I see/mount/eject a USB stick" is ---
 # --- genuinely OS-specific (udev+udisksctl on Linux, drive letters + ---
-# --- DeviceIoControl on Windows). ---
+# --- DeviceIoControl on Windows, DiskArbitration+diskutil on macOS). ---
 
 if(WIN32)
     target_sources(seabass_core PRIVATE
@@ -434,6 +439,17 @@ if(WIN32)
         src/infrastructure/media/windows_usb_formatter.cpp
         src/infrastructure/process/run_command_windows.cpp
     )
+elseif(APPLE)
+    target_sources(seabass_core PRIVATE
+        src/infrastructure/media/diskutil_media_mounter.cpp
+        src/infrastructure/media/macos_disk_arbitration_monitor.cpp
+        src/infrastructure/media/macos_disk_description.cpp
+        src/infrastructure/media/macos_removable_media_locator.cpp
+        src/infrastructure/media/macos_usb_formatter.cpp
+        src/infrastructure/process/run_command_posix.cpp
+    )
+    target_link_libraries(seabass_core PUBLIC
+        "-framework CoreFoundation" "-framework DiskArbitration" "-framework IOKit")
 else()
     target_sources(seabass_core PRIVATE
         src/infrastructure/media/linux_removable_media_locator.cpp

@@ -9,6 +9,11 @@
 #include "infrastructure/media/windows_removable_media_monitor.hpp"
 #include "infrastructure/media/windows_removable_media_mounter.hpp"
 #include "infrastructure/media/windows_usb_formatter.hpp"
+#elif defined(__APPLE__)
+#include "infrastructure/media/diskutil_media_mounter.hpp"
+#include "infrastructure/media/macos_disk_arbitration_monitor.hpp"
+#include "infrastructure/media/macos_removable_media_locator.hpp"
+#include "infrastructure/media/macos_usb_formatter.hpp"
 #else
 #include "infrastructure/media/linux_removable_media_locator.hpp"
 #include "infrastructure/media/linux_udev_media_monitor.hpp"
@@ -23,6 +28,8 @@ std::unique_ptr<application::RemovableMediaLocator> createRemovableMediaLocator(
 {
 #if defined(_WIN32)
     return std::make_unique<WindowsRemovableMediaLocator>();
+#elif defined(__APPLE__)
+    return std::make_unique<MacRemovableMediaLocator>();
 #else
     return std::make_unique<LinuxRemovableMediaLocator>();
 #endif
@@ -32,6 +39,8 @@ std::unique_ptr<application::RemovableMediaMonitor> createRemovableMediaMonitor(
 {
 #if defined(_WIN32)
     return std::make_unique<WindowsRemovableMediaMonitor>();
+#elif defined(__APPLE__)
+    return std::make_unique<MacDiskArbitrationMonitor>();
 #else
     return std::make_unique<LinuxUdevMediaMonitor>();
 #endif
@@ -41,6 +50,8 @@ std::unique_ptr<application::RemovableMediaMounter> createRemovableMediaMounter(
 {
 #if defined(_WIN32)
     return std::make_unique<WindowsRemovableMediaMounter>();
+#elif defined(__APPLE__)
+    return std::make_unique<DiskutilMediaMounter>();
 #else
     return std::make_unique<UdisksctlMediaMounter>();
 #endif
@@ -50,6 +61,8 @@ std::unique_ptr<application::UsbFormatter> createUsbFormatter()
 {
 #if defined(_WIN32)
     return std::make_unique<WindowsUsbFormatter>();
+#elif defined(__APPLE__)
+    return std::make_unique<MacUsbFormatter>();
 #else
     return std::make_unique<LinuxUsbFormatter>();
 #endif
