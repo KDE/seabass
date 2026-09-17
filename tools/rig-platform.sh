@@ -65,6 +65,56 @@ if [ "$rig_os" = "Darwin" ]; then
     export SEABASS_ACCEPT_DISK_IMAGES=1
 fi
 
+# True on a Windows shell (MSYS2, git-bash, Cygwin), where `uname -s`
+# reports MINGW64_NT-10.0 and the like.
+rig_is_windows() {
+    case "$rig_os" in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Where the app really keeps its settings, listed so that a change to
+# them is visible to a diff.
+#
+# Linux writes a file under XDG_CONFIG_HOME and macOS a property list,
+# both of which a file listing can see. Windows writes the registry --
+# gui/seabass_settings.hpp's own comment records the measurement: on
+# Windows a real run resolves to HKEY_CURRENT_USER\Software\seabass\
+# seabass whatever XDG_CONFIG_HOME says, because Qt does not read it
+# there. So on Windows the file listing finds nothing, compares nothing,
+# and reports agreement: a guard that cannot fail. This prints the key
+# instead, and says so loudly when it cannot.
+everyday_settings_listing() {
+    if ! rig_is_windows; then
+        return 0
+    fi
+    if command -v reg >/dev/null 2>&1; then
+        # The reading is taken first and tested on its own. Piping reg
+        # straight into sed puts sed's status (always 0) on the pipeline,
+        # so `|| echo ABSENT` could never fire: an absent key printed
+        # NOTHING, before and after, and the diff agreed with itself --
+        # the very guard-that-cannot-fail this function exists to remove.
+        local dump
+        if dump=$(reg query 'HKCU\Software\seabass\seabass' /s 2>/dev/null); then
+            printf '%s\n' "$dump" | sed -e 's/[[:space:]]*$//' -e '/^$/d'
+        else
+            echo 'HKCU\Software\seabass\seabass ABSENT'
+        fi
+    else
+        echo 'HKCU\Software\seabass\seabass UNWATCHED-NO-REG-EXE'
+    fi
+}
+
+# Non-zero when the line above is a placeholder rather than a reading, so
+# a check can fail instead of comparing two placeholders and passing.
+everyday_settings_watchable() {
+    if ! rig_is_windows; then
+        return 0
+    fi
+    command -v reg >/dev/null 2>&1
+}
+
 # The filesystem UUID the app keys a stick's edit lock on: udev's ID_FS_UUID
 # on Linux, DiskArbitration's volume UUID on macOS (what `diskutil info`
 # prints as "Volume UUID").

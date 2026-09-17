@@ -184,6 +184,18 @@ run (`RIG_REFERENCE_PRINTS`) and compared after it. Each check writes
 `<out>/<check>.log` and a `PASS`/`FAIL` line to `<out>/summary.tsv`; a run of
 several hours that reports PASS in minutes is suspect, so read the logs.
 
+The sandbox profile (`SEABASS_HOME`, `XDG_*`) covers Linux fully. It does
+not cover the app's settings on macOS or Windows, where Qt ignores
+`XDG_CONFIG_HOME`: macOS writes a property list and Windows the registry
+key `HKCU\Software\seabass\seabass` (measured; see
+`gui/seabass_settings.hpp`). So on those two, S3 and X4 do not assert that
+settings landed in the sandbox -- they read the everyday settings before
+and after the round and fail if anything moved. On Windows that reading
+needs `reg` on PATH, and both checks fail saying so if it is missing,
+rather than comparing two placeholders and passing. Both, not just S3:
+`RIG_ONLY` runs a check by name, and X4 on its own is then the only guard
+there is.
+
 The pieces run on their own too, each ending in `RIG RESULT: PASS` or
 `FAIL` with a matching exit code:
 

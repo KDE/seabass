@@ -74,6 +74,10 @@ real_profile_now() {
             echo "$path ABSENT"
         fi
     done
+    # And Windows in the registry, which no file listing can see -- see
+    # everyday_settings_listing() in rig-platform.sh for why that made
+    # this whole comparison vacuous there.
+    everyday_settings_listing
 }
 
 real_profile_now > "$out/real-profile-before.txt"
@@ -228,8 +232,20 @@ sandbox_profile() {
     # XDG_CONFIG_HOME means nothing to Qt on macOS; there the checks run
     # the QML runner, which keeps its settings in a sandbox of its own, and
     # the everyday property list is watched below instead.
-    if [ "$rig_os" != "Darwin" ]; then
+    #
+    # Nor on Windows, where a real run resolves to the registry whatever
+    # this variable says (gui/seabass_settings.hpp records the
+    # measurement). Asserting a file there fails a check that can never
+    # pass, and says nothing about the thing that matters -- so the
+    # everyday key is watched below instead, exactly as on macOS. That
+    # only works while the tool to read it is there, so a missing reg.exe
+    # fails here rather than silently comparing two placeholders.
+    if [ "$rig_os" != "Darwin" ] && ! rig_is_windows; then
         [ -f "$config/seabass/seabass.conf" ] || { echo "no settings in the sandbox"; ok=1; }
+    fi
+    if ! everyday_settings_watchable; then
+        echo "reg.exe not on PATH: the everyday settings cannot be watched, so this round cannot prove it left them alone"
+        ok=1
     fi
     [ -d "$home/metadata" ] || { echo "no metadata store in the sandbox"; ok=1; }
     real_profile_now > "$out/real-profile-after.txt"
@@ -243,6 +259,15 @@ sandbox_profile() {
 # Run again at the very end of the round: S3 alone only proves the profile
 # was untouched by the three checks before it.
 sandbox_profile_still_clean() {
+    # The same refusal S3 makes, and for the same reason: without reg.exe
+    # the Windows part of the listing is a placeholder, identical before
+    # and after, so this diff would agree having compared nothing. S3
+    # failing does not cover it -- RIG_ONLY runs a check by name, and then
+    # X4 is the only guard there is.
+    if ! everyday_settings_watchable; then
+        echo "reg.exe not on PATH: the everyday settings cannot be watched, so this round cannot prove it left them alone"
+        return 1
+    fi
     real_profile_now > "$out/real-profile-end.txt"
     diff "$out/real-profile-before.txt" "$out/real-profile-end.txt" \
         && echo "the everyday profile is still exactly as it was" \
