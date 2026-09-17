@@ -8,8 +8,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 Seabass's home is on [KDE Invent](https://invent.kde.org/multimedia/seabass);
 the [GitHub mirror](https://github.com/sebasje/seabass) exists for wider
-reach, but KDE Invent is the canonical repository. The mirror used to live
-at `sebasje/djconvert`, which is now an archived pointer to this one.
+reach, but KDE Invent is the canonical repository.
 
 Reads and manages DJ track libraries across the three catalogs found on a
 rekordbox/Engine DJ USB stick: rekordbox's classic per-device export
@@ -90,38 +89,20 @@ needs real hardware to verify is tracked in
 
 ## License
 
-Seabass's own code is licensed under **GPL-2.0-only OR GPL-3.0-only OR
-LicenseRef-KDE-Accepted-GPL** -- the GNU General Public License version 2
-or 3, or any later version accepted by the membership of KDE e.V., which
-acts as a proxy under section 14 of GPLv3. That is the form KDE's
-licensing policy expects of an application.
+Seabass is licensed under **GPL-2.0-only OR GPL-3.0-only OR
+LicenseRef-KDE-Accepted-GPL**. Documentation is CC-BY-SA-4.0, build files
+are BSD-2-Clause, test fixtures CC0-1.0. The licence texts are in
+[`LICENSES/`](LICENSES/).
 
-Every file carries an SPDX tag and the full licence texts are in
-[`LICENSES/`](LICENSES/), following [REUSE 3.0](https://reuse.software/)
-as the policy requires. Files that cannot hold a header -- the binary test
-fixtures, vendored sources that must stay byte-identical to upstream --
-are covered by [`.reuse/dep5`](.reuse/dep5). `reuse lint` checks the lot
-and runs in CI.
-
-### Third-party components
-
-This project vendors a few pieces of other software, each under its own
-license (see [`cmake/dependency-submodules.txt`](cmake/dependency-submodules.txt)
-and `specs/README.md` for exact sources):
+Bundled components keep their own licences:
 
 | Component | Location | License |
 |---|---|---|
-| `libdjinterop` | `third_party/libdjinterop/` (git submodule) | LGPL-3.0-or-later |
-| `kaitai_struct_cpp_stl_runtime` | `third_party/kaitai_struct_cpp_stl_runtime/` (git submodule) | MIT |
-| rekordbox PDB/ANLZ format specs from [Deep-Symmetry/crate-digger](https://github.com/Deep-Symmetry/crate-digger), and the C++ parser generated from them | `specs/*.ksy`, `src/infrastructure/rekordbox/generated/` | EPL-2.0 OR MPL-2.0 OR LGPL-3.0-only; Seabass uses both under LGPL-3.0-only |
+| libdjinterop | `third_party/libdjinterop/` | LGPL-3.0-or-later |
+| Kaitai Struct C++ runtime | `third_party/kaitai_struct_cpp_stl_runtime/` | MIT |
+| zlib (Windows builds only; Linux uses the system library) | `third_party/zlib/` | Zlib |
+| rekordbox format specs from [crate-digger](https://github.com/Deep-Symmetry/crate-digger), and the parser generated from them | `specs/`, `src/infrastructure/rekordbox/generated/` | EPL-2.0 OR MPL-2.0 OR LGPL-3.0-only (used under LGPL-3.0-only) |
+| Breeze icons | `src/gui/qml/icons/breeze/` | LGPL-3.0-or-later |
+| Seabass logo, `prime4display.jpg` | `src/gui/qml/icons/`, top level | CC-BY-SA-4.0 |
 
-The crate-digger licence is settled upstream: the specs' own `meta:`
-block and the project's `LICENSE` name EPL-2.0 with MPL-2.0 and LGPL-3.0
-as secondary licences, and generated parsers inherit that choice
-(crate-digger issues
-[#49](https://github.com/Deep-Symmetry/crate-digger/issues/49) and
-[#50](https://github.com/Deep-Symmetry/crate-digger/issues/50)).
-
-All three combine cleanly with Seabass: the disjunction above offers
-GPL-3.0-only, a GPLv3 combined work takes LGPLv3 code without difficulty,
-and MIT is permissive.
+A binary build is therefore distributed under GPL-3.0.
