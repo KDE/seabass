@@ -238,6 +238,27 @@ runner exit 0 without running anything):
 `tools/rig_save_backups <stick>` lists the automatic backups a round's
 saves left on the stick and asks the store whether each is restorable.
 
+### On macOS, with disk images for sticks
+
+The same scripts run on a Mac: `tools/rig-platform.sh` puts Homebrew's GNU
+coreutils and findutils first on `PATH` (`brew install coreutils
+findutils`) and swaps `udisksctl`/`lsblk`/`/proc` for `diskutil`/`ps`. With
+one free USB port the sticks can be mounted disk images, which the app
+lists only when `SEABASS_ACCEPT_DISK_IMAGES=1` (the rig sets it):
+
+```
+hdiutil create -size 32g -type SPARSE -fs "MS-DOS FAT32" -volname VSTICKA -layout MBRSPUD vsticka.sparseimage
+hdiutil create -size 64g -type SPARSE -fs ExFAT -volname VSTICKB -layout MBRSPUD vstickb.sparseimage
+hdiutil attach -nobrowse vsticka.sparseimage; hdiutil attach -nobrowse vstickb.sparseimage
+SEABASS_BUILD_DIR=~/Seabass/builds/<name> RIG_REFERENCE_A=... RIG_REFERENCE_B=... tools/rig-shakedown.sh ~/rig-out
+```
+
+`RIG_STICK_A`/`RIG_STICK_B` default to `/Volumes/VSTICKA`/`VSTICKB` there,
+and `RIG_DEVICE_B` to B's device node. A disk image is not a USB stick: it
+proves the app's logic end to end, not how a real stick or its bus behaves,
+so a release round still wants real sticks. Quit rekordbox and Engine DJ
+first -- every write is refused while either runs.
+
 A stick pull is simulated by unmounting and remounting the device
 (`run-live.sh`); a pull in the middle of a save still needs someone at the
 machine. What is left for a person: playing a restored stick on Pioneer

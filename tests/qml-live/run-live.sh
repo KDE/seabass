@@ -11,11 +11,12 @@
 # See docs/testing.md, "Live tests against a real stick".
 #
 #   tests/qml-live/run-live.sh /media/you/STICK /dev/sdX1 [screenshot dir]
+#   tests/qml-live/run-live.sh /Volumes/STICK /dev/diskNs1 [screenshot dir]   (macOS)
 #   SKIP_PLAIN=1 ...   runs only the three orchestrated scenarios
 #   SEABASS_BUILD_DIR=~/builds/seabass ...   a build outside <repo>/build
 #
 # The device is required: the stick-pull scenario unmounts and mounts it
-# again with udisksctl, and a bundle that leaves that scenario out has not
+# again (udisksctl, or diskutil on macOS), and a bundle that leaves that scenario out has not
 # run. Every test writes to the stick through the normal backup path; do
 # not point this at a stick you cannot afford to restore.
 set -u
@@ -25,6 +26,7 @@ device="${2:?device of the scratch stick, e.g. /dev/sdb1 -- the stick-pull scena
 shots="${3:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
+. "$root/tools/rig-platform.sh"
 # Builds usually live outside the repository: SEABASS_BUILD_DIR says where.
 build="${SEABASS_BUILD_DIR:-$root/build}"
 bin="$build/seabass_qml_tests"
@@ -94,10 +96,10 @@ done
 # honours SEABASS_HOME.
 lockdir="${SEABASS_HOME:-$HOME/Seabass}/metadata/edit-locks"
 mkdir -p "$lockdir"
-libid="$(lsblk -no UUID "$(findmnt -no SOURCE "$stick")" 2>/dev/null | head -1)"
+libid="$(stick_uuid "$stick")"
 if [ -n "$libid" ]; then
     sleep 600 & holder=$!
-    startid="$(awk '{print $22}' "/proc/$holder/stat")"
+    startid="$(process_start_id "$holder")"
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '{"heartbeatUnix":"%s","hostname":"%s","instanceId":"run-live-foreign","libraryId":"%s","mountPoint":"%s","pid":"%s","processStartId":"%s","startedAtUtc":"%s","stickLabel":"%s"}\n' \
         "$(date +%s)" "$(hostname)" "$libid" "$stick" "$holder" "$startid" "$now" "$(basename "$stick")" \
@@ -130,11 +132,11 @@ rm -f /tmp/rekordbox
 
 # 4. The stick goes away while editing.
 if [ -n "$device" ]; then
-    ( sleep 12; udisksctl unmount -b "$device" >/dev/null 2>&1 && echo "--- unmounted $device"
-      sleep 15; udisksctl mount -b "$device" >/dev/null 2>&1 && echo "--- mounted $device again" ) &
+    ( sleep 12; unmount_device "$device" && echo "--- unmounted $device"
+      sleep 15; mount_device "$device" && echo "--- mounted $device again" ) &
     run "LiveStickPull::test_stickPulledWhileEditing" SEABASS_LIVE_STICK_PULL=1
     wait
-    udisksctl mount -b "$device" >/dev/null 2>&1 || true
+    mount_device "$device" || true
 else
     echo "=== LiveStickPull skipped: no device given"
     failed=1

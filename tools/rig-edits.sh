@@ -27,6 +27,7 @@ stick="${1:?mount point of the test stick}"
 baseline="${2:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
+. "$here/rig-platform.sh"
 build="${SEABASS_BUILD_DIR:-$root/build}"
 export SEABASS_LIVE_STICK="$stick"
 export QT_QPA_PLATFORM=offscreen

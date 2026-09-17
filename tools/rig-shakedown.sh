@@ -11,12 +11,15 @@
 #
 # Configured by environment (defaults are the rig machine's):
 #   SEABASS_BUILD_DIR   the build to test                    (<repo>/build)
-#   RIG_STICK_A         test stick A, gets reference A        (/media/sebas/RV2)
-#   RIG_STICK_B         test stick B, gets reference B        (/media/sebas/A4-128GB)
-#   RIG_DEVICE_B        stick B's partition, for the pull test (/dev/sdc1)
+#   RIG_STICK_A         test stick A, gets reference A        (/media/sebas/RV2; macOS /Volumes/VSTICKA)
+#   RIG_STICK_B         test stick B, gets reference B        (/media/sebas/A4-128GB; macOS /Volumes/VSTICKB)
+#   RIG_DEVICE_B        stick B's partition, for the pull test (/dev/sdc1; macOS: B's device node)
 #   RIG_REFERENCE_A     reference backup for A (never written) (~/Seabass/e2e/backups/CORSAIR.zip)
 #   RIG_REFERENCE_B     reference backup for B (never written) (~/Seabass/e2e/backups/WHALESHARK2.zip)
 #   RIG_REFERENCE_PRINTS  size/mtime/manifest sha256 of both references, as check S4 recorded them
+#
+# On macOS the sticks may be mounted disk images (see docs/testing.md): the
+# rig sets SEABASS_ACCEPT_DISK_IMAGES=1 so the app lists them.
 #
 # Both sticks are overwritten, several times, and end as exact copies of
 # their references. The references are only read. Run it with the sandbox
@@ -30,10 +33,18 @@ set -u
 out="${1:?output directory}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
+. "$here/rig-platform.sh"
 build="${SEABASS_BUILD_DIR:-$root/build}"
-A="${RIG_STICK_A:-/media/sebas/RV2}"
-B="${RIG_STICK_B:-/media/sebas/A4-128GB}"
-deviceB="${RIG_DEVICE_B:-/dev/sdc1}"
+if [ "$rig_os" = "Darwin" ]; then
+    A="${RIG_STICK_A:-/Volumes/VSTICKA}"
+    B="${RIG_STICK_B:-/Volumes/VSTICKB}"
+    deviceB="${RIG_DEVICE_B:-$(stick_device "$B")}"
+    export SEABASS_ACCEPT_DISK_IMAGES=1
+else
+    A="${RIG_STICK_A:-/media/sebas/RV2}"
+    B="${RIG_STICK_B:-/media/sebas/A4-128GB}"
+    deviceB="${RIG_DEVICE_B:-/dev/sdc1}"
+fi
 refA="${RIG_REFERENCE_A:-$HOME/Seabass/e2e/backups/CORSAIR.zip}"
 refB="${RIG_REFERENCE_B:-$HOME/Seabass/e2e/backups/WHALESHARK2.zip}"
 prints="${RIG_REFERENCE_PRINTS:-$HOME/Seabass/e2e/reference-fingerprints.txt}"
@@ -54,7 +65,9 @@ trap 'rm -f "$A/RIG-FILLER.bin" "$B/RIG-FILLER.bin" 2>/dev/null' EXIT
 # call runs, so a definition further down would have left the baseline
 # empty and failed S3 and X4 on every round.
 real_profile_now() {
-    for path in "$HOME/.config/seabass/seabass.conf" "$HOME/Seabass/metadata"; do
+    # macOS keeps the settings in a property list instead.
+    for path in "$HOME/.config/seabass/seabass.conf" "$HOME/Library/Preferences/com.seabass.seabass.plist" \
+                "$HOME/Seabass/metadata"; do
         if [ -e "$path" ]; then
             stat -c '%n %s %Y' "$path"
         else
@@ -212,7 +225,12 @@ sandbox_profile() {
     case "$home" in "$HOME/Seabass/e2e"*) ;; *) echo "SEABASS_HOME is not the sandbox"; ok=1;; esac
     case "$config" in "$HOME/Seabass/e2e"*) ;; *) echo "XDG_CONFIG_HOME is not the sandbox"; ok=1;; esac
     case "$data" in "$HOME/Seabass/e2e"*) ;; *) echo "XDG_DATA_HOME is not the sandbox"; ok=1;; esac
-    [ -f "$config/seabass/seabass.conf" ] || { echo "no settings in the sandbox"; ok=1; }
+    # XDG_CONFIG_HOME means nothing to Qt on macOS; there the checks run
+    # the QML runner, which keeps its settings in a sandbox of its own, and
+    # the everyday property list is watched below instead.
+    if [ "$rig_os" != "Darwin" ]; then
+        [ -f "$config/seabass/seabass.conf" ] || { echo "no settings in the sandbox"; ok=1; }
+    fi
     [ -d "$home/metadata" ] || { echo "no metadata store in the sandbox"; ok=1; }
     real_profile_now > "$out/real-profile-after.txt"
     diff "$out/real-profile-before.txt" "$out/real-profile-after.txt" \
