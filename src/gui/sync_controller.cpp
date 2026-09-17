@@ -29,6 +29,7 @@
 #include "gui/qt_progress_reporter.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -47,7 +48,7 @@ namespace
 
 std::chrono::system_clock::time_point fileMtime(const std::string &path)
 {
-    return std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(path));
+    return infrastructure::toSystemClock(std::filesystem::last_write_time(path));
 }
 
 // Builds SyncTaskResult::playlistNames/playlistTrackCounts from the union

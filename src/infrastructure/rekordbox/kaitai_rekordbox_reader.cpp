@@ -10,6 +10,7 @@
 #include <sstream>
 #include <unordered_map>
 
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_anlz.h"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
@@ -442,7 +443,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         const auto written =
                             std::filesystem::last_write_time(std::filesystem::path(m_pioneerRoot) / extRelative, ec);
                         if (!ec) {
-                            const auto asSystem = std::chrono::clock_cast<std::chrono::system_clock>(written);
+                            const auto asSystem = infrastructure::toSystemClock(written);
                             track.metadataModifiedAt =
                                 std::chrono::duration_cast<std::chrono::seconds>(asSystem.time_since_epoch()).count();
                         }

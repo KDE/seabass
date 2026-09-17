@@ -5,6 +5,7 @@
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 
 #include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/work_counters.hpp"
 
 #include <algorithm>
@@ -393,15 +394,15 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
                 // (an int32 clamp of a wildly wrong ~13-trillion-second
                 // value), silently poisoning every mtime this store wrote
                 // and tripping Zip64Reader's DOS-vs-extended-timestamp
-                // consistency check on every restore. clock_cast() to
-                // system_clock is the same conversion this project
+                // consistency check on every restore. toSystemClock()
+                // (file_clock.hpp) is the same conversion this project
                 // already does everywhere else it needs a real Unix
                 // timestamp from fs::last_write_time() (see cli/main.cpp,
                 // stick_tree_walker.cpp's toUnixSeconds(), etc.) --
                 // inlined rather than reusing that helper, so this file
                 // does not gain a dependency on stick_tree_walker.cpp in
                 // every target that lists it directly.
-                const auto sysTime = std::chrono::clock_cast<std::chrono::system_clock>(stamp);
+                const auto sysTime = infrastructure::toSystemClock(stamp);
                 mtime = std::chrono::duration_cast<std::chrono::seconds>(sysTime.time_since_epoch()).count();
             }
             writer.addFileFromMemory(entryName, mtime,
@@ -551,12 +552,12 @@ bool FilesystemBackupStore::restoreFromArchive(const fs::path &dir,
             const std::int64_t recorded = reader->entries()[*index].mtimeUnix;
             if (recorded > Year2000) {
                 std::error_code timeEc;
-                // Inline clock_cast, as the write side does, for the same
-                // reason: the file clock's epoch is not the Unix one (MSVC
-                // counts from 1601), and this file does not depend on
-                // stick_tree_walker.cpp.
+                // Header-only toFileClock(), as the write side does, for
+                // the same reason: the file clock's epoch is not the Unix
+                // one (MSVC counts from 1601), and this file does not
+                // depend on stick_tree_walker.cpp.
                 const std::chrono::system_clock::time_point asSystem{std::chrono::seconds(recorded)};
-                fs::last_write_time(target, std::chrono::clock_cast<fs::file_time_type::clock>(asSystem), timeEc);
+                fs::last_write_time(target, infrastructure::toFileClock(asSystem), timeEc);
             }
         }
         if (restored && target.extension() == ".db") {

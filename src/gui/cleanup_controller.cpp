@@ -178,7 +178,7 @@ QVariant CleanupPlanListModel::data(const QModelIndex &index, int role) const
     case NewCueCountRole:
         return static_cast<int>(plan.mergedCuesForSurvivor.size()) - static_cast<int>(plan.survivor.cues.size());
     case IncludedRole:
-        return m_included[realIndex];
+        return bool(m_included[realIndex]);
     case StagedRole:
         return realIndex < m_stagedDescriptions.size() && !m_stagedDescriptions[realIndex].isEmpty();
     case StagedDescriptionRole:
@@ -391,7 +391,7 @@ QVariant PendingDeletionListModel::data(const QModelIndex &index, int role) cons
     case TimestampRole:
         return QString::fromStdString(entry.timestampUtc);
     case IncludedRole:
-        return m_included[static_cast<size_t>(index.row())];
+        return bool(m_included[static_cast<size_t>(index.row())]);
     case SizeHumanRole:
         return humanSize(entry.fileSizeBytes);
     default:

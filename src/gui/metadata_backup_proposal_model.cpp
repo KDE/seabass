@@ -156,7 +156,7 @@ QVariant BackupProposalListModel::data(const QModelIndex &index, int role) const
     case ChangeSummaryRole:
         return changeSummaryOf(proposal);
     case StagedRole:
-        return m_staged[static_cast<std::size_t>(source)];
+        return bool(m_staged[static_cast<std::size_t>(source)]);
     default:
         return {};
     }

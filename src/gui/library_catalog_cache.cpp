@@ -4,12 +4,14 @@
 
 #include "gui/library_catalog_cache.hpp"
 
+#include <exception>
 #include <filesystem>
 #include <stdexcept>
 
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/audio/duration_fill.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -41,7 +43,7 @@ fs::path freshnessFile(const std::string &format, const std::string &path)
 
 std::chrono::system_clock::time_point realMtime(const std::string &format, const std::string &path)
 {
-    return std::chrono::clock_cast<std::chrono::system_clock>(fs::last_write_time(freshnessFile(format, path)));
+    return infrastructure::toSystemClock(fs::last_write_time(freshnessFile(format, path)));
 }
 
 std::vector<domain::Track> readCatalog(const std::string &format, const std::string &path,

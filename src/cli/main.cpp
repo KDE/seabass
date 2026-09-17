@@ -36,6 +36,7 @@
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "infrastructure/logging/file_operation_log.hpp"
 #include "infrastructure/media/media_factory.hpp"
@@ -740,7 +741,7 @@ int runBackupsCommand(bool wantRekordbox, bool wantEngine, const std::optional<s
 
 std::chrono::system_clock::time_point fileMtime(const std::string &path)
 {
-    return std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(path));
+    return seabass::infrastructure::toSystemClock(std::filesystem::last_write_time(path));
 }
 
 std::string describeCues(const std::vector<seabass::domain::CuePoint> &cues)

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "infrastructure/engine/engine_library_layout.hpp"
+#include "infrastructure/file_clock.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/long_paths.hpp"
 
@@ -72,7 +73,7 @@ bool isExcludedFromBackup(std::string_view relativePath, bool isDirectory)
 std::int64_t toUnixSeconds(fs::file_time_type time)
 {
     using namespace std::chrono;
-    auto sys = clock_cast<system_clock>(time);
+    auto sys = toSystemClock(time);
     return duration_cast<seconds>(sys.time_since_epoch()).count();
 }
 
@@ -80,7 +81,7 @@ fs::file_time_type fromUnixSeconds(std::int64_t secondsSinceEpoch)
 {
     using namespace std::chrono;
     system_clock::time_point sys{seconds(secondsSinceEpoch)};
-    return clock_cast<fs::file_time_type::clock>(sys);
+    return toFileClock(sys);
 }
 
 std::string pathToUtf8(const fs::path &path)

@@ -14,6 +14,7 @@
 #include <iostream>
 
 #include "infrastructure/backup/filesystem_backup_store.hpp"
+#include "infrastructure/file_clock.hpp"
 
 #include "scratch_path.hpp"
 
@@ -85,15 +86,15 @@ int main()
     // restore: an undo that dates every file "now" makes the stick look
     // freshly edited to the metadata merge rule and the backup advice.
     {
-        // Converted with clock_cast, as the store does, so this test builds
+        // Converted with file_clock.hpp, as the store does, so this test builds
         // without stick_tree_walker.cpp just like the store itself.
         const auto fromUnixSeconds = [](std::int64_t seconds) {
-            return std::chrono::clock_cast<fs::file_time_type::clock>(
+            return seabass::infrastructure::toFileClock(
                 std::chrono::system_clock::time_point{std::chrono::seconds(seconds)});
         };
         const auto toUnixSeconds = [](fs::file_time_type time) {
             return std::chrono::duration_cast<std::chrono::seconds>(
-                       std::chrono::clock_cast<std::chrono::system_clock>(time).time_since_epoch())
+                       seabass::infrastructure::toSystemClock(time).time_since_epoch())
                 .count();
         };
         fs::path dated = root / "dated" / "export.pdb";
