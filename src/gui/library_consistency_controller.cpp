@@ -32,6 +32,7 @@
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/delete_orphan_change.hpp"
 #include "gui/edit/changes/remove_junk_cue_change.hpp"
+#include "gui/edit/changes/repair_artwork_change.hpp"
 #include "gui/edit/changes/repair_issue_change.hpp"
 
 namespace seabass::gui
@@ -353,6 +354,13 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
 
         tallyPlaylists(tracks, result);
 
+        if (format == QStringLiteral("engine")) {
+            // Cover art, checked while this format's library is open
+            // anyway: one read of Track/AlbumArt and a stat per image,
+            // nothing next to the scan itself.
+            result.artwork = infrastructure::engine::auditArtwork(path.toStdString());
+        }
+
         if (!playlistName.isEmpty()) {
             tracks = domain::filterByScope(tracks, domain::TrackScope::playlist(playlistName.toStdString()));
         }
@@ -417,6 +425,33 @@ QString LibraryConsistencyController::pathForFormat(const QString &format) const
     return format == "engine" ? m_enginePath : m_rekordboxPath;
 }
 
+int LibraryConsistencyController::artworkImportedCount() const
+{
+    return static_cast<int>(std::count_if(m_artwork.unreadable.begin(), m_artwork.unreadable.end(),
+                                          [](const infrastructure::engine::ArtworkEntry &entry) {
+                                              return entry.storage
+                                                  == infrastructure::engine::ArtworkStorage::ImportedPath;
+                                          }));
+}
+
+int LibraryConsistencyController::artworkMissingFileCount() const
+{
+    return static_cast<int>(std::count_if(m_artwork.unreadable.begin(), m_artwork.unreadable.end(),
+                                          [](const infrastructure::engine::ArtworkEntry &entry) {
+                                              return entry.storage
+                                                  == infrastructure::engine::ArtworkStorage::CachedFileMissing;
+                                          }));
+}
+
+int LibraryConsistencyController::artworkBrokenRowCount() const
+{
+    return static_cast<int>(std::count_if(m_artwork.unreadable.begin(), m_artwork.unreadable.end(),
+                                          [](const infrastructure::engine::ArtworkEntry &entry) {
+                                              return entry.storage
+                                                  == infrastructure::engine::ArtworkStorage::RowWithoutHash;
+                                          }));
+}
+
 void LibraryConsistencyController::scan(const QString &rekordboxPath, const QString &enginePath,
                                           const QString &playlistName)
 {
@@ -428,6 +463,12 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     m_currentPlaylistName = playlistName;
     m_model.clear();
     m_junkCueModel.clear();
+    // The cover-art counts belong to the scan that produced them. Left
+    // standing, a rescan showed the previous run's headline beside an
+    // emptied issue list, and an Engine leg that then errored left those
+    // counts on screen for as long as the page lived.
+    m_artwork = {};
+    emit artworkChanged();
     // Deliberately NOT clearing m_playlistNames/m_playlistTrackCounts
     // here: this scan() call is itself reachable synchronously from
     // inside PlaylistPickerCombo's own row-delegate onClicked handler
@@ -509,6 +550,10 @@ void LibraryConsistencyController::onScanFinished()
     } else {
         m_model.appendIssues(std::move(result.issues));
         m_junkCueModel.appendIssues(std::move(result.junkCues));
+        if (result.artwork.tracksWithArt > 0 || !result.artwork.error.empty()) {
+            m_artwork = std::move(result.artwork);
+            emit artworkChanged();
+        }
         // Rows staged before this rescan keep their mark if they are
         // still listed (the change itself lives in the session).
         for (const auto &[key, info] : m_stagedIssues) {
@@ -609,6 +654,15 @@ void LibraryConsistencyController::attachSession()
                     scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
                     return;
                 }
+                if (auto staged = m_stagedArtwork.find(changeId); staged != m_stagedArtwork.end()) {
+                    // The counts come from the database this just wrote, so
+                    // they are re-read once the whole save is done rather
+                    // than guessed at per track.
+                    m_stagedArtwork.erase(staged);
+                    m_rescanAfterSave = true;
+                    emit artworkChanged();
+                    return;
+                }
                 for (auto it = m_stagedIssues.begin(); it != m_stagedIssues.end(); ++it) {
                     if (it->second.changeId == changeId) {
                         // A rekordbox repair mirrors its cue merge/row
@@ -655,8 +709,10 @@ void LibraryConsistencyController::attachSession()
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
                 m_stagedIssues.clear();
                 m_stagedJunk.clear();
+                m_stagedArtwork.clear();
                 m_model.clearStaged();
                 m_junkCueModel.clearStaged();
+                emit artworkChanged();
                 emit issuesChanged();
             });
         }
@@ -843,6 +899,72 @@ void LibraryConsistencyController::removeAllJunkCues()
         setStatusMessage(
             QStringLiteral("Staged removing %1 stray cue(s). Press Save to write it to the stick.").arg(staged));
     }
+}
+
+void LibraryConsistencyController::repairArtwork()
+{
+    if (m_busy || artworkRepairStaged()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    std::vector<infrastructure::engine::ArtworkEntry> repairable;
+    for (const auto &entry : m_artwork.unreadable) {
+        if (!entry.imageOnStick.empty()) {
+            repairable.push_back(entry);
+        }
+    }
+    if (repairable.empty()) {
+        setErrorMessage("None of these tracks' images are on this stick, so there is nothing to copy.");
+        return;
+    }
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    // One change per track, the unit the save summary counts and the
+    // progress bar ticks. The hint tells the first of them how many are
+    // coming, so the whole run goes through one scratch copy of m.db.
+    //
+    // Staged in one call: a thousand separate stage() calls is quadratic
+    // twice over -- a duplicate-id scan per change, and a pendingChanged()
+    // per change that has QML rebuild the whole pending-description list
+    // for the Save button's tooltip -- which froze the window on one press
+    // of a button whose whole job is to be pressed once.
+    const int count = static_cast<int>(repairable.size());
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    changes.reserve(repairable.size());
+    std::set<QString> ids;
+    for (const auto &entry : repairable) {
+        // Only the first declares the database, so the save takes one
+        // checkpoint copy of it rather than one per track: see
+        // RepairArtworkChange::filesToBackup().
+        changes.push_back(std::make_unique<RepairArtworkChange>(m_enginePath, entry, count, changes.empty()));
+        ids.insert(RepairArtworkChange::idFor(entry.trackId));
+    }
+    if (!m_session->stageAll(std::move(changes))) {
+        return;  // the session reported the refusal; the page shows it
+    }
+    m_stagedArtwork = std::move(ids);
+    emit artworkChanged();
+    setStatusMessage(
+        QStringLiteral("Staged cover art for %1 track(s). Press Save to write it to the stick.").arg(count));
+}
+
+void LibraryConsistencyController::unstageArtworkRepair()
+{
+    if (m_stagedArtwork.empty()) {
+        return;
+    }
+    if (m_session) {
+        QStringList ids;
+        for (const QString &staged : m_stagedArtwork) {
+            ids << staged;
+        }
+        m_session->unstageAll(ids);
+    }
+    m_stagedArtwork.clear();
+    emit artworkChanged();
+    setStatusMessage({});
 }
 
 void LibraryConsistencyController::unstageJunkCue(int index)

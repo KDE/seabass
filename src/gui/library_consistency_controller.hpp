@@ -20,6 +20,9 @@
 #include "application/ports/cancellation_token.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
+#include <set>
+
+#include "infrastructure/engine/engine_artwork.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
 namespace seabass::gui
@@ -160,6 +163,10 @@ struct LibraryConsistencyScanResult
     // union as the progressive per-format scan completes.
     QStringList playlistNames;
     QVariantMap playlistTrackCounts;
+    // Engine only: which tracks' cover art a player can actually find.
+    // Engine's own "import rekordbox library" leaves art pointing at a
+    // path on the importing computer, which no player has.
+    infrastructure::engine::ArtworkAudit artwork;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -218,6 +225,15 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(int repairableCount READ repairableCount NOTIFY issuesChanged)
+    Q_PROPERTY(int artworkTracksWithArt READ artworkTracksWithArt NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkReadableCount READ artworkReadableCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkUnreadableCount READ artworkUnreadableCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkRepairableCount READ artworkRepairableCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkImportedCount READ artworkImportedCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkMissingFileCount READ artworkMissingFileCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkBrokenRowCount READ artworkBrokenRowCount NOTIFY artworkChanged)
+    Q_PROPERTY(QString artworkError READ artworkError NOTIFY artworkChanged)
+    Q_PROPERTY(bool artworkRepairStaged READ artworkRepairStaged NOTIFY artworkChanged)
     // Backs the Playlist picker in JunkCuePage.qml -- same shape/
     // convention as SyncController's own playlistNames/
     // playlistTrackCounts (index 0 of ["All tracks"] + these is the "no
@@ -252,6 +268,32 @@ public:
     // silently undercount on a long list.
     int repairableCount() const;
 
+    // Cover art, Engine only. A track counts as readable when its art is
+    // stored the way Engine stores its own: a hash, with the image in
+    // "Engine Library/Artwork". Anything still pointing at the importing
+    // computer's path is art no player will show.
+    int artworkTracksWithArt() const { return m_artwork.tracksWithArt; }
+    int artworkReadableCount() const { return m_artwork.readableByAPlayer; }
+    int artworkUnreadableCount() const { return static_cast<int>(m_artwork.unreadable.size()); }
+    int artworkRepairableCount() const { return m_artwork.repairable(); }
+    // The two faults are different things to say to a person, and the
+    // notice said the first one about both: an imported path points at the
+    // importing computer and can be repaired from the rekordbox art beside
+    // it, while a missing cached file is a row that is already right with
+    // its image deleted, which nothing here can put back.
+    int artworkImportedCount() const;
+    int artworkMissingFileCount() const;
+    // And a third: the track asked for art, and the row it points at has
+    // no hash to find it by. Nothing here can repair that.
+    int artworkBrokenRowCount() const;
+    // Set when the audit could not read the database. Without it an audit
+    // that failed looks exactly like a library with nothing wrong: no
+    // counts, no notice, no word to the user.
+    QString artworkError() const { return QString::fromStdString(m_artwork.error); }
+    // Staged as one change per track (the unit the save summary counts),
+    // so "staged" is "any of them is".
+    bool artworkRepairStaged() const { return !m_stagedArtwork.empty(); }
+
     // Scans every format actually present: rekordbox if rekordboxPath is
     // non-empty, engine if enginePath is non-empty, onelibrary if
     // exportLibrary.db exists under rekordboxPath. Progressive: each
@@ -275,6 +317,12 @@ public:
     // only (see class comment). No-op for a rekordbox/Engine issue.
     Q_INVOKABLE void deleteOrphan(int index);
     Q_INVOKABLE void unstageIssue(int index);
+
+    // Stages giving every repairable track Engine's own artwork storage:
+    // the image copied into the library, the row pointed at it. Save
+    // writes it, like every other change on this page.
+    Q_INVOKABLE void repairArtwork();
+    Q_INVOKABLE void unstageArtworkRepair();
 
     // Stages rewriting the track's full cue list with the offending 0:00
     // memory cue (and any other memory cue also sitting at 0, if somehow
@@ -303,6 +351,7 @@ signals:
     void errorMessageChanged();
     void statusMessageChanged();
     void issuesChanged();
+    void artworkChanged();
     void canUndoChanged();
 
 private:
@@ -342,6 +391,9 @@ private:
     };
     std::map<QString, StagedInfo> m_stagedIssues;  // issue key -> what is staged for it
     std::map<QString, QString> m_stagedJunk;    // junk key -> change id
+    infrastructure::engine::ArtworkAudit m_artwork;
+    // The cover-art changes this page has staged, by change id.
+    std::set<QString> m_stagedArtwork;
     // A rekordbox repair's OneLibrary mirror can stale another listed
     // issue: re-scan once the save that applied one has finished.
     bool m_rescanAfterSave = false;

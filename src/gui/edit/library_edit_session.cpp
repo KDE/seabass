@@ -12,6 +12,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <map>
 #include <set>
 
 #include "gui/edit/changes/restore_backups_change.hpp"
@@ -243,6 +244,82 @@ bool LibraryEditSession::stage(std::unique_ptr<PendingChange> change)
         m_registry->sessionStateChanged();
     }
     return true;
+}
+
+bool LibraryEditSession::stageAll(std::vector<std::unique_ptr<PendingChange>> changes)
+{
+    if (changes.empty() || m_writing) {
+        return false;
+    }
+    if (editsBrowsedBackup()) {
+        m_registry->reportReadOnlyRefusal(m_libraryId, m_stickLabel);
+        return false;
+    }
+    // The owner comes from the first change there actually is. stage()
+    // refuses a null change outright, and this has to refuse the same
+    // way: fronting the batch with a null one used to dereference it, and
+    // a batch of nothing but nulls used to take the stick's edit lock,
+    // set an owner, emit as though something had been staged, and return
+    // true with an empty change list.
+    auto first = std::find_if(changes.begin(), changes.end(), [](const auto &c) { return c != nullptr; });
+    if (first == changes.end()) {
+        return false;
+    }
+    const QString owner = (*first)->owner();
+    if (!m_changes.empty() && !m_editorOwner.isEmpty() && owner != m_editorOwner) {
+        emit editorConflict(m_editorOwner, owner);
+        return false;
+    }
+    if (!acquireLock()) {
+        return false;
+    }
+    m_editorOwner = owner;
+    const bool wasDirty = dirty();
+    // By id, so replacing an already-staged one stays what it was in
+    // stage() without turning the batch into a scan per change.
+    std::map<QString, std::size_t> indexById;
+    for (std::size_t i = 0; i < m_changes.size(); ++i) {
+        indexById.emplace(m_changes[i]->id(), i);
+    }
+    for (auto &change : changes) {
+        if (!change) {
+            continue;
+        }
+        const QString id = change->id();
+        if (auto existing = indexById.find(id); existing != indexById.end()) {
+            m_changes[existing->second] = std::shared_ptr<PendingChange>(std::move(change));
+        } else {
+            indexById.emplace(id, m_changes.size());
+            m_changes.push_back(std::shared_ptr<PendingChange>(std::move(change)));
+        }
+    }
+    emit pendingChanged();
+    if (!wasDirty) {
+        emit stateChanged();
+        m_registry->sessionStateChanged();
+    }
+    return true;
+}
+
+void LibraryEditSession::unstageAll(const QStringList &changeIds)
+{
+    if (m_writing || changeIds.isEmpty()) {
+        return;
+    }
+    const std::set<QString> wanted(changeIds.begin(), changeIds.end());
+    auto it = std::remove_if(m_changes.begin(), m_changes.end(),
+                             [&](const auto &c) { return wanted.count(c->id()) > 0; });
+    if (it == m_changes.end()) {
+        return;
+    }
+    m_changes.erase(it, m_changes.end());
+    clearOwnerIfClean();
+    emit pendingChanged();
+    if (m_changes.empty()) {
+        emit stateChanged();
+        m_registry->sessionStateChanged();
+        releaseLockIfUnneeded();
+    }
 }
 
 void LibraryEditSession::unstage(const QString &changeId)

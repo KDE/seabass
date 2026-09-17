@@ -165,6 +165,12 @@ public:
     // Writes to `liveFile` land in `writtenFile` for the rest of this save
     // (a scratch copy), so that is the file a failed change must put back.
     void redirectWrites(const std::string &liveFile, const std::string &writtenFile);
+    // Where a write to `liveFile` has to go: `liveFile` itself, or the
+    // scratch copy a redirect points at. A change that opens a file by
+    // path of its own -- rather than through a writer this class hands out
+    // -- has to ask, or it writes the live file behind the redirect and
+    // the scratch lands on top of its work at the end of the save.
+    std::string writeTargetFor(const std::string &liveFile) const;
     void endChange();
     // Closes every shared() writer, then puts back every file this change
     // protected. Returns the first file that could not be put back.

@@ -123,7 +123,15 @@ public:
     // (another instance holds it) emits lockRefused(holder), stages
     // nothing and returns false. Re-staging an id replaces the old change.
     bool stage(std::unique_ptr<PendingChange> change);
+    // Many at once, all or none, with one pendingChanged() at the end.
+    // Staging a thousand one at a time is quadratic twice over -- each
+    // stage() scans the list for a duplicate id, and each signal makes
+    // QML rebuild the whole pending-description list for the Save
+    // button's tooltip -- which froze the window on one button press.
+    bool stageAll(std::vector<std::unique_ptr<PendingChange>> changes);
     Q_INVOKABLE void unstage(const QString &changeId);
+    // Same, for taking a batch back out again.
+    void unstageAll(const QStringList &changeIds);
     bool hasChange(const QString &changeId) const;
 
     Q_INVOKABLE void save();

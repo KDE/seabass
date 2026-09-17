@@ -347,6 +347,7 @@ add_library(seabass_core STATIC
     src/infrastructure/rekordbox/rekordbox_library_anonymizer.cpp
     src/infrastructure/engine/libdjinterop_engine_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
+    src/infrastructure/engine/engine_artwork.cpp
     src/infrastructure/engine/rekordbox_key_parser.cpp
     src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
@@ -661,6 +662,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/restore_metadata_change.cpp
         src/gui/edit/changes/remove_junk_cue_change.hpp
         src/gui/edit/changes/remove_junk_cue_change.cpp
+        src/gui/edit/changes/repair_artwork_change.hpp
+        src/gui/edit/changes/repair_artwork_change.cpp
         src/gui/edit/changes/repair_issue_change.hpp
         src/gui/edit/changes/repair_issue_change.cpp
         src/gui/edit/changes/sync_plan_change.hpp
@@ -790,6 +793,9 @@ if(SEABASS_GUI AND Qt6_FOUND)
             Qt6::Multimedia
             Qt6::Concurrent
             Qt6::Svg
+            # ArtworkFixture builds a small Engine database for the
+            # cover-art page's tests.
+            SQLite::SQLite3
         )
         # See the find_package(Qt6 ...) call above for why these two are
         # conditional rather than in the list above.
@@ -984,6 +990,20 @@ add_executable(library_consistency_test
 )
 target_include_directories(library_consistency_test PRIVATE src)
 add_test(NAME library_consistency_test COMMAND library_consistency_test)
+
+add_executable(engine_artwork_test
+    tests/engine_artwork_test.cpp
+    src/infrastructure/engine/engine_artwork.cpp
+    src/infrastructure/hashing/sha256.cpp
+    # The repaired image is written durably, like every other write onto a
+    # stick, so this test needs the writer and its long-path helper.
+    src/infrastructure/durable_file_write.cpp
+    src/infrastructure/long_paths.cpp
+    src/infrastructure/work_counters.cpp
+)
+target_include_directories(engine_artwork_test PRIVATE src tests)
+target_link_libraries(engine_artwork_test PRIVATE SQLite::SQLite3)
+add_test(NAME engine_artwork_test COMMAND engine_artwork_test)
 
 add_executable(junk_cue_test
     src/domain/junk_cue.cpp

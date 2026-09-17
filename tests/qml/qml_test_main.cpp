@@ -19,6 +19,10 @@
 #include <QtQuickTest/quicktest.h>
 
 #include <cstdlib>
+#include <string>
+#include <system_error>
+
+#include <sqlite3.h>
 
 // Runs every tst_*.qml file found under the directory passed via -input
 // (see the add_test() call in CMakeLists.txt) against a real QQmlEngine --
@@ -37,6 +41,109 @@
 // memory cue) and five tracks ready to sync, one of which already has one
 // of the cues it is about to receive. The page builds its controller
 // itself, so the test finds it by objectName and hands it here.
+// Copies of the committed Engine library for the cover-art tests, and the
+// one place they are cleaned up again.
+//
+// Copies, not the fixture itself: pointing a page at a library opens an
+// edit session on the stick it sits on, which writes Seabass/backups and a
+// .write.lock beside it. Run against tests/fixtures/anonymized_library
+// that lands in the source tree -- it did, once, before this existed.
+//
+// eraseImages() additionally turns every AlbumArt row into a proper hash
+// and empties Artwork/, leaving a library whose only cover-art fault is
+// deleted image files. The fixture as committed carries the other fault as
+// well (1467 imported paths beside 95 of these), so it cannot show what
+// Library Health says about this one on its own -- and that is the branch
+// which used to offer a rekordbox re-import for pictures no import ever
+// wrote. A copy of the real library rather than a hand-made database,
+// because the page runs the whole Engine scan, which wants an Engine
+// library and reports an error for anything less: an error would leave the
+// artwork counts at zero, which is the state the test would then be
+// asserting.
+class ArtworkFixture : public QObject
+{
+    Q_OBJECT
+public:
+    using QObject::QObject;
+
+    ~ArtworkFixture() override
+    {
+        std::error_code ec;
+        for (const QString &root : m_roots) {
+            std::filesystem::remove_all(root.toStdString(), ec);
+        }
+    }
+
+    // The "Engine Library" path to point a page at, or empty on failure
+    // (which the test then fails on, rather than skipping).
+    Q_INVOKABLE QString libraryCopy(const QString &fromLibrary) { return copy(fromLibrary, false); }
+    Q_INVOKABLE QString libraryWithMissingImages(const QString &fromLibrary) { return copy(fromLibrary, true); }
+
+    // The same, and then `emptyRows` of the art rows emptied outright, so
+    // the library carries a missing-image fault and a hash-less-row fault
+    // at once and neither imported paths nor anything repairable. That is
+    // the shape where a closing sentence picked by whichever count was
+    // zero attached itself to the wrong fault.
+    Q_INVOKABLE QString libraryWithMissingImagesAndEmptyRows(const QString &fromLibrary, int emptyRows)
+    {
+        const QString library = copy(fromLibrary, true);
+        if (library.isEmpty()) {
+            return {};
+        }
+        sqlite3 *db = nullptr;
+        const std::string file = (std::filesystem::path(library.toStdString()) / "Database2" / "m.db").string();
+        if (sqlite3_open(file.c_str(), &db) != SQLITE_OK) {
+            sqlite3_close(db);
+            return {};
+        }
+        // Never id 1, which is Engine's own "no cover" row: emptying that
+        // one would be indistinguishable from a library with no art.
+        const std::string sql = "UPDATE AlbumArt SET hash = NULL WHERE id IN (SELECT id FROM AlbumArt WHERE id > 1 "
+            "ORDER BY id LIMIT " + std::to_string(emptyRows) + ");";
+        const bool ok = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+        sqlite3_close(db);
+        return ok ? library : QString();
+    }
+
+private:
+    QString copy(const QString &fromLibrary, bool eraseImages)
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path root = seabass::testing::scratchRoot()
+            / ("seabass_qml_artwork_" + std::to_string(QCoreApplication::applicationPid()) + "_"
+               + std::to_string(m_roots.size()));
+        fs::remove_all(root, ec);
+        const fs::path library = root / "Engine Library";
+        fs::create_directories(root, ec);
+        fs::copy(fromLibrary.toStdString(), library, fs::copy_options::recursive, ec);
+        if (ec) {
+            return {};
+        }
+        m_roots.append(QString::fromStdString(root.string()));
+        if (!eraseImages) {
+            return QString::fromStdString(library.string());
+        }
+
+        // Every image the copy might have had, gone.
+        fs::remove_all(library / "Artwork", ec);
+        fs::create_directories(library / "Artwork", ec);
+        sqlite3 *db = nullptr;
+        if (sqlite3_open((library / "Database2" / "m.db").string().c_str(), &db) != SQLITE_OK) {
+            sqlite3_close(db);
+            return {};
+        }
+        // Proper 20-byte hashes, the width Engine's own rows use: the rows
+        // are right, and only their files are missing.
+        const bool ok =
+            sqlite3_exec(db, "UPDATE AlbumArt SET hash = randomblob(20);", nullptr, nullptr, nullptr) == SQLITE_OK;
+        sqlite3_close(db);
+        return ok ? QString::fromStdString(library.string()) : QString();
+    }
+
+    QStringList m_roots;
+};
+
 class SyncPageFixture : public QObject
 {
     Q_OBJECT
@@ -359,6 +466,7 @@ public slots:
         }
         engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
         engine->rootContext()->setContextProperty(QStringLiteral("syncPageFixture"), new SyncPageFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("artworkFixture"), new ArtworkFixture(engine));
     }
 };
 

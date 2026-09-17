@@ -302,10 +302,7 @@ void SaveContext::protectForThisChange(const std::string &file)
     if (!m_inChange || file.empty()) {
         return;
     }
-    std::string target = file;
-    if (auto redirect = m_redirects.find(application::normalizedPathKey(file)); redirect != m_redirects.end()) {
-        target = redirect->second;
-    }
+    const std::string target = writeTargetFor(file);
     // A SQLite database is its sidecars too. Absent ones are recorded as
     // absent, so one the change created is removed again.
     std::vector<std::string> members{target};
@@ -343,6 +340,14 @@ void SaveContext::protectForThisChange(const std::string &file)
         }
         m_checkpoints.push_back(std::move(checkpoint));
     }
+}
+
+std::string SaveContext::writeTargetFor(const std::string &liveFile) const
+{
+    if (auto redirect = m_redirects.find(application::normalizedPathKey(liveFile)); redirect != m_redirects.end()) {
+        return redirect->second;
+    }
+    return liveFile;
 }
 
 void SaveContext::redirectWrites(const std::string &liveFile, const std::string &writtenFile)

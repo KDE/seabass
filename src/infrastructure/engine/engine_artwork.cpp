@@ -1,0 +1,435 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+#include "infrastructure/engine/engine_artwork.hpp"
+
+#include <sqlite3.h>
+
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+
+#include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/hashing/sha256.hpp"
+
+namespace seabass::infrastructure::engine
+{
+
+namespace fs = std::filesystem;
+
+namespace
+{
+
+constexpr std::string_view ImportedPrefix = "image://";
+// The part of an imported reference that is the same on every machine --
+// in both spellings, because the reference is the path as the *importing*
+// computer wrote it, and Engine DJ on Windows writes
+// "...\PIONEER\Artwork\00001\a5_m.jpg". Looking for the forward-slash
+// form alone would have found nothing on a stick imported there: every
+// track unrepairable, and the page telling the user "none of their images
+// are on this stick" about a stick where all of them are.
+constexpr std::string_view StickTail = "PIONEER/Artwork";
+constexpr std::string_view StickTailWindows = "PIONEER\\Artwork";
+
+fs::path databaseFile(const std::string &engineLibraryPath)
+{
+    return fs::path(engineLibraryPath) / "Database2" / "m.db";
+}
+
+fs::path artworkDirectory(const std::string &engineLibraryPath)
+{
+    return fs::path(engineLibraryPath) / "Artwork";
+}
+
+// The extension a repaired file gets, decided on the bytes rather than on
+// the name the source had: the audit looks for "<hash>.jpg", ".jpeg" or
+// ".png" exactly, so a source called a5_m.JPG was written as <hash>.JPG and
+// read back as still missing on any case-sensitive filesystem -- counted
+// unreadable AND unrepairable, the notice up and the button disabled. An
+// extension also says nothing about what is in the file, and that name is
+// all a player has to go on. Empty when the bytes are neither JPEG nor PNG.
+std::string extensionForImage(std::string_view bytes)
+{
+    if (bytes.size() >= 3 && static_cast<unsigned char>(bytes[0]) == 0xFF
+        && static_cast<unsigned char>(bytes[1]) == 0xD8 && static_cast<unsigned char>(bytes[2]) == 0xFF) {
+        return ".jpg";
+    }
+    static constexpr std::string_view PngMagic("\x89PNG\r\n\x1a\n", 8);
+    if (bytes.size() >= PngMagic.size() && bytes.substr(0, PngMagic.size()) == PngMagic) {
+        return ".png";
+    }
+    return {};
+}
+
+// The first bytes only: the audit asks this of every imported entry, and
+// a full read of a thousand JPEGs to answer it would be a scan of its own.
+bool isImageARepairCanName(const fs::path &file)
+{
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    std::array<char, 8> head{};
+    in.read(head.data(), head.size());
+    return !extensionForImage(std::string_view(head.data(), static_cast<size_t>(in.gcount()))).empty();
+}
+
+std::string readWholeFile(const fs::path &file)
+{
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+}  // namespace
+
+int ArtworkAudit::repairable() const
+{
+    return static_cast<int>(std::count_if(unreadable.begin(), unreadable.end(),
+                                          [](const ArtworkEntry &entry) { return !entry.imageOnStick.empty(); }));
+}
+
+std::string artworkFileName(std::span<const std::uint8_t> hash)
+{
+    static constexpr char Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    std::string out;
+    out.reserve((hash.size() + 2) / 3 * 4);
+    size_t i = 0;
+    for (; i + 2 < hash.size(); i += 3) {
+        const std::uint32_t triple = (hash[i] << 16) | (hash[i + 1] << 8) | hash[i + 2];
+        out += Alphabet[(triple >> 18) & 0x3F];
+        out += Alphabet[(triple >> 12) & 0x3F];
+        out += Alphabet[(triple >> 6) & 0x3F];
+        out += Alphabet[triple & 0x3F];
+    }
+    if (i + 1 == hash.size()) {
+        const std::uint32_t triple = hash[i] << 16;
+        out += Alphabet[(triple >> 18) & 0x3F];
+        out += Alphabet[(triple >> 12) & 0x3F];
+    } else if (i + 2 == hash.size()) {
+        const std::uint32_t triple = (hash[i] << 16) | (hash[i + 1] << 8);
+        out += Alphabet[(triple >> 18) & 0x3F];
+        out += Alphabet[(triple >> 12) & 0x3F];
+        out += Alphabet[(triple >> 6) & 0x3F];
+    }
+    return out;
+}
+
+ArtworkStorage classifyArtworkReference(std::string_view reference)
+{
+    if (reference.empty()) {
+        return ArtworkStorage::None;
+    }
+    if (reference.starts_with(ImportedPrefix)) {
+        return ArtworkStorage::ImportedPath;
+    }
+    // A hash. Whether its file is there is the caller's to check.
+    return ArtworkStorage::Cached;
+}
+
+std::string imageOnStickFor(std::string_view reference, const std::string &stickRoot)
+{
+    bool windowsSpelling = false;
+    auto at = reference.find(StickTail);
+    if (at == std::string_view::npos) {
+        at = reference.find(StickTailWindows);
+        windowsSpelling = at != std::string_view::npos;
+    }
+    if (at == std::string_view::npos) {
+        return {};
+    }
+    std::string tail(reference.substr(at));
+    if (windowsSpelling) {
+        // Only for the spelling that matched with backslashes. A backslash
+        // inside a forward-slash reference is part of a file name -- legal
+        // on Linux and on exFAT mounted there -- and turning it into a
+        // separator would look up a file that does not exist and report the
+        // track unrepairable.
+        std::replace(tail.begin(), tail.end(), '\\', '/');
+    }
+    // One appended component, so the forward slashes inside `tail` stay
+    // literal rather than being re-split -- the same care the Engine
+    // reader's own artwork resolution takes, for the same Windows reason.
+    //
+    // And caught, for that same reason: `tail` is raw bytes out of a
+    // database column, and on Windows operator/ converts them to wide
+    // characters and throws filesystem_error when they are not valid
+    // UTF-8. libdjinterop_engine_reader.cpp catches the same throw per
+    // row, after a real Windows run did exactly that. Uncaught here it
+    // would leave runScanTask's outer handler to turn one unreadable
+    // artwork path into "the Engine scan failed", costing the user every
+    // missing file, junk cue and playlist tally for the format.
+    try {
+        return (fs::path(stickRoot) / tail).make_preferred().string();
+    } catch (const std::exception &) {
+        return {};
+    }
+}
+
+ArtworkAudit auditArtwork(const std::string &engineLibraryPath)
+{
+    ArtworkAudit audit;
+    const fs::path db = databaseFile(engineLibraryPath);
+    const fs::path artwork = artworkDirectory(engineLibraryPath);
+    const std::string stickRoot = fs::path(engineLibraryPath).parent_path().string();
+
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(db.string().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        audit.error = "could not read " + db.string();
+        if (handle) {
+            sqlite3_close(handle);
+        }
+        return audit;
+    }
+
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "SELECT t.id, t.title, t.artist, a.hash, t.albumArtId FROM Track t "
+                      "LEFT JOIN AlbumArt a ON a.id = t.albumArtId ORDER BY t.id";
+    if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        audit.error = std::string("could not read the Track table: ") + sqlite3_errmsg(handle);
+        sqlite3_close(handle);
+        return audit;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        ArtworkEntry entry;
+        entry.trackId = sqlite3_column_int64(stmt, 0);
+        if (const unsigned char *title = sqlite3_column_text(stmt, 1)) {
+            entry.title = reinterpret_cast<const char *>(title);
+        }
+        if (const unsigned char *artist = sqlite3_column_text(stmt, 2)) {
+            entry.artist = reinterpret_cast<const char *>(artist);
+        }
+        const void *blob = sqlite3_column_blob(stmt, 3);
+        const int size = sqlite3_column_bytes(stmt, 3);
+        if (blob == nullptr || size <= 0) {
+            // Nothing to find the art by, which is two different things.
+            //
+            // Engine's way of saying "this track has no cover" is not a
+            // missing albumArtId. It is a row: libdjinterop seeds
+            // AlbumArt (1, '', NULL) in every schema it writes
+            // (schema_1_18_0_os.cpp and its siblings) and points art-less
+            // tracks at it -- ALBUM_ART_ID_NONE in
+            // djinterop/engine/v3/track_table.hpp. 0 is the other
+            // spelling, which this project's own Engine reader already
+            // excludes. Both are "no art asked for", and reporting them
+            // would put a permanent, unfixable warning on every healthy
+            // library: most tracks on most sticks have no cover.
+            //
+            // What is left -- an albumArtId of its own, pointing at a row
+            // whose hash is NULL or empty -- is art asked for that nothing
+            // can resolve. The committed fixture has two of those (two
+            // tracks at AlbumArt 469, hash NULL, on a library whose row 1
+            // carries a real 65-byte reference, so it has no sentinel),
+            // and counting them as "no art asked for" left them out of
+            // every figure the page shows.
+            constexpr std::int64_t AlbumArtIdNone = 1;
+            const std::int64_t albumArtId = sqlite3_column_int64(stmt, 4);
+            if (sqlite3_column_type(stmt, 4) == SQLITE_NULL || albumArtId == 0 || albumArtId == AlbumArtIdNone) {
+                continue;
+            }
+            entry.storage = ArtworkStorage::RowWithoutHash;
+            audit.tracksWithArt++;
+            audit.unreadable.push_back(std::move(entry));
+            continue;
+        }
+        const std::string reference(static_cast<const char *>(blob), static_cast<size_t>(size));
+        entry.storage = classifyArtworkReference(reference);
+        audit.tracksWithArt++;
+
+        if (entry.storage == ArtworkStorage::ImportedPath) {
+            entry.reference = reference;
+            entry.imageOnStick = imageOnStickFor(reference, stickRoot);
+            std::error_code ec;
+            if (!entry.imageOnStick.empty() && !fs::is_regular_file(entry.imageOnStick, ec)) {
+                entry.imageOnStick.clear();
+            }
+            // And a file that is there but is not an image a repair can
+            // name (the written file's extension says JPEG or PNG, which
+            // is all a player has to go on) is not repairable either. Told
+            // here rather than at save time, so the count the page shows
+            // and the button it offers are what a repair will actually do,
+            // and so one odd file cannot stop a save of a thousand others.
+            if (!entry.imageOnStick.empty() && !isImageARepairCanName(entry.imageOnStick)) {
+                entry.imageOnStick.clear();
+            }
+            audit.unreadable.push_back(std::move(entry));
+            continue;
+        }
+
+        const std::span<const std::uint8_t> hash(static_cast<const std::uint8_t *>(blob), static_cast<size_t>(size));
+        const std::string name = artworkFileName(hash);
+        std::error_code ec;
+        bool present = false;
+        for (const char *extension : {".jpg", ".jpeg", ".png"}) {
+            if (fs::is_regular_file(artwork / (name + extension), ec)) {
+                present = true;
+                break;
+            }
+        }
+        if (present) {
+            audit.readableByAPlayer++;
+        } else {
+            entry.storage = ArtworkStorage::CachedFileMissing;
+            entry.reference = name;
+            audit.unreadable.push_back(std::move(entry));
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(handle);
+
+    std::stable_partition(audit.unreadable.begin(), audit.unreadable.end(),
+                          [](const ArtworkEntry &entry) { return !entry.imageOnStick.empty(); });
+    return audit;
+}
+
+ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
+                            const std::function<void(const std::string &)> &beforeWrite,
+                            const std::string &databaseFileOverride)
+{
+    ArtworkRepair result;
+    const fs::path db = databaseFileOverride.empty() ? databaseFile(engineLibraryPath) : fs::path(databaseFileOverride);
+    const fs::path artwork = artworkDirectory(engineLibraryPath);
+
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(db.string().c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+        result.error = "could not open " + db.string();
+        if (handle) {
+            sqlite3_close(handle);
+        }
+        return result;
+    }
+    // BEGIN is deferred, so the lock is taken at the first INSERT. Without
+    // this, another connection holding the database for a moment (the
+    // reader the same scan just used, a libdjinterop writer in the same
+    // save) comes back as "database is locked" at once and fails the whole
+    // save, rather than waiting the moment out.
+    sqlite3_busy_timeout(handle, 5000);
+    std::error_code ec;
+    fs::create_directories(artwork, ec);
+    // Checked, like the COMMIT below: without a transaction every INSERT
+    // and UPDATE autocommits, ROLLBACK does nothing, and a repair that
+    // fails halfway leaves rows behind while reporting that it wrote
+    // none -- the opposite of what this function promises.
+    if (sqlite3_exec(handle, "BEGIN;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        result.error = std::string("could not begin the art repair: ") + sqlite3_errmsg(handle);
+        sqlite3_close(handle);
+        return result;
+    }
+
+    auto fail = [&](const std::string &message) {
+        sqlite3_exec(handle, "ROLLBACK;", nullptr, nullptr, nullptr);
+        sqlite3_close(handle);
+        result.error = message;
+        result.repaired = 0;
+        return result;
+    };
+
+    // beforeWrite is SaveContext::protectForThisChange, which throws when
+    // it cannot copy a file aside (no temporary space, say). Uncaught it
+    // would unwind past an open write transaction and an open handle,
+    // leaving a hot journal beside the database that the save's own
+    // rollback then restores underneath a connection still holding it.
+    try {
+        for (const ArtworkEntry &entry : entries) {
+            if (entry.imageOnStick.empty()) {
+                continue;  // nothing on this stick to give it
+            }
+            const std::string bytes = readWholeFile(entry.imageOnStick);
+            if (bytes.empty()) {
+                continue;  // unreadable image: one cover is not worth failing the save
+            }
+            const std::string extension = extensionForImage(bytes);
+            if (extension.empty()) {
+                result.notAnImage++;
+                continue;  // neither JPEG nor PNG: nothing a player is promised to read
+            }
+            const auto full = hashing::Sha256::of(std::as_bytes(std::span(bytes)));
+            // 20 bytes, the width Engine's own rows use.
+            const std::span<const std::uint8_t> hash(full.data(), 20);
+            const std::string name = artworkFileName(hash);
+            const fs::path destination = artwork / (name + extension);
+            if (!fs::is_regular_file(destination, ec)) {
+                if (beforeWrite) {
+                    beforeWrite(destination.string());
+                }
+                // Durably, like every other write onto a stick: a bare
+                // ofstream leaves the bytes in the write-back cache, and a
+                // stick pulled after the save said Done would leave a
+                // truncated file sitting at exactly the name the audit
+                // looks for. The track would then count as readable from
+                // then on, the page would call the library healthy, the
+                // player would show a broken cover, and no rescan could
+                // ever surface it -- worse than not having copied it.
+                if (!writeFileDurablyAtomic(destination.string(), bytes)) {
+                    return fail("could not write " + destination.string());
+                }
+                result.filesWritten.push_back(destination.string());
+            }
+
+            std::int64_t albumArtId = 0;
+            sqlite3_stmt *find = nullptr;
+            if (sqlite3_prepare_v2(handle, "SELECT id FROM AlbumArt WHERE hash = ?;", -1, &find, nullptr) != SQLITE_OK) {
+                return fail(std::string("could not look up the art row: ") + sqlite3_errmsg(handle));
+            }
+            sqlite3_bind_blob(find, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
+            if (sqlite3_step(find) == SQLITE_ROW) {
+                albumArtId = sqlite3_column_int64(find, 0);
+            }
+            sqlite3_finalize(find);
+
+            if (albumArtId == 0) {
+                sqlite3_stmt *insert = nullptr;
+                if (sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (hash, albumArt) VALUES (?, NULL);", -1, &insert,
+                                       nullptr) != SQLITE_OK) {
+                    return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+                }
+                sqlite3_bind_blob(insert, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
+                if (sqlite3_step(insert) != SQLITE_DONE) {
+                    sqlite3_finalize(insert);
+                    return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+                }
+                sqlite3_finalize(insert);
+                albumArtId = sqlite3_last_insert_rowid(handle);
+            }
+
+            sqlite3_stmt *point = nullptr;
+            if (sqlite3_prepare_v2(handle, "UPDATE Track SET albumArtId = ? WHERE id = ?;", -1, &point, nullptr)
+                != SQLITE_OK) {
+                return fail(std::string("could not point the track at its art: ") + sqlite3_errmsg(handle));
+            }
+            sqlite3_bind_int64(point, 1, albumArtId);
+            sqlite3_bind_int64(point, 2, entry.trackId);
+            if (sqlite3_step(point) != SQLITE_DONE) {
+                sqlite3_finalize(point);
+                return fail(std::string("could not point the track at its art: ") + sqlite3_errmsg(handle));
+            }
+            sqlite3_finalize(point);
+            if (sqlite3_changes(handle) > 0) {
+                result.repaired++;
+            } else {
+                // The image is in the library and the AlbumArt row is
+                // written, but the track itself went between the audit and
+                // the save. Counted apart, because gating `repaired` on
+                // this alone let a repair that had done all its work report
+                // that none of the images could be read.
+                result.tracksNoLongerThere++;
+            }
+        }
+    } catch (const std::exception &e) {
+        return fail(std::string("could not set aside a file before writing it: ") + e.what());
+    }
+
+    if (sqlite3_exec(handle, "COMMIT;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        return fail(std::string("could not commit the art repair: ") + sqlite3_errmsg(handle));
+    }
+    sqlite3_close(handle);
+    return result;
+}
+
+}  // namespace seabass::infrastructure::engine
