@@ -406,6 +406,7 @@ ApplicationWindow {
             onEngineLibraryCreatorRequested: (stickLabel, rekordboxPath) => stackView.push(engineLibraryCreatorPageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
+                mediaController: mediaCtrl,
             })
             onSettingsRequested: (stickLabel, pioneerRoot) => stackView.push(settingsPageComponent, {
                 stickLabel: stickLabel,

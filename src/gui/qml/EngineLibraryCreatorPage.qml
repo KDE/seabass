@@ -18,10 +18,17 @@ Page {
     id: root
     required property string stickLabel
     required property string rekordboxPath
+    // Only used to re-detect once the library exists; see onWriteFinished.
+    required property var mediaController
 
     EngineLibraryCreatorController {
         id: controller
     }
+    // Exposed so a test can raise the controller's own signals against
+    // the page. The page owns its controller rather than being handed
+    // one, so without this there is no way to check what it does when a
+    // write finishes short of writing a real Engine library to a stick.
+    readonly property alias controller: controller
 
     // 0=V1, 1=V2, 2=V3 -- see infrastructure::engine::EngineSchemaGeneration.
     // Real hardware/firmware compatibility per generation is genuinely
@@ -103,7 +110,39 @@ Page {
     Connections {
         target: controller
         function onLockRefused(holder) { lockedDialog.openFor(controller.libraryId, holder); }
-        function onWriteFinished(summary) { summaryDialog.show(summary); }
+        function onWriteFinished(summary) {
+            // What a stick HAS is a snapshot taken by detect(), and the
+            // only thing that re-takes it by itself is a udev hotplug
+            // event. This wrote an Engine library into a folder on a
+            // stick that is already mounted, so nothing fires, and the
+            // stick list goes on saying there is no Engine library:
+            // Browse offers no Engine side, and Create is still on offer
+            // for a library that now exists.
+            //
+            // Here rather than on the stick list's activation, so the
+            // rescan happens once, after a library was actually created,
+            // instead of on every return to the list -- detect() is a
+            // synchronous scan of every mounted stick and ends in a full
+            // model reset, which would throw away scroll position and
+            // every row's state each time.
+            // Anything but a clean cancel. A cancel is the one outcome
+            // that cannot have put a file on the stick: the library is
+            // built in a scratch directory and only copied across at the
+            // end, and cancelling discards the scratch copy.
+            //
+            // A FAILURE is not the same thing, and skipping it here was a
+            // bug. The copy onto the stick is one recursive copy inside
+            // the same try, so a full stick or an I/O error part way
+            // leaves a partial Engine Library folder behind and still
+            // reports an error. Without a re-detect the list goes on
+            // offering "Create Engine Library", and the retry is refused
+            // by the creator's own "already exists" check with no way out
+            // short of replugging the stick.
+            if (!summary.cancelled) {
+                root.mediaController.detect();
+            }
+            summaryDialog.show(summary);
+        }
     }
 
     PageScrollView {
