@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -104,6 +106,22 @@ inline void sandboxSettings(const std::filesystem::path &configHome)
 #else
     setenv("XDG_CONFIG_HOME", configHome.string().c_str(), 1);
 #endif
+}
+
+// Bytes Deflate cannot shrink, for tests that need an archive really as
+// large as its input: a run of one byte deflates to almost nothing.
+// Seeded, so two buffers can differ.
+inline std::string incompressible(std::size_t size, std::uint64_t seed = 0x243F6A8885A308D3ull)
+{
+    std::string out(size, '\0');
+    std::uint64_t x = seed;
+    for (std::size_t i = 0; i < size; ++i) {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        out[i] = static_cast<char>(x & 0xff);
+    }
+    return out;
 }
 
 }  // namespace seabass::testing

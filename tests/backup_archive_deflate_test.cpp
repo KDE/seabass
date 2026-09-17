@@ -32,6 +32,7 @@
 #include "infrastructure/stick_backup/zip64_reader.hpp"
 #include "infrastructure/stick_backup/zip64_writer.hpp"
 #include "infrastructure/stick_backup/zip_format.hpp"
+#include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::stick_backup;
 using seabass::infrastructure::hashing::Sha256Digest;
@@ -58,18 +59,7 @@ std::string compressible(std::size_t size)
     return out;
 }
 
-std::string incompressible(std::size_t size)
-{
-    std::string out(size, '\0');
-    std::uint64_t x = 0x243F6A8885A308D3ull;
-    for (std::size_t i = 0; i < size; ++i) {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        out[i] = static_cast<char>(x & 0xff);
-    }
-    return out;
-}
+using seabass::testing::incompressible;
 
 std::uint32_t crcOf(const std::string &s)
 {

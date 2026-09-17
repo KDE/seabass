@@ -174,22 +174,45 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
         add(target.file, target.label);
     }
 
-    for (const std::string &label : labelOrder) {
-        const std::vector<std::string> &files = byLabel[label];
-        auto existing = m_recordByLabel.find(label);
-        application::BackupRecord record;
-        if (existing == m_recordByLabel.end()) {
-            record = archiveStore().backup(files, label);
-            m_recordByLabel[label] = record.id;
-            m_backups.push_back({QString::fromStdString(fs::path(record.path).parent_path().string()),
-                                 QString::fromStdString(record.id)});
-        } else {
-            record = archiveStore().addToArchive(existing->second, files);
+    // The records this call makes, so that when a later label's backup
+    // fails (the stick filled up) the earlier ones go with it: the save
+    // is refused as a whole, and a record with no save behind it would
+    // sit in Manage Backups taking space on a stick that has none. A
+    // label that already had a record keeps it -- addToArchive() leaves
+    // a record exactly as it was when it fails.
+    std::vector<std::string> madeHere;
+    const size_t backupsBefore = m_backups.size();
+    try {
+        for (const std::string &label : labelOrder) {
+            const std::vector<std::string> &files = byLabel[label];
+            auto existing = m_recordByLabel.find(label);
+            application::BackupRecord record;
+            if (existing == m_recordByLabel.end()) {
+                record = archiveStore().backup(files, label);
+                madeHere.push_back(record.id);
+                m_recordByLabel[label] = record.id;
+                m_backups.push_back({QString::fromStdString(fs::path(record.path).parent_path().string()),
+                                     QString::fromStdString(record.id)});
+            } else {
+                record = archiveStore().addToArchive(existing->second, files);
+            }
+            log().record(label + ": backed up " + std::to_string(files.size()) + " file(s) -> " + record.path);
+            for (const std::string &file : files) {
+                m_backedUp[application::normalizedPathKey(file)] = record.id;
+            }
         }
-        log().record(label + ": backed up " + std::to_string(files.size()) + " file(s) -> " + record.path);
-        for (const std::string &file : files) {
-            m_backedUp[application::normalizedPathKey(file)] = record.id;
+    } catch (...) {
+        for (const std::string &madeId : madeHere) {
+            archiveStore().remove(madeId);
+            std::erase_if(m_recordByLabel, [&](const auto &entry) { return entry.second == madeId; });
+            std::erase_if(m_backedUp, [&](const auto &entry) { return entry.second == madeId; });
         }
+        m_backups.resize(backupsBefore);
+        if (!madeHere.empty()) {
+            log().record("backup failed: removed the " + std::to_string(madeHere.size())
+                         + " record(s) this save had already made");
+        }
+        throw;
     }
 }
 

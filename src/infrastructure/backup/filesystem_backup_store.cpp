@@ -21,6 +21,7 @@
 #include <vector>
 #include <span>
 #include <sstream>
+#include <tuple>
 
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
@@ -139,6 +140,95 @@ std::string originValue(BackupOrigin origin)
     return origin == BackupOrigin::UserRequested ? "user" : "automatic";
 }
 
+// The manifest, written whole and fsynced: it is the record's commit
+// marker (list() wants it), so a stick pulled right after a save finds
+// all of it or none -- a partial one would have restore() put back
+// fewer files than were backed up. One writer for backup() and
+// addToArchive(), so the format has one source beside readManifest().
+bool writeManifest(const fs::path &dir, const Manifest &manifest)
+{
+    std::ostringstream out;
+    out << ManifestVersionKey << '\t' << manifest.version << '\n';
+    if (manifest.origin) {
+        out << OriginKey << '\t' << originValue(*manifest.origin) << '\n';
+    }
+    for (const auto &[entryName, recorded] : manifest.entries) {
+        out << entryName << '\t' << recorded << '\n';
+    }
+    return writeFileDurablyAtomic((dir / ManifestFileName).string(), out.str());
+}
+
+// Puts an archive back to the length it had before an append that
+// failed part-way. Through the archive file itself, truncate then
+// barrier, as ArchiveUpdater::abort() does: a bare resize_file() stays in
+// the page cache, and a stick pulled after the refused save would come
+// back with the trailing bytes on the medium and the record refused
+// whole. If even that fails the record is removed: an archive with bytes
+// after its end-of-central-directory lists as restorable and then is
+// not, which is worse than no record.
+void cutArchiveBackTo(const fs::path &dir, std::uint64_t length)
+{
+    const fs::path archivePath = dir / ArchiveFileName;
+    // Only an archive that grew needs cutting. One that could not even be
+    // opened for writing (read-only, held by another program) never took
+    // a byte and is intact; one whose size cannot be read is unknown, and
+    // a record removed on a guess is worse than one left alone.
+    std::error_code sizeEc;
+    const std::uintmax_t size = fs::file_size(archivePath, sizeEc);
+    if (sizeEc || size == length) {
+        return;
+    }
+    try {
+        if (length == 0) {
+            fs::remove(archivePath);
+        } else {
+            stick_backup::PosixArchiveFile file(archivePath, stick_backup::PosixArchiveFile::OpenMode::ReadWrite);
+            file.truncate(length);
+            file.barrier();
+        }
+    } catch (...) {
+        std::error_code removeEc;
+        fs::remove_all(dir, removeEc);
+    }
+}
+
+// A directory holding the store's archive but no manifest is a backup
+// that died before its manifest: a pull or a crash between the two, or,
+// before archives were cut back on failure, a stick that filled up.
+// Earlier builds left those on sticks, and hidden from list() they would
+// be space nobody could reclaim -- prune and Manage Backups only see
+// what is listed. Swept from the space-reclaiming paths only, which run
+// under the stick's write lock, so no backup can be writing one; and
+// judged by the record's own timestamp id, which a wrong clock or a
+// suspend cannot shift the way a file time can: a day old is dead. A
+// user's own folder carries no archive and is left alone.
+void sweepDeadRecords(const fs::path &base)
+{
+    const std::string cutoff = std::format(
+        "{:%Y%m%dT%H%M%S}",
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now() - std::chrono::hours(24)));
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(base, ec)) {
+        if (!entry.is_directory(ec)) {
+            continue;
+        }
+        const std::string name = entry.path().filename().string();
+        // "YYYYMMDDTHHMMSS-label", as timestampNow() + sanitize() make it.
+        bool timestamped = name.size() > 15 && name[8] == 'T' && name[15] == '-';
+        for (size_t i = 0; timestamped && i < 15; ++i) {
+            timestamped = i == 8 || std::isdigit(static_cast<unsigned char>(name[i]));
+        }
+        if (!timestamped || name.compare(0, 15, cutoff) >= 0) {
+            continue;
+        }
+        if (fs::is_regular_file(entry.path() / ManifestFileName, ec)
+            || !fs::is_regular_file(entry.path() / ArchiveFileName, ec)) {
+            continue;
+        }
+        fs::remove_all(entry.path(), ec);
+    }
+}
+
 }  // namespace
 
 // The stick this store lives on: baseDirectory is <stick>/Seabass/backups.
@@ -203,15 +293,29 @@ BackupRecord FilesystemBackupStore::backup(const std::vector<std::string> &fileP
     }
     fs::create_directories(dir);
 
-    auto [written, archiveBytes] = writeArchiveEntries(dir, filePaths);
-
-    {
-        std::ofstream manifest(dir / ManifestFileName, std::ios::app);
-        manifest << ManifestVersionKey << '\t' << ManifestFormatVersion << '\n';
-        manifest << OriginKey << '\t' << originValue(origin) << '\n';
-        for (const auto &[entryName, recorded] : written) {
-            manifest << entryName << '\t' << recorded << '\n';
+    // A backup that fails part-way -- the stick ran out of space while
+    // the archive was being written, as the release rig's full-stick
+    // check does on purpose -- must not leave its directory behind: a
+    // truncated backup.zip with no manifest is listed by list() as a
+    // record (it keeps any directory holding an archive), shows up in
+    // Manage Backups as an empty entry, and would be offered to restore
+    // from. The directory is this call's own, so removing it whole on
+    // any failure loses nothing that was ever complete.
+    std::vector<std::pair<std::string, std::string>> written;
+    std::uint64_t archiveBytes = 0;
+    try {
+        std::tie(written, archiveBytes) = writeArchiveEntries(dir, filePaths);
+        Manifest manifest;
+        manifest.version = ManifestFormatVersion;
+        manifest.origin = origin;
+        manifest.entries = written;
+        if (!writeManifest(dir, manifest)) {
+            throw std::runtime_error("could not write the manifest of backup " + id + " under " + m_baseDirectory);
         }
+    } catch (...) {
+        std::error_code removeEc;
+        fs::remove_all(dir, removeEc);
+        throw;
     }
 
     DirectoryState &state = stateFor(dir);
@@ -240,9 +344,18 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
     std::error_code ec;
     if (fs::exists(archivePath, ec)) {
         stick_backup::PosixArchiveFile existing(archivePath, stick_backup::PosixArchiveFile::OpenMode::ReadOnly);
-        if (auto reader = stick_backup::Zip64Reader::tryOpen(existing)) {
-            carried = reader->entries();
+        std::string error;
+        auto reader = stick_backup::Zip64Reader::tryOpen(existing, &error);
+        if (!reader) {
+            // Appending past an archive the reader refuses would write a
+            // central directory naming only the new entries, under a
+            // manifest that still names the old ones: a record that lists
+            // as restorable and then is not. Refusing makes the save say
+            // "could not back up", which is the truth.
+            throw std::runtime_error("backup archive " + archivePath.string() + " is unreadable, so nothing is added to it: "
+                                     + error);
         }
+        carried = reader->entries();
     }
 
     std::vector<std::pair<std::string, std::string>> written;
@@ -319,16 +432,41 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     if (!fs::is_directory(dir, ec)) {
         throw std::runtime_error("no backup with id " + id + " to add to");
     }
-    if (readManifest(dir).version != ManifestFormatVersion) {
+    Manifest manifest = readManifest(dir);
+    if (manifest.version != ManifestFormatVersion) {
         throw std::runtime_error("backup " + id + " is not a record this build wrote");
     }
 
-    auto [written, archiveBytes] = writeArchiveEntries(dir, filePaths);
-    {
-        std::ofstream manifest(dir / ManifestFileName, std::ios::app);
-        for (const auto &[entryName, recorded] : written) {
-            manifest << entryName << '\t' << recorded << '\n';
+    // An append that fails part-way (the stick fills up on the second
+    // file of a label) leaves the new entry's bytes after the old
+    // end-of-central-directory, and any trailing byte makes the reader
+    // refuse the whole archive -- the files backed up before it,
+    // correctly, included, so the undo would fail for them too. Cut the
+    // archive back to where it was and leave the manifest alone: the
+    // record stays what it was before the call.
+    const fs::path archivePath = dir / ArchiveFileName;
+    std::error_code sizeEc;
+    std::uintmax_t archiveBefore = fs::file_size(archivePath, sizeEc);
+    if (sizeEc == std::errc::no_such_file_or_directory) {
+        archiveBefore = 0;
+    } else if (sizeEc) {
+        // Refused before anything is written: a length taken from a
+        // failed stat would have the cut-back remove a good archive.
+        throw std::runtime_error("could not read the size of " + archivePath.string() + ": " + sizeEc.message());
+    }
+    std::vector<std::pair<std::string, std::string>> written;
+    std::uint64_t archiveBytes = 0;
+    try {
+        std::tie(written, archiveBytes) = writeArchiveEntries(dir, filePaths);
+        // The manifest this call parsed, with the new entries: rewritten
+        // whole from what was read, never spliced onto raw bytes.
+        manifest.entries.insert(manifest.entries.end(), written.begin(), written.end());
+        if (!writeManifest(dir, manifest)) {
+            throw std::runtime_error("could not write the manifest of backup " + id + " under " + m_baseDirectory);
         }
+    } catch (...) {
+        cutArchiveBackTo(dir, archiveBefore);
+        throw;
     }
     stateFor(dir).sizeBytes = archiveBytes;
 
@@ -336,7 +474,7 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     record.id = id;
     record.path = dir.string();
     record.sizeBytes = archiveBytes;
-    for (const auto &[entryName, recorded] : readManifest(dir).entries) {
+    for (const auto &[entryName, recorded] : manifest.entries) {
         record.filePaths.push_back(recorded);
     }
     return record;
@@ -477,10 +615,18 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
         // backups folder (a folder the user put there, another tool's
         // output) used to be listed as an Automatic record and, sorting
         // first, be the first thing prune() removed.
+        // The manifest is written last, whole, and is the record's commit
+        // marker. A directory holding only backup.zip is a backup that
+        // died between its archive and its manifest (a pull, a crash, and
+        // under earlier builds a stick that filled up) and not a record:
+        // listed, it showed in Manage Backups as an empty entry and, with
+        // no origin line to read, counted as automatic and pushed real
+        // records out of prune's keep window. prune() sweeps it once it is
+        // a day old (sweepDeadRecords), so it does not sit unlisted on a
+        // stick taking space nobody could reclaim.
         std::error_code manifestEc;
-        if (!fs::is_regular_file(entry.path() / ManifestFileName, manifestEc)
-            && !fs::is_regular_file(entry.path() / ArchiveFileName, manifestEc)) {
-            continue;  // a record carries at least one of these; a user's folder carries neither
+        if (!fs::is_regular_file(entry.path() / ManifestFileName, manifestEc)) {
+            continue;
         }
         BackupRecord record;
         record.id = entry.path().filename().string();
@@ -519,6 +665,7 @@ std::vector<BackupRecord> FilesystemBackupStore::pruneCandidates(size_t keepCoun
 
 std::uint64_t FilesystemBackupStore::prune(size_t keepCount)
 {
+    sweepDeadRecords(m_baseDirectory);
     const std::vector<BackupRecord> automatic = pruneCandidates(keepCount);
     std::uint64_t freed = 0;
     size_t toRemove = automatic.size();
@@ -535,6 +682,7 @@ std::uint64_t FilesystemBackupStore::prune(size_t keepCount)
 std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytesWanted,
                                                             const std::set<std::string> &spare)
 {
+    sweepDeadRecords(m_baseDirectory);
     if (bytesWanted == 0) {
         return 0;
     }

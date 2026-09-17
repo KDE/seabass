@@ -17,6 +17,11 @@
 
 #include "scratch_path.hpp"
 
+#ifndef _WIN32
+#include <csignal>
+#include <sys/resource.h>
+#endif
+
 using namespace seabass::infrastructure::backup;
 using seabass::application::BackupOrigin;
 namespace fs = std::filesystem;
@@ -661,11 +666,26 @@ int main()
         store.prune(1);
         assert(fs::exists(foreignDir / "0-my-own-folder" / "precious.txt"));
         assert(store.list().size() == 1);
-        // A record from before the manifest existed still carries the
-        // archive, and stays listed: data already on sticks stays readable.
-        fs::create_directories(foreignDir / "1-legacy-record");
-        writeFile(foreignDir / "1-legacy-record" / "backup.zip", "not really a zip, but the store's own file name");
-        assert(store.list().size() == 2);
+        // A directory holding only backup.zip is a backup that died before
+        // its manifest, not a record: not listed, so neither offered to
+        // restore from nor counted as automatic by prune. Earlier builds
+        // left such directories on sticks, and unlisted they were space
+        // nobody could reclaim, so prune sweeps them once their own
+        // timestamp id is a day old; a younger one waits (a backup may
+        // still be writing it), and a folder that is not the store's --
+        // no timestamp, or no archive -- is never touched.
+        const std::string young = store.backup({victim.string()}, "sync").id;
+        fs::remove(foreignDir / young / ".manifest");
+        fs::create_directories(foreignDir / "20200101T000000-add-cue");
+        writeFile(foreignDir / "20200101T000000-add-cue" / "backup.zip", "not really a zip, but the store's own file name");
+        fs::create_directories(foreignDir / "1-not-ours");
+        writeFile(foreignDir / "1-not-ours" / "backup.zip", "not really a zip, but the store's own file name");
+        assert(store.list().size() == 1 && "none of the three manifest-less directories is a record");
+        store.prune(1);
+        assert(!fs::exists(foreignDir / "20200101T000000-add-cue") && "an old dead record is swept");
+        assert(fs::exists(foreignDir / young) && "a young one is left for a backup that may still be writing it");
+        assert(fs::exists(foreignDir / "1-not-ours") && "a folder without the store's timestamp id is not touched");
+        assert(fs::exists(foreignDir / "0-my-own-folder" / "precious.txt") && "nor a folder without an archive");
         std::cout << "case: a directory without a manifest is not a record and survives prune OK\n";
     }
 
@@ -687,6 +707,114 @@ int main()
         assert(!fs::exists(root / "wal" / "exportLibrary.db-shm"));
         std::cout << "case: restoring a database removes stale sidecars beside it OK\n";
     }
+
+#ifndef _WIN32
+    // A backup that fails part-way leaves nothing broken behind. The
+    // release rig's full-stick check found the opposite: a save refused
+    // for lack of space left <backups>/<ts>-add-cue/ holding a truncated
+    // backup.zip and no manifest, and Manage Backups listed it as an
+    // empty record. Provoked here without a full disk: a write past
+    // RLIMIT_FSIZE fails with EFBIG once SIGXFSZ is ignored, which is the
+    // same mid-write failure a full stick gives, deterministic, and it
+    // binds root as much as anyone.
+    {
+        struct rlimit unlimited{};
+        assert(getrlimit(RLIMIT_FSIZE, &unlimited) == 0);
+        const auto xfszBefore = signal(SIGXFSZ, SIG_IGN);
+        // Nothing is printed while the limit is on: with stdout sent to a
+        // file, a cout past the limit fails too and sets badbit for good,
+        // and every later line of this test would silently vanish.
+        std::string arranged;
+        const auto limitWritesTo = [&](rlim_t bytes) {
+            struct rlimit limit = unlimited;
+            limit.rlim_cur = bytes;
+            assert(setrlimit(RLIMIT_FSIZE, &limit) == 0);
+        };
+        const auto liftTheLimit = [&]() { assert(setrlimit(RLIMIT_FSIZE, &unlimited) == 0); };
+        // Incompressible, so the archive really is as big as the file and
+        // the limit is reached.
+        fs::path failRoot = root / "fails";
+        fs::path failBackups = failRoot / "Seabass" / "backups";
+        fs::path first = failRoot / "m.db";
+        const std::string firstContents = seabass::testing::incompressible(64 * 1024, 1);
+        writeFile(first, firstContents);
+        FilesystemBackupStore store(failBackups.string());
+        auto good = store.backup({first.string()}, "sync");
+        assert(store.list().size() == 1);
+
+        // A first backup that fails: no record is left behind, and the
+        // record made before it is untouched.
+        limitWritesTo(4096);
+        bool threw = false;
+        try {
+            store.backup({first.string()}, "add-cue");
+        } catch (const std::exception &e) {
+            threw = true;
+            arranged = e.what();
+        }
+        liftTheLimit();
+        std::cout << "  the backup failed as arranged: " << arranged << '\n';
+        assert(threw && "a backup whose archive cannot be written reports the failure");
+        std::vector<std::string> left;
+        for (const auto &entry : fs::directory_iterator(failBackups)) {
+            left.push_back(entry.path().filename().string());
+        }
+        assert(left.size() == 1 && left[0] == good.id && "the failed backup's directory is gone, the earlier record stays");
+        assert(store.list().size() == 1 && store.list()[0].id == good.id);
+        std::cout << "case: a backup that fails part-way leaves no record behind OK\n";
+
+        // An append that fails: the record stays exactly what it was --
+        // archive, manifest -- and still restores. Without the cut-back
+        // the new entry's bytes trail the old end-of-central-directory
+        // and the reader refuses the whole archive, first file included.
+        fs::path second = failRoot / "export.pdb";
+        writeFile(second, seabass::testing::incompressible(64 * 1024, 2));
+        const fs::path archive = fs::path(good.path) / "backup.zip";
+        const fs::path manifest = fs::path(good.path) / ".manifest";
+        const auto archiveBefore = fs::file_size(archive);
+        const std::string manifestBefore = readFile(manifest);
+        limitWritesTo(archiveBefore + 512);
+        threw = false;
+        try {
+            store.addToArchive(good.id, {second.string()});
+        } catch (const std::exception &e) {
+            threw = true;
+            arranged = e.what();
+        }
+        liftTheLimit();
+        signal(SIGXFSZ, xfszBefore);
+        std::cout << "  the append failed as arranged: " << arranged << '\n';
+        assert(threw && "an append whose archive cannot be written reports the failure");
+        assert(fs::file_size(archive) == archiveBefore && "the archive is cut back to where it was");
+        assert(readFile(manifest) == manifestBefore && "the manifest names what the archive holds");
+        assert(store.list().size() == 1 && store.list()[0].filePaths.size() == 1);
+        writeFile(first, "changed after the failed append");
+        assert(store.restore(good.id) && "the record still restores");
+        assert(readFile(first) == firstContents);
+        std::cout << "case: an append that fails part-way leaves the record as it was OK\n";
+
+        // An archive the reader refuses (trailing bytes from a torn append
+        // that never got cut back) is not appended to: appending would
+        // write a central directory naming only the new entries under a
+        // manifest that still names the old ones. The save is refused
+        // instead, and the manifest stays as it was.
+        {
+            std::ofstream tail(archive, std::ios::app | std::ios::binary);
+            tail << "trailing bytes from a torn append";
+        }
+        const std::string manifestBeforeRefusal = readFile(manifest);
+        threw = false;
+        try {
+            store.addToArchive(good.id, {second.string()});
+        } catch (const std::exception &e) {
+            threw = true;
+            std::cout << "  the append was refused: " << e.what() << '\n';
+        }
+        assert(threw && "an unreadable archive is not appended to");
+        assert(readFile(manifest) == manifestBeforeRefusal);
+        std::cout << "case: an unreadable archive is not appended to OK\n";
+    }
+#endif
 
     std::cout << "all cases passed\n";
     return 0;
