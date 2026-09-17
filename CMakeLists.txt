@@ -2190,6 +2190,14 @@ endif()
 add_test(NAME corpus_test COMMAND corpus_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(corpus_test PROPERTIES LABELS "integration")
 
+# Issue #21: the anonymized library, as a stick, through a full backup and
+# an exact restore, the far end compared with the near end.
+add_executable(library_backup_roundtrip_test tests/library_backup_roundtrip_test.cpp)
+target_include_directories(library_backup_roundtrip_test PRIVATE src)
+target_link_libraries(library_backup_roundtrip_test PRIVATE seabass_core)
+add_test(NAME library_backup_roundtrip_test COMMAND library_backup_roundtrip_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(library_backup_roundtrip_test PROPERTIES LABELS "integration")
+
 
 # ---------------------------------------------------------------------------
 # Keep assertions alive in test binaries, whatever the build type.
