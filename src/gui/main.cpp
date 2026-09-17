@@ -94,9 +94,20 @@ bool exportMaterialPalette()
     // its existing KDE-driven auto-selection untouched. Respect an
     // explicit override (e.g. a developer testing a different style) by
     // only setting this if nothing already has.
+    //
+    // macOS's native "macOS" style refuses the background/contentItem
+    // overrides this app's controls are built on (it logs "does not
+    // support customization" for each and draws its own). Material takes
+    // them and honours the palette exported above; Fusion was tried and
+    // drew light pages from the system palette around the app's dark
+    // cards. Material is also what tests/qml's screenshot mode renders.
 #ifdef Q_OS_WIN
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
         qputenv("QT_QUICK_CONTROLS_STYLE", "FluentWinUI3");
+    }
+#elif defined(Q_OS_MACOS)
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+        qputenv("QT_QUICK_CONTROLS_STYLE", "Material");
     }
 #endif
 
