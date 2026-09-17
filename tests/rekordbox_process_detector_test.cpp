@@ -17,6 +17,10 @@
 #else
 #include <unistd.h>
 #endif
+#if defined(__APPLE__)
+#include <libproc.h>
+#include <sys/param.h>
+#endif
 
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 
@@ -31,7 +35,7 @@ namespace
 // detector itself reads each platform's process name (see
 // rekordbox_process_detector.cpp) -- /proc/<pid>/comm's 15-byte
 // truncation on Linux, the bare name (detector appends ".exe" itself) on
-// Windows.
+// Windows, proc_name() on macOS.
 std::string selfProcessNameForDetector()
 {
 #if defined(_WIN32)
@@ -45,6 +49,11 @@ std::string selfProcessNameForDetector()
         baseName = baseName.substr(0, dot);
     }
     return baseName;
+#elif defined(__APPLE__)
+    char name[2 * MAXCOMLEN + 1] = {};
+    int n = proc_name(getpid(), name, sizeof(name));
+    assert(n > 0);
+    return std::string(name, static_cast<size_t>(n));
 #else
     char selfExe[4096] = {};
     ssize_t n = readlink("/proc/self/exe", selfExe, sizeof(selfExe) - 1);

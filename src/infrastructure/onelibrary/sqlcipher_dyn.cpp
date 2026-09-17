@@ -53,6 +53,34 @@ const char *libraryNotFoundHint()
     return "could not load libsqlcipher-0.dll -- is the mingw-w64-ucrt-x86_64-sqlcipher package's "
            "DLL on PATH or next to the executable?";
 }
+#elif defined(__APPLE__)
+// The bare names find a copy bundled next to the app or on the dyld search
+// path; Homebrew's own prefix (Apple Silicon, then Intel) is not on that
+// path, so it is tried explicitly after them.
+void *loadLibrary()
+{
+    for (const char *name : {"libsqlcipher.0.dylib", "libsqlcipher.dylib",
+                             "/opt/homebrew/opt/sqlcipher/lib/libsqlcipher.0.dylib",
+                             "/usr/local/opt/sqlcipher/lib/libsqlcipher.0.dylib"}) {
+        if (void *mod = dlopen(name, RTLD_NOW)) {
+            return mod;
+        }
+    }
+    return nullptr;
+}
+void *resolveSymbol(void *mod, const char *name)
+{
+    return dlsym(mod, name);
+}
+void unloadLibrary(void *mod)
+{
+    dlclose(mod);
+}
+const char *libraryNotFoundHint()
+{
+    return "could not load libsqlcipher.0.dylib -- is Homebrew's sqlcipher package installed "
+           "(brew install sqlcipher)?";
+}
 #else
 // Distros disagree on the installed soname (Debian/Ubuntu's libsqlcipher1
 // package ships "libsqlcipher.so.1"; other packagings use ".so.0"; the

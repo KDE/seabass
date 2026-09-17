@@ -19,6 +19,11 @@
 #include <windows.h>
 
 #include <tlhelp32.h>
+#elif defined(__APPLE__)
+#include <libproc.h>
+#include <sys/proc_info.h>
+
+#include <vector>
 #endif
 
 namespace seabass::infrastructure::system
@@ -120,6 +125,52 @@ bool isProcessRunning(const std::string &name)
     }
     ::CloseHandle(snapshot);
     return found;
+}
+
+#elif defined(__APPLE__)
+
+namespace
+{
+
+std::string toLower(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+}  // namespace
+
+// Lists every pid via libproc and compares each one's name, which
+// proc_name() takes from the executable (up to 32 bytes, e.g. "rekordbox",
+// "Engine DJ"), case-insensitively. Processes owned by other users are
+// listed too; a pid that exits mid-scan just yields no name.
+bool isProcessRunning(const std::string &name)
+{
+    std::string wanted = toLower(name);
+
+    int count = proc_listallpids(nullptr, 0);
+    if (count <= 0) {
+        return false;
+    }
+    // Headroom for processes started between the two calls.
+    std::vector<pid_t> pids(static_cast<std::size_t>(count) + 64);
+    count = proc_listallpids(pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
+    if (count <= 0) {
+        return false;
+    }
+    pids.resize(std::min(static_cast<std::size_t>(count), pids.size()));
+
+    char buffer[2 * MAXCOMLEN + 1];
+    for (pid_t pid : pids) {
+        if (pid <= 0) {
+            continue;
+        }
+        int length = proc_name(pid, buffer, sizeof(buffer));
+        if (length > 0 && toLower(std::string(buffer, static_cast<std::size_t>(length))) == wanted) {
+            return true;
+        }
+    }
+    return false;
 }
 
 #else
