@@ -48,12 +48,15 @@ namespace seabass::application
 // to delete. Normalizing too much only ever moves a file toward "still
 // referenced" or two rows toward "the same file".
 //
-// KNOWN GAP: Unicode normalisation. "é" as one code point and "e" plus a
-// combining acute are the same filename and get different keys; a stick
-// written on macOS carries the decomposed form. Fixing it needs a
-// normalisation table rather than a case rule, and a half-built one
-// would be worse than none. tests/path_key_test.cpp states this as an
-// expectation so it is visible rather than forgotten.
+// Unicode normalisation is folded too, since 2026-09-17: "é" as one code
+// point and "e" plus a combining acute are the same filename, and macOS
+// stores the decomposed form on FAT and exFAT -- a stick restored there
+// read every accented track as an extra, and Clean Up would have called
+// the same files unreferenced. The table is generated from the Unicode
+// database by tools/generate_nfc_compositions.py
+// (src/application/nfc_compositions.inc); combining marks are composed in
+// the order they arrive, without canonical reordering first, which leaves
+// an unusually ordered pair of marks unfolded -- the safe direction.
 std::string normalizedPathKey(const std::string &path);
 
 }  // namespace seabass::application

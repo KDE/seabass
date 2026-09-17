@@ -135,15 +135,25 @@ int main()
     assert(normalizedPathKey(truncated) == truncated);
     std::cout << "  (non-ASCII case folding and its boundaries hold)\n";
 
-    // KNOWN GAP, stated rather than hidden: Unicode normalisation.
-    // "é" as one code point and "e" + combining acute are the same
-    // character and the same filename, and these keys differ. A stick
-    // written on macOS carries the decomposed form. Not fixed here
-    // because it needs a normalisation table rather than a case rule,
-    // and a half-done one would be worse than none.
+    // Unicode normalisation: macOS stores names decomposed on FAT and
+    // exFAT, so the same file arrives composed from a catalog and
+    // decomposed from the filesystem. Both spellings are one key, or a
+    // restored stick reads as full of extras and Clean Up offers
+    // referenced tracks for deletion.
     const std::string composed = "/Contents/caf\u00e9.mp3";
     const std::string decomposed = "/Contents/cafe\u0301.mp3";
-    assert(normalizedPathKey(composed) != normalizedPathKey(decomposed));
+    same(composed, decomposed, "composed and decomposed spellings are one file");
+    // Real names off a stick this failed on: German, Scandinavian and a
+    // two-mark Vietnamese one.
+    same("/Contents/Ann Clue/20_Fr\u00e4ulein Smilla.mp3", "/Contents/Ann Clue/20_Fra\u0308ulein Smilla.mp3",
+         "a-diaeresis, both spellings");
+    same("/Contents/Ben B\u00f6hmer/Beyond.mp3", "/Contents/Ben Bo\u0308hmer/Beyond.mp3", "o-diaeresis");
+    same("/Contents/Rosal\u00eda/Berghain.mp3", "/Contents/Rosali\u0301a/Berghain.mp3", "i-acute");
+    same("/Contents/Ti\u1ebfn/song.mp3", "/Contents/Tie\u0302\u0301n/song.mp3", "two marks, composed in order");
+    // A mark with nothing to attach to, and one that composes with
+    // nothing: both pass through rather than being dropped.
+    assert(normalizedPathKey("/\u0301x") == "/\u0301x");
+    assert(normalizedPathKey("/z\u0308.mp3") == "/z\u0308.mp3");
 
     std::cout << "all cases passed\n";
     return 0;

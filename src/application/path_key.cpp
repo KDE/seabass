@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -108,6 +110,109 @@ void encodeUtf8(std::uint32_t cp, std::string &out)
 // is still a real path to a real file, and mangling it here would make
 // two spellings of one file differ, which is the failure this whole
 // function exists to prevent.
+// One row of the generated table: base + mark compose to `composed`.
+struct NfcComposition
+{
+    std::uint32_t base;
+    std::uint32_t mark;
+    std::uint32_t composed;
+};
+
+#include "application/nfc_compositions.inc"
+
+// Composes "e" + U+0301 back into "é" (NFC), so a name written on macOS --
+// which stores it decomposed on FAT and exFAT -- keys the same as the one
+// in a catalog or a backup manifest. Without it a restored stick's own
+// files read as extras and a referenced track reads as unreferenced, which
+// is what Seabass offers to delete.
+//
+// Not a complete NFC: combining marks are composed in the order they
+// arrive, without the canonical reordering the standard asks for first, so
+// a name carrying two marks in an unusual order stays as it is. That is
+// the safe direction (a key that folds less), and the sequences a music
+// library actually carries are one mark deep.
+std::uint32_t composePair(std::uint32_t base, std::uint32_t mark)
+{
+    const NfcComposition *first = std::begin(NfcCompositions);
+    const NfcComposition *last = std::end(NfcCompositions);
+    const auto found = std::lower_bound(first, last, std::pair<std::uint32_t, std::uint32_t>{base, mark},
+                                        [](const NfcComposition &row, const std::pair<std::uint32_t, std::uint32_t> &key) {
+                                            return std::pair<std::uint32_t, std::uint32_t>{row.base, row.mark} < key;
+                                        });
+    if (found != last && found->base == base && found->mark == mark) {
+        return found->composed;
+    }
+    return 0;
+}
+
+std::string composeUtf8(const std::string &in)
+{
+    std::string out;
+    out.reserve(in.size());
+    bool havePending = false;
+    std::uint32_t pending = 0;
+    auto flush = [&]() {
+        if (havePending) {
+            encodeUtf8(pending, out);
+            havePending = false;
+        }
+    };
+    std::size_t i = 0;
+    while (i < in.size()) {
+        const auto byte = static_cast<unsigned char>(in[i]);
+        std::size_t length = 0;
+        std::uint32_t cp = 0;
+        if (byte < 0x80) {
+            length = 1;
+            cp = byte;
+        } else if ((byte & 0xE0) == 0xC0) {
+            length = 2;
+            cp = byte & 0x1F;
+        } else if ((byte & 0xF0) == 0xE0) {
+            length = 3;
+            cp = byte & 0x0F;
+        } else if ((byte & 0xF8) == 0xF0) {
+            length = 4;
+            cp = byte & 0x07;
+        } else {
+            flush();
+            out.push_back(in[i++]);  // stray continuation or invalid lead
+            continue;
+        }
+        if (i + length > in.size()) {
+            flush();
+            out.push_back(in[i++]);  // truncated sequence
+            continue;
+        }
+        bool valid = true;
+        for (std::size_t k = 1; k < length; ++k) {
+            const auto cont = static_cast<unsigned char>(in[i + k]);
+            if ((cont & 0xC0) != 0x80) {
+                valid = false;
+                break;
+            }
+            cp = (cp << 6) | (cont & 0x3F);
+        }
+        if (!valid) {
+            flush();
+            out.push_back(in[i++]);
+            continue;
+        }
+        i += length;
+        if (havePending) {
+            if (const std::uint32_t composed = composePair(pending, cp); composed != 0) {
+                pending = composed;  // and stays pending: "ê" + U+0301 is "ế"
+                continue;
+            }
+            flush();
+        }
+        pending = cp;
+        havePending = true;
+    }
+    flush();
+    return out;
+}
+
 std::string lowerUtf8(const std::string &in)
 {
     std::string out;
@@ -239,7 +344,7 @@ std::string normalizedPathKey(const std::string &path)
         return {};
     }
     std::replace(slashed.begin(), slashed.end(), '\\', '/');
-    return lowerUtf8(lexicallyNormalizedPath(slashed));
+    return lowerUtf8(composeUtf8(lexicallyNormalizedPath(slashed)));
 }
 
 }  // namespace seabass::application
