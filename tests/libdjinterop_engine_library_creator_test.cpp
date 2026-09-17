@@ -5,6 +5,7 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <map>
 
 #include <sqlite3.h>
 
@@ -177,6 +178,52 @@ int main()
             assert(firstId == 1);
         }
         std::cout << "case 4 (Information row at id 1, every schema generation) OK\n";
+    }
+
+    // Case 5: playlists come across, with their folder structure and in
+    // the order the source recorded -- a playlist is not a set, and a DJ
+    // notices immediately when it is treated as one.
+    {
+        fs::path path = root / "Engine Library playlists";
+        Track first = makeTrack("r1", "Opener", "Artist One", (root / "song1.mp3").string());
+        Track second = makeTrack("r2", "Closer", "Artist Two", (root / "song2.mp3").string(), 140.0, "Gbm", 200.0);
+        Track third = makeTrack("r3", "Middle", "Artist Three", (root / "song3.mp3").string());
+        // Deliberately out of order in the input, and in two playlists
+        // that share one folder, so both the ordering and the folder
+        // reuse are actually exercised.
+        first.playlists = {{"Techno/Peak Time", 0}};
+        third.playlists = {{"Techno/Peak Time", 1}};
+        second.playlists = {{"Techno/Peak Time", 2}, {"Techno/Warm Up", 0}};
+        std::vector<Track> tracks = {second, third, first};
+
+        auto result = EngineLibraryCreator::create(path.string(), tracks, EngineSchemaGeneration::V2);
+        assert(result.errorMessage.empty());
+        assert(result.tracksCreated == 3);
+        // Two playlists plus the "Techno" folder they share.
+        assert(result.playlistsCreated == 3);
+
+        LibdjinteropEngineReader reader(path.string());
+        auto readBack = seabass::application::ScanLibrary(reader).execute();
+        assert(readBack.size() == 3);
+
+        std::map<int, std::string> peakTime;
+        bool warmUpHasCloser = false;
+        for (const auto &t : readBack) {
+            for (const auto &membership : t.playlists) {
+                if (membership.name == "Techno/Peak Time") {
+                    peakTime[membership.position] = t.title;
+                }
+                if (membership.name == "Techno/Warm Up" && t.title == "Closer") {
+                    warmUpHasCloser = true;
+                }
+            }
+        }
+        assert(peakTime.size() == 3);
+        assert(peakTime[0] == "Opener");
+        assert(peakTime[1] == "Middle");
+        assert(peakTime[2] == "Closer");
+        assert(warmUpHasCloser);
+        std::cout << "case 5 (playlists, their folders and their order) OK\n";
     }
 
     // Cancel between two tracks: nothing at all lands on the target

@@ -4,12 +4,16 @@
 
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <djinterop/djinterop.hpp>
 #include <djinterop/engine/engine.hpp>
@@ -99,6 +103,104 @@ int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<d
         snapshot.main_cue = *earliestMemoryCueMs / 1000.0 * DefaultSampleRate;
     }
     return hotCuesSet + (earliestMemoryCueMs ? 1 : 0);
+}
+
+// One track's place in one playlist: where it sits, and the row that was
+// created for it. Held until every track exists, because a playlist can
+// only be filled with tracks the database already has.
+struct PlaylistMember
+{
+    int position = -1;
+    djinterop::track track;
+};
+
+using PlaylistMembers = std::map<std::string, std::vector<PlaylistMember>>;
+
+// Rebuilds the source's playlists, folders and all.
+//
+// A membership's name is a full path ("Techno/Peak Time"), so each
+// segment but the last is a folder. Engine models both with the same
+// Playlist table, which is why a folder here is simply a playlist with
+// children -- created once and reused, so two playlists under the same
+// folder share it rather than producing two folders of the same name.
+//
+// Order matters to a DJ: a playlist is not a set. Tracks go in by the
+// position the source recorded, and anything the reader could not place
+// (position -1) keeps its encounter order at the end rather than being
+// dropped or silently sorted somewhere arbitrary.
+//
+// Returns how many playlists were created, folders included.
+int createPlaylists(djinterop::database &db, const PlaylistMembers &members,
+                     application::ProgressReporter &reporter, const application::CancellationToken &cancel)
+{
+    if (members.empty()) {
+        return 0;
+    }
+    reporter.start("Creating playlists", members.size());
+
+    std::map<std::string, djinterop::playlist> byPath;
+    int created = 0;
+    size_t done = 0;
+
+    // Creates the playlist at `path`, and every folder above it, once.
+    const std::function<std::optional<djinterop::playlist>(const std::string &)> ensure =
+        [&](const std::string &path) -> std::optional<djinterop::playlist> {
+        if (auto existing = byPath.find(path); existing != byPath.end()) {
+            return existing->second;
+        }
+        const size_t cut = path.rfind('/');
+        const std::string leaf = cut == std::string::npos ? path : path.substr(cut + 1);
+        if (leaf.empty()) {
+            return std::nullopt;
+        }
+        try {
+            djinterop::playlist playlist = cut == std::string::npos
+                                                ? db.create_root_playlist(leaf)
+                                                : [&]() -> djinterop::playlist {
+                auto parent = ensure(path.substr(0, cut));
+                if (!parent) {
+                    return db.create_root_playlist(leaf);
+                }
+                return parent->create_sub_playlist(leaf);
+            }();
+            ++created;
+            byPath.insert({path, playlist});
+            return playlist;
+        } catch (const std::exception &) {
+            // A name Engine will not take (a duplicate, or characters it
+            // rejects) costs that one playlist, not the whole library:
+            // the tracks themselves are already in and playable.
+            return std::nullopt;
+        }
+    };
+
+    for (const auto &[path, entries] : members) {
+        if (cancel.cancelled()) {
+            break;
+        }
+        auto playlist = ensure(path);
+        if (playlist) {
+            std::vector<PlaylistMember> ordered = entries;
+            std::stable_sort(ordered.begin(), ordered.end(), [](const PlaylistMember &a, const PlaylistMember &b) {
+                const bool aPlaced = a.position >= 0;
+                const bool bPlaced = b.position >= 0;
+                if (aPlaced != bPlaced) {
+                    return aPlaced;  // unplaced tracks go last, in encounter order
+                }
+                return aPlaced ? a.position < b.position : false;
+            });
+            for (const PlaylistMember &member : ordered) {
+                try {
+                    playlist->add_track_back(member.track);
+                } catch (const std::exception &) {
+                    // Same reasoning: one missing entry, not a failed build.
+                }
+            }
+        }
+        reporter.tick(++done);
+    }
+    reporter.finish();
+    return created;
 }
 
 // Puts the Information row back at id 1, where Engine keeps it.
@@ -237,6 +339,8 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
 
             reporter.start("Creating Engine Library", tracks.size());
             size_t processed = 0;
+            // Filled as tracks are created, spent once they all exist.
+            PlaylistMembers playlistMembers;
 
             for (const auto &track : tracks) {
                 if (cancel.cancelled()) {
@@ -309,11 +413,18 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
 
                 result.cuesCopied += applyCuesToSnapshot(snapshot, track.cues);
 
-                db.create_track(snapshot);
+                djinterop::track created = db.create_track(snapshot);
                 result.tracksCreated++;
+                for (const domain::PlaylistMembership &membership : track.playlists) {
+                    if (!membership.name.empty()) {
+                        playlistMembers[membership.name].push_back({membership.position, created});
+                    }
+                }
                 reporter.tick(++processed);
             }
             reporter.finish();
+
+            result.playlistsCreated = createPlaylists(db, playlistMembers, reporter, cancel);
             // db goes out of scope here, closing its SQLite connection (and
             // with it, any pending journal) before the raw files underneath
             // are copied below -- copying while the connection is still open

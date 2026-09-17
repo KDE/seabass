@@ -33,6 +33,7 @@ struct EngineLibraryCreationResult
     int tracksCreated = 0;
     int tracksSkipped = 0;  // e.g. no resolved local file to reference
     int cuesCopied = 0;
+    int playlistsCreated = 0;  // folders included; they are playlists too
     int tracksTotal = 0;       // what was asked for, created or not
     bool cancelled = false;    // stopped via the token; nothing was written to `directory`
     std::string errorMessage;  // empty on success
@@ -57,7 +58,8 @@ struct EngineLibraryCreationResult
 // always true, but a reasonable approximation absent a real per-beat
 // grid read from rekordbox's own analysis data, which this project
 // doesn't parse yet despite the underlying Kaitai spec already defining
-// that section).
+// that section), and the source's playlists, rebuilt with their folder
+// structure and each track at the position the source recorded.
 //
 // Deliberately NOT carried over in this version: album art (libdjinterop's
 // own album_art API is unfinished -- see its header, marked "TODO -
@@ -65,7 +67,8 @@ struct EngineLibraryCreationResult
 // artwork field at all), a real per-beat grid, waveform data (reading
 // rekordbox's own waveform preview already works elsewhere in this
 // project, but no rekordbox->Engine waveform format conversion exists
-// yet), and playlists.
+// yet). A player therefore shows these tracks without artwork: confirmed
+// on a Prime 4, which plays them perfectly and displays no cover.
 class EngineLibraryCreator
 {
 public:
