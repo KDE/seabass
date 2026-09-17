@@ -177,6 +177,11 @@ int main()
     {
         std::int64_t self = sys::currentPid();
         std::uint64_t start = sys::currentProcessStartId();
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+        // Every platform the app ships on records one; 0 would quietly
+        // turn the recycled-pid check off.
+        assert(start != 0);
+#endif
         assert(sys::isProcessAlive(self, start));
         assert(sys::isProcessAlive(self, 0));
         if (start != 0) {

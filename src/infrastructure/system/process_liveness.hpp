@@ -14,7 +14,8 @@ namespace seabass::infrastructure::system
 // decides whether that owner is still around. A pid alone is not enough:
 // pids are recycled, so the process start time (Linux: field 22 of
 // /proc/<pid>/stat, in clock ticks since boot; Windows: the creation
-// FILETIME) is recorded too and must match.
+// FILETIME; macOS: proc_pidinfo's start time in whole seconds) is
+// recorded too and must match.
 
 std::int64_t currentPid();
 

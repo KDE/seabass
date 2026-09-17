@@ -22,6 +22,11 @@
 #include <csignal>
 #include <unistd.h>
 #endif
+#if defined(__APPLE__)
+#include <libproc.h>
+#include <sys/proc.h>
+#include <sys/proc_info.h>
+#endif
 
 namespace seabass::infrastructure::system
 {
@@ -152,6 +157,71 @@ bool isProcessAlive(std::int64_t pid, std::uint64_t startId)
     }
     ::CloseHandle(process);
     return alive;
+}
+
+#elif defined(__APPLE__)
+
+namespace
+{
+
+// The kernel's own record of a process: its start time (whole seconds
+// since the epoch, which is what `ps -o lstart` shows and what a shell can
+// reproduce) and whether it has exited and waits to be reaped.
+struct BsdInfo
+{
+    std::uint64_t startSeconds = 0;
+    bool zombie = false;
+    bool ok = false;
+};
+
+BsdInfo readBsdInfo(std::int64_t pid)
+{
+    BsdInfo result;
+    proc_bsdinfo info{};
+    int size = proc_pidinfo(static_cast<pid_t>(pid), PROC_PIDTBSDINFO, 0, &info, PROC_PIDTBSDINFO_SIZE);
+    if (size != PROC_PIDTBSDINFO_SIZE) {
+        return result;
+    }
+    result.startSeconds = static_cast<std::uint64_t>(info.pbi_start_tvsec);
+    result.zombie = info.pbi_status == SZOMB;
+    result.ok = true;
+    return result;
+}
+
+}  // namespace
+
+std::int64_t currentPid()
+{
+    return static_cast<std::int64_t>(::getpid());
+}
+
+std::uint64_t currentProcessStartId()
+{
+    BsdInfo self = readBsdInfo(currentPid());
+    return self.ok ? self.startSeconds : 0;
+}
+
+bool isProcessAlive(std::int64_t pid, std::uint64_t startId)
+{
+    if (pid <= 0) {
+        return false;
+    }
+    if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) {
+        return false;
+    }
+    BsdInfo info = readBsdInfo(pid);
+    if (!info.ok) {
+        // Exists (kill said so) but is not ours to inspect: the pid alone
+        // has to do, as on platforms without a start id.
+        return true;
+    }
+    if (info.zombie) {
+        return false;  // a zombie holds nothing
+    }
+    if (startId != 0 && info.startSeconds != 0 && info.startSeconds != startId) {
+        return false;  // the pid was recycled
+    }
+    return true;
 }
 
 #else
