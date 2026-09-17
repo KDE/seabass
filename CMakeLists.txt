@@ -487,6 +487,7 @@ if(MINGW)
     # toolchain-specific DLL pair that needs statically absorbing.
     target_link_options(seabass-cli PRIVATE -static-libgcc -static-libstdc++ -static)
 endif()
+install(TARGETS seabass-cli RUNTIME DESTINATION bin)
 
 # --- seabass: the Qt Quick composition root (opt-in: only built ---
 # --- when Qt6 is available, so machines without Qt still get the CLI) ---

@@ -306,3 +306,8 @@ endif()
 if(TARGET Qt6::QuickShapes)
     target_link_libraries(seabass PRIVATE Qt6::QuickShapes)
 endif()
+
+# Every QML file is compiled straight into this binary via Qt's qmlcache
+# mechanism (see the .rcc/qmlcache/*.cpp objects this target builds) --
+# nothing loose to install alongside it.
+install(TARGETS seabass RUNTIME DESTINATION bin)
