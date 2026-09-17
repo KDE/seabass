@@ -203,7 +203,6 @@ Page {
             }
 
             ColumnLayout {
-                visible: root.appSettingsController.experimentalFeaturesEnabled
                 spacing: 6 * Theme.iconScale
                 Subtitle { text: "Full stick backups" }
                 Label {

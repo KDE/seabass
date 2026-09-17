@@ -76,22 +76,17 @@ from day one.
   with the backup and restore it is built on; graduate together, after
   the live checks in `docs/stick-backup-plan.md` ("Stick-to-stick clone").
 
-- **Full Stick Backup and Restore** (added 2026-09-05) — backs a whole
-  stick up into one browsable `.zip` on this computer
-  (`~/Seabass Backups/<label>.zip`, changeable in App Settings) and keeps
-  it current incrementally; restores onto the same stick or a fresh one.
-  Three gated surfaces: the "Full Stick Backup" `ActionCard` on
-  `BackupsHubPage.qml`, the "Restore a Stick Backup" tool button on
-  `StickListPage.qml`'s header (top-level, like Format USB Stick, because
-  the target is often a blank replacement drive), and the backup-folder
-  section on `AppSettingsPage.qml`. Design and every decision behind it:
-  `docs/stick-backup-plan.md`. Experimental because it introduces a new
-  on-disk format (ZIP64/STORE with a manifest and a crash-safe append-only
-  update protocol) and a restore path that overwrites files on a stick.
-  The fault-injection suite is green, but graduation needs real use:
-  several incremental backups of a real stick over weeks, a cancel/keep/
-  resume cycle, a compaction, and at least one restore onto a fresh
-  exFAT stick that Engine DJ / a player then reads without complaint.
+- **Stick Restore and Update** (added 2026-09-05, as the restore half of
+  Full Stick Backup and Restore) — restores a full stick backup onto the
+  same stick or a fresh one, and brings a stick up to date from its backup
+  or another mounted stick. Gated surfaces: the "Restore a Stick Backup"
+  tool button on `StickListPage.qml`'s header (top-level, like Format USB
+  Stick, because the target is often a blank replacement drive), the
+  restore/clone card on each stick, and "Update Stick" on
+  `BackupsHubPage.qml`. Design: `docs/stick-backup-plan.md`. Experimental
+  because it overwrites files on a stick. Graduation needs at least one
+  restore onto a fresh exFAT stick that Engine DJ / a player then reads
+  without complaint.
 
 - **Matching** (added 2026-09-04) — a panel on the Library page
   (`MatchingPage.qml`) that finds tracks compatible in key (Camelot-wheel
@@ -129,6 +124,14 @@ from day one.
   GO+ to test against).
 
 ## Graduated to stable
+
+- **Full Stick Backup** (added 2026-09-05, graduated 2026-09-17) — backs a
+  whole stick up into one browsable `.zip` on this computer
+  (`~/Seabass Backups/<label>.zip`, changeable in App Settings, whose
+  backup-folder section graduated with it) and keeps it current
+  incrementally, in the ZIP64/STORE format with a manifest and a
+  crash-safe append-only update protocol (`docs/stick-backup-plan.md`).
+  Restoring from it is still experimental, see above.
 
 - **Library Health** (added 2026-08-29, graduated 2026-08-30) —
   cross-catalog consistency scan/repair, plus the 0:00-junk-memory-cue

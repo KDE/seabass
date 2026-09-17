@@ -48,7 +48,10 @@ TestCase {
     }
 
     function init() {
-        settings.experimentalFeaturesEnabled = true;  // reveals the "Full stick backups" group
+        // The "Full stick backups" group is not gated any more (the feature
+        // graduated on 2026-09-17); the long path must elide with the flag
+        // off, the state most users are in.
+        settings.experimentalFeaturesEnabled = false;
         settings.stickBackupDirectory = longPath;
     }
 
@@ -72,6 +75,7 @@ TestCase {
         var page = make(700, 700);
         var label = findChild(page, "backupPathLabel");
         wait(50);
+        verify(label.visible);
         verify(label.truncated);
         verify(label.width <= findChild(page, "settingsColumn").width);
     }

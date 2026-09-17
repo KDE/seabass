@@ -154,10 +154,11 @@ TestCase {
         compare(restore.signalArguments[0][2], "/b/MAIN.zip");
     }
 
-    function test_fullStickBackupHiddenWithoutExperimentalFeatures() {
+    // Full Stick Backup graduated from experimental on 2026-09-17: it and
+    // Manage Backups are there regardless of the flag.
+    function test_fullStickBackupShownWithoutExperimentalFeatures() {
         var page = makePage({}, {appSettingsController: {experimentalFeaturesEnabled: false}});
-        compare(findChild(page, "fullStickBackupCard").visible, false);
-        // Not experimental at all -- always there regardless of the flag.
+        compare(findChild(page, "fullStickBackupCard").visible, true);
         compare(findChild(page, "manageBackupsCard").visible, true);
     }
 }

@@ -144,11 +144,8 @@ Page {
                     ? "Full stick backup is up to date"
                     : "Back up the whole stick into one file on this computer")
             cardIcon: "archive-insert"
-            // Experimental (see docs/experimental-features.md and
-            // docs/stick-backup-plan.md): a new archive format and a
-            // restore path that overwrites files on a stick.
-            experimental: true
-            experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
+            // Graduated 2026-09-17 (docs/experimental-features.md); restoring
+            // and updating a stick from the backup are still experimental.
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.fullStickBackupRequested(root.stickLabel, root.rekordboxPath, root.enginePath)
         }
@@ -187,7 +184,7 @@ Page {
             cardTitle: "Manage Backups"
             cardSubtitle: "Browse and delete the full stick backups on this computer"
             cardIcon: "deep-history"
-            // Not gated like Full Stick Backup: it only browses and deletes
+            // Not gated, like Full Stick Backup: it only browses and deletes
             // files on this computer, and Home's menu offers it ungated too.
             onClicked: root.manageBackupsRequested(root.stickLabel, root.currentArchivePath)
         }

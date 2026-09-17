@@ -73,14 +73,25 @@ TestCase {
         return c;
     }
 
-    function makePage(overrides) {
+    function makePage(overrides, experimental) {
         return createTemporaryObject(pageComponent, testCase, {
             stickLabel: "STICK",
             rekordboxPath: "/media/STICK/PIONEER",
             enginePath: "/media/STICK/Engine Library",
-            appSettingsController: {stickBackupDirectory: "/home/u/Seabass Backups", experimentalFeaturesEnabled: true},
+            appSettingsController: {stickBackupDirectory: "/home/u/Seabass Backups",
+                                    experimentalFeaturesEnabled: experimental !== false},
             controller: makeFakeController(overrides),
         });
+    }
+
+    // Backing up graduated from experimental; restoring from this page did
+    // not, so the backup is offered with the flag off and the restore is not.
+    function test_restoreStaysExperimental() {
+        var page = makePage({}, false);
+        compare(findChild(page, "restoreSection").visible, false);
+        compare(findChild(page, "backUpFrame").visible, true);
+        var withFlag = makePage({}, true);
+        compare(findChild(withFlag, "restoreSection").visible, true);
     }
 
     function calls(page) {

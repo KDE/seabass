@@ -7,8 +7,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// Per-stick "Full Stick Backup" (experimental, see
-// docs/experimental-features.md and docs/stick-backup-plan.md). Backs the
+// Per-stick "Full Stick Backup" (see docs/stick-backup-plan.md; graduated
+// from experimental on 2026-09-17, restoring is still experimental). Backs the
 // whole stick up into one browsable .zip on this computer and keeps it
 // current incrementally; restore hands off to RestoreStickBackupPage
 // with this stick preselected.
@@ -130,7 +130,6 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()
             }
-            ExperimentalBadge {}
             Item { Layout.fillWidth: true }
             BusyIndicator { running: root.controller.previewing === true; visible: running; implicitWidth: 20; implicitHeight: 20 }
         }
@@ -602,7 +601,11 @@ Page {
             }
 
             // ---- Restore ----
+            // Still experimental (docs/experimental-features.md), unlike the
+            // backup above it: it overwrites files on the stick.
             Frame {
+                objectName: "restoreSection"
+                visible: root.appSettingsController.experimentalFeaturesEnabled === true
                 Layout.fillWidth: true
                 opacity: root.hasBackup && root.controller.busy !== true ? 1.0 : 0.55
                 RowLayout {
@@ -611,7 +614,11 @@ Page {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
-                        Label { text: "Restore Onto " + root.stickLabel; font.bold: true }
+                        RowLayout {
+                            spacing: Theme.tightSpacing
+                            Label { text: "Restore Onto " + root.stickLabel; font.bold: true }
+                            ExperimentalBadge {}
+                        }
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
