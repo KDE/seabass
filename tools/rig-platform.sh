@@ -19,10 +19,17 @@ if [ "$rig_os" = "Darwin" ]; then
         [ -d "$gnubin" ] && PATH="$gnubin:$PATH"
     done
     export PATH
-    if ! stat -c %s / >/dev/null 2>&1 || ! command -v stdbuf >/dev/null; then
+    # Both packages, checked by what the scripts use: BSD xargs rejects -d,
+    # and a catalog listing that comes out empty would make every catalog
+    # comparison of a round pass having compared nothing.
+    if ! stat -c %s / >/dev/null 2>&1 || ! command -v stdbuf >/dev/null \
+        || ! xargs --version 2>/dev/null | grep -q GNU || ! find --version 2>/dev/null | grep -q GNU; then
         echo "rig-platform.sh: GNU coreutils/findutils are needed on macOS (brew install coreutils findutils)" >&2
         exit 1
     fi
+    # Every rig script may be pointed at a mounted disk image standing in
+    # for a stick (docs/testing.md); the app lists one only with this set.
+    export SEABASS_ACCEPT_DISK_IMAGES=1
 fi
 
 # The filesystem UUID the app keys a stick's edit lock on: udev's ID_FS_UUID
@@ -67,8 +74,10 @@ mount_device() {  # <device>
 process_start_id() {  # <pid>
     if [ "$rig_os" = "Darwin" ]; then
         local started
-        started="$(LC_ALL=C ps -o lstart= -p "$1" | sed 's/  *$//')"
-        [ -n "$started" ] && LC_ALL=C /bin/date -j -f "%a %b %d %T %Y" "$started" +%s 2>/dev/null
+        # In UTC on both sides: local time repeats an hour when summer time
+        # ends, and the conversion back could land an hour off.
+        started="$(TZ=UTC LC_ALL=C ps -o lstart= -p "$1" | sed 's/  *$//')"
+        [ -n "$started" ] && TZ=UTC LC_ALL=C /bin/date -j -f "%a %b %d %T %Y" "$started" +%s 2>/dev/null
     else
         awk '{print $22}' "/proc/$1/stat"
     fi

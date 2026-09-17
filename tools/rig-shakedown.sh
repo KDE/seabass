@@ -19,7 +19,8 @@
 #   RIG_REFERENCE_PRINTS  size/mtime/manifest sha256 of both references, as check S4 recorded them
 #
 # On macOS the sticks may be mounted disk images (see docs/testing.md): the
-# rig sets SEABASS_ACCEPT_DISK_IMAGES=1 so the app lists them.
+# rig (tools/rig-platform.sh) sets SEABASS_ACCEPT_DISK_IMAGES=1 so the app
+# lists them.
 #
 # Both sticks are overwritten, several times, and end as exact copies of
 # their references. The references are only read. Run it with the sandbox
@@ -39,7 +40,6 @@ if [ "$rig_os" = "Darwin" ]; then
     A="${RIG_STICK_A:-/Volumes/VSTICKA}"
     B="${RIG_STICK_B:-/Volumes/VSTICKB}"
     deviceB="${RIG_DEVICE_B:-$(stick_device "$B")}"
-    export SEABASS_ACCEPT_DISK_IMAGES=1
 else
     A="${RIG_STICK_A:-/media/sebas/RV2}"
     B="${RIG_STICK_B:-/media/sebas/A4-128GB}"
