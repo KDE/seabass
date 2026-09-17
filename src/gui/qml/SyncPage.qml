@@ -1002,6 +1002,12 @@ Page {
                             GridLayout {
                                 objectName: "sidesGrid"
                                 Layout.fillWidth: true
+                                // uniformCellWidths splits a width the columns
+                                // do not divide into half pixels, which the
+                                // layout rounds one up and one down; giving up
+                                // the remainder keeps the two copies the same.
+                                Layout.maximumWidth: parent.width
+                                    - (parent.width - (columns - 1) * columnSpacing) % columns
                                 columns: root.wide ? 2 : 1
                                 uniformCellWidths: true
                                 columnSpacing: Theme.rowSpacing
