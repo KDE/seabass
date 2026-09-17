@@ -56,7 +56,7 @@ mkdir -p "$out" "$out/shots"
 # F4 writes gigabytes to stick A. An interrupt between the fill and its
 # removal would leave the stick full for every later check and for the
 # next round; this costs nothing when there is no filler.
-trap 'rm -f "$A/RIG-FILLER.bin" "$B/RIG-FILLER.bin" 2>/dev/null' EXIT
+trap 'rm -f "$A"/RIG-FILLER-*.bin "$B"/RIG-FILLER-*.bin 2>/dev/null' EXIT
 # For S3: what the everyday profile looks like before the run.
 # The everyday profile, listed so that a file APPEARING counts as a change
 # too: the run creating ~/.config/seabass/seabass.conf is the damage this
@@ -303,12 +303,53 @@ quit_with_changes() {
 # back whatever happened -- the filler is removed even on a failure.
 free_kb_of() { /bin/df -kP "$1" | awk 'NR==2 {print $4}'; }
 
+# The filler is a set of pieces, not one file: FAT32 holds nothing over
+# 4 GiB, and a single filler stopped there with "File too large" -- the
+# stick kept 13 GB free and F4 proved nothing (macOS round 2). exFAT would
+# take one file, but one path for both beats two.
+filler_pieces() { ls -1 "$A"/RIG-FILLER-*.bin 2>/dev/null | sort; }
+filler_newest() { filler_pieces | tail -1; }
+
+# Writes <KB>, in pieces of at most 3 GiB, continuing the numbering.
+filler_grow() {  # <KB>
+    local todo_kb="$1"
+    local chunk_kb=3145728  # 3 GiB
+    local piece; piece=$(filler_pieces | wc -l | tr -d ' ')
+    while [ "$todo_kb" -gt 0 ]; do
+        local now_kb=$todo_kb
+        [ "$now_kb" -gt "$chunk_kb" ] && now_kb=$chunk_kb
+        dd if=/dev/zero of="$(printf '%s/RIG-FILLER-%02d.bin' "$A" "$piece")" \
+            bs=1M count=$((now_kb / 1024)) status=none || true
+        todo_kb=$((todo_kb - now_kb))
+        piece=$((piece + 1))
+    done
+}
+
+# Gives <KB> back, from the newest piece down: the same "shrink rather
+# than rewrite" the single filler allowed, since rewriting 13 GB costs
+# eleven minutes over USB 2 for less than a megabyte of difference.
+filler_shrink() {  # <KB>
+    local todo_kb="$1"
+    while [ "$todo_kb" -gt 0 ]; do
+        local last; last=$(filler_newest)
+        [ -n "$last" ] || return 0
+        local piece_kb=$(( $(stat -c %s "$last") / 1024 ))
+        if [ "$piece_kb" -gt "$todo_kb" ]; then
+            truncate -s -${todo_kb}K "$last" || true
+            return 0
+        fi
+        rm -f "$last"
+        todo_kb=$((todo_kb - piece_kb))
+    done
+}
+
 fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep the filler for the next pass: 0|1>
     local leave_kb="$1" test="$2" records_may_appear="$3" keep_filler="$4"
     # Stick A, deliberately: exFAT has no fallocate, so the filler is
     # written for real, and A's spare gigabytes cost minutes where B's cost
     # the better part of an hour for exactly the same proof.
-    local filler="$A/RIG-FILLER.bin"
+    # The newest piece, for the "records left behind" check below.
+    local filler; filler=$(filler_newest)
     local free_kb; free_kb=$(free_kb_of "$A")
     # Under a quarter megabyte, and measured rather than assumed: the
     # backup this save writes is about 460 KB (the analysis file plus
@@ -317,14 +358,14 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # save has to refuse, which is the outcome this check exists for.
     local size_kb=$((free_kb - leave_kb))
     local rc=0
-    if [ -f "$filler" ] && [ "$free_kb" -lt "$leave_kb" ]; then
+    if [ -n "$filler" ] && [ "$free_kb" -lt "$leave_kb" ]; then
         # The filler from the pass before, shrunk to the new margin: exFAT
         # shrinks a file in place, where writing 13 GB again costs eleven
         # minutes over USB 2 for less than a megabyte of difference. (Seen
         # before the "too little to fill" guard below, which the kept
         # filler would trip: 256 KB free IS too little to fill from.)
         echo "shrinking the filler from the pass before: $free_kb KB free -> leaving about $leave_kb KB"
-        truncate -s -$((leave_kb - free_kb))K "$filler" || true
+        filler_shrink $((leave_kb - free_kb))
         sync
     elif [ "$size_kb" -lt "$leave_kb" ]; then
         # What the stick actually has, not the margin: this is the one
@@ -332,14 +373,14 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
         # filler left from a pass before goes too, or the restore that
         # follows finds a full stick.
         echo "$A has $free_kb KB free, too little to fill down to $leave_kb KB; F4 cannot be proven here"
-        rm -f "$filler"
+        rm -f "$A"/RIG-FILLER-*.bin
         sync
         return 1
     else
         echo "filling $A: $free_kb KB free -> leaving about $leave_kb KB"
-        # Appending: a filler kept from a pass whose margin was larger
-        # grows rather than being cut to nothing and written again.
-        dd if=/dev/zero of="$filler" bs=1M count=$((size_kb / 1024)) oflag=append conv=notrunc status=none || true
+        # Growing: a filler kept from a pass whose margin was larger gains
+        # pieces rather than being cut to nothing and written again.
+        filler_grow "$size_kb"
         sync
     fi
     # bs=1M rounds the filler down by up to a megabyte, and the old limit
@@ -350,11 +391,13 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # then measure again; the limit is one cluster of rounding, no more.
     local left_kb; left_kb=$(free_kb_of "$A")
     if [ "$left_kb" -gt "$leave_kb" ]; then
-        dd if=/dev/zero of="$filler" bs=32K count=$(((left_kb - leave_kb) / 32)) \
-            oflag=append conv=notrunc status=none || true
+        # Its own small piece: appending to the newest one could take it
+        # over the 4 GiB a FAT32 file may hold.
+        dd if=/dev/zero of="$A/RIG-FILLER-top.bin" bs=32K count=$(((left_kb - leave_kb) / 32)) status=none || true
         sync
         left_kb=$(free_kb_of "$A")
     fi
+    filler=$(filler_newest)
     /bin/df -hP "$A" | tail -1
     echo "left on $A after the fill: $left_kb KB (target $leave_kb KB)"
     if [ "$left_kb" -gt $((leave_kb + 32)) ]; then
@@ -362,7 +405,7 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
         # full stick. Said out loud rather than passed over: dd's own error
         # is swallowed so the filler is always removed.
         echo "the stick still has $left_kb KB free: the fill failed, F4 cannot be proven"
-        rm -f "$filler"
+        rm -f "$A"/RIG-FILLER-*.bin
         sync
         return 1
     fi
@@ -381,7 +424,7 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     if [ "$keep_filler" -eq 1 ]; then
         echo "filler kept for the next pass; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free"
     else
-        rm -f "$filler"
+        rm -f "$A"/RIG-FILLER-*.bin
         sync
         echo "filler removed; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free again"
     fi
@@ -426,9 +469,9 @@ metadata_between_sticks() {
 }
 
 refused_while_dj_software_runs() {
-    # tools/rig_fake_dj.cpp, built as "rekordbox": a copy of a system
-    # binary is killed on macOS, which left this check proving nothing.
-    "$build/rekordbox" 120 &
+    mkdir -p "$out/fake"
+    cp /bin/sleep "$out/fake/rekordbox"
+    "$out/fake/rekordbox" 120 &
     local fake=$!
     sleep 1
     "$build/rig_backup" "$B" "$out/backups-fb/$b.zip" --expect-refused
