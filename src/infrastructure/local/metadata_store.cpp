@@ -16,6 +16,7 @@
 #include <map>
 #include <system_error>
 
+#include "domain/junk_cue.hpp"
 #include "domain/metadata_merge.hpp"
 #include "domain/track_matching.hpp"
 #include "infrastructure/hashing/sha256.hpp"
@@ -785,6 +786,14 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
             storedCues = cuesFor(id);
         }
 
+        // A memory cue sitting at 0:00 is a stray press, not authored
+        // work (domain/junk_cue.hpp). It does not come in here: not into
+        // the stored cue list, not into the count that decides which
+        // side has more, and so never back out onto a stick through a
+        // restore -- which would put back exactly what Library Health
+        // had just cleaned off.
+        const std::vector<CuePoint> incomingCues = domain::withoutJunkMemoryCues(track.cues);
+
         // The shared merge rule, per authored field group: a blank is
         // filled, more cues wins, otherwise the later edit wins. The
         // stick is the incoming side here and the store the existing
@@ -792,7 +801,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         // other way round, which is the whole point of it living in the
         // domain rather than here.
         const bool writeCues =
-            domain::takeIncomingCues(track.cues, storedCues, source.catalogModifiedAt, storedModifiedAt);
+            domain::takeIncomingCues(incomingCues, storedCues, source.catalogModifiedAt, storedModifiedAt);
         const bool writeRating =
             domain::takeIncomingRating(track.rating, storedRating, source.catalogModifiedAt, storedModifiedAt);
         const bool writeComment =
@@ -804,8 +813,8 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         // A track the rule decided against on at least one group: the
         // stick offered something, the store already had something else,
         // and what was stored won.
-        const bool cuesConflict = !storedCues.empty() && !track.cues.empty() &&
-                                   !domain::cueSetsEqual(storedCues, track.cues);
+        const bool cuesConflict = !storedCues.empty() && !incomingCues.empty() &&
+                                   !domain::cueSetsEqual(storedCues, incomingCues);
         const bool ratingConflict = storedRating.has_value() && track.rating.has_value() &&
                                      *storedRating != *track.rating;
         const bool commentConflict = !storedComment.empty() && !track.comment.empty() &&
@@ -988,7 +997,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
                 INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, is_loop, loop_end_ms)
                 VALUES (?,?,?,?,?,?,?,?)
             )sql");
-            for (const auto &cue : track.cues) {
+            for (const auto &cue : incomingCues) {
                 insert.reset();
                 insert.bindInt64(1, id);
                 insert.bind(2, kindToText(cue.kind));

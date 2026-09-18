@@ -328,6 +328,43 @@ int main()
         std::cout << "case 12 (a proposal carries the catalogs that decide what can be written) OK\n";
     }
 
+    // 13. A stray memory cue at 0:00 is a fault, not work anyone did. A
+    //     restore must never put one back -- backups taken before this
+    //     was filtered on the way in still hold them -- and a stick
+    //     carrying nothing but strays has no cues to weigh against, so
+    //     the store fills a gap rather than fighting a conflict.
+    {
+        CuePoint stray;
+        stray.kind = CuePoint::Kind::Memory;
+        stray.positionMs = 340;  // what Engine's own analysis leaves
+
+        Track stick = stickTrack("Nur Ein Moment");
+        stick.cues = {stray};
+        Track stored = storedTrack("Nur Ein Moment");
+        stored.cues = {hotCue(1, 30'000), stray};
+
+        const auto proposals = planMetadataRestore({stick}, {stored}, StoredAt - 1000);
+        const MetadataRestoreProposal *proposal = find(proposals, "Nur Ein Moment");
+        assert(proposal != nullptr);
+        assert(proposal->cuesOffered);
+        assert(proposal->cuesFillAGap && "a stick with only strays has no cues to keep");
+        assert(!proposal->cuesConflict);
+        assert(proposal->cues.size() == 1 && "the stray is not written back");
+        assert(proposal->cues.front().kind == CuePoint::Kind::Hot);
+        assert(proposal->cuesAdded() == 1 && "and the count is of cues that are really added");
+
+        // A hot cue at 0:00 is a real one -- some DJs put it there on
+        // purpose -- and goes back untouched.
+        Track stickTwo = stickTrack("Am Anfang");
+        Track storedTwo = storedTrack("Am Anfang");
+        storedTwo.cues = {hotCue(1, 0)};
+        const auto more = planMetadataRestore({stickTwo}, {storedTwo}, StoredAt - 1000);
+        const MetadataRestoreProposal *second = find(more, "Am Anfang");
+        assert(second != nullptr && second->cuesOffered);
+        assert(second->cues.size() == 1);
+        std::cout << "case 13 (stray cues are not restored, and a stick holding only strays counts as empty) OK\n";
+    }
+
     std::cout << "all metadata_restore_test cases passed\n";
     return 0;
 }

@@ -476,6 +476,31 @@ int main()
         std::cout << "case 17 (a tag nobody could read never counts as a change) OK\n";
     }
 
+    // A stray cue is nothing to back up: the store will not take it, so
+    // offering to copy it -- or counting it among what a backup would
+    // add -- promises something that will not happen.
+    {
+        CuePoint stray;
+        stray.kind = CuePoint::Kind::Memory;
+        stray.positionMs = 340;
+
+        Track onlyStrays = stickTrack("Nur Ein Moment");
+        onlyStrays.cues = {stray};
+        const auto plan = planMetadataBackup({onlyStrays}, {}, StickWrittenLongAgo);
+        const auto &proposal = only(plan);
+        assert(proposal.isNew);
+        assert(!proposal.cuesOffered && "there is nothing here a backup would take");
+        assert(proposal.cuesAdded() == 0);
+
+        Track mixed = stickTrack("Halb So Wild");
+        mixed.cues = {stray, hotCue(1, 30'000.0)};
+        const auto second = planMetadataBackup({mixed}, {}, StickWrittenLongAgo);
+        const auto &both = only(second);
+        assert(both.cuesOffered);
+        assert(both.cuesAdded() == 1 && "one real cue, not two");
+        std::cout << "case 18 (a stray cue is not something a backup would take) OK\n";
+    }
+
     std::cout << "metadata_backup_plan_test: all cases passed\n";
     return 0;
 }

@@ -4,6 +4,8 @@
 
 #include "domain/metadata_restore.hpp"
 
+#include "domain/junk_cue.hpp"
+
 #include "domain/metadata_merge.hpp"
 #include "domain/track_matching.hpp"
 
@@ -16,7 +18,10 @@ int MetadataRestoreProposal::cuesAdded() const
         return 0;
     }
     const int after = static_cast<int>(cues.size());
-    const int before = static_cast<int>(stickTrack.cues.size());
+    // Against the cues that count: a stick whose three cues are all
+    // strays gains every cue this writes, and saying "adds 1" because it
+    // had three of something the write drops is the wrong number.
+    const int before = static_cast<int>(withoutJunkMemoryCues(stickTrack.cues).size());
     return after > before ? after - before : 0;
 }
 
@@ -38,12 +43,23 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
         const std::int64_t storedAt = stored->metadataModifiedAt;
 
         // ---- cues ----
-        proposal.cuesFillAGap = stick->cues.empty() && !stored->cues.empty();
+        //
+        // Neither side's stray cues take part. A memory cue at 0:00 is a
+        // fault (domain/junk_cue.hpp), so the store must not offer one
+        // back -- older backups were taken before this was filtered on
+        // the way in and still hold them -- and a stick carrying nothing
+        // but strays is a stick with no cues, which is a gap to fill
+        // rather than a conflict to weigh. What the restore writes is a
+        // whole cue list, so a single stray left in it would be written
+        // back with the rest.
+        const std::vector<CuePoint> storedCues = withoutJunkMemoryCues(stored->cues);
+        const std::vector<CuePoint> stickCues = withoutJunkMemoryCues(stick->cues);
+        proposal.cuesFillAGap = stickCues.empty() && !storedCues.empty();
         proposal.cuesConflict =
-            !stick->cues.empty() && !stored->cues.empty() && !cueSetsEqual(stick->cues, stored->cues);
-        if (takeIncomingCues(stored->cues, stick->cues, storedAt, stickModifiedAt)) {
+            !stickCues.empty() && !storedCues.empty() && !cueSetsEqual(stickCues, storedCues);
+        if (takeIncomingCues(storedCues, stickCues, storedAt, stickModifiedAt)) {
             proposal.cuesOffered = true;
-            proposal.cues = stored->cues;
+            proposal.cues = storedCues;
         }
 
         // ---- rating ----

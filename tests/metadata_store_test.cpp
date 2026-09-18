@@ -128,7 +128,7 @@ int main()
         MetadataStore metadata(db);
 
         Track first = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
-        first.cues = {memoryCue(0.0), hotCue(1, 32000.0)};
+        first.cues = {memoryCue(12'000.0), hotCue(1, 32000.0)};
         first.rating = 4;
         first.comment = "opener";
         first.artworkPath = cover.string();
@@ -183,7 +183,7 @@ int main()
     {
         MetadataStore metadata(db);
         Track first = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
-        first.cues = {memoryCue(0.0), hotCue(1, 32000.0)};
+        first.cues = {memoryCue(12'000.0), hotCue(1, 32000.0)};
         first.rating = 4;
         first.comment = "opener";
         first.artworkPath = cover.string();
@@ -219,7 +219,7 @@ int main()
     {
         MetadataStore metadata(db);
         Track changed = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
-        changed.cues = {memoryCue(0.0), hotCue(1, 48000.0)};  // hot cue moved
+        changed.cues = {memoryCue(12'000.0), hotCue(1, 48000.0)};  // hot cue moved
         changed.rating = 2;
         changed.comment = "";  // nothing incoming: never a conflict
 
@@ -259,11 +259,11 @@ int main()
         const fs::path cueCountDb = root / "cue-counts" / "metadata.db";
         MetadataStore metadata(cueCountDb);
         Track full = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
-        full.cues = {memoryCue(0.0), hotCue(1, 32000.0), hotCue(2, 64000.0)};
+        full.cues = {memoryCue(12'000.0), hotCue(1, 32000.0), hotCue(2, 64000.0)};
         store(metadata, {full}, sourceFor(stick, "RV2", CatalogOld));
 
         Track reExported = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
-        reExported.cues = {memoryCue(0.0)};
+        reExported.cues = {memoryCue(12'000.0)};
         const auto summary = store(metadata, {reExported}, sourceFor(stick, "RV2", CatalogNew));
         assert(summary.tracksSkipped == 1);
         assert(summary.tracksUpdated == 0);
@@ -273,7 +273,7 @@ int main()
         // And the other direction: a stick that has gained cues gives
         // them to a store that has fewer, however old the catalog is.
         Track recued = sampleTrack(stick, "Contents/Kalte Nacht/Erste.mp3", "Erste");
-        recued.cues = {memoryCue(0.0), hotCue(1, 32000.0), hotCue(2, 64000.0), hotCue(3, 96000.0)};
+        recued.cues = {memoryCue(12'000.0), hotCue(1, 32000.0), hotCue(2, 64000.0), hotCue(3, 96000.0)};
         const auto grew = store(metadata, {recued}, sourceFor(stick, "RV2", CatalogOld));
         assert(grew.tracksUpdated == 1);
         assert(metadata.browse("Erste", 10, 0)[0].cueCount == 4);
@@ -467,7 +467,7 @@ int main()
         MetadataStore metadata(oldDb);
         // A working store, not a thrown error and not a broken one.
         Track track = sampleTrack(stick, "Contents/A/new.mp3", "New");
-        track.cues = {memoryCue(0.0)};
+        track.cues = {memoryCue(12'000.0)};
         const auto summary = store(metadata, {track}, sourceFor(stick));
         assert(summary.tracksAdded == 1);
         assert(metadata.trackCount() == 1);
@@ -607,10 +607,10 @@ int main()
         const fs::path deleteDb = root / "deletes" / "metadata.db";
         MetadataStore metadata(deleteDb);
         Track first = sampleTrack(stick, "Contents/A/one.mp3", "One");
-        first.cues = {memoryCue(0.0), hotCue(1, 1000.0)};
+        first.cues = {memoryCue(12'000.0), hotCue(1, 1000.0)};
         first.playlists = {PlaylistMembership{"Techno", 0}};
         Track second = sampleTrack(stick, "Contents/A/two.mp3", "Two");
-        second.cues = {memoryCue(0.0)};
+        second.cues = {memoryCue(12'000.0)};
         store(metadata, {first, second}, sourceFor(stick));
         assert(metadata.trackCount() == 2);
 
@@ -907,6 +907,33 @@ int main()
         assert(!MetadataStore::canTakeArtwork(empty.string()));
         assert(!MetadataStore::canTakeArtwork(""));
         std::cout << "case 20 (a missing or empty cover cannot be taken in) OK\n";
+    }
+
+    // ---- case 21: a stray cue is never taken into the store ----------
+    //
+    // A memory cue inside the first second is a fault Library Health
+    // cleans off a stick, not work anyone did. Storing one would hand it
+    // straight back on the next restore, and would let it count towards
+    // "which side has more cues" when the two disagree.
+    {
+        const fs::path strayDb = root / "strays" / "metadata.db";
+        MetadataStore metadata(strayDb);
+        Track track = sampleTrack(stick, "Contents/Kalte Nacht/Dritte.mp3", "Dritte");
+        CuePoint stray;
+        stray.kind = CuePoint::Kind::Memory;
+        stray.positionMs = 340;  // where Engine's own analysis lands one
+        track.cues = {stray, hotCue(1, 0.0), memoryCue(48'000.0)};
+
+        const auto summary = store(metadata, {track}, sourceFor(stick));
+        assert(summary.cuesStored == 2 && "the stray stays on the stick");
+        const auto rows = metadata.browse("Dritte", 10, 0);
+        assert(rows.size() == 1 && rows[0].cueCount == 2);
+        for (const auto &cue : metadata.cuesFor(rows[0].id)) {
+            // A hot cue at 0:00 is deliberate and kept; a memory cue
+            // there is the fault.
+            assert(!(cue.kind == CuePoint::Kind::Memory && cue.positionMs < 1000.0));
+        }
+        std::cout << "case 21 (a stray memory cue at 0:00 never enters the store) OK\n";
     }
 
     return 0;

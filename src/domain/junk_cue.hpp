@@ -44,6 +44,15 @@ struct JunkCueIssue
 // by the finder and the remover so the two cannot disagree.
 bool isJunkMemoryCue(const CuePoint &cue);
 
+// The same cues with the junk left out.
+//
+// A stray cue is a fault to be cleaned off a stick, not a piece of a
+// DJ's work: it must not be copied into a metadata backup, must not
+// count towards "which side has more cues" when the two disagree, and
+// must never be written back onto a stick by a restore -- which would
+// put back exactly what Library Health had just taken off.
+std::vector<CuePoint> withoutJunkMemoryCues(const std::vector<CuePoint> &cues);
+
 class JunkCueFinder
 {
 public:

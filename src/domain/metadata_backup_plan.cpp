@@ -4,6 +4,8 @@
 
 #include "domain/metadata_backup_plan.hpp"
 
+#include "domain/junk_cue.hpp"
+
 #include <map>
 #include <set>
 
@@ -92,7 +94,10 @@ int MetadataBackupProposal::cuesAdded() const
     if (!cuesOffered) {
         return 0;
     }
-    const int after = static_cast<int>(stickTrack.cues.size());
+    // Only the cues a backup would take: the strays are not stored, so
+    // counting them here would promise the store something it will not
+    // be given.
+    const int after = static_cast<int>(withoutJunkMemoryCues(stickTrack.cues).size());
     // A new track is measured against nothing, so every cue on it is
     // added. An existing one is measured against what the store already
     // holds. Never negative: when the stick's set is the smaller one the
@@ -137,7 +142,7 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
             // by field, because "the store has never seen this track" is
             // one fact and not three.
             proposal.isNew = true;
-            proposal.cuesOffered = !stick.cues.empty();
+            proposal.cuesOffered = !withoutJunkMemoryCues(stick.cues).empty();
             proposal.cuesFillAGap = proposal.cuesOffered;
             proposal.ratingOffered = stick.rating.has_value();
             proposal.commentOffered = !stick.comment.empty();
@@ -159,10 +164,16 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         const std::int64_t storedAt = stored->metadataModifiedAt;
 
         // ---- cues ----
-        proposal.cuesFillAGap = stored->cues.empty() && !stick.cues.empty();
+        //
+        // Stray cues take no part, the same as on the way back out: what
+        // the store would take of this track is what decides whether
+        // there is anything to offer, and the store does not take those.
+        const std::vector<CuePoint> stickCues = withoutJunkMemoryCues(stick.cues);
+        const std::vector<CuePoint> storedCues = withoutJunkMemoryCues(stored->cues);
+        proposal.cuesFillAGap = storedCues.empty() && !stickCues.empty();
         proposal.cuesConflict =
-            !stored->cues.empty() && !stick.cues.empty() && !cueSetsEqual(stored->cues, stick.cues);
-        proposal.cuesOffered = takeIncomingCues(stick.cues, stored->cues, stickModifiedAt, storedAt);
+            !storedCues.empty() && !stickCues.empty() && !cueSetsEqual(storedCues, stickCues);
+        proposal.cuesOffered = takeIncomingCues(stickCues, storedCues, stickModifiedAt, storedAt);
 
         // ---- rating ----
         proposal.ratingConflict = stick.rating && stored->rating && *stick.rating != *stored->rating;

@@ -25,4 +25,16 @@ std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)
     return issues;
 }
 
+std::vector<CuePoint> withoutJunkMemoryCues(const std::vector<CuePoint> &cues)
+{
+    std::vector<CuePoint> kept;
+    kept.reserve(cues.size());
+    for (const CuePoint &cue : cues) {
+        if (!isJunkMemoryCue(cue)) {
+            kept.push_back(cue);
+        }
+    }
+    return kept;
+}
+
 }  // namespace seabass::domain

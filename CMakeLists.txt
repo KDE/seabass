@@ -1277,6 +1277,7 @@ target_link_libraries(pdb_rating_write_test PRIVATE seabass_core)
 add_test(NAME pdb_rating_write_test COMMAND pdb_rating_write_test)
 
 add_executable(metadata_restore_test
+    src/domain/junk_cue.cpp
     src/domain/metadata_merge.cpp
     src/domain/metadata_restore.cpp
     src/domain/track_matching.cpp
@@ -1286,6 +1287,7 @@ target_include_directories(metadata_restore_test PRIVATE src)
 add_test(NAME metadata_restore_test COMMAND metadata_restore_test)
 
 add_executable(metadata_backup_plan_test
+    src/domain/junk_cue.cpp
     src/domain/metadata_backup_plan.cpp
     src/domain/metadata_merge.cpp
     src/domain/track_matching.cpp
