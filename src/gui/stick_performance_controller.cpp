@@ -30,6 +30,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/scratch_dir_guard.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+#include "storageprobe/walk_tree.hpp"
 
 namespace seabass::gui
 {
@@ -191,13 +192,6 @@ struct WalkResult
     std::uint64_t folders = 0;
 };
 
-std::uint64_t sizeOf(const fs::directory_entry &entry)
-{
-    std::error_code ec;
-    auto size = entry.file_size(ec);
-    return ec ? 0 : size;
-}
-
 template <typename Accept>
 WalkResult walk(const fs::path &dir, Accept accept, const application::CancellationToken &cancel,
                 bool skipHidden = false)
@@ -207,34 +201,32 @@ WalkResult walk(const fs::path &dir, Accept accept, const application::Cancellat
     if (dir.empty() || !fs::exists(dir, ec) || ec) {
         return result;
     }
-    std::uint64_t entries = 0;
-    auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
-    auto end = fs::recursive_directory_iterator();
-    for (; !ec && it != end; it.increment(ec)) {
-        if ((++entries & 0xFF) == 0) {
-            cancel.throwIfCancelled();
+
+    // storageprobe::walkTree rather than recursive_directory_iterator: the
+    // iterator abandons the whole walk on the first error, and on any macOS
+    // stick that error is .Spotlight-V100 (EPERM, which
+    // skip_permission_denied does not cover). A no-library measurement then
+    // found no files to sample on a stick full of them.
+    auto walked = storageprobe::walkTree(
+        dir.string(),
+        [skipHidden](const std::string &relative) {
+            // The same exclusions Full Stick Backup applies (the recycle
+            // bin, System Volume Information, this app's own backups and
+            // locks), so a no-library measurement never samples deleted
+            // files or backup archives as "audio".
+            return !skipHidden || !infrastructure::stick_backup::isExcludedFromBackup(relative, true);
+        },
+        [&cancel](std::uint64_t) { cancel.throwIfCancelled(); });
+
+    result.folders = walked.folders;
+    for (const auto &file : walked.files) {
+        const std::string relative = fs::path(file.path).lexically_relative(dir).generic_string();
+        if (skipHidden && infrastructure::stick_backup::isExcludedFromBackup(relative, false)) {
+            continue;
         }
-        std::error_code entryEc;
-        // The same exclusions Full Stick Backup applies (the recycle bin,
-        // System Volume Information, this app's own backups and locks),
-        // so a no-library measurement never samples deleted files or
-        // backup archives as "audio".
-        const std::string relative = it->path().lexically_relative(dir).generic_string();
-        if (it->is_directory(entryEc) && !entryEc) {
-            if (skipHidden && infrastructure::stick_backup::isExcludedFromBackup(relative, true)) {
-                it.disable_recursion_pending();
-                continue;
-            }
-            ++result.folders;
-        } else if (it->is_regular_file(entryEc) && !entryEc) {
-            if (skipHidden && infrastructure::stick_backup::isExcludedFromBackup(relative, false)) {
-                continue;
-            }
-            const std::uint64_t size = sizeOf(*it);
-            if (accept(*it, size)) {
-                result.files.push_back(it->path().string());
-                result.sizes.push_back(size);
-            }
+        if (accept(fs::path(file.path), file.size)) {
+            result.files.push_back(file.path);
+            result.sizes.push_back(file.size);
         }
     }
     return result;
@@ -384,11 +376,11 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             WalkResult analysis;
             if (!rekordboxPath.isEmpty()) {
                 analysis = walk(fs::path(rekordboxPath.toStdString()) / "USBANLZ",
-                                [](const fs::directory_entry &e, std::uint64_t) { return e.path().filename() == "ANLZ0000.DAT"; }, cancel);
+                                [](const fs::path &path, std::uint64_t) { return path.filename() == "ANLZ0000.DAT"; }, cancel);
             }
             if (analysis.files.empty() && !enginePath.isEmpty()) {
                 analysis = walk(fs::path(enginePath.toStdString()) / "Database2" / "OverviewData",
-                                [](const fs::directory_entry &, std::uint64_t) { return true; }, cancel);
+                                [](const fs::path &, std::uint64_t) { return true; }, cancel);
             }
             sampleKind = QStringLiteral("library");
 
@@ -397,7 +389,7 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
                 // stick big enough to stream from and seek in will do, and
                 // any small one stands in for an analysis file.
                 auto everything = walk(fs::path(stickRoot),
-                                       [](const fs::directory_entry &, std::uint64_t size) { return size >= 4 * 1024; }, cancel, true);
+                                       [](const fs::path &, std::uint64_t size) { return size >= 4 * 1024; }, cancel, true);
                 analysis.folders = everything.folders;
                 for (std::size_t i = 0; i < everything.files.size(); ++i) {
                     (everything.sizes[i] >= 64 * 1024 ? audioFiles : analysis.files).push_back(everything.files[i]);

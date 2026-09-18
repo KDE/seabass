@@ -291,6 +291,7 @@ add_library(storageprobe STATIC
     src/storageprobe/surface_check.cpp
     src/storageprobe/write_probe.cpp
     src/storageprobe/workload.cpp
+    src/storageprobe/walk_tree.cpp
 )
 target_include_directories(storageprobe PUBLIC src)
 target_compile_features(storageprobe PUBLIC cxx_std_17)
@@ -926,6 +927,11 @@ add_test(NAME real_file_sizes_test COMMAND real_file_sizes_test)
 # this pins is one a second operating system has to agree with -- that is the
 # whole point of it -- so the test compiles the source directly and runs
 # everywhere, macOS included.
+add_executable(walk_tree_test tests/walk_tree_test.cpp)
+target_include_directories(walk_tree_test PRIVATE src)
+target_link_libraries(walk_tree_test PRIVATE storageprobe)
+add_test(NAME walk_tree_test COMMAND walk_tree_test)
+
 add_executable(linux_usb_formatter_test
     tests/linux_usb_formatter_test.cpp
     src/infrastructure/media/linux_usb_formatter.cpp

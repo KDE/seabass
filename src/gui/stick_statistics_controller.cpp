@@ -17,6 +17,7 @@
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+#include "storageprobe/walk_tree.hpp"
 
 namespace seabass::gui
 {
@@ -101,27 +102,24 @@ QVariantMap toVariant(const infrastructure::system::StickHardwareInfo &hw,
 // Best-effort recursive directory size, skipping anything that errors
 // (permission-denied entries, a symlink loop, the stick being unplugged
 // mid-walk) rather than aborting the whole statistics scan over it.
+//
+// That is what this always claimed to do and did not: with
+// recursive_directory_iterator, the first error ended the loop, so on any
+// macOS stick the walk stopped at .Spotlight-V100 -- EPERM, which
+// skip_permission_denied does not cover -- and the size came back 0.
+// storageprobe::walkTree skips the directory instead of the stick.
 std::uint64_t directorySizeBytes(const std::string &dir, const application::CancellationToken &cancel)
 {
     std::error_code ec;
     if (dir.empty() || !fs::exists(dir, ec) || ec) {
         return 0;
     }
+    auto walk = storageprobe::walkTree(dir, {}, [&cancel](std::uint64_t) {
+        cancel.throwIfCancelled();  // a walk of a big stick is the slow part of this scan
+    });
     std::uint64_t total = 0;
-    std::uint64_t entries = 0;
-    auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
-    auto end = fs::recursive_directory_iterator();
-    for (; !ec && it != end; it.increment(ec)) {
-        if ((++entries & 0xFF) == 0) {
-            cancel.throwIfCancelled();  // a walk of a big stick is the slow part of this scan
-        }
-        std::error_code fileEc;
-        if (it->is_regular_file(fileEc) && !fileEc) {
-            auto size = it->file_size(fileEc);
-            if (!fileEc) {
-                total += size;
-            }
-        }
+    for (const auto &file : walk.files) {
+        total += file.size;
     }
     return total;
 }

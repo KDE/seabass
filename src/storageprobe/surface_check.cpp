@@ -4,6 +4,8 @@
 
 #include "surface_check.hpp"
 
+#include "walk_tree.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -49,25 +51,29 @@ SurfaceCheckResult SurfaceCheck::run(const std::string &root, const SurfaceProgr
                                      const CancelCheck &cancelled, const SurfaceCheckOptions &options)
 {
     SurfaceCheckResult result;
-    std::vector<Entry> entries;
+
+    // Walked by hand rather than with recursive_directory_iterator: its
+    // skip_permission_denied only covers EACCES, and macOS answers EPERM
+    // for .Spotlight-V100, which it creates on every USB volume it
+    // indexes. The iterator sets the error code, the loop ends, and the
+    // check reports "Nothing was read." for a stick full of music. See
+    // walk_tree.hpp for the measurement.
     std::uint64_t totalBytes = 0;
-    std::error_code ec;
-    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if ((entries.size() & 0xFF) == 0 && cancelled()) {
+    auto walk = walkTree(root, {}, [&cancelled](std::uint64_t) {
+        if (cancelled()) {
             throw Cancelled();
         }
-        std::error_code entryEc;
-        if (!it->is_regular_file(entryEc) || entryEc) {
-            continue;
-        }
-        auto size = it->file_size(entryEc);
-        if (entryEc) {
-            continue;
-        }
-        entries.push_back({it->path().string(), size});
-        totalBytes += size;
+    });
+    std::vector<Entry> entries;
+    entries.reserve(walk.files.size());
+    for (const auto &file : walk.files) {
+        entries.push_back({file.path, file.size});
+        totalBytes += file.size;
     }
+    // A directory that could not be opened is not media that failed, but
+    // it is a part of the stick this check did not see, and saying so is
+    // the difference between "healthy" and "healthy as far as I looked".
+    result.unopenable = walk.skipped;
 
     std::vector<char> buffer(options.bufferBytes);
     struct Rated
