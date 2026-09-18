@@ -6,6 +6,7 @@
 
 #include <QAbstractListModel>
 #include <QFutureWatcher>
+#include <QHash>
 #include <QSet>
 #include <QVector>
 #include <QObject>
@@ -333,8 +334,17 @@ public:
     PendingTask m_busyTask;
     QVector<PendingTask> m_taskQueue;
     QSet<QString> m_mountedByUs;      // devicePaths Seabass mounted, to unmount on quit
+    QString labelOf(const QString &devicePath) const;
+
     QSet<QString> m_userUnmounted;    // ejected from the list: leave alone until re-inserted
-    QSet<QString> m_autoMountFailed;  // do not retry until re-inserted
+    // Devices whose automatic mount failed, with the label they carried
+    // when it did: do not retry until the stick is re-inserted, or until
+    // the filesystem itself changes. A format leaves the same device path
+    // with a new filesystem, and that deserves a fresh attempt rather
+    // than a stick that sits there unmounted because of a refusal that
+    // was about the partition it used to have.
+    QHash<QString, QString> m_autoMountFailed;
+
     bool m_ownMountsReleased = false;
     // Every mounted stick ever seen this session, by mount point, kept
     // after the stick is gone (see libraryIdForMountPoint()).

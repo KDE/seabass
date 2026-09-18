@@ -626,20 +626,43 @@ void MediaController::queueAutoMounts()
             continue;
         }
         present.insert(devicePath);
+        const QString label = QString::fromStdString(stick.label);
+        const auto failedWith = m_autoMountFailed.constFind(devicePath);
+        if (failedWith != m_autoMountFailed.constEnd()) {
+            if (failedWith.value() == label) {
+                continue;  // the same filesystem that would not mount
+            }
+            // A different label on the same path is a different
+            // filesystem: a format, or a swap. Worth one more try.
+            m_autoMountFailed.remove(devicePath);
+        }
         if (stick.mounted || stick.hasNoFilesystem || queuedOrBusy.contains(devicePath)
-            || m_userUnmounted.contains(devicePath) || m_autoMountFailed.contains(devicePath)) {
+            || m_userUnmounted.contains(devicePath)) {
             continue;
         }
         enqueue(devicePath, true, true, false);
     }
-    for (QSet<QString> *set : {&m_userUnmounted, &m_autoMountFailed, &m_mountedByUs}) {
+    for (QSet<QString> *set : {&m_userUnmounted, &m_mountedByUs}) {
         for (auto it = set->begin(); it != set->end();) {
             it = present.contains(*it) ? std::next(it) : set->erase(it);
         }
     }
+    for (auto it = m_autoMountFailed.begin(); it != m_autoMountFailed.end();) {
+        it = present.contains(it.key()) ? std::next(it) : m_autoMountFailed.erase(it);
+    }
     m_taskQueue.erase(std::remove_if(m_taskQueue.begin(), m_taskQueue.end(),
                                      [&](const PendingTask &t) { return !present.contains(t.devicePath); }),
                       m_taskQueue.end());
+}
+
+QString MediaController::labelOf(const QString &devicePath) const
+{
+    for (const application::DetectedStick &stick : m_model.sticks()) {
+        if (QString::fromStdString(stick.devicePath) == devicePath) {
+            return QString::fromStdString(stick.label);
+        }
+    }
+    return {};
 }
 
 void MediaController::mountStick(const QString &devicePath)
@@ -700,12 +723,21 @@ void MediaController::onTaskFinished()
         if (result.success) {
             m_mountedByUs.insert(task.devicePath);
         } else if (task.automatic) {
-            m_autoMountFailed.insert(task.devicePath);
+            m_autoMountFailed.insert(task.devicePath, labelOf(task.devicePath));
         }
     } else if (result.success) {
         m_mountedByUs.remove(task.devicePath);
     }
-    setErrorMessage(result.errorMessage);
+    // An automatic mount is Seabass being helpful, not something the user
+    // asked for, so its failure is not the user's problem to read. It is
+    // also the one that loses a race with a format: while mkfs is running
+    // the partition is briefly not a mountable filesystem, and udisks says
+    // so in words that land on screen as though something were wrong with
+    // the stick. The failure is still remembered, and the row still shows
+    // the stick as unmounted with a Mount button that reports properly.
+    if (!task.automatic || result.success) {
+        setErrorMessage(result.errorMessage);
+    }
     emit busyChanged();
     detect();
     processQueue();
