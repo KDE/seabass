@@ -25,13 +25,46 @@ include:
 # inside this repo rather than craft-blueprints-community, so CI doesn't
 # depend on an upstream contribution landing first -- confirmed locally
 # that Craft resolves a blueprint from an arbitrary [Blueprints]
-# Locations entry with no dependency on the community repo at all. Not
-# yet confirmed end to end on a real KDE CI run: CraftMaster's own
-# .craft.ini config-override still needs to point Locations at this
-# checkout's craft-blueprint/ dir, which the job doesn't do yet. Upstream
-# to craft-blueprints-community once this has a real CI run behind it.
+# Locations entry with no dependency on the community repo at all. The
+# .craft.ini in this checkout is what points Locations there; both the
+# Windows and the macOS base template read it as CraftMaster's
+# --config-override ($KDECI_CRAFT_PROJECT_CONFIG), so it needs no job of
+# its own. Upstream to craft-blueprints-community once this has a real CI
+# run behind it.
 - project: sysadmin/ci-utilities
   file: /gitlab-templates/craft-windows-x86-64-qt6.yml
+
+# macOS. The same blueprint, the same .craft.ini, a signed and notarized
+# .dmg out the far end.
+#
+# There is no plain build-and-test template for macOS on Invent -- the
+# whole macOS lane is Craft -- so this job packages, it does not run the
+# test suite. Two reasons it cannot: craft-ci's CraftConfig.ini sets
+# `/.buildTests = False` for every blueprint, and Craft carries only
+# Boost's headers, while libdjinterop's vendored test suite wants
+# Boost.Filesystem compiled. That is the same reason the blueprint
+# configures -DSEABASS_TESTS=OFF. So a green job here means "it builds,
+# links and packages on macOS", not "the 152 tests pass" -- those stay
+# local until this repo has a .kde-ci.yml and a Linux build job.
+#
+# arm64 only, on purpose. KDE has a single macOS builder and both targets
+# queue on it; the Intel one (craft-macos-x86-64-qt6.yml) cross-compiles
+# on that same ARM machine, so it is a second, less-tested path for a
+# device we have no way to verify on. Worth adding once arm64 has some
+# green runs behind it.
+#
+# Verified locally before enabling: this blueprint produces
+# seabass-macos-build-master-macos-clang-arm64.dmg (58 MB) against the
+# same General/ABI = macos-clang-arm64 the CI target uses.
+#
+# Note the template's own rules run this automatically once
+# $KDECI_SECURE_SERVICES_KEY is set, which it now is: Apple will not let
+# an unsigned .dmg be useful, so the job signs, notarizes and publishes
+# the build. Unlike the Windows job below, no allow_failure is added --
+# nothing is known to be broken here, and a first run that fails should
+# say so loudly rather than sit orange.
+- project: sysadmin/ci-utilities
+  file: /gitlab-templates/craft-macos-arm64-qt6.yml
 variables:
   SECRET_DETECTION_ENABLED: 'true'
 secret_detection:
