@@ -272,6 +272,21 @@ TestCase {
         compare(ring.artTurns, 0);
     }
 
+    // A turning cover holds its size; the swell returns as it runs out.
+    function test_aTurningCoverDoesNotSwellWithTheBass() {
+        var ring = gridRing({spinning: true});
+        compare(ring.artSwell, 1, "at rest the cover swells with the bass as it always did");
+        step(ring, 0.35);
+        fuzzyCompare(ring.artSwell, 0.5, 0.03, "half way up to speed, half of it");
+        step(ring, 1);
+        compare(ring.artSwell, 0, "at speed, none");
+        ring.spinning = false;
+        step(ring, 3);
+        verify(ring.artSwell > 0.3 && ring.artSwell < 1, "and it comes back with the run-out: " + ring.artSwell);
+        step(ring, 12);
+        compare(ring.artSwell, 1);
+    }
+
     // Pausing is the deck's stop button: the brake, half a second.
     function test_pausedTheBrakeStopsItAndPlayingStartsItAgain() {
         var ring = gridRing({spinning: true});

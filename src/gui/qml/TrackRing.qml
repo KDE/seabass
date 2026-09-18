@@ -163,6 +163,12 @@ Item {
     readonly property real bearingDrag: 0.03      // turns/s^2
     readonly property real speedDrag: 0.2         // 1/s
     property real platterSpeed: 0                 // turns a second
+    // A turning cover holds its size. The swell on every beat moves
+    // everything near its rim out and back again while it goes round,
+    // and the eye reads that as the platter changing speed. The halo and
+    // the bars still move to the bass. It comes back as the platter runs
+    // out, in step with it.
+    readonly property real artSwell: 1 - Math.min(1, root.platterSpeed / root.fullSpeed)
     property real artTurns: 0                     // 0..1, what the shader turns the cover by
     // What the run-out's drag is multiplied by to end it upright.
     property real runOutDrag: 1
@@ -360,6 +366,7 @@ Item {
         property real rippleSpan: root.rippleSpan
         property real rippleStrength: root.rippleStrength
         property real artTurns: root.artTurns
+        property real artSwell: root.artSwell
         property real bars: root.bars
         property real artRadius: root.artRadius
         property real hasArt: artImage.status === Image.Ready ? 1 : 0

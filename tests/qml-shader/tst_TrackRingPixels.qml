@@ -214,6 +214,23 @@ TestCase {
         verify(image.blue(300, 300 + 90) > 200, "and the blue underneath");
     }
 
+    // Just outside the cover's resting edge: on a kick a cover at rest
+    // swells over this point, a turning one does not.
+    function test_aTurningCoverHoldsItsSizeOnAKick() {
+        var stage = make({progress: -1, playing: true, animated: false, liveLevels: true, liveLow: 1});
+        var justOutside = {x: Math.round(300 + 300 * 0.512), y: 300};
+        wait(100);
+        var atRest = grabImage(stage);
+        var disc = atRest.green(300, 300);
+        fuzzyCompare(atRest.green(justOutside.x, justOutside.y), disc, 6, "at rest the swollen cover reaches it");
+
+        stage.ring.platterSpeed = stage.ring.fullSpeed;
+        wait(100);
+        var turning = grabImage(stage);
+        verify(Math.abs(turning.green(justOutside.x, justOutside.y) - disc) > 25, "turning, the cover stops short of it: cover g="
+               + disc + ", there g=" + turning.green(justOutside.x, justOutside.y));
+    }
+
     function test_aClickOnTheDiscIsAClickAndItsCornersAreNot() {
         var stage = make({progress: 0.1});
         var clicks = 0;

@@ -29,6 +29,7 @@ layout(std140, binding = 0) uniform buf {
     float rippleSpan;  // seconds a ripple takes to cross the bars
     float rippleStrength;
     float artTurns;    // how far round the cover has spun, in turns, 0..1
+    float artSwell;    // how much of the bass's swell the cover takes, 0..1
     float bars;        // how many bars go round
     float artRadius;   // the art disc, in units of the ring's outer radius
     float hasArt;
@@ -82,7 +83,7 @@ void main()
         w = max(w, texture(wave, vec2(u, 0.5)).rgb);
     }
 
-    float discRadius = artRadius * (1.0 + 0.05 * bass);
+    float discRadius = artRadius * (1.0 + 0.05 * bass * artSwell);
     float r0 = artRadius + 0.07;
     float room = 1.0 - r0;
     // The bars under the playhead jump with the bass: that is where the
