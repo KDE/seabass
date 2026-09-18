@@ -145,6 +145,14 @@ Page {
                         + "from Engine Library/Artwork. Engine DJ writes those again the next time it analyses "
                         + "or re-imports them.");
                 }
+                var emptied = consistencyController.artworkEmptyFileCount;
+                if (emptied > 0) {
+                    parts.push(emptied + " have their image file sitting in Engine Library/Artwork with nothing in "
+                        + "it -- the name is right and the file is empty, which is what a stick pulled out "
+                        + "mid-write leaves behind. A player draws its own grey placeholder for those, so they "
+                        + "look like art that was never there. Engine DJ writes them again when it next analyses "
+                        + "or re-imports those tracks.");
+                }
                 if (broken > 0) {
                     parts.push(broken + " point at an art row with nothing in it, so there is no image to look for.");
                 }

@@ -8,6 +8,7 @@
 #include <functional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <string_view>
 #include <vector>
 
@@ -33,6 +34,12 @@ enum class ArtworkStorage {
     Cached,
     // A hash whose file is missing: the row is fine, the image is gone.
     CachedFileMissing,
+    // A hash whose file is there and holds nothing a player can draw --
+    // empty, truncated, or not an image at all. What an unclean unplug
+    // leaves: the directory entry survives, its data does not. Worth
+    // saying apart from "missing", because the two read differently to
+    // anyone looking at the stick: this one looks fine in a file manager.
+    CachedFileUnreadable,
     // "image://fileart//<absolute path>" from an import. Unusable on a
     // player, whatever this machine can resolve.
     ImportedPath,
@@ -53,9 +60,15 @@ struct ArtworkEntry
     // The raw AlbumArt.hash, as text when it is text.
     std::string reference;
     // The image this stick holds for it, found by anchoring on the
-    // "PIONEER/Artwork/..." tail of an imported path. Empty when this
-    // stick has no such file, and then the entry cannot be repaired.
+    // "PIONEER/Artwork/..." tail of an imported path, or -- for a row
+    // whose own cached file is gone or empty -- by asking the rekordbox
+    // catalog beside it what art it holds for the same audio file. Empty
+    // when this stick has no such file, and then the entry cannot be
+    // repaired.
     std::string imageOnStick;
+    // The track's audio file, resolved against the Engine library, which
+    // is how the rekordbox side is asked about the same track.
+    std::string trackFile;
 };
 
 struct ArtworkAudit
@@ -72,7 +85,17 @@ struct ArtworkAudit
 };
 
 // Reads <engineLibraryPath>/Database2/m.db read-only. Never writes.
-ArtworkAudit auditArtwork(const std::string &engineLibraryPath);
+// Art the rekordbox catalog on the same stick holds, keyed by the audio
+// file it belongs to (lowercased absolute path, so a FAT stick's casing
+// cannot hide a match). Engine and rekordbox keep separate image files --
+// different encodings, different bytes -- so this is not a shared store
+// but a second source to rebuild from, and the only one that is on the
+// stick itself when the Engine copy is gone.
+using ArtworkSourceByTrackFile = std::unordered_map<std::string, std::string>;
+
+std::string artworkSourceKey(const std::string &trackFile);
+
+ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources = {});
 
 // How Engine spells a hash as a file name under Artwork/: base64url,
 // unpadded. Exposed for the test, which checks it against the encoding

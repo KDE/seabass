@@ -184,7 +184,7 @@ int main(int argc, char **argv)
         sqlite3 *db = fixture.open();
         std::vector<std::uint8_t> cached(20, 0x11);
         const std::string cachedName = artworkFileName(cached);
-        write(fixture.library / "Artwork" / (cachedName + ".jpg"), "CACHED-IMAGE");
+        write(fixture.library / "Artwork" / (cachedName + ".jpg"), jpeg("CACHED-IMAGE"));
         exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (1, x'"
                  "1111111111111111111111111111111111111111');");
         exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (2, x'"
@@ -418,6 +418,59 @@ int main(int argc, char **argv)
         assert(audit.unreadable[1].storage == ArtworkStorage::RowWithoutHash);
         assert(audit.repairable() == 0);  // there is no image and no name to write
         std::cout << "case 9 (Engine's no-cover row is no art; a row of its own with nothing in it is a fault) OK\n";
+    }
+
+    // 10. The fault this was written for: a stick pulled mid-write leaves
+    //     the artwork file's name and loses its data. The row is right,
+    //     the file is there, and it holds nothing -- which a player draws
+    //     as no cover at all. It has to be found (an existing file is not
+    //     the question; an image is), and it has to be fixable from the
+    //     rekordbox art on the same stick, which is the copy the user
+    //     still has with them when the Engine one is gone.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_emptied");
+        fs::create_directories(fixture.stick / "Contents");
+        write(fixture.stick / "Contents" / "song.mp3", "AUDIO");
+        write(fixture.stick / "PIONEER" / "Artwork" / "00002" / "cover.jpg", jpeg("REKORDBOX-COVER"));
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open((fixture.library / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+        exec(db, "DROP TABLE Track;");
+        exec(db, "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER, path TEXT);");
+        std::vector<std::uint8_t> lost(20, 0x44);
+        const std::string lostName = artworkFileName(lost);
+        write(fixture.library / "Artwork" / (lostName + ".jpg"), "");  // the name survived, the data did not
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (1, x'"
+                 "4444444444444444444444444444444444444444');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId, path) VALUES "
+                 "(1, 'Emptied', 'A', 1, '../Contents/song.mp3');");
+        sqlite3_close(db);
+
+        // Without the rekordbox side: found, named as its own kind of
+        // fault, and not repairable -- never counted as readable.
+        const ArtworkAudit alone = auditArtwork(fixture.library.string());
+        assert(alone.error.empty());
+        assert(alone.readableByAPlayer == 0);
+        assert(alone.unreadable.size() == 1);
+        assert(alone.unreadable[0].storage == ArtworkStorage::CachedFileUnreadable);
+        assert(alone.repairable() == 0);
+
+        // With it: the same fault, now repairable from the art beside it.
+        ArtworkSourceByTrackFile sources;
+        sources.emplace(artworkSourceKey((fixture.stick / "Contents" / "song.mp3").string()),
+                        (fixture.stick / "PIONEER" / "Artwork" / "00002" / "cover.jpg").string());
+        const ArtworkAudit audit = auditArtwork(fixture.library.string(), sources);
+        assert(audit.repairable() == 1);
+        assert(!audit.unreadable[0].imageOnStick.empty());
+
+        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable);
+        assert(repair.error.empty());
+        assert(repair.repaired == 1);
+        // The empty file is not what the row points at any more, and what
+        // it does point at has bytes in it.
+        const ArtworkAudit after = auditArtwork(fixture.library.string(), sources);
+        assert(after.readableByAPlayer == 1);
+        assert(after.unreadable.empty());
+        std::cout << "case 10 (an emptied artwork file is a fault, and the rekordbox art beside it fixes it) OK\n";
     }
 
     std::cout << "engine_artwork_test: all cases passed\n";

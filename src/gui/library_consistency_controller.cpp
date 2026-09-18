@@ -348,7 +348,8 @@ void tallyPlaylists(const std::vector<domain::Track> &tracks, LibraryConsistency
 // -- same seam SyncController::runAnalyzeTask already uses.
 LibraryConsistencyScanResult runScanTask(QString format, QString path, QString playlistName,
                                           std::shared_ptr<QtProgressReporter> reporter,
-                                          application::CancellationToken cancel)
+                                          application::CancellationToken cancel,
+                                          infrastructure::engine::ArtworkSourceByTrackFile artSources)
 {
     LibraryConsistencyScanResult result;
     try {
@@ -356,11 +357,25 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
 
         tallyPlaylists(tracks, result);
 
+        if (format == QStringLiteral("rekordbox")) {
+            // What this catalog holds per audio file, for the Engine pass
+            // that follows: Engine keeps its own copies of the art, so
+            // when one of those is lost this is the only source still on
+            // the stick.
+            for (const domain::Track &track : tracks) {
+                if (track.artworkPath.empty() || track.filePath.empty()) {
+                    continue;
+                }
+                result.artSources.emplace(infrastructure::engine::artworkSourceKey(track.filePath),
+                                          track.artworkPath);
+            }
+        }
+
         if (format == QStringLiteral("engine")) {
             // Cover art, checked while this format's library is open
             // anyway: one read of Track/AlbumArt and a stat per image,
             // nothing next to the scan itself.
-            result.artwork = infrastructure::engine::auditArtwork(path.toStdString());
+            result.artwork = infrastructure::engine::auditArtwork(path.toStdString(), artSources);
         }
 
         if (!playlistName.isEmpty()) {
@@ -447,6 +462,15 @@ int LibraryConsistencyController::artworkMissingFileCount() const
                                           }));
 }
 
+int LibraryConsistencyController::artworkEmptyFileCount() const
+{
+    return static_cast<int>(std::count_if(m_artwork.unreadable.begin(), m_artwork.unreadable.end(),
+                                          [](const infrastructure::engine::ArtworkEntry &entry) {
+                                              return entry.storage
+                                                  == infrastructure::engine::ArtworkStorage::CachedFileUnreadable;
+                                          }));
+}
+
 int LibraryConsistencyController::artworkBrokenRowCount() const
 {
     return static_cast<int>(std::count_if(m_artwork.unreadable.begin(), m_artwork.unreadable.end(),
@@ -472,6 +496,7 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     // emptied issue list, and an Engine leg that then errored left those
     // counts on screen for as long as the page lived.
     m_artwork = {};
+    m_artSources.clear();
     emit artworkChanged();
     const QString stickRoot = QString::fromStdString(
         std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
@@ -537,7 +562,7 @@ void LibraryConsistencyController::scanNextPendingFormat()
     m_pendingScanFormats.erase(m_pendingScanFormats.begin());
     setScanningFormat(format);
     m_watcher.setFuture(QtConcurrent::run(runScanTask, format, pathForFormat(format), m_currentPlaylistName,
-                                          makeReporter(), m_scanCancel));
+                                          makeReporter(), m_scanCancel, m_artSources));
 }
 
 void LibraryConsistencyController::cancelScan()
@@ -564,6 +589,9 @@ void LibraryConsistencyController::onScanFinished()
     } else {
         m_model.appendIssues(std::move(result.issues));
         m_junkCueModel.appendIssues(std::move(result.junkCues));
+        if (!result.artSources.empty()) {
+            m_artSources = std::move(result.artSources);
+        }
         if (result.artwork.tracksWithArt > 0 || !result.artwork.error.empty()) {
             m_artwork = std::move(result.artwork);
             emit artworkChanged();

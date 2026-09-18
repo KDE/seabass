@@ -7,6 +7,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -87,6 +88,16 @@ std::string readWholeFile(const fs::path &file)
 }
 
 }  // namespace
+
+std::string artworkSourceKey(const std::string &trackFile)
+{
+    std::error_code ec;
+    fs::path resolved = fs::weakly_canonical(fs::path(trackFile), ec);
+    std::string key = (ec ? fs::path(trackFile) : resolved).string();
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return key;
+}
 
 int ArtworkAudit::repairable() const
 {
@@ -171,7 +182,7 @@ std::string imageOnStickFor(std::string_view reference, const std::string &stick
     }
 }
 
-ArtworkAudit auditArtwork(const std::string &engineLibraryPath)
+ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources)
 {
     ArtworkAudit audit;
     const fs::path db = databaseFile(engineLibraryPath);
@@ -187,9 +198,31 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath)
         return audit;
     }
 
+    // Every Engine library this ships against has Track.path, but an
+    // older or hand-made schema without it must still get its art
+    // checked: without the column there is simply no rekordbox track to
+    // match, not a failed scan.
+    bool hasTrackPath = false;
+    {
+        sqlite3_stmt *columns = nullptr;
+        if (sqlite3_prepare_v2(handle, "PRAGMA table_info(Track);", -1, &columns, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(columns) == SQLITE_ROW) {
+                const unsigned char *column = sqlite3_column_text(columns, 1);
+                if (column != nullptr && std::string(reinterpret_cast<const char *>(column)) == "path") {
+                    hasTrackPath = true;
+                    break;
+                }
+            }
+        }
+        sqlite3_finalize(columns);
+    }
+
     sqlite3_stmt *stmt = nullptr;
-    const char *sql = "SELECT t.id, t.title, t.artist, a.hash, t.albumArtId FROM Track t "
-                      "LEFT JOIN AlbumArt a ON a.id = t.albumArtId ORDER BY t.id";
+    const std::string sqlText =
+        std::string("SELECT t.id, t.title, t.artist, a.hash, t.albumArtId, ")
+        + (hasTrackPath ? "t.path" : "NULL")
+        + " FROM Track t LEFT JOIN AlbumArt a ON a.id = t.albumArtId ORDER BY t.id";
+    const char *sql = sqlText.c_str();
     if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         audit.error = std::string("could not read the Track table: ") + sqlite3_errmsg(handle);
         sqlite3_close(handle);
@@ -204,6 +237,15 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath)
         }
         if (const unsigned char *artist = sqlite3_column_text(stmt, 2)) {
             entry.artist = reinterpret_cast<const char *>(artist);
+        }
+        if (const unsigned char *trackPath = sqlite3_column_text(stmt, 5)) {
+            // Engine stores it relative to the library directory
+            // ("../Contents/..."), which is where the rekordbox catalog's
+            // own absolute paths meet it.
+            std::error_code pathEc;
+            const fs::path absolute =
+                fs::weakly_canonical(fs::path(engineLibraryPath) / reinterpret_cast<const char *>(trackPath), pathEc);
+            entry.trackFile = pathEc ? std::string() : absolute.string();
         }
         const void *blob = sqlite3_column_blob(stmt, 3);
         const int size = sqlite3_column_bytes(stmt, 3);
@@ -265,18 +307,41 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath)
         const std::span<const std::uint8_t> hash(static_cast<const std::uint8_t *>(blob), static_cast<size_t>(size));
         const std::string name = artworkFileName(hash);
         std::error_code ec;
-        bool present = false;
+        bool readable = false;
+        bool anyFile = false;
         for (const char *extension : {".jpg", ".jpeg", ".png"}) {
-            if (fs::is_regular_file(artwork / (name + extension), ec)) {
-                present = true;
+            const fs::path cached = artwork / (name + extension);
+            if (!fs::is_regular_file(cached, ec)) {
+                continue;
+            }
+            anyFile = true;
+            // There being a file is not the question a player asks. An
+            // unclean unplug leaves directory entries whose data is gone:
+            // the name is right, the size is zero, and Engine draws its
+            // grey placeholder. Counting those as "a player can read this"
+            // is how a stick reports every cover art fixed while the
+            // player shows blanks -- so the bytes have to say JPEG or PNG,
+            // which is all isImageARepairCanName asks.
+            if (isImageARepairCanName(cached)) {
+                readable = true;
                 break;
             }
         }
-        if (present) {
+        if (readable) {
             audit.readableByAPlayer++;
         } else {
-            entry.storage = ArtworkStorage::CachedFileMissing;
+            entry.storage = anyFile ? ArtworkStorage::CachedFileUnreadable : ArtworkStorage::CachedFileMissing;
             entry.reference = name;
+            // The row is right and its image is gone: the rekordbox
+            // catalog on the same stick usually still has art for the
+            // same audio file, and that is a source the user has with
+            // them, rather than a backup they may not have made.
+            if (!sources.empty() && !entry.trackFile.empty()) {
+                const auto found = sources.find(artworkSourceKey(entry.trackFile));
+                if (found != sources.end() && isImageARepairCanName(found->second)) {
+                    entry.imageOnStick = found->second;
+                }
+            }
             audit.unreadable.push_back(std::move(entry));
         }
     }
@@ -354,7 +419,11 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             const std::span<const std::uint8_t> hash(full.data(), 20);
             const std::string name = artworkFileName(hash);
             const fs::path destination = artwork / (name + extension);
-            if (!fs::is_regular_file(destination, ec)) {
+            // Not "is it there" but "is it an image": an empty file at
+            // the right name is exactly what this repair exists to fix,
+            // and skipping it because something is there would write the
+            // row, report success, and leave the player showing nothing.
+            if (!fs::is_regular_file(destination, ec) || !isImageARepairCanName(destination)) {
                 if (beforeWrite) {
                     beforeWrite(destination.string());
                 }

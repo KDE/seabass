@@ -168,6 +168,11 @@ struct LibraryConsistencyScanResult
     // Engine's own "import rekordbox library" leaves art pointing at a
     // path on the importing computer, which no player has.
     infrastructure::engine::ArtworkAudit artwork;
+    // rekordbox only: the art this catalog holds per audio file, which
+    // the Engine pass after it uses to rebuild an Engine copy that is
+    // gone or empty. Every scan starts with rekordbox, so it is there by
+    // the time Engine asks.
+    infrastructure::engine::ArtworkSourceByTrackFile artSources;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -237,6 +242,7 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(int artworkRepairableCount READ artworkRepairableCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkImportedCount READ artworkImportedCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkMissingFileCount READ artworkMissingFileCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkEmptyFileCount READ artworkEmptyFileCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkBrokenRowCount READ artworkBrokenRowCount NOTIFY artworkChanged)
     Q_PROPERTY(QString artworkError READ artworkError NOTIFY artworkChanged)
     Q_PROPERTY(bool artworkRepairStaged READ artworkRepairStaged NOTIFY artworkChanged)
@@ -294,6 +300,9 @@ public:
     // its image deleted, which nothing here can put back.
     int artworkImportedCount() const;
     int artworkMissingFileCount() const;
+    // Art whose file is there and holds nothing a player can draw: what
+    // a stick pulled mid-write leaves behind.
+    int artworkEmptyFileCount() const;
     // And a third: the track asked for art, and the row it points at has
     // no hash to find it by. Nothing here can repair that.
     int artworkBrokenRowCount() const;
@@ -435,6 +444,8 @@ private:
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
     std::vector<QString> m_pendingScanFormats;
+    // Carried from the rekordbox pass to the Engine pass of the same scan.
+    infrastructure::engine::ArtworkSourceByTrackFile m_artSources;
     bool m_busy = false;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
