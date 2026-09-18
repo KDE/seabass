@@ -27,12 +27,32 @@ if [ "$rig_os" = "Darwin" ]; then
                   /usr/local/opt/coreutils/libexec/gnubin /usr/local/opt/findutils/libexec/gnubin; do
         [ -d "$gnubin" ] && PATH="$gnubin:$PATH"
     done
+    # And the system's own sbin, which holds diskutil and mount. A round
+    # started from a stripped environment had them missing: stick_device()
+    # returned the empty string, the live bundle was handed no device and
+    # refused to start, and stick_uuid() would have compared one empty
+    # string with another and called it a match.
+    for sysbin in /usr/sbin /sbin; do
+        case ":$PATH:" in
+            *":$sysbin:"*) ;;
+            *) PATH="$PATH:$sysbin" ;;
+        esac
+    done
     export PATH
     # Both packages, checked by what the scripts use: BSD xargs rejects -d,
     # and a catalog listing that comes out empty would make every catalog
     # comparison of a round pass having compared nothing.
     if ! command -v ctest >/dev/null; then
         echo "rig-platform.sh: ctest is not on PATH (brew install cmake)" >&2
+        exit 1
+    fi
+    if ! command -v diskutil >/dev/null; then
+        # Every stick fact on macOS comes through diskutil: the device
+        # node, the volume UUID, unmounting and mounting again. Without it
+        # those helpers return the empty string, which is not an error
+        # anywhere it is used -- an empty UUID compares equal to an empty
+        # UUID, and a check that compared nothing would be recorded green.
+        echo "rig-platform.sh: diskutil is not on PATH (expected in /usr/sbin)" >&2
         exit 1
     fi
     if ! stat -c %s / >/dev/null 2>&1 || ! command -v stdbuf >/dev/null \
