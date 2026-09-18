@@ -271,7 +271,14 @@ Item {
         // A platter still running out keeps the clock going after the music has stopped.
         running: root.animated && root.available && root.visible
             && (root.playing || root.platterSpeed > 0 || root.artTurns !== 0)
-        onTriggered: root.advance(frameTime)
+        // smoothFrameTime, not frameTime. Frames reach the screen evenly,
+        // one a refresh, but the moment this handler runs wanders within
+        // the refresh: measured on the Radeon, frameTime averaged 16.7 ms
+        // with a spread of 4.8 (10 to 20), smoothFrameTime 16.7 with 0.3.
+        // Turning the cover by the raw figure turned it 10 ms' worth on
+        // one evenly spaced frame and 20 on the next, and the eye reads
+        // that as a platter speeding up and slowing down.
+        onTriggered: root.advance(smoothFrameTime)
     }
 
     // rekordbox writes every cover twice, 80 px as aNN.jpg and 240 px as
