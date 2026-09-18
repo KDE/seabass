@@ -155,6 +155,19 @@ int main()
     assert(normalizedPathKey("/\u0301x") == "/\u0301x");
     assert(normalizedPathKey("/z\u0308.mp3") == "/z\u0308.mp3");
 
+    // composedPathSpelling(): the same folding, but as a name to hand
+    // back to a filesystem rather than a key. macOS's exFAT driver takes
+    // only this spelling for unlink and rmdir, while a directory read
+    // hands out the other one.
+    assert(seabass::application::composedPathSpelling("/Contents/cafe\u0301.mp3") == "/Contents/caf\u00e9.mp3");
+    assert(seabass::application::composedPathSpelling("/Contents/caf\u00e9.mp3") == "/Contents/caf\u00e9.mp3");
+    // Unlike the key, it leaves everything else alone: a name is a name.
+    assert(seabass::application::composedPathSpelling("/Contents/Ben Bo\u0308hmer/BEYOND.mp3") == "/Contents/Ben B\u00f6hmer/BEYOND.mp3");
+    assert(seabass::application::composedPathSpelling("/Contents/./x/../A B .mp3") == "/Contents/./x/../A B .mp3");
+    assert(seabass::application::composedPathSpelling("C:\\Contents\\x.mp3") == "C:\\Contents\\x.mp3");
+    assert(seabass::application::composedPathSpelling(invalid) == invalid);
+    std::cout << "  (composed spellings compose, and nothing else changes)\n";
+
     std::cout << "all cases passed\n";
     return 0;
 }

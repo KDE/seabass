@@ -59,4 +59,17 @@ namespace seabass::application
 // an unusually ordered pair of marks unfolded -- the safe direction.
 std::string normalizedPathKey(const std::string &path);
 
+// The same spelling with its combining marks composed, and nothing else
+// done to it: no lowercasing, no "." or ".." collapsing, no trimming.
+// A name to hand back to the filesystem, rather than a key to compare.
+//
+// macOS needs one. Its exFAT driver hands out decomposed names from a
+// directory read ("Ko" + U+0308 for "Kölsch") and accepts either
+// spelling for stat -- but unlink and rmdir take only the composed one
+// and answer ENOENT for the other, which std::filesystem reports as
+// "there was nothing to remove". A caller that has just been refused
+// can retry with this, once the filesystem has confirmed the two names
+// are the same entry.
+std::string composedPathSpelling(const std::string &path);
+
 }  // namespace seabass::application

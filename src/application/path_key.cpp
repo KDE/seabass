@@ -347,4 +347,9 @@ std::string normalizedPathKey(const std::string &path)
     return lowerUtf8(composeUtf8(lexicallyNormalizedPath(slashed)));
 }
 
+std::string composedPathSpelling(const std::string &path)
+{
+    return composeUtf8(path);
+}
+
 }  // namespace seabass::application

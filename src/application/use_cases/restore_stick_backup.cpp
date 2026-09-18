@@ -5,6 +5,7 @@
 #include "application/use_cases/restore_stick_backup.hpp"
 
 #include "infrastructure/backup/stick_space.hpp"
+#include "infrastructure/fs_remove.hpp"
 
 #include <zlib.h>
 
@@ -774,18 +775,18 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         std::sort(extras.begin(), extras.end(), [](const std::string &a, const std::string &b) { return a.size() > b.size(); });
         for (const std::string &extra : extras) {
             fs::path target = options.targetRoot / pathFromUtf8(extra);
-            if (fs::is_directory(longPathSafe(target), ec)) {
-                fs::remove(longPathSafe(target), ec);  // only if empty by now
-            } else if (extraIsBackupFile(options.targetRoot, target, plan)) {
+            const bool isDirectory = fs::is_directory(longPathSafe(target), ec);
+            ec.clear();
+            if (!isDirectory && extraIsBackupFile(options.targetRoot, target, plan)) {
                 continue;  // the restored file itself, under a spelling of its name
-            } else {
-                fs::remove(longPathSafe(target), ec);
             }
-            if (ec) {
-                summary.warnings.push_back(extra + ": could not remove: " + ec.message());
-                ec.clear();
-            } else {
+            // A directory goes only if it is empty by now, which the
+            // deepest-first order above has seen to.
+            std::string failure;
+            if (infrastructure::removeEntry(target, failure)) {
                 ++summary.extrasRemoved;
+            } else {
+                summary.warnings.push_back(extra + ": could not remove: " + failure);
             }
         }
     }

@@ -386,6 +386,7 @@ add_library(seabass_core STATIC
     src/infrastructure/stick_backup/archive_updater.cpp
     src/infrastructure/stick_backup/archive_recovery.cpp
     src/infrastructure/long_paths.cpp
+    src/infrastructure/fs_remove.cpp
     src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/stick_backup/stat_diff.cpp
     src/infrastructure/stick_backup/sqlite_db_set.cpp
@@ -1682,8 +1683,18 @@ add_executable(pending_deletion_manifest_test
 target_include_directories(pending_deletion_manifest_test PRIVATE src)
 add_test(NAME pending_deletion_manifest_test COMMAND pending_deletion_manifest_test)
 
+add_executable(fs_remove_test
+    src/infrastructure/long_paths.cpp
+    src/infrastructure/fs_remove.cpp
+    src/application/path_key.cpp
+    tests/fs_remove_test.cpp
+)
+target_include_directories(fs_remove_test PRIVATE src tests)
+add_test(NAME fs_remove_test COMMAND fs_remove_test)
+
 add_executable(pending_deletion_applier_test
     src/infrastructure/long_paths.cpp
+    src/infrastructure/fs_remove.cpp
     src/application/path_key.cpp
     src/infrastructure/cleanup/pending_deletion_manifest.cpp
     src/infrastructure/cleanup/stick_containment.cpp
@@ -1828,6 +1839,7 @@ add_test(NAME backup_archive_truncation_fuzz_test COMMAND backup_archive_truncat
 set(SEABASS_STICK_BACKUP_STICK_SOURCES
     ${SEABASS_STICK_BACKUP_UPDATE_SOURCES}
     src/infrastructure/long_paths.cpp
+    src/infrastructure/fs_remove.cpp
     src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/stick_backup/stat_diff.cpp
     src/infrastructure/stick_backup/sqlite_db_set.cpp
@@ -1868,6 +1880,7 @@ add_test(NAME stat_diff_test COMMAND stat_diff_test)
 add_executable(backup_database_capture_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
     tests/backup_database_capture_test.cpp
+    src/application/path_key.cpp
 )
 target_include_directories(backup_database_capture_test PRIVATE src)
 target_link_libraries(backup_database_capture_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
@@ -1888,6 +1901,7 @@ add_executable(backup_stick_test
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/work_counters.cpp
     tests/backup_stick_test.cpp
+    src/application/path_key.cpp
 )
 target_include_directories(backup_stick_test PRIVATE src)
 target_link_libraries(backup_stick_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)

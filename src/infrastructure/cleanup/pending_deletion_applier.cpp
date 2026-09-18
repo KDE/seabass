@@ -5,6 +5,7 @@
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
 
 #include "infrastructure/cleanup/stick_containment.hpp"
+#include "infrastructure/fs_remove.hpp"
 #include "infrastructure/long_paths.hpp"
 
 #include <filesystem>
@@ -53,20 +54,22 @@ std::vector<PendingDeletionOutcome> applyPendingDeletions(const std::vector<Pend
         // MAX_PATH, and there the unprefixed calls answer "not there" and
         // "could not remove" about a file that is present and removable.
         const fs::path path = longPathSafe(entry.filePath);
+        std::string failure;
         if (!fs::exists(path, ec)) {
             outcome.status = PendingDeletionOutcome::Status::AlreadyAbsent;
             processed.insert(entry.filePath);
-        } else if (fs::remove(path, ec)) {
+        } else if (removeEntry(entry.filePath, failure)) {
+            // removeEntry, not fs::remove: on macOS a track whose name
+            // carries an accent comes back from a directory read
+            // decomposed, and unlink takes only the composed spelling --
+            // so the file survived and the person was told it had gone.
+            // It prefixes the path itself and reports what it did, not
+            // merely whether it unlinked something.
             outcome.status = PendingDeletionOutcome::Status::Deleted;
             processed.insert(entry.filePath);
         } else {
             outcome.status = PendingDeletionOutcome::Status::Failed;
-            // fs::remove returns false both for a real failure and for
-            // "there was nothing to remove", and only the first sets ec.
-            // Passing ec.message() through regardless put the string
-            // "The operation completed successfully" in front of the user
-            // as the reason their file could not be deleted.
-            outcome.failureReason = ec ? ec.message() : "the file could not be removed";
+            outcome.failureReason = failure;
         }
         outcomes.push_back(std::move(outcome));
         if (onFileProcessed) {
