@@ -31,6 +31,7 @@
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/restore_path_sanitizer.hpp"
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
+#include "infrastructure/stick_backup/stat_diff.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
 #include "infrastructure/stick_backup/zip_format.hpp"
@@ -314,7 +315,8 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
         if (fs::is_regular_file(target, ec)) {
             std::uint64_t size = fs::file_size(target, ec);
             std::int64_t mtime = ec ? 0 : toUnixSeconds(fs::last_write_time(target, ec));
-            if (!ec && size == entry.size && std::llabs(mtime - entry.mtimeUnix) <= 2) {
+            if (!ec && size == entry.size
+                && infrastructure::stick_backup::mtimeMatchesRecorded(entry.mtimeUnix, mtime)) {
                 planned.unchanged = true;
             }
         }

@@ -28,7 +28,42 @@ bool plausibleZoneShift(std::int64_t delta)
     return delta != 0 && std::llabs(delta) <= MaxShiftSeconds && delta % ShiftQuantumSeconds == 0;
 }
 
+// 1980-01-01T00:00:00Z, the FAT epoch: the floor a FAT or exFAT driver
+// clamps to, read back through whatever local offset the reading
+// machine has. A stamp within one timezone of it is that floor and not
+// a date; see mtimeMatchesRecorded() in the header.
+constexpr std::int64_t FatEpochUnix = 315'532'800;
+
+bool atFatEpoch(std::int64_t when)
+{
+    return std::llabs(when - FatEpochUnix) <= MaxShiftSeconds;
+}
+
 }  // namespace
+
+bool mtimeMatchesRecorded(std::int64_t recordedUnix, std::int64_t onDiskUnix)
+{
+    if (withinWindow(recordedUnix, onDiskUnix)) {
+        return true;
+    }
+    // Both at the floor, and apart by a timezone: the same clamped stamp
+    // read through two offsets. Deliberately not "both somewhere in
+    // 1980-01-01", which would forgive a whole day -- a window nothing
+    // would ever test, since no real file is dated there to notice an
+    // edit going unbacked-up inside it.
+    //
+    // Snapped to the nearest quarter hour before judging, with the same
+    // two-second tolerance the uniform-shift path uses further down: FAT
+    // rounds stamps to two seconds on one side of this comparison and
+    // not the other, and an offset that came back as 3599 rather than
+    // 3600 would bring the whole symptom back one second away from the
+    // case being fixed.
+    const std::int64_t delta = onDiskUnix - recordedUnix;
+    const std::int64_t snapped = (delta + (delta >= 0 ? ShiftQuantumSeconds / 2 : -ShiftQuantumSeconds / 2))
+                                 / ShiftQuantumSeconds * ShiftQuantumSeconds;
+    return atFatEpoch(recordedUnix) && atFatEpoch(onDiskUnix) && plausibleZoneShift(snapped)
+        && withinWindow(delta, snapped);
+}
 
 std::string pathCompareKey(std::string_view relativePath)
 {
@@ -83,10 +118,21 @@ DiffResult diffTreeAgainstManifest(const TreeWalk &tree, const BackupManifest *p
             result.bytesToRead += entry.size;
             continue;
         }
-        ++sizeMatched;
         if (withinWindow(row.mtimeUnix, entry.mtimeUnix)) {
+            ++sizeMatched;
+            result.unchanged.push_back(&entry);
+        } else if (mtimeMatchesRecorded(row.mtimeUnix, entry.mtimeUnix)) {
+            // Both stamps at the FAT epoch's floor. Left out of
+            // sizeMatched deliberately: a file pinned to the floor
+            // cannot move with the rest when a stick crosses a timezone,
+            // so counting it would only raise the bar the uniform-shift
+            // detection below has to clear. A rekordbox stick carries
+            // two ANLZ files per track, which is enough of them to keep
+            // that detection from ever firing -- and then every track
+            // file on a DST-shifted stick is re-read and re-stored.
             result.unchanged.push_back(&entry);
         } else {
+            ++sizeMatched;
             sizeMatchedButMoved.push_back({&entry, entry.mtimeUnix - row.mtimeUnix});
         }
     }

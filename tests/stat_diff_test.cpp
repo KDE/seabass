@@ -150,6 +150,77 @@ int main()
         std::cout << "case 4 (too few / random / non-zone deltas are real changes) OK\n";
     }
 
+    {
+        // Case 5: the floor of the FAT epoch is one stamp.
+        //
+        // FAT and exFAT store local time with no zone in it and cannot go
+        // below their own local floor, so a driver clamps: macOS took
+        // 1980-01-01T00:00:00Z and gave back 1980-01-01 00:00 CET, an
+        // hour earlier. rekordbox stamps its ANLZ files with the epoch
+        // itself, so an exact restore rewrote those two files on every
+        // run and could never report itself finished.
+        constexpr std::int64_t epoch = 315'532'800;  // 1980-01-01T00:00:00Z
+        assert(mtimeMatchesRecorded(epoch, epoch - 3600));   // clamped, UTC+1
+        assert(mtimeMatchesRecorded(epoch, epoch + 43200));  // and the other way, UTC-12
+        assert(mtimeMatchesRecorded(epoch - 3600, epoch));
+        assert(mtimeMatchesRecorded(epoch, epoch));
+        assert(mtimeMatchesRecorded(epoch, epoch - 2700));  // UTC+0:45, a real zone
+        // Only the floor, and only a timezone wide. A day-wide window
+        // here would forgive a real edit in it, and nothing in any
+        // library is dated there to notice.
+        assert(!mtimeMatchesRecorded(epoch, epoch + 50'400 + 900));  // past UTC+14
+        assert(!mtimeMatchesRecorded(epoch, epoch + 1000));          // nowhere near a quarter hour
+        assert(!mtimeMatchesRecorded(epoch, epoch + 86'401));
+        assert(!mtimeMatchesRecorded(epoch + 200'000, epoch + 200'000 + 3600));
+        // FAT rounds stamps to two seconds on one side of this
+        // comparison and not the other, so an offset that comes back as
+        // 3599 is the same offset -- and the symptom must not return one
+        // second away from the case being fixed.
+        assert(mtimeMatchesRecorded(epoch, epoch - 3599));
+        assert(!mtimeMatchesRecorded(epoch, epoch - 3596));
+        // The ordinary window is untouched.
+        assert(mtimeMatchesRecorded(1'700'000'000, 1'700'000'002));
+        assert(!mtimeMatchesRecorded(1'700'000'000, 1'700'000'003));
+        {
+            // And it reaches the diff: a size-matched file stamped at the
+            // epoch, read back an hour off, is unchanged rather than a
+            // rewrite -- without the 8-file quorum a zone shift needs.
+            BackupManifest previous;
+            TreeWalk walk;
+            previous.rows.push_back(row("PIONEER/USBANLZ/P030/ANLZ0000.DAT", 10846, epoch));
+            walk.entries.push_back(file("PIONEER/USBANLZ/P030/ANLZ0000.DAT", 10846, epoch - 3600));
+            DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+            assert(diff.unchanged.size() == 1 && diff.changed.empty() && diff.uniformShiftSeconds == 0);
+        }
+        {
+            // And a file pinned to the floor must not make the
+            // uniform-shift detection harder to reach. A stick carried
+            // across a DST change: ten tracks all +3600, and twenty
+            // epoch-stamped ANLZ files that cannot move with them. If
+            // those twenty counted as size-matched, the shift would go
+            // undetected and all ten tracks would be re-read and
+            // re-stored -- a full backup where an incremental was due,
+            // on exactly the library shape this exception is about.
+            BackupManifest previous;
+            TreeWalk walk;
+            for (int i = 0; i < 10; ++i) {
+                const std::string p = "Contents/" + std::to_string(i) + ".mp3";
+                previous.rows.push_back(row(p, 4096, 1'700'000'000));
+                walk.entries.push_back(file(p, 4096, 1'700'000'000 + 3600));
+            }
+            for (int i = 0; i < 20; ++i) {
+                const std::string p = "PIONEER/USBANLZ/" + std::to_string(i) + ".DAT";
+                previous.rows.push_back(row(p, 10846, epoch));
+                walk.entries.push_back(file(p, 10846, epoch - 3600));
+            }
+            DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+            assert(diff.uniformShiftSeconds == 3600);
+            assert(diff.uniformlyShiftedFiles == 10);
+            assert(diff.changed.empty() && diff.unchanged.size() == 30);
+        }
+        std::cout << "case 5 (the FAT epoch's floor is one stamp) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

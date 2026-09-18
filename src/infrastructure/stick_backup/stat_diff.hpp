@@ -39,6 +39,25 @@ struct DiffResult
 // changes and carries no information a restore needs.
 constexpr std::int64_t MtimeWindowSeconds = 2;
 
+// Whether a file's mtime on a stick is the one that was recorded for it.
+//
+// The window above, plus one exception for the floor of the FAT epoch.
+// FAT and exFAT count from 1980-01-01 00:00 and store *local* time with
+// no timezone in it, so a driver cannot write a stamp below its own
+// local floor: it clamps. macOS's exFAT driver takes 1980-01-01
+// 00:00:00Z and gives back 1980-01-01 00:00 local, an hour off here and
+// up to twelve elsewhere. rekordbox stamps its ANLZ files with the
+// epoch itself -- a filesystem's way of saying "no date" -- so an exact
+// restore wrote those two files, read them back an hour off, and called
+// them still-to-write on every run, for ever.
+//
+// So: two stamps both within one timezone of the epoch, differing by a
+// whole number of quarter hours, are the same clamped stamp. Not "both
+// somewhere in 1980-01-01": a day-wide window would quietly forgive a
+// real edit, and since no real file is dated there, nothing would ever
+// fail to tell us.
+bool mtimeMatchesRecorded(std::int64_t recordedUnix, std::int64_t onDiskUnix);
+
 // The key two paths are compared under. v1: the exact bytes. The seam
 // exists so NFC/NFD folding can be added without touching the diff (see
 // docs/stick-backup-plan.md, "Optimization pass").
