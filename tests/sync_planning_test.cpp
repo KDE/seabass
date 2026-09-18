@@ -393,6 +393,45 @@ int main()
         std::cout << "case 18 (a moved pad is dropped and gained; a drifted memory cue is kept) OK\n";
     }
 
+    // Colour is extra information about a cue, not what a cue is. Two
+    // sides holding the same cue in another shade used to be a plan --
+    // a conflict to weigh, an offer to write, a row that came back after
+    // every sync, because the shade was all that ever differed.
+    {
+        SyncMatch m{makeTrack("r1", "song.mp3", 200.0,
+                              {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "drop"}}),
+                    makeTrack("e1", "song.mp3", 200.0,
+                              {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#00FF00", ""}})};
+        auto plan = SyncPlanner::plan(m, now, now);
+        assert(plan.kind == SyncPlan::Kind::AlreadyConsistent);
+        assert(plan.direction == SyncPlan::Direction::None);
+        assert(!plan.hotCuesNeedChoice);
+        std::cout << "case (a colour difference is not a disagreement) OK\n";
+    }
+
+    // But it is not thrown away either. A cue written onto a side that
+    // already had a colour for it keeps that colour: the format the cue
+    // came from may simply have no way to say (an Engine memory cue never
+    // does, and the rekordbox writer records no comment at all), and
+    // silence must not paint over what is there.
+    {
+        SyncMatch m{makeTrack("r1", "song.mp3", 200.0,
+                              {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "drop"},
+                               CuePoint{CuePoint::Kind::Hot, 2, 2000.0, "#0000FF", ""}}),
+                    makeTrack("e1", "song.mp3", 200.0,
+                              {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""},
+                               CuePoint{CuePoint::Kind::Hot, 3, 9000.0, "", ""}})};
+        auto plan = SyncPlanner::plan(m, now, now);
+        assert(plan.hotCuesNeedChoice && "the slots really differ, which is a choice");
+        // Whichever way the user goes, a colour the target holds survives.
+        for (const CuePoint &cue : plan.cuesIfBWins) {
+            if (cue.kind == CuePoint::Kind::Hot && cue.hotCueNumber == 1) {
+                assert(cue.color == "#FF0000" && "writing Engine's colourless cue onto rekordbox keeps the red");
+            }
+        }
+        std::cout << "case (a colour is carried onto the side being written) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

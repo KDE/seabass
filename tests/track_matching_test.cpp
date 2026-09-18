@@ -52,24 +52,52 @@ int main()
     }
 
     // cueSetsEqual: kind/hotCueNumber mismatches always count, regardless of
-    // position. comment is deliberately NOT compared -- RekordboxCueWriter
-    // can't write it at all (anlz_cue_codec.cpp always encodes an empty
-    // comment), so treating a comment difference as a real mismatch made
-    // Engine cues with a label permanently reappear as "needs sync" with no
-    // writer able to ever resolve it. color IS compared for hot cues (both
-    // formats support it), but NOT for memory cues -- Engine's single
-    // memory-style cue point has no color at all, so the same
-    // permanently-stuck problem would hit any colored rekordbox memory cue.
+    // position. Neither comment nor color is compared. comment because
+    // RekordboxCueWriter cannot write one at all (anlz_cue_codec.cpp
+    // always encodes an empty comment), so a comment difference made
+    // Engine cues with a label reappear as "needs sync" forever, with no
+    // writer able to settle it. color because it is extra information
+    // about a cue rather than what the cue is: a cue in the same slot at
+    // the same position in another shade is the same cue, and calling
+    // that a disagreement put a permanent conflict on a pair nobody
+    // needed to resolve. Colour is carried instead -- see
+    // keepExistingColours below.
     {
         CuePoint base{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "drop"};
         assert(!cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Memory, 1, 1000.0, "#FF0000", "drop"}}));
         assert(!cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 2, 1000.0, "#FF0000", "drop"}}));
-        assert(!cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#00FF00", "drop"}}));
+        assert(cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#00FF00", "drop"}}));
+        assert(cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", "drop"}}));
         assert(cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "break"}}));
 
         CuePoint memoryBase{CuePoint::Kind::Memory, 0, 7000.0, "#FF0000", ""};
         assert(cueSetsEqual({memoryBase}, {CuePoint{CuePoint::Kind::Memory, 0, 7000.0, "", ""}}));
-        std::cout << "case 5 (cueSetsEqual field mismatches -> false, comment/memory-color ignored) OK\n";
+        std::cout << "case 5 (cueSetsEqual: slot, kind and position decide; comment and colour do not) OK\n";
+    }
+
+    // Colour is not compared, so it has to be carried: a cue arriving
+    // with none takes the colour the target already had for it, and one
+    // arriving with a colour keeps its own. Silence is not an
+    // instruction to erase.
+    {
+        const std::vector<CuePoint> existing = {
+            CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
+            CuePoint{CuePoint::Kind::Hot, 2, 5000.0, "#00FF00", ""},
+            CuePoint{CuePoint::Kind::Memory, 0, 7000.0, "#0000FF", ""},
+        };
+        const std::vector<CuePoint> incoming = {
+            CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""},          // silent: inherits red
+            CuePoint{CuePoint::Kind::Hot, 2, 5000.0, "#FFFF00", ""},   // brings its own
+            CuePoint{CuePoint::Kind::Memory, 0, 7400.0, "", ""},       // same cue, 400 ms off
+            CuePoint{CuePoint::Kind::Hot, 3, 9000.0, "", ""},          // nothing to inherit
+        };
+        const auto kept = keepExistingColours(incoming, existing);
+        assert(kept.size() == 4);
+        assert(kept[0].color == "#FF0000" && "an empty colour takes what was there");
+        assert(kept[1].color == "#FFFF00" && "a real colour is never overwritten");
+        assert(kept[2].color == "#0000FF" && "memory cues match by position, within the same tolerance");
+        assert(kept[3].color.empty() && "and a cue the target never had stays as it is");
+        std::cout << "case 5b (colour is carried across rather than fought over) OK\n";
     }
 
     // titleArtistKey: case/whitespace-insensitive, symmetric in what it

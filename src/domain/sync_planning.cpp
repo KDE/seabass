@@ -110,14 +110,14 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
     if (aHasCues && !bHasCues) {
         result.kind = SyncPlan::Kind::AOnly;
         result.direction = SyncPlan::Direction::ToB;
-        result.cuesToApply = match.trackA.cues;
+        result.cuesToApply = keepExistingColours(match.trackA.cues, match.trackB.cues);
         return result;
     }
 
     if (!aHasCues && bHasCues) {
         result.kind = SyncPlan::Kind::BOnly;
         result.direction = SyncPlan::Direction::ToA;
-        result.cuesToApply = match.trackB.cues;
+        result.cuesToApply = keepExistingColours(match.trackB.cues, match.trackA.cues);
         return result;
     }
 
@@ -200,6 +200,10 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
         for (const CuePoint &cue : unionByPosition(memoryA, memoryB)) {
             result.cuesToApply.push_back(cue);
         }
+        // A memory cue taken from the side that has no colours for them
+        // (Engine's main cue never does) must not paint over the colour
+        // the target already had for the same position.
+        result.cuesToApply = keepExistingColours(std::move(result.cuesToApply), target.cues);
         return result;
     }
 
@@ -214,7 +218,11 @@ SyncPlan SyncPlanner::plan(const SyncMatch &match, std::chrono::system_clock::ti
         const std::vector<CuePoint> memory =
             onto.format == "engine" && !ontoMemory.empty() ? ontoMemory : unionByPosition(memoryA, memoryB);
         cues.insert(cues.end(), memory.begin(), memory.end());
-        return cues;
+        // Whatever the target already knew about these cues' colours
+        // stays: a writer that cannot record one, or a format that has
+        // none for this kind, is silent rather than grey, and silence is
+        // not an instruction to erase.
+        return keepExistingColours(std::move(cues), onto.cues);
     };
 
     // Only one side has hot cues at all: nothing is at risk, so that side

@@ -33,8 +33,14 @@ matrix.repair.pdbParses 1
 matrix.strayCue.durableWritesPerSave 7
 matrix.strayCue.encryptedOpensPerSave 1
 matrix.strayCue.pdbParsesPerSave 1
-matrix.sync.durableWritesPerSave 14
-matrix.sync.engineOpens 0
+# Changed 2026-09-18, third time, deliberately: a cue in the same slot at
+# the same position in another colour is no longer a disagreement. Pairs
+# that differed only in shade stopped being plans at all, so the sync case
+# -- which takes the first five plans carrying a hot cue -- now takes a
+# different five: one of them writes onto Engine (engineOpens 0 -> 1) and
+# the set needs two fewer whole-file writes (14 -> 12).
+matrix.sync.durableWritesPerSave 12
+matrix.sync.engineOpens 1
 onelibrary.tracks 1644
 rekordbox.cues 317
 rekordbox.tracks 1161

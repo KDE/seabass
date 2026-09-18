@@ -55,4 +55,19 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
 // rounding).
 bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b);
 
+// The same cues, with any colour the target already had put back where
+// the incoming cue has none.
+//
+// Colour is the one part of a cue that each format keeps its own way:
+// Engine's memory cue has none at all, an un-set pad reads as no colour,
+// and a writer that cannot record one leaves it empty. So a cue coming
+// the other way with an empty colour is not someone saying "make this
+// one grey" -- it is silence, and silence must not overwrite what is
+// already there. A cue that does carry a colour brings it with it.
+//
+// Matched the way cueSetsEqual matches: hot cues by slot, memory cues by
+// position within the same tolerance.
+std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming,
+                                          const std::vector<CuePoint> &existing);
+
 }  // namespace seabass::domain
