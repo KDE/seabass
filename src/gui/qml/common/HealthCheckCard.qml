@@ -31,6 +31,16 @@ Rectangle {
     property bool failed: false
     property bool running: false
 
+    // How much of what this check found Seabass can put right itself,
+    // drawn big and coloured beside the title: read before the sentence
+    // is, and the number a person actually wants off this page. Both -1
+    // (the default) on a check with nothing to count.
+    property int fixableCount: -1
+    property int foundCount: -1
+    readonly property bool hasTally: card.foundCount > 0 && card.fixableCount >= 0
+    readonly property color tallyColor: card.fixableCount === 0 ? Theme.danger
+        : card.fixableCount >= card.foundCount ? Theme.good
+        : Theme.warnIcon
     property string actionLabel: ""
     property bool actionEnabled: true
     // Why the action cannot be taken, shown instead of silently disabling
@@ -80,6 +90,36 @@ Rectangle {
                 font.pointSize: Theme.fontMedium
             }
             Item { Layout.fillWidth: true }
+            // <fixable> / <found>, with the half that matters carrying the
+            // weight: the big coloured number is what Seabass can do, the
+            // quieter one what it found.
+            Row {
+                objectName: "checkTally"
+                visible: card.hasTally && !card.running
+                spacing: 3
+                Label {
+                    anchors.baseline: parent.children[1].baseline
+                    text: card.fixableCount
+                    color: card.tallyColor
+                    font.family: Theme.dataFamily
+                    font.pointSize: Theme.fontXLarge
+                    font.weight: Font.DemiBold
+                }
+                Label {
+                    id: tallyRest
+                    text: "/ " + card.foundCount
+                    color: Theme.textMuted
+                    font.family: Theme.dataFamily
+                    font.pointSize: Theme.fontMedium
+                }
+                Label {
+                    anchors.baseline: tallyRest.baseline
+                    leftPadding: 4
+                    text: "Seabass can fix"
+                    color: Theme.textMuted
+                    font.pointSize: Theme.fontSmall
+                }
+            }
             // A check that passed says so with a mark, not only by the
             // absence of a warning stripe: a page of cards where nothing
             // is wrong should read as a row of green ticks at a glance,

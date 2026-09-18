@@ -140,7 +140,11 @@ TestCase {
         var explanation = findChild(page, "coverArtExplanation");
         var text = explanation.text;
         verify(text.indexOf("Engine Library/Artwork") >= 0, "the missing-image fault is named: " + text);
-        verify(text.indexOf("no image to look for") >= 0, "the hash-less fault is named: " + text);
+        // Not "there is no image to look for" any more: a row without a
+        // hash has no name to look one up BY, which is a different claim
+        // -- the track still names its file, and the file or a backup can
+        // still have the cover.
+        verify(text.indexOf("no name to look the image up by") >= 0, "the hash-less fault is named: " + text);
         // The advice belongs to the fault it can help. Said last, after the
         // hash-less sentence, it described rows it cannot help at all.
         var adviceAt = text.indexOf("Engine DJ writes those again");

@@ -1022,12 +1022,17 @@ void LibraryConsistencyController::repairArtwork()
     setStatusMessage({});
     std::vector<infrastructure::engine::ArtworkEntry> repairable;
     for (const auto &entry : m_artwork.unreadable) {
-        if (!entry.imageOnStick.empty()) {
+        // Whatever the scan found a source for -- art beside it on the
+        // stick, the track's own tags, a backup. Filtering on the on-stick
+        // file alone made the page promise a count it then refused to act
+        // on, which is the one thing a count must never do.
+        if (!entry.imageOnStick.empty() || entry.otherSource) {
             repairable.push_back(entry);
         }
     }
     if (repairable.empty()) {
-        setErrorMessage("None of these tracks' images are on this stick, so there is nothing to copy.");
+        setErrorMessage("No copy of these covers was found on this stick, in the tracks themselves, or in a backup, "
+                        "so there is nothing to put back.");
         return;
     }
     if (!ensureSessionForStaging()) {

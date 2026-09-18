@@ -226,9 +226,11 @@ Page {
         if (root.artworkRepairableCount > 0) {
             text += " " + (root.artworkRepairableCount === root.artworkUnreadableCount ? "All of them"
                                                                                        : root.artworkRepairableCount + " of them")
-                 + " can be fixed from the artwork already on this stick.";
+                 + " can be rebuilt -- from the rekordbox art on this stick, the tracks' own tags, or a backup on "
+                 + "this computer.";
         } else {
-            text += " None of their images are on this stick, so re-importing in Engine DJ is what would rebuild them.";
+            text += " No copy of them was found on this stick, in the tracks themselves, or in a backup, so "
+                 + "re-importing in Engine DJ is what would rebuild them.";
         }
         return text;
     }
@@ -323,6 +325,8 @@ Page {
 
             HealthCheckCard {
                 objectName: "brokenFilesCard"
+                fixableCount: root.repairableCount
+                foundCount: root.brokenCount
                 actionEnabled: !healthController.stickReadOnly
                 actionDisabledReason: root.blockedByReadOnly
                 title: "Tracks and their files"
@@ -335,6 +339,10 @@ Page {
 
             HealthCheckCard {
                 objectName: "junkCuesCard"
+                // Every stray cue can be taken out; the count is there to
+                // say so, not to qualify it.
+                fixableCount: root.junkCueCount
+                foundCount: root.junkCueCount
                 actionEnabled: !healthController.stickReadOnly
                 actionDisabledReason: root.blockedByReadOnly
                 title: "Memory cues at 0:00"
@@ -347,6 +355,8 @@ Page {
 
             HealthCheckCard {
                 objectName: "coverArtCard"
+                fixableCount: root.artworkRepairableCount
+                foundCount: root.artworkUnreadableCount
                 actionEnabled: !healthController.stickReadOnly
                 actionDisabledReason: root.blockedByReadOnly
                 title: "Cover art"

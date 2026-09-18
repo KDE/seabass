@@ -154,8 +154,16 @@ Page {
                         + "or re-imports those tracks.");
                 }
                 if (broken > 0) {
-                    parts.push(broken + " point at an art row with nothing in it, so there is no image to look for.");
+                    parts.push(broken + " point at an art row with nothing in it, so there is no name to look the "
+                        + "image up by. The track still says which file it is, though, so a cover can come back from "
+                        + "the file's own tags or from a backup that knows it.");
                 }
+                parts.push(fixable > 0
+                    ? fixable + " of " + consistencyController.artworkUnreadableCount + " can be put back: Seabass "
+                      + "takes the image from the rekordbox art on this stick, the track's own tags, or a stick "
+                      + "backup on this computer -- whichever still has a copy, in that order."
+                    : "None of them has a copy left on this stick, in the tracks themselves, or in a backup on this "
+                      + "computer. Re-importing or re-analysing in Engine DJ is what would rebuild them.");
                 return parts.join(" ");
             }
         }

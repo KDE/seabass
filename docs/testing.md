@@ -204,6 +204,15 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   Without `--execute` it only checks.
 - `rig_read <stick> [<archive>]`: catalog counts and the read-only scans,
   timed, without writing to the stick.
+- `rig_fs_repair [--keep]`: Library Health's filesystem repair end to end,
+  on a FAT32 loopback image the tool damages itself -- no stick and no
+  root. It clears FAT32's clean-shutdown bit and wrongs the free-cluster
+  summary (what an unclean unplug leaves), mounts the volume read-only,
+  and then checks the whole path: Seabass sees it as read-only, the
+  platform's repair reports it consistent again, the volume takes writes,
+  and every file written before the damage is still whole. Linux attaches
+  the image through udisks2, macOS through `hdiutil`; Windows has no
+  unprivileged way to attach one, so there the repair stays manual.
 - `rig_backup <stick> <archive> [--expect ... | --expect-refused | --cancel-at P keep|discard]`
   and `rig_compact <archive>`: a full stick backup verified, not hollow, and
   compaction freeing exactly what it promised.

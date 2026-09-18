@@ -2201,6 +2201,15 @@ target_link_libraries(rig_backup PRIVATE seabass_core)
 
 # Release rig: compact a full stick backup; it must shrink by exactly the dead
 # space it reported and still verify with the same entries.
+# Release rig: the filesystem repair, end to end, on a FAT32 loopback image
+# this tool damages itself -- no stick, no root. Not built on Windows: see
+# the file's own header.
+if(NOT WIN32)
+    add_executable(rig_fs_repair tools/rig_fs_repair.cpp)
+    target_include_directories(rig_fs_repair PRIVATE src)
+    target_link_libraries(rig_fs_repair PRIVATE seabass_core)
+endif()
+
 add_executable(rig_compact tools/rig_compact.cpp)
 target_include_directories(rig_compact PRIVATE src)
 target_link_libraries(rig_compact PRIVATE seabass_core)

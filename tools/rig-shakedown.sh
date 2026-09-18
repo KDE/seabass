@@ -643,6 +643,18 @@ check S2-reference-links reference_links
 check S3-sandboxed-profile sandbox_profile
 check S4-references-unchanged references_unchanged
 
+# ---- the stick's own filesystem --------------------------------------
+#
+# On a FAT32 loopback image rig_fs_repair damages itself, not on a stick:
+# the detection, the platform's repair call and the files surviving it are
+# the same code either way, and a stick cannot be damaged on purpose
+# without root or luck (see the ticket on damaging one from seabass-cli).
+# Windows has no unprivileged way to attach an image, so the check is not
+# built there and the repair stays a manual check on that platform.
+if ! rig_is_windows && [ -x "$build/rig_fs_repair" ]; then
+    check H1-filesystem-repair "$build/rig_fs_repair"
+fi
+
 # ---- restores onto the test sticks -----------------------------------
 check B1-restore-A "$build/rig_restore" "$refA" "$A" --execute || { echo "stick A is not at its reference; stopping"; exit 1; }
 check B3-restore-B "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not at its reference; stopping"; exit 1; }
