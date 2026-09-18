@@ -235,6 +235,34 @@ Page {
         return text;
     }
 
+    readonly property int sampleRateMissingCount: healthController.sampleRateMissingCount
+    readonly property int sampleRateFixableCount: healthController.sampleRateFixableCount
+
+    readonly property string sampleRateSummary: {
+        if (root.scanning) {
+            return "Checking whether every Engine track says what sample rate it is...";
+        }
+        if (!root.scanned) {
+            return "Not checked yet.";
+        }
+        if (root.sampleRateMissingCount === 0) {
+            return "Every Engine track says what sample rate it is, so its cues sit where they were put.";
+        }
+        let text = root.sampleRateMissingCount + " Engine track(s) do not say what sample rate they are. Engine "
+            + "stores cue positions as a count of samples, so a player and Seabass both have to guess the rate to "
+            + "turn those into times -- and a guess of 44.1 kHz on a 48 kHz track puts a cue five minutes in "
+            + "almost half a minute out of place.";
+        if (root.sampleRateFixableCount > 0) {
+            text += " " + (root.sampleRateFixableCount === root.sampleRateMissingCount ? "Every one of their files"
+                                                                                       : root.sampleRateFixableCount
+                                                                                         + " of their files")
+                 + " says what the rate really is, and Seabass can write it into the library.";
+        } else {
+            text += " None of their files could be read to find out, so there is nothing to copy in.";
+        }
+        return text;
+    }
+
     readonly property string junkCueSummary: {
         if (root.scanning) {
             return "Looking for memory cues sitting at the very start of a track...";
@@ -351,6 +379,20 @@ Page {
                 ok: root.junkCueCount === 0
                 actionLabel: root.junkCueCount > 0 ? "Review these cues" : ""
                 onActionRequested: root.detailRequested("junkcues")
+            }
+
+            HealthCheckCard {
+                objectName: "sampleRateCard"
+                fixableCount: root.sampleRateFixableCount
+                foundCount: root.sampleRateMissingCount
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Sample rates"
+                summary: root.sampleRateSummary
+                running: root.scanning
+                ok: root.sampleRateMissingCount === 0
+                actionLabel: root.sampleRateMissingCount > 0 ? "Review sample rates" : ""
+                onActionRequested: root.detailRequested("samplerates")
             }
 
             HealthCheckCard {

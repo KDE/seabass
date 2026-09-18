@@ -359,8 +359,9 @@ Page {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: Theme.textMuted
-            text: "Three checks on this stick: catalog rows whose audio file is missing, memory cues sitting at "
-                + "0:00, and cover art a player cannot show. Nothing is written until you press Save."
+            text: "Four checks on this stick: catalog rows whose audio file is missing, memory cues sitting at "
+                + "0:00, Engine tracks that do not say what sample rate they are, and cover art a player cannot "
+                + "show. Nothing is written until you press Save."
         }
 
         Subtitle { text: "Missing files" }
@@ -404,6 +405,53 @@ Page {
                     ? "Every safe repair is staged already. Press Save to write them."
                     : "Repair every entry with an exact healthy match. Conflicts are left for you."
                 onClicked: confirmRepairAllDialog.open()
+            }
+        }
+
+        Subtitle {
+            objectName: "sampleRateSubtitle"
+            Layout.topMargin: 12
+            text: "Sample rates"
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Label {
+                objectName: "sampleRateSummary"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: consistencyController.sampleRateMissingCount === 0
+                    ? "Every Engine track says what sample rate it is."
+                    : consistencyController.sampleRateMissingCount + " Engine track(s) do not say what sample rate "
+                      + "they are, so every cue on them is placed by a guess. "
+                      + (consistencyController.sampleRateFixableCount > 0
+                          ? consistencyController.sampleRateFixableCount
+                            + " of their files can say, and Seabass can write it in."
+                          : "None of their files could be read to find out.")
+            }
+            Label {
+                objectName: "stagedSampleRatesNote"
+                visible: consistencyController.sampleRateFillStaged
+                text: "staged, not saved yet"
+                color: Theme.warnText
+            }
+            Button {
+                objectName: "fillSampleRatesButton"
+                visible: consistencyController.sampleRateFixableCount > 0
+                    || consistencyController.sampleRateFillStaged
+                text: consistencyController.sampleRateFillStaged ? "Unstage" : "Fill In From The Files"
+                enabled: !consistencyController.busy && !consistencyController.writing
+                    && !consistencyController.stickReadOnly
+                ToolTip.visible: hovered
+                ToolTip.text: consistencyController.stickReadOnly
+                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    : consistencyController.sampleRateFillStaged
+                    ? "Take this back out of the changes to save"
+                    : "Stage writing each track's real sample rate, read from the file itself. Save writes it."
+                onClicked: consistencyController.sampleRateFillStaged
+                    ? consistencyController.unstageSampleRateFill()
+                    : consistencyController.fillSampleRates()
             }
         }
 

@@ -23,6 +23,7 @@
 #include <set>
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_sample_rates.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
@@ -183,6 +184,9 @@ struct LibraryConsistencyScanResult
     // Engine's own "import rekordbox library" leaves art pointing at a
     // path on the importing computer, which no player has.
     infrastructure::engine::ArtworkAudit artwork;
+    // Engine only: rows that do not say their sample rate, and what
+    // their files said when asked during the same pass.
+    infrastructure::engine::SampleRateAudit sampleRates;
     // rekordbox only: the art this catalog holds per audio file, which
     // the Engine pass after it uses to rebuild an Engine copy that is
     // gone or empty. Every scan starts with rekordbox, so it is there by
@@ -274,6 +278,13 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(int artworkEmptyFileCount READ artworkEmptyFileCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkBrokenRowCount READ artworkBrokenRowCount NOTIFY artworkChanged)
     Q_PROPERTY(QString artworkError READ artworkError NOTIFY artworkChanged)
+    // Tracks whose Engine row does not say what sample rate they are, and
+    // how many of those the files themselves can answer for. Engine turns
+    // every cue position into a time with this number, so a missing one
+    // is every cue on that track being placed by a guess.
+    Q_PROPERTY(int sampleRateMissingCount READ sampleRateMissingCount NOTIFY sampleRatesChanged)
+    Q_PROPERTY(int sampleRateFixableCount READ sampleRateFixableCount NOTIFY sampleRatesChanged)
+    Q_PROPERTY(bool sampleRateFillStaged READ sampleRateFillStaged NOTIFY sampleRatesChanged)
     Q_PROPERTY(bool artworkRepairStaged READ artworkRepairStaged NOTIFY artworkChanged)
     // Backs the Playlist picker in JunkCuePage.qml -- same shape/
     // convention as SyncController's own playlistNames/
@@ -346,6 +357,9 @@ public:
     // Staged as one change per track (the unit the save summary counts),
     // so "staged" is "any of them is".
     bool artworkRepairStaged() const { return !m_stagedArtwork.empty(); }
+    int sampleRateMissingCount() const { return static_cast<int>(m_sampleRates.missing.size()); }
+    int sampleRateFixableCount() const { return m_sampleRates.fixable(); }
+    bool sampleRateFillStaged() const { return m_sampleRateFillStaged; }
 
     // Scans every format actually present: rekordbox if rekordboxPath is
     // non-empty, engine if enginePath is non-empty, onelibrary if
@@ -380,6 +394,10 @@ public:
     Q_INVOKABLE void repairStickFilesystem();
 
     Q_INVOKABLE void repairArtwork();
+    // Stages writing every sample rate a file could answer for. Staging
+    // only, like every other fix here: Save writes it.
+    Q_INVOKABLE void fillSampleRates();
+    Q_INVOKABLE void unstageSampleRateFill();
     Q_INVOKABLE void unstageArtworkRepair();
 
     // Stages rewriting the track's full cue list with the offending 0:00
@@ -410,6 +428,7 @@ signals:
     void statusMessageChanged();
     void issuesChanged();
     void artworkChanged();
+    void sampleRatesChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
     // could poll would not do: "it worked" and "it did not" are the whole
@@ -470,6 +489,8 @@ private:
     QFutureWatcher<infrastructure::media::FilesystemRepairResult> m_repairWatcher;
     // The cover-art changes this page has staged, by change id.
     std::set<QString> m_stagedArtwork;
+    infrastructure::engine::SampleRateAudit m_sampleRates;
+    bool m_sampleRateFillStaged = false;
     // A rekordbox repair's OneLibrary mirror can stale another listed
     // issue: re-scan once the save that applied one has finished.
     bool m_rescanAfterSave = false;

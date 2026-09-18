@@ -36,6 +36,10 @@
 #include "gui/future_result.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/artwork_rescue_sources.hpp"
+#include "gui/edit/changes/fill_sample_rate_change.hpp"
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 #include "gui/app_settings_controller.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/changes/repair_issue_change.hpp"
@@ -387,6 +391,22 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                 std::filesystem::path(path.toStdString()).parent_path().string());
             result.artwork =
                 infrastructure::engine::auditArtwork(path.toStdString(), artSources, result.rescue->probe());
+            // The same pass asks each row for its sample rate, and each
+            // file whose row cannot say. Reading a header costs about
+            // 0.07 ms (see TagLibMetadataProbe), so a library where
+            // nothing is missing costs nothing and one where everything
+            // is costs a second.
+            result.sampleRates = infrastructure::engine::auditSampleRates(
+                path.toStdString(), [](const std::string &audioFile) -> double {
+#ifdef SEABASS_HAVE_TAGLIB
+                    infrastructure::audio::TagLibMetadataProbe probe;
+                    const auto metadata = probe.read(audioFile);
+                    return metadata ? static_cast<double>(metadata->sampleRate) : 0.0;
+#else
+                    (void)audioFile;
+                    return 0.0;
+#endif
+                });
         }
 
         if (!playlistName.isEmpty()) {
@@ -514,6 +534,9 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     // emptied issue list, and an Engine leg that then errored left those
     // counts on screen for as long as the page lived.
     m_artwork = {};
+    m_sampleRates = {};
+    m_sampleRateFillStaged = false;
+    emit sampleRatesChanged();
     m_artSources.clear();
     emit artworkChanged();
     const QString stickRoot = QString::fromStdString(
@@ -616,6 +639,10 @@ void LibraryConsistencyController::onScanFinished()
         if (result.artwork.tracksWithArt > 0 || !result.artwork.error.empty()) {
             m_artwork = std::move(result.artwork);
             emit artworkChanged();
+        }
+        if (result.sampleRates.tracksChecked > 0 || !result.sampleRates.error.empty()) {
+            m_sampleRates = std::move(result.sampleRates);
+            emit sampleRatesChanged();
         }
         // Rows staged before this rescan keep their mark if they are
         // still listed (the change itself lives in the session).
@@ -740,6 +767,13 @@ void LibraryConsistencyController::attachSession()
                     scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
                     return;
                 }
+                if (changeId == FillSampleRateChange::idFor()) {
+                    m_sampleRateFillStaged = false;
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit sampleRatesChanged();
+                    return;
+                }
                 if (auto staged = m_stagedArtwork.find(changeId); staged != m_stagedArtwork.end()) {
                     // The counts come from the database this just wrote, so
                     // they are re-read once the whole save is done rather
@@ -799,6 +833,8 @@ void LibraryConsistencyController::attachSession()
                 m_stagedIssues.clear();
                 m_stagedJunk.clear();
                 m_stagedArtwork.clear();
+                m_sampleRateFillStaged = false;
+                emit sampleRatesChanged();
                 m_model.clearStaged();
                 m_junkCueModel.clearStaged();
                 clearStagedStatusIfNothingStaged();
@@ -1097,6 +1133,50 @@ void LibraryConsistencyController::repairArtwork()
         QStringLiteral("Staged cover art for %1 track(s). Press Save to write it to the stick.").arg(count));
 }
 
+void LibraryConsistencyController::fillSampleRates()
+{
+    if (m_busy || m_sampleRateFillStaged) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    std::vector<infrastructure::engine::SampleRateEntry> writable;
+    for (const auto &entry : m_sampleRates.missing) {
+        if (entry.sampleRateFromFile > 0.0) {
+            writable.push_back(entry);
+        }
+    }
+    if (writable.empty()) {
+        setErrorMessage("None of these tracks' files could say what sample rate they are, so there is nothing to "
+                        "write.");
+        return;
+    }
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    const int count = static_cast<int>(writable.size());
+    if (!m_session->stage(std::make_unique<FillSampleRateChange>(m_enginePath, std::move(writable)))) {
+        return;  // the session reported the refusal; the page shows it
+    }
+    m_sampleRateFillStaged = true;
+    emit sampleRatesChanged();
+    setStagedStatusMessage(
+        QStringLiteral("Staged the sample rate for %1 track(s). Press Save to write it to the stick.").arg(count));
+}
+
+void LibraryConsistencyController::unstageSampleRateFill()
+{
+    if (!m_sampleRateFillStaged) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage(FillSampleRateChange::idFor());
+    }
+    m_sampleRateFillStaged = false;
+    emit sampleRatesChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 void LibraryConsistencyController::unstageArtworkRepair()
 {
     if (m_stagedArtwork.empty()) {
@@ -1205,7 +1285,8 @@ void LibraryConsistencyController::setStagedStatusMessage(const QString &message
 
 void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
-    if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()) {
+    if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
+        && !m_sampleRateFillStaged) {
         setStatusMessage({});
     }
 }

@@ -33,6 +33,11 @@ TestCase {
             property bool stickReadOnly: false
             property int repairableCount: 0
             property int unstagedRepairableCount: 0
+            property int sampleRateMissingCount: 0
+            property int sampleRateFixableCount: 0
+            property bool sampleRateFillStaged: false
+            function fillSampleRates() { sampleRateFillStaged = true; }
+            function unstageSampleRateFill() { sampleRateFillStaged = false; }
             property int unstagedJunkCueCount: 0
             property int stagedCount: stagedIssueCount + stagedJunkCueCount
             property int stagedIssueCount: 0
@@ -147,5 +152,37 @@ TestCase {
             }
         }
         return null;
+    }
+
+    // Sample rates: a row without one means every cue on that track is
+    // placed by a guess, and the file itself can say what it really is.
+    // The button stages, like every other fix on this page.
+    function test_theSampleRateFixStagesAndSaysSo() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        controller.sampleRateMissingCount = 43;
+        controller.sampleRateFixableCount = 40;
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null, "the page must instantiate");
+
+        var summary = findChild(page, "sampleRateSummary");
+        verify(summary !== null, "the check must say what it found");
+        verify(summary.text.indexOf("43") >= 0 && summary.text.indexOf("40") >= 0,
+               "both numbers belong in the sentence: " + summary.text);
+
+        var button = findChild(page, "fillSampleRatesButton");
+        var note = findChild(page, "stagedSampleRatesNote");
+        verify(button !== null && note !== null);
+        compare(button.visible, true, "there is something to fix");
+        compare(note.visible, false, "and nothing staged yet");
+
+        button.clicked();
+        compare(controller.sampleRateFillStaged, true, "the button stages");
+        compare(note.visible, true, "and the page says so where the button is");
+        compare(button.text, "Unstage", "the same button takes it back");
+        button.clicked();
+        compare(controller.sampleRateFillStaged, false);
+
+        page.destroy();
+        wait(0);
     }
 }
