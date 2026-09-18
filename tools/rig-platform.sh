@@ -147,6 +147,20 @@ start_fake_dj() {  # <build dir> <seconds>
 stick_uuid() {  # <mount point>
     if [ "$rig_os" = "Darwin" ]; then
         diskutil info "$1" 2>/dev/null | awk -F': *' '/^ *Volume UUID:/ {print $2; exit}'
+    elif rig_is_windows; then
+        # Windows has no filesystem UUID the way Linux/macOS do, so
+        # StickIdentity::libraryId() uses the volume serial number
+        # instead (stick_hardware_info.cpp), formatted as 8 upper-case
+        # hex digits with no dash. `vol` prints it as "XXXX-XXXX";
+        # confirmed directly against a real drive here that stripping
+        # the dash and upper-casing produces exactly what a backup
+        # archive's own log records for the same stick (e.g. "vol D:"
+        # -> "1E04-8148", matching "stick (1E048148)" in that stick's
+        # own rig_backup output byte for byte).
+        local drive
+        drive="$(printf '%s' "${1#/}" | cut -c1 | tr '[:lower:]' '[:upper:]')"
+        cmd //c "vol ${drive}:" 2>/dev/null | tr -d '\r' \
+            | grep -oE '[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}' | tr -d '-' | tr '[:lower:]' '[:upper:]'
     else
         lsblk -no UUID "$(findmnt -no SOURCE "$1")" 2>/dev/null | head -1
     fi
