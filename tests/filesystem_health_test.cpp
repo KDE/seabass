@@ -77,6 +77,27 @@ int main(int argc, char **argv)
         std::cout << "case 4 (repairing what is not there refuses, with a reason) OK\n";
     }
 
+    // 5. The guard that keeps the repair on the drive the user pressed
+    //    for: a directory inside a filesystem resolves to the filesystem
+    //    it sits on, and repairing the disk under someone's home
+    //    directory because they opened a library folder there is not a
+    //    thing to do by accident.
+    {
+        assert(!isMountPointRoot(""));
+        assert(!isMountPointRoot("/nonexistent/seabass/stick"));
+        const fs::path inside = fs::temp_directory_path() / "seabass-not-a-mount-point";
+        std::error_code ec;
+        fs::create_directories(inside, ec);
+        assert(!isMountPointRoot(inside.string()));
+        const FilesystemRepairResult result = repairFilesystem(inside.string());
+        assert(!result.repaired);
+        assert(result.message.find("not a drive of its own") != std::string::npos);
+        fs::remove_all(inside, ec);
+        // And the one path every system has: "/" is a mount point.
+        assert(isMountPointRoot("/") || isMountPointRoot("C:\\"));
+        std::cout << "case 5 (a folder inside a filesystem is not a drive to repair) OK\n";
+    }
+
     std::cout << "filesystem_health_test: all cases passed\n";
     return 0;
 }

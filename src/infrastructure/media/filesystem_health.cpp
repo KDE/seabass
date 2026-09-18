@@ -57,6 +57,39 @@ bool isMountedReadOnly(const std::string &path)
 #endif
 }
 
+namespace
+{
+
+// "/media/sebas/A3/" and "/media/sebas/A3" are the same place; "/" keeps
+// its one character.
+std::string trimTrailingSeparators(std::string path)
+{
+    while (path.size() > 1 && (path.back() == '/' || path.back() == '\\')) {
+        path.pop_back();
+    }
+    return path;
+}
+
+#ifdef __linux__
+// Mount points in /proc/self/mounts carry octal escapes for spaces
+// ("\040") and a few other characters.
+std::string decodeMountPoint(const std::string &raw)
+{
+    std::string decoded;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i] == '\\' && i + 3 < raw.size()) {
+            decoded += static_cast<char>(std::stoi(raw.substr(i + 1, 3), nullptr, 8));
+            i += 3;
+        } else {
+            decoded += raw[i];
+        }
+    }
+    return decoded;
+}
+#endif
+
+}  // namespace
+
 std::string deviceForMountPoint(const std::string &mountPoint)
 {
     if (mountPoint.empty()) {
@@ -94,16 +127,7 @@ std::string deviceForMountPoint(const std::string &mountPoint)
         if (!(fields >> device >> where)) {
             continue;
         }
-        // Mount points carry octal escapes for spaces ("\040").
-        std::string decoded;
-        for (size_t i = 0; i < where.size(); ++i) {
-            if (where[i] == '\\' && i + 3 < where.size()) {
-                decoded += static_cast<char>(std::stoi(where.substr(i + 1, 3), nullptr, 8));
-                i += 3;
-            } else {
-                decoded += where[i];
-            }
-        }
+        const std::string decoded = decodeMountPoint(where);
         // The longest mount point that is a prefix of the path: a stick
         // mounted under /media/<user>/<label> sits inside "/" too.
         if (mountPoint.rfind(decoded, 0) == 0 && decoded.size() > bestMount.size()) {
@@ -112,6 +136,41 @@ std::string deviceForMountPoint(const std::string &mountPoint)
         }
     }
     return best;
+#endif
+}
+
+bool isMountPointRoot(const std::string &path)
+{
+    if (path.empty()) {
+        return false;
+    }
+#if defined(_WIN32)
+    char root[MAX_PATH] = {};
+    if (::GetVolumePathNameA(path.c_str(), root, MAX_PATH) == 0) {
+        return false;
+    }
+    return trimTrailingSeparators(root) == trimTrailingSeparators(path);
+#elif defined(__APPLE__)
+    struct statfs info = {};
+    if (::statfs(path.c_str(), &info) != 0) {
+        return false;
+    }
+    return trimTrailingSeparators(info.f_mntonname) == trimTrailingSeparators(path);
+#else
+    std::ifstream mounts("/proc/self/mounts");
+    std::string line;
+    while (std::getline(mounts, line)) {
+        std::istringstream fields(line);
+        std::string device;
+        std::string where;
+        if (!(fields >> device >> where)) {
+            continue;
+        }
+        if (trimTrailingSeparators(decodeMountPoint(where)) == trimTrailingSeparators(path)) {
+            return true;
+        }
+    }
+    return false;
 #endif
 }
 
@@ -132,6 +191,15 @@ std::string blockObjectPath(const std::string &devicePath)
 FilesystemRepairResult repairFilesystem(const std::string &mountPoint)
 {
     FilesystemRepairResult result;
+    // A path inside a filesystem resolves to the filesystem it sits on --
+    // a library opened from a folder would resolve to the disk holding the
+    // user's home directory, and repairing that is not what anyone pressed
+    // for. Only a mount point of its own is a drive to check.
+    if (!isMountPointRoot(mountPoint)) {
+        result.message = mountPoint + " is a folder on another drive, not a drive of its own, so Seabass did not "
+                                      "try to check it.";
+        return result;
+    }
     const std::string device = deviceForMountPoint(mountPoint);
     if (device.empty()) {
         result.message = "Seabass could not tell which drive " + mountPoint + " is, so it did not try to repair it.";

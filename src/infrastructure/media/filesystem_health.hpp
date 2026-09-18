@@ -25,6 +25,12 @@ bool isMountedReadOnly(const std::string &path);
 // repair tool.
 std::string deviceForMountPoint(const std::string &mountPoint);
 
+// Whether this path is a filesystem's own mount point rather than a
+// directory somewhere inside one. Repair works on a whole filesystem, so
+// the difference is the difference between checking a USB stick and
+// checking the disk the user's home directory is on.
+bool isMountPointRoot(const std::string &path);
+
 struct FilesystemRepairResult
 {
     bool repaired = false;
