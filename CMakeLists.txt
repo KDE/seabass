@@ -306,6 +306,7 @@ add_library(seabass_core STATIC
     src/domain/filesystem_compatibility.cpp
     src/domain/fuzzy_matcher.cpp
     src/domain/junk_cue.cpp
+    src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
     src/domain/stick_performance.cpp
@@ -340,6 +341,7 @@ add_library(seabass_core STATIC
     src/infrastructure/rekordbox/pdb_row_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cleanup_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
+    src/infrastructure/rekordbox/rekordbox_xml_writer.cpp
     src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
     src/infrastructure/rekordbox/rekordbox_waveform_reader.cpp
     src/infrastructure/rekordbox/rekordbox_settings_fields.cpp
@@ -405,6 +407,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/fill_missing_durations.cpp
     src/application/path_key.cpp
     src/application/use_cases/collapse_catalog_rows.cpp
+    src/application/use_cases/export_rekordbox_xml.cpp
     src/application/use_cases/real_file_sizes.cpp
     src/application/use_cases/find_unreferenced_files.cpp
     src/infrastructure/stick_layout.cpp
@@ -915,6 +918,18 @@ add_executable(real_file_sizes_test tests/real_file_sizes_test.cpp)
 target_include_directories(real_file_sizes_test PRIVATE src)
 target_link_libraries(real_file_sizes_test PRIVATE seabass_core)
 add_test(NAME real_file_sizes_test COMMAND real_file_sizes_test)
+
+add_executable(rekordbox_xml_writer_test tests/rekordbox_xml_writer_test.cpp)
+target_include_directories(rekordbox_xml_writer_test PRIVATE src)
+target_link_libraries(rekordbox_xml_writer_test PRIVATE seabass_core)
+add_test(NAME rekordbox_xml_writer_test COMMAND rekordbox_xml_writer_test)
+
+add_executable(export_rekordbox_xml_test tests/export_rekordbox_xml_test.cpp)
+target_include_directories(export_rekordbox_xml_test PRIVATE src)
+target_link_libraries(export_rekordbox_xml_test PRIVATE seabass_core)
+add_test(NAME export_rekordbox_xml_test COMMAND export_rekordbox_xml_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(export_rekordbox_xml_test PROPERTIES LABELS "integration")
 
 add_executable(collapse_catalog_rows_test tests/collapse_catalog_rows_test.cpp)
 target_include_directories(collapse_catalog_rows_test PRIVATE src)

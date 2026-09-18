@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <map>
 #include <format>
 #include <functional>
 #include <iterator>
@@ -24,6 +26,7 @@
 #include "application/ports/operation_log.hpp"
 #include "application/ports/removable_media_locator.hpp"
 #include "application/use_cases/anonymize_library.hpp"
+#include "application/use_cases/export_rekordbox_xml.hpp"
 #include "application/use_cases/consolidate_duplicate_cues.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "application/use_cases/sync_libraries.hpp"
@@ -93,6 +96,9 @@ void printUsage()
     Console::info("                 [--track NAME] [--needs-cues [N]]");
     Console::info("  seabass-cli sync --rekordbox [PATH] --engine [PATH] [--dry-run] [--auto]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
+    Console::info("  seabass-cli export-xml [--rekordbox [PATH]] [--engine [PATH]] --out FILE");
+    Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
+    Console::info("                 [--keep-junk-cues]");
     Console::info("  seabass-cli anonymize [--rekordbox [PATH]] [--engine [PATH]] --out DIR");
     Console::info("                        [--hardware TEXT] [--notes TEXT]");
     Console::info("  seabass-cli --help");
@@ -114,6 +120,12 @@ void printUsage()
     Console::info("           below). With --clean, deletes the oldest ones so at most --keep");
     Console::info("           N remain (default " + std::to_string(DefaultKeepBackups) +
                    "), freeing space on the stick.");
+    Console::info("  export-xml  Writes a rekordbox collection XML (the DJ_PLAYLISTS file");
+    Console::info("           rekordbox imports on a computer) covering every catalog given,");
+    Console::info("           with their cues merged. This is the one route into rekordbox's own");
+    Console::info("           library: it imports no stick format directly, so cues set on Denon");
+    Console::info("           gear reach rekordbox this way or not at all. Read-only apart from");
+    Console::info("           the file named by --out.");
     Console::info("  anonymize  Writes a de-identified, structurally-real copy of one or both");
     Console::info("           libraries to --out DIR: every real track is kept, and its");
     Console::info("           titles/artists/comments/filenames/playlist");
@@ -154,7 +166,22 @@ void printUsage()
     Console::info("                      count, only a last-played timestamp). Defaults to the");
     Console::info("                      top " + std::to_string(DefaultNeedsCuesLimit) +
                    "; pass N to change that, or 0 for no limit.");
-    Console::info("  --out DIR           anonymize only: where to write the anonymized library/ies");
+    Console::info("  --out DIR|FILE      anonymize: the directory to write to; export-xml: the");
+    Console::info("                      XML file to write");
+    Console::info("  --prefer WHICH      export-xml only: rekordbox or engine (default rekordbox).");
+    Console::info("                      A hot cue slot holds one cue, so where two catalogs");
+    Console::info("                      disagree about it the preferred one wins and the other");
+    Console::info("                      position is reported as a conflict. Cue on Denon gear?");
+    Console::info("                      Pass --prefer engine.");
+    Console::info("  --exclude-ext EXT   export-xml only: leave every file with this extension out");
+    Console::info("                      of the collection (repeatable). \"--exclude-ext flac\" is");
+    Console::info("                      how a library for a FLAC-less player like the XDJ-RX2");
+    Console::info("                      gets built without moving any files.");
+    Console::info("  --map FROM=TO       export-xml only: rewrite path prefix FROM to TO, longest");
+    Console::info("                      match wins (repeatable). For when the files no longer");
+    Console::info("                      live where the catalog recorded them.");
+    Console::info("  --keep-junk-cues    export-xml only: keep the memory cues at 0:00 that are");
+    Console::info("                      otherwise dropped");
     Console::info("                      and MANIFEST.txt. Required.");
     Console::info("  --slim              anonymize only: the three catalogs and the cues, without");
     Console::info("                      the binary bulk -- unreferenced analysis files, Engine's");
@@ -224,6 +251,8 @@ void printUsage()
     Console::info("  seabass-cli backups --clean --keep 3          # keep only the 3 most recent");
     Console::info("  seabass-cli scan --engine --track concorde    # look up a track by (fuzzy) name");
     Console::info("  seabass-cli scan --rekordbox --needs-cues 10  # top 10 most-played tracks with no cues");
+    Console::info("  seabass-cli export-xml --rekordbox --engine --prefer engine --out rb.xml");
+    Console::info("  seabass-cli export-xml --engine --exclude-ext flac --out rb.xml  # no FLAC for the RX2");
     Console::info("  seabass-cli sync --rekordbox --engine --dry-run  # see the proposal, change nothing");
     Console::info("  seabass-cli sync --rekordbox --engine            # analyze, then confirm before writing");
 }
@@ -1166,6 +1195,128 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
 // see AnonymizeLibrary's own doc comment for exactly what's kept vs.
 // replaced vs. removed. Never sends anything anywhere itself; only ever
 // writes to DIR.
+// "export-xml": the one door into rekordbox on a computer.
+//
+// Every other format here describes a USB stick, and rekordbox imports
+// none of them into its own library. So a library assembled from sticks --
+// with the Engine cues merged in, which is the entire point -- reaches the
+// desktop as a collection XML or not at all.
+//
+// Read-only: it opens catalogs and writes one file, the one named by --out.
+int runExportXmlCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPath,
+                         const std::optional<std::string> &enginePath, const std::optional<std::string> &outFile,
+                         const std::vector<std::string> &excludeExtensions,
+                         const std::map<std::string, std::string> &pathPrefixMap, bool preferEngine,
+                         bool keepJunkCues)
+{
+    if (!outFile) {
+        Console::error("export-xml requires --out FILE");
+        return 1;
+    }
+
+    auto resolved = resolveLibraryPaths(wantRekordbox, wantEngine, rekordboxPath, enginePath);
+    if (!resolved.rekordboxPath && !resolved.enginePath) {
+        return 1;
+    }
+
+    std::vector<Track> rekordboxRows;
+    std::vector<Track> engineRows;
+    try {
+        if (resolved.rekordboxPath) {
+            rekordboxRows = scanPath(
+                std::make_unique<seabass::infrastructure::rekordbox::KaitaiRekordboxReader>(*resolved.rekordboxPath),
+                *resolved.rekordboxPath);
+        }
+        if (resolved.enginePath) {
+            engineRows = scanPath(
+                std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(*resolved.enginePath),
+                *resolved.enginePath);
+        }
+    } catch (const std::exception &e) {
+        Console::error(e.what());
+        return 1;
+    }
+
+    // Catalog order is not cosmetic: where two catalogs claim the same hot
+    // cue slot at different positions, the first one listed wins it and
+    // the other position is dropped. A DJ who cues on Denon gear wants
+    // --prefer engine.
+    std::vector<Track> rows;
+    rows.reserve(rekordboxRows.size() + engineRows.size());
+    if (preferEngine) {
+        rows.insert(rows.end(), engineRows.begin(), engineRows.end());
+        rows.insert(rows.end(), rekordboxRows.begin(), rekordboxRows.end());
+    } else {
+        rows.insert(rows.end(), rekordboxRows.begin(), rekordboxRows.end());
+        rows.insert(rows.end(), engineRows.begin(), engineRows.end());
+    }
+
+    seabass::application::ExportRekordboxXmlOptions options;
+    options.excludeExtensions = excludeExtensions;
+    options.pathPrefixMap = pathPrefixMap;
+    options.dropJunkMemoryCues = !keepJunkCues;
+    options.reportUnresolved = true;
+
+    seabass::application::ExportRekordboxXml useCase;
+    const auto result = useCase.execute(rows, options);
+
+    std::ofstream out(*outFile, std::ios::binary);
+    if (!out) {
+        Console::error("could not open " + *outFile + " for writing");
+        return 1;
+    }
+    out << result.xml;
+    out.close();
+    if (!out) {
+        Console::error("could not write " + *outFile);
+        return 1;
+    }
+
+    Console::info("");
+    Console::heading("rekordbox XML written to " + *outFile);
+    Console::info("  tracks:    " + std::to_string(result.tracksWritten) + " (from " + std::to_string(rows.size()) +
+                   " catalog row(s))");
+    Console::info("  playlists: " + std::to_string(result.playlistsWritten));
+    Console::info("  cues:      " + std::to_string(result.cuesWritten) + ", of which " +
+                   std::to_string(result.cuesFromOtherCatalogs) + " were not in rekordbox's own catalog");
+    if (result.junkMemoryCuesDropped > 0) {
+        Console::info("  dropped:   " + std::to_string(result.junkMemoryCuesDropped) +
+                       " junk memory cue(s) at 0:00");
+    }
+    if (result.tracksExcludedByExtension > 0) {
+        Console::info("  excluded:  " + std::to_string(result.tracksExcludedByExtension) +
+                       " track(s) by file extension");
+    }
+    if (result.tracksStreaming > 0) {
+        Console::info("  skipped:   " + std::to_string(result.tracksStreaming) +
+                       " streaming track(s) -- they have no local file");
+    }
+    if (result.tracksWithoutPath > 0) {
+        Console::info("  skipped:   " + std::to_string(result.tracksWithoutPath) +
+                       " track(s) whose file path no catalog resolved");
+    }
+    if (!result.conflicts.empty()) {
+        Console::info("");
+        Console::info(std::to_string(result.conflicts.size()) +
+                       " cue(s) disagreed across catalogs; the first catalog listed won the slot:");
+        size_t shown = 0;
+        for (const auto &conflict : result.conflicts) {
+            if (shown++ >= 20) {
+                Console::info("  ... and " + std::to_string(result.conflicts.size() - shown + 1) + " more");
+                break;
+            }
+            Console::info("  " + conflict.artist + " - " + conflict.title + " " + conflict.slot + ": " +
+                           conflict.formatA + " @ " + std::to_string(static_cast<long long>(conflict.positionMsA)) +
+                           "ms vs " + conflict.formatB + " @ " +
+                           std::to_string(static_cast<long long>(conflict.positionMsB)) + "ms");
+        }
+    }
+    Console::info("");
+    Console::info("Import it in rekordbox: Preferences -> View -> Layout -> show \"rekordbox xml\",");
+    Console::info("set the file there, then drag the playlists into your collection.");
+    return 0;
+}
+
 int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPath,
                          const std::optional<std::string> &enginePath, const std::optional<std::string> &outDir,
                          bool slim, const std::string &hardware,
@@ -1276,6 +1427,10 @@ int main(int argc, char **argv)
     std::optional<std::string> enginePath;
     std::optional<std::string> trackFilter;
     std::optional<std::string> outDir;
+    std::vector<std::string> excludeExtensions;
+    std::map<std::string, std::string> pathPrefixMap;
+    bool preferEngine = false;
+    bool keepJunkCues = false;
     bool slim = false;
     std::string hardware;
     std::string notes;
@@ -1341,6 +1496,46 @@ int main(int argc, char **argv)
                 return 1;
             }
             outDir = args[++i];
+        } else if (arg == "--exclude-ext") {
+            if (i + 1 >= args.size()) {
+                Console::error("--exclude-ext requires an extension, e.g. flac");
+                return 1;
+            }
+            std::string ext = args[++i];
+            if (!ext.empty() && ext.front() == '.') {
+                ext.erase(ext.begin());
+            }
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            excludeExtensions.push_back(ext);
+        } else if (arg == "--map") {
+            if (i + 1 >= args.size()) {
+                Console::error("--map requires FROM=TO");
+                return 1;
+            }
+            const std::string mapping = args[++i];
+            const auto equals = mapping.find('=');
+            if (equals == std::string::npos || equals == 0 || equals + 1 >= mapping.size()) {
+                Console::error("--map needs FROM=TO, got \"" + mapping + "\"");
+                return 1;
+            }
+            pathPrefixMap[mapping.substr(0, equals)] = mapping.substr(equals + 1);
+        } else if (arg == "--prefer") {
+            if (i + 1 >= args.size()) {
+                Console::error("--prefer requires rekordbox or engine");
+                return 1;
+            }
+            const std::string which = args[++i];
+            if (which == "engine") {
+                preferEngine = true;
+            } else if (which == "rekordbox") {
+                preferEngine = false;
+            } else {
+                Console::error("--prefer takes rekordbox or engine, got \"" + which + "\"");
+                return 1;
+            }
+        } else if (arg == "--keep-junk-cues") {
+            keepJunkCues = true;
         } else if (arg == "--slim") {
             slim = true;
         } else if (arg == "--hardware") {
@@ -1371,7 +1566,8 @@ int main(int argc, char **argv)
         return help ? 0 : 1;
     }
     if (commands.size() != 1 ||
-        (commands[0] != "scan" && commands[0] != "backups" && commands[0] != "sync" && commands[0] != "anonymize")) {
+        (commands[0] != "scan" && commands[0] != "backups" && commands[0] != "sync" && commands[0] != "anonymize" &&
+         commands[0] != "export-xml")) {
         Console::error("unknown command: " + commands[0]);
         printUsage();
         return 1;
@@ -1383,6 +1579,11 @@ int main(int argc, char **argv)
 
     if (commands[0] == "sync") {
         return runSyncCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, autoMode, dryRun, force);
+    }
+
+    if (commands[0] == "export-xml") {
+        return runExportXmlCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, outDir, excludeExtensions,
+                                    pathPrefixMap, preferEngine, keepJunkCues);
     }
 
     if (commands[0] == "anonymize") {
