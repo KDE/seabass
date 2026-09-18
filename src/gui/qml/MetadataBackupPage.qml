@@ -203,6 +203,18 @@ Page {
 
     // ---- leaving with something staged --------------------------------
     property var pendingLeave: null
+    // What pressing the commit button will actually do to what is staged.
+    // A function of the two counts and nothing else, so it can be checked
+    // without a populated store behind it.
+    function verbFor(toBackUp, toForget) {
+        if (toBackUp > 0 && toForget > 0) {
+            return "Save";
+        }
+        return toForget > 0 ? "Forget" : "Back Up";
+    }
+
+    readonly property string saveVerb: root.verbFor(controller.stagedAddCount, controller.stagedForDeletionCount)
+
     // Set when the user answered the leave dialog with "Back Up". The
     // leaving then waits for saveCompleted rather than happening beside
     // the save: popping this page destroys the controller, whose
@@ -865,10 +877,19 @@ Page {
     // stick; here it writes to this computer, which is why the dialogs
     // around it say so in their own words rather than borrowing the
     // stick wording.
+    //
+    // Which word depends on what is staged, because this page stages two
+    // opposite things. A button reading "Back Up" over a staged deletion
+    // names the one operation that is not about to happen, and the page
+    // right above it is already saying "1 to forget". So: the verb when
+    // every staged change is the same kind, and the neutral "Save" when
+    // they are mixed, which is the rule JunkCuePage's own saveLabel
+    // comment sets out -- a page that does one thing says it, a page
+    // doing several says Save.
     SaveOverlayButton {
         objectName: "saveOverlay"
         session: controller
-        label: "Back Up"
+        label: root.saveVerb
         destinationPhrase: "stored on this computer"
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -887,7 +908,7 @@ Page {
         // thing that is never true here.
         detailText: controller.pendingCount > 0
             ? controller.pendingCount + " change(s) are staged and not in the backup yet." : ""
-        saveText: "Back Up"
+        saveText: root.saveVerb
         onSaveRequested: {
             // Not followed by runPendingLeave(): onSaveCompleted does
             // that, once there is actually something to leave behind.

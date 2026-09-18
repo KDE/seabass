@@ -109,6 +109,18 @@ TestCase {
                "deleting goes through the same Save button, not one of its own");
     }
 
+    // The button names the operation that is about to happen, and this
+    // page stages two opposite ones. "Back Up" over a staged deletion
+    // names the one thing that is not going to happen, while the summary
+    // line directly above it already reads "1 to forget".
+    function test_theSaveButtonSaysWhichOfTheTwoThingsItWillDo() {
+        var page = make();
+        compare(page.verbFor(3, 0), "Back Up", "only additions: the page's own word for them");
+        compare(page.verbFor(0, 3), "Forget", "only deletions: the page's own word for them");
+        compare(page.verbFor(2, 3), "Save", "both kinds: the neutral word, because no verb covers both");
+        compare(page.verbFor(0, 0), "Back Up", "nothing staged: the action the page is for");
+    }
+
     function test_nothingIsStagedSoNothingIsOffered() {
         // The floating button is only up when there is something to
         // save, and the escape hatch beside it only when there is
