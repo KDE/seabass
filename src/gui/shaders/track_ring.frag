@@ -6,7 +6,13 @@
 // A whole track as a ring around its cover art: 12 o'clock is the start,
 // clockwise is time, a bar's length is that moment's energy. Everything
 // is read from two textures -- the waveform as an N x 1 strip (r, g, b =
-// low, mid, high) and the art -- so a frame costs the CPU two uniforms.
+// low, mid, high) and the art -- so a frame costs the CPU a few uniforms.
+//
+// What moves, while a track plays: the art swells and throws a halo with
+// the bass; the bars under the playhead jump with it; a slow wave of
+// light travels round the played part, as strong as the mids; the white
+// roots flare with the highs; and every beat sends a ripple out from the
+// art through the bars.
 
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -15,7 +21,11 @@ layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
     float progress;    // 0..1 of the track played; below 0 for "not playing"
-    float bass;        // the low band under the playhead, 0..1
+    float bass;        // how loud the low band is right now, 0..1
+    float mid;         // and the mid band
+    float high;        // and the high band
+    float time;        // seconds, running while the track plays
+    float rippleAge;   // seconds since the last beat; large for "none"
     float bars;        // how many bars go round
     float artRadius;   // the art disc, in units of the ring's outer radius
     float hasArt;
@@ -69,21 +79,27 @@ void main()
         w = max(w, texture(wave, vec2(u, 0.5)).rgb);
     }
 
-    float discRadius = artRadius * (1.0 + 0.035 * bass);
+    float discRadius = artRadius * (1.0 + 0.05 * bass);
     float r0 = artRadius + 0.07;
     float room = 1.0 - r0;
-    float low = max(w.r, 0.03) * room;
-    float mid = w.g * 0.72 * room;
-    float high = w.b * 0.45 * room;
-    float reach = max(low, max(mid, high));
+    // The bars under the playhead jump with the bass: that is where the
+    // music is. (t - progress does not wrap at twelve o'clock; the first
+    // and last second of a track can live without the jump.)
+    float ahead = t - progress;
+    float here = progress >= 0.0 ? exp(-abs(ahead) * 38.0) : 0.0;
+    float jump = 1.0 + here * (0.08 + 0.50 * bass);
+    float lowReach = min(max(w.r, 0.03) * jump, 1.0) * room;
+    float midReach = min(w.g * 0.72 * jump, 1.0) * room;
+    float highReach = min(w.b * 0.45 * jump, 1.0) * room;
+    float reach = max(lowReach, max(midReach, highReach));
 
     vec3 c = ringColour(dir);
     // Fainter means nearer the page's own colour, not nearer black: the
     // page can be a light one.
     vec3 page = backgroundColor.rgb;
     vec3 colour = mix(page, c, 0.50);
-    colour = mix(colour, c, 1.0 - smoothstep(mid - px, mid + px, r - r0));
-    colour = mix(colour, mix(c, vec3(1.0), 0.8), 1.0 - smoothstep(high - px, high + px, r - r0));
+    colour = mix(colour, c, 1.0 - smoothstep(midReach - px, midReach + px, r - r0));
+    colour = mix(colour, mix(c, vec3(1.0), 0.65 + 0.35 * high), 1.0 - smoothstep(highReach - px, highReach + px, r - r0));
 
     // A pixel's width measured in bars, worked out rather than taken from
     // fwidth(k): k jumps from `bars` to 0 at 12 o'clock and fwidth would
@@ -92,16 +108,28 @@ void main()
     float inBar = smoothstep(0.16 - kpx, 0.16 + kpx, f) * (1.0 - smoothstep(0.84 - kpx, 0.84 + kpx, f));
     float alpha = inBar * smoothstep(r0 - px, r0 + px, r) * (1.0 - smoothstep(reach - px, reach + px, r - r0));
 
-    float ahead = t - progress;
+    float played = 1.0;
     if (progress >= 0.0) {
         // What is still to come is dimmed; what was just played glows,
         // fading back round the ring like a comet's tail.
-        float played = 1.0 - smoothstep(-0.5 / bars, 0.5 / bars, ahead);
+        played = 1.0 - smoothstep(-0.5 / bars, 0.5 / bars, ahead);
         float luma = dot(colour, vec3(0.299, 0.587, 0.114));
         colour = mix(mix(page, mix(vec3(luma), colour, 0.6), 0.32), colour, played);
         float tail = played * exp(ahead * 45.0);
         colour += c * tail * 0.55;
     }
+
+    // A slow wave of light going round what has been played, as strong
+    // as the mids are loud: motion between the beats.
+    float wave = 0.5 + 0.5 * sin(TAU * (t * 14.0 - time * 0.30));
+    colour *= 1.0 + 0.35 * mid * wave * played;
+
+    // A beat sends a ripple out from the art, crossing the bars in about
+    // two thirds of a second and fading as it goes.
+    float front = r0 + rippleAge * 1.5 * room;
+    float offFront = (r - front) / 0.045;
+    float ripple = exp(-offFront * offFront) * exp(-rippleAge * 3.5) * step(rippleAge, 1.0) * step(r0, r);
+    colour += c * ripple * 0.9;
 
     // The ring's base line, so silence still draws a circle.
     float base = (1.0 - smoothstep(0.0, 1.5 * px, abs(r - (r0 - 0.012)))) * 0.45;
@@ -116,6 +144,10 @@ void main()
         outColour = mix(outColour, vec4(1.0), line);
         outColour += vec4(c * glow, glow) * (1.0 - outColour.a);
     }
+
+    // Between the bars and past their tips the ripple still shows, faintly.
+    float faint = ripple * 0.14 * (1.0 - smoothstep(1.0 - px, 1.0, r));
+    outColour += vec4(c * faint, faint) * (1.0 - outColour.a);
 
     // The bass lifts a halo off the art's edge.
     float halo = bass * 0.55 * exp(-max(r - discRadius, 0.0) * 28.0) * step(discRadius, r);

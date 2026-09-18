@@ -10,6 +10,12 @@
 #include <QObject>
 #include <QQmlEngine>
 #include <QVariantList>
+#include <QtGlobal>
+
+#include "domain/audio_levels.hpp"
+
+class QAudioBuffer;
+class QAudioBufferOutput;
 
 namespace seabass::gui
 {
@@ -35,6 +41,19 @@ class PlaybackController : public QObject
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
     Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
+    // How loud the playing audio is right now, in three bands of 0..1,
+    // and a count that goes up by one on every beat -- a count rather
+    // than a signal so that QML can simply bind to it. Measured from the
+    // decoded audio as it plays (see AudioLevelMeter), so it is there for
+    // every format, waveform or no waveform. All zero while nothing
+    // plays. liveLevels says whether this Qt can deliver the audio at
+    // all (6.8 and later); where it cannot, a display has the stored
+    // waveform to fall back on.
+    Q_PROPERTY(bool liveLevels READ liveLevels CONSTANT)
+    Q_PROPERTY(qreal levelLow READ levelLow NOTIFY levelsChanged)
+    Q_PROPERTY(qreal levelMid READ levelMid NOTIFY levelsChanged)
+    Q_PROPERTY(qreal levelHigh READ levelHigh NOTIFY levelsChanged)
+    Q_PROPERTY(int beatCount READ beatCount NOTIFY beatCountChanged)
 
 public:
     explicit PlaybackController(QObject *parent = nullptr);
@@ -54,6 +73,11 @@ public:
     qint64 duration() const { return m_player.duration(); }
     qint64 position() const { return m_player.position(); }
     bool playing() const { return m_player.playbackState() == QMediaPlayer::PlayingState; }
+    bool liveLevels() const { return m_bufferOutput != nullptr; }
+    qreal levelLow() const { return m_levels.low; }
+    qreal levelMid() const { return m_levels.mid; }
+    qreal levelHigh() const { return m_levels.high; }
+    int beatCount() const { return m_beatCount; }
     // Linear gain, 0.0 (silent) to 1.0 (unattenuated) -- matches
     // QAudioOutput::volume()'s own scale directly, no remapping.
     qreal volume() const { return m_audioOutput.volume(); }
@@ -90,12 +114,24 @@ signals:
     void playingChanged();
     void volumeChanged();
     void errorMessageChanged();
+    void levelsChanged();
+    void beatCountChanged();
 
 private:
     void setErrorMessage(const QString &message);
+    void meterBuffer(const QAudioBuffer &buffer);
+    // Levels back to zero and the meter's memory gone: nothing is
+    // playing, or something else is about to.
+    void clearLevels();
 
     QMediaPlayer m_player;
     QAudioOutput m_audioOutput;
+    // Owned through QObject parentage; null where Qt cannot deliver the
+    // decoded audio (before 6.8).
+    QAudioBufferOutput *m_bufferOutput = nullptr;
+    domain::AudioLevelMeter m_meter;
+    domain::AudioLevels m_levels;
+    int m_beatCount = 0;
     bool m_hasTrack = false;
     QString m_currentFormat;
     QString m_currentSourceId;

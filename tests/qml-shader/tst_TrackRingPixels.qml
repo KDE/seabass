@@ -146,6 +146,53 @@ TestCase {
         verify(image.red(Math.round(300 + 300 * 0.535), 300) > 200, "and is drawn in its own colour");
     }
 
+    function quietWaveform() {
+        var quiet = [];
+        for (var i = 0; i < 400; ++i) {
+            quiet.push({low: 0.2, mid: 0.0, high: 0.0});
+        }
+        return quiet;
+    }
+
+    // The bars under the playhead jump with the bass: a point past a
+    // quiet bar's tip is lit on a kick and dark without one.
+    function test_theBarsUnderThePlayheadJumpWithTheBass() {
+        var justPlayed = 0.5 - 1.5 / 200;
+        var pastTheTip = 0.57 + 0.43 * 0.25;   // the bars reach 0.20
+        var stage = make({progress: 0.5, playing: true, animated: false, waveformData: quietWaveform(),
+                          liveLevels: true, liveLow: 0});
+        // Not black even so: the playhead's own glow reaches this far.
+        var still = pixelAt(grabImage(stage), justPlayed, pastTheTip).g;
+        verify(still < 40, "no bass: the bar ends where the waveform says, got g=" + still);
+        stage.ring.liveLow = 1.0;
+        wait(100);
+        var image = grabImage(stage);
+        verify(pixelAt(image, justPlayed, pastTheTip).g > still + 60, "on a kick it reaches past that: " + still
+               + " -> " + pixelAt(image, justPlayed, pastTheTip).g);
+        // All that reaches there is the last of the halo the bass lifts off the art.
+        verify(pixelAt(image, 0.25, pastTheTip).g < 10, "and a quarter of a turn away no bar moves, got g="
+               + pixelAt(image, 0.25, pastTheTip).g);
+    }
+
+    // A beat sends a ripple out through the bars. Held still 0.4 s in,
+    // its front is 0.6 of the way out -- in the low band's half-strength
+    // colour, which has room to get brighter.
+    function test_aBeatSendsARippleOutThroughTheBars() {
+        var stage = make({progress: -1, playing: true, animated: false, time: 10});
+        var onTheFront = 0.57 + 0.43 * 0.60;
+        var before = pixelAt(grabImage(stage), 0.25, onTheFront);
+        stage.ring.rippleStart = 9.6;
+        wait(100);
+        var image = grabImage(stage);
+        var during = pixelAt(image, 0.25, onTheFront);
+        verify(during.g > before.g + 35, "the front lights the bar it is crossing: " + before.g + " -> " + during.g);
+        var ahead = pixelAt(image, 0.25, 0.57 + 0.43 * 0.95);
+        verify(Math.abs(ahead.g - 128) < 12, "and not the part it has yet to reach, got g=" + ahead.g);
+        stage.ring.time = 11.5;
+        wait(100);
+        compare(pixelAt(grabImage(stage), 0.25, onTheFront).g, before.g, "a second later it is gone");
+    }
+
     function test_aClickOnTheDiscIsAClickAndItsCornersAreNot() {
         var stage = make({progress: 0.1});
         var clicks = 0;

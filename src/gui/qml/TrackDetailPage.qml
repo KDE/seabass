@@ -184,6 +184,11 @@ Page {
                         progress: root.playbackController.duration > 0
                             ? root.playbackController.position / root.playbackController.duration : 0
                         playing: root.playbackController.playing === true
+                        liveLevels: root.playbackController.liveLevels === true
+                        liveLow: root.playbackController.levelLow || 0
+                        liveMid: root.playbackController.levelMid || 0
+                        liveHigh: root.playbackController.levelHigh || 0
+                        beatCount: root.playbackController.beatCount || 0
                     }
                 }
             }

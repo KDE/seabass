@@ -4,6 +4,10 @@
 
 #include "playback_controller.hpp"
 
+#include <QAudioBuffer>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+#include <QAudioBufferOutput>
+#endif
 #include <QFile>
 #include <QUrl>
 #include <QVariantMap>
@@ -57,6 +61,20 @@ PlaybackController::PlaybackController(QObject *parent) : QObject(parent)
     connect(&m_player, &QMediaPlayer::durationChanged, this, &PlaybackController::durationChanged);
     connect(&m_player, &QMediaPlayer::positionChanged, this, &PlaybackController::positionChanged);
     connect(&m_player, &QMediaPlayer::playbackStateChanged, this, &PlaybackController::playingChanged);
+    // Paused or stopped, no more audio arrives to bring the levels down:
+    // without this a display would freeze on the last kick.
+    connect(&m_player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
+        if (state != QMediaPlayer::PlayingState) {
+            clearLevels();
+        }
+    });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    m_bufferOutput = new QAudioBufferOutput(this);
+    m_player.setAudioBufferOutput(m_bufferOutput);
+    // Queued onto this thread by the context object: the player hands
+    // buffers over from its own.
+    connect(m_bufferOutput, &QAudioBufferOutput::audioBufferReceived, this, &PlaybackController::meterBuffer);
+#endif
     connect(&m_audioOutput, &QAudioOutput::volumeChanged, this, &PlaybackController::volumeChanged);
     connect(&m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &message) {
         setErrorMessage(message);
@@ -142,6 +160,41 @@ void PlaybackController::stop()
     m_waveform.clear();
     m_cues.clear();
     emit trackChanged();
+}
+
+void PlaybackController::meterBuffer(const QAudioBuffer &buffer)
+{
+    // A buffer still in the queue from before a pause or a stop.
+    if (!playing() || !buffer.isValid()) {
+        return;
+    }
+    const QAudioFormat format = buffer.format();
+    domain::SampleFormat sampleFormat;
+    switch (format.sampleFormat()) {
+    case QAudioFormat::UInt8: sampleFormat = domain::SampleFormat::UInt8; break;
+    case QAudioFormat::Int16: sampleFormat = domain::SampleFormat::Int16; break;
+    case QAudioFormat::Int32: sampleFormat = domain::SampleFormat::Int32; break;
+    case QAudioFormat::Float: sampleFormat = domain::SampleFormat::Float; break;
+    default: return;
+    }
+    const domain::AudioLevels levels = m_meter.feed(buffer.constData<void>(),
+        static_cast<std::size_t>(buffer.frameCount()), format.channelCount(), sampleFormat, format.sampleRate());
+    m_levels = levels;
+    emit levelsChanged();
+    if (levels.beat) {
+        ++m_beatCount;
+        emit beatCountChanged();
+    }
+}
+
+void PlaybackController::clearLevels()
+{
+    m_meter.reset();
+    if (m_levels.low == 0.0 && m_levels.mid == 0.0 && m_levels.high == 0.0) {
+        return;
+    }
+    m_levels = {};
+    emit levelsChanged();
 }
 
 void PlaybackController::setErrorMessage(const QString &message)

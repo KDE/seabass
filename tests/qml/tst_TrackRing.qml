@@ -60,6 +60,39 @@ TestCase {
         compare(ring.bass, 0.6);
     }
 
+    // Where the player can measure the audio, that is what the ring
+    // moves to: it has the beat in it, and the waveform has not.
+    function test_liveLevelsWinOverTheWaveform() {
+        var ring = make({waveformData: [{low: 0.1, mid: 0.2, high: 0.3}], playing: true, progress: 0.5,
+                         liveLevels: true, liveLow: 0.9, liveMid: 0.6, liveHigh: 0.4});
+        compare(ring.bass, 0.9);
+        compare(ring.mid, 0.6);
+        compare(ring.high, 0.4);
+        ring.liveLevels = false;
+        compare(ring.bass, 0.1, "without them, the column under the playhead");
+        compare(ring.mid, 0.2);
+        compare(ring.high, 0.3);
+        ring.liveLevels = true;
+        ring.playing = false;
+        compare(ring.bass + ring.mid + ring.high, 0, "and a paused track holds still either way");
+    }
+
+    function test_aBeatStartsARippleOnlyWhilePlaying() {
+        var ring = make({playing: true, animated: false, time: 12.5});
+        verify(ring.rippleAge > 1, "no beat yet, no ripple: its age is past the shader's one second");
+        ring.beatCount = 1;
+        compare(ring.rippleAge, 0, "a beat starts one");
+        ring.time = 12.8;
+        fuzzyCompare(ring.rippleAge, 0.3, 0.0001);
+        ring.beatCount = 2;
+        compare(ring.rippleAge, 0, "and the next beat the next");
+
+        ring.time = 20;
+        ring.playing = false;
+        ring.beatCount = 3;
+        verify(ring.rippleAge > 1, "a beat that arrives after the pause starts nothing");
+    }
+
     function test_rekordboxArtAsksForTheLargeCoverAndSettlesForTheSmall() {
         var small = "file:///nowhere/PIONEER/Artwork/00001/a16.jpg";
         var ring = make({artworkSource: small});

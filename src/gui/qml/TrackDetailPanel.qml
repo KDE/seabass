@@ -256,6 +256,11 @@ Pane {
                     progress: panel.playbackController.duration > 0
                         ? panel.playbackController.position / panel.playbackController.duration : 0
                     playing: panel.playbackController.playing === true
+                    liveLevels: panel.playbackController.liveLevels === true
+                    liveLow: panel.playbackController.levelLow || 0
+                    liveMid: panel.playbackController.levelMid || 0
+                    liveHigh: panel.playbackController.levelHigh || 0
+                    beatCount: panel.playbackController.beatCount || 0
                     onClicked: ringFullscreen.open()
                 }
             }

@@ -297,6 +297,7 @@ target_include_directories(storageprobe PUBLIC src)
 target_compile_features(storageprobe PUBLIC cxx_std_17)
 
 add_library(seabass_core STATIC
+    src/domain/audio_levels.cpp
     src/domain/camelot_key.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
@@ -1160,6 +1161,13 @@ add_executable(camelot_key_test
 )
 target_include_directories(camelot_key_test PRIVATE src)
 add_test(NAME camelot_key_test COMMAND camelot_key_test)
+
+add_executable(audio_levels_test
+    src/domain/audio_levels.cpp
+    tests/audio_levels_test.cpp
+)
+target_include_directories(audio_levels_test PRIVATE src)
+add_test(NAME audio_levels_test COMMAND audio_levels_test)
 
 add_executable(rekordbox_key_parser_test
     src/infrastructure/engine/rekordbox_key_parser.cpp

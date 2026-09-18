@@ -38,15 +38,49 @@ Item {
     // Clicked anywhere on the disc the ring fills.
     signal clicked()
 
-    // The low band under the playhead: what the art and its halo move to.
-    // Only while playing -- a paused track holds still.
-    readonly property real bass: {
+    // What the ring moves to. Live, from the player, where the player
+    // can measure the audio as it plays (PlaybackController.liveLevels):
+    // that has the beat in it. Otherwise the stored waveform's column
+    // under the playhead, which changes about once a second -- enough to
+    // breathe to, not to dance to.
+    property bool liveLevels: false
+    property real liveLow: 0
+    property real liveMid: 0
+    property real liveHigh: 0
+    // Goes up by one on every beat; each one sends a ripple through the ring.
+    property int beatCount: 0
+
+    readonly property var columnUnderPlayhead: {
         var n = root.waveformData ? root.waveformData.length : 0;
-        if (!root.playing || root.progress < 0 || n === 0) {
-            return 0;
+        if (root.progress < 0 || n === 0) {
+            return null;
         }
         var col = root.waveformData[Math.min(n - 1, Math.floor(root.progress * n))];
-        return typeof col === "number" ? col : col.low;
+        return typeof col === "number" ? {low: col, mid: col, high: col} : col;
+    }
+    // Only while playing -- a paused track holds still.
+    readonly property real bass: !root.playing ? 0 : root.liveLevels ? root.liveLow
+        : (root.columnUnderPlayhead ? root.columnUnderPlayhead.low : 0)
+    readonly property real mid: !root.playing ? 0 : root.liveLevels ? root.liveMid
+        : (root.columnUnderPlayhead ? root.columnUnderPlayhead.mid : 0)
+    readonly property real high: !root.playing ? 0 : root.liveLevels ? root.liveHigh
+        : (root.columnUnderPlayhead ? root.columnUnderPlayhead.high : 0)
+
+    // The shader's clock, in seconds. It runs only while there is
+    // something to animate; `animated` off leaves it to whoever sets it,
+    // which is how a test holds a ripple still to look at it.
+    property bool animated: true
+    property real time: 0
+    property real rippleStart: -100
+    readonly property real rippleAge: root.time - root.rippleStart
+    onBeatCountChanged: {
+        if (root.playing) {
+            root.rippleStart = root.time;
+        }
+    }
+    FrameAnimation {
+        running: root.animated && root.playing && root.available && root.visible
+        onTriggered: root.time += frameTime
     }
 
     // rekordbox writes every cover twice, 80 px as aNN.jpg and 240 px as
@@ -121,6 +155,10 @@ Item {
 
         property real progress: root.progress
         property real bass: root.bass
+        property real mid: root.mid
+        property real high: root.high
+        property real time: root.time
+        property real rippleAge: root.rippleAge
         property real bars: root.bars
         property real artRadius: root.artRadius
         property real hasArt: artImage.status === Image.Ready ? 1 : 0
@@ -129,9 +167,14 @@ Item {
         property var wave: stripTexture
         property var art: artImage
 
-        // The bass arrives once per waveform column, a step every second
-        // or so; eased, the art breathes instead of twitching.
-        Behavior on bass { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        // From the waveform the bass arrives once per column, a step
+        // every second or so; eased, the art breathes instead of
+        // twitching. Live levels ease themselves, and easing a kick again
+        // here would be to miss it.
+        Behavior on bass {
+            enabled: !root.liveLevels
+            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+        }
     }
 
     // Cues sit on the ring's base line, each in its own colour.
