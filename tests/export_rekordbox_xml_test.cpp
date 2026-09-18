@@ -83,26 +83,31 @@ void testEngineCuesReachRekordbox()
     assert(countOf(result.xml, "<POSITION_MARK") == 4);
 }
 
-// A memory cue in the first second is the junk this library is full of;
-// a hot cue there can be deliberate. Dropping both would delete real work.
-void testJunkMemoryCuesDroppedButHotCuesKept()
+// A cue in the first second is noise whatever kind it is -- the track
+// already starts there, so neither a memory cue nor a hot pad at 7 ms is
+// anything to navigate by. A loop is the exception, wherever it starts:
+// an intro loop on the first bar is real work, and it carries an end as
+// well as a start, which no stray press does.
+void testJunkCuesDroppedExceptLoops()
 {
     Track t = row("engine", "1", "/stick/Contents/b.mp3", "Drifter");
     t.cues.push_back(CuePoint{CuePoint::Kind::Memory, 0, 0.0, "", "", false, 0.0});
     t.cues.push_back(CuePoint{CuePoint::Kind::Memory, 0, 539.0, "", "", false, 0.0});  // Engine's own main_cue drift
     t.cues.push_back(CuePoint{CuePoint::Kind::Hot, 1, 250.0, "#FF0017", "", false, 0.0});
+    t.cues.push_back(CuePoint{CuePoint::Kind::Hot, 2, 100.0, "#00C4FF", "intro", true, 4200.0});  // a loop
     t.cues.push_back(CuePoint{CuePoint::Kind::Memory, 0, 40000.0, "", "", false, 0.0});
 
     ExportRekordboxXml useCase;
     const auto result = useCase.execute({t});
-    assert(result.junkMemoryCuesDropped == 2);
+    assert(result.junkMemoryCuesDropped == 3);  // two memory cues and the hot pad
     assert(result.cuesWritten == 2);
-    assert(contains(result.xml, "Start=\"0.250\" Num=\"1\""));   // the hot cue survived
-    assert(contains(result.xml, "Start=\"40.000\" Num=\"-1\""));  // the real memory cue survived
+    assert(contains(result.xml, "Type=\"4\" Start=\"0.100\" End=\"4.200\""));  // the loop survived
+    assert(contains(result.xml, "Start=\"40.000\" Num=\"-1\""));                 // the real memory cue survived
+    assert(!contains(result.xml, "Start=\"0.250\""));                            // the hot pad at 250 ms did not
 
     ExportRekordboxXmlOptions keepThem;
     keepThem.dropJunkMemoryCues = false;
-    assert(useCase.execute({t}, keepThem).cuesWritten == 4);
+    assert(useCase.execute({t}, keepThem).cuesWritten == 5);
 }
 
 void testExtensionExclusionAndPathMapping()
@@ -250,7 +255,7 @@ void testAgainstFixture(const fs::path &fixture)
 int main(int argc, char **argv)
 {
     testEngineCuesReachRekordbox();
-    testJunkMemoryCuesDroppedButHotCuesKept();
+    testJunkCuesDroppedExceptLoops();
     testExtensionExclusionAndPathMapping();
     testLongestPrefixWins();
     testConflictingCuesAreReportedAndOrderDecides();

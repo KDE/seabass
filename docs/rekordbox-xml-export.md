@@ -33,7 +33,7 @@ rest behind. Merging the catalogs first is the whole point of the feature.
    catalogs listing one file is the library being *correct*, not duplication;
    collapsing is also what unions their cues, and it is the step that carries
    Engine's cues to the rekordbox side. On the real stick: 3129 rows → 1471 files.
-3. **Drop junk memory cues** (`domain::isJunkMemoryCue`), unless `--keep-junk-cues`.
+3. **Drop junk cues** (`domain::isJunkCue`: anything but a loop inside the first second), unless `--keep-junk-cues`.
 4. **Filter** streaming rows (their path names a cache on another machine),
    rows with no resolvable path (rekordbox keys its collection on `Location`),
    and any extension named by `--exclude-ext`.
@@ -49,17 +49,29 @@ wins and the other position is dropped (`domain::LocalRestorePlanner::mergeCues`
 because it is the only record that something was discarded. Positions within
 100 ms are cross-format rounding, not disagreement.
 
-**Junk cues are most of what a stick holds.** 1448 of the WHALESHARK stick's
-1594 memory cues were Engine's own auto-placed `main_cue`, leaving 146 real cues
-on 47 tracks — 36 of which rekordbox did not have. Reporting the pre-cleanup
-number as "cues recovered from Denon" would overstate the result by 40×.
+**Count what survives cleanup, not what a catalog reports.** On the WHALESHARK
+stick 1448 of 1594 "memory cues" were dropped as junk, leaving 146 real cues on
+47 tracks, 36 of which rekordbox did not have. Reporting the raw catalog number
+as "cues recovered from Denon" would have overstated the result by 40× — and
+most of that difference was phantom cues this project's own reader invented,
+which is the strongest possible argument for counting after the clean-up rather
+than before it.
 
-**A memory cue at a negative position is junk.** Engine rounds `main_cue` a hair
-below the first sample: 1388 of those 1448 read back at `-0.000 ms`. The rule
-used to require `positionMs >= 0.0`, which let every one of them past the check
-written to catch exactly that cue. Hot cues are excluded by *kind* at any
-position, so a deliberate "track start" pad still survives. Cue positions are
-additionally clamped at zero on write — `Start="-0.000"` is not seekable.
+**Most of what looked like junk was never a cue at all.** An earlier reading of
+this export blamed the 1388 memory cues sitting at `-0.000 ms` on Engine
+rounding its `main_cue` below the first sample. The real cause turned out to be
+in this project: Engine records a main cue as a sample offset and `-1` when
+there is none, and the reader divided that sentinel by the sample rate like any
+other offset, so every un-cued track came back carrying a phantom memory cue a
+fraction of a millisecond before the track started. Fixed in "No main cue is not
+a cue at minus one sample"; the committed fixture went from 1688 cues to the 219
+someone really placed.
+
+What remains is `domain::isJunkCue`: a cue inside the first second is noise
+*whatever kind it is*, because the track already begins there — with a loop as
+the exception, since an intro loop on the first bar is real work and carries an
+end as well as a start. Positions are still clamped at zero on write:
+`Start="-0.000"` is not something rekordbox can seek to.
 
 **Tags contain bytes XML cannot hold.** A single one makes the document
 unparseable and rekordbox rejects the file without saying which of 1471 tracks

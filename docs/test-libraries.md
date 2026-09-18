@@ -63,10 +63,14 @@ the fixture share.
 | `B6-flac-truncated` | FLAC cut mid-stream | — |
 | `B7-crossformat` | same recording as mp3 and FLAC | dedup and cue sync across formats |
 
-Planted as cues by the XML (see below): a memory cue at exactly 0:00 and one at
-0.539 s. The second is what Engine's own auto-placed `main_cue` looks like, and
-on a real stick **1388 of 1448 junk cues read back at `-0.000 ms`** — a
-negative position that a `positionMs >= 0.0` guard skips silently.
+Planted as cues by the XML (see below): a memory cue at exactly 0:00, one at
+0.539 s, and a loop at 0.1 s that must **survive** the clean-up.
+
+The loop matters because the rule is about position and not kind: a cue inside
+the first second is noise whatever it is, since the track already starts there,
+while an intro loop on the first bar is real work and carries an end as well as
+a start. The set exists partly to keep that distinction honest — it is exactly
+the kind of rule that gets widened by one commit and quietly eats real cues.
 
 ## What is planted where, and when
 
