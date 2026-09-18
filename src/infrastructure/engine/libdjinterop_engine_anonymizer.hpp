@@ -21,6 +21,13 @@ struct EngineAnonymizationResult
     // shipped. hm.db -- the play history, with real titles, artists and
     // paths -- was going out in every export until this existed.
     std::vector<std::string> removedUnanonymizableFiles;
+    // The ones it meant to drop and could not, each with why -- same
+    // contract as tracksRefused below: a nonempty list means the export
+    // must not be shared, because hm.db and its kind are exactly what is
+    // in here. std::filesystem::remove() answers "did I unlink
+    // something", not "is it gone" (see fs_remove.hpp), so this list is
+    // the difference between the two.
+    std::vector<std::string> unremovedUnanonymizableFiles;
     // PerformanceData rows whose waveform blob was emptied, when
     // slimForTesting was asked for. The cues in the same row are kept.
     int waveformRowsEmptied = 0;

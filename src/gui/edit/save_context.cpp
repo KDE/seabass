@@ -5,6 +5,8 @@
 #include "gui/edit/save_context.hpp"
 
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/fs_remove.hpp"
+#include "infrastructure/long_paths.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include <algorithm>
 #include <fstream>
@@ -416,11 +418,31 @@ std::optional<QString> SaveContext::rollBackChange()
         try {
             std::error_code ec;
             if (it->copy.empty()) {
-                if (fs::exists(it->original, ec) && fs::remove(it->original, ec)) {
+                // No copy means the file did not exist before this change,
+                // so putting it back means deleting it.
+                //
+                // Through removeEntry() rather than fs::remove(): the
+                // plain call answers "did I unlink something" and reports
+                // a path it cannot resolve as a quiet false with no error
+                // -- past MAX_PATH on Windows, which a track under a long
+                // artist/album path reaches. That left a file a failed
+                // change had created sitting on the stick while the save
+                // reported the rollback complete. Treated like the error
+                // below, because a rollback that did not roll back is the
+                // same kind of lie either way.
+                // The existence test is long-path prefixed too. Measured
+                // on Windows against a real file at a 337-unit path:
+                // fs::exists() unprefixed returns FALSE with ec unset, so
+                // the guard this replaced short-circuited and never even
+                // reached the remove. Prefixing only the remove would
+                // have left the bug exactly where it was.
+                const fs::path original = infrastructure::longPathSafe(it->original);
+                if (fs::exists(original, ec)) {
+                    std::string failure;
+                    if (!infrastructure::removeEntry(it->original, failure)) {
+                        throw std::runtime_error("could not remove " + it->original + ": " + failure);
+                    }
                     ++putBack;
-                }
-                if (ec) {
-                    throw std::runtime_error("could not remove " + it->original + ": " + ec.message());
                 }
                 continue;
             }

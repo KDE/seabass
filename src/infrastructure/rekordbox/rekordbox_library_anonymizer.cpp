@@ -9,11 +9,13 @@
 #include <fstream>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
 #include "infrastructure/anonymization_placeholder.hpp"
 #include "infrastructure/anonymization_export_layout.hpp"
+#include "infrastructure/fs_remove.hpp"
 #include "infrastructure/onelibrary/onelibrary_anonymizer.hpp"
 #include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
@@ -369,9 +371,17 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                 }
             }
             for (const auto &path : unknown) {
-                std::error_code removeEc;
-                fs::remove(path, removeEc);
-                result.removedUnanonymizableFiles.push_back(path.filename().string());
+                // Counted as dropped only once it is actually gone. This
+                // list is what the manifest tells whoever receives the
+                // export; a file still present that the manifest calls
+                // removed is the one outcome this whole class exists to
+                // prevent.
+                std::string failure;
+                if (infrastructure::removeEntry(path, failure)) {
+                    result.removedUnanonymizableFiles.push_back(path.filename().string());
+                } else {
+                    result.unremovedUnanonymizableFiles.push_back(path.filename().string() + ": " + failure);
+                }
             }
         }
         copyTreeIfPresent(fs::path(sourceRoot) / "USBANLZ", fs::path(destinationRoot) / "USBANLZ");
@@ -426,8 +436,16 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                 result.oneLibraryTracksScrubbed = oneLibraryResult.tracksScrubbed;
                 result.oneLibraryError = oneLibraryResult.errorMessage;
                 if (!oneLibraryResult.errorMessage.empty()) {
-                    std::error_code removeEc;
-                    fs::remove(oneLibrary, removeEc);
+                    // The scrub failed, so this database still holds real
+                    // titles, artists and paths; dropping it is what keeps
+                    // the export shareable. Not a sidecar and not
+                    // cleanup: if it cannot be dropped, the export is
+                    // unsafe and has to say so.
+                    std::string failure;
+                    if (!infrastructure::removeEntry(oneLibrary, failure)) {
+                        result.unremovedUnanonymizableFiles.push_back(
+                            oneLibrary.filename().string() + " (unscrubbed Device Library Plus mirror): " + failure);
+                    }
                 }
             }
             // Only now: SQLite recreates its -shm and -wal side files the
@@ -436,6 +454,13 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             // scrub itself wrote. They are removed last, and the VACUUM
             // the anonymizer ends with has already folded everything into
             // the database file proper.
+            //
+            // Left on the raw call deliberately, unlike the three sites
+            // above: these two names are fixed ASCII that this code
+            // writes itself, so no decomposition to trip over, and their
+            // contents post-VACUUM are the scrubbed bytes rather than the
+            // originals. One left behind is untidy, not a leak, and the
+            // export verifier's byte sweep would find it anyway.
             for (const char *sideFile : {"exportLibrary.db-shm", "exportLibrary.db-wal"}) {
                 std::error_code removeEc;
                 fs::remove(fs::path(destinationRoot) / "rekordbox" / sideFile, removeEc);
@@ -581,9 +606,16 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                     // Removed rather than scrubbed. Nothing in the export
                     // points at it, and for a small fixture these are the
                     // bulk of the bytes.
-                    std::error_code removeEc;
-                    fs::remove(entry.path(), removeEc);
-                    ++result.orphanedAnalysisFilesRemoved;
+                    // Counted only when gone. These still carry the real
+                    // path of a track deleted from the library, so one
+                    // left behind is a leak, not a tidiness problem.
+                    std::string failure;
+                    if (infrastructure::removeEntry(entry.path(), failure)) {
+                        ++result.orphanedAnalysisFilesRemoved;
+                    } else {
+                        result.unremovedUnanonymizableFiles.push_back(
+                            entry.path().filename().string() + " (orphaned analysis file): " + failure);
+                    }
                     continue;
                 }
                 anonymizeAnlzFile(entry.path().string(), nextCueCommentIndex);
@@ -592,6 +624,16 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         }
     } catch (const std::exception &e) {
         result.errorMessage = e.what();
+    }
+    // Said in errorMessage as well as in the list, because every caller
+    // checks errorMessage and an export holding a file nothing can scrub
+    // is a failed anonymization however much of the rest worked.
+    if (!result.unremovedUnanonymizableFiles.empty() && result.errorMessage.empty()) {
+        result.errorMessage = std::to_string(result.unremovedUnanonymizableFiles.size())
+            + " file(s) that cannot be anonymized are still in the export and could not be removed: "
+            + result.unremovedUnanonymizableFiles.front()
+            + (result.unremovedUnanonymizableFiles.size() > 1 ? ", ..." : "")
+            + " -- this export must not be shared.";
     }
     return result;
 }

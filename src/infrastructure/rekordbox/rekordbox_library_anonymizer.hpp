@@ -34,6 +34,17 @@ struct RekordboxAnonymizationResult
     // so the manifest can say what is missing from the export instead of
     // leaving a submitter to wonder.
     std::vector<std::string> removedUnanonymizableFiles;
+    // The ones it meant to drop and could not, each with why. A file here
+    // is one nothing in this project knows how to scrub, still sitting in
+    // the export: a nonempty list means the export must not be shared,
+    // and errorMessage is set to say so. Separate from the list above
+    // because "dropped" and "meant to drop" are different claims, and the
+    // manifest makes the first one to whoever receives the export.
+    //
+    // It exists because std::filesystem::remove() answers "did I unlink
+    // something", not "is it gone", and reports a name it cannot resolve
+    // as a quiet false with no error -- see fs_remove.hpp.
+    std::vector<std::string> unremovedUnanonymizableFiles;
     // Analysis files scrubbed that no present track row pointed at:
     // leftovers from tracks deleted from the library, which the copy
     // brings along and which still carry their real path.

@@ -5,12 +5,14 @@
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
 
 #include "infrastructure/anonymization_export_layout.hpp"
+#include "infrastructure/fs_remove.hpp"
 
 #include <cstdio>
 #include <filesystem>
 
 #include <sqlite3.h>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <unordered_map>
 #include <vector>
@@ -197,9 +199,17 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
                 }
             }
             for (const auto &path : unknown) {
-                std::error_code removeEc;
-                fs::remove(path, removeEc);
-                result.removedUnanonymizableFiles.push_back(path.filename().string());
+                // Counted as dropped only once it is actually gone. hm.db
+                // is in here -- the play history, with real titles,
+                // artists and paths -- so a file this loop reports as
+                // removed while it is still in Database2 ships the exact
+                // content the anonymizer exists to keep out.
+                std::string failure;
+                if (infrastructure::removeEntry(path, failure)) {
+                    result.removedUnanonymizableFiles.push_back(path.filename().string());
+                } else {
+                    result.unremovedUnanonymizableFiles.push_back(path.filename().string() + ": " + failure);
+                }
             }
         }
 
@@ -324,6 +334,17 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
         result.tracksAnonymized = static_cast<int>(allTracks.size());
     } catch (const std::exception &e) {
         result.errorMessage = e.what();
+    }
+    // Same contract as tracksRefused: a file nothing can scrub, still in
+    // Database2, means this export must not be shared. Said in
+    // errorMessage as well as in the list, because that is what callers
+    // check.
+    if (!result.unremovedUnanonymizableFiles.empty() && result.errorMessage.empty()) {
+        result.errorMessage = std::to_string(result.unremovedUnanonymizableFiles.size())
+            + " file(s) that cannot be anonymized are still in the export and could not be removed: "
+            + result.unremovedUnanonymizableFiles.front()
+            + (result.unremovedUnanonymizableFiles.size() > 1 ? ", ..." : "")
+            + " -- this export must not be shared.";
     }
     if (result.errorMessage.empty()) {
         result.filenameColumnRows = scrubFilenameColumn(destinationRoot);

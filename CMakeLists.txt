@@ -1845,6 +1845,11 @@ add_test(NAME duplicate_cleanup_interruption_test COMMAND duplicate_cleanup_inte
 add_executable(libdjinterop_engine_anonymizer_test
     src/infrastructure/engine/libdjinterop_engine_anonymizer.cpp
     src/application/ports/progress_reporter.cpp
+    # The anonymizer counts a file as dropped only once removeEntry()
+    # says it is gone, so this test links the real one rather than
+    # asserting against a remove() that answers a different question.
+    src/infrastructure/fs_remove.cpp
+    src/application/path_key.cpp
     tests/libdjinterop_engine_anonymizer_test.cpp
 )
 target_include_directories(libdjinterop_engine_anonymizer_test PRIVATE src)
