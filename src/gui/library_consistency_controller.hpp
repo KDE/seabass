@@ -29,6 +29,8 @@
 namespace seabass::gui
 {
 
+class ArtworkRescueSources;
+
 class LibraryEditSession;
 
 // Read-only Qt list model over the LibraryConsistencyIssues
@@ -173,6 +175,9 @@ struct LibraryConsistencyScanResult
     // gone or empty. Every scan starts with rekordbox, so it is there by
     // the time Engine asks.
     infrastructure::engine::ArtworkSourceByTrackFile artSources;
+    // Engine only: where covers this library has lost can be found again
+    // (tags, stick backups). Shared with the repair that follows.
+    std::shared_ptr<ArtworkRescueSources> rescue;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -446,6 +451,9 @@ private:
     std::vector<QString> m_pendingScanFormats;
     // Carried from the rekordbox pass to the Engine pass of the same scan.
     infrastructure::engine::ArtworkSourceByTrackFile m_artSources;
+    std::shared_ptr<ArtworkRescueSources> m_rescue;
+    // Where this computer keeps full stick backups, for the rescue above.
+    QString m_backupDirectory;
     bool m_busy = false;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;

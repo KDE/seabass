@@ -384,6 +384,7 @@ add_library(seabass_core STATIC
     src/infrastructure/stick_backup/zip64_writer.cpp
     src/infrastructure/stick_backup/zip64_reader.cpp
     src/infrastructure/stick_backup/backup_manifest.cpp
+    src/infrastructure/stick_backup/backup_artwork_lookup.cpp
     src/infrastructure/stick_backup/archive_journal.cpp
     src/infrastructure/stick_backup/archive_updater.cpp
     src/infrastructure/stick_backup/archive_recovery.cpp
@@ -580,7 +581,8 @@ find_package(Qt6 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts
 if(TAGLIB_FOUND OR TARGET TagLib::tag)
     add_library(seabass_taglib STATIC
         src/infrastructure/audio/taglib_metadata_probe.cpp
-        src/infrastructure/audio/taglib_duration_probe.cpp)
+        src/infrastructure/audio/taglib_duration_probe.cpp
+        src/infrastructure/audio/embedded_artwork.cpp)
     target_include_directories(seabass_taglib PUBLIC src)
     if(TARGET PkgConfig::TAGLIB)
         target_link_libraries(seabass_taglib PUBLIC PkgConfig::TAGLIB)
@@ -2286,6 +2288,11 @@ set_tests_properties(archive_anlz_source_test PROPERTIES LABELS "integration")
 
 # End to end: back a library up, open the backup, read it. Asserts the
 # cues match the original folder even though USBANLZ was never extracted.
+add_executable(backup_artwork_lookup_test tests/backup_artwork_lookup_test.cpp)
+target_include_directories(backup_artwork_lookup_test PRIVATE src tests)
+target_link_libraries(backup_artwork_lookup_test PRIVATE seabass_core SQLite::SQLite3)
+add_test(NAME backup_artwork_lookup_test COMMAND backup_artwork_lookup_test)
+
 add_executable(open_stick_backup_test tests/open_stick_backup_test.cpp)
 target_include_directories(open_stick_backup_test PRIVATE src)
 target_link_libraries(open_stick_backup_test PRIVATE seabass_core)

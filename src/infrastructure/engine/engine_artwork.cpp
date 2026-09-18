@@ -101,8 +101,9 @@ std::string artworkSourceKey(const std::string &trackFile)
 
 int ArtworkAudit::repairable() const
 {
-    return static_cast<int>(std::count_if(unreadable.begin(), unreadable.end(),
-                                          [](const ArtworkEntry &entry) { return !entry.imageOnStick.empty(); }));
+    return static_cast<int>(std::count_if(unreadable.begin(), unreadable.end(), [](const ArtworkEntry &entry) {
+        return !entry.imageOnStick.empty() || entry.otherSource;
+    }));
 }
 
 std::string artworkFileName(std::span<const std::uint8_t> hash)
@@ -182,7 +183,8 @@ std::string imageOnStickFor(std::string_view reference, const std::string &stick
     }
 }
 
-ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources)
+ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources,
+                          const ArtworkSourceProbe &hasOtherSource)
 {
     ArtworkAudit audit;
     const fs::path db = databaseFile(engineLibraryPath);
@@ -228,6 +230,23 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         sqlite3_close(handle);
         return audit;
     }
+
+    // Where a fault's image can come back from, in the order of how
+    // close the copy is to the track: the rekordbox catalog on this same
+    // stick first, then the audio file's own tags -- which is where both
+    // libraries took their copies from in the first place.
+    const auto findASourceFor = [&sources, &hasOtherSource](ArtworkEntry &entry) {
+        if (!sources.empty() && !entry.trackFile.empty()) {
+            const auto found = sources.find(artworkSourceKey(entry.trackFile));
+            if (found != sources.end() && isImageARepairCanName(found->second)) {
+                entry.imageOnStick = found->second;
+                return;
+            }
+        }
+        if (hasOtherSource) {
+            entry.otherSource = hasOtherSource(entry);
+        }
+    };
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         ArtworkEntry entry;
@@ -277,6 +296,11 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             }
             entry.storage = ArtworkStorage::RowWithoutHash;
             audit.tracksWithArt++;
+            // There is nothing to look the image up by, but there is
+            // still a track, and a track has a file: the art can be
+            // rebuilt from the same places as any other fault, and the
+            // repair writes the row it never had.
+            findASourceFor(entry);
             audit.unreadable.push_back(std::move(entry));
             continue;
         }
@@ -332,16 +356,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         } else {
             entry.storage = anyFile ? ArtworkStorage::CachedFileUnreadable : ArtworkStorage::CachedFileMissing;
             entry.reference = name;
-            // The row is right and its image is gone: the rekordbox
-            // catalog on the same stick usually still has art for the
-            // same audio file, and that is a source the user has with
-            // them, rather than a backup they may not have made.
-            if (!sources.empty() && !entry.trackFile.empty()) {
-                const auto found = sources.find(artworkSourceKey(entry.trackFile));
-                if (found != sources.end() && isImageARepairCanName(found->second)) {
-                    entry.imageOnStick = found->second;
-                }
-            }
+            findASourceFor(entry);
             audit.unreadable.push_back(std::move(entry));
         }
     }
@@ -355,7 +370,8 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
 
 ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
                             const std::function<void(const std::string &)> &beforeWrite,
-                            const std::string &databaseFileOverride)
+                            const std::string &databaseFileOverride,
+                            const ArtworkSourceReader &readOtherSource)
 {
     ArtworkRepair result;
     const fs::path db = databaseFileOverride.empty() ? databaseFile(engineLibraryPath) : fs::path(databaseFileOverride);
@@ -402,12 +418,14 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     // rollback then restores underneath a connection still holding it.
     try {
         for (const ArtworkEntry &entry : entries) {
-            if (entry.imageOnStick.empty()) {
-                continue;  // nothing on this stick to give it
+            std::string bytes;
+            if (!entry.imageOnStick.empty()) {
+                bytes = readWholeFile(entry.imageOnStick);
+            } else if (entry.otherSource && readOtherSource) {
+                bytes = readOtherSource(entry);
             }
-            const std::string bytes = readWholeFile(entry.imageOnStick);
             if (bytes.empty()) {
-                continue;  // unreadable image: one cover is not worth failing the save
+                continue;  // no source, or an unreadable one: a cover is not worth failing the save
             }
             const std::string extension = extensionForImage(bytes);
             if (extension.empty()) {

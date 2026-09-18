@@ -473,6 +473,53 @@ int main(int argc, char **argv)
         std::cout << "case 10 (an emptied artwork file is a fault, and the rekordbox art beside it fixes it) OK\n";
     }
 
+    // 11. Neither library has a copy any more, but the track does: the
+    //     art both of them originally took from the file's own tags is
+    //     still in the file. A row with no hash at all is fixed the same
+    //     way -- it names a track, and a track has a file.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_embedded");
+        fs::create_directories(fixture.stick / "Contents");
+        write(fixture.stick / "Contents" / "tagged.mp3", "AUDIO-WITH-A-PICTURE-INSIDE");
+        write(fixture.stick / "Contents" / "bare.mp3", "AUDIO-WITH-NOTHING-INSIDE");
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open((fixture.library / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+        exec(db, "DROP TABLE Track;");
+        exec(db, "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER, path TEXT);");
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (7, NULL);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId, path) VALUES "
+                 "(1, 'Has a picture', 'A', 7, '../Contents/tagged.mp3');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId, path) VALUES "
+                 "(2, 'Has none anywhere', 'B', 7, '../Contents/bare.mp3');");
+        sqlite3_close(db);
+
+        const std::string tagged = (fixture.stick / "Contents" / "tagged.mp3").string();
+        const auto probe = [&tagged](const ArtworkEntry &entry) { return entry.trackFile == tagged; };
+        const auto reader = [&tagged](const ArtworkEntry &entry) {
+            return entry.trackFile == tagged ? jpeg("EMBEDDED-COVER") : std::string();
+        };
+
+        const ArtworkAudit audit = auditArtwork(fixture.library.string(), {}, probe);
+        assert(audit.error.empty());
+        assert(audit.unreadable.size() == 2);
+        assert(audit.unreadable[0].storage == ArtworkStorage::RowWithoutHash);
+        // Only the one whose file really carries a picture is promised.
+        assert(audit.repairable() == 1);
+        assert(audit.unreadable[0].otherSource);
+        assert(!audit.unreadable[1].otherSource);
+
+        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable, {}, {}, reader);
+        assert(repair.error.empty());
+        assert(repair.repaired == 1);
+        assert(repair.filesWritten.size() == 1);
+
+        const ArtworkAudit after = auditArtwork(fixture.library.string(), {}, probe);
+        assert(after.readableByAPlayer == 1);
+        assert(after.unreadable.size() == 1);  // the one with no art anywhere stays a fault
+        assert(after.repairable() == 0);
+        std::cout << "case 11 (a track's own tags are the last source, and a hash-less row is fixed from them too) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }

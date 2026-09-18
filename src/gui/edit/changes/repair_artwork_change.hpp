@@ -13,6 +13,8 @@
 namespace seabass::gui
 {
 
+class ArtworkRescueSources;
+
 // Gives one Engine track its cover art the way Engine stores it: the image
 // copied into "Engine Library/Artwork" under the hash of its bytes, and the
 // track pointed at that row.
@@ -37,8 +39,13 @@ public:
     // can decide whether the whole run goes through a scratch copy.
     // declaresDatabase: true for the first of a batch only, see
     // filesToBackup().
+    // rescue: where the image comes from when it is not a plain file on
+    // the stick -- the track's own tags, or a stick backup on this
+    // computer. Null leaves those entries alone, which is what a library
+    // scanned without them reports as unfixable anyway.
     RepairArtworkChange(QString enginePath, infrastructure::engine::ArtworkEntry entry, int itemCountHint,
-                        bool declaresDatabase = true);
+                        bool declaresDatabase = true,
+                        std::shared_ptr<ArtworkRescueSources> rescue = {});
 
     QString id() const override;
     // Staged from Library Health, like the repairs and orphan deletions.
@@ -59,6 +66,7 @@ private:
     infrastructure::engine::ArtworkEntry m_entry;
     int m_itemCountHint = 1;
     bool m_declaresDatabase = true;
+    std::shared_ptr<ArtworkRescueSources> m_rescue;
 };
 
 }  // namespace seabass::gui

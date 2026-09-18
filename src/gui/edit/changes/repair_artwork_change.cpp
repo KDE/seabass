@@ -7,6 +7,7 @@
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
+#include "gui/artwork_rescue_sources.hpp"
 
 #include <string>
 
@@ -29,11 +30,13 @@ std::string databaseOf(const QString &enginePath)
 }  // namespace
 
 RepairArtworkChange::RepairArtworkChange(QString enginePath, infrastructure::engine::ArtworkEntry entry,
-                                         int itemCountHint, bool declaresDatabase)
+                                         int itemCountHint, bool declaresDatabase,
+                                         std::shared_ptr<ArtworkRescueSources> rescue)
     : m_enginePath(std::move(enginePath))
     , m_entry(std::move(entry))
     , m_itemCountHint(itemCountHint)
     , m_declaresDatabase(declaresDatabase)
+    , m_rescue(std::move(rescue))
 {
 }
 
@@ -115,7 +118,7 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
     // the stick, not the database the scratch copy stands in for.
     const auto repair = infrastructure::engine::repairArtwork(
         m_enginePath.toStdString(), {m_entry}, [&ctx](const std::string &file) { ctx.protectForThisChange(file); },
-        database);
+        database, m_rescue ? m_rescue->reader() : infrastructure::engine::ArtworkSourceReader{});
     if (!repair.error.empty()) {
         return ChangeOutcome::failure(QString::fromStdString(repair.error));
     }

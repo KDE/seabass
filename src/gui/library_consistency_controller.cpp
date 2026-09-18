@@ -35,6 +35,9 @@
 #include "gui/edit/changes/repair_artwork_change.hpp"
 #include "gui/future_result.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
+#include "gui/artwork_rescue_sources.hpp"
+#include "gui/app_settings_controller.hpp"
+#include "gui/seabass_settings.hpp"
 #include "gui/edit/changes/repair_issue_change.hpp"
 
 namespace seabass::gui
@@ -349,7 +352,8 @@ void tallyPlaylists(const std::vector<domain::Track> &tracks, LibraryConsistency
 LibraryConsistencyScanResult runScanTask(QString format, QString path, QString playlistName,
                                           std::shared_ptr<QtProgressReporter> reporter,
                                           application::CancellationToken cancel,
-                                          infrastructure::engine::ArtworkSourceByTrackFile artSources)
+                                          infrastructure::engine::ArtworkSourceByTrackFile artSources,
+                                          QString backupDirectory)
 {
     LibraryConsistencyScanResult result;
     try {
@@ -375,7 +379,14 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // Cover art, checked while this format's library is open
             // anyway: one read of Track/AlbumArt and a stat per image,
             // nothing next to the scan itself.
-            result.artwork = infrastructure::engine::auditArtwork(path.toStdString(), artSources);
+            // The rescue sources outlive the scan: the repair that
+            // follows asks the same object for the bytes, so a backup
+            // archive is opened once rather than once per cover.
+            result.rescue = std::make_shared<ArtworkRescueSources>(
+                backupDirectory.toStdString(),
+                std::filesystem::path(path.toStdString()).parent_path().string());
+            result.artwork =
+                infrastructure::engine::auditArtwork(path.toStdString(), artSources, result.rescue->probe());
         }
 
         if (!playlistName.isEmpty()) {
@@ -427,6 +438,13 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
             &LibraryConsistencyController::onScanFinished);
     connect(&m_repairWatcher, &QFutureWatcher<infrastructure::media::FilesystemRepairResult>::finished, this,
             &LibraryConsistencyController::onFilesystemRepairFinished);
+    // Where this computer keeps full stick backups: read once, the same
+    // way and from the same key AppSettingsController writes it, so a
+    // cover lost from the stick can be looked for in them.
+    QSettings settings = openSeabassSettings();
+    m_backupDirectory = settings.value(QStringLiteral("stickBackupDirectory"),
+                                       AppSettingsController::defaultStickBackupDirectory())
+                            .toString();
 }
 
 std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
@@ -562,7 +580,7 @@ void LibraryConsistencyController::scanNextPendingFormat()
     m_pendingScanFormats.erase(m_pendingScanFormats.begin());
     setScanningFormat(format);
     m_watcher.setFuture(QtConcurrent::run(runScanTask, format, pathForFormat(format), m_currentPlaylistName,
-                                          makeReporter(), m_scanCancel, m_artSources));
+                                          makeReporter(), m_scanCancel, m_artSources, m_backupDirectory));
 }
 
 void LibraryConsistencyController::cancelScan()
@@ -591,6 +609,9 @@ void LibraryConsistencyController::onScanFinished()
         m_junkCueModel.appendIssues(std::move(result.junkCues));
         if (!result.artSources.empty()) {
             m_artSources = std::move(result.artSources);
+        }
+        if (result.rescue) {
+            m_rescue = result.rescue;
         }
         if (result.artwork.tracksWithArt > 0 || !result.artwork.error.empty()) {
             m_artwork = std::move(result.artwork);
@@ -1029,7 +1050,8 @@ void LibraryConsistencyController::repairArtwork()
         // Only the first declares the database, so the save takes one
         // checkpoint copy of it rather than one per track: see
         // RepairArtworkChange::filesToBackup().
-        changes.push_back(std::make_unique<RepairArtworkChange>(m_enginePath, entry, count, changes.empty()));
+        changes.push_back(
+            std::make_unique<RepairArtworkChange>(m_enginePath, entry, count, changes.empty(), m_rescue));
         ids.insert(RepairArtworkChange::idFor(entry.trackId));
     }
     if (!m_session->stageAll(std::move(changes))) {

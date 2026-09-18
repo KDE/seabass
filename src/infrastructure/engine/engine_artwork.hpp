@@ -69,6 +69,11 @@ struct ArtworkEntry
     // The track's audio file, resolved against the Engine library, which
     // is how the rekordbox side is asked about the same track.
     std::string trackFile;
+    // A copy exists somewhere that is not a plain file on this stick --
+    // the audio file's own tags, or a stick backup on this computer. The
+    // repair asks for the bytes when it gets there; the scan only asks
+    // whether they exist, so the count it shows is a promise it can keep.
+    bool otherSource = false;
 };
 
 struct ArtworkAudit
@@ -95,7 +100,16 @@ using ArtworkSourceByTrackFile = std::unordered_map<std::string, std::string>;
 
 std::string artworkSourceKey(const std::string &trackFile);
 
-ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources = {});
+// The other places a lost cover can come back from, asked about one
+// faulty entry at a time and never for a whole library. Passed in rather
+// than called here: one of them reads tags (TagLib) and another reads
+// stick backups (the zip reader), and neither belongs to this file's job
+// of reading an Engine database.
+using ArtworkSourceProbe = std::function<bool(const ArtworkEntry &)>;
+using ArtworkSourceReader = std::function<std::string(const ArtworkEntry &)>;
+
+ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources = {},
+                          const ArtworkSourceProbe &hasOtherSource = {});
 
 // How Engine spells a hash as a file name under Artwork/: base64url,
 // unpadded. Exposed for the test, which checks it against the encoding
@@ -148,6 +162,7 @@ struct ArtworkRepair
 // fails the repair with the transaction rolled back.
 ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
                             const std::function<void(const std::string &)> &beforeWrite = {},
-                            const std::string &databaseFile = {});
+                            const std::string &databaseFile = {},
+                            const ArtworkSourceReader &readOtherSource = {});
 
 }  // namespace seabass::infrastructure::engine
