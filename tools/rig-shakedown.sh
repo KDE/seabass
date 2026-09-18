@@ -51,6 +51,15 @@ prints="${RIG_REFERENCE_PRINTS:-$HOME/Seabass/e2e/reference-fingerprints.txt}"
 # rig_delete_backup refuses to delete anything at these paths or beside them.
 export RIG_REFERENCE_A="$refA" RIG_REFERENCE_B="$refB"
 export QT_QPA_PLATFORM=offscreen
+# On Windows a GUI-subsystem process with no console attached has Qt's
+# default message handler route qDebug()/qWarning()/console.log() (and
+# QtQuickTest's own PASS/FAIL report) to OutputDebugString instead of
+# stderr -- invisible to a pipe, a log file, or anything else short of a
+# debugger. Every "this test produced no output at all" mystery tonight
+# was this: the tests were genuinely failing, on a perfectly ordinary
+# assertion, and there was simply nothing to read. Confirmed directly by
+# setting this and immediately seeing the real failure message.
+export QT_FORCE_STDERR_LOGGING=1
 
 mkdir -p "$out" "$out/shots"
 # F4 writes gigabytes to stick A. An interrupt between the fill and its

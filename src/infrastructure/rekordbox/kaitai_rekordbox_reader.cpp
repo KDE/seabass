@@ -477,15 +477,48 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         // directly. The same mismatch this project already
                         // fixed once for OneLibraryReader::readAll(), missed
                         // here.
-                        track.filePath = std::filesystem::path(stickRoot + trackFilePath).make_preferred().string();
+                        //
+                        // make_preferred() alone was not enough: it rewrites
+                        // which character a separator uses, not how many
+                        // appear together. trackFilePath already carries its
+                        // own leading "/" (this is a stick-root-relative
+                        // path, see the comment above stickRoot's own
+                        // definition) and stickRoot -- the PIONEER folder's
+                        // parent -- ends in one too whenever PIONEER sits
+                        // directly under the stick root, which every real
+                        // stick does. The two leading separators surviving
+                        // make_preferred() as "E:\\\Contents\..." (three
+                        // backslashes after the drive, not one) is why a
+                        // live rig test comparing this against
+                        // OneLibraryReader's own (correctly single-slash-
+                        // stripped) filePath on Windows found the same file
+                        // listed under two different strings and matched
+                        // nothing -- confirmed directly, counting the
+                        // backslashes either side. Stripped the same way
+                        // OneLibraryReader::readAll() already strips relPath.
+                        // fs::path's own operator/ rather than string
+                        // concatenation, too: it inserts a separator only
+                        // when stickRoot doesn't already end with one, so
+                        // this stays correct on whichever of the two shapes
+                        // stickRoot happens to be (this project's own
+                        // pattern in OneLibraryReader::readAll(), which this
+                        // now matches exactly).
+                        if (trackFilePath.front() == '/' || trackFilePath.front() == '\\') {
+                            trackFilePath.erase(0, 1);
+                        }
+                        track.filePath = (std::filesystem::path(stickRoot) / trackFilePath).make_preferred().string();
                         std::error_code ec;
                         auto size = std::filesystem::file_size(track.filePath, ec);
                         track.fileSizeBytes = ec ? 0 : size;
                     }
                     auto artworkIt = artworkPathById.find(rowTrack->artwork_id());
                     if (artworkIt != artworkPathById.end() && !artworkIt->second.empty()) {
+                        std::string artworkRelativePath = artworkIt->second;
+                        if (artworkRelativePath.front() == '/' || artworkRelativePath.front() == '\\') {
+                            artworkRelativePath.erase(0, 1);
+                        }
                         track.artworkPath =
-                            std::filesystem::path(stickRoot + artworkIt->second).make_preferred().string();
+                            (std::filesystem::path(stickRoot) / artworkRelativePath).make_preferred().string();
                     }
                     track.durationSeconds = rowTrack->duration();
                     track.bpm = rowTrack->tempo() / 100.0;

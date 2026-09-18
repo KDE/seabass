@@ -39,6 +39,10 @@ export SEABASS_LIVE_STICK="$stick"
 [ -z "$shots" ] || mkdir -p "$shots"
 export SEABASS_SCREENSHOT_DIR="$shots"
 export QT_QPA_PLATFORM=offscreen
+# See tools/rig-shakedown.sh's own copy of this: without it, a real
+# failure on Windows prints nothing at all (Qt routes it to
+# OutputDebugString instead of stderr when there is no attached console).
+export QT_FORCE_STDERR_LOGGING=1
 failed=0
 
 # Always a full "TestCase::function" name: a bare TestCase name makes

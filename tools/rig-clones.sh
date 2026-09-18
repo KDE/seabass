@@ -39,6 +39,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 build="${SEABASS_BUILD_DIR:-$root/build}"
 export QT_QPA_PLATFORM=offscreen
+# See rig-shakedown.sh's own copy of this: without it, a real failure on
+# Windows prints nothing at all (Qt routes it to OutputDebugString instead
+# of stderr when there is no attached console), so `step()` below would
+# capture an empty log for a genuine, ordinary assertion failure.
+export QT_FORCE_STDERR_LOGGING=1
 a="$(basename "$A")"
 b="$(basename "$B")"
 failed=0

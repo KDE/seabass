@@ -31,6 +31,11 @@ root="$(cd "$here/.." && pwd)"
 build="${SEABASS_BUILD_DIR:-$root/build}"
 export SEABASS_LIVE_STICK="$stick"
 export QT_QPA_PLATFORM=offscreen
+# See rig-shakedown.sh's own copy of this: without it, a real failure on
+# Windows prints nothing at all (Qt routes it to OutputDebugString instead
+# of stderr when there is no attached console), so `run()` below would
+# capture an empty log for a genuine, ordinary assertion failure.
+export QT_FORCE_STDERR_LOGGING=1
 failed=0
 
 run() {  # full "TestCase::function" name
