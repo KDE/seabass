@@ -149,6 +149,12 @@ protected:
     void setScanLabel(const QString &label);
     void setErrorMessage(const QString &message);
     void setStatusMessage(const QString &message);
+    // A "Staged N ... Press Save" line, which stops being true the moment
+    // nothing is staged any more: the last change landing, an unstage, or a
+    // discard. Kept apart from other status messages so clearing it never
+    // wipes one of those.
+    void setStagedStatusMessage(const QString &message);
+    void clearStagedStatusIfNothingStaged();
 
     LibraryEditSession *session() const { return m_session; }
 
@@ -158,6 +164,7 @@ protected:
         QString description;
     };
     std::map<QString, StagedInfo> m_stagedByKey;  // row key -> what is staged for it
+    bool m_statusIsAboutStaging = false;
 
 private:
     void onSessionChangeApplied(const QString &changeId);

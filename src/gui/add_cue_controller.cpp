@@ -46,6 +46,11 @@ void AddCueController::attachSession(const QString &format, const QString &path)
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 if (m_pending.erase(changeId) > 0) {
                     ++m_pendingRevision;
+                    if (m_pending.empty()) {
+                        // "Staged: ... Press Save" stops being true with the
+                        // last cue written.
+                        setStatusMessage({});
+                    }
                     emit pendingChanged();
                 }
             });
@@ -58,6 +63,7 @@ void AddCueController::attachSession(const QString &format, const QString &path)
                 if (!m_pending.empty()) {
                     m_pending.clear();
                     ++m_pendingRevision;
+                    setStatusMessage({});
                     emit pendingChanged();
                 }
             });

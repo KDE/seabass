@@ -198,6 +198,31 @@ TestCase {
         compare(controller.artworkRepairStaged, false, "unstaging takes it back out");
     }
 
+    // "Press Save to write it to the stick" is only true while something is
+    // waiting to be saved. It used to be set once and left there, so a page
+    // whose work had already landed -- or been taken back -- went on telling
+    // the user to press a button with nothing behind it.
+    //
+    // The third way it goes (the save lands) needs a real save, which only
+    // the live suite does; tst_LiveEditMode asserts it there.
+    function test_theStagedLineGoesWhenNothingIsStaged() {
+        testCase.repairableLibrary = artworkFixture.libraryWithRepairableArt(testCase.fixtureEngineRoot);
+        verify(testCase.repairableLibrary.length > 0, "the fixture library must be built");
+        var page = createTemporaryObject(repairablePageComponent, testCase);
+        var controller = page.consistencyController;
+        tryVerify(function() { return controller.busy === false; }, 300000, "the scan must finish");
+        compare(controller.statusMessage, "", "a scan that found things to fix says nothing about saving");
+
+        var button = findChild(page, "fixCoverArtButton");
+        button.clicked();
+        verify(controller.statusMessage.indexOf("Press Save") >= 0,
+               "staging says what Save would do: " + controller.statusMessage);
+
+        button.clicked();
+        compare(controller.artworkRepairStaged, false);
+        compare(controller.statusMessage, "", "and taking it back takes the line with it");
+    }
+
     function test_theCoverArtNoticeStaysAwayWithNothingToReport() {
         var page = createTemporaryObject(pageComponent, testCase);
         verify(page !== null, "the page must instantiate");

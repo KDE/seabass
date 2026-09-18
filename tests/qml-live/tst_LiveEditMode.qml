@@ -254,6 +254,7 @@ TestCase {
             skip("no stray cues on this stick");
         }
         ctrl.removeAllJunkCues();
+        verify(ctrl.statusMessage.length > 0, "staging says what Save will write");
         var s = session();
         tryCompare(s, "pendingCount", count, 5000);
         shot(page, "live-junk-staged");
@@ -261,6 +262,9 @@ TestCase {
         compare(summary.error, "");
         compare(summary.written, count);
         tryCompare(ctrl, "busy", false, 120000);
+        // Written means written: the page must not still be telling the user
+        // to press Save.
+        compare(ctrl.statusMessage, "", "the staged-work line must go once the save lands");
 
         // The save is only real if a fresh scan no longer sees them. A test
         // that never re-reads passes just as happily against a writer that

@@ -452,6 +452,12 @@ private:
     void setScanProgress(int current, int total);
     void setErrorMessage(const QString &message);
     void setStatusMessage(const QString &message);
+    // A "Staged N ... Press Save" line, true only while something is
+    // staged: cleared when the last group lands, is unstaged, or is
+    // discarded. Kept apart from other status messages so clearing it
+    // never wipes one of those.
+    void setStagedStatusMessage(const QString &message);
+    void clearStagedStatusIfNothingStaged();
     std::shared_ptr<QtProgressReporter> makeReporter();
 
     CleanupPlanListModel m_model;
@@ -480,6 +486,7 @@ private:
     int m_scanTotal = 0;
     QString m_errorMessage;
     QString m_statusMessage;
+    bool m_statusIsAboutStaging = false;
 };
 
 }  // namespace seabass::gui

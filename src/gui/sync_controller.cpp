@@ -341,7 +341,8 @@ void SyncController::stageSelected(bool matchingSearchOnly)
         }
     }
     if (staged > 0) {
-        setStatusMessage(QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged));
+        setStagedStatusMessage(
+            QStringLiteral("Staged %1 track(s). Press Save to write the cues to the stick.").arg(staged));
     }
 }
 

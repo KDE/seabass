@@ -436,7 +436,8 @@ void DuplicatesController::applyAllUnambiguous()
         }
     }
     if (staged > 0) {
-        setStatusMessage(QStringLiteral("Staged %1 group(s). Press Save to copy the cues onto the stick.").arg(staged));
+        setStagedStatusMessage(
+            QStringLiteral("Staged %1 group(s). Press Save to copy the cues onto the stick.").arg(staged));
     }
 }
 

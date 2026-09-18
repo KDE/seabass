@@ -1024,6 +1024,7 @@ void CleanupController::attachSession()
                         if (index >= 0) {
                             m_model.removePlansAt({index});
                         }
+                        clearStagedStatusIfNothingStaged();
                         emit plansChanged();
                         emit includedChanged();
                         // The doomed copies were appended to the pending-
@@ -1036,6 +1037,7 @@ void CleanupController::attachSession()
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
                 m_stagedBySurvivor.clear();
                 m_model.clearStaged();
+                clearStagedStatusIfNothingStaged();
                 emit plansChanged();
                 emit includedChanged();
             });
@@ -1130,7 +1132,8 @@ void CleanupController::apply(bool matchingSearchOnly)
         }
     }
     if (staged > 0) {
-        setStatusMessage(QStringLiteral("Staged %1 group(s). Press Save to clean them up on the stick.").arg(staged));
+        setStagedStatusMessage(
+            QStringLiteral("Staged %1 group(s). Press Save to clean them up on the stick.").arg(staged));
     }
 }
 
@@ -1151,6 +1154,7 @@ void CleanupController::unstageAll()
     for (std::size_t i = 0; i < m_model.plans().size(); ++i) {
         m_model.setStaged(i, false, QString());
     }
+    clearStagedStatusIfNothingStaged();
     emit plansChanged();
 }
 
@@ -1169,6 +1173,7 @@ void CleanupController::unstage(int row)
     }
     m_stagedBySurvivor.erase(it);
     m_model.setStaged(static_cast<size_t>(rawIndex), false, QString());
+    clearStagedStatusIfNothingStaged();
     emit plansChanged();
 }
 
@@ -1349,8 +1354,22 @@ void CleanupController::setErrorMessage(const QString &message)
     emit errorMessageChanged();
 }
 
+void CleanupController::setStagedStatusMessage(const QString &message)
+{
+    setStatusMessage(message);
+    m_statusIsAboutStaging = !message.isEmpty();
+}
+
+void CleanupController::clearStagedStatusIfNothingStaged()
+{
+    if (m_statusIsAboutStaging && m_stagedBySurvivor.empty()) {
+        setStatusMessage({});
+    }
+}
+
 void CleanupController::setStatusMessage(const QString &message)
 {
+    m_statusIsAboutStaging = false;
     if (m_statusMessage == message) {
         return;
     }

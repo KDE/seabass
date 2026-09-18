@@ -723,6 +723,7 @@ void LibraryConsistencyController::attachSession()
                     // than guessed at per track.
                     m_stagedArtwork.erase(staged);
                     m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
                     emit artworkChanged();
                     return;
                 }
@@ -742,6 +743,7 @@ void LibraryConsistencyController::attachSession()
                         if (index >= 0) {
                             m_model.removeIssueAt(index);
                         }
+                        clearStagedStatusIfNothingStaged();
                         emit issuesChanged();
                         return;
                     }
@@ -758,6 +760,7 @@ void LibraryConsistencyController::attachSession()
                         if (index >= 0) {
                             m_junkCueModel.removeAt(index);
                         }
+                        clearStagedStatusIfNothingStaged();
                         emit issuesChanged();
                         return;
                     }
@@ -775,6 +778,7 @@ void LibraryConsistencyController::attachSession()
                 m_stagedArtwork.clear();
                 m_model.clearStaged();
                 m_junkCueModel.clearStaged();
+                clearStagedStatusIfNothingStaged();
                 emit artworkChanged();
                 emit issuesChanged();
             });
@@ -866,7 +870,8 @@ void LibraryConsistencyController::repairAll()
         }
     }
     if (staged > 0) {
-        setStatusMessage(QStringLiteral("Staged %1 repair(s). Press Save to write them to the stick.").arg(staged));
+        setStagedStatusMessage(
+            QStringLiteral("Staged %1 repair(s). Press Save to write them to the stick.").arg(staged));
     }
 }
 
@@ -905,6 +910,7 @@ void LibraryConsistencyController::unstageIssue(int index)
     }
     m_stagedIssues.erase(it);
     m_model.setStaged(index, false, QString());
+    clearStagedStatusIfNothingStaged();
     emit issuesChanged();
 }
 
@@ -959,7 +965,7 @@ void LibraryConsistencyController::removeAllJunkCues()
         }
     }
     if (staged > 0) {
-        setStatusMessage(
+        setStagedStatusMessage(
             QStringLiteral("Staged removing %1 stray cue(s). Press Save to write it to the stick.").arg(staged));
     }
 }
@@ -1064,7 +1070,7 @@ void LibraryConsistencyController::repairArtwork()
     }
     m_stagedArtwork = std::move(ids);
     emit artworkChanged();
-    setStatusMessage(
+    setStagedStatusMessage(
         QStringLiteral("Staged cover art for %1 track(s). Press Save to write it to the stick.").arg(count));
 }
 
@@ -1082,7 +1088,10 @@ void LibraryConsistencyController::unstageArtworkRepair()
     }
     m_stagedArtwork.clear();
     emit artworkChanged();
-    setStatusMessage({});
+    // One way of clearing the staged line, shared with the other two:
+    // clearing it here by hand would keep working while the mechanism
+    // rotted, and a test of this path would prove nothing.
+    clearStagedStatusIfNothingStaged();
 }
 
 void LibraryConsistencyController::unstageJunkCue(int index)
@@ -1100,6 +1109,7 @@ void LibraryConsistencyController::unstageJunkCue(int index)
     }
     m_stagedJunk.erase(it);
     m_junkCueModel.setStaged(index, false);
+    clearStagedStatusIfNothingStaged();
     emit issuesChanged();
 }
 
@@ -1164,8 +1174,22 @@ void LibraryConsistencyController::setErrorMessage(const QString &message)
     emit errorMessageChanged();
 }
 
+void LibraryConsistencyController::setStagedStatusMessage(const QString &message)
+{
+    setStatusMessage(message);
+    m_statusIsAboutStaging = !message.isEmpty();
+}
+
+void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
+{
+    if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()) {
+        setStatusMessage({});
+    }
+}
+
 void LibraryConsistencyController::setStatusMessage(const QString &message)
 {
+    m_statusIsAboutStaging = false;
     if (m_statusMessage == message) {
         return;
     }

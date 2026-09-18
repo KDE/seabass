@@ -94,6 +94,7 @@ void StagedCueEditController::onSessionChangeApplied(const QString &changeId)
         if (index >= 0) {
             stagedPlanModel()->removePlanAt(index);
         }
+        clearStagedStatusIfNothingStaged();
         emit stagedChanged();
         onStagedChangeApplied(index >= 0);
         break;
@@ -104,6 +105,7 @@ void StagedCueEditController::onSessionChangesDiscarded()
 {
     m_stagedByKey.clear();
     stagedPlanModel()->clearStaged();
+    clearStagedStatusIfNothingStaged();
     emit stagedChanged();
     onStagedCleared();
 }
@@ -155,6 +157,7 @@ void StagedCueEditController::unstage(int index)
     }
     m_stagedByKey.erase(it);
     model->setStaged(index, false, QString());
+    clearStagedStatusIfNothingStaged();
     emit stagedChanged();
 }
 
@@ -205,8 +208,22 @@ void StagedCueEditController::setErrorMessage(const QString &message)
     emit errorMessageChanged();
 }
 
+void StagedCueEditController::setStagedStatusMessage(const QString &message)
+{
+    setStatusMessage(message);
+    m_statusIsAboutStaging = !message.isEmpty();
+}
+
+void StagedCueEditController::clearStagedStatusIfNothingStaged()
+{
+    if (m_statusIsAboutStaging && m_stagedByKey.empty()) {
+        setStatusMessage({});
+    }
+}
+
 void StagedCueEditController::setStatusMessage(const QString &message)
 {
+    m_statusIsAboutStaging = false;
     if (m_statusMessage == message) {
         return;
     }

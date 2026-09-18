@@ -407,6 +407,12 @@ private:
     void setScanningFormat(const QString &format);
     void setErrorMessage(const QString &message);
     void setStatusMessage(const QString &message);
+    // A "Staged N ... Press Save" line, which stops being true the moment
+    // nothing is staged any more -- the last change landing, an unstage, or
+    // a discard. Tracked apart from any other status so clearing it never
+    // wipes a message about something else.
+    void setStagedStatusMessage(const QString &message);
+    void clearStagedStatusIfNothingStaged();
     QString pathForFormat(const QString &format) const;
     std::shared_ptr<QtProgressReporter> makeReporter();
     // Folds one format's own playlist tally (LibraryConsistencyScanResult
@@ -460,6 +466,7 @@ private:
     QString m_scanningFormat;
     QString m_errorMessage;
     QString m_statusMessage;
+    bool m_statusIsAboutStaging = false;
 };
 
 }  // namespace seabass::gui
