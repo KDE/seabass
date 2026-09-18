@@ -1,0 +1,129 @@
+#version 440
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+// A whole track as a ring around its cover art: 12 o'clock is the start,
+// clockwise is time, a bar's length is that moment's energy. Everything
+// is read from two textures -- the waveform as an N x 1 strip (r, g, b =
+// low, mid, high) and the art -- so a frame costs the CPU two uniforms.
+
+layout(location = 0) in vec2 qt_TexCoord0;
+layout(location = 0) out vec4 fragColor;
+
+layout(std140, binding = 0) uniform buf {
+    mat4 qt_Matrix;
+    float qt_Opacity;
+    float progress;    // 0..1 of the track played; below 0 for "not playing"
+    float bass;        // the low band under the playhead, 0..1
+    float bars;        // how many bars go round
+    float columns;     // how many waveform columns the strip holds
+    float artRadius;   // the art disc, in units of the ring's outer radius
+    float hasArt;
+    vec4 fallbackColor;
+};
+
+layout(binding = 1) uniform sampler2D wave;
+layout(binding = 2) uniform sampler2D art;
+
+const float TAU = 6.28318530718;
+
+// The art, heavily blurred, looked up in the direction this bar points:
+// the cover bleeds outward into its own ring.
+vec3 ringColour(vec2 dir)
+{
+    if (hasArt < 0.5)
+        return fallbackColor.rgb;
+    vec3 c = vec3(0.0);
+    // Nine wide taps stand in for a blur; the art has no mipmaps to lean on.
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            vec2 jitter = (vec2(float(i), float(j)) - 1.0) * 0.09;
+            c += texture(art, clamp(vec2(0.5) + dir * 0.30 + jitter, 0.02, 0.98)).rgb;
+        }
+    c /= 9.0;
+    // Push it away from grey and up to a brightness that reads on a dark
+    // page; a black-and-white cover still gives a black-and-white ring.
+    float luma = dot(c, vec3(0.299, 0.587, 0.114));
+    c = clamp(mix(vec3(luma), c, 1.7), 0.0, 1.0);
+    float peak = max(max(c.r, c.g), max(c.b, 0.001));
+    return c * (clamp(peak, 0.75, 1.0) / peak);
+}
+
+void main()
+{
+    vec2 p = (qt_TexCoord0 - 0.5) * 2.0;
+    float r = length(p);
+    float px = fwidth(r);
+    vec2 dir = p / max(r, 0.0001);
+    float t = fract(atan(p.x, -p.y) / TAU + 1.0);
+
+    // This bar: the loudest of the columns it spans, so a short peak
+    // between two sample points is not lost.
+    float k = t * bars;
+    float bar = floor(k);
+    float f = fract(k);
+    vec3 w = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        float u = (bar + (float(i) + 0.5) / 4.0) / bars;
+        w = max(w, texture(wave, vec2(u, 0.5)).rgb);
+    }
+
+    float discRadius = artRadius * (1.0 + 0.035 * bass);
+    float r0 = artRadius + 0.07;
+    float room = 1.0 - r0;
+    float low = max(w.r, 0.03) * room;
+    float mid = w.g * 0.72 * room;
+    float high = w.b * 0.45 * room;
+    float reach = max(low, max(mid, high));
+
+    vec3 c = ringColour(dir);
+    vec3 colour = c * 0.50;
+    colour = mix(colour, c, 1.0 - smoothstep(mid - px, mid + px, r - r0));
+    colour = mix(colour, mix(c, vec3(1.0), 0.8), 1.0 - smoothstep(high - px, high + px, r - r0));
+
+    // A pixel's width measured in bars, worked out rather than taken from
+    // fwidth(k): k jumps from `bars` to 0 at 12 o'clock and fwidth would
+    // draw a seam there.
+    float kpx = px / max(r, 0.001) * bars / TAU;
+    float inBar = smoothstep(0.16 - kpx, 0.16 + kpx, f) * (1.0 - smoothstep(0.84 - kpx, 0.84 + kpx, f));
+    float alpha = inBar * smoothstep(r0 - px, r0 + px, r) * (1.0 - smoothstep(reach - px, reach + px, r - r0));
+
+    float ahead = t - progress;
+    if (progress >= 0.0) {
+        // What is still to come is dimmed; what was just played glows,
+        // fading back round the ring like a comet's tail.
+        float played = 1.0 - smoothstep(-0.5 / bars, 0.5 / bars, ahead);
+        float luma = dot(colour, vec3(0.299, 0.587, 0.114));
+        colour = mix(mix(vec3(luma), colour, 0.6) * 0.32, colour, played);
+        float tail = played * exp(ahead * 45.0);
+        colour += c * tail * 0.55;
+    }
+
+    // The ring's base line, so silence still draws a circle.
+    float base = (1.0 - smoothstep(0.0, 1.5 * px, abs(r - (r0 - 0.012)))) * 0.45;
+    vec4 outColour = vec4(colour * alpha, alpha);
+    outColour = outColour + vec4(c * base, base) * (1.0 - outColour.a);
+
+    if (progress >= 0.0) {
+        float arc = abs(ahead) * TAU * r;
+        float onRing = smoothstep(r0 - 0.03 - px, r0 - 0.03 + px, r) * (1.0 - smoothstep(1.0 - px, 1.0, r));
+        float line = (1.0 - smoothstep(0.004, 0.004 + px, arc)) * onRing;
+        float glow = exp(-arc * 55.0) * 0.35 * onRing;
+        outColour = mix(outColour, vec4(1.0), line);
+        outColour += vec4(c * glow, glow) * (1.0 - outColour.a);
+    }
+
+    // The bass lifts a halo off the art's edge.
+    float halo = bass * 0.55 * exp(-max(r - discRadius, 0.0) * 28.0) * step(discRadius, r);
+    outColour += vec4(c * halo, halo) * (1.0 - outColour.a);
+
+    // The art itself, as a disc that swells a touch with the bass.
+    float disc = 1.0 - smoothstep(discRadius - px, discRadius + px, r);
+    vec3 artColour = hasArt > 0.5
+        ? texture(art, clamp(vec2(0.5) + p / (discRadius * 2.0), 0.0, 1.0)).rgb
+        : fallbackColor.rgb * 0.18;
+    outColour = mix(outColour, vec4(artColour, 1.0), disc);
+
+    fragColor = outColour * qt_Opacity;
+}
