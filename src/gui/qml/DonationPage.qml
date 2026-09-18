@@ -113,9 +113,9 @@ Page {
 
             Label {
                 objectName: "supportCosts"
-                text: "With that said, making Seabass available for free isn't free for me. Aside from my time, "
-                    + "hardware to test with I also have to pay for various services that keep this project "
-                    + "going. Chipping in is hugely welcome."
+                text: "With that said, making Seabass available for free isn't free for me. Aside from my time "
+                    + "and hardware to test with, I also have to pay for various services that keep this "
+                    + "project going. Chipping in is hugely welcome."
                 wrapMode: Text.WordWrap
                 font.pointSize: Theme.baseFontPointSize * 1.1
                 Layout.fillWidth: true

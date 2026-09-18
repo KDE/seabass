@@ -33,7 +33,13 @@ TestCase {
         // well as linked.
         var kind = findChild(page, "supportKindWords").text;
         verify(kind.indexOf("mailto:sebas@kde.org") >= 0 && kind.indexOf(">sebas@kde.org<") >= 0, kind);
-        verify(findChild(page, "supportCosts").text.indexOf("isn't free for me") >= 0);
+        // Sebastian's own words, and the clause a previous edit garbled
+        // ("Aside from my time, hardware to test with I also have to
+        // pay"), so the sentence is pinned where it went wrong rather
+        // than only at its opening.
+        var costs = findChild(page, "supportCosts").text;
+        verify(costs.indexOf("isn't free for me") >= 0, costs);
+        verify(costs.indexOf("Aside from my time and hardware to test with, I also have to pay") >= 0, costs);
         // Both asks in this sentence are links, and each goes where it
         // says. This check used to look for "kde.org/donate" here, which
         // is the NEXT sentence's link -- so it passed while the word
