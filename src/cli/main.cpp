@@ -382,15 +382,27 @@ std::vector<Track> scanPath(std::unique_ptr<LibraryReader> reader, const std::st
 // lives in -- for Engine that's always the same m.db regardless of track,
 // but for rekordbox each track's cues live in its own ANLZ .EXT file, so
 // the backup target genuinely depends on which track is being written.
+// `acquireLocks` is called once, immediately before the first write, and
+// what it returns is held until this function ends. Not before: taking
+// the stick's write lock creates Seabass/backups/.write.lock on the
+// stick, and the lock's destructor releases the lock without removing
+// the file. `scan` is documented as reading only, so a scan that took
+// the lock up front left a file behind on every stick it looked at --
+// including one the rig points read-only checks at, and including a
+// reference stick nobody meant to touch. Almost every scan finds nothing
+// to consolidate, and one that does still asks before writing.
 void handleDuplicates(const std::string &formatName, const std::vector<Track> &tracks, CueWriter *writer,
                        BackupStore *backupStore, OperationLog *log,
                        const std::function<std::vector<std::string>(const std::string &)> &filesToBackUpFor,
-                       bool autoMode)
+                       bool autoMode,
+                       const std::function<std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>>()>
+                           &acquireLocks)
 {
     auto plans = ConsolidateDuplicateCues().execute(tracks);
     if (plans.empty()) {
         return;
     }
+    std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>> locks;
 
     bool printedHeading = false;
     std::set<std::string> backedUpFiles;
@@ -435,6 +447,12 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
         if (!apply) {
             Console::info("  skipped.");
             continue;
+        }
+
+        // The first write of this scan, and the first moment the stick
+        // may be touched at all.
+        if (locks.empty() && acquireLocks) {
+            locks = acquireLocks();
         }
 
         for (const auto &target : plan.targets) {
@@ -1388,8 +1406,10 @@ int main(int argc, char **argv)
             if (refuseIfLockedByGui(target.path, force)) {
                 continue;  // the report is out; only the consolidation offer is skipped
             }
-            auto stickLocks = seabass::infrastructure::backup::acquireStickLocks(
-                {seabass::infrastructure::backup::backupDirForCatalogPath(target.path)});
+            auto takeLocks = [path = target.path]() {
+                return seabass::infrastructure::backup::acquireStickLocks(
+                    {seabass::infrastructure::backup::backupDirForCatalogPath(path)});
+            };
 
             seabass::infrastructure::rekordbox::RekordboxCueWriter writer(target.path);
             fs::path stickRoot = fs::path(target.path).parent_path();
@@ -1405,7 +1425,7 @@ int main(int argc, char **argv)
                 }
                 return {seabass::infrastructure::rekordbox::extAnlzPath(pioneerRoot, *analyzePath)};
             };
-            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode);
+            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks);
         }
 
         bool multipleEngine = scanTargets.engineTargets.size() > 1;
@@ -1418,8 +1438,10 @@ int main(int argc, char **argv)
             if (refuseIfLockedByGui(target.path, force)) {
                 continue;
             }
-            auto stickLocks = seabass::infrastructure::backup::acquireStickLocks(
-                {seabass::infrastructure::backup::backupDirForCatalogPath(target.path)});
+            auto takeLocks = [path = target.path]() {
+                return seabass::infrastructure::backup::acquireStickLocks(
+                    {seabass::infrastructure::backup::backupDirForCatalogPath(path)});
+            };
 
             seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(target.path);
             fs::path stickRoot = fs::path(target.path).parent_path();
@@ -1430,7 +1452,7 @@ int main(int argc, char **argv)
             auto filesToBackUpFor = [engineDbFile](const std::string &) -> std::vector<std::string> {
                 return {engineDbFile};
             };
-            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode);
+            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks);
         }
     } catch (const std::exception &e) {
         Console::error(e.what());
