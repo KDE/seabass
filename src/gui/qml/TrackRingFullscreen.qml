@@ -113,9 +113,10 @@ Window {
             onClicked: root.close()
         }
 
-        TrackRing {
+        PlayerTrackRing {
             id: ring
             objectName: "fullscreenRing"
+            playbackController: root.playbackController
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
             anchors.topMargin: Theme.pageMargin * 2
@@ -123,23 +124,14 @@ Window {
                             parent.height - captions.height - Theme.iconSizeLarge - Theme.pageMargin * 6)
             height: width
             // One bar to a waveform column: at this size there is room.
-            bars: Math.max(200, Math.min(400, root.playbackController.waveform ? root.playbackController.waveform.length : 200))
-            waveformData: root.playbackController.waveform || []
-            cueData: root.playbackController.cues || []
-            trackDurationMs: root.playbackController.duration || 0
-            artworkSource: root.playbackController.artworkPath || ""
-            progress: root.playbackController.duration > 0
-                ? root.playbackController.position / root.playbackController.duration : 0
-            playing: root.playbackController.playing === true
+            bars: Math.max(200, Math.min(400, waveformData.length))
             spinning: root.spinning
-            liveLevels: root.playbackController.liveLevels === true
-            liveLow: root.playbackController.levelLow || 0
-            liveMid: root.playbackController.levelMid || 0
-            liveHigh: root.playbackController.levelHigh || 0
-            beatCount: root.playbackController.beatCount || 0
-            positionMs: root.playbackController.position || 0
-            beatTimesMs: root.playbackController.beatTimesMs || []
-            beatNumbers: root.playbackController.beatNumbers || []
+            // This window exists from the moment the pane does, shut. An
+            // item in a window that is not showing still calls itself
+            // visible, so the ring would run its clock sixty times a
+            // second in a window nobody can see, for as long as anything
+            // played.
+            animated: root.visible
             onClicked: root.close()
         }
 

@@ -140,8 +140,8 @@ Page {
 
     // This page's list is the player's queue: next, previous and what
     // plays when a track ends are the rows of the list as it is sorted
-    // and filtered now. Offered whenever the library shown changes (see
-    // rescan()), so a track played from the details pane has a queue too.
+    // and filtered now. Offered whenever a scan has filled the list, so a
+    // track played from the details pane has a queue too.
     function offerQueue() {
         root.playbackController.setQueue(scanController.tracks, root.format, root.currentPath());
     }
@@ -151,10 +151,23 @@ Page {
     // pane goes with it. A pane turned to some other track is being read,
     // and stays.
     Connections {
+        target: scanController
+        function onBusyChanged() {
+            if (!scanController.busy) {
+                root.offerQueue();
+            }
+        }
+    }
+    Connections {
         target: root.playbackController
         function onAdvanced(previousSourceId) {
             var row = root.playbackController.currentQueueRow();
-            if (row >= 0 && root.trackPanelOpen && trackDetailPanel.trackSourceId === previousSourceId) {
+            // Not while a cue is being placed in the pane: following would
+            // turn the pane to another track and the placement would be
+            // gone without a word.
+            var placing = trackDetailPanel.pendingPositionMs >= 0;
+            if (row >= 0 && root.trackPanelOpen && !placing && trackDetailPanel.trackSourceId === previousSourceId
+                    && root.playbackController.currentLibraryPath === root.currentPath()) {
                 trackDetailPanel.showFor(scanController.tracks.trackAt(row));
             }
         }
@@ -217,7 +230,11 @@ Page {
 
     function rescan() {
         selectedPlaylistIndex = 0;
-        root.offerQueue();
+        // Until the scan is done the list still holds the OLD library's
+        // rows. A queue offered now would put this library's name on
+        // them, and a track ending meanwhile would load the old
+        // library's file as one of this one's. No queue until then.
+        root.playbackController.setQueue(null, "", "");
         scanController.scan(root.format, root.currentPath(), root.format === "engine" ? root.rekordboxPath : "");
     }
 

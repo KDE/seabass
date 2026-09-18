@@ -51,6 +51,27 @@ double sampleRateOf(const djinterop::track &track, const std::vector<djinterop::
 
 }  // namespace
 
+std::vector<domain::Beat> beatGridOf(const djinterop::track &track)
+{
+    const std::vector<djinterop::beatgrid_marker> engineMarkers = track.beatgrid();
+    if (engineMarkers.size() < 2) {
+        return {};
+    }
+    const double sampleRate = sampleRateOf(track, engineMarkers);
+    if (sampleRate <= 0.0) {
+        return {};
+    }
+    std::vector<domain::BeatGridMarker> markers;
+    for (const auto &marker : engineMarkers) {
+        markers.push_back({marker.index, marker.sample_offset / sampleRate * 1000.0});
+    }
+    double durationMs = 0.0;
+    if (const auto duration = track.duration()) {
+        durationMs = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(*duration).count());
+    }
+    return domain::beatsInOrder(domain::beatsFromMarkers(std::move(markers), durationMs));
+}
+
 std::vector<domain::Beat> readBeatGrid(const std::string &engineLibraryPath, const std::string &trackSourceId)
 {
     try {
@@ -59,26 +80,7 @@ std::vector<domain::Beat> readBeatGrid(const std::string &engineLibraryPath, con
         }
         auto db = djinterop::engine::load_database(engineLibraryPath);
         std::optional<djinterop::track> track = db.track_by_id(std::stoll(trackSourceId));
-        if (!track) {
-            return {};
-        }
-        const std::vector<djinterop::beatgrid_marker> engineMarkers = track->beatgrid();
-        if (engineMarkers.size() < 2) {
-            return {};
-        }
-        const double sampleRate = sampleRateOf(*track, engineMarkers);
-        if (sampleRate <= 0.0) {
-            return {};
-        }
-        std::vector<domain::BeatGridMarker> markers;
-        for (const auto &marker : engineMarkers) {
-            markers.push_back({marker.index, marker.sample_offset / sampleRate * 1000.0});
-        }
-        double durationMs = 0.0;
-        if (const auto duration = track->duration()) {
-            durationMs = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(*duration).count());
-        }
-        return domain::beatsFromMarkers(std::move(markers), durationMs);
+        return track ? beatGridOf(*track) : std::vector<domain::Beat>{};
     } catch (const std::exception &) {
         return {};
     }

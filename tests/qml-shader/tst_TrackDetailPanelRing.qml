@@ -35,7 +35,8 @@ TestCase {
         pause: function() { testCase.calls.push("pause"); },
         stop: function() { testCase.calls.push("stop"); },
         hasNext: true, hasPrevious: false,
-        hasTrack: true, currentFormat: "engine", currentSourceId: "42",
+        hasTrack: true, currentFormat: "engine", currentSourceId: "42", currentLibraryPath: "/media/MAIN/Engine Library",
+        errorMessage: "",
         title: "Major Tom (Reworked 2024)", artist: "DJ Amador", artworkPath: "",
         waveform: [{low: 0.8, mid: 0.4, high: 0.1}, {low: 0.2, mid: 0.1, high: 0.0}],
         cues: [{positionMs: 32000, color: "#ffcc00"}],
@@ -79,7 +80,7 @@ TestCase {
         compare(findChild(panel, "trackArtwork").visible, false, "the ring carries the cover now");
         fuzzyCompare(ring.progress, 0.25, 0.0001);
         compare(ring.cueData.length, 1);
-        compare(ring.waveformData.length, 400, "the ring draws the waveform the pane already read");
+        compare(ring.waveformData.length, 2, "the ring draws what the player has loaded");
 
         if (screenshotDir && screenshotDir.length > 0) {
             wait(400);
@@ -202,6 +203,62 @@ TestCase {
         mouseClick(findChild(overlay.contentItem, "fullscreenPlay"));
         compare(testCase.calls, ["next", "skip 4", "skip -4", "togglePlay"]);
         compare(overlay.visible, true, "and the ring is still up");
+        overlay.close();
+    }
+
+    // A track that failed to load keeps its sleeve: the ring would hide
+    // it, and the sleeve is the pane's way to try playing it again.
+    function test_aTrackThatFailedToLoadKeepsItsSleeve() {
+        var stage = createTemporaryObject(stageComponent, testCase);
+        var failed = {};
+        for (var key in testCase.player) failed[key] = testCase.player[key];
+        failed.errorMessage = "audio file not found: /music/major-tom.mp3";
+        stage.panel.playbackController = failed;
+        stage.panel.showFor(track("42"));
+        compare(stage.panel.isLoadedTrack, true);
+        compare(findChild(stage.panel, "trackRingRow").showsRing, false);
+        compare(findChild(stage.panel, "trackArtwork").visible, true);
+    }
+
+    // Fullscreen's "click anywhere to go back" includes the corners of
+    // the ring's square, which the ring used to take and then ignore.
+    function test_aClickBesideTheRoundRingClosesFullscreenToo() {
+        var overlay = openFullscreen();
+        var big = findChild(overlay.contentItem, "fullscreenRing");
+        tryVerify(function() { return big.width > 300; }, 2000);
+        mouseClick(big, 6, 6);
+        tryCompare(overlay, "visible", false, 2000);
+    }
+
+    // The ring's clock costs a redraw a frame, so it runs only while
+    // something moves: not in the fullscreen window while it is shut, and
+    // not for a paused platter resting on its brake.
+    function test_theClockStopsWhenNothingMoves() {
+        var stage = createTemporaryObject(stageComponent, testCase);
+        stage.panel.showFor(track("42"));
+        var overlay = findChild(stage.panel, "ringFullscreenWindow");
+        var big = findChild(overlay.contentItem, "fullscreenRing");
+        var clock = findChild(big, "ringClock");
+        compare(testCase.player.playing, true);
+        compare(clock.running, false, "shut, the fullscreen ring runs nothing though a track plays");
+
+        var ring = findChild(stage.panel, "trackRing");
+        tryVerify(function() { return ring.width > 200; }, 2000);
+        mouseClick(ring, ring.width / 2, ring.height / 2);
+        tryCompare(overlay, "visible", true, 2000);
+        tryCompare(clock, "running", true, 2000, "open, it runs");
+
+        // Spinning, then paused: the brake stops the platter askew and it waits.
+        overlay.keyPressed(Qt.Key_Return, false);
+        wait(900);
+        var paused = {};
+        for (var key in testCase.player) paused[key] = testCase.player[key];
+        paused.playing = false;
+        stage.panel.playbackController = paused;
+        overlay.playbackController = paused;
+        tryCompare(big, "platterSpeed", 0, 3000);
+        verify(big.artTurns !== 0, "the brake left it askew");
+        tryCompare(clock, "running", false, 1000, "and a platter waiting on its brake runs nothing");
         overlay.close();
     }
 

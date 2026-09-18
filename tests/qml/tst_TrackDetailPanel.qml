@@ -165,8 +165,9 @@ TestCase {
         compare(panel.trackStreamingSource, "TIDAL");
     }
 
-    function makeLoadedPlayer(format, sourceId) {
+    function makeLoadedPlayer(format, sourceId, libraryPath) {
         return {waveformFor: function() { return []; }, hasTrack: true, currentFormat: format,
+                currentLibraryPath: libraryPath || "/media/MAIN/Engine Library",
                 currentSourceId: sourceId, playing: true, position: 93000, duration: 372000,
                 seek: function() {}, togglePlay: function() {}};
     }
@@ -177,6 +178,8 @@ TestCase {
             {tag: "another track", player: makeLoadedPlayer("engine", "7"), expected: false},
             // rekordbox and Engine number their tracks independently.
             {tag: "the same id in the other format", player: makeLoadedPlayer("rekordbox", "42"), expected: false},
+            // Nor is an id a track's name across two sticks of one format.
+            {tag: "the same id on another stick", player: makeLoadedPlayer("engine", "42", "/media/OTHER/Engine Library"), expected: false},
             {tag: "nothing loaded", player: {waveformFor: function() { return []; }}, expected: false},
         ];
     }

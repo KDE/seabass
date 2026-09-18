@@ -29,12 +29,6 @@ Page {
     // prev/next here match exactly what the user was looking at when
     // they clicked this row.
     property var track: root.scanController.trackAt(root.trackIndex)
-    // Whether this page's track is the one the player has loaded,
-    // playing or paused. The id alone would not do: rekordbox and Engine
-    // number their tracks independently, so "42" is a track in each.
-    readonly property bool isLoadedTrack: !!root.track && root.playbackController.hasTrack === true
-        && root.playbackController.currentSourceId === root.track.sourceId
-        && root.playbackController.currentFormat === root.format
     readonly property bool hasPrev: root.trackIndex > 0
     readonly property bool hasNext: root.trackIndex < root.scanController.trackCount() - 1
     property var prevTrack: root.hasPrev ? root.scanController.trackAt(root.trackIndex - 1) : null
@@ -144,55 +138,15 @@ Page {
             Layout.fillWidth: true
             spacing: 16
 
-            // The cover art -- or, for the track the player has loaded,
-            // the whole track as a ring around it, with the playhead
-            // going round. Wherever the ring cannot be drawn (see
-            // TrackRing.available) the plain art stays.
-            Item {
-                id: artTile
-                objectName: "artTile"
-                readonly property bool showsRing: root.isLoadedTrack && ringLoader.item !== null
-                    && ringLoader.item.available
-                property real side: Theme.iconSizeLarge * (showsRing ? 6 : 2)
-                Behavior on side { NumberAnimation { duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic } }
-                Layout.preferredWidth: side
-                Layout.preferredHeight: side
-                Layout.alignment: Qt.AlignTop
-
-                Rectangle {
+            Rectangle {
+                Layout.preferredWidth: Theme.iconSizeLarge * 2
+                Layout.preferredHeight: Theme.iconSizeLarge * 2
+                color: Theme.surface
+                Image {
                     anchors.fill: parent
-                    visible: !artTile.showsRing
-                    color: Theme.surface
-                    Image {
-                        anchors.fill: parent
-                        visible: root.track && root.track.artworkPath.length > 0
-                        source: root.track ? root.track.artworkPath : ""
-                        fillMode: Image.PreserveAspectCrop
-                    }
-                }
-                Loader {
-                    id: ringLoader
-                    anchors.fill: parent
-                    active: root.isLoadedTrack
-                    sourceComponent: TrackRing {
-                        objectName: "trackRing"
-                        waveformData: root.track
-                            ? root.playbackController.waveformFor(root.format, root.libraryPath, root.track.sourceId) : []
-                        cueData: root.track ? root.track.cues : []
-                        trackDurationMs: root.track ? root.track.durationSeconds * 1000 : 0
-                        artworkSource: root.track ? root.track.artworkPath : ""
-                        progress: root.playbackController.duration > 0
-                            ? root.playbackController.position / root.playbackController.duration : 0
-                        playing: root.playbackController.playing === true
-                        liveLevels: root.playbackController.liveLevels === true
-                        liveLow: root.playbackController.levelLow || 0
-                        liveMid: root.playbackController.levelMid || 0
-                        liveHigh: root.playbackController.levelHigh || 0
-                        beatCount: root.playbackController.beatCount || 0
-                        positionMs: root.playbackController.position || 0
-                        beatTimesMs: root.playbackController.beatTimesMs || []
-                        beatNumbers: root.playbackController.beatNumbers || []
-                    }
+                    visible: root.track && root.track.artworkPath.length > 0
+                    source: root.track ? root.track.artworkPath : ""
+                    fillMode: Image.PreserveAspectCrop
                 }
             }
 

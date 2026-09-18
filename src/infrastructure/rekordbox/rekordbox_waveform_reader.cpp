@@ -16,18 +16,10 @@ namespace seabass::infrastructure::rekordbox
 
 using Anlz = rekordbox_anlz_t;
 
-std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &pioneerRoot,
-                                                          const std::string &trackSourceId,
-                                                          std::shared_ptr<AnlzByteSource> anlzSource)
+domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const std::string &trackSourceId,
+                                        std::shared_ptr<AnlzByteSource> anlzSource)
 {
-    // Resolved below, after the track is known to have an analysis file
-    // at all -- for a browsed backup, resolving means opening the archive,
-    // and this runs on the UI thread on every Play and list scroll.
-    // Best-effort per the header contract: findAnlzPathForTrackId() throws
-    // if export.pdb itself can't be opened (e.g. the stick was unmounted
-    // right as playback was requested), which callers -- notably
-    // PlaybackController::load(), invoked directly from every Play click --
-    // don't expect and don't guard against.
+    domain::TrackAnalysis analysis;
     try {
         auto analyzePath = findAnlzPathForTrackId(pioneerRoot, static_cast<uint32_t>(std::stoul(trackSourceId)));
         if (!analyzePath) {
@@ -47,32 +39,49 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &pione
         Anlz anlz(&ks);
 
         for (const auto &section : *anlz.sections()) {
-            if (section->fourcc() != Anlz::SECTION_TAGS_WAVE_PREVIEW) {
-                continue;
+            if (section->fourcc() == Anlz::SECTION_TAGS_WAVE_PREVIEW && analysis.waveform.empty()) {
+                auto *tag = dynamic_cast<Anlz::wave_preview_tag_t *>(section->body());
+                if (!tag || tag->_is_null_data()) {
+                    continue;
+                }
+                std::string data = tag->data();
+                analysis.waveform.reserve(data.size());
+                for (unsigned char b : data) {
+                    double height = (b & 0x1F) / 31.0;
+                    double whiteness = ((b >> 5) & 0x07) / 7.0;
+                    domain::WaveformColumn col;
+                    col.low = height;
+                    col.mid = height * (0.55 + 0.45 * whiteness);
+                    col.high = height * whiteness;
+                    analysis.waveform.push_back(col);
+                }
+            } else if (section->fourcc() == Anlz::SECTION_TAGS_BEAT_GRID && analysis.beats.empty()) {
+                // PQTZ: rekordbox writes every beat out, with its place in the bar.
+                auto *tag = dynamic_cast<Anlz::beat_grid_tag_t *>(section->body());
+                if (!tag || tag->beats() == nullptr) {
+                    continue;
+                }
+                std::vector<domain::Beat> beats;
+                beats.reserve(tag->beats()->size());
+                for (const auto &beat : *tag->beats()) {
+                    const int inBar = beat->beat_number();
+                    beats.push_back({static_cast<double>(beat->time()), inBar >= 1 && inBar <= 4 ? inBar : 0});
+                }
+                analysis.beats = domain::beatsInOrder(std::move(beats));
             }
-            auto *tag = dynamic_cast<Anlz::wave_preview_tag_t *>(section->body());
-            if (!tag || tag->_is_null_data()) {
-                continue;
-            }
-
-            std::string data = tag->data();
-            std::vector<domain::WaveformColumn> waveform;
-            waveform.reserve(data.size());
-            for (unsigned char b : data) {
-                double height = (b & 0x1F) / 31.0;
-                double whiteness = ((b >> 5) & 0x07) / 7.0;
-                domain::WaveformColumn col;
-                col.low = height;
-                col.mid = height * (0.55 + 0.45 * whiteness);
-                col.high = height * whiteness;
-                waveform.push_back(col);
-            }
-            return waveform;
         }
     } catch (const std::exception &) {
+        // Half an analysis is no use to anyone who asked for a whole one.
         return {};
     }
-    return {};
+    return analysis;
+}
+
+std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &pioneerRoot,
+                                                          const std::string &trackSourceId,
+                                                          std::shared_ptr<AnlzByteSource> anlzSource)
+{
+    return readTrackAnalysis(pioneerRoot, trackSourceId, std::move(anlzSource)).waveform;
 }
 
 }  // namespace seabass::infrastructure::rekordbox

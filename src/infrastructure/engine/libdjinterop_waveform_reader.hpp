@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "domain/track_analysis.hpp"
 #include "domain/waveform.hpp"
 
 namespace seabass::infrastructure::engine
@@ -22,5 +23,9 @@ namespace seabass::infrastructure::engine
 // should never block playback.
 std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engineLibraryPath,
                                                           const std::string &trackSourceId);
+
+// The waveform preview and the beat grid from one opening of the
+// database. Either half is empty where the track has not got it.
+domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId);
 
 }  // namespace seabass::infrastructure::engine

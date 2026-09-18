@@ -33,6 +33,9 @@ class PlaybackController : public QObject
     Q_PROPERTY(bool hasTrack READ hasTrack NOTIFY trackChanged)
     Q_PROPERTY(QString currentFormat READ currentFormat NOTIFY trackChanged)
     Q_PROPERTY(QString currentSourceId READ currentSourceId NOTIFY trackChanged)
+    // The library the loaded track came from. An id names a track only
+    // within one: two sticks of one format both have a track 42.
+    Q_PROPERTY(QString currentLibraryPath READ currentLibraryPath NOTIFY trackChanged)
     Q_PROPERTY(QString title READ title NOTIFY trackChanged)
     Q_PROPERTY(QString artist READ artist NOTIFY trackChanged)
     Q_PROPERTY(QString artworkPath READ artworkPath NOTIFY trackChanged)
@@ -56,9 +59,10 @@ class PlaybackController : public QObject
     // than a signal so that QML can simply bind to it. Measured from the
     // decoded audio as it plays (see AudioLevelMeter), so it is there for
     // every format, waveform or no waveform. All zero while nothing
-    // plays. liveLevels says whether this Qt can deliver the audio at
-    // all (6.8 and later); where it cannot, a display has the stored
-    // waveform to fall back on.
+    // plays. liveLevels says whether audio has actually been delivered --
+    // not whether it could be: Qt has the means from 6.8 on, but only its
+    // FFmpeg backend uses them, and on GStreamer not one buffer arrives.
+    // Until one has, a display has the stored waveform to fall back on.
     // Whether there is a track before or after the loaded one in the
     // queue -- see setQueue().
     // Set on the app's one player, and only there: Seabass then appears
@@ -69,7 +73,15 @@ class PlaybackController : public QObject
     Q_PROPERTY(bool desktopMediaControls READ desktopMediaControls WRITE setDesktopMediaControls NOTIFY desktopMediaControlsChanged)
     Q_PROPERTY(bool hasNext READ hasNext NOTIFY queueChanged)
     Q_PROPERTY(bool hasPrevious READ hasPrevious NOTIFY queueChanged)
-    Q_PROPERTY(bool liveLevels READ liveLevels CONSTANT)
+    // Set while anything is writing a library (Main.qml binds it to
+    // EditSessionRegistry.anyWriting). Moving through the queue opens
+    // the library -- Engine's through libdjinterop, which opens it for
+    // writing -- and with a queue that happens with nobody at the
+    // keyboard: a track ends in the middle of a save. While this is set
+    // next(), previous() and the end of a track load nothing; a track
+    // that ended meanwhile is followed by the next one when it clears.
+    Q_PROPERTY(bool libraryBusy READ libraryBusy WRITE setLibraryBusy NOTIFY libraryBusyChanged)
+    Q_PROPERTY(bool liveLevels READ liveLevels NOTIFY liveLevelsChanged)
     Q_PROPERTY(qreal levelLow READ levelLow NOTIFY levelsChanged)
     Q_PROPERTY(qreal levelMid READ levelMid NOTIFY levelsChanged)
     Q_PROPERTY(qreal levelHigh READ levelHigh NOTIFY levelsChanged)
@@ -85,6 +97,7 @@ public:
     // both are exposed and a caller should compare both.
     QString currentFormat() const { return m_currentFormat; }
     QString currentSourceId() const { return m_currentSourceId; }
+    QString currentLibraryPath() const { return m_currentLibraryPath; }
     QString title() const { return m_title; }
     QString artist() const { return m_artist; }
     QString artworkPath() const { return m_artworkPath; }
@@ -95,7 +108,9 @@ public:
     qint64 duration() const { return m_player.duration(); }
     qint64 position() const { return m_player.position(); }
     bool playing() const { return m_player.playbackState() == QMediaPlayer::PlayingState; }
-    bool liveLevels() const { return m_bufferOutput != nullptr; }
+    bool liveLevels() const { return m_buffersArrive; }
+    bool libraryBusy() const { return m_libraryBusy; }
+    void setLibraryBusy(bool busy);
     bool desktopMediaControls() const { return m_desktopMediaControls; }
     void setDesktopMediaControls(bool enabled);
     qreal levelLow() const { return m_levels.low; }
@@ -167,6 +182,10 @@ signals:
     void errorMessageChanged();
     void levelsChanged();
     void queueChanged();
+    void libraryBusyChanged();
+    void liveLevelsChanged();
+    // The position jumped -- a seek, a skip -- rather than played on.
+    void seeked(qint64 positionMs);
     void desktopMediaControlsChanged();
     // next(), previous() or the end of a track moved the player on from
     // `previousSourceId`: whoever was showing that track may want to follow.
@@ -180,6 +199,7 @@ private:
     // playing, or something else is about to.
     void clearLevels();
     int playableRowFrom(int row, int step) const;
+    void dropQueue();
     void loadQueueRow(int row);
     QVariant queueValue(int row, const QByteArray &role) const;
 
@@ -202,6 +222,9 @@ private:
     QVariantList m_cues;
     QPointer<QAbstractItemModel> m_queue;
     bool m_desktopMediaControls = false;
+    bool m_libraryBusy = false;
+    bool m_advanceWhenLibraryFree = false;
+    bool m_buffersArrive = false;
     QObject *m_mpris = nullptr;
     QString m_queueFormat;
     QString m_queueLibraryPath;

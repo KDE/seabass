@@ -27,16 +27,22 @@ OUT=$(cd "$OUT" && pwd)
 INNER=$(mktemp "$OUT/inner.XXXXXX")
 cat > "$INNER" <<INNER_EOF
 #!/bin/bash
-exec env -u DISPLAY QT_QPA_PLATFORM=wayland QSG_RHI_BACKEND=opengl SEABASS_SCREENSHOT_DIR="$OUT" \\
+env -u DISPLAY QT_QPA_PLATFORM=wayland QSG_RHI_BACKEND=opengl SEABASS_SCREENSHOT_DIR="$OUT" \\
     XDG_CONFIG_HOME="$BUILD/qml-test-config" \\
     "$BUILD/seabass_qml_tests" -input "$INPUT" > "$OUT/render.log" 2>&1
+echo \$? > "$OUT/exit-code"
 INNER_EOF
 chmod +x "$INNER"
+rm -f "$OUT/exit-code" "$OUT/render.log"
+# So that the GPU named at the end is this run's, not one left by another.
+rm -f "$HOME"/.cache/seabass_qml_tests/qtpipelinecache-*/qqpc_opengl
 timeout 600 dbus-run-session -- kwin_wayland --virtual --socket "wl-seabass-gpu-$$" \
     --width 1920 --height 1200 --no-lockscreen --no-global-shortcuts \
     --exit-with-session "$INNER" > "$OUT/kwin.log" 2>&1 || true
 rm -f "$INNER"
-grep -E "^Totals|^FAIL|^QWARN" "$OUT/render.log" || { echo "no test output -- see $OUT/kwin.log"; exit 1; }
+grep -E "^Totals|^FAIL" "$OUT/render.log" || { echo "no test output -- see $OUT/kwin.log"; exit 1; }
 strings -n 6 "$HOME"/.cache/seabass_qml_tests/qtpipelinecache-*/qqpc_opengl 2>/dev/null \
     | grep -m1 -iE "radeon|llvmpipe|intel|nvidia|mesa" || echo "could not tell which GPU drew this"
-! grep -q "^FAIL" "$OUT/render.log"
+# The tests' own exit code, not the look of the log: a crash half way
+# leaves the earlier cases' "Totals" lines and no FAIL at all.
+[ "$(cat "$OUT/exit-code" 2>/dev/null)" = "0" ] || { echo "the tests did not finish cleanly (exit $(cat "$OUT/exit-code" 2>/dev/null || echo none)) -- see $OUT/render.log"; exit 1; }

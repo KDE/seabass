@@ -32,6 +32,8 @@ ApplicationWindow {
         id: playbackCtrl
         // The app's one player is the one the desktop's media keys reach.
         desktopMediaControls: true
+        // Nothing moves through the queue while a library is being written.
+        libraryBusy: EditSessionRegistry.anyWriting
     }
 
     // Space toggles play/pause for whatever's loaded in the player bar --

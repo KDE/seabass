@@ -105,4 +105,58 @@ TestCase {
         player.skipBeats(4);
         compare(player.hasTrack, false, "and asking changes nothing");
     }
+
+    // While a library is being written nothing moves through the queue:
+    // that would open the library, unasked, in the middle of a save.
+    function test_nothingMovesThroughTheQueueWhileALibraryIsWritten() {
+        load("a");
+        player.libraryBusy = true;
+        player.next();
+        compare(player.currentSourceId, "a", "next waits");
+        compare(advanced.count, 0);
+        player.libraryBusy = false;
+        player.next();
+        compare(player.currentSourceId, "d", "and works again afterwards");
+        player.libraryBusy = false;
+    }
+
+    // Letting go of a queue lets go of its signals too. They used to be
+    // kept, so every return to a list connected it once more and every
+    // change to the list was then announced that many times over.
+    SignalSpy { id: queueChanges; target: player; signalName: "queueChanged" }
+    function test_aQueueLetGoOfIsNotListenedToAnyMore() {
+        load("a");
+        for (var round = 0; round < 3; ++round) {
+            load("a", "/another/library");            // drops the queue
+            player.setQueue(queue, "rekordbox", "/lib");
+            load("a");
+        }
+        queueChanges.clear();
+        queue.append({sourceId: "e", filePath: aFile, streamingSource: "", title: "Track e", artist: "Artist", artworkPath: ""});
+        compare(queueChanges.count, 1, "one change to the list is one announcement");
+    }
+
+    // A page that goes takes its list with it.
+    Component { id: shortLivedQueue; ListModel {} }
+    function test_aQueueThatIsDestroyedEndsTheQueue() {
+        var model = shortLivedQueue.createObject(testCase);
+        model.append({sourceId: "a", filePath: aFile, streamingSource: "", title: "A", artist: "", artworkPath: ""});
+        model.append({sourceId: "z", filePath: aFile, streamingSource: "", title: "Z", artist: "", artworkPath: ""});
+        player.setQueue(model, "rekordbox", "/lib");
+        load("a");
+        compare(player.hasNext, true);
+        queueChanges.clear();
+        model.destroy();
+        tryVerify(function() { return queueChanges.count > 0; }, 2000, "its going is announced");
+        compare(player.hasNext, false);
+        player.next();
+        compare(player.currentSourceId, "a");
+    }
+
+    // Whether live levels are to be had is not known until audio has
+    // actually arrived: Qt 6.8 has the means on every backend and uses
+    // them on one. A display goes by this to choose its fallback.
+    function test_liveLevelsAreNotClaimedBeforeAnyAudioArrives() {
+        compare(player.liveLevels, false);
+    }
 }

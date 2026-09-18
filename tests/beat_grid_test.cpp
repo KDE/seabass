@@ -10,6 +10,7 @@
 // usage: beat_grid_test <fixture root holding rekordbox/ and engine/>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -105,6 +106,27 @@ int main(int argc, char **argv)
         check(domain::beatsFromMarkers({{0, 0.0}}, 1000.0).empty(), "one marker pins a beat but not a tempo");
         check(domain::beatsFromMarkers({{0, 0.0}, {1000, 1000.0}}, 0.0).empty(), "a 1 ms beat is a damaged grid");
         check(domain::beatsFromMarkers({{3, 0.0}, {3, 500.0}}, 0.0).empty(), "two markers on one index span nothing");
+    }
+
+    // Damaged markers. These used to be walked beat by beat: two thousand
+    // million of them, to keep the few inside the track.
+    {
+        const auto started = std::chrono::steady_clock::now();
+        const auto beats = domain::beatsFromMarkers({{0, 0.0}, {2000000000, 3.0e11}}, 60000.0);
+        const auto took = std::chrono::steady_clock::now() - started;
+        check(beats.size() == 401, "150 ms beats in a minute are 401, got " + std::to_string(beats.size()));
+        check(took < std::chrono::milliseconds(200), "and they are worked out, not walked to");
+        check(domain::beatsFromMarkers({{0, 0.0}, {2000000000, 3.0e11}}, 0.0).empty(), "with no end known that is more beats than any track has: no grid");
+        check(domain::beatsFromMarkers({{2147483000, 0.0}, {2147483647, 323500.0}}, 0.0).size() == 648, "indices at the very top of the range do not overflow");
+        const double nan = std::nan("");
+        check(domain::beatsFromMarkers({{0, nan}, {8, 4000.0}}, 0.0).empty(), "a marker that is not a number pins nothing");
+        check(domain::beatsFromMarkers({{0, 0.0}, {8, 4000.0}, {16, nan}}, 0.0).size() == 9, "and the good ones still do");
+    }
+    // A grid as a file has it, made fit to keep time by.
+    {
+        const auto beats = domain::beatsInOrder({{-5.0, 4}, {100.0, 1}, {600.0, 2}, {600.0, 3}, {std::nan(""), 4}, {400.0, 1}, {1100.0, 2}});
+        check(beats.size() == 3 && beats[0].timeMs == 100.0 && beats[1].timeMs == 600.0 && beats[2].timeMs == 1100.0,
+              "what is before the start, not a number, or not after the beat before it is dropped");
     }
 
     // A jump of whole beats lands as far into the beat as it left.

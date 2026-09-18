@@ -57,11 +57,13 @@ Pane {
     property string trackSourceId: ""
     // Whether the track shown is the one the player has loaded, playing
     // or paused. The id alone would not do: rekordbox and Engine number
-    // their tracks independently, so "42" is a track in each.
+    // their tracks independently, so "42" is a track in each -- and in
+    // each of two sticks of the same format, so the library counts too.
     readonly property bool isLoadedTrack: panel.trackSourceId.length > 0
         && panel.playbackController.hasTrack === true
         && panel.playbackController.currentSourceId === panel.trackSourceId
         && panel.playbackController.currentFormat === panel.format
+        && panel.playbackController.currentLibraryPath === panel.libraryPath
     property string trackTitle: ""
     property string trackArtist: ""
     property var trackCues: []
@@ -232,8 +234,10 @@ Pane {
         Item {
             id: ringRow
             objectName: "trackRingRow"
+            // Not for a track that failed to load: the ring hides the sleeve,
+            // and the sleeve is the pane's way to try playing it again.
             readonly property bool showsRing: panel.isLoadedTrack && ringLoader.item !== null
-                && ringLoader.item.available
+                && ringLoader.item.available && !(panel.playbackController.errorMessage || "").length
             // Measured against the column, not this row: while it is shut
             // the layout gives an invisible row no width to measure.
             property real side: showsRing ? Math.min(Theme.iconSizeLarge * 6, ringRow.parent.width) : 0
@@ -248,23 +252,9 @@ Pane {
                 width: ringRow.side
                 height: ringRow.side
                 anchors.horizontalCenter: parent.horizontalCenter
-                sourceComponent: TrackRing {
+                sourceComponent: PlayerTrackRing {
                     objectName: "trackRing"
-                    waveformData: waveformView.waveformData
-                    cueData: panel.trackCues
-                    trackDurationMs: panel.trackDurationMs
-                    artworkSource: panel.trackArtworkPath
-                    progress: panel.playbackController.duration > 0
-                        ? panel.playbackController.position / panel.playbackController.duration : 0
-                    playing: panel.playbackController.playing === true
-                    liveLevels: panel.playbackController.liveLevels === true
-                    liveLow: panel.playbackController.levelLow || 0
-                    liveMid: panel.playbackController.levelMid || 0
-                    liveHigh: panel.playbackController.levelHigh || 0
-                    beatCount: panel.playbackController.beatCount || 0
-                    positionMs: panel.playbackController.position || 0
-                    beatTimesMs: panel.playbackController.beatTimesMs || []
-                    beatNumbers: panel.playbackController.beatNumbers || []
+                    playbackController: panel.playbackController
                     onClicked: ringFullscreen.open()
                 }
             }

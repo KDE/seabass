@@ -10,6 +10,8 @@
 
 #include <djinterop/djinterop.hpp>
 
+#include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
+
 namespace seabass::infrastructure::engine
 {
 
@@ -20,28 +22,11 @@ constexpr size_t TargetPoints = 400;
 
 }  // namespace
 
-std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engineLibraryPath,
-                                                          const std::string &trackSourceId)
+namespace
 {
-    // Best-effort per the header contract -- load_database()/track_by_id()
-    // can throw (e.g. the stick was unmounted right as playback was
-    // requested), which callers -- notably PlaybackController::load(),
-    // invoked directly from every Play click -- don't guard against.
-    std::optional<djinterop::track> track;
-    std::vector<djinterop::waveform_entry> entries;
-    try {
-        if (!djinterop::engine::database_exists(engineLibraryPath)) {
-            return {};
-        }
-        auto db = djinterop::engine::load_database(engineLibraryPath);
-        track = db.track_by_id(std::stoll(trackSourceId));
-        if (!track) {
-            return {};
-        }
-        entries = track->waveform();
-    } catch (const std::exception &) {
-        return {};
-    }
+
+std::vector<domain::WaveformColumn> previewOf(const std::vector<djinterop::waveform_entry> &entries)
+{
     if (entries.empty()) {
         return {};
     }
@@ -70,6 +55,40 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engin
         waveform.push_back(col);
     }
     return waveform;
+}
+
+}  // namespace
+
+domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId)
+{
+    domain::TrackAnalysis analysis;
+    try {
+        if (!djinterop::engine::database_exists(engineLibraryPath)) {
+            return {};
+        }
+        auto db = djinterop::engine::load_database(engineLibraryPath);
+        std::optional<djinterop::track> track = db.track_by_id(std::stoll(trackSourceId));
+        if (!track) {
+            return {};
+        }
+        analysis.waveform = previewOf(track->waveform());
+        // Its own try: a grid libdjinterop cannot read is no reason to
+        // throw the waveform away with it.
+        try {
+            analysis.beats = beatGridOf(*track);
+        } catch (const std::exception &) {
+            analysis.beats.clear();
+        }
+    } catch (const std::exception &) {
+        return {};
+    }
+    return analysis;
+}
+
+std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engineLibraryPath,
+                                                          const std::string &trackSourceId)
+{
+    return readTrackAnalysis(engineLibraryPath, trackSourceId).waveform;
 }
 
 }  // namespace seabass::infrastructure::engine

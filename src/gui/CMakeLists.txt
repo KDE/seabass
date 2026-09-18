@@ -130,6 +130,7 @@ set(SEABASS_GUI_QML_FILES
     qml/CueFallbackNotice.qml
     qml/TrackWaveformCard.qml
     qml/PlaylistPickerCombo.qml
+    qml/PlayerTrackRing.qml
     qml/PlaylistRowDelegate.qml
     qml/PlaylistListView.qml
     qml/MatchingPage.qml

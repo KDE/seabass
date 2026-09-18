@@ -38,25 +38,11 @@ Item {
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: 400; easing.type: Easing.InOutQuad } }
 
-    TrackRing {
+    PlayerTrackRing {
         id: ring
         objectName: "watermarkTrackRing"
         anchors.fill: parent
+        playbackController: root.playbackController
         interactive: false
-        waveformData: root.playbackController.waveform || []
-        cueData: root.playbackController.cues || []
-        trackDurationMs: root.playbackController.duration || 0
-        artworkSource: root.playbackController.artworkPath || ""
-        progress: root.playbackController.duration > 0
-            ? root.playbackController.position / root.playbackController.duration : 0
-        playing: root.playbackController.playing === true
-        liveLevels: root.playbackController.liveLevels === true
-        liveLow: root.playbackController.levelLow || 0
-        liveMid: root.playbackController.levelMid || 0
-        liveHigh: root.playbackController.levelHigh || 0
-        beatCount: root.playbackController.beatCount || 0
-        positionMs: root.playbackController.position || 0
-        beatTimesMs: root.playbackController.beatTimesMs || []
-        beatNumbers: root.playbackController.beatNumbers || []
     }
 }

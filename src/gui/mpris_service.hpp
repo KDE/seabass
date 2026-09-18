@@ -97,6 +97,8 @@ public:
     bool canGoPrevious() const;
     bool hasTrack() const;
     bool yes() const { return true; }
+    void newTrack() { ++m_trackNumber; }
+    QString trackPath() const;
     double one() const { return 1.0; }
     void ignoreRate(double) {}
 
@@ -116,6 +118,7 @@ signals:
 
 private:
     PlaybackController *m_controller;
+    int m_trackNumber = 0;
 };
 
 }  // namespace seabass::gui

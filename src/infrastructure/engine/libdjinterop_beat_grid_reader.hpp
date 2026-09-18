@@ -9,8 +9,16 @@
 
 #include "domain/beat_grid.hpp"
 
+namespace djinterop
+{
+class track;
+}
+
 namespace seabass::infrastructure::engine
 {
+
+// The same, of a track of a database that is open already.
+std::vector<domain::Beat> beatGridOf(const djinterop::track &track);
 
 // A track's beat grid from an Engine library. Engine stores markers, not
 // beats (see domain::BeatGridMarker), in samples; this gives the beats

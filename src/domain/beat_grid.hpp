@@ -33,6 +33,12 @@ struct BeatGridMarker
 // before the track's start are dropped.
 std::vector<Beat> beatsFromMarkers(std::vector<BeatGridMarker> markers, double durationMs);
 
+// A grid as read from a file, made fit to keep time by: every beat after
+// the one before it, none before the track starts, none that is not a
+// number. Whatever breaks that is dropped. Two beats at one moment would
+// otherwise be a beat of no length, and a display dividing by it.
+std::vector<Beat> beatsInOrder(std::vector<Beat> beats);
+
 // Where a jump of `beats` whole beats (negative for back) from
 // `positionMs` lands: as far into the beat it arrives at as it was into
 // the one it left, so the jump stays in time. `beatTimesMs` is the

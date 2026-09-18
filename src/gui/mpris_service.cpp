@@ -17,9 +17,10 @@ namespace
 {
 const QString kObjectPath = QStringLiteral("/org/mpris/MediaPlayer2");
 const QString kPlayerInterface = QStringLiteral("org.mpris.MediaPlayer2.Player");
-// MPRIS wants every track named by an object path. There is one track at
-// a time and no track list, so one fixed path says all there is to say.
-const QString kTrackPath = QStringLiteral("/org/kde/seabass/track/current");
+// MPRIS wants every track named by an object path, and a new one for
+// every track: a client's SetPosition names the track it means, and with
+// one fixed path a request meant for the last track was taken for this one.
+const QString kTrackPathPrefix = QStringLiteral("/org/kde/seabass/track/");
 const QString kNoTrackPath = QStringLiteral("/org/mpris/MediaPlayer2/TrackList/NoTrack");
 }  // namespace
 
@@ -39,7 +40,15 @@ MprisService::MprisService(PlaybackController *controller) : QObject(controller)
                                     {QStringLiteral("CanPause"), player->hasTrack()},
                                     {QStringLiteral("CanSeek"), player->hasTrack()}});
     };
-    connect(controller, &PlaybackController::trackChanged, this, trackChanged);
+    connect(controller, &PlaybackController::trackChanged, this, [player, trackChanged] {
+        player->newTrack();
+        trackChanged();
+    });
+    // Every jump, whoever asked for it: the desktop's applet works the
+    // position out by itself between these, and a seek it is not told of
+    // leaves its slider wrong until the next pause.
+    connect(controller, &PlaybackController::seeked, player,
+            [player](qint64 positionMs) { emit player->Seeked(positionMs * 1000); });
     // The length is only known once the file is open, after trackChanged.
     connect(controller, &PlaybackController::durationChanged, this,
             [this, player] { announce(kPlayerInterface, {{QStringLiteral("Metadata"), player->metadata()}}); });
@@ -115,7 +124,7 @@ QVariantMap MprisPlayerAdaptor::metadata() const
         map.insert(QStringLiteral("mpris:trackid"), QVariant::fromValue(QDBusObjectPath(kNoTrackPath)));
         return map;
     }
-    map.insert(QStringLiteral("mpris:trackid"), QVariant::fromValue(QDBusObjectPath(kTrackPath)));
+    map.insert(QStringLiteral("mpris:trackid"), QVariant::fromValue(QDBusObjectPath(trackPath())));
     map.insert(QStringLiteral("xesam:title"), m_controller->title());
     // A list: MPRIS has it that a track can have several artists.
     map.insert(QStringLiteral("xesam:artist"), QStringList{m_controller->artist()});
@@ -126,6 +135,11 @@ QVariantMap MprisPlayerAdaptor::metadata() const
         map.insert(QStringLiteral("mpris:artUrl"), m_controller->artworkPath());
     }
     return map;
+}
+
+QString MprisPlayerAdaptor::trackPath() const
+{
+    return kTrackPathPrefix + QString::number(m_trackNumber);
 }
 
 double MprisPlayerAdaptor::volume() const { return m_controller->volume(); }
@@ -149,8 +163,7 @@ void MprisPlayerAdaptor::Seek(qlonglong offsetMicroseconds)
     }
     const qint64 target = qBound<qint64>(0, m_controller->position() + offsetMicroseconds / 1000,
                                          qMax<qint64>(0, m_controller->duration() - 1));
-    m_controller->seek(target);
-    emit Seeked(target * 1000);
+    m_controller->seek(target);   // which announces Seeked, as every seek does
 }
 
 void MprisPlayerAdaptor::SetPosition(const QDBusObjectPath &trackId, qlonglong positionMicroseconds)
@@ -158,11 +171,10 @@ void MprisPlayerAdaptor::SetPosition(const QDBusObjectPath &trackId, qlonglong p
     // For another track than the one loaded, or past its end, the spec
     // says to do nothing: the caller's idea of what is playing is stale.
     const qint64 target = positionMicroseconds / 1000;
-    if (!m_controller->hasTrack() || trackId.path() != kTrackPath || target < 0 || target > m_controller->duration()) {
+    if (!m_controller->hasTrack() || trackId.path() != trackPath() || target < 0 || target > m_controller->duration()) {
         return;
     }
     m_controller->seek(target);
-    emit Seeked(target * 1000);
 }
 
 }  // namespace seabass::gui

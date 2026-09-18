@@ -898,7 +898,10 @@ if(SEABASS_GUI AND Qt6_FOUND)
             set_tests_properties(seabass_qml_shader_tests PROPERTIES ENVIRONMENT
                 "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
         else()
-            message(STATUS "seabass_qml_shader_tests not registered (needs xvfb-run and Qt6 ShaderTools)")
+            # A warning, not a status line: without it nothing at all checks
+            # what the shader draws, and that should not scroll past unseen.
+            message(WARNING "seabass_qml_shader_tests NOT registered: it needs xvfb-run and Qt6 ShaderTools. "
+                "What TrackRing's shader draws is untested in this build.")
         endif()
     else()
         message(STATUS "SEABASS_TESTS=OFF: seabass_qml_tests not built")

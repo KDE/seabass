@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "domain/track_analysis.hpp"
 #include "domain/waveform.hpp"
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
 
@@ -36,5 +37,13 @@ namespace seabass::infrastructure::rekordbox
 std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &pioneerRoot,
                                                           const std::string &trackSourceId,
                                                           std::shared_ptr<AnlzByteSource> anlzSource = nullptr);
+
+// The waveform preview and the beat grid (the PQTZ section) from one read
+// and one parse of the track's ANLZ .DAT file. Either half is empty where
+// the file has not got it; both are where there is no file, or it cannot
+// be read -- a missing analysis is a display that falls back, never an
+// error.
+domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const std::string &trackSourceId,
+                                        std::shared_ptr<AnlzByteSource> anlzSource = nullptr);
 
 }  // namespace seabass::infrastructure::rekordbox

@@ -18,9 +18,7 @@
 #if defined(Q_OS_LINUX)
 #include "mpris_service.hpp"
 #endif
-#include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
-#include "infrastructure/rekordbox/rekordbox_beat_grid_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
 
 namespace seabass::gui
@@ -29,14 +27,16 @@ namespace seabass::gui
 namespace
 {
 
-QVariantList readWaveform(const QString &format, const QString &libraryPath, const QString &sourceId)
+// The track's analysis -- waveform and beat grid -- from one read of the
+// library. See domain::TrackAnalysis for why one.
+domain::TrackAnalysis readAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId)
 {
-    std::vector<domain::WaveformColumn> points;
     try {
         if (format == "rekordbox") {
-            points = infrastructure::rekordbox::readWaveformPreview(libraryPath.toStdString(), sourceId.toStdString());
-        } else if (format == "engine") {
-            points = infrastructure::engine::readWaveformPreview(libraryPath.toStdString(), sourceId.toStdString());
+            return infrastructure::rekordbox::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString());
+        }
+        if (format == "engine") {
+            return infrastructure::engine::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString());
         }
         // Any other format (currently just "onelibrary") has no waveform
         // reader of its own -- stays empty rather than falling into
@@ -49,6 +49,11 @@ QVariantList readWaveform(const QString &format, const QString &libraryPath, con
         // escaping here would crash the app outright instead of just
         // leaving the waveform blank for this one track.
     }
+    return {};
+}
+
+QVariantList toVariantList(const std::vector<domain::WaveformColumn> &points)
+{
     QVariantList waveform;
     for (const auto &col : points) {
         QVariantMap m;
@@ -58,6 +63,11 @@ QVariantList readWaveform(const QString &format, const QString &libraryPath, con
         waveform.append(m);
     }
     return waveform;
+}
+
+QVariantList readWaveform(const QString &format, const QString &libraryPath, const QString &sourceId)
+{
+    return toVariantList(readAnalysis(format, libraryPath, sourceId).waveform);
 }
 
 }  // namespace
@@ -78,7 +88,12 @@ PlaybackController::PlaybackController(QObject *parent) : QObject(parent)
     });
     // On to the next track by itself when one ends.
     connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
-        if (status == QMediaPlayer::EndOfMedia && hasNext()) {
+        if (status != QMediaPlayer::EndOfMedia) {
+            return;
+        }
+        if (m_libraryBusy) {
+            m_advanceWhenLibraryFree = true;   // see libraryBusy
+        } else if (hasNext()) {
             next();
         }
     });
@@ -108,8 +123,9 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     setErrorMessage({});
     // The queue belongs to one library; a track from another ends it.
     if (m_queue && (format != m_queueFormat || libraryPath != m_queueLibraryPath)) {
-        m_queue = nullptr;
+        dropQueue();
     }
+    m_advanceWhenLibraryFree = false;
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
@@ -126,14 +142,9 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
     } else {
-        m_waveform = readWaveform(format, libraryPath, sourceId);
-        // Same on-demand read as the waveform, from the same files.
-        std::vector<domain::Beat> beats;
-        if (format == QLatin1String("rekordbox")) {
-            beats = infrastructure::rekordbox::readBeatGrid(libraryPath.toStdString(), sourceId.toStdString());
-        } else if (format == QLatin1String("engine")) {
-            beats = infrastructure::engine::readBeatGrid(libraryPath.toStdString(), sourceId.toStdString());
-        }
+        const domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId);
+        m_waveform = toVariantList(analysis.waveform);
+        const std::vector<domain::Beat> &beats = analysis.beats;
         m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
         m_beatNumbers.reserve(static_cast<qsizetype>(beats.size()));
         for (const domain::Beat &beat : beats) {
@@ -162,9 +173,7 @@ QVariantList PlaybackController::waveformFor(const QString &format, const QStrin
 
 void PlaybackController::setQueue(QAbstractItemModel *model, const QString &format, const QString &libraryPath)
 {
-    if (m_queue) {
-        disconnect(m_queue, nullptr, this, nullptr);
-    }
+    dropQueue();
     m_queue = model;
     m_queueFormat = format;
     m_queueLibraryPath = libraryPath;
@@ -175,8 +184,36 @@ void PlaybackController::setQueue(QAbstractItemModel *model, const QString &form
         connect(m_queue, &QAbstractItemModel::rowsInserted, this, &PlaybackController::queueChanged);
         connect(m_queue, &QAbstractItemModel::rowsRemoved, this, &PlaybackController::queueChanged);
         connect(m_queue, &QAbstractItemModel::rowsMoved, this, &PlaybackController::queueChanged);
+        // A page that goes takes its list with it, and with it "next".
+        connect(m_queue, &QObject::destroyed, this, &PlaybackController::queueChanged);
     }
     emit queueChanged();
+}
+
+// Lets go of the queue AND of its signals. Forgetting the second made
+// every return to a list connect it once more, and every change to the
+// list then announce itself that many times over.
+void PlaybackController::dropQueue()
+{
+    if (m_queue) {
+        disconnect(m_queue, nullptr, this, nullptr);
+    }
+    m_queue = nullptr;
+}
+
+void PlaybackController::setLibraryBusy(bool busy)
+{
+    if (busy == m_libraryBusy) {
+        return;
+    }
+    m_libraryBusy = busy;
+    emit libraryBusyChanged();
+    if (!busy && m_advanceWhenLibraryFree) {
+        m_advanceWhenLibraryFree = false;
+        if (m_player.mediaStatus() == QMediaPlayer::EndOfMedia) {
+            next();
+        }
+    }
 }
 
 QVariant PlaybackController::queueValue(int row, const QByteArray &role) const
@@ -231,7 +268,7 @@ int PlaybackController::playableRowFrom(int row, int step) const
 
 void PlaybackController::loadQueueRow(int row)
 {
-    if (row < 0) {
+    if (row < 0 || m_libraryBusy) {
         return;
     }
     const QString previousSourceId = m_currentSourceId;
@@ -258,7 +295,7 @@ void PlaybackController::skipBeats(int beats)
         return;
     }
     const std::vector<double> grid(m_beatTimesMs.cbegin(), m_beatTimesMs.cend());
-    m_player.setPosition(static_cast<qint64>(domain::positionAfterSkippingBeats(
+    seek(static_cast<qint64>(domain::positionAfterSkippingBeats(
         grid, static_cast<double>(m_player.position()), beats, static_cast<double>(m_player.duration()))));
 }
 
@@ -271,8 +308,13 @@ void PlaybackController::setDesktopMediaControls(bool enabled)
 #if defined(Q_OS_LINUX)
     if (enabled) {
         auto *service = new MprisService(this);
-        service->start();
-        m_mpris = service;
+        // No session bus, or no name to be had on it: then there is no
+        // service, rather than one that looks alive and hears nothing.
+        if (service->start()) {
+            m_mpris = service;
+        } else {
+            delete service;
+        }
     } else {
         delete m_mpris;
         m_mpris = nullptr;
@@ -310,6 +352,7 @@ void PlaybackController::togglePlay()
 void PlaybackController::seek(qint64 positionMs)
 {
     m_player.setPosition(positionMs);
+    emit seeked(positionMs);
 }
 
 void PlaybackController::stop()
@@ -340,6 +383,10 @@ void PlaybackController::meterBuffer(const QAudioBuffer &buffer)
     // A buffer still in the queue from before a pause or a stop.
     if (!playing() || !buffer.isValid()) {
         return;
+    }
+    if (!m_buffersArrive) {
+        m_buffersArrive = true;
+        emit liveLevelsChanged();
     }
     const QAudioFormat format = buffer.format();
     domain::SampleFormat sampleFormat;

@@ -128,6 +128,9 @@ Item {
             }
         }
         var length = lo + 1 < times.length ? times[lo + 1] - times[lo] : times[lo] - times[lo - 1];
+        if (!(length > 0)) {
+            length = 500;   // the readers drop such beats; this is for a grid from anywhere else
+        }
         root.beatLengthMs = length;
         // Past the last beat of the grid by more than a beat: it has ended.
         root.msSinceBeat = at - times[lo] > length * 1.5 ? 1e9 : at - times[lo];
@@ -274,9 +277,15 @@ Item {
         root.energy += (root.loudLow - root.energy) * Math.min(1, rate);
     }
     FrameAnimation {
+        objectName: "ringClock"
         // A platter still running out keeps the clock going after the music has stopped.
+        // Still to do once the music has stopped: a platter running out,
+        // and one that stopped short of upright being eased home. A
+        // paused platter resting askew on its brake is NOT -- it waits
+        // there, and counting it kept the whole window redrawing sixty
+        // times a second for as long as the pause lasted.
         running: root.animated && root.available && root.visible
-            && (root.playing || root.platterSpeed > 0 || root.artTurns !== 0)
+            && (root.playing || root.platterSpeed > 0 || (!root.spinning && root.artTurns !== 0))
         // smoothFrameTime, not frameTime. Frames reach the screen evenly,
         // one a refresh, but the moment this handler runs wanders within
         // the refresh: measured on the Radeon, frameTime averaged 16.7 ms
@@ -409,19 +418,22 @@ Item {
         }
     }
 
+    // The ring is round and its area square. The mask makes the corners
+    // not the ring at all, so a click there goes to whatever is behind --
+    // it used to be taken here and then ignored, a dead corner in a
+    // fullscreen window whose whole point is "click anywhere to go back".
     MouseArea {
         anchors.fill: parent
         enabled: root.available && root.interactive
         visible: enabled
         cursorShape: Qt.PointingHandCursor
-        onClicked: function(mouse) {
-            // The ring is round and this area is square: its corners are
-            // not the ring.
-            var dx = mouse.x - root.width / 2;
-            var dy = mouse.y - root.height / 2;
-            if (Math.sqrt(dx * dx + dy * dy) <= ring.width / 2) {
-                root.clicked();
+        containmentMask: QtObject {
+            function contains(point: point): bool {
+                var dx = point.x - root.width / 2;
+                var dy = point.y - root.height / 2;
+                return Math.sqrt(dx * dx + dy * dy) <= ring.width / 2;
             }
         }
+        onClicked: root.clicked()
     }
 }
