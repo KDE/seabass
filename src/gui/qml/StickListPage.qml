@@ -591,7 +591,7 @@ Page {
                 // rather than only explaining, since the repair lives
                 // there and sending someone looking for it is no help.
                 readonly property string readOnlyNote:
-                    "This stick is mounted read-only -- its filesystem needs checking. Library Health can do that."
+                    "This stick is mounted read-only: its filesystem needs checking. Library Health can do that."
                 // What the backup advisor found for this stick (see
                 // BackupAdvisorController); null until it has looked.
                 readonly property var advice: root.backupAdvisor.advice[mountPoint] || null
@@ -1189,7 +1189,7 @@ Page {
                             cardSubtitle: delegateRoot.cloneSource !== null ? delegateRoot.cloneSource.detail
                                 : (delegateRoot.adviceState === "restore"
                                     ? "Restore " + delegateRoot.advice.backupLabel + "'s library onto this stick"
-                                    : "No known stick backups yet -- browse for a backup file to restore")
+                                    : "No known stick backups yet. Browse for a backup file to restore")
                             cardIcon: "edit-copy"
                             // Built on the stick backup: either a copy of
                             // another mounted stick's own current library,

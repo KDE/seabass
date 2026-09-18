@@ -405,7 +405,11 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 
         auto sampleRate = safeGet<std::optional<double>>(*m_progress, id, "sample_rate",
                                                           [&] { return tr.sample_rate(); });
-        if (!sampleRate) {
+        // Or a stored zero, which real libraries carry: dividing by it
+        // gives inf (or NaN at offset 0), and an infinite cue position
+        // walks straight past every check that asks whether a cue is near
+        // the start.
+        if (!sampleRate || *sampleRate <= 0.0) {
             // 44.1kHz is by far the most common sample rate for the
             // compressed audio these libraries hold; falling back to it
             // gives a position that's very likely close to right, instead

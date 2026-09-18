@@ -346,8 +346,8 @@ Page {
                     icon.color: Theme.text
                     text: checked ? "Ascending" : "Descending"
                     ToolTip.visible: hovered
-                    ToolTip.text: checked ? "Sorted ascending -- click to sort descending"
-                                          : "Sorted descending -- click to sort ascending"
+                    ToolTip.text: checked ? "Sorted ascending. Click to sort descending"
+                                          : "Sorted descending. Click to sort ascending"
                     onCheckedChanged: scanController.setSort(sortCombo.currentValue, checked)
                 }
             }

@@ -16,7 +16,7 @@ QString refuseIfDjSoftwareRunning()
         return {};
     }
     return QStringLiteral("Refused: %1 appears to be running on this machine. Close it before writing to this "
-                          "stick -- both writing to the same files at once risks corrupting your library.")
+                          "stick: both writing to the same files at once risks corrupting your library.")
         .arg(QString::fromStdString(name));
 }
 

@@ -128,7 +128,7 @@ bool StagedCueEditController::stageChange(int index, const QString &key, std::un
         return false;
     }
     if (m_session->writing()) {
-        setErrorMessage("A save is running -- stage more once it has finished.");
+        setErrorMessage("A save is running. Stage more once it has finished.");
         return false;
     }
     QString changeId = change->id();

@@ -285,6 +285,10 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(int sampleRateMissingCount READ sampleRateMissingCount NOTIFY sampleRatesChanged)
     Q_PROPERTY(int sampleRateFixableCount READ sampleRateFixableCount NOTIFY sampleRatesChanged)
     Q_PROPERTY(bool sampleRateFillStaged READ sampleRateFillStaged NOTIFY sampleRatesChanged)
+    // The check itself could not run. Distinct from finding nothing:
+    // without it, a library that would not open showed the same green
+    // "every track says what it is" as a healthy one.
+    Q_PROPERTY(QString sampleRateError READ sampleRateError NOTIFY sampleRatesChanged)
     Q_PROPERTY(bool artworkRepairStaged READ artworkRepairStaged NOTIFY artworkChanged)
     // Backs the Playlist picker in JunkCuePage.qml -- same shape/
     // convention as SyncController's own playlistNames/
@@ -360,6 +364,7 @@ public:
     int sampleRateMissingCount() const { return static_cast<int>(m_sampleRates.missing.size()); }
     int sampleRateFixableCount() const { return m_sampleRates.fixable(); }
     bool sampleRateFillStaged() const { return m_sampleRateFillStaged; }
+    QString sampleRateError() const { return QString::fromStdString(m_sampleRates.error); }
 
     // Scans every format actually present: rekordbox if rekordboxPath is
     // non-empty, engine if enginePath is non-empty, onelibrary if
@@ -490,6 +495,7 @@ private:
     // The cover-art changes this page has staged, by change id.
     std::set<QString> m_stagedArtwork;
     infrastructure::engine::SampleRateAudit m_sampleRates;
+    std::set<QString> m_stagedSampleRates;
     bool m_sampleRateFillStaged = false;
     // A rekordbox repair's OneLibrary mirror can stale another listed
     // issue: re-scan once the save that applied one has finished.

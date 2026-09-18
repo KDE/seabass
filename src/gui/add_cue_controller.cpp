@@ -111,7 +111,7 @@ void AddCueController::addCue(const QString &format, const QString &path, const 
         return;
     }
     if (m_session->writing()) {
-        setErrorMessage("A save is running -- add the cue once it has finished.");
+        setErrorMessage("A save is running. Add the cue once it has finished.");
         return;
     }
 

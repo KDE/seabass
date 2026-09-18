@@ -180,7 +180,7 @@ RowLayout {
         // Names itself in full when it has been shortened -- an
         // abbreviation the reader cannot expand is just a missing word.
         ToolTip.text: !root.backEnabled ? root.backDisabledTooltip
-            : contentItem.truncated ? (root.middleLabel + " -- back to it")
+            : contentItem.truncated ? (root.middleLabel + ": back to it")
             : ("Back to " + root.middleLabel)
     }
 

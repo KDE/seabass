@@ -162,7 +162,7 @@ Page {
             readOnly: root.lockedByOther
             onReadOnlyClicked: root.explainLock()
             cardTitle: "Clean Up Stray Cues"
-            cardSubtitle: "Remove memory cues sitting at 0:00, almost always accidental"
+            cardSubtitle: "Remove cues sitting at 0:00, almost always accidental"
             cardIcon: "draw-eraser"
             enabled: root.hasRekordbox || root.hasEngine
             onClicked: root.junkCueCleanupRequested(root.stickLabel, root.rekordboxPath, root.enginePath)

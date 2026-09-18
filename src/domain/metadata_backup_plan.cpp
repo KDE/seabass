@@ -97,7 +97,7 @@ int MetadataBackupProposal::cuesAdded() const
     // Only the cues a backup would take: the strays are not stored, so
     // counting them here would promise the store something it will not
     // be given.
-    const int after = static_cast<int>(withoutJunkMemoryCues(stickTrack.cues).size());
+    const int after = static_cast<int>(withoutJunkCues(stickTrack.cues).size());
     // A new track is measured against nothing, so every cue on it is
     // added. An existing one is measured against what the store already
     // holds. Never negative: when the stick's set is the smaller one the
@@ -142,7 +142,7 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
             // by field, because "the store has never seen this track" is
             // one fact and not three.
             proposal.isNew = true;
-            proposal.cuesOffered = !withoutJunkMemoryCues(stick.cues).empty();
+            proposal.cuesOffered = !withoutJunkCues(stick.cues).empty();
             proposal.cuesFillAGap = proposal.cuesOffered;
             proposal.ratingOffered = stick.rating.has_value();
             proposal.commentOffered = !stick.comment.empty();
@@ -155,7 +155,10 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
 
         const Track *stored = found->second;
         proposal.storedId = stored->sourceId;
-        proposal.storedCueCount = static_cast<int>(stored->cues.size());
+        // Filtered like the stick side it is subtracted from: a store
+        // row written before strays were kept out still carries them, and
+        // counting them on one side only under-reports what a backup adds.
+        proposal.storedCueCount = static_cast<int>(withoutJunkCues(stored->cues).size());
 
         // The stick is the incoming side here and the store the existing
         // one -- the mirror image of planMetadataRestore, which runs the
@@ -168,8 +171,8 @@ MetadataBackupPlan planMetadataBackup(const std::vector<Track> &stickTracks,
         // Stray cues take no part, the same as on the way back out: what
         // the store would take of this track is what decides whether
         // there is anything to offer, and the store does not take those.
-        const std::vector<CuePoint> stickCues = withoutJunkMemoryCues(stick.cues);
-        const std::vector<CuePoint> storedCues = withoutJunkMemoryCues(stored->cues);
+        const std::vector<CuePoint> stickCues = withoutJunkCues(stick.cues);
+        const std::vector<CuePoint> storedCues = withoutJunkCues(stored->cues);
         proposal.cuesFillAGap = storedCues.empty() && !stickCues.empty();
         proposal.cuesConflict =
             !storedCues.empty() && !stickCues.empty() && !cueSetsEqual(storedCues, stickCues);

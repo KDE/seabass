@@ -35,7 +35,7 @@ std::vector<domain::CuePoint> cuesWithoutJunk(const domain::Track &track)
         // cue inside the first second. The remover used to test == 0.0,
         // so a cue at 12 ms was listed, "removed", and survived the
         // rewrite.
-        if (!domain::isJunkMemoryCue(c)) {
+        if (!domain::isJunkCue(c)) {
             remainingCues.push_back(c);
         }
     }
@@ -107,7 +107,7 @@ QString RemoveJunkCueChange::owner() const
 
 QString RemoveJunkCueChange::description() const
 {
-    return QStringLiteral("Remove the 0:00 memory cue from \"%1\"").arg(QString::fromStdString(m_track.title));
+    return QStringLiteral("Remove the cue at 0:00 from \"%1\"").arg(QString::fromStdString(m_track.title));
 }
 
 QString RemoveJunkCueChange::verb() const

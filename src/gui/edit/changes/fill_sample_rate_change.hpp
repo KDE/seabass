@@ -19,18 +19,22 @@ namespace seabass::gui
 // Writes the sample rate each track's own file reports into the Engine
 // rows that do not carry one.
 //
-// One change for the whole set, unlike the artwork repair's one per
-// track: there is nothing to decide per row here and no per-row UI to
-// keep in step -- every entry writes one number that the file already
-// answered for during the scan, and a save summary reading "1 change"
-// against "sample rates filled in for 43 tracks" says what happened
-// better than 43 identical lines would.
+// One change per track, like every other fix in Library Health. It was
+// one change for the whole set at first, which made the Save button and
+// the summary count it as a single item while forty-three tracks were
+// being written: the same work, counted differently from the repairs and
+// the cover art beside it, so nothing on the page added up.
+//
+// declaresDatabase: true for the first of a batch only, the same
+// reasoning as RepairArtworkChange::filesToBackup() -- one checkpoint
+// copy of m.db per save rather than one per track.
 class FillSampleRateChange : public PendingChange
 {
 public:
-    FillSampleRateChange(QString enginePath, std::vector<infrastructure::engine::SampleRateEntry> entries);
+    FillSampleRateChange(QString enginePath, infrastructure::engine::SampleRateEntry entry, int itemCountHint,
+                         bool declaresDatabase = true);
 
-    static QString idFor();
+    static QString idFor(std::int64_t trackId);
 
     QString id() const override;
     QString owner() const override;
@@ -43,7 +47,9 @@ public:
 
 private:
     QString m_enginePath;
-    std::vector<infrastructure::engine::SampleRateEntry> m_entries;
+    infrastructure::engine::SampleRateEntry m_entry;
+    int m_itemCountHint = 1;
+    bool m_declaresDatabase = true;
 };
 
 }  // namespace seabass::gui

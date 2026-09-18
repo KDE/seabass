@@ -55,7 +55,7 @@ Page {
         switch (status) {
         case "complete": return {label: "VERIFIED", color: Theme.good, tip: "Every entry was checked against its checksum when this backup was written."};
         case "partial-cancelled": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "The last backup was cancelled and kept; the next run continues from there."};
-        case "partial-conflict": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "The database was not captured -- Engine DJ or rekordbox was running, or the database kept changing."};
+        case "partial-conflict": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "The database was not captured: Engine DJ or rekordbox was running, or the database kept changing."};
         case "partial-db-too-large": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "The Engine database is too large for Seabass to back up safely; back it up by hand."};
         case "partial-skipped": return {label: "INCOMPLETE", color: Theme.warnIcon, tip: "Some files could not be read and are not in this backup; see the last run's warnings and back up again."};
         default: return {label: "", color: Theme.textMuted, tip: ""};
@@ -143,7 +143,7 @@ Page {
         closePolicy: Popup.NoAutoClose
         title: "Backup stopped"
         headline: "The files copied so far are complete. Keep them, and the next backup continues from "
-            + "here -- or discard them"
+            + "here, or discard them"
             + (root.hasBackup ? ", which leaves the previous backup exactly as it was."
                               : " and remove the partial backup file.")
         detailText: "Nothing on the stick is affected either way."
@@ -369,7 +369,7 @@ Page {
                     wrapMode: Text.WordWrap
                     color: Theme.warnText
                     text: "Not enough free space on this drive. Compacting writes a fresh copy of the backup before "
-                        + "removing the old one, so it needs room for both. Free some space and try again -- the "
+                        + "removing the old one, so it needs room for both. Free some space and try again. The "
                         + "backup is complete and usable as it is."
                 }
             }
@@ -430,7 +430,7 @@ Page {
                     wrapMode: Text.WordWrap
                     color: Theme.warnText
                     text: "This stick is mounted read-only, which means its filesystem is damaged. Backing it up "
-                        + "still works and is worth doing now -- reading is all a backup does -- but this will be "
+                        + "still works and is worth doing now, since reading is all a backup does, but this will be "
                         + "an emergency copy: it holds whatever could still be read off a damaged stick, and it "
                         + "is marked as such. Restore it onto a working library only as a last resort."
                 }
@@ -603,7 +603,7 @@ Page {
                         color: Theme.textMuted
                         font.pointSize: Theme.fontSmall
                         text: "The stick's timestamps all moved by " + (root.since.uniformShiftSeconds / 3600) + " h since the last "
-                            + "backup (a timezone or daylight-saving change) -- treated as unchanged, not re-read."
+                            + "backup (a timezone or daylight-saving change), treated as unchanged, not re-read."
                     }
                     RowLayout {
                         visible: root.controller.busy !== true && root.since.freeBytes !== undefined
@@ -692,7 +692,7 @@ Page {
                             text: root.dead.deadBytes > 0
                                 ? Theme.humanBytes(root.dead.deadBytes) + " unused (" + Math.round((root.dead.ratio || 0) * 100)
                                   + "% of " + Theme.humanBytes(root.dead.archiveBytes) + ")"
-                                  + (root.dead.suggested ? " -- worth compacting." : " -- not worth compacting yet.")
+                                  + (root.dead.suggested ? ", worth compacting." : ", not worth compacting yet.")
                                 : "No wasted space."
                         }
                     }
@@ -736,7 +736,7 @@ Page {
                             color: Theme.textMuted
                             text: root.hasBackup
                                 ? "Puts this backup back onto the stick. Files on the stick that aren't in the backup are kept unless you choose an exact restore."
-                                : "Nothing to restore yet -- make a backup first."
+                                : "Nothing to restore yet. Make a backup first."
                         }
                     }
                     Button {

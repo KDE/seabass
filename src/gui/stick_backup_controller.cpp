@@ -298,7 +298,7 @@ bool StickBackupController::enterDirectWrite(std::function<void()> retry)
 void StickBackupController::backUp()
 {
     if (busy() || m_pending || m_stickRoot.isEmpty()) {
-        emit actionFeedback(QStringLiteral("Still busy -- try again once the current operation finishes."), true);
+        emit actionFeedback(QStringLiteral("Still busy. Try again once the current operation finishes."), true);
         return;
     }
     if (!enterDirectWrite([this] { backUp(); })) {
@@ -630,7 +630,7 @@ void StickBackupController::onRunFinished()
             // Only here is the backup itself known to be damaged: every
             // entry was read back, and these did not match what was
             // written.
-            setErrorMessage(QStringLiteral("Verification found %1 damaged entr%2 -- this backup should not be trusted; run a new backup.")
+            setErrorMessage(QStringLiteral("Verification found %1 damaged entr%2. This backup should not be trusted; run a new backup.")
                                 .arg(v.failures.size())
                                 .arg(v.failures.size() == 1 ? QStringLiteral("y") : QStringLiteral("ies")));
             emit actionFeedback(m_errorMessage, true);

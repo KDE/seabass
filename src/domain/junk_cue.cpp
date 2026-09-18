@@ -7,9 +7,12 @@
 namespace seabass::domain
 {
 
-bool isJunkMemoryCue(const CuePoint &cue)
+bool isJunkCue(const CuePoint &cue)
 {
-    return cue.kind == CuePoint::Kind::Memory && cue.positionMs < 1000.0;
+    // A loop is never noise, wherever it starts: an intro loop set on the
+    // first bar is a real thing a DJ places, and it has an end as well as
+    // a start, which a stray press does not.
+    return !cue.isLoop && cue.positionMs < 1000.0;
 }
 
 std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)
@@ -17,7 +20,7 @@ std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)
     std::vector<JunkCueIssue> issues;
     for (const auto &track : tracks) {
         for (const auto &cue : track.cues) {
-            if (isJunkMemoryCue(cue)) {
+            if (isJunkCue(cue)) {
                 issues.push_back(JunkCueIssue{track, cue});
             }
         }
@@ -25,12 +28,12 @@ std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)
     return issues;
 }
 
-std::vector<CuePoint> withoutJunkMemoryCues(const std::vector<CuePoint> &cues)
+std::vector<CuePoint> withoutJunkCues(const std::vector<CuePoint> &cues)
 {
     std::vector<CuePoint> kept;
     kept.reserve(cues.size());
     for (const CuePoint &cue : cues) {
-        if (!isJunkMemoryCue(cue)) {
+        if (!isJunkCue(cue)) {
             kept.push_back(cue);
         }
     }

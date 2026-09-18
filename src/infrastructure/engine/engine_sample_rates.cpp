@@ -120,15 +120,25 @@ SampleRateRepair repairSampleRates(const std::string &engineLibraryPath,
                 result.skipped++;
                 continue;
             }
-            auto track = db.track_by_id(entry.trackId);
-            if (!track) {
-                result.skipped++;  // gone since the audit; not this run's business
-                continue;
+            // Per row, because the rows this function is given are by
+            // definition the damaged ones: a track whose data blob is
+            // the wrong length throws inside libdjinterop, and one of
+            // those must not take the other nine hundred with it.
+            try {
+                auto track = db.track_by_id(entry.trackId);
+                if (!track) {
+                    result.skipped++;  // gone since the audit; not this run's business
+                    continue;
+                }
+                track->set_sample_rate(entry.sampleRateFromFile);
+                result.repaired++;
+            } catch (const std::exception &) {
+                result.skipped++;
             }
-            track->set_sample_rate(entry.sampleRateFromFile);
-            result.repaired++;
         }
     } catch (const std::exception &e) {
+        // Opening the library failed, so nothing was written: this is the
+        // one case where the count really is zero.
         result.error = std::string("could not write the sample rates: ") + e.what();
         result.repaired = 0;
     }

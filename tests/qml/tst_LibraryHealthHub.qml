@@ -128,11 +128,11 @@ TestCase {
                 summary: "Every track in every catalog on this stick points at a file that is really there.",
                 ok: true}},
             {name: "health-card-finding", props: {title: "Memory cues at 0:00",
-                summary: "27 memory cues sit at 0:00. These are almost always accidental -- a stray press "
-                       + "while the track was at the start -- rather than something you placed on purpose.",
+                summary: "27 cues sit at 0:00. These are almost always accidental: a stray press "
+                       + "while the track was at the start, rather than something you placed on purpose.",
                 ok: false, actionLabel: "Review these cues"}},
             {name: "health-card-tally-some", props: {title: "Cover art",
-                summary: "29 of 1271 Engine tracks have cover art no player can show. 27 of them can be rebuilt -- "
+                summary: "29 of 1271 Engine tracks have cover art no player can show. 27 of them can be rebuilt "
                        + "from the rekordbox art on this stick, the tracks' own tags, or a backup on this computer.",
                 ok: false, fixableCount: 27, foundCount: 29, actionLabel: "Review cover art"}},
             {name: "health-card-tally-none", props: {title: "Cover art",
@@ -140,7 +140,7 @@ TestCase {
                        + "this stick, in the tracks themselves, or in a backup.",
                 ok: false, fixableCount: 0, foundCount: 2, actionLabel: "Review cover art"}},
             {name: "health-card-tally-all", props: {title: "Memory cues at 0:00",
-                summary: "27 memory cues sit at 0:00, and every one of them can be taken out.",
+                summary: "27 cues sit at 0:00, and every one of them can be taken out.",
                 ok: false, fixableCount: 27, foundCount: 27, actionLabel: "Review these cues"}},
             {name: "health-card-running", props: {title: "Tracks and their files",
                 summary: "Checking every row in every catalog against the files on the stick (rekordbox)...",

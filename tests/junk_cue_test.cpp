@@ -46,15 +46,20 @@ int main()
         std::cout << "case 1 (memory cue at 0:00 is flagged) OK\n";
     }
 
-    // Case 2: a hot cue at 0:00 is not junk, deliberate track-start pads
-    // some DJs place there on purpose.
+    // Case 2: a hot cue at 0:00 is junk as well.
+    //
+    // It was exempt on the theory that some DJs keep a deliberate
+    // track-start pad there. Real sticks have one or two to a library, at
+    // 7 ms and 109 ms, sitting among the memory-cue noise and no more use
+    // to navigate by: the track already starts at 0:00.
     {
         std::vector<Track> tracks = {
             makeTrack("a", "Song", "Artist", {makeCue(CuePoint::Kind::Hot, 0.0)}),
         };
         auto issues = JunkCueFinder::find(tracks);
-        assert(issues.empty());
-        std::cout << "case 2 (hot cue at 0:00 is not flagged) OK\n";
+        assert(issues.size() == 1);
+        assert(issues[0].cue.kind == CuePoint::Kind::Hot);
+        std::cout << "case 2 (a hot cue at 0:00 is flagged too) OK\n";
     }
 
     // Case 3: a memory cue away from 0:00 is not junk.
@@ -101,9 +106,10 @@ int main()
             makeTrack("c", "Song C", "Artist", {makeCue(CuePoint::Kind::Memory, 0.0)}),
         };
         auto issues = JunkCueFinder::find(tracks);
-        assert(issues.size() == 2);
+        assert(issues.size() == 3);
         assert(issues[0].track.sourceId == "a");
-        assert(issues[1].track.sourceId == "c");
+        assert(issues[1].track.sourceId == "b" && "the hot cue at the start counts now too");
+        assert(issues[2].track.sourceId == "c");
         std::cout << "case 4 (multiple tracks/cues, only true matches surface) OK\n";
     }
 
@@ -112,7 +118,7 @@ int main()
     // sample offset put a cue at minus a fraction of a millisecond.
     // Sticks and metadata backups made before that still carry them, so
     // the rule has to name them even though the reader no longer makes
-    // them. The withoutJunkMemoryCues() filter is the same rule, and the
+    // them. The withoutJunkCues() filter is the same rule, and the
     // metadata paths lean on it.
     {
         const double sentinel = -1.0 / 44100.0 * 1000.0;  // what one real library was full of
@@ -122,15 +128,43 @@ int main()
                        makeCue(CuePoint::Kind::Memory, 30'000.0)}),
         };
         auto issues = JunkCueFinder::find(tracks);
-        assert(issues.size() == 1);
-        assert(issues[0].cue.kind == CuePoint::Kind::Memory);
+        assert(issues.size() == 2 && "the sentinel and the hot cue at the start");
         assert(issues[0].cue.positionMs < 0.0);
 
-        const auto kept = withoutJunkMemoryCues(tracks[0].cues);
-        assert(kept.size() == 2);
-        assert(kept[0].kind == CuePoint::Kind::Hot && "a hot cue at 0:00 is deliberate");
-        assert(kept[1].positionMs == 30'000.0);
-        std::cout << "case 5 (a cue before the start is junk; a hot cue at 0:00 is not) OK\n";
+        const auto kept = withoutJunkCues(tracks[0].cues);
+        assert(kept.size() == 1);
+        assert(kept[0].positionMs == 30'000.0);
+
+        // A loop is the exception, wherever it starts: it has an end as
+        // well as a start, which no stray press does.
+        CuePoint introLoop = makeCue(CuePoint::Kind::Hot, 0.0);
+        introLoop.isLoop = true;
+        introLoop.loopEndMs = 8'000.0;
+        assert(!isJunkCue(introLoop));
+        std::cout << "case 5 (a cue before the start is junk; a loop never is) OK\n";
+    }
+
+    // Case 6: a hot cue in the first second is junk too.
+    //
+    // It counted as deliberate until real sticks were looked at: one or
+    // two to a library, at 7 ms and 109 ms, indistinguishable from the
+    // noise beside them and no use to navigate by, since the track
+    // already starts there.
+    {
+        std::vector<Track> tracks = {
+            makeTrack("a", "Song", "Artist",
+                      {makeCue(CuePoint::Kind::Hot, 7.0), makeCue(CuePoint::Kind::Hot, 109.0),
+                       makeCue(CuePoint::Kind::Hot, 30'000.0), makeCue(CuePoint::Kind::Memory, 0.0)}),
+        };
+        auto issues = JunkCueFinder::find(tracks);
+        assert(issues.size() == 3 && "both hot cues at the start, and the memory cue");
+        const auto kept = withoutJunkCues(tracks[0].cues);
+        assert(kept.size() == 1);
+        assert(kept[0].kind == CuePoint::Kind::Hot && kept[0].positionMs == 30'000.0);
+        // The line is the same second for both kinds.
+        assert(!isJunkCue(makeCue(CuePoint::Kind::Hot, 1000.0)));
+        assert(isJunkCue(makeCue(CuePoint::Kind::Hot, 999.0)));
+        std::cout << "case 6 (a hot cue in the first second is junk too) OK\n";
     }
 
     std::cout << "All junk_cue tests passed.\n";

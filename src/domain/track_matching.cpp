@@ -175,9 +175,13 @@ std::vector<CuePoint> keepExistingColours(std::vector<CuePoint> incoming, const 
             if (had.color.empty() || had.kind != cue.kind) {
                 continue;
             }
-            const bool sameCue = cue.kind == CuePoint::Kind::Hot
-                ? had.hotCueNumber == cue.hotCueNumber
-                : std::abs(had.positionMs - cue.positionMs) <= PositionToleranceMs;
+            // Engine reads hot cues and hot loops into the same slot
+            // numbers, so the slot alone would let a loop's colour land
+            // on the cue that shares its number.
+            const bool sameCue = had.isLoop == cue.isLoop
+                && (cue.kind == CuePoint::Kind::Hot
+                        ? had.hotCueNumber == cue.hotCueNumber
+                        : std::abs(had.positionMs - cue.positionMs) <= PositionToleranceMs);
             if (sameCue) {
                 cue.color = had.color;
                 break;
@@ -204,17 +208,28 @@ bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b
         // a label permanently reappear as "needs sync" after a ToRekordbox
         // apply, since no writer could ever make the comment fields agree.
         //
-        // color is excluded for every kind, and it used to be excluded
-        // only for memory cues (where Engine's single main_cue has none at
-        // all, so comparing it against a colored rekordbox memory cue
-        // could never be made to agree). Hot cues were still compared on
-        // color, which made a cue in the right place, in the right slot,
-        // differing only in shade, count as a set that disagrees -- a
+        // Two shades of the same cue are the same cue. Comparing color
+        // outright made a cue in the right slot at the right position,
+        // differing only in shade, count as a set that disagrees: a
         // conflict to resolve, an offer to write, a row that never
-        // settles. Color is extra information about a cue, not what a cue
-        // IS: worth carrying across (see keepExistingColours(), which is
-        // how it stops being lost) and not worth a disagreement.
+        // settled. Color is extra information about a cue, not what the
+        // cue IS.
+        //
+        // One shade is different in kind from the others, though, and
+        // that is no shade at all. A side with no color for a hot cue is
+        // a side that has not been told one, so the two sets are not
+        // equal and the sync that follows carries the color across. Two
+        // real colors that disagree is a DJ recoloring on one side, and
+        // it stays where it was put rather than starting an argument
+        // nothing can settle.
+        //
+        // Memory cues are exempt from even that: Engine's single main cue
+        // has no color at all, so "one side has none" is its permanent
+        // state and would be a mismatch that no writer could ever fix.
         if (x.kind != y.kind || x.hotCueNumber != y.hotCueNumber) {
+            return false;
+        }
+        if (x.kind == CuePoint::Kind::Hot && x.color.empty() != y.color.empty()) {
             return false;
         }
         if (std::abs(x.positionMs - y.positionMs) > PositionToleranceMs) {

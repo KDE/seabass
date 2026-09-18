@@ -1092,7 +1092,7 @@ void CleanupController::stagePlan(size_t rawIndex)
         }
     }
     if (writing()) {
-        setErrorMessage("A write is running -- stage more once it has finished.");
+        setErrorMessage("A write is running. Stage more once it has finished.");
         return;
     }
     const auto &plan = plans[rawIndex];

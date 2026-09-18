@@ -148,7 +148,7 @@ Page {
                 var emptied = consistencyController.artworkEmptyFileCount;
                 if (emptied > 0) {
                     parts.push(emptied + " have their image file sitting in Engine Library/Artwork with nothing in "
-                        + "it -- the name is right and the file is empty, which is what a stick pulled out "
+                        + "it: the name is right and the file is empty, which is what a stick pulled out "
                         + "mid-write leaves behind. A player draws its own grey placeholder for those, so they "
                         + "look like art that was never there. Engine DJ writes them again when it next analyses "
                         + "or re-imports those tracks.");
@@ -161,7 +161,7 @@ Page {
                 parts.push(fixable > 0
                     ? fixable + " of " + consistencyController.artworkUnreadableCount + " can be put back: Seabass "
                       + "takes the image from the rekordbox art on this stick, the track's own tags, or a stick "
-                      + "backup on this computer -- whichever still has a copy, in that order."
+                      + "backup on this computer, whichever still has a copy, in that order."
                     : "None of them has a copy left on this stick, in the tracks themselves, or in a backup on this "
                       + "computer. Re-importing or re-analysing in Engine DJ is what would rebuild them.");
                 return parts.join(" ");
@@ -184,7 +184,7 @@ Page {
                     && !consistencyController.stickReadOnly
                 ToolTip.visible: hovered
                 ToolTip.text: consistencyController.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
                     : consistencyController.artworkRepairStaged
                     ? "Take this back out of the changes to save"
                     : "Stage copying each image into Engine Library/Artwork and pointing the track at it. "
@@ -199,7 +199,7 @@ Page {
                 objectName: "coverArtStagedNote"
                 visible: consistencyController.artworkRepairStaged
                 color: Theme.warnText
-                text: "staged, not saved yet -- press Save to write it to the stick"
+                text: "staged, not saved yet. Press Save to write it to the stick"
             }
             Item { Layout.fillWidth: true }
         }

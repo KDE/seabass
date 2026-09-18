@@ -380,7 +380,7 @@ Page {
                 font.pointSize: Theme.fontSmall
                 textFormat: Text.StyledText
                 linkColor: Theme.accent
-                text: "A 0:00 memory cue on this side is usually accidental. "
+                text: "A cue at 0:00 on this side is usually accidental. "
                     + "<a href=\"clean-up-stray-cues\">Clean Up Stray Cues</a>"
                 onLinkActivated: card.junkLinkActivated()
                 HoverHandler {
@@ -545,7 +545,7 @@ Page {
                     + "copied again: that is what *keeps 1* on a row means.\n\n"
                     + "## Needs a decision\n"
                     + "Both sides have hot cues, and they differ. No timestamp can say which set you "
-                    + "meant -- Engine moves a track's edit time for a rating or a BPM change just as for "
+                    + "meant: Engine moves a track's edit time for a rating or a BPM change just as for "
                     + "a cue. Pick the side whose hot cues should be on both; the pick is staged straight "
                     + "away.\n\n"
                     + "## DeviceLibrary and OneLibrary\n"

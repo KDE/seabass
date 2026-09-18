@@ -353,15 +353,16 @@ int main()
         assert(proposal->cues.front().kind == CuePoint::Kind::Hot);
         assert(proposal->cuesAdded() == 1 && "and the count is of cues that are really added");
 
-        // A hot cue at 0:00 is a real one -- some DJs put it there on
-        // purpose -- and goes back untouched.
+        // A hot cue at the start is noise on the same terms, so a
+        // restore does not put one back either; one further in does.
         Track stickTwo = stickTrack("Am Anfang");
         Track storedTwo = storedTrack("Am Anfang");
-        storedTwo.cues = {hotCue(1, 0)};
+        storedTwo.cues = {hotCue(1, 0), hotCue(2, 45'000.0)};
         const auto more = planMetadataRestore({stickTwo}, {storedTwo}, StoredAt - 1000);
         const MetadataRestoreProposal *second = find(more, "Am Anfang");
         assert(second != nullptr && second->cuesOffered);
-        assert(second->cues.size() == 1);
+        assert(second->cues.size() == 1 && "only the one that is really a cue");
+        assert(second->cues.front().positionMs == 45'000.0);
         std::cout << "case 13 (stray cues are not restored, and a stick holding only strays counts as empty) OK\n";
     }
 

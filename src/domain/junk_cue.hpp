@@ -11,12 +11,16 @@
 namespace seabass::domain
 {
 
-// One memory cue sitting at the very start of a track -- in practice
-// almost always an accidental/junk cue rather than a deliberate marker:
-// unlike a hot cue (which some DJs do use at 0:00 on purpose as an
-// explicit "track start" pad), a memory cue there serves no real
-// navigational purpose (the track already starts at 0:00) and most
-// often comes from a stray click during analysis or an import artifact.
+// One cue sitting at the very start of a track -- noise rather than a
+// marker anyone placed. The track already starts at 0:00, so a cue there
+// navigates to nothing; what it comes from is a stray press during
+// analysis, an import artifact, or a format's own "no cue set" sentinel.
+//
+// Hot cues at 0:00 counted as deliberate until 2026-09-18, on the theory
+// that some DJs keep a "track start" pad. Real sticks say otherwise: they
+// turn up one or two to a library, at 7 ms and 109 ms, indistinguishable
+// from the memory-cue noise beside them and just as useless to navigate
+// by. They are cleaned up with the rest now.
 //
 // A position before the start counts too, and is the plainer case: it
 // cannot be a cue anyone placed. Seabass made those itself until the
@@ -39,17 +43,19 @@ namespace seabass::domain
 struct JunkCueIssue
 {
     Track track;    // the track carrying the cue
-    CuePoint cue;   // the specific memory cue at position 0
+    CuePoint cue;   // the specific cue at the start
 };
 
 // Pure, no filesystem/database access -- callers already have a fresh
 // track list from the same scan that also feeds
 // LibraryConsistencyChecker, this just looks at cues directly rather
 // than file existence.
-// The one definition of "junk": a memory cue inside the first second,
-// almost always a stray press while the track sat at the start. Shared
-// by the finder and the remover so the two cannot disagree.
-bool isJunkMemoryCue(const CuePoint &cue);
+// The one definition of "junk": any cue inside the first second, hot or
+// memory, except a loop. A loop starting on the first bar is a real
+// thing someone set, and it carries an end as well as a start, which a
+// stray press never does. Shared by the finder and the remover so the
+// two cannot disagree.
+bool isJunkCue(const CuePoint &cue);
 
 // The same cues with the junk left out.
 //
@@ -58,7 +64,7 @@ bool isJunkMemoryCue(const CuePoint &cue);
 // count towards "which side has more cues" when the two disagree, and
 // must never be written back onto a stick by a restore -- which would
 // put back exactly what Library Health had just taken off.
-std::vector<CuePoint> withoutJunkMemoryCues(const std::vector<CuePoint> &cues);
+std::vector<CuePoint> withoutJunkCues(const std::vector<CuePoint> &cues);
 
 class JunkCueFinder
 {

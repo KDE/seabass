@@ -49,7 +49,7 @@ Label {
         if (silent)
             return "";
         var s = "This stick also has " + info.filesFound + " audio file(s), " + info.bytesHuman
-            + ", that no catalog references -- checked against " + root.catalogNames
+            + ", that no catalog references, checked against " + root.catalogNames
             + ". They are listed below wherever they match a track you still have, so you can see what "
             + "each one duplicates before anything happens to it. Nothing is deleted here either: they "
             + "go to \"Delete Orphaned Files\" with the rest.";

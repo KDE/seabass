@@ -21,7 +21,7 @@ int MetadataRestoreProposal::cuesAdded() const
     // Against the cues that count: a stick whose three cues are all
     // strays gains every cue this writes, and saying "adds 1" because it
     // had three of something the write drops is the wrong number.
-    const int before = static_cast<int>(withoutJunkMemoryCues(stickTrack.cues).size());
+    const int before = static_cast<int>(withoutJunkCues(stickTrack.cues).size());
     return after > before ? after - before : 0;
 }
 
@@ -52,8 +52,8 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
         // rather than a conflict to weigh. What the restore writes is a
         // whole cue list, so a single stray left in it would be written
         // back with the rest.
-        const std::vector<CuePoint> storedCues = withoutJunkMemoryCues(stored->cues);
-        const std::vector<CuePoint> stickCues = withoutJunkMemoryCues(stick->cues);
+        const std::vector<CuePoint> storedCues = withoutJunkCues(stored->cues);
+        const std::vector<CuePoint> stickCues = withoutJunkCues(stick->cues);
         proposal.cuesFillAGap = stickCues.empty() && !storedCues.empty();
         proposal.cuesConflict =
             !stickCues.empty() && !storedCues.empty() && !cueSetsEqual(stickCues, storedCues);

@@ -359,7 +359,7 @@ TestCase {
         verify(card !== null);
         compare(card.visible, true);
         compare(card.cardSubtitle.toLowerCase().indexOf("one of your"), -1);
-        compare(card.cardSubtitle, "No known stick backups yet -- browse for a backup file to restore");
+        compare(card.cardSubtitle, "No known stick backups yet. Browse for a backup file to restore");
 
         var restore = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreStickBackupRequested"});
         card.clicked();

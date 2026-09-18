@@ -382,6 +382,18 @@ void MetadataStore::openAndMigrate()
     // The store this feature exists to protect would be unopenable, for
     // good. A transaction makes the whole step happen or none of it.
     if (migrateInPlace) {
+        // A copy first. Every earlier version was migrated in place with
+        // nothing to lose (1 -> 2 only added columns), but 3 deletes
+        // rows, and this database is the one place that may hold cues no
+        // stick has any more. The copy is the same move-aside the
+        // unknown-version path makes, minus the part where the store
+        // itself goes away.
+        std::error_code copyEc;
+        fs::path beside = m_databasePath;
+        beside += ".before-schema-" + std::to_string(SchemaVersion);
+        if (!fs::exists(beside, copyEc)) {
+            fs::copy_file(m_databasePath, beside, copyEc);
+        }
         exec(m_db, "BEGIN IMMEDIATE");
         struct RollbackGuard
         {
@@ -421,7 +433,12 @@ void MetadataStore::openAndMigrate()
             // --:--", counted in every cue count, and offered back by a
             // restore. They were never anyone's work, so there is
             // nothing to weigh up: they go.
-            exec(m_db, "DELETE FROM cues WHERE kind = 'memory' AND position_ms < 1000;");
+            // Loops are spared: a loop is a real thing someone set, and
+            // rekordbox memory loops read back as Kind::Memory with
+            // isLoop, so an intro loop on the first bar lives exactly
+            // here. Deleting one would take a DJ's own work out of the
+            // one place that may hold it after the stick is gone.
+            exec(m_db, "DELETE FROM cues WHERE position_ms < 1000 AND is_loop = 0;");
         }
         exec(m_db, "UPDATE schema_version SET version = 3;");
         exec(m_db, "COMMIT");
@@ -812,7 +829,7 @@ MetadataBackupSummary MetadataStore::store(const std::vector<Track> &tracks, con
         // side has more, and so never back out onto a stick through a
         // restore -- which would put back exactly what Library Health
         // had just cleaned off.
-        const std::vector<CuePoint> incomingCues = domain::withoutJunkMemoryCues(track.cues);
+        const std::vector<CuePoint> incomingCues = domain::withoutJunkCues(track.cues);
 
         // The shared merge rule, per authored field group: a blank is
         // filled, more cues wins, otherwise the later edit wins. The

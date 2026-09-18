@@ -229,7 +229,7 @@ Page {
                         + "## Before you send it\n"
                         + "This data **may be published** as part of the project's test suite. "
                         + "Anything you would not want public should not go in the hardware or "
-                        + "notes fields below -- mention it in the email instead.\n"
+                        + "notes fields below. Mention it in the email instead.\n"
                 }
             }
 

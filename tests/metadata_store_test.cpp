@@ -922,16 +922,16 @@ int main()
         CuePoint stray;
         stray.kind = CuePoint::Kind::Memory;
         stray.positionMs = 340;  // where Engine's own analysis lands one
+        // A hot cue at the start is noise on the same terms as a memory
+        // cue there, and neither is taken in.
         track.cues = {stray, hotCue(1, 0.0), memoryCue(48'000.0)};
 
         const auto summary = store(metadata, {track}, sourceFor(stick));
-        assert(summary.cuesStored == 2 && "the stray stays on the stick");
+        assert(summary.cuesStored == 1 && "both cues at the start stay on the stick");
         const auto rows = metadata.browse("Dritte", 10, 0);
-        assert(rows.size() == 1 && rows[0].cueCount == 2);
+        assert(rows.size() == 1 && rows[0].cueCount == 1);
         for (const auto &cue : metadata.cuesFor(rows[0].id)) {
-            // A hot cue at 0:00 is deliberate and kept; a memory cue
-            // there is the fault.
-            assert(!(cue.kind == CuePoint::Kind::Memory && cue.positionMs < 1000.0));
+            assert(cue.positionMs >= 1000.0);
         }
         std::cout << "case 21 (a stray memory cue at 0:00 never enters the store) OK\n";
     }

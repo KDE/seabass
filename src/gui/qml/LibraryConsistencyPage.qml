@@ -177,7 +177,7 @@ Page {
         property int pendingIndex: -1
         severity: SeabassDialog.Question
         title: "Stage removing this cue?"
-        headline: "Removes this memory cue sitting at 0:00 from the track."
+        headline: "Removes this cue sitting at 0:00 from the track."
         detailText: "Backed up first."
         acceptText: "Stage Removal"
         onAccepted: if (pendingIndex >= 0) consistencyController.removeJunkCue(pendingIndex)
@@ -191,9 +191,9 @@ Page {
         // ListView footer, whose ids are scoped to the footer
         // component, so from out here it is a ReferenceError and this
         // title never binds. The model is the shared thing both can see.
-        title: "Stage removing all " + consistencyController.junkCues.count + " memory cue(s) at 0:00?"
-        headline: "This stages removing every memory cue at 0:00 currently listed, across every catalog on "
-            + "this stick -- once you press Save that is a real write, not just dismissing them from view."
+        title: "Stage removing all " + consistencyController.junkCues.count + " cue(s) at 0:00?"
+        headline: "This stages removing every cue at 0:00 currently listed, across every catalog on "
+            + "this stick. Once you press Save that is a real write, not just dismissing them from view."
         detailText: "Everything is backed up first, but make sure this is really what you want."
         acceptText: "Stage Removal"
         onAccepted: consistencyController.removeAllJunkCues()
@@ -202,8 +202,8 @@ Page {
     MessageDialog {
         id: confirmIgnoreAllJunkCuesDialog
         severity: SeabassDialog.Question
-        title: "Ignore all memory cues at 0:00"
-        headline: "Dismisses every memory cue at 0:00 currently listed, just for this view."
+        title: "Ignore all cues at 0:00"
+        headline: "Dismisses every cue at 0:00 currently listed, just for this view."
         detailText: "Nothing is written, they'll show up again the next time you scan."
         acceptText: "Ignore All"
         onAccepted: consistencyController.ignoreAllJunkCues()
@@ -359,7 +359,7 @@ Page {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: Theme.textMuted
-            text: "Four checks on this stick: catalog rows whose audio file is missing, memory cues sitting at "
+            text: "Four checks on this stick: catalog rows whose audio file is missing, cues sitting at "
                 + "0:00, Engine tracks that do not say what sample rate they are, and cover art a player cannot "
                 + "show. Nothing is written until you press Save."
         }
@@ -400,7 +400,7 @@ Page {
                     && consistencyController.unstagedRepairableCount > 0 && !consistencyController.stickReadOnly
                 ToolTip.visible: hovered
                 ToolTip.text: consistencyController.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
                     : consistencyController.unstagedRepairableCount === 0 && consistencyController.repairableCount > 0
                     ? "Every safe repair is staged already. Press Save to write them."
                     : "Repair every entry with an exact healthy match. Conflicts are left for you."
@@ -445,7 +445,7 @@ Page {
                     && !consistencyController.stickReadOnly
                 ToolTip.visible: hovered
                 ToolTip.text: consistencyController.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
                     : consistencyController.sampleRateFillStaged
                     ? "Take this back out of the changes to save"
                     : "Stage writing each track's real sample rate, read from the file itself. Save writes it."
@@ -457,7 +457,7 @@ Page {
 
         Subtitle {
             Layout.topMargin: 12
-            text: "Memory cues at 0:00"
+            text: "Cues at 0:00"
         }
 
         RowLayout {
@@ -465,8 +465,8 @@ Page {
             spacing: 12
             Label {
                 text: consistencyController.junkCues.count === 0
-                    ? "No memory cues are sitting at 0:00."
-                    : "I found " + consistencyController.junkCues.count + " memory cue(s) sitting at 0:00, likely accidental"
+                    ? "No cues are sitting at 0:00."
+                    : "I found " + consistencyController.junkCues.count + " cue(s) sitting at 0:00, likely accidental"
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -490,10 +490,10 @@ Page {
                 // final, or click it and believe the cues are
                 // already gone.
                 ToolTip.text: consistencyController.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
                     : consistencyController.unstagedJunkCueCount === 0
                     ? "Every one of them is staged already. Press Save to write it."
-                    : "Stage removing every 0:00 memory cue listed, in all catalogs. Save writes it."
+                    : "Stage removing every cue at 0:00 listed, in all catalogs. Save writes it."
                 onClicked: confirmRemoveAllJunkCuesDialog.open()
             }
             Button {
@@ -863,7 +863,7 @@ Page {
                             actionButtonText: junkDelegate.staged ? "Unstage" : "Remove"
                             actionButtonTooltip: junkDelegate.staged
                                 ? "Staged for removal, not on the stick yet: press Save. Click to take it back out."
-                                : "Stage removing this memory cue at 0:00 from the track; Save writes it. Backed up first."
+                                : "Stage removing this cue at 0:00 from the track; Save writes it. Backed up first."
                             actionButtonEnabled: !consistencyController.busy && !consistencyController.writing
                             onActionTriggered: {
                                 if (junkDelegate.staged) {
@@ -883,7 +883,7 @@ Page {
                                 text: "Ignore"
                                 enabled: !consistencyController.busy
                                 ToolTip.visible: hovered
-                                ToolTip.text: "Dismiss this one, just for this view -- nothing on the stick changes"
+                                ToolTip.text: "Dismiss this one, just for this view. Nothing on the stick changes"
                                 onClicked: consistencyController.ignoreJunkCue(junkDelegate.index)
                             }
                         }

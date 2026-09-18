@@ -272,7 +272,7 @@ Page {
         // on, so "restore" here means "salvage", not "put it back".
         warningText: (root.info.sourceReadOnly === true
                 ? "This is an EMERGENCY COPY, taken off a stick whose filesystem was already damaged. It holds "
-                  + "whatever could still be read off it -- files may be missing, and files that are there may be "
+                  + "whatever could still be read off it: files may be missing, and files that are there may be "
                   + "damaged in ways nothing has checked. Restore it only if there is nothing better left. "
                 : "")
             + (root.preview.filesToWrite || 0) + " file(s) on " + confirmDialog.confirmTarget

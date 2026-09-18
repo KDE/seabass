@@ -191,7 +191,7 @@ void SettingsController::setField(const QString &fileName, const QString &fieldL
         }
     }
     if (!known) {
-        setErrorMessage("\"" + fieldLabel + "\" cannot be set to " + optionName + " -- not a value Seabass knows.");
+        setErrorMessage("\"" + fieldLabel + "\" cannot be set to " + optionName + ": not a value Seabass knows.");
         return;
     }
     if (optionName == oldValue) {

@@ -195,7 +195,7 @@ Page {
         property int pendingIndex: -1
         severity: SeabassDialog.Question
         title: "Remove This Cue?"
-        headline: "Stages removing this memory cue sitting at 0:00 from the track; Save writes it."
+        headline: "Stages removing this cue sitting at 0:00 from the track; Save writes it."
         detailText: "Backed up first."
         acceptText: "Stage Removal"
         onAccepted: if (pendingIndex >= 0) consistencyController.removeJunkCue(pendingIndex)
@@ -205,9 +205,9 @@ Page {
         id: confirmRemoveAllJunkCuesDialog
         severity: SeabassDialog.Warning
         destructive: true
-        title: "Remove All " + junkCueListView.count + " Memory Cue(s) at 0:00?"
-        headline: "This permanently removes every memory cue at 0:00 currently listed, across every "
-            + "catalog on this stick -- a real write, not just dismissing them from view."
+        title: "Remove All " + junkCueListView.count + " Cue(s) at 0:00?"
+        headline: "This permanently removes every cue at 0:00 currently listed, across every "
+            + "catalog on this stick. A real write, not just dismissing them from view."
         detailText: "Everything is backed up first, but make sure this is really what you want before "
             + "continuing."
         acceptText: "Stage Removal"
@@ -217,8 +217,8 @@ Page {
     MessageDialog {
         id: confirmIgnoreAllJunkCuesDialog
         severity: SeabassDialog.Question
-        title: "Ignore all memory cues at 0:00"
-        headline: "Dismisses every memory cue at 0:00 currently listed, just for this view."
+        title: "Ignore all cues at 0:00"
+        headline: "Dismisses every cue at 0:00 currently listed, just for this view."
         detailText: "Nothing is written, they'll show up again the next time you scan."
         acceptText: "Ignore All"
         onAccepted: consistencyController.ignoreAllJunkCues()
@@ -265,9 +265,9 @@ Page {
                     // from Library Health's card, and a number that does
                     // not say so reads as a disagreement about the same
                     // one.
-                    text: junkCueListView.count + " memory cue(s) sitting at 0:00, likely accidental"
+                    text: junkCueListView.count + " cue(s) sitting at 0:00, likely accidental"
                         + (root.selectedPlaylistName.length > 0
-                            ? " -- in " + root.selectedPlaylistName + " only" : " -- across the whole library")
+                            ? ", in " + root.selectedPlaylistName + " only" : ", across the whole library")
                     font.bold: true
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
@@ -282,7 +282,7 @@ Page {
                     ToolTip.visible: hovered
                     ToolTip.text: consistencyController.unstagedJunkCueCount === 0
                         ? "Every one of them is staged already. Press Clean Up to write it."
-                        : "Stage removing every 0:00 memory cue listed, in all catalogs."
+                        : "Stage removing every cue at 0:00 listed, in all catalogs."
                     onClicked: confirmRemoveAllJunkCuesDialog.open()
                 }
                 Button {
@@ -371,7 +371,7 @@ Page {
             Layout.topMargin: 24
             Layout.bottomMargin: 12
             visible: junkCueListView.count === 0 && !consistencyController.busy
-            text: "No memory cues are sitting at 0:00."
+            text: "No cues are sitting at 0:00."
             color: Theme.textMuted
         }
     }

@@ -113,7 +113,7 @@ QHash<int, QByteArray> BackupProposalListModel::roleNames() const
 QString storesSummaryOf(const MetadataBackupProposal &proposal)
 {
     QStringList parts;
-    const int cues = static_cast<int>(domain::withoutJunkMemoryCues(proposal.stickTrack.cues).size());
+    const int cues = static_cast<int>(domain::withoutJunkCues(proposal.stickTrack.cues).size());
     if (proposal.cuesOffered && cues > 0) {
         parts << (cues == 1 ? QStringLiteral("1 cue") : QStringLiteral("%1 cues").arg(cues));
     }
@@ -176,11 +176,11 @@ QVariant BackupProposalListModel::data(const QModelIndex &index, int role) const
         // is about: the store does not take stray cues, so counting them
         // here offered "1 cue" for a track whose only cue was a stray and
         // whose backup would carry none.
-        return static_cast<int>(domain::withoutJunkMemoryCues(track.cues).size());
+        return static_cast<int>(domain::withoutJunkCues(track.cues).size());
     case CuesAddedRole:
         return proposal.cuesAdded();
     case CueSummaryRole:
-        return metadataCueSummary(domain::withoutJunkMemoryCues(track.cues));
+        return metadataCueSummary(domain::withoutJunkCues(track.cues));
     case IsNewRole:
         return proposal.isNew;
     case CuesConflictRole:

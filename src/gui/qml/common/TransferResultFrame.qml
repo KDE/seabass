@@ -88,7 +88,7 @@ Frame {
                 wrapMode: Text.WordWrap
                 color: Theme.textMuted
                 font.pointSize: Theme.fontSmall
-                text: "This can predate the backup -- a re-numbered or re-imported track can leave the database still pointing at its old file. Library Health can tell the two apart and offer to fix it."
+                text: "This can predate the backup: a re-numbered or re-imported track can leave the database still pointing at its old file. Library Health can tell the two apart and offer to fix it."
             }
             Button {
                 objectName: "repairLibraryButton"

@@ -535,7 +535,11 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     // counts on screen for as long as the page lived.
     m_artwork = {};
     m_sampleRates = {};
-    m_sampleRateFillStaged = false;
+    // The staged fill is NOT cleared here, for the same reason the staged
+    // artwork is not: a rescan re-reads the library, it does not unstage
+    // what someone asked for. Clearing the flag while the change stayed
+    // in the session left a fix that could not be taken back and would
+    // still be written by Save.
     emit sampleRatesChanged();
     m_artSources.clear();
     emit artworkChanged();
@@ -767,8 +771,12 @@ void LibraryConsistencyController::attachSession()
                     scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
                     return;
                 }
-                if (changeId == FillSampleRateChange::idFor()) {
-                    m_sampleRateFillStaged = false;
+                if (auto staged = m_stagedSampleRates.find(changeId); staged != m_stagedSampleRates.end()) {
+                    // Counted like the cover art: the numbers come from
+                    // the database this just wrote, so they are re-read
+                    // once the whole save is done.
+                    m_stagedSampleRates.erase(staged);
+                    m_sampleRateFillStaged = !m_stagedSampleRates.empty();
                     m_rescanAfterSave = true;
                     clearStagedStatusIfNothingStaged();
                     emit sampleRatesChanged();
@@ -833,6 +841,7 @@ void LibraryConsistencyController::attachSession()
                 m_stagedIssues.clear();
                 m_stagedJunk.clear();
                 m_stagedArtwork.clear();
+                m_stagedSampleRates.clear();
                 m_sampleRateFillStaged = false;
                 emit sampleRatesChanged();
                 m_model.clearStaged();
@@ -858,7 +867,7 @@ bool LibraryConsistencyController::ensureSessionForStaging()
         }
     }
     if (m_session->writing()) {
-        setErrorMessage("A save is running -- stage more once it has finished.");
+        setErrorMessage("A save is running. Stage more once it has finished.");
         return false;
     }
     return true;
@@ -1155,9 +1164,22 @@ void LibraryConsistencyController::fillSampleRates()
         return;
     }
     const int count = static_cast<int>(writable.size());
-    if (!m_session->stage(std::make_unique<FillSampleRateChange>(m_enginePath, std::move(writable)))) {
+    // One change per track, the unit the save summary counts and the
+    // progress bar ticks, staged in one call for the same reason the
+    // artwork repair is: a thousand separate stage() calls is quadratic
+    // twice over.
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    std::set<QString> ids;
+    changes.reserve(writable.size());
+    for (const auto &entry : writable) {
+        changes.push_back(
+            std::make_unique<FillSampleRateChange>(m_enginePath, entry, count, changes.empty()));
+        ids.insert(FillSampleRateChange::idFor(entry.trackId));
+    }
+    if (!m_session->stageAll(std::move(changes))) {
         return;  // the session reported the refusal; the page shows it
     }
+    m_stagedSampleRates = std::move(ids);
     m_sampleRateFillStaged = true;
     emit sampleRatesChanged();
     setStagedStatusMessage(
@@ -1170,8 +1192,13 @@ void LibraryConsistencyController::unstageSampleRateFill()
         return;
     }
     if (m_session) {
-        m_session->unstage(FillSampleRateChange::idFor());
+        QStringList staged;
+        for (const QString &id : m_stagedSampleRates) {
+            staged << id;
+        }
+        m_session->unstageAll(staged);
     }
+    m_stagedSampleRates.clear();
     m_sampleRateFillStaged = false;
     emit sampleRatesChanged();
     clearStagedStatusIfNothingStaged();
