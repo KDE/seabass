@@ -493,6 +493,38 @@ cli_sync_dry_run() {
     "$build/seabass-cli" sync --rekordbox "$B/PIONEER" --engine "$B/Engine Library" --dry-run && unchanged_catalogs "$B"
 }
 
+stick_tree() {  # stick -> one line per entry: path, size, mtime
+    find "$1" -mindepth 1 -printf '%P\t%s\t%T@\n' 2>/dev/null | sort
+}
+
+# A command that says it only reads must leave the stick exactly as it
+# was -- every file, not only the catalogs unchanged_catalogs compares.
+#
+# `scan` took the stick's write lock before *offering* to consolidate
+# duplicate cues, and taking that lock creates Seabass/backups/.write.lock
+# and leaves it there. Every scan of every stick, for a write almost none
+# of them made. The rig could not have caught it: unchanged_catalogs
+# would not have looked at that file, and the rig never ran `scan` at
+# all -- its one CLI call is R4's dry run, which returns before any lock.
+# So this check exists to run the commands that claim to read, and to
+# compare the whole tree rather than the files someone thought to name.
+#
+# Stdin is closed: a scan that does find duplicates asks before writing,
+# and a rig check must never sit at a prompt.
+read_only_writes_nothing() {
+    local before after
+    before="$(stick_tree "$B")"
+    "$build/seabass-cli" scan --rekordbox "$B/PIONEER" < /dev/null || return 1
+    "$build/seabass-cli" scan --engine "$B/Engine Library" < /dev/null || return 1
+    after="$(stick_tree "$B")"
+    if [ "$before" = "$after" ]; then
+        return 0
+    fi
+    echo "a read-only command changed the stick:"
+    diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -20
+    return 1
+}
+
 live_edit_mode() {
     "$root/tests/qml-live/run-live.sh" "$B" "$deviceB" "$out/shots" && unchanged_catalogs "$B"
 }
@@ -510,7 +542,8 @@ refused_while_dj_software_runs() {
     # real, already-installed app satisfies it just by existing in the
     # process list -- no need to reach a usable UI state, and taskkill
     # cleans it up regardless of what it's doing when the check finishes.
-    # Linux has no such install here, so it fakes the name onto /bin/sleep.
+    # Elsewhere there is no such install, so start_fake_dj puts the name
+    # on a process the rig built for it.
     if rig_is_windows; then
         local rekordbox_exe="${RIG_REKORDBOX_EXE:-/c/Program Files/rekordbox/rekordbox 7.2.18/rekordbox.exe}"
         # The default path is version-pinned, so the next rekordbox update
@@ -520,10 +553,8 @@ refused_while_dj_software_runs() {
         "$rekordbox_exe" &
         sleep 3
     else
-        mkdir -p "$out/fake"
-        cp /bin/sleep "$out/fake/rekordbox"
-        "$out/fake/rekordbox" 120 &
-        fake=$!
+        start_fake_dj "$build" 120 || return 1
+        fake=$fake_dj_pid
         sleep 1
     fi
     "$build/rig_backup" "$B" "$out/backups-fb/$b.zip" --expect-refused
@@ -597,6 +628,7 @@ check R1-R3-read-A "$build/rig_read" "$A" "$refA"
 check R1-R3-read-B "$build/rig_read" "$B" "$refB"
 check R2-R5-pages live_pages
 check R4-sync-dry-run cli_sync_dry_run
+check R7-read-only-writes-nothing read_only_writes_nothing
 check R6-catalogs-after-reads bash -c "grep -F '$A/' '$out/catalog-baseline.txt' | sha256sum -c && grep -F '$B/' '$out/catalog-baseline.txt' | sha256sum -c"
 
 # ---- edits -----------------------------------------------------------

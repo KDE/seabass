@@ -115,6 +115,32 @@ everyday_settings_watchable() {
     command -v reg >/dev/null 2>&1
 }
 
+# Starts the stand-in for DJ software that the write guards look for,
+# and puts its pid in fake_dj_pid (a variable rather than an echo, so the
+# caller stays the process's parent and can still wait for it).
+#
+# The rig builds this one -- tools/rig_fake_dj.cpp, built as "rekordbox"
+# -- rather than copying /bin/sleep, because macOS SIGKILLs a copy of a
+# signed system binary: the copy died instantly, nothing was detected,
+# and the check that proves a write is refused had nothing to refuse it.
+# That was fixed once, in the live bundle, while FB7 kept its own copy of
+# the same trick and went on failing on macOS alone. Hence one place.
+#
+# A missing binary is a loud failure here, not a quiet absence of DJ
+# software: the check would otherwise report that nothing refused the
+# run, which is what a broken guard looks like too.
+fake_dj_pid=""
+start_fake_dj() {  # <build dir> <seconds>
+    local build="$1" seconds="$2"
+    fake_dj_pid=""
+    if [ ! -x "$build/rekordbox" ]; then
+        echo "start_fake_dj: $build/rekordbox is missing -- build the rig_fake_dj target" >&2
+        return 1
+    fi
+    "$build/rekordbox" "$seconds" &
+    fake_dj_pid=$!
+}
+
 # The filesystem UUID the app keys a stick's edit lock on: udev's ID_FS_UUID
 # on Linux, DiskArbitration's volume UUID on macOS (what `diskutil info`
 # prints as "Volume UUID").

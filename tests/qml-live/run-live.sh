@@ -115,13 +115,12 @@ else
     failed=1
 fi
 
-# 3. The process guard and the CLI probe. A copy of sleep named rekordbox
-#    is what the detector sees; it is killed 25 s in, and the CLI runs
-#    while the test still holds the lock.
-# The rig builds this one (tools/rig_fake_dj.cpp) rather than copying a
-# system binary: macOS kills a copy of one outright, so the guard check
-# used to prove nothing there.
-"$build/rekordbox" 300 & fake=$!
+# 3. The process guard and the CLI probe. A process named rekordbox is
+#    what the detector sees; it is killed 25 s in, and the CLI runs while
+#    the test still holds the lock. start_fake_dj (rig-platform.sh) is
+#    the one place that starts one.
+start_fake_dj "$build" 300 || exit 1
+fake=$fake_dj_pid
 ( sleep 25; kill "$fake" 2>/dev/null
   sleep 8
   echo "--- CLI while the GUI holds the lock:"
