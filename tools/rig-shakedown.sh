@@ -493,8 +493,23 @@ cli_sync_dry_run() {
     "$build/seabass-cli" sync --rekordbox "$B/PIONEER" --engine "$B/Engine Library" --dry-run && unchanged_catalogs "$B"
 }
 
-stick_tree() {  # stick -> one line per entry: path, size, mtime
-    find "$1" -mindepth 1 -printf '%P\t%s\t%T@\n' 2>/dev/null | sort
+# One line per entry: every file with its size and mtime, every
+# directory by name alone.
+#
+# Seabass/caches is left out: it holds derived data (probed durations,
+# catalog mirrors) that any run may rebuild and that carries nothing of
+# the library. Everything else is compared, including Seabass/backups,
+# so a lock file left behind still fails this check.
+#
+# A directory's mtime is not compared, because it moves whenever
+# anything inside it does -- including inside the caches this check
+# deliberately ignores, which is how the Seabass folder itself came back
+# as the only difference. The files under it are compared exactly, so
+# nothing real hides behind that.
+stick_tree() {  # stick -> one line per file: path, size, mtime; per directory: path
+    find "$1" -mindepth 1 -path "$1/Seabass/caches" -prune -o \
+        -printf '%y\t%P\t%s\t%T@\n' 2>/dev/null \
+        | awk -F'\t' '$1 == "d" { print "d\t" $2; next } { print }' | sort
 }
 
 # A command that says it only reads must leave the stick exactly as it
@@ -513,10 +528,20 @@ stick_tree() {  # stick -> one line per entry: path, size, mtime
 # and a rig check must never sit at a prompt.
 read_only_writes_nothing() {
     local before after
+    # What the caches held before, so this check can put them back. A
+    # check that leaves the stick different from how it found it can hide
+    # the next one's bug -- and a scan writes a duration cache, which is
+    # allowed but is still state the following checks did not ask for.
+    local cachesBefore; cachesBefore="$(find "$B/Seabass/caches" -mindepth 1 2>/dev/null | sort)"
     before="$(stick_tree "$B")"
     "$build/seabass-cli" scan --rekordbox "$B/PIONEER" < /dev/null || return 1
     "$build/seabass-cli" scan --engine "$B/Engine Library" < /dev/null || return 1
     after="$(stick_tree "$B")"
+    # Anything under caches this check caused goes again, before the
+    # verdict, so the removal happens whether it passes or fails.
+    find "$B/Seabass/caches" -mindepth 1 2>/dev/null | sort | while read -r cached; do
+        printf '%s\n' "$cachesBefore" | grep -qxF "$cached" || rm -rf "$cached"
+    done
     if [ "$before" = "$after" ]; then
         return 0
     fi
