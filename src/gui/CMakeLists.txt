@@ -59,6 +59,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/MetadataTrackDelegate.qml
     qml/common/ProgressReport.qml
     qml/common/ProgressTrack.qml
+    qml/common/RowHoverShade.qml
     qml/common/SelectableText.qml
     qml/common/MessagePopup.qml
     qml/common/HealthCheckCard.qml

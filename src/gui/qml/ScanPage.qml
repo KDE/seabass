@@ -500,9 +500,18 @@ Page {
                     // Solid, muted colors rather than a translucent overlay,
                     // so the result doesn't depend on (and can't pick up an
                     // unexpected tint from) whatever's rendered underneath.
-                    color: rowMouseArea.pressed ? Theme.rowPressed
-                        : rowMouseArea.containsMouse ? Theme.rowHover
-                        : (trackDelegate.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
+                    // Set straight away, never animated: the list rewrites
+                    // it as rows scroll and sort, and the hover shading
+                    // below is what fades.
+                    color: trackDelegate.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd
+
+                    // Hover and press, faded in and out over that colour.
+                    RowHoverShade {
+                        objectName: "rowHoverShade"
+                        radius: trackDelegate.radius
+                        hovered: rowMouseArea.containsMouse
+                        pressed: rowMouseArea.pressed
+                    }
 
                     // Now-playing highlight, an accent-colored stripe,
                     // same idiom as most media players use for "this one."
