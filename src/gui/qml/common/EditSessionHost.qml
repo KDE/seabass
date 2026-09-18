@@ -96,6 +96,10 @@ Item {
     // for any page that hosts a session without handling it.
     signal backupLocationAccepted()
     signal backupLocationDeclined()
+    // The save summary has been read and dismissed. For a page that wants
+    // to step back once its one job is done -- after the save the user
+    // asked for, never instead of it.
+    signal summaryDismissed()
 
     z: 900  // above page content, below BusyOverlay (1000): a scan's scrim covers the Save button
 
@@ -241,6 +245,7 @@ Item {
                 internal.pendingLeave = null;
                 internal.leaveAfterSave = false;
             }
+            host.summaryDismissed();
         }
     }
 

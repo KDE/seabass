@@ -98,6 +98,7 @@ set(SEABASS_GUI_QML_FILES
     qml/TrackDetailPage.qml
     qml/DuplicatesPage.qml
     qml/CleanupPage.qml
+    qml/CoverArtPage.qml
     qml/PendingDeletionsPage.qml
     qml/JunkCuePage.qml
     qml/LibraryConsistencyPage.qml

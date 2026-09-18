@@ -538,6 +538,11 @@ ApplicationWindow {
         }
     }
 
+    Component {
+        id: coverArtPageComponent
+        CoverArtPage {}
+    }
+
     // Library Health opens on its hub: every check run once, each
     // reporting in a sentence. The detailed row-by-row view is pushed from
     // there, and is handed the hub's own controller so it shows the scan
@@ -547,12 +552,15 @@ ApplicationWindow {
         LibraryHealthHubPage {
             id: healthHub
             playbackController: playbackCtrl
-            onDetailRequested: (section) => stackView.push(libraryConsistencyPageComponent, {
-                stickLabel: healthHub.stickLabel,
-                rekordboxPath: healthHub.rekordboxPath,
-                enginePath: healthHub.enginePath,
-                sharedController: healthHub.consistencyController,
-            })
+            // Cover art has its own page: one library-wide fault with one
+            // action, rather than a row among the per-track findings.
+            onDetailRequested: (section) => stackView.push(
+                section === "artwork" ? coverArtPageComponent : libraryConsistencyPageComponent, {
+                    stickLabel: healthHub.stickLabel,
+                    rekordboxPath: healthHub.rekordboxPath,
+                    enginePath: healthHub.enginePath,
+                    sharedController: healthHub.consistencyController,
+                })
         }
     }
 

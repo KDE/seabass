@@ -355,11 +355,23 @@ Page {
             Layout.fillWidth: true
         }
 
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            text: "Three checks on this stick: catalog rows whose audio file is missing, memory cues sitting at "
+                + "0:00, and cover art a player cannot show. Nothing is written until you press Save."
+        }
+
+        Subtitle { text: "Missing files" }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: 12
             Label {
-                text: "I found " + issueListView.count + " row(s) with a missing file, across every catalog on this stick"
+                text: issueListView.count === 0
+                    ? "Every row on this stick has its file."
+                    : "I found " + issueListView.count + " row(s) with a missing file, across every catalog on this stick"
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -382,121 +394,43 @@ Page {
             }
         }
 
-        // Cover art a player cannot find: its own row rather than one of
-        // the issue rows below, because it is a property of the Engine
-        // library as a whole, not of one track's missing file.
-        Rectangle {
-            objectName: "artworkNotice"
-            // An audit that could not read the database is shown too. It
-            // used to leave every count at zero, which is the same screen a
-            // healthy library gets: the one fault nobody would ever hear
-            // about.
-            visible: consistencyController.artworkUnreadableCount > 0
-                || consistencyController.artworkError.length > 0
+        Subtitle {
+            Layout.topMargin: 12
+            text: "Memory cues at 0:00"
+        }
+
+        RowLayout {
             Layout.fillWidth: true
-            radius: 6
-            color: Theme.groupBackground
-            border.color: Theme.borderSubtle
-            implicitHeight: artworkRow.implicitHeight + 20
-
-            RowLayout {
-                id: artworkRow
-                anchors.fill: parent
-                anchors.margins: 10
-                spacing: Theme.rowSpacing
-
-                SeabassIcon {
-                    iconName: "dialog-warning"
-                    size: Theme.iconSizeSmall * 0.75
-                    color: Theme.warnIcon
-                    Layout.alignment: Qt.AlignTop
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 2
-                    Label {
-                        objectName: "artworkNoticeHeadline"
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        text: consistencyController.artworkError.length > 0
-                            ? "Seabass could not check this library's cover art"
-                            : consistencyController.artworkUnreadableCount + " of "
-                              + consistencyController.artworkTracksWithArt
-                              + " Engine track(s) have cover art no player can show"
-                    }
-                    Label {
-                        objectName: "artworkNoticeExplanation"
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                        // Two different faults, and this said the first one
-                        // about both: an imported path points at the
-                        // computer that ran the import and can be repaired
-                        // from the rekordbox art beside it, while a missing
-                        // cached file is a row that is already right whose
-                        // image was deleted. A library with only the second
-                        // used to be told about an import it never had, and
-                        // offered a re-import that would not help.
-                        text: {
-                            if (consistencyController.artworkError.length > 0) {
-                                return consistencyController.artworkError;
-                            }
-                            // One self-contained sentence per fault, each
-                            // carrying its own advice. Chained the other
-                            // way round -- a shared closing sentence
-                            // picked by whichever count happened to be
-                            // zero -- the advice attached itself to the
-                            // wrong fault: rows with no hash were told
-                            // Engine DJ would write their pictures again,
-                            // which it cannot do for a row with no hash to
-                            // write them under.
-                            var imported = consistencyController.artworkImportedCount;
-                            var missing = consistencyController.artworkMissingFileCount;
-                            var broken = consistencyController.artworkBrokenRowCount;
-                            var fixable = consistencyController.artworkRepairableCount;
-                            var parts = [];
-                            if (imported > 0) {
-                                parts.push(imported + " point at a folder on the computer that ran Engine's "
-                                    + "\"import rekordbox library\", which a player does not have."
-                                    + (fixable > 0
-                                        ? " Seabass can copy " + fixable + " of them in from the rekordbox art on "
-                                          + "this stick."
-                                        : " None of their images are on this stick, so Seabass cannot copy them in; "
-                                          + "re-importing in Engine DJ would rebuild them."));
-                            }
-                            if (missing > 0) {
-                                parts.push(missing + " are stored the way Engine stores its own, but the image file "
-                                    + "is gone from Engine Library/Artwork. Engine DJ writes those again the next "
-                                    + "time it analyses or re-imports them.");
-                            }
-                            if (broken > 0) {
-                                parts.push(broken + " point at an art row with nothing in it, so there is no image "
-                                    + "to look for.");
-                            }
-                            return parts.join(" ");
-                        }
-                    }
-                }
-                Label {
-                    visible: consistencyController.artworkRepairStaged
-                    text: "staged, not saved yet"
-                    color: Theme.warnText
-                }
-                Button {
-                    objectName: "repairArtworkButton"
-                    text: consistencyController.artworkRepairStaged ? "Unstage" : "Fix Cover Art"
-                    enabled: !consistencyController.busy && !consistencyController.writing
-                        && (consistencyController.artworkRepairStaged
-                            || consistencyController.artworkRepairableCount > 0)
-                    ToolTip.visible: hovered
-                    ToolTip.text: consistencyController.artworkRepairStaged
-                        ? "Take this back out of the changes to save"
-                        : "Copy each image into Engine Library/Artwork and point the track at it; Save writes it"
-                    onClicked: consistencyController.artworkRepairStaged
-                        ? consistencyController.unstageArtworkRepair()
-                        : consistencyController.repairArtwork()
-                }
+            spacing: 12
+            Label {
+                text: consistencyController.junkCues.count === 0
+                    ? "No memory cues are sitting at 0:00."
+                    : "I found " + consistencyController.junkCues.count + " memory cue(s) sitting at 0:00, likely accidental"
+            }
+            Item { Layout.fillWidth: true }
+            Button {
+                visible: consistencyController.junkCues.count > 0
+                text: "Remove All"
+                enabled: !consistencyController.busy
+                ToolTip.visible: hovered
+                // It stages; it does not remove. The row buttons
+                // beside it and the confirmation this opens both
+                // said so already -- this one promised an
+                // immediate permanent delete, which is the wrong
+                // thing to tell someone in both directions: they
+                // either avoid a reversible action thinking it is
+                // final, or click it and believe the cues are
+                // already gone.
+                ToolTip.text: "Stage removing every 0:00 memory cue listed, in all catalogs. Save writes it."
+                onClicked: confirmRemoveAllJunkCuesDialog.open()
+            }
+            Button {
+                visible: consistencyController.junkCues.count > 0
+                text: "Ignore All"
+                enabled: !consistencyController.busy
+                ToolTip.visible: hovered
+                ToolTip.text: "Hide these from this view only. Nothing on the stick changes."
+                onClicked: confirmIgnoreAllJunkCuesDialog.open()
             }
         }
 
@@ -824,39 +758,6 @@ Page {
                 // reasoning.
                 spacing: 10
 
-                RowLayout {
-                    visible: junkCueRepeater.count > 0
-                    Layout.fillWidth: true
-                    Layout.topMargin: 12
-                    spacing: 12
-                    Label {
-                        text: "I found " + junkCueRepeater.count + " memory cue(s) sitting at 0:00, likely accidental"
-                    }
-                    Item { Layout.fillWidth: true }
-                    Button {
-                        text: "Remove All"
-                        enabled: !consistencyController.busy
-                        ToolTip.visible: hovered
-                        // It stages; it does not remove. The row buttons
-                        // beside it and the confirmation this opens both
-                        // said so already -- this one promised an
-                        // immediate permanent delete, which is the wrong
-                        // thing to tell someone in both directions: they
-                        // either avoid a reversible action thinking it is
-                        // final, or click it and believe the cues are
-                        // already gone.
-                        ToolTip.text: "Stage removing every 0:00 memory cue listed, in all catalogs. Save writes it."
-                        onClicked: confirmRemoveAllJunkCuesDialog.open()
-                    }
-                    Button {
-                        text: "Ignore All"
-                        enabled: !consistencyController.busy
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Hide these from this view only. Nothing on the stick changes."
-                        onClicked: confirmIgnoreAllJunkCuesDialog.open()
-                    }
-                }
-
                 Repeater {
                     id: junkCueRepeater
                     model: consistencyController.junkCues
@@ -917,14 +818,6 @@ Page {
                     }
                 }
 
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: 24
-                    Layout.bottomMargin: 12
-                    visible: issueListView.count === 0 && junkCueRepeater.count === 0 && !consistencyController.busy
-                    text: "Every row on this stick has its file, and no memory cues are sitting at 0:00."
-                    color: Theme.textMuted
-                }
             }
         }
     }

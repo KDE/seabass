@@ -111,6 +111,7 @@ TestCase {
             {name: "MetadataRestorePage", props: stickProps({libraryId: ""})},
             {name: "LibraryHealthHubPage", props: stickProps({playbackController: realPlayback})},
             {name: "LibraryConsistencyPage", props: stickProps({playbackController: realPlayback})},
+            {name: "CoverArtPage", props: stickProps({})},
             {name: "SyncPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "ScanPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},
             {name: "DuplicatesPage", props: stickProps({playbackController: realPlayback, appSettingsController: realAppSettings})},

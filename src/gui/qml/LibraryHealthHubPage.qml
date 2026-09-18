@@ -72,6 +72,8 @@ Page {
     readonly property int brokenCount: healthController.issues.count
     readonly property int repairableCount: healthController.repairableCount
     readonly property int junkCueCount: healthController.junkCues.count
+    readonly property int artworkUnreadableCount: healthController.artworkUnreadableCount
+    readonly property int artworkRepairableCount: healthController.artworkRepairableCount
 
     readonly property string brokenSummary: {
         if (root.scanning) {
@@ -114,6 +116,37 @@ Page {
             return healthController.filesystemMessage;
         }
         return "This stick takes writes normally.";
+    }
+
+    // Cover art is a property of the Engine library rather than of one
+    // track's file, and it is the fault nobody finds by looking: the art
+    // simply never appears on the player, with nothing to say why.
+    readonly property string artworkSummary: {
+        if (root.scanning) {
+            return "Checking where each Engine track's cover art is stored...";
+        }
+        if (!root.scanned) {
+            return "Not checked yet.";
+        }
+        if (healthController.artworkError.length > 0) {
+            return healthController.artworkError;
+        }
+        if (healthController.artworkTracksWithArt === 0) {
+            return "No Engine library on this stick, or no track carries cover art.";
+        }
+        if (root.artworkUnreadableCount === 0) {
+            return "Every Engine track's cover art is stored where a player can find it.";
+        }
+        let text = root.artworkUnreadableCount + " of " + healthController.artworkTracksWithArt
+            + " Engine tracks have cover art no player can show.";
+        if (root.artworkRepairableCount > 0) {
+            text += " " + (root.artworkRepairableCount === root.artworkUnreadableCount ? "All of them"
+                                                                                       : root.artworkRepairableCount + " of them")
+                 + " can be fixed from the artwork already on this stick.";
+        } else {
+            text += " None of their images are on this stick, so re-importing in Engine DJ is what would rebuild them.";
+        }
+        return text;
     }
 
     readonly property string junkCueSummary: {
@@ -222,6 +255,17 @@ Page {
                 ok: root.junkCueCount === 0
                 actionLabel: root.junkCueCount > 0 ? "Review these cues" : ""
                 onActionRequested: root.detailRequested("junkcues")
+            }
+
+            HealthCheckCard {
+                objectName: "coverArtCard"
+                title: "Cover art"
+                summary: root.artworkSummary
+                running: root.scanning
+                ok: root.artworkUnreadableCount === 0 && healthController.artworkError.length === 0
+                failed: healthController.artworkError.length > 0
+                actionLabel: root.artworkUnreadableCount > 0 ? "Review cover art" : ""
+                onActionRequested: root.detailRequested("artwork")
             }
 
             // The rekordbox/OneLibrary comparison is specified in

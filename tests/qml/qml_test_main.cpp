@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QTemporaryDir>
 #include <filesystem>
+#include <fstream>
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -103,6 +104,56 @@ public:
         const bool ok = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
         sqlite3_close(db);
         return ok ? library : QString();
+    }
+
+    // A copy whose imported art paths have their images beside it, under
+    // the stick's own PIONEER/Artwork -- the one shape where the page has
+    // something to offer, and so the only one that can show that pressing
+    // its button stages rather than writes.
+    Q_INVOKABLE QString libraryWithRepairableArt(const QString &fromLibrary)
+    {
+        namespace fs = std::filesystem;
+        const QString library = copy(fromLibrary, false);
+        if (library.isEmpty()) {
+            return {};
+        }
+        const fs::path stick = fs::path(library.toStdString()).parent_path();
+        sqlite3 *db = nullptr;
+        if (sqlite3_open((fs::path(library.toStdString()) / "Database2" / "m.db").string().c_str(), &db)
+            != SQLITE_OK) {
+            sqlite3_close(db);
+            return {};
+        }
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT hash FROM AlbumArt;", -1, &stmt, nullptr) != SQLITE_OK) {
+            sqlite3_close(db);
+            return {};
+        }
+        int written = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const void *blob = sqlite3_column_blob(stmt, 0);
+            const int size = sqlite3_column_bytes(stmt, 0);
+            if (blob == nullptr || size <= 0) {
+                continue;
+            }
+            const std::string reference(static_cast<const char *>(blob), static_cast<size_t>(size));
+            const auto at = reference.find("PIONEER/Artwork");
+            if (at == std::string::npos) {
+                continue;
+            }
+            const fs::path image = stick / reference.substr(at);
+            std::error_code ec;
+            fs::create_directories(image.parent_path(), ec);
+            std::ofstream out(image, std::ios::binary | std::ios::trunc);
+            // A real JPEG header: the audit reads the first bytes and
+            // refuses to name a repair after a file that is not an image.
+            // The name follows it, so each image hashes to its own row.
+            out << "\xFF\xD8\xFF" << image.filename().string();
+            written++;
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return written > 0 ? library : QString();
     }
 
 private:
