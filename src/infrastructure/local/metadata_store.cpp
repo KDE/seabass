@@ -40,7 +40,7 @@ constexpr const char *Context = "metadata store";
 // found once those arrive, instead of being filed a second time as a new
 // track. authored_at, so the merge rule can ask when the DJ last changed
 // a field rather than when a backup run last looked at the row.
-constexpr int SchemaVersion = 2;
+constexpr int SchemaVersion = 3;
 
 // The shared RAII statement and exec() with this store's error-message
 // context bound in, so call sites stay two arguments.
@@ -331,7 +331,11 @@ void MetadataStore::openAndMigrate()
     // it. The change is one added column, so it is migrated in place
     // once the database is open, below.
     const int existing = schemaVersionOf(m_databasePath);
-    const bool migrateInPlace = existing == 1 && SchemaVersion == 2;
+    // Every version so far has been migrated in place rather than moved
+    // aside: 1 -> 2 added two columns (see above), 2 -> 3 deletes noise
+    // that was never data. Neither can fail to produce a store that is
+    // still worth having, which is the test for doing it in place.
+    const bool migrateInPlace = existing >= 1 && existing < SchemaVersion;
     if (!migrateInPlace && existing != 0 && existing != SchemaVersion) {
         // isoTimestampUtc()'s colons (the "T14:23:45Z" part) are fine as
         // a stored value -- every other call site uses it that way --
@@ -390,20 +394,36 @@ void MetadataStore::openAndMigrate()
                 }
             }
         } guard{m_db};
-        exec(m_db, "ALTER TABLE tracks ADD COLUMN fallback_key TEXT NOT NULL DEFAULT '';");
-        exec(m_db, "ALTER TABLE tracks ADD COLUMN authored_at TEXT NOT NULL DEFAULT '';");
-        // Every version-1 row carries one key, in a column that says
-        // which kind it is. A row keyed by filename already has its
-        // fallback key; it just has it in the other column, and copying
-        // it across is what lets the strong key replace it later
-        // without the row losing the only way it can still be found.
-        exec(m_db, "UPDATE tracks SET fallback_key = match_key WHERE match_key LIKE 'fn:%';");
-        // The best guess available for rows written before the two dates
-        // were told apart. It is an upper bound on when the authored
-        // fields were really written, which is the direction that makes
-        // an old backup lose to a stick rather than beat it.
-        exec(m_db, "UPDATE tracks SET authored_at = updated_at;");
-        exec(m_db, "UPDATE schema_version SET version = 2;");
+        if (existing == 1) {
+            exec(m_db, "ALTER TABLE tracks ADD COLUMN fallback_key TEXT NOT NULL DEFAULT '';");
+            exec(m_db, "ALTER TABLE tracks ADD COLUMN authored_at TEXT NOT NULL DEFAULT '';");
+            // Every version-1 row carries one key, in a column that
+            // says which kind it is. A row keyed by filename already has
+            // its fallback key; it just has it in the other column, and
+            // copying it across is what lets the strong key replace it
+            // later without the row losing the only way it can still be
+            // found.
+            exec(m_db, "UPDATE tracks SET fallback_key = match_key WHERE match_key LIKE 'fn:%';");
+            // The best guess available for rows written before the two
+            // dates were told apart. It is an upper bound on when the
+            // authored fields were really written, which is the
+            // direction that makes an old backup lose to a stick rather
+            // than beat it.
+            exec(m_db, "UPDATE tracks SET authored_at = updated_at;");
+        }
+        if (existing < 3) {
+            // The noise this store took in before it knew better: memory
+            // cues at or before 0:00. Engine records "no main cue" as a
+            // sample offset of -1, which the reader turned into a cue a
+            // fraction of a millisecond before the track starts, and one
+            // real store here held 958 of them -- a phantom cue on every
+            // un-cued track, shown in the browse list as "Memory cue at
+            // --:--", counted in every cue count, and offered back by a
+            // restore. They were never anyone's work, so there is
+            // nothing to weigh up: they go.
+            exec(m_db, "DELETE FROM cues WHERE kind = 'memory' AND position_ms < 1000;");
+        }
+        exec(m_db, "UPDATE schema_version SET version = 3;");
         exec(m_db, "COMMIT");
         guard.committed = true;
     }

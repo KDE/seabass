@@ -936,5 +936,42 @@ int main()
         std::cout << "case 21 (a stray memory cue at 0:00 never enters the store) OK\n";
     }
 
+    // ---- case 22: opening an older store cleans the noise out of it --
+    //
+    // Phantom cues went in before the store knew to refuse them: one per
+    // un-cued Engine track, at minus a fraction of a millisecond, shown
+    // in the browse list as "Memory cue at --:--" and offered back by
+    // every restore. Filtering the way in and the way out still leaves
+    // them sitting in the file, counted; they are noise, so opening the
+    // store is where they go.
+    {
+        const fs::path oldDb = root / "noisy" / "metadata.db";
+        {
+            MetadataStore metadata(oldDb);
+            Track track = sampleTrack(stick, "Contents/Kalte Nacht/Vierte.mp3", "Vierte");
+            track.cues = {hotCue(1, 64'000.0)};
+            store(metadata, {track}, sourceFor(stick));
+        }
+        // Reach in as the old code did, then put the version back so the
+        // next open has something to migrate.
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            const char *insert = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
+                                 "is_loop, loop_end_ms) SELECT id, 'memory', 0, -0.0226757, '', '', 0, 0 FROM tracks";
+            assert(sqlite3_exec(raw, insert, nullptr, nullptr, nullptr) == SQLITE_OK);
+            assert(sqlite3_exec(raw, "UPDATE schema_version SET version = 2", nullptr, nullptr, nullptr) == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+
+        MetadataStore reopened(oldDb);
+        const auto rows = reopened.browse("Vierte", 10, 0);
+        assert(rows.size() == 1);
+        assert(rows[0].cueCount == 1 && "the phantom is gone from the count");
+        const auto cues = reopened.cuesFor(rows[0].id);
+        assert(cues.size() == 1 && cues[0].kind == CuePoint::Kind::Hot && "and from the cue list");
+        std::cout << "case 22 (opening an older store deletes the phantom cues it took in) OK\n";
+    }
+
     return 0;
 }
