@@ -569,7 +569,7 @@ option(SEABASS_EXPERIMENTAL "Compile in the experimental-features opt-in (Settin
 # them (losing MultiEffect/Shape QML types) rather than failing to
 # configure at all.
 find_package(Qt6 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts QuickDialogs2 Multimedia Concurrent Svg
-    OPTIONAL_COMPONENTS Test QuickTest QuickEffects QuickShapes)
+    OPTIONAL_COMPONENTS Test QuickTest QuickEffects QuickShapes ShaderTools)
 # --- QtMultimedia duration probe (see TrackDurationProbe) ---
 #
 # Deliberately its own tiny target rather than sources in seabass_core:
@@ -842,6 +842,15 @@ if(SEABASS_GUI AND Qt6_FOUND)
         target_compile_definitions(seabass_qml_tests PRIVATE
             $<$<BOOL:${SEABASS_EXPERIMENTAL}>:SEABASS_EXPERIMENTAL_BUILD>)
 
+        # The same shader the app carries, at the same URL -- see
+        # src/gui/CMakeLists.txt. BASE drops the src/gui/ this target's
+        # root-relative path would otherwise put into it.
+        if(Qt6ShaderTools_FOUND)
+            qt_add_shaders(seabass_qml_tests "seabass_shaders"
+                PREFIX "/seabass"
+                BASE src/gui
+                FILES src/gui/shaders/track_ring.frag)
+        endif()
         add_test(NAME seabass_qml_tests
             COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
         # No real display needed -- Qt's "offscreen" platform plugin renders
@@ -870,6 +879,23 @@ if(SEABASS_GUI AND Qt6_FOUND)
             list(APPEND _seabass_qml_test_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
         endif()
         set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT "${_seabass_qml_test_env}")
+
+        # What a shader draws. The offscreen platform above falls back to
+        # the software scene graph, which draws no ShaderEffect at all --
+        # silently, the item is just empty -- so tests/qml-shader runs on
+        # a real X server instead, with Mesa's software OpenGL: no GPU
+        # needed, and the same pixels on every machine. Only where there
+        # is an xvfb-run to give it that server.
+        find_program(SEABASS_XVFB_RUN xvfb-run)
+        if(SEABASS_XVFB_RUN AND Qt6ShaderTools_FOUND)
+            add_test(NAME seabass_qml_shader_tests
+                COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
+                    $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-shader)
+            set_tests_properties(seabass_qml_shader_tests PROPERTIES ENVIRONMENT
+                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+        else()
+            message(STATUS "seabass_qml_shader_tests not registered (needs xvfb-run and Qt6 ShaderTools)")
+        endif()
     else()
         message(STATUS "SEABASS_TESTS=OFF: seabass_qml_tests not built")
     endif()

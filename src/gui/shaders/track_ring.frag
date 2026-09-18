@@ -17,10 +17,10 @@ layout(std140, binding = 0) uniform buf {
     float progress;    // 0..1 of the track played; below 0 for "not playing"
     float bass;        // the low band under the playhead, 0..1
     float bars;        // how many bars go round
-    float columns;     // how many waveform columns the strip holds
     float artRadius;   // the art disc, in units of the ring's outer radius
     float hasArt;
     vec4 fallbackColor;
+    vec4 backgroundColor;   // the page behind: what "dimmed" fades toward
 };
 
 layout(binding = 1) uniform sampler2D wave;
@@ -78,7 +78,10 @@ void main()
     float reach = max(low, max(mid, high));
 
     vec3 c = ringColour(dir);
-    vec3 colour = c * 0.50;
+    // Fainter means nearer the page's own colour, not nearer black: the
+    // page can be a light one.
+    vec3 page = backgroundColor.rgb;
+    vec3 colour = mix(page, c, 0.50);
     colour = mix(colour, c, 1.0 - smoothstep(mid - px, mid + px, r - r0));
     colour = mix(colour, mix(c, vec3(1.0), 0.8), 1.0 - smoothstep(high - px, high + px, r - r0));
 
@@ -95,7 +98,7 @@ void main()
         // fading back round the ring like a comet's tail.
         float played = 1.0 - smoothstep(-0.5 / bars, 0.5 / bars, ahead);
         float luma = dot(colour, vec3(0.299, 0.587, 0.114));
-        colour = mix(mix(vec3(luma), colour, 0.6) * 0.32, colour, played);
+        colour = mix(mix(page, mix(vec3(luma), colour, 0.6), 0.32), colour, played);
         float tail = played * exp(ahead * 45.0);
         colour += c * tail * 0.55;
     }
@@ -122,7 +125,7 @@ void main()
     float disc = 1.0 - smoothstep(discRadius - px, discRadius + px, r);
     vec3 artColour = hasArt > 0.5
         ? texture(art, clamp(vec2(0.5) + p / (discRadius * 2.0), 0.0, 1.0)).rgb
-        : fallbackColor.rgb * 0.18;
+        : mix(page, fallbackColor.rgb, 0.18);
     outColour = mix(outColour, vec4(artColour, 1.0), disc);
 
     fragColor = outColour * qt_Opacity;

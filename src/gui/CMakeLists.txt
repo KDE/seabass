@@ -138,6 +138,7 @@ set(SEABASS_GUI_QML_FILES
     qml/RestoreStickBackupPage.qml
     qml/CloneStickPage.qml
     qml/TrackDetailPanel.qml
+    qml/TrackRing.qml
 )
 set(SEABASS_GUI_SOURCES
     media_controller.hpp
@@ -303,6 +304,19 @@ qt_add_qml_module(seabass
     SOURCES
         ${SEABASS_GUI_SOURCES}
 )
+
+# TrackRing's fragment shader, compiled to .qsb at build time. Optional:
+# without Qt's shader tools there is no shader in the binary, TrackRing
+# reports itself unavailable and its caller shows the plain cover art.
+# A prefix of its own rather than the QML module's, which differs between
+# this target and seabass_qml_tests -- the QML names one URL for both.
+if(Qt6ShaderTools_FOUND)
+    qt_add_shaders(seabass "seabass_shaders"
+        PREFIX "/seabass"
+        FILES shaders/track_ring.frag)
+else()
+    message(STATUS "Qt6 ShaderTools not found: TrackRing falls back to plain cover art")
+endif()
 
 # edit/ is on the path too because qmltyperegistrar includes every
 # QML_ELEMENT header by bare file name (`__has_include(<x.hpp>)`) and

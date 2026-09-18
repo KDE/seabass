@@ -179,4 +179,54 @@ TestCase {
         compare(page.relationDisplay("8A", "3B").label, "Dissonant transition");
         compare(page.relationDisplay("", "8A").label, "");
     }
+
+    // A player with something loaded. Still a plain object: the page
+    // only reads it.
+    function makeLoadedPlayer(format, sourceId) {
+        return {
+            waveformFor: function() { return []; },
+            load: function() {},
+            seek: function() {},
+            hasTrack: true, currentFormat: format, currentSourceId: sourceId,
+            playing: true, position: 60000, duration: 200000,
+        };
+    }
+
+    function makePageWithPlayer(player) {
+        return createTemporaryObject(pageComponent, testCase, {
+            scanController: testCase.makeFakeScanController(testCase.fakeTracks),
+            trackIndex: 1,
+            format: "rekordbox",
+            libraryPath: "/tmp/library",
+            playbackController: player,
+            appSettingsController: testCase.fakeAppSettingsController,
+        });
+    }
+
+    function test_thePageKnowsWhenItsTrackIsTheLoadedOne_data() {
+        return [
+            {tag: "the same track", player: makeLoadedPlayer("rekordbox", "b"), expected: true},
+            {tag: "another track", player: makeLoadedPlayer("rekordbox", "a"), expected: false},
+            // rekordbox and Engine number their tracks independently.
+            {tag: "the same id in the other format", player: makeLoadedPlayer("engine", "b"), expected: false},
+            {tag: "nothing loaded", player: testCase.fakePlaybackController, expected: false},
+        ];
+    }
+    function test_thePageKnowsWhenItsTrackIsTheLoadedOne(data) {
+        var page = makePageWithPlayer(data.player);
+        verify(page !== null);
+        compare(page.isLoadedTrack, data.expected);
+        compare(findChild(page, "trackRing") !== null, data.expected, "the ring exists only for the loaded track");
+    }
+
+    // This suite's platform cannot run the ring's shader. The page must
+    // then keep the plain cover art at its usual size rather than grow an
+    // empty square -- tests/qml-shader has the case where it can.
+    function test_whereTheRingCannotBeDrawnThePlainArtStays() {
+        var page = makePageWithPlayer(makeLoadedPlayer("rekordbox", "b"));
+        var tile = findChild(page, "artTile");
+        compare(page.isLoadedTrack, true);
+        compare(tile.showsRing, false);
+        compare(tile.side, Theme.iconSizeLarge * 2);
+    }
 }
