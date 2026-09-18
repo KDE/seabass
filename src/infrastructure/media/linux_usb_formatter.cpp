@@ -55,6 +55,26 @@ std::string formatTypeName(domain::UsbFilesystem fs)
 
 }  // namespace
 
+// The MBR partition-type byte to stamp on the partition itself.
+//
+// This used to be left empty, on the documented understanding that udisks2
+// would "pick a sensible type for the requested filesystem automatically".
+// It does not. A stick formatted FAT32 by this code came back with a real
+// mkfs.fat FAT32 filesystem inside a partition still typed 0x83, Linux --
+// which Linux never notices, because it probes the content and ignores the
+// byte, and macOS refuses outright: it trusts the byte, finds a filesystem
+// it has no driver for, and offers to erase the stick. A DJ who says yes
+// loses the library.
+//
+// 0x0c is W95 FAT32 (LBA), which is what every tool that writes a FAT32
+// stick for this kind of hardware uses -- diskutil's own MBRFormat FAT32
+// on macOS writes it, and so does Windows. 0x07 covers exFAT (shared with
+// NTFS/IFS, as the spec intends).
+std::string mbrPartitionType(domain::UsbFilesystem fs)
+{
+    return fs == domain::UsbFilesystem::Fat32 ? "0x0c" : "0x07";
+}
+
 std::optional<std::uint64_t> LinuxUsbFormatter::maxSizeFor(domain::UsbFilesystem) const
 {
     // mkfs.vfat/mkfs.exfat (what udisks2 shells out to internally) have no
@@ -102,15 +122,14 @@ bool LinuxUsbFormatter::format(const std::string &wholeDiskPath, domain::UsbFile
     // offset=0/size=0 ("uint64 0" -- gdbus call has no per-argument
     // method-signature awareness, so a bare "0" would parse as int32 and
     // be rejected; verified against real GVariant parsing, not assumed)
-    // means "start at the beginning, use all remaining space." An empty
-    // `type` ('') is documented udisks2 behavior for "pick a sensible MBR
-    // partition-type byte for the requested filesystem automatically"
-    // rather than this project hardcoding one -- NOT independently
-    // verified against a real destructive call this session (this dev
-    // machine's only spare-looking USB disk is Sebastian's real,
-    // populated stick), so treat this specific step as unverified until
-    // exercised against a real scratch stick, same as the plan's
-    // "Real-hardware verification" section already flags.
+    // means "start at the beginning, use all remaining space."
+    //
+    // `type` is now given explicitly. It used to be '', on the documented
+    // understanding that udisks2 picks a sensible MBR type byte for the
+    // requested filesystem; the first real scratch stick this was ever run
+    // against came back as FAT32-inside-a-Linux-partition, unreadable on
+    // macOS. See mbrPartitionType above. The old comment flagged this exact
+    // step as unverified, and it was wrong.
     std::string formatOptions = "{'label': <" + gvariantString(volumeLabel) + ">}";
     auto createResult = runCommand({
         "gdbus",
@@ -124,7 +143,7 @@ bool LinuxUsbFormatter::format(const std::string &wholeDiskPath, domain::UsbFile
         "org.freedesktop.UDisks2.PartitionTable.CreatePartitionAndFormat",
         "uint64 0",
         "uint64 0",
-        "''",
+        gvariantString(mbrPartitionType(fsType)),
         "''",
         "{}",
         gvariantString(formatTypeName(fsType)),

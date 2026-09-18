@@ -919,6 +919,19 @@ target_include_directories(real_file_sizes_test PRIVATE src)
 target_link_libraries(real_file_sizes_test PRIVATE seabass_core)
 add_test(NAME real_file_sizes_test COMMAND real_file_sizes_test)
 
+# The Linux formatter only builds into seabass_core on Linux, but the value
+# this pins is one a second operating system has to agree with -- that is the
+# whole point of it -- so the test compiles the source directly and runs
+# everywhere, macOS included.
+add_executable(linux_usb_formatter_test
+    tests/linux_usb_formatter_test.cpp
+    src/infrastructure/media/linux_usb_formatter.cpp
+    src/domain/usb_filesystem.cpp
+)
+target_include_directories(linux_usb_formatter_test PRIVATE src)
+target_link_libraries(linux_usb_formatter_test PRIVATE seabass_core)
+add_test(NAME linux_usb_formatter_test COMMAND linux_usb_formatter_test)
+
 add_executable(rekordbox_xml_writer_test tests/rekordbox_xml_writer_test.cpp)
 target_include_directories(rekordbox_xml_writer_test PRIVATE src)
 target_link_libraries(rekordbox_xml_writer_test PRIVATE seabass_core)

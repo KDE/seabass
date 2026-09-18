@@ -15,6 +15,14 @@ namespace seabass::infrastructure::media
 // or hand-rolling partition tables. Talks to udisks2 through "gdbus call"
 // (present on every system with GLib, no new dependency) rather than
 // linking libudisks2/QtDBus for two calls.
+// The MBR partition-type byte a formatted stick gets stamped with, as the
+// hex string udisks2 wants. Exposed (rather than kept anonymous-namespace
+// private) so it has direct unit test coverage: the value used to be left
+// for udisks2 to choose, it chose 0x83 (Linux) for a FAT32 stick, and macOS
+// then offered to erase the result -- a silent wrong answer that only a real
+// stick on a second operating system revealed.
+std::string mbrPartitionType(domain::UsbFilesystem fs);
+
 class LinuxUsbFormatter : public application::UsbFormatter
 {
 public:
