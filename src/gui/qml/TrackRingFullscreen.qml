@@ -11,12 +11,20 @@ import SeabassGui
 // up while a track plays. Opened by a click on the ring in the track
 // details pane; a click anywhere, or Escape, goes back.
 //
+// A window of its own, fullscreen, over the screen the app is on. The
+// app's own window is left exactly as it is -- its size, its place and
+// whether it is maximized are the user's, and taking it fullscreen and
+// back is a good way to lose them.
+//
 // It shows what the PLAYER has loaded, not what the pane was showing, so
 // it follows the player to the next track, and it closes by itself when
 // the player has nothing loaded any more.
-Popup {
+Window {
     id: root
+    objectName: "ringFullscreenWindow"
     required property var playbackController
+    // The app's window, for the screen to open on.
+    property var hostWindow: null
 
     readonly property bool hasTrack: root.playbackController.hasTrack === true
     onHasTrackChanged: {
@@ -25,35 +33,33 @@ Popup {
         }
     }
 
-    // What the window was before -- windowed or maximized -- to go back to.
-    property int visibilityBefore: Window.Windowed
-    readonly property var hostWindow: root.parent ? root.parent.Window.window : null
-
-    parent: Overlay.overlay
-    x: 0
-    y: 0
-    width: parent ? parent.width : 0
-    height: parent ? parent.height : 0
-    padding: 0
-    modal: true
-    closePolicy: Popup.CloseOnEscape
-    background: Rectangle { color: Theme.background }
-    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.shortTransitionDuration } }
-    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.shortTransitionDuration } }
-
-    onAboutToShow: {
-        if (root.hostWindow) {
-            root.visibilityBefore = root.hostWindow.visibility;
-            root.hostWindow.visibility = Window.FullScreen;
+    function open() {
+        // Only a Window made in QML has a `screen` to read; without one
+        // this opens on the primary screen, which is no reason not to open.
+        if (root.hostWindow && root.hostWindow.screen) {
+            root.screen = root.hostWindow.screen;
         }
-    }
-    onAboutToHide: {
-        if (root.hostWindow && root.hostWindow.visibility === Window.FullScreen) {
-            root.hostWindow.visibility = root.visibilityBefore;
-        }
+        root.showFullScreen();
+        root.requestActivate();
     }
 
-    contentItem: Item {
+    visible: false
+    flags: Qt.Window | Qt.FramelessWindowHint
+    // The screen's size of its own accord, too: making a window
+    // fullscreen is a request to the window manager, and where there is
+    // none to grant it the window would stay the size it was born.
+    width: Screen.width
+    height: Screen.height
+    title: root.playbackController.title || "Seabass"
+    color: Theme.background
+
+    Shortcut {
+        sequence: "Esc"
+        onActivated: root.close()
+    }
+
+    Item {
+        anchors.fill: parent
         MouseArea {
             anchors.fill: parent
             onClicked: root.close()

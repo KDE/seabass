@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import SeabassGui
 
 // The track details column on the Library page: a resizable, closable
@@ -269,6 +270,7 @@ Pane {
         TrackRingFullscreen {
             id: ringFullscreen
             playbackController: panel.playbackController
+            hostWindow: panel.Window.window
         }
 
         // Title, artist and the facts in one column, with the artwork

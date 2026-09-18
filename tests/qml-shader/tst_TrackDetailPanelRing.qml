@@ -80,38 +80,46 @@ TestCase {
         }
     }
 
-    // A click on the ring puts it alone on the whole screen; a click
-    // there goes back, to the window as it was.
-    function test_aClickOnTheRingGoesFullscreenAndAClickThereGoesBack() {
+    // A click on the ring puts it alone on the whole screen, in a window
+    // of its own; a click there goes back. The app's own window is not
+    // touched: an earlier version took IT fullscreen and back, which is
+    // a good way to lose the size and place the user gave it.
+    function test_aClickOnTheRingOpensAFullscreenWindowAndAClickThereClosesIt() {
         var stage = createTemporaryObject(stageComponent, testCase);
         var panel = stage.panel;
         panel.showFor(track("42"));
         var ring = findChild(panel, "trackRing");
         var host = testCase.Window.window;
-        var before = host.visibility;
-        verify(before !== Window.FullScreen);
+        var hostVisibility = host.visibility;
+        var hostWidth = host.width;
+        var overlay = findChild(panel, "ringFullscreenWindow");
+        verify(overlay !== null);
+        compare(overlay.visible, false);
         tryVerify(function() { return ring.width > 200; }, 2000);
 
         mouseClick(ring, ring.width / 2, ring.height / 2);
-        var big = null;
-        tryVerify(function() { big = findChild(Overlay.overlay, "fullscreenRing"); return big !== null && big.visible; },
-                  2000, "the fullscreen ring opens");
-        compare(host.visibility, Window.FullScreen);
-        verify(big.width > ring.width, "and is the larger of the two");
-        compare(findChild(Overlay.overlay, "fullscreenTitle").text, "Major Tom (Reworked 2024)");
-        compare(findChild(Overlay.overlay, "fullscreenArtist").text, "DJ Amador");
+        tryCompare(overlay, "visible", true, 2000, "the fullscreen window opens");
+        compare(overlay.visibility, Window.FullScreen);
+        verify(overlay !== host, "and it is not the app's window");
+        compare(host.visibility, hostVisibility, "which is left as it was");
+        compare(host.width, hostWidth);
+
+        var big = findChild(overlay.contentItem, "fullscreenRing");
+        verify(big !== null);
+        tryVerify(function() { return big.width > ring.width; }, 2000, "the ring there is the larger of the two");
+        compare(findChild(overlay.contentItem, "fullscreenTitle").text, "Major Tom (Reworked 2024)");
+        compare(findChild(overlay.contentItem, "fullscreenArtist").text, "DJ Amador");
         fuzzyCompare(big.progress, 0.25, 0.0001);
         compare(big.waveformData.length, 2, "it draws what the PLAYER has loaded");
 
         if (screenshotDir && screenshotDir.length > 0) {
             wait(500);
-            grabImage(Overlay.overlay).save(screenshotDir + "/track-ring-fullscreen.png");
+            grabImage(overlay.contentItem).save(screenshotDir + "/track-ring-fullscreen.png");
         }
 
         mouseClick(big, big.width / 2, big.height / 2);
-        tryVerify(function() { return findChild(Overlay.overlay, "fullscreenRing") === null
-                                   || !findChild(Overlay.overlay, "fullscreenRing").visible; }, 2000, "a click there closes it");
-        compare(host.visibility, before, "and the window is as it was");
+        tryCompare(overlay, "visible", false, 2000, "a click there closes it");
+        compare(host.visibility, hostVisibility);
     }
 
     function test_anyOtherTrackKeepsItsSleeve() {
