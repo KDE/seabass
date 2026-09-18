@@ -229,6 +229,15 @@ void printUsage()
     Console::info("  written -- --auto only skips the confirmation prompt afterwards, it never");
     Console::info("  skips the analysis step.");
     Console::info("");
+    Console::info("  On positions: the same cue rarely sits at the same millisecond in two");
+    Console::info("  catalogs. rekordbox keeps a pad in more than one list of its own that can");
+    Console::info("  disagree by half a second, and every cross-format conversion rounds, so two");
+    Console::info("  cues within half a second are treated as the same cue rather than as a");
+    Console::info("  difference. Quantize on the player hides the small ones -- it snaps the");
+    Console::info("  moment a cue fires to the beat grid -- but it never changes what is stored,");
+    Console::info("  and a cue further off than half a quantize step snaps to the next beat");
+    Console::info("  instead of the one you meant.");
+    Console::info("");
     Console::heading("Backups");
     Console::info("  Every write Seabass makes (duplicate-cue consolidation, sync) backs up the");
     Console::info("  file(s) it's about to touch first, under");

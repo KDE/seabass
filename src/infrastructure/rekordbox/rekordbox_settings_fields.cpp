@@ -47,7 +47,9 @@ const std::vector<SettingsFieldDescriptor> &allSettingsFields()
          "Brightness of the player's main screen."},
         {"MYSETTING.DAT", "Quantize", 10, {{0x80, "off"}, {0x81, "on"}}, PlayerDeckState,
          "Whether the Quantize button starts out on. With it on, cues, loops and beat jumps land on the beat, "
-         "in steps of the quantize beat value."},
+         "in steps of the quantize beat value. It moves when a cue fires, never where the cue is stored, and "
+         "it can only be as right as the track's beat grid: a cue sitting more than half a step off snaps to "
+         "the neighbouring beat rather than back to the one you meant."},
         {"MYSETTING.DAT",
          "Auto cue level",
          11,
@@ -105,7 +107,8 @@ const std::vector<SettingsFieldDescriptor> &allSettingsFields()
          24,
          {{0x80, "1"}, {0x81, "1/2"}, {0x82, "1/4"}, {0x83, "1/8"}},
          PlayerDjSetting,
-         "The size of the step Quantize snaps to, in beats."},
+         "The size of the step Quantize snaps to, in beats. A smaller step moves a slightly-off cue less, and "
+         "rescues a badly-off one less too: anything past half a step lands on the next beat instead."},
         {"MYSETTING.DAT",
          "Hot cue autoload",
          25,
