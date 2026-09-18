@@ -20,6 +20,7 @@ TestCase {
 
     property var seeks: []
     property int toggles: 0
+    property var calls: []
     property var player: ({
         waveformFor: function() {
             var columns = [];
@@ -27,7 +28,13 @@ TestCase {
             return columns;
         },
         seek: function(ms) { testCase.seeks.push(ms); },
-        togglePlay: function() { testCase.toggles += 1; },
+        togglePlay: function() { testCase.toggles += 1; testCase.calls.push("togglePlay"); },
+        skipBeats: function(beats) { testCase.calls.push("skip " + beats); },
+        next: function() { testCase.calls.push("next"); },
+        previous: function() { testCase.calls.push("previous"); },
+        pause: function() { testCase.calls.push("pause"); },
+        stop: function() { testCase.calls.push("stop"); },
+        hasNext: true, hasPrevious: false,
         hasTrack: true, currentFormat: "engine", currentSourceId: "42",
         title: "Major Tom (Reworked 2024)", artist: "DJ Amador", artworkPath: "",
         waveform: [{low: 0.8, mid: 0.4, high: 0.1}, {low: 0.2, mid: 0.1, high: 0.0}],
@@ -120,6 +127,82 @@ TestCase {
         mouseClick(big, big.width / 2, big.height / 2);
         tryCompare(overlay, "visible", false, 2000, "a click there closes it");
         compare(host.visibility, hostVisibility);
+    }
+
+    function openFullscreen() {
+        var stage = createTemporaryObject(stageComponent, testCase);
+        stage.panel.showFor(track("42"));
+        var ring = findChild(stage.panel, "trackRing");
+        tryVerify(function() { return ring.width > 200; }, 2000);
+        mouseClick(ring, ring.width / 2, ring.height / 2);
+        var overlay = findChild(stage.panel, "ringFullscreenWindow");
+        tryCompare(overlay, "visible", true, 2000);
+        testCase.calls = [];
+        return overlay;
+    }
+
+    // Keys go through the window's one keyPressed(), which is what is
+    // pressed here: a test cannot give another window the keyboard focus
+    // where there is no window manager to grant it.
+    function test_theKeysInFullscreen_data() {
+        return [
+            {tag: "right skips a bar on", key: Qt.Key_Right, expected: ["skip 4"]},
+            {tag: "left skips a bar back", key: Qt.Key_Left, expected: ["skip -4"]},
+            {tag: "up is the previous track", key: Qt.Key_Up, expected: ["previous"]},
+            {tag: "down is the next track", key: Qt.Key_Down, expected: ["next"]},
+            {tag: "space plays and pauses", key: Qt.Key_Space, expected: ["togglePlay"]},
+            {tag: "the media play key", key: Qt.Key_MediaTogglePlayPause, expected: ["togglePlay"]},
+            {tag: "the media next key", key: Qt.Key_MediaNext, expected: ["next"]},
+            {tag: "the media previous key", key: Qt.Key_MediaPrevious, expected: ["previous"]},
+            {tag: "the media stop key", key: Qt.Key_MediaStop, expected: ["stop"]},
+            // Held down, down would run through the whole list.
+            {tag: "down held is not next again", key: Qt.Key_Down, repeat: true, expected: []},
+            {tag: "right held keeps skipping", key: Qt.Key_Right, repeat: true, expected: ["skip 4"]},
+            {tag: "a letter is not ours", key: Qt.Key_A, expected: [], unhandled: true},
+        ];
+    }
+    function test_theKeysInFullscreen(data) {
+        var overlay = openFullscreen();
+        compare(overlay.keyPressed(data.key, data.repeat === true), data.unhandled !== true);
+        compare(testCase.calls, data.expected);
+        overlay.close();
+    }
+
+    function test_enterSetsTheCoverSpinningAndStopsItAgain() {
+        var overlay = openFullscreen();
+        var big = findChild(overlay.contentItem, "fullscreenRing");
+        compare(big.spinning, false, "it does not spin until asked");
+        overlay.keyPressed(Qt.Key_Return, false);
+        compare(big.spinning, true);
+        overlay.keyPressed(Qt.Key_Enter, false);
+        compare(big.spinning, false, "the keypad's Enter is Enter too");
+        compare(findChild(testCase.Window.window.contentItem, "trackRing").spinning, false, "the pane's ring never spins");
+        overlay.close();
+    }
+
+    function test_escapeClosesFullscreen() {
+        var overlay = openFullscreen();
+        overlay.keyPressed(Qt.Key_Escape, false);
+        tryCompare(overlay, "visible", false, 2000);
+    }
+
+    // A click anywhere closes the fullscreen ring -- except on a control,
+    // which does what it says and leaves the ring up.
+    function test_theControlsWorkAndDoNotCloseTheRing() {
+        var overlay = openFullscreen();
+        overlay.showControls();
+        var next = findChild(overlay.contentItem, "fullscreenNext");
+        var previous = findChild(overlay.contentItem, "fullscreenPrevious");
+        tryVerify(function() { return findChild(overlay.contentItem, "fullscreenTransport").opacity === 1; }, 2000);
+        compare(next.enabled, true);
+        compare(previous.enabled, false, "there is no previous track, and the button says so");
+        mouseClick(next);
+        mouseClick(findChild(overlay.contentItem, "fullscreenForward"));
+        mouseClick(findChild(overlay.contentItem, "fullscreenBack"));
+        mouseClick(findChild(overlay.contentItem, "fullscreenPlay"));
+        compare(testCase.calls, ["next", "skip 4", "skip -4", "togglePlay"]);
+        compare(overlay.visible, true, "and the ring is still up");
+        overlay.close();
     }
 
     function test_anyOtherTrackKeepsItsSleeve() {

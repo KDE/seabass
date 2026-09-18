@@ -30,6 +30,8 @@ ApplicationWindow {
 
     PlaybackController {
         id: playbackCtrl
+        // The app's one player is the one the desktop's media keys reach.
+        desktopMediaControls: true
     }
 
     // Space toggles play/pause for whatever's loaded in the player bar --
@@ -40,6 +42,16 @@ ApplicationWindow {
     // and nothing else focusable in this app does, so this is a reliable
     // "is this a text-entry control" test without needing to enumerate
     // every control type that might gain focus.
+    // The keyboard's media keys, for when they arrive as keys: on Windows
+    // and macOS, and on a Linux desktop that does not take them for
+    // itself. Plasma and GNOME do take them, and hand them to the player
+    // over MPRIS instead -- see playbackCtrl.desktopMediaControls.
+    Shortcut { sequences: ["Media Play", "Toggle Media Play/Pause"]; context: Qt.ApplicationShortcut; onActivated: playbackCtrl.togglePlay() }
+    Shortcut { sequence: "Media Pause"; context: Qt.ApplicationShortcut; onActivated: playbackCtrl.pause() }
+    Shortcut { sequence: "Media Stop"; context: Qt.ApplicationShortcut; onActivated: playbackCtrl.stop() }
+    Shortcut { sequence: "Media Next"; context: Qt.ApplicationShortcut; onActivated: playbackCtrl.next() }
+    Shortcut { sequence: "Media Previous"; context: Qt.ApplicationShortcut; onActivated: playbackCtrl.previous() }
+
     Shortcut {
         sequence: "Space"
         enabled: playbackCtrl.hasTrack

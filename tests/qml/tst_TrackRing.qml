@@ -185,24 +185,35 @@ TestCase {
         verify(ring.rippleStrength < 0.3, "nor does its ripple, got " + ring.rippleStrength);
     }
 
-    // The cover spins at an LP's 33 1/3 rpm: one turn every 1.8 s.
-    function test_theCoverSpinsAtThirtyThreeAndAThird() {
+    // Asked to, the cover spins at an LP's 33 1/3 rpm: one turn every 1.8 s.
+    function test_theCoverSpinsAtThirtyThreeAndAThirdWhenAskedTo() {
         var ring = gridRing();
-        ring.positionMs = 0;
-        compare(ring.artTurns, 0);
         ring.positionMs = 900;
+        compare(ring.artTurns, 0, "not unless asked: a cover is easier to recognise upright");
+
+        ring.spinning = true;
+        compare(ring.artTurns, 0, "it starts from upright, wherever the track is");
+        ring.positionMs = 1800;
         fuzzyCompare(ring.artTurns, 0.5, 0.0001, "half a turn in 0.9 s");
-        ring.positionMs = 60000;
+        ring.positionMs = 900 + 60000;
         fuzzyCompare((ring.artTurns + 0.5) % 1, (1 / 3 + 0.5) % 1, 0.0001, "33 1/3 turns in a minute leaves it a third round");
 
         // It turns with the track, carried forward between reports...
-        ring.positionMs = 0;
+        ring.spinning = false;
+        ring.spinning = true;
         ring.advance(0.45);
         fuzzyCompare(ring.artTurns, 0.25, 0.0001, "a quarter turn in 0.45 s of playing");
+        // ...a seek back turns it back rather than past zero...
+        ring.positionMs = ring.spinOriginMs - 450;
+        fuzzyCompare(ring.artTurns, 0.75, 0.0001);
         // ...and a paused record does not turn.
         ring.playing = false;
+        var held = ring.artTurns;
         ring.advance(5);
-        fuzzyCompare(ring.artTurns, 0.25, 0.0001);
+        compare(ring.artTurns, held);
+
+        ring.spinning = false;
+        compare(ring.artTurns, 0, "switched off, it is upright again");
     }
 
     function test_rekordboxArtAsksForTheLargeCoverAndSettlesForTheSmall() {

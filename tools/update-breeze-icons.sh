@@ -48,6 +48,12 @@ devices/22/drive-removable-media-usb-pendrive.svg
 devices/22/media-flash-sd-mmc.svg
 places/22/folder.svg
 actions/22/media-eject.svg
+# Fullscreen track ring: transport
+actions/22/media-playback-pause.svg
+actions/22/media-skip-backward.svg
+actions/22/media-skip-forward.svg
+actions/22/media-seek-backward.svg
+actions/22/media-seek-forward.svg
 actions/22/window-close.svg
 # First page and hub cards
 actions/22/view-media-track.svg

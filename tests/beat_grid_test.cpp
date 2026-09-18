@@ -107,6 +107,25 @@ int main(int argc, char **argv)
         check(domain::beatsFromMarkers({{3, 0.0}, {3, 500.0}}, 0.0).empty(), "two markers on one index span nothing");
     }
 
+    // A jump of whole beats lands as far into the beat as it left.
+    {
+        std::vector<double> grid;
+        for (int i = 0; i < 100; ++i) {
+            grid.push_back(1000.0 + i * 500.0);
+        }
+        using domain::positionAfterSkippingBeats;
+        check(positionAfterSkippingBeats(grid, 5125.0, 4, 60000.0) == 7125.0, "four beats on from 125 ms into a beat is 125 ms into the fourth after");
+        check(positionAfterSkippingBeats(grid, 5125.0, -4, 60000.0) == 3125.0, "and four back likewise");
+        check(positionAfterSkippingBeats(grid, 1600.0, -4, 60000.0) == 1100.0, "back past the first beat stops in the first beat");
+        check(positionAfterSkippingBeats(grid, 400.0, 4, 60000.0) == 2900.0, "before the grid starts a beat is 625 ms");
+        check(positionAfterSkippingBeats({}, 10000.0, -4, 60000.0) == 7500.0, "and so it is with no grid at all");
+        check(positionAfterSkippingBeats({}, 1000.0, -4, 60000.0) == 0.0, "never before the start");
+        check(positionAfterSkippingBeats({}, 59000.0, 4, 60000.0) == 59999.0, "nor onto the very end, which a player takes for the track ending");
+        // A tempo change between here and there: the offset into the beat is kept in milliseconds.
+        std::vector<double> twoTempi = {0.0, 500.0, 1000.0, 1250.0, 1500.0, 1750.0};
+        check(positionAfterSkippingBeats(twoTempi, 600.0, 3, 0.0) == 1600.0, "across a tempo change it still lands in the beat it should");
+    }
+
     if (argc < 2) {
         std::cerr << "usage: beat_grid_test <fixture root>\n";
         return 2;

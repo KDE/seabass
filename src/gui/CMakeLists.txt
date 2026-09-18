@@ -218,6 +218,13 @@ set(SEABASS_GUI_SOURCES
     system_font_metrics.hpp
     system_font_metrics.cpp
 )
+
+# Seabass as a media player on the session bus -- how media keys reach a
+# player on a Linux desktop. D-Bus is there already (seabass_edit links
+# it on these platforms, for the sleep inhibitor).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND SEABASS_GUI_SOURCES mpris_service.hpp mpris_service.cpp)
+endif()
 # The Breeze icons the UI draws (common/SeabassIcon.qml), copied by
 # tools/update-breeze-icons.sh -- which is also where to add one.
 set(SEABASS_GUI_ICONS
@@ -257,7 +264,12 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/link.svg
     qml/icons/breeze/media-eject.svg
     qml/icons/breeze/media-flash-sd-mmc.svg
+    qml/icons/breeze/media-playback-pause.svg
     qml/icons/breeze/media-playback-start.svg
+    qml/icons/breeze/media-seek-backward.svg
+    qml/icons/breeze/media-seek-forward.svg
+    qml/icons/breeze/media-skip-backward.svg
+    qml/icons/breeze/media-skip-forward.svg
     qml/icons/breeze/office-chart-bar.svg
     qml/icons/breeze/server-database.svg
     qml/icons/breeze/sidebar-collapse-left.svg

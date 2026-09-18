@@ -138,11 +138,34 @@ Page {
     // own button. Sits between the track list and the Matching panel.
     property bool trackPanelOpen: false
 
+    // This page's list is the player's queue: next, previous and what
+    // plays when a track ends are the rows of the list as it is sorted
+    // and filtered now. Offered whenever the library shown changes (see
+    // rescan()), so a track played from the details pane has a queue too.
+    function offerQueue() {
+        root.playbackController.setQueue(scanController.tracks, root.format, root.currentPath());
+    }
+
+    // When the player moves on by itself -- the next track, the previous,
+    // the end of one -- and the pane was showing the track it left, the
+    // pane goes with it. A pane turned to some other track is being read,
+    // and stays.
+    Connections {
+        target: root.playbackController
+        function onAdvanced(previousSourceId) {
+            var row = root.playbackController.currentQueueRow();
+            if (row >= 0 && root.trackPanelOpen && trackDetailPanel.trackSourceId === previousSourceId) {
+                trackDetailPanel.showFor(scanController.tracks.trackAt(row));
+            }
+        }
+    }
+
     // Plays a row's track and turns the details pane to it. The pane is
     // where the playing track is shown as a ring, so a track played from
     // the list while the pane was shut, or on another track, played with
     // nothing to show for it.
     function playRow(row) {
+        root.offerQueue();
         root.playbackController.load(root.format, root.currentPath(), row.sourceId, row.filePath, row.title,
             row.artist, row.artworkPath, row.cues);
         trackDetailPanel.showFor(row);
@@ -194,6 +217,7 @@ Page {
 
     function rescan() {
         selectedPlaylistIndex = 0;
+        root.offerQueue();
         scanController.scan(root.format, root.currentPath(), root.format === "engine" ? root.rekordboxPath : "");
     }
 

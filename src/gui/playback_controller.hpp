@@ -6,8 +6,10 @@
 
 #include <QAudioOutput>
 #include <QCache>
+#include <QAbstractItemModel>
 #include <QMediaPlayer>
 #include <QObject>
+#include <QPointer>
 #include <QQmlEngine>
 #include <QVariantList>
 #include <QtGlobal>
@@ -57,6 +59,16 @@ class PlaybackController : public QObject
     // plays. liveLevels says whether this Qt can deliver the audio at
     // all (6.8 and later); where it cannot, a display has the stored
     // waveform to fall back on.
+    // Whether there is a track before or after the loaded one in the
+    // queue -- see setQueue().
+    // Set on the app's one player, and only there: Seabass then appears
+    // on the desktop as a media player, which is how the keyboard's media
+    // keys, the desktop's media applet and the lock screen reach it (see
+    // MprisService; Linux only, a no-op elsewhere). Off by default so
+    // that the many controllers tests and previews make stay invisible.
+    Q_PROPERTY(bool desktopMediaControls READ desktopMediaControls WRITE setDesktopMediaControls NOTIFY desktopMediaControlsChanged)
+    Q_PROPERTY(bool hasNext READ hasNext NOTIFY queueChanged)
+    Q_PROPERTY(bool hasPrevious READ hasPrevious NOTIFY queueChanged)
     Q_PROPERTY(bool liveLevels READ liveLevels CONSTANT)
     Q_PROPERTY(qreal levelLow READ levelLow NOTIFY levelsChanged)
     Q_PROPERTY(qreal levelMid READ levelMid NOTIFY levelsChanged)
@@ -84,6 +96,8 @@ public:
     qint64 position() const { return m_player.position(); }
     bool playing() const { return m_player.playbackState() == QMediaPlayer::PlayingState; }
     bool liveLevels() const { return m_bufferOutput != nullptr; }
+    bool desktopMediaControls() const { return m_desktopMediaControls; }
+    void setDesktopMediaControls(bool enabled);
     qreal levelLow() const { return m_levels.low; }
     qreal levelMid() const { return m_levels.mid; }
     qreal levelHigh() const { return m_levels.high; }
@@ -113,7 +127,34 @@ public:
     Q_INVOKABLE QVariantList waveformFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
 
+    // The list the player walks: next(), previous(), and on to the next
+    // track by itself when one ends. It is a track list model -- any
+    // model with sourceId, filePath, title, artist, artworkPath, cues and
+    // streamingSource roles -- looked at live, not copied: the queue IS
+    // the list on screen, in the order and with the filter it has now.
+    // The loaded track is found in it by its id each time, so re-sorting
+    // the list under a playing track moves "next" with it; a track that
+    // is no longer in the list has no next. Rows that cannot be played (a
+    // streaming track, a missing file) are stepped over.
+    // A plain load() keeps the queue as long as it stays in the same
+    // library.
+    Q_INVOKABLE void setQueue(QAbstractItemModel *model, const QString &format, const QString &libraryPath);
+    Q_INVOKABLE void next();
+    Q_INVOKABLE void previous();
+    // The queue row the loaded track is on, or -1.
+    Q_INVOKABLE int currentQueueRow() const;
+    bool hasNext() const { return playableRowFrom(currentQueueRow(), +1) >= 0; }
+    bool hasPrevious() const { return playableRowFrom(currentQueueRow(), -1) >= 0; }
+
+    // Jumps by whole beats of the track's grid, forward or back, landing
+    // on the same place in the beat it left -- a skip that stays in time.
+    // Where there is no grid a beat is taken as 625 ms, which makes four
+    // of them two and a half seconds.
+    Q_INVOKABLE void skipBeats(int beats);
+
     Q_INVOKABLE void togglePlay();
+    Q_INVOKABLE void play();
+    Q_INVOKABLE void pause();
     Q_INVOKABLE void seek(qint64 positionMs);
     Q_INVOKABLE void stop();
 
@@ -125,6 +166,11 @@ signals:
     void volumeChanged();
     void errorMessageChanged();
     void levelsChanged();
+    void queueChanged();
+    void desktopMediaControlsChanged();
+    // next(), previous() or the end of a track moved the player on from
+    // `previousSourceId`: whoever was showing that track may want to follow.
+    void advanced(const QString &previousSourceId);
     void beatCountChanged();
 
 private:
@@ -133,6 +179,9 @@ private:
     // Levels back to zero and the meter's memory gone: nothing is
     // playing, or something else is about to.
     void clearLevels();
+    int playableRowFrom(int row, int step) const;
+    void loadQueueRow(int row);
+    QVariant queueValue(int row, const QByteArray &role) const;
 
     QMediaPlayer m_player;
     QAudioOutput m_audioOutput;
@@ -145,11 +194,17 @@ private:
     bool m_hasTrack = false;
     QString m_currentFormat;
     QString m_currentSourceId;
+    QString m_currentLibraryPath;
     QString m_title;
     QString m_artist;
     QString m_artworkPath;
     QVariantList m_waveform;
     QVariantList m_cues;
+    QPointer<QAbstractItemModel> m_queue;
+    bool m_desktopMediaControls = false;
+    QObject *m_mpris = nullptr;
+    QString m_queueFormat;
+    QString m_queueLibraryPath;
     QList<qreal> m_beatTimesMs;
     QList<int> m_beatNumbers;
     QString m_errorMessage;

@@ -4,6 +4,8 @@
 
 #include "playback_controller.hpp"
 
+#include <algorithm>
+
 #include <QAudioBuffer>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 #include <QAudioBufferOutput>
@@ -12,6 +14,10 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include "domain/beat_grid.hpp"
+#if defined(Q_OS_LINUX)
+#include "mpris_service.hpp"
+#endif
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_beat_grid_reader.hpp"
@@ -70,6 +76,12 @@ PlaybackController::PlaybackController(QObject *parent) : QObject(parent)
             clearLevels();
         }
     });
+    // On to the next track by itself when one ends.
+    connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::EndOfMedia && hasNext()) {
+            next();
+        }
+    });
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     m_bufferOutput = new QAudioBufferOutput(this);
     m_player.setAudioBufferOutput(m_bufferOutput);
@@ -94,12 +106,17 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
 {
     m_player.stop();
     setErrorMessage({});
+    // The queue belongs to one library; a track from another ends it.
+    if (m_queue && (format != m_queueFormat || libraryPath != m_queueLibraryPath)) {
+        m_queue = nullptr;
+    }
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
 
     m_currentFormat = format;
     m_currentSourceId = sourceId;
+    m_currentLibraryPath = libraryPath;
     m_title = title;
     m_artist = artist;
     m_artworkPath = artworkPath;
@@ -128,6 +145,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     }
 
     emit trackChanged();
+    emit queueChanged();
 }
 
 QVariantList PlaybackController::waveformFor(const QString &format, const QString &libraryPath,
@@ -140,6 +158,141 @@ QVariantList PlaybackController::waveformFor(const QString &format, const QStrin
     QVariantList waveform = readWaveform(format, libraryPath, sourceId);
     m_waveformCache.insert(key, new QVariantList(waveform));
     return waveform;
+}
+
+void PlaybackController::setQueue(QAbstractItemModel *model, const QString &format, const QString &libraryPath)
+{
+    if (m_queue) {
+        disconnect(m_queue, nullptr, this, nullptr);
+    }
+    m_queue = model;
+    m_queueFormat = format;
+    m_queueLibraryPath = libraryPath;
+    if (m_queue) {
+        // Whatever changes the list changes what comes next.
+        connect(m_queue, &QAbstractItemModel::modelReset, this, &PlaybackController::queueChanged);
+        connect(m_queue, &QAbstractItemModel::layoutChanged, this, &PlaybackController::queueChanged);
+        connect(m_queue, &QAbstractItemModel::rowsInserted, this, &PlaybackController::queueChanged);
+        connect(m_queue, &QAbstractItemModel::rowsRemoved, this, &PlaybackController::queueChanged);
+        connect(m_queue, &QAbstractItemModel::rowsMoved, this, &PlaybackController::queueChanged);
+    }
+    emit queueChanged();
+}
+
+QVariant PlaybackController::queueValue(int row, const QByteArray &role) const
+{
+    if (!m_queue || row < 0 || row >= m_queue->rowCount()) {
+        return {};
+    }
+    // A model need not have every role, and must not be asked for one it
+    // has not: QML's ListModel crashes on a role of -1.
+    const int roleId = m_queue->roleNames().key(role, -1);
+    if (roleId < 0) {
+        return {};
+    }
+    return m_queue->data(m_queue->index(row, 0), roleId);
+}
+
+int PlaybackController::currentQueueRow() const
+{
+    // A queue set for another library than the loaded track's has an id
+    // like it only by coincidence.
+    if (!m_queue || !m_hasTrack || m_currentFormat != m_queueFormat || m_currentLibraryPath != m_queueLibraryPath) {
+        return -1;
+    }
+    const int role = m_queue->roleNames().key("sourceId", -1);
+    if (role < 0) {
+        return -1;
+    }
+    const int rows = m_queue->rowCount();
+    for (int row = 0; row < rows; ++row) {
+        if (m_queue->data(m_queue->index(row, 0), role).toString() == m_currentSourceId) {
+            return row;
+        }
+    }
+    return -1;
+}
+
+int PlaybackController::playableRowFrom(int row, int step) const
+{
+    if (!m_queue || row < 0) {
+        return -1;
+    }
+    const int rows = m_queue->rowCount();
+    for (int candidate = row + step; candidate >= 0 && candidate < rows; candidate += step) {
+        const QString filePath = queueValue(candidate, "filePath").toString();
+        if (queueValue(candidate, "streamingSource").toString().isEmpty() && !filePath.isEmpty()
+            && QFile::exists(filePath)) {
+            return candidate;
+        }
+    }
+    return -1;
+}
+
+void PlaybackController::loadQueueRow(int row)
+{
+    if (row < 0) {
+        return;
+    }
+    const QString previousSourceId = m_currentSourceId;
+    load(m_queueFormat, m_queueLibraryPath, queueValue(row, "sourceId").toString(),
+         queueValue(row, "filePath").toString(), queueValue(row, "title").toString(),
+         queueValue(row, "artist").toString(), queueValue(row, "artworkPath").toString(),
+         queueValue(row, "cues").toList());
+    emit advanced(previousSourceId);
+}
+
+void PlaybackController::next()
+{
+    loadQueueRow(playableRowFrom(currentQueueRow(), +1));
+}
+
+void PlaybackController::previous()
+{
+    loadQueueRow(playableRowFrom(currentQueueRow(), -1));
+}
+
+void PlaybackController::skipBeats(int beats)
+{
+    if (!m_hasTrack || beats == 0) {
+        return;
+    }
+    const std::vector<double> grid(m_beatTimesMs.cbegin(), m_beatTimesMs.cend());
+    m_player.setPosition(static_cast<qint64>(domain::positionAfterSkippingBeats(
+        grid, static_cast<double>(m_player.position()), beats, static_cast<double>(m_player.duration()))));
+}
+
+void PlaybackController::setDesktopMediaControls(bool enabled)
+{
+    if (enabled == m_desktopMediaControls) {
+        return;
+    }
+    m_desktopMediaControls = enabled;
+#if defined(Q_OS_LINUX)
+    if (enabled) {
+        auto *service = new MprisService(this);
+        service->start();
+        m_mpris = service;
+    } else {
+        delete m_mpris;
+        m_mpris = nullptr;
+    }
+#endif
+    emit desktopMediaControlsChanged();
+}
+
+void PlaybackController::play()
+{
+    if (m_hasTrack) {
+        m_player.play();
+    }
+}
+
+void PlaybackController::pause()
+{
+    if (m_hasTrack) {
+        m_player.pause();
+    }
 }
 
 void PlaybackController::togglePlay()
@@ -179,6 +332,7 @@ void PlaybackController::stop()
     m_beatNumbers.clear();
     m_cues.clear();
     emit trackChanged();
+    emit queueChanged();
 }
 
 void PlaybackController::meterBuffer(const QAudioBuffer &buffer)

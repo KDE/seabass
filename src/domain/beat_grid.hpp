@@ -33,4 +33,14 @@ struct BeatGridMarker
 // before the track's start are dropped.
 std::vector<Beat> beatsFromMarkers(std::vector<BeatGridMarker> markers, double durationMs);
 
+// Where a jump of `beats` whole beats (negative for back) from
+// `positionMs` lands: as far into the beat it arrives at as it was into
+// the one it left, so the jump stays in time. `beatTimesMs` is the
+// grid, in order. Off the grid -- no grid, or before its first beat or
+// after its last -- a beat is taken as 625 ms. Never before the start,
+// nor within a millisecond of `durationMs` (when that is known), where a
+// player would take it for the end of the track.
+double positionAfterSkippingBeats(const std::vector<double> &beatTimesMs, double positionMs, int beats,
+                                  double durationMs);
+
 }  // namespace seabass::domain

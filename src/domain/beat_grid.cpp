@@ -51,4 +51,20 @@ std::vector<Beat> beatsFromMarkers(std::vector<BeatGridMarker> markers, double d
     return beats;
 }
 
+double positionAfterSkippingBeats(const std::vector<double> &beatTimesMs, double positionMs, int beats,
+                                  double durationMs)
+{
+    double target = positionMs + beats * 625.0;
+    if (beatTimesMs.size() > 1 && positionMs >= beatTimesMs.front() && positionMs <= beatTimesMs.back()) {
+        const auto after = std::upper_bound(beatTimesMs.begin(), beatTimesMs.end(), positionMs);
+        const auto here = static_cast<long>(after - beatTimesMs.begin()) - 1;
+        const long there = std::clamp(here + beats, 0L, static_cast<long>(beatTimesMs.size()) - 1);
+        target = beatTimesMs[static_cast<std::size_t>(there)] + (positionMs - beatTimesMs[static_cast<std::size_t>(here)]);
+    }
+    if (durationMs > 0.0) {
+        target = std::min(target, durationMs - 1.0);
+    }
+    return std::max(0.0, target);
+}
+
 }  // namespace seabass::domain

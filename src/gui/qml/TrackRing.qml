@@ -132,13 +132,20 @@ Item {
     }
     onBeatTimesMsChanged: root.findBeat()
 
-    // The cover spins like the record it is the sleeve of, at an LP's
-    // 33 1/3 rpm. Reckoned from the position, not from a clock: it turns
-    // while the track plays, holds when it is paused, and a seek puts it
-    // where the record would be. In turns, kept within one so that an
-    // hour in the shader's float still has its precision.
+    // Asked for, the cover spins like the record it is the sleeve of, at
+    // an LP's 33 1/3 rpm. Off by default: a cover is there to be
+    // recognised, and that is easier upright. Reckoned from the position,
+    // not from a clock: it turns while the track plays, holds when it is
+    // paused, and a seek turns it as far as the record would have gone.
+    // It starts from upright where it was switched on, and goes back to
+    // upright when switched off. In turns, kept within one so that an hour
+    // in the shader's float still has its precision.
+    property bool spinning: false
+    property real spinOriginMs: 0
+    onSpinningChanged: root.spinOriginMs = root.smoothPositionMs
     readonly property real revolutionsPerMinute: 100 / 3
-    readonly property real artTurns: (Math.max(0, root.smoothPositionMs) / 60000 * root.revolutionsPerMinute) % 1
+    readonly property real artTurns: !root.spinning ? 0
+        : ((((root.smoothPositionMs - root.spinOriginMs) / 60000 * root.revolutionsPerMinute) % 1) + 1) % 1
 
     // How much the recent music has had in the low band: up fast, down
     // over half a second. It scales the grid's pulse, so that the ring
