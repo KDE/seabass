@@ -26,6 +26,8 @@ layout(std140, binding = 0) uniform buf {
     float high;        // and the high band
     float time;        // seconds, running while the track plays
     float rippleAge;   // seconds since the last beat; large for "none"
+    float rippleSpan;  // seconds a ripple takes to cross the bars
+    float rippleStrength;
     float bars;        // how many bars go round
     float artRadius;   // the art disc, in units of the ring's outer radius
     float hasArt;
@@ -124,11 +126,13 @@ void main()
     float wave = 0.5 + 0.5 * sin(TAU * (t * 14.0 - time * 0.30));
     colour *= 1.0 + 0.35 * mid * wave * played;
 
-    // A beat sends a ripple out from the art, crossing the bars in about
-    // two thirds of a second and fading as it goes.
-    float front = r0 + rippleAge * 1.5 * room;
+    // A beat sends a ripple out from the art, crossing the bars in
+    // rippleSpan -- most of a beat, so it is gone as the next one starts
+    // -- and fading as it goes.
+    float crossed = rippleAge / max(rippleSpan, 0.01);
+    float front = r0 + crossed * room;
     float offFront = (r - front) / 0.045;
-    float ripple = exp(-offFront * offFront) * exp(-rippleAge * 3.5) * step(rippleAge, 1.0) * step(r0, r);
+    float ripple = exp(-offFront * offFront) * exp(-crossed * 2.2) * step(crossed, 1.15) * step(r0, r) * rippleStrength;
     colour += c * ripple * 0.9;
 
     // The ring's base line, so silence still draws a circle.

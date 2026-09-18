@@ -174,14 +174,14 @@ TestCase {
                + pixelAt(image, 0.25, pastTheTip).g);
     }
 
-    // A beat sends a ripple out through the bars. Held still 0.4 s in,
-    // its front is 0.6 of the way out -- in the low band's half-strength
+    // A beat sends a ripple out through the bars. With no grid it takes
+    // 0.35 s to cross; held still 0.21 s in, its front is 0.6 of the way out -- in the low band's half-strength
     // colour, which has room to get brighter.
     function test_aBeatSendsARippleOutThroughTheBars() {
         var stage = make({progress: -1, playing: true, animated: false, time: 10});
         var onTheFront = 0.57 + 0.43 * 0.60;
         var before = pixelAt(grabImage(stage), 0.25, onTheFront);
-        stage.ring.rippleStart = 9.6;
+        stage.ring.rippleStart = 9.79;
         wait(100);
         var image = grabImage(stage);
         var during = pixelAt(image, 0.25, onTheFront);

@@ -12,7 +12,9 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
+#include "infrastructure/rekordbox/rekordbox_beat_grid_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
 
 namespace seabass::gui
@@ -93,6 +95,8 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_player.stop();
     setErrorMessage({});
     m_waveform.clear();
+    m_beatTimesMs.clear();
+    m_beatNumbers.clear();
 
     m_currentFormat = format;
     m_currentSourceId = sourceId;
@@ -106,6 +110,19 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
     } else {
         m_waveform = readWaveform(format, libraryPath, sourceId);
+        // Same on-demand read as the waveform, from the same files.
+        std::vector<domain::Beat> beats;
+        if (format == QLatin1String("rekordbox")) {
+            beats = infrastructure::rekordbox::readBeatGrid(libraryPath.toStdString(), sourceId.toStdString());
+        } else if (format == QLatin1String("engine")) {
+            beats = infrastructure::engine::readBeatGrid(libraryPath.toStdString(), sourceId.toStdString());
+        }
+        m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
+        m_beatNumbers.reserve(static_cast<qsizetype>(beats.size()));
+        for (const domain::Beat &beat : beats) {
+            m_beatTimesMs.append(beat.timeMs);
+            m_beatNumbers.append(beat.beatInBar);
+        }
         m_player.setSource(QUrl::fromLocalFile(filePath));
         m_player.play();
     }
@@ -158,6 +175,8 @@ void PlaybackController::stop()
     m_currentFormat.clear();
     m_currentSourceId.clear();
     m_waveform.clear();
+    m_beatTimesMs.clear();
+    m_beatNumbers.clear();
     m_cues.clear();
     emit trackChanged();
 }

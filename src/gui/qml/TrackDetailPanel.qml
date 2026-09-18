@@ -262,6 +262,9 @@ Pane {
                     liveMid: panel.playbackController.levelMid || 0
                     liveHigh: panel.playbackController.levelHigh || 0
                     beatCount: panel.playbackController.beatCount || 0
+                    positionMs: panel.playbackController.position || 0
+                    beatTimesMs: panel.playbackController.beatTimesMs || []
+                    beatNumbers: panel.playbackController.beatNumbers || []
                     onClicked: ringFullscreen.open()
                 }
             }

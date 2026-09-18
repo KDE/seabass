@@ -189,6 +189,9 @@ Page {
                         liveMid: root.playbackController.levelMid || 0
                         liveHigh: root.playbackController.levelHigh || 0
                         beatCount: root.playbackController.beatCount || 0
+                        positionMs: root.playbackController.position || 0
+                        beatTimesMs: root.playbackController.beatTimesMs || []
+                        beatNumbers: root.playbackController.beatNumbers || []
                     }
                 }
             }

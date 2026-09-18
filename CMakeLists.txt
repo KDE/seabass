@@ -298,6 +298,7 @@ target_compile_features(storageprobe PUBLIC cxx_std_17)
 
 add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
+    src/domain/beat_grid.cpp
     src/domain/camelot_key.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
@@ -345,6 +346,7 @@ add_library(seabass_core STATIC
     src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
     src/infrastructure/rekordbox/rekordbox_xml_writer.cpp
     src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
+    src/infrastructure/rekordbox/rekordbox_beat_grid_reader.cpp
     src/infrastructure/rekordbox/rekordbox_waveform_reader.cpp
     src/infrastructure/rekordbox/rekordbox_settings_fields.cpp
     src/infrastructure/rekordbox/rekordbox_settings_reader.cpp
@@ -356,6 +358,7 @@ add_library(seabass_core STATIC
     src/infrastructure/engine/engine_sample_rates.cpp
     src/infrastructure/engine/engine_import_state.cpp
     src/infrastructure/engine/rekordbox_key_parser.cpp
+    src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
     src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
@@ -1161,6 +1164,14 @@ add_executable(camelot_key_test
 )
 target_include_directories(camelot_key_test PRIVATE src)
 add_test(NAME camelot_key_test COMMAND camelot_key_test)
+
+# The beat grid a playing track's display keeps time by: the marker
+# arithmetic by hand, and both readers against the committed fixture.
+add_executable(beat_grid_test tests/beat_grid_test.cpp)
+target_include_directories(beat_grid_test PRIVATE src)
+target_link_libraries(beat_grid_test PRIVATE seabass_core)
+add_test(NAME beat_grid_test COMMAND beat_grid_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(beat_grid_test PROPERTIES LABELS "integration")
 
 add_executable(audio_levels_test
     src/domain/audio_levels.cpp

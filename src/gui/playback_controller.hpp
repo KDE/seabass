@@ -36,6 +36,14 @@ class PlaybackController : public QObject
     Q_PROPERTY(QString artworkPath READ artworkPath NOTIFY trackChanged)
     Q_PROPERTY(QVariantList waveform READ waveform NOTIFY trackChanged)
     Q_PROPERTY(QVariantList cues READ cues NOTIFY trackChanged)
+    // The loaded track's beat grid as rekordbox or Engine analysed it:
+    // when each beat falls, in milliseconds, and its place in the bar (1
+    // to 4, 1 the downbeat, 0 unknown), index for index. Empty for a
+    // track with no grid. This is what a display keeps time by -- it is
+    // what the DJ's own decks keep time by. The live levels below say how
+    // loud the music is, not when the beat is.
+    Q_PROPERTY(QList<qreal> beatTimesMs READ beatTimesMs NOTIFY trackChanged)
+    Q_PROPERTY(QList<int> beatNumbers READ beatNumbers NOTIFY trackChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
     Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
@@ -70,6 +78,8 @@ public:
     QString artworkPath() const { return m_artworkPath; }
     QVariantList waveform() const { return m_waveform; }
     QVariantList cues() const { return m_cues; }
+    QList<qreal> beatTimesMs() const { return m_beatTimesMs; }
+    QList<int> beatNumbers() const { return m_beatNumbers; }
     qint64 duration() const { return m_player.duration(); }
     qint64 position() const { return m_player.position(); }
     bool playing() const { return m_player.playbackState() == QMediaPlayer::PlayingState; }
@@ -140,6 +150,8 @@ private:
     QString m_artworkPath;
     QVariantList m_waveform;
     QVariantList m_cues;
+    QList<qreal> m_beatTimesMs;
+    QList<int> m_beatNumbers;
     QString m_errorMessage;
     // Keyed on format+libraryPath+sourceId (see waveformFor()'s own doc
     // comment) -- QCache owns the heap-allocated values it stores; 300
