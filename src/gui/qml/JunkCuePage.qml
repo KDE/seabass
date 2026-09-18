@@ -274,7 +274,15 @@ Page {
                 }
                 Button {
                     text: "Stage Removing All"
+                    // Nothing left to stage once they all are: the rows
+                    // stay listed with their own Unstage buttons, so the
+                    // list being long is no reason for this to be live.
                     enabled: !consistencyController.busy && !consistencyController.writing
+                        && consistencyController.unstagedJunkCueCount > 0
+                    ToolTip.visible: hovered
+                    ToolTip.text: consistencyController.unstagedJunkCueCount === 0
+                        ? "Every one of them is staged already. Press Clean Up to write it."
+                        : "Stage removing every 0:00 memory cue listed, in all catalogs."
                     onClicked: confirmRemoveAllJunkCuesDialog.open()
                 }
                 Button {

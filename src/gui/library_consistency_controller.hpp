@@ -90,6 +90,13 @@ signals:
 private:
     std::vector<domain::LibraryConsistencyIssue> m_issues;
     std::vector<QString> m_stagedDescriptions;  // empty = not staged; parallel to m_issues
+
+public:
+    // Repairable rows nobody has staged yet: what "Stage All Safe
+    // Repairs" would actually do if pressed.
+    int repairableUnstaged() const;
+
+private:
 };
 
 // Read-only Qt list model over the JunkCueIssues LibraryConsistencyController
@@ -147,6 +154,12 @@ signals:
 private:
     std::vector<domain::JunkCueIssue> m_issues;
     std::vector<bool> m_staged;  // parallel to m_issues
+
+public:
+    // Rows nobody has staged yet: what "Remove All" would still do.
+    int unstagedCount() const;
+
+private:
 };
 
 // Result of a background scan task for one format, see
@@ -241,6 +254,12 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(int repairableCount READ repairableCount NOTIFY issuesChanged)
+    // What the "do all of it" buttons have left to do. Distinct from the
+    // counts above, which say what the check found: a button that has
+    // staged everything it can offer is a button with nothing behind it,
+    // and it should look like one.
+    Q_PROPERTY(int unstagedRepairableCount READ unstagedRepairableCount NOTIFY issuesChanged)
+    Q_PROPERTY(int unstagedJunkCueCount READ unstagedJunkCueCount NOTIFY issuesChanged)
     // The stick itself, before anything about its library: a filesystem
     // the kernel has set read-only takes every write down with it.
     Q_PROPERTY(bool stickReadOnly READ stickReadOnly NOTIFY stickHealthChanged)
@@ -291,6 +310,8 @@ public:
     // is null for anything outside the visible/cache range, which would
     // silently undercount on a long list.
     int repairableCount() const;
+    int unstagedRepairableCount() const { return m_model.repairableUnstaged(); }
+    int unstagedJunkCueCount() const { return m_junkCueModel.unstagedCount(); }
 
     // Cover art, Engine only. A track counts as readable when its art is
     // stored the way Engine stores its own: a hash, with the image in

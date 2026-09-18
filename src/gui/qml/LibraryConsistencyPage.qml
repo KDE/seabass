@@ -392,11 +392,16 @@ Page {
             }
             Button {
                 text: "Stage All Safe Repairs"
+                // What it has left to stage, not what the check found:
+                // once every safe repair is staged there is nothing
+                // behind this button, and it should not look pressable.
                 enabled: !consistencyController.busy && !consistencyController.writing
-                    && consistencyController.repairableCount > 0 && !consistencyController.stickReadOnly
+                    && consistencyController.unstagedRepairableCount > 0 && !consistencyController.stickReadOnly
                 ToolTip.visible: hovered
                 ToolTip.text: consistencyController.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    : consistencyController.unstagedRepairableCount === 0 && consistencyController.repairableCount > 0
+                    ? "Every safe repair is staged already. Press Save to write them."
                     : "Repair every entry with an exact healthy match. Conflicts are left for you."
                 onClicked: confirmRepairAllDialog.open()
             }
@@ -426,6 +431,7 @@ Page {
                 visible: consistencyController.junkCues.count > 0
                 text: "Remove All"
                 enabled: !consistencyController.busy && !consistencyController.stickReadOnly
+                    && consistencyController.unstagedJunkCueCount > 0
                 ToolTip.visible: hovered
                 // It stages; it does not remove. The row buttons
                 // beside it and the confirmation this opens both
@@ -437,6 +443,8 @@ Page {
                 // already gone.
                 ToolTip.text: consistencyController.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    : consistencyController.unstagedJunkCueCount === 0
+                    ? "Every one of them is staged already. Press Save to write it."
                     : "Stage removing every 0:00 memory cue listed, in all catalogs. Save writes it."
                 onClicked: confirmRemoveAllJunkCuesDialog.open()
             }

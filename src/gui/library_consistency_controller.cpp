@@ -655,6 +655,29 @@ void LibraryConsistencyController::mergePlaylistSummary(const QStringList &names
     m_playlistNames.sort();
 }
 
+int LibraryConsistencyIssueListModel::repairableUnstaged() const
+{
+    int n = 0;
+    for (std::size_t i = 0; i < m_issues.size(); ++i) {
+        const bool staged = i < m_stagedDescriptions.size() && !m_stagedDescriptions[i].isEmpty();
+        if (!staged && m_issues[i].kind == LibraryConsistencyIssue::Kind::Repairable) {
+            n++;
+        }
+    }
+    return n;
+}
+
+int JunkCueIssueListModel::unstagedCount() const
+{
+    int n = 0;
+    for (std::size_t i = 0; i < m_issues.size(); ++i) {
+        if (i >= m_staged.size() || !m_staged[i]) {
+            n++;
+        }
+    }
+    return n;
+}
+
 int LibraryConsistencyController::repairableCount() const
 {
     int n = 0;

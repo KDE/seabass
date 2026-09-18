@@ -32,6 +32,8 @@ TestCase {
             property bool canUndo: false
             property bool stickReadOnly: false
             property int repairableCount: 0
+            property int unstagedRepairableCount: 0
+            property int unstagedJunkCueCount: 0
             property int stagedCount: stagedIssueCount + stagedJunkCueCount
             property int stagedIssueCount: 0
             property int stagedJunkCueCount: 0
@@ -93,5 +95,57 @@ TestCase {
         // reading properties off a destroyed object.
         page.destroy();
         wait(0);
+    }
+
+    // A "do all of it" button with everything already staged has nothing
+    // behind it. It used to stay live, because it asked what the check
+    // found rather than what it had left to do.
+    function test_theAllButtonsGoQuietOnceEverythingIsStaged() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        // The delegate needs its roles; the buttons under test do not
+        // care what is in them.
+        var row = {track: {title: "A track", artist: "An artist", filePath: "/nowhere/a.mp3",
+                           durationMs: 0, cues: [], side: "engine", sourceId: "1", artworkPath: ""},
+                   staged: false, format: "engine", positionMs: 0};
+        controller.junkCues.append(row);
+        controller.junkCues.append(row);
+        controller.repairableCount = 3;
+        controller.unstagedRepairableCount = 3;
+        controller.unstagedJunkCueCount = 2;
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null, "the page must instantiate");
+
+        var repairAll = findButton(page, "Stage All Safe Repairs");
+        var removeAll = findButton(page, "Remove All");
+        verify(repairAll !== null && removeAll !== null, "both do-all buttons must be there");
+        compare(repairAll.enabled, true, "with repairs waiting it is live");
+        compare(removeAll.enabled, true, "with cues waiting it is live");
+
+        controller.unstagedRepairableCount = 0;
+        controller.unstagedJunkCueCount = 0;
+        compare(repairAll.enabled, false, "everything staged: nothing left to press it for");
+        compare(removeAll.enabled, false);
+        page.destroy();
+        wait(0);
+    }
+
+    // Buttons are found by their label: the page has no objectName on
+    // them, and adding one only for a test would be a worse thing to
+    // pin than the words the user reads.
+    function findButton(item, text) {
+        if (item === null || item === undefined) {
+            return null;
+        }
+        if (item.text === text && item.enabled !== undefined && item.clicked !== undefined) {
+            return item;
+        }
+        var kids = item.children ? item.children : [];
+        for (var i = 0; i < kids.length; ++i) {
+            var found = findButton(kids[i], text);
+            if (found !== null) {
+                return found;
+            }
+        }
+        return null;
     }
 }
