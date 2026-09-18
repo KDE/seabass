@@ -62,7 +62,7 @@ struct ManifestRow
 // Format: tab-separated text, one row per line, so it stays readable via
 // `unzip -p backup.zip SEABASS-MANIFEST.tsv` and needs no JSON library.
 //
-//   seabass-stick-manifest<TAB>1<TAB>stickIdentifier<TAB>label<TAB>status<TAB>createdAtUnix[<TAB>libraryFingerprint]
+//   seabass-stick-manifest<TAB>1<TAB>stickIdentifier<TAB>label<TAB>status<TAB>createdAtUnix[<TAB>libraryFingerprint[<TAB>sourceReadOnly]]
 //   f<TAB>path<TAB>size<TAB>mtimeUnix<TAB>crc32hex<TAB>sha256hex<TAB>extra
 //   d<TAB>path<TAB>0<TAB>mtimeUnix<TAB><TAB><TAB>
 //   ...
@@ -82,6 +82,12 @@ struct BackupManifest
     // up; empty for backups written before it existed or when the library
     // could not be read. Opaque here: only the domain parses it.
     std::string libraryFingerprint;
+    // The stick was mounted read-only when this was taken: a damaged
+    // filesystem the kernel had already refused writes to. What was read
+    // off it is whatever survived, so the backup is an emergency copy and
+    // says so wherever it is offered -- restoring one over a working
+    // library is a last resort, not an ordinary restore.
+    bool sourceReadOnly = false;
     std::vector<ManifestRow> rows;
 
     std::string serialize() const;

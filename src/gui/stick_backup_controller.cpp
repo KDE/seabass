@@ -26,6 +26,7 @@
 #include "infrastructure/local/stick_performance_history.hpp"
 #include "infrastructure/stick_backup/archive_compactor.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
+#include "infrastructure/media/filesystem_health.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 
@@ -74,6 +75,7 @@ struct StickBackupController::PreviewResult
     QString stickIdentifier;
     double readMbps = 0.0;  // last measured audio read speed for this stick, 0 = unknown
     QString blockedBy;
+    bool stickReadOnly = false;
 };
 
 struct StickBackupController::RunResult
@@ -122,6 +124,7 @@ BackupStickOptions StickBackupController::baseOptions() const
     options.archivePath = fs::path(m_archivePath.toStdString());
     options.stickIdentifier = m_stickIdentifier.toStdString();
     options.stickLabel = m_stickLabel.toStdString();
+    options.sourceReadOnly = m_stickReadOnly;
     return options;
 }
 
@@ -165,6 +168,7 @@ void StickBackupController::refresh()
             // No history is not an error; the ETA just stays unknown.
         }
         result->blockedBy = QString::fromStdString(infrastructure::system::conflictingDjSoftwareName());
+        result->stickReadOnly = infrastructure::media::isMountedReadOnly(root.toStdString());
         return result;
     }));
 }
@@ -220,6 +224,7 @@ void StickBackupController::onPreviewFinished()
                                 || p.deadBytes >= infrastructure::stick_backup::SuggestCompactionBytes);
         m_deadSpace = dead;
         m_blockedBy = result->blockedBy;
+        m_stickReadOnly = result->stickReadOnly;
         if (!p.error.empty()) {
             setErrorMessage(QString::fromStdString(p.error));
         }

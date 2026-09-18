@@ -59,6 +59,11 @@ class StickBackupController : public QObject
     Q_PROPERTY(QVariantMap deadSpace READ deadSpace NOTIFY previewChanged)
     // "" or the name of the DJ software that blocks a backup right now.
     Q_PROPERTY(QString blockedBy READ blockedBy NOTIFY previewChanged)
+    // The stick is mounted read-only: this backup is still worth making
+    // -- reading is all a backup does -- but what comes off a damaged
+    // filesystem is whatever survived, so the page says so before the
+    // press and the archive carries the mark afterwards.
+    Q_PROPERTY(bool stickReadOnly READ stickReadOnly NOTIFY previewChanged)
     Q_PROPERTY(bool pendingCancelDecision READ pendingCancelDecision NOTIFY pendingCancelDecisionChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
@@ -86,6 +91,7 @@ public:
     QVariantMap sinceLastBackup() const { return m_sinceLastBackup; }
     QVariantMap deadSpace() const { return m_deadSpace; }
     QString blockedBy() const { return m_blockedBy; }
+    bool stickReadOnly() const { return m_stickReadOnly; }
     bool pendingCancelDecision() const { return m_pending != nullptr; }
     QString errorMessage() const { return m_errorMessage; }
     QString statusMessage() const { return m_statusMessage; }
@@ -178,6 +184,7 @@ private:
     QVariantMap m_sinceLastBackup;
     QVariantMap m_deadSpace;
     QString m_blockedBy;
+    bool m_stickReadOnly = false;
     QString m_errorMessage;
     QString m_statusMessage;
     application::CancellationToken m_cancel;

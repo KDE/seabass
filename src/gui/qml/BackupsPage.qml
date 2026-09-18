@@ -309,6 +309,15 @@ Page {
                             ToolTip.text: root.exactDate(backupRow.modelData.createdAt) + "\n" + backupRow.modelData.archivePath
                         }
                         Label {
+                            objectName: "backupEmergencyCopy"
+                            visible: backupRow.readable && backupRow.modelData.sourceReadOnly === true
+                            text: "Emergency copy: read off this stick while its filesystem was damaged. "
+                                + "Restore it only as a last resort."
+                            color: Theme.warnIcon
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                        Label {
                             objectName: "backupStatus"
                             visible: backupRow.readable && backupRow.modelData.status !== "complete"
                             text: root.statusNames[backupRow.modelData.status] || "Incomplete"

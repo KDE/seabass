@@ -576,6 +576,16 @@ ApplicationWindow {
                     enginePath: healthHub.enginePath,
                     sharedController: healthHub.consistencyController,
                 })
+            // "Back up before repairing": straight to this stick's own
+            // Backups page. No device path to hand over from here, which
+            // only hides the card that restores onto a blank drive.
+            onBackupRequested: (mountPoint) => stackView.push(backupsHubPageComponent, {
+                stickLabel: healthHub.stickLabel,
+                rekordboxPath: healthHub.rekordboxPath,
+                enginePath: healthHub.enginePath,
+                mountPoint: mountPoint,
+                backupAdvisor: backupAdvisorCtrl,
+            })
         }
     }
 

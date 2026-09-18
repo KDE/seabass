@@ -50,6 +50,9 @@ struct BackupStickOptions
     // domain::LibraryFingerprint::serialize() of the live library, stored
     // in the manifest header; empty keeps the previous backup's.
     std::string libraryFingerprint;
+    // The stick is mounted read-only, i.e. damaged: the run still reads
+    // everything it can, and the archive is marked as an emergency copy.
+    bool sourceReadOnly = false;
     CancellationToken cancel = CancellationToken::none();
     // Polled between files/chunks, at most every `probeInterval`: true
     // means Engine DJ / rekordbox appeared and the database must not be

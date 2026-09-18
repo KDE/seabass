@@ -411,6 +411,30 @@ Page {
                         + "database can't change while it's being read."
                 }
             }
+            // The stick is damaged and the backup is still the right
+            // move -- it only reads -- but what it captures is whatever
+            // survived, and that has to be said before the press, not
+            // discovered at restore time.
+            Rectangle {
+                Layout.fillWidth: true
+                objectName: "emergencyCopyBanner"
+                visible: root.controller.stickReadOnly === true
+                implicitHeight: emergencyLabel.implicitHeight + 16
+                radius: 4
+                color: Theme.warnBg
+                border.color: Theme.warnBorder
+                Label {
+                    id: emergencyLabel
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    wrapMode: Text.WordWrap
+                    color: Theme.warnText
+                    text: "This stick is mounted read-only, which means its filesystem is damaged. Backing it up "
+                        + "still works and is worth doing now -- reading is all a backup does -- but this will be "
+                        + "an emergency copy: it holds whatever could still be read off a damaged stick, and it "
+                        + "is marked as such. Restore it onto a working library only as a last resort."
+                }
+            }
             StickWriteWarning {
                 visible: root.controller.backingUp === true
                 text: "Backing up. Do not remove the stick until this finishes."

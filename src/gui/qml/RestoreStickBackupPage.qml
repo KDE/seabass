@@ -267,7 +267,15 @@ Page {
         acceptObjectName: "restoreAcceptButton"
         warningTitle: root.exact ? "This overwrites files and removes everything the backup doesn't contain."
                                  : "This overwrites files on a drive that already holds a DJ library."
-        warningText: (root.preview.filesToWrite || 0) + " file(s) on " + confirmDialog.confirmTarget
+        // An emergency copy leads the warning: what is about to be
+        // written came off a filesystem the kernel had already given up
+        // on, so "restore" here means "salvage", not "put it back".
+        warningText: (root.info.sourceReadOnly === true
+                ? "This is an EMERGENCY COPY, taken off a stick whose filesystem was already damaged. It holds "
+                  + "whatever could still be read off it -- files may be missing, and files that are there may be "
+                  + "damaged in ways nothing has checked. Restore it only if there is nothing better left. "
+                : "")
+            + (root.preview.filesToWrite || 0) + " file(s) on " + confirmDialog.confirmTarget
             + " will be written from the backup"
             + (root.exact ? " and " + (root.preview.extras || 0) + " file(s) or folder(s) not in the backup removed." : ".")
             + " Audio files on the drive are not backed up first."
@@ -381,6 +389,17 @@ Page {
                                               + " · " + backupRadio.modelData.entries + " entries"
                                     }
                                 }
+                                // Read off a stick whose filesystem was
+                                // already damaged: a different thing from
+                                // an incomplete backup, and the one the
+                                // user has to weigh before restoring.
+                                StatusBadge {
+                                    visible: backupRadio.modelData.sourceReadOnly === true
+                                    label: "EMERGENCY COPY"
+                                    badgeColor: Theme.warnIcon
+                                    tooltipText: "Taken off a stick that was already damaged. It holds whatever "
+                                        + "could still be read; restore it only as a last resort."
+                                }
                                 StatusBadge {
                                     label: backupRadio.unreadable ? "UNREADABLE"
                                         : (backupRadio.modelData.status === "complete" ? "VERIFIED" : "INCOMPLETE")
@@ -422,6 +441,13 @@ Page {
                                     text: root.controller.archivePath + (root.archiveReady
                                         ? " · " + root.friendlyTimestamp(root.info.createdAt) + " · " + root.info.entries + " entries" : "")
                                 }
+                            }
+                            StatusBadge {
+                                visible: root.archiveReady && root.info.sourceReadOnly === true
+                                label: "EMERGENCY COPY"
+                                badgeColor: Theme.warnIcon
+                                tooltipText: "Taken off a stick that was already damaged. It holds whatever could "
+                                    + "still be read; restore it only as a last resort."
                             }
                             StatusBadge {
                                 visible: root.archiveReady

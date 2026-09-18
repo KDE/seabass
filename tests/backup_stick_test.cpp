@@ -389,6 +389,22 @@ int main()
         std::cout << "case 10 (cancel an update and discard: previous archive byte-exact) OK\n";
     }
 
+    // ---- an emergency copy off a read-only stick keeps its mark ----
+    {
+        Fixture f("emergency");
+        f.options.sourceReadOnly = true;
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        assert(f.manifest().sourceReadOnly);
+        // Sticky: an update from a healthy stick still carries entries
+        // read off the damaged one, so the archive stays marked.
+        writeFile(f.stick / "Contents" / "later.mp3", pseudoRandom(5'000, 77), 1'700'300'000);
+        f.options.sourceReadOnly = false;
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        assert(f.manifest().sourceReadOnly);
+        assert(f.verifies());
+        std::cout << "case 11 (a backup off a read-only stick is marked, and stays marked) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

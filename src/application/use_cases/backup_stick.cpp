@@ -611,6 +611,11 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     manifest.libraryFingerprint = options.libraryFingerprint.empty() && opened.manifest
                                       ? opened.manifest->libraryFingerprint
                                       : options.libraryFingerprint;
+    // Sticky across generations: an update carries entries captured in
+    // the run that read the damaged stick, so the archive goes on holding
+    // data of unknown quality even when the stick is healthy again. The
+    // mark comes off by making a new backup, not by updating this one.
+    manifest.sourceReadOnly = options.sourceReadOnly || (opened.manifest && opened.manifest->sourceReadOnly);
     for (const TreeEntry *entry : plan.carried) {
         auto found = opened.entriesByName.find(entryNameFor(*entry));
         auto row = opened.rowsByPath.find(entry->relativePath);

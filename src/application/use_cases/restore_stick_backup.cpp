@@ -553,6 +553,7 @@ StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
     // The settled size for an unfinished update: what a restore would read.
     description.archiveBytes = opened.readable().size();
     description.libraryFingerprint = opened.manifest->libraryFingerprint;
+    description.sourceReadOnly = opened.manifest->sourceReadOnly;
     for (const ManifestRow &row : opened.manifest->rows) {
         if (!row.extra.empty()) {
             description.databaseFingerprints.emplace_back(row.path, row.extra);
@@ -604,6 +605,7 @@ RestorePreview RestoreStickBackup::preview(const RestoreOptions &options)
     preview.stickLabel = opened.manifest->stickLabel;
     preview.stickIdentifier = opened.manifest->stickIdentifier;
     preview.status = opened.manifest->status;
+    preview.sourceReadOnly = opened.manifest->sourceReadOnly;
     preview.createdAtUnix = opened.manifest->createdAtUnix;
     preview.unreadableEntries = opened.unreadableEntries;
     preview.rollsBackUnfinishedUpdate = opened.rollsBackUnfinishedUpdate;

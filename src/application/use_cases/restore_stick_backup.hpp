@@ -67,6 +67,9 @@ struct RestorePreview
     std::int64_t createdAtUnix = 0;
     std::size_t entries = 0;   // files + directories in the backup
     std::uint64_t bytes = 0;   // total file bytes in the backup
+    // See StickBackupDescription::sourceReadOnly: an emergency copy read
+    // off a damaged stick. The restore page leads with it.
+    bool sourceReadOnly = false;
     std::size_t filesToWrite = 0;   // missing on the target or different size/mtime
     std::size_t filesUnchanged = 0; // present with the same size and mtime: skipped
     std::uint64_t bytesToWrite = 0;
@@ -103,6 +106,10 @@ struct StickBackupDescription
     std::size_t entries = 0;      // files + directories in the backup
     std::uint64_t archiveBytes = 0;  // size of the .zip on disk
     std::string libraryFingerprint;  // domain::LibraryFingerprint::serialize(), empty for older backups
+    // Taken off a stick the kernel had already made read-only: an
+    // emergency copy of a damaged filesystem. Everything that offers this
+    // backup says so, because restoring one is a last resort.
+    bool sourceReadOnly = false;
     // Archive-relative path of each captured database's main file and the
     // DbSetFingerprint hex it had: the exact "has the library changed
     // since" test against the same database on a stick.

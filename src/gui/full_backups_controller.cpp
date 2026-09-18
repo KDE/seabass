@@ -122,6 +122,7 @@ void FullBackupsController::refresh()
             map["trackCount"] = backup.trackCount ? static_cast<qlonglong>(*backup.trackCount) : -1;
             map["playlistCount"] = backup.playlistCount ? static_cast<qlonglong>(*backup.playlistCount) : -1;
             map["isCurrentStick"] = backup.isCurrentStick;
+            map["sourceReadOnly"] = d.sourceReadOnly;
             if (!d.error.empty()) {
                 // describe() leaves the size unset for an unreadable file;
                 // it still takes up space, and that is worth saying.

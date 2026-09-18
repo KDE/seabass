@@ -31,6 +31,19 @@ Page {
     // the card the user pressed.
     signal detailRequested(string section)
 
+    // "Back up before you let anything near this stick." A filesystem
+    // check moves and drops things; on a stick that is already damaged
+    // the copy comes first, and the page offers it rather than telling
+    // someone to go and find it.
+    signal backupRequested(string mountPoint)
+
+    // The stick's own root: the catalog paths sit one level inside it.
+    readonly property string stickRoot: {
+        var path = root.enginePath.length > 0 ? root.enginePath : root.rekordboxPath;
+        var cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+        return cut > 0 ? path.substring(0, cut) : path;
+    }
+
     LibraryConsistencyController {
         id: healthController
     }
@@ -91,6 +104,27 @@ Page {
             }
             repairOutcomeDialog.open();
         }
+    }
+
+    // Pressed Check and Repair: the copy is offered first, every time.
+    // A check on a damaged filesystem is the last moment at which what is
+    // still readable can be saved -- it moves files it cannot place into
+    // lost+found and drops what it cannot make sense of.
+    MessageDialog {
+        id: repairAdviceDialog
+        objectName: "repairAdviceDialog"
+        severity: SeabassDialog.Warning
+        title: "Back Up This Stick First?"
+        headline: "The check repairs the filesystem in place: it moves files it cannot put back where they belong, "
+            + "and drops what it cannot make sense of at all. Whatever is still readable is readable now."
+        detailText: "A backup still works on a read-only stick -- it only reads -- and Seabass marks one taken now "
+            + "as an emergency copy, so a later restore says plainly what it holds. It takes as long as the stick "
+            + "is big; the check will still be here afterwards."
+        alternateText: "Back Up First"
+        acceptText: "Check and Repair"
+        rejectText: "Cancel"
+        onAlternateRequested: root.backupRequested(root.stickRoot)
+        onAccepted: healthController.repairStickFilesystem()
     }
 
     MessageDialog {
@@ -284,7 +318,7 @@ Page {
                 actionLabel: healthController.stickReadOnly ? "Check and Repair" : ""
                 actionEnabled: !healthController.repairingFilesystem && !root.scanning
                 actionDisabledReason: root.scanning ? "Wait for the scan to finish" : ""
-                onActionRequested: healthController.repairStickFilesystem()
+                onActionRequested: repairAdviceDialog.open()
             }
 
             HealthCheckCard {

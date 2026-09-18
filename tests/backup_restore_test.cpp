@@ -525,6 +525,21 @@ int main()
         std::cout << "case 12 (one corrupted entry among six: reported, the rest still restores) OK\n";
     }
 
+    // ---- an emergency copy says so all the way to the restore ----
+    {
+        Fixture f("emergency-copy");
+        f.backup.sourceReadOnly = true;
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        // Both the list and the preview carry it: the list badges it, the
+        // preview's confirmation leads with it, and neither can read the
+        // flag off anything but the archive.
+        assert(RestoreStickBackup::describe(f.archive).sourceReadOnly);
+        RestorePreview preview = RestoreStickBackup::preview(f.restore);
+        assert(preview.error.empty());
+        assert(preview.sourceReadOnly);
+        std::cout << "case: an emergency copy is still marked when it is offered for restore OK\n";
+    }
+
     std::cout << "all cases passed\n";
 
     // ---- A write-protected backup restores ----

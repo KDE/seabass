@@ -195,6 +195,7 @@ void RestoreStickBackupController::refreshKnownBackups()
             map["createdAt"] = QDateTime::fromSecsSinceEpoch(d.createdAtUnix).toString(Qt::ISODate);
             map["entries"] = static_cast<qlonglong>(d.entries);
             map["bytes"] = static_cast<qlonglong>(d.archiveBytes);
+            map["sourceReadOnly"] = d.sourceReadOnly;
             backups.push_back(map);
         }
         return backups;
@@ -317,6 +318,7 @@ void RestoreStickBackupController::onAnalyzeFinished()
         info["createdAt"] = QDateTime::fromSecsSinceEpoch(p.createdAtUnix).toString(Qt::ISODate);
         info["entries"] = static_cast<qlonglong>(p.entries);
         info["bytes"] = static_cast<qlonglong>(p.bytes);
+        info["sourceReadOnly"] = p.sourceReadOnly;
         info["rejectedCount"] = static_cast<qlonglong>(p.rejected.size());
         info["unreadableEntries"] = static_cast<qlonglong>(p.unreadableEntries);
         m_archiveInfo = info;
