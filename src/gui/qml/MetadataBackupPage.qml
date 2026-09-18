@@ -641,6 +641,7 @@ Page {
                 required property int storedCueCount
                 required property string cueSummary
                 required property string changeSummary
+                required property string storesSummary
                 required property bool staged
 
                 // And the ones it does, marked required here so the
@@ -663,6 +664,7 @@ Page {
                 selected: proposalRow.staged
                 selectTooltip: "Stage this track to be added to the Metadata Backup"
                 cueTooltip: proposalRow.cueSummary
+                storesSummary: proposalRow.storesSummary
                 expanded: root.expandedProposalPath === proposalRow.relativePath
                 // What the badge counts is not what is on the track but
                 // what a backup would change about it, and on a track

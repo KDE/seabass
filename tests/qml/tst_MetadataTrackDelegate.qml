@@ -49,4 +49,28 @@ TestCase {
         row.selected = false;
         compare(box.checked, false, "and the page can still clear it, as Select None does");
     }
+
+    // What a backup of this row would hold, said in the opened-up half.
+    // The badge above it is one or two words -- "new" on a track the
+    // store has never seen -- which says that something would be stored
+    // without saying what, and on a stick whose tracks carry no cues
+    // that list is the whole answer.
+    function test_theDetailSaysWhatBackingUpWouldStore() {
+        var delegate = createTemporaryObject(rowComponent, testCase, {
+            index: 0, title: "Jungle Love", artist: "Someone", expanded: true,
+            storesSummary: "playlist membership, play count, cover art",
+        });
+        verify(delegate !== null, "the delegate must instantiate");
+        var value = findChild(delegate, "storesSummaryValue");
+        verify(value !== null, "the detail must be there");
+        compare(value.visible, true);
+        compare(value.text, "playlist membership, play count, cover art");
+
+        // A row that is not an offer says nothing: the store's own
+        // browse list uses the same delegate.
+        var stored = createTemporaryObject(rowComponent, testCase, {
+            index: 1, title: "Jungle Love", artist: "Someone", expanded: true,
+        });
+        compare(findChild(stored, "storesSummaryValue").visible, false);
+    }
 }

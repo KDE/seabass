@@ -96,6 +96,9 @@ Rectangle {
     // An extra line at the top of the detail, for whatever the page
     // needs to say about this particular row.
     property string detailNote: ""
+    // What backing this row up would put in the store, in words. Empty
+    // on a row that is not an offer (the store's own browse list).
+    property string storesSummary: ""
 
     property alias actionItems: actionRow.data
     // Page-specific content under the expanded half's facts, lined up with
@@ -309,6 +312,17 @@ Rectangle {
                 visible: delegate.detailNote.length > 0
                 text: delegate.detailNote
                 color: Theme.textMuted
+            }
+
+            // First of the facts: it is the reason the row is on the
+            // page at all, and on a stick whose tracks carry no cues it
+            // is the only answer to what a backup of it would hold.
+            DetailLabel { visible: delegate.storesSummary.length > 0; text: "Backing up stores" }
+            DetailValue {
+                objectName: "storesSummaryValue"
+                visible: delegate.storesSummary.length > 0
+                text: delegate.storesSummary
+                wrapMode: Text.WordWrap
             }
 
             DetailLabel { visible: delegate.relativePath.length > 0; text: "File" }

@@ -99,8 +99,45 @@ QHash<int, QByteArray> BackupProposalListModel::roleNames() const
         {CommentOfferedRole, "commentOffered"},
         {StoredFromRole, "storedFrom"},
         {ChangeSummaryRole, "changeSummary"},
+        {StoresSummaryRole, "storesSummary"},
         {StagedRole, "staged"},
     };
+}
+
+// What this row would put in the store, spelled out. The badge's
+// summary is deliberately short, and for a track the store has never
+// seen it is one word -- "new" -- which says that something would be
+// stored without saying what. Opened up, a row can afford the whole
+// list, and on a stick whose tracks carry no cues at all that list is
+// the entire answer to "what am I backing up here".
+QString storesSummaryOf(const MetadataBackupProposal &proposal)
+{
+    QStringList parts;
+    const int cues = static_cast<int>(domain::withoutJunkMemoryCues(proposal.stickTrack.cues).size());
+    if (proposal.cuesOffered && cues > 0) {
+        parts << (cues == 1 ? QStringLiteral("1 cue") : QStringLiteral("%1 cues").arg(cues));
+    }
+    if (proposal.ratingOffered) {
+        parts << QStringLiteral("rating");
+    }
+    if (proposal.commentOffered) {
+        parts << QStringLiteral("comment");
+    }
+    if (proposal.playlistsOffered) {
+        parts << QStringLiteral("playlist membership");
+    }
+    if (proposal.playCountOffered) {
+        parts << QStringLiteral("play count");
+    }
+    if (proposal.artworkOffered) {
+        parts << QStringLiteral("cover art");
+    }
+    if (parts.isEmpty()) {
+        // A row can be here for its identity alone: the store knows the
+        // track by a weaker key, or by details that have since changed.
+        return QStringLiteral("the track itself, so the backup can find it again");
+    }
+    return parts.join(QStringLiteral(", "));
 }
 
 QVariant BackupProposalListModel::data(const QModelIndex &index, int role) const
@@ -158,6 +195,8 @@ QVariant BackupProposalListModel::data(const QModelIndex &index, int role) const
         return proposal.commentOffered;
     case StoredFromRole:
         return QString::fromStdString(proposal.storedFrom);
+    case StoresSummaryRole:
+        return storesSummaryOf(proposal);
     case ChangeSummaryRole:
         return changeSummaryOf(proposal);
     case StagedRole:

@@ -51,7 +51,10 @@ public:
         RatingOfferedRole,
         CommentOfferedRole,
         StoredFromRole,   // the stick this track's stored copy last came from
-        ChangeSummaryRole,  // "new", "4 cues", "rating" -- what this row would change
+        ChangeSummaryRole,
+        // Everything this row would put in the store, in words, for the
+        // opened-up detail. See storesSummaryOf().
+        StoresSummaryRole,  // "new", "4 cues", "rating" -- what this row would change
         StagedRole,
     };
 
