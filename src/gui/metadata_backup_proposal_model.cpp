@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "domain/junk_cue.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
 
@@ -134,11 +135,15 @@ QVariant BackupProposalListModel::data(const QModelIndex &index, int role) const
     case CommentRole:
         return QString::fromStdString(track.comment);
     case CueCountRole:
-        return static_cast<int>(track.cues.size());
+        // What a backup would take off this track, which is what this row
+        // is about: the store does not take stray cues, so counting them
+        // here offered "1 cue" for a track whose only cue was a stray and
+        // whose backup would carry none.
+        return static_cast<int>(domain::withoutJunkMemoryCues(track.cues).size());
     case CuesAddedRole:
         return proposal.cuesAdded();
     case CueSummaryRole:
-        return metadataCueSummary(track.cues);
+        return metadataCueSummary(domain::withoutJunkMemoryCues(track.cues));
     case IsNewRole:
         return proposal.isNew;
     case CuesConflictRole:
