@@ -185,35 +185,109 @@ TestCase {
         verify(ring.rippleStrength < 0.3, "nor does its ripple, got " + ring.rippleStrength);
     }
 
-    // Asked to, the cover spins at an LP's 33 1/3 rpm: one turn every 1.8 s.
-    function test_theCoverSpinsAtThirtyThreeAndAThirdWhenAskedTo() {
+    // ---- the cover as a platter, with a Technics' momentum ----
+
+    function step(ring, seconds) {
+        for (var t = 0; t < seconds - 1e-9; t += 1 / 60) {
+            ring.advance(1 / 60);
+        }
+    }
+
+    function test_theCoverDoesNotSpinUnlessAskedTo() {
         var ring = gridRing();
-        ring.positionMs = 900;
-        compare(ring.artTurns, 0, "not unless asked: a cover is easier to recognise upright");
+        step(ring, 2);
+        compare(ring.artTurns, 0, "a cover is easier to recognise upright");
+        compare(ring.platterSpeed, 0);
+    }
 
-        ring.spinning = true;
-        compare(ring.artTurns, 0, "it starts from upright, wherever the track is");
-        ring.positionMs = 1800;
-        fuzzyCompare(ring.artTurns, 0.5, 0.0001, "half a turn in 0.9 s");
-        ring.positionMs = 900 + 60000;
-        fuzzyCompare((ring.artTurns + 0.5) % 1, (1 / 3 + 0.5) % 1, 0.0001, "33 1/3 turns in a minute leaves it a third round");
+    // Technics give 0.7 s from standstill to 33 1/3.
+    function test_switchedOnItIsAtSpeedInSevenTenthsOfASecond() {
+        var ring = gridRing({spinning: true});
+        step(ring, 0.35);
+        fuzzyCompare(ring.platterSpeed, ring.fullSpeed / 2, 0.02, "half way there at half time");
+        step(ring, 0.35);
+        fuzzyCompare(ring.platterSpeed, ring.fullSpeed, 0.01, "at speed after 0.7 s");
+        step(ring, 5);
+        fuzzyCompare(ring.platterSpeed, ring.fullSpeed, 0.0001, "and no faster, ever");
 
-        // It turns with the track, carried forward between reports...
+        var before = ring.artTurns;
+        step(ring, 1.8);
+        var moved = (ring.artTurns - before + 1) % 1;
+        verify(moved < 0.01 || moved > 0.99, "33 1/3 rpm is one turn every 1.8 s, moved " + moved);
+    }
+
+    // Switching it off is cutting the power: nothing brakes, it runs out.
+    function test_switchedOffItRunsOutLikeAPlatterWithThePowerCut() {
+        var ring = gridRing({spinning: true});
+        step(ring, 2);
         ring.spinning = false;
-        ring.spinning = true;
-        ring.advance(0.45);
-        fuzzyCompare(ring.artTurns, 0.25, 0.0001, "a quarter turn in 0.45 s of playing");
-        // ...a seek back turns it back rather than past zero...
-        ring.positionMs = ring.spinOriginMs - 450;
-        fuzzyCompare(ring.artTurns, 0.75, 0.0001);
-        // ...and a paused record does not turn.
+
+        var last = ring.platterSpeed;
+        var speeds = [];
+        for (var second = 1; second <= 12; ++second) {
+            step(ring, 1);
+            verify(ring.platterSpeed <= last, "it only ever slows");
+            last = ring.platterSpeed;
+            speeds.push(last);
+        }
+        verify(speeds[0] > ring.fullSpeed * 0.6, "a second on it has barely slowed: " + speeds[0]);
+        verify(speeds[3] > ring.fullSpeed * 0.15, "four seconds on it is still turning: " + speeds[3]);
+        compare(speeds[11], 0, "twelve seconds on it has stopped");
+        compare(ring.artTurns, 0, "and come to rest upright, not askew");
+        // Slowing fastest at first, as drag that grows with speed does.
+        verify(ring.fullSpeed - speeds[0] > speeds[2] - speeds[3], "the run-out eases, it is not a straight line");
+    }
+
+    // Wherever in the turn the power is cut, it ends upright -- by running
+    // out a little longer or shorter, not by being straightened after.
+    function test_theRunOutEndsUprightWhereverItWasCutOff_data() {
+        return [{tag: "cut off at 2.0 s", after: 2.0}, {tag: "at 2.3 s", after: 2.3}, {tag: "at 2.9 s", after: 2.9},
+                {tag: "at 3.4 s", after: 3.4}, {tag: "at 3.7 s", after: 3.7}];
+    }
+    function test_theRunOutEndsUprightWhereverItWasCutOff(data) {
+        var ring = gridRing({spinning: true});
+        step(ring, data.after);
+        ring.spinning = false;
+        verify(ring.runOutDrag >= 0.67 && ring.runOutDrag <= 1.5, "the drag stays a platter's: " + ring.runOutDrag);
+        var seconds = 0;
+        while (ring.platterSpeed > 0 && seconds < 20) {
+            step(ring, 0.1);
+            seconds += 0.1;
+        }
+        verify(seconds > 4.5 && seconds < 12.5, "it ran out in " + seconds.toFixed(1) + " s");
+        var offUpright = Math.min(ring.artTurns, 1 - ring.artTurns);
+        verify(offUpright < 0.01, "and stopped within a hair of upright, not needing to be turned there: " + offUpright);
+        step(ring, 1);
+        compare(ring.artTurns, 0, "the hair is eased away");
+    }
+
+    // Cut off while it has barely started, it cannot coast a whole turn;
+    // it stops and is eased home the short way.
+    function test_cutOffBarelyMovingItIsEasedHome() {
+        var ring = gridRing({spinning: true});
+        step(ring, 0.15);
+        ring.spinning = false;
+        step(ring, 6);
+        compare(ring.platterSpeed, 0);
+        compare(ring.artTurns, 0);
+    }
+
+    // Pausing is the deck's stop button: the brake, half a second.
+    function test_pausedTheBrakeStopsItAndPlayingStartsItAgain() {
+        var ring = gridRing({spinning: true});
+        step(ring, 2);
         ring.playing = false;
-        var held = ring.artTurns;
-        ring.advance(5);
-        compare(ring.artTurns, held);
+        step(ring, 0.25);
+        verify(ring.platterSpeed > 0 && ring.platterSpeed < ring.fullSpeed, "braking");
+        step(ring, 0.3);
+        compare(ring.platterSpeed, 0, "stopped within half a second");
+        var rest = ring.artTurns;
+        step(ring, 3);
+        compare(ring.artTurns, rest, "and it stays where the brake left it: the record is still on");
 
-        ring.spinning = false;
-        compare(ring.artTurns, 0, "switched off, it is upright again");
+        ring.playing = true;
+        step(ring, 0.7);
+        fuzzyCompare(ring.platterSpeed, ring.fullSpeed, 0.01, "play starts it again");
     }
 
     function test_rekordboxArtAsksForTheLargeCoverAndSettlesForTheSmall() {

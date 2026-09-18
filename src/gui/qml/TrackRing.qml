@@ -137,18 +137,88 @@ Item {
 
     // Asked for, the cover spins like the record it is the sleeve of, at
     // an LP's 33 1/3 rpm. Off by default: a cover is there to be
-    // recognised, and that is easier upright. Reckoned from the position,
-    // not from a clock: it turns while the track plays, holds when it is
-    // paused, and a seek turns it as far as the record would have gone.
-    // It starts from upright where it was switched on, and goes back to
-    // upright when switched off. In turns, kept within one so that an hour
-    // in the shader's float still has its precision.
+    // recognised, and that is easier upright.
+    //
+    // It is a platter with momentum, not an angle looked up from the
+    // position, and it behaves like a Technics SL-1210:
+    //  - switched on, the direct drive has it at speed in 0.7 s, the
+    //    figure Technics gives;
+    //  - paused, the brake stops it in half a second, as the deck's
+    //    start/stop button does;
+    //  - switched OFF it is the power being cut: nothing brakes, the
+    //    platter runs out against its own bearing, slowing for the best
+    //    part of eight seconds -- the wind-down DJs end a set with.
+    // It comes to rest upright. Not by being straightened afterwards: when
+    // the power is cut the run-out is reckoned ahead, and its drag made a
+    // little stronger or weaker so that it ends on a whole turn. How far
+    // a platter coasts is inversely proportional to its drag, exactly, so
+    // that is one division.
     property bool spinning: false
-    property real spinOriginMs: 0
-    onSpinningChanged: root.spinOriginMs = root.smoothPositionMs
     readonly property real revolutionsPerMinute: 100 / 3
-    readonly property real artTurns: !root.spinning ? 0
-        : ((((root.smoothPositionMs - root.spinOriginMs) / 60000 * root.revolutionsPerMinute) % 1) + 1) % 1
+    readonly property real fullSpeed: root.revolutionsPerMinute / 60     // turns a second
+    readonly property real startUpSeconds: 0.7
+    readonly property real brakeSeconds: 0.5
+    // Run-out: a constant drag (the bearing) plus one that grows with
+    // speed (air, eddy currents). From full speed these stop it in 7.7 s.
+    readonly property real bearingDrag: 0.03      // turns/s^2
+    readonly property real speedDrag: 0.2         // 1/s
+    property real platterSpeed: 0                 // turns a second
+    property real artTurns: 0                     // 0..1, what the shader turns the cover by
+    // What the run-out's drag is multiplied by to end it upright.
+    property real runOutDrag: 1
+
+    // How far the platter would coast from `speed` with the drag as it is.
+    function coastTurns(speed) {
+        var turns = 0;
+        var dt = 1 / 120;
+        while (speed > 0) {
+            speed -= (root.bearingDrag + root.speedDrag * speed) * dt;
+            turns += Math.max(0, speed) * dt;
+        }
+        return turns;
+    }
+    onSpinningChanged: {
+        if (root.spinning || root.platterSpeed <= 0) {
+            return;
+        }
+        // The whole turn nearest to where it would stop by itself -- but
+        // within what still looks like the same platter: between two
+        // thirds and one and a half times the drag. A platter cut off
+        // while barely moving cannot reach a whole turn inside that, and
+        // is eased home at the end instead (see turnPlatter).
+        var natural = root.coastTurns(root.platterSpeed);
+        var wanted = Math.max(1, Math.round(root.artTurns + natural)) - root.artTurns;
+        root.runOutDrag = Math.min(1.5, Math.max(0.67, natural / wanted));
+    }
+
+    function turnPlatter(seconds) {
+        // In small steps: the drag depends on the speed it changes.
+        var left = seconds;
+        while (left > 0) {
+            var dt = Math.min(left, 1 / 120);
+            left -= dt;
+            if (root.spinning && root.playing) {
+                root.platterSpeed = Math.min(root.fullSpeed, root.platterSpeed + root.fullSpeed / root.startUpSeconds * dt);
+            } else if (root.spinning) {
+                root.platterSpeed = Math.max(0, root.platterSpeed - root.fullSpeed / root.brakeSeconds * dt);
+            } else if (root.platterSpeed > 0) {
+                root.platterSpeed = Math.max(0, root.platterSpeed
+                    - (root.bearingDrag + root.speedDrag * root.platterSpeed) * root.runOutDrag * dt);
+            } else if (root.artTurns !== 0) {
+                // Stopped, the power off, and not quite upright: the
+                // reckoning above is good to a hair, and this is the hair
+                // -- or the rest of the way, for a platter that was cut
+                // off too slow to coast there. Eased, the short way round.
+                var home = root.artTurns < 0.5 ? 0 : 1;
+                var next = root.artTurns + (home - root.artTurns) * Math.min(1, dt / 0.12);
+                root.artTurns = Math.abs(home - next) < 0.0005 ? 0 : next;
+                continue;
+            } else {
+                return;
+            }
+            root.artTurns = (root.artTurns + root.platterSpeed * dt) % 1;
+        }
+    }
 
     // How much the recent music has had in the low band: up fast, down
     // over half a second. It scales the grid's pulse, so that the ring
@@ -189,6 +259,7 @@ Item {
     property real time: 0
     function advance(seconds) {
         root.time += seconds;
+        root.turnPlatter(seconds);
         if (root.playing) {
             root.smoothPositionMs += seconds * 1000;
         }
@@ -197,7 +268,9 @@ Item {
         root.energy += (root.loudLow - root.energy) * Math.min(1, rate);
     }
     FrameAnimation {
-        running: root.animated && root.playing && root.available && root.visible
+        // A platter still running out keeps the clock going after the music has stopped.
+        running: root.animated && root.available && root.visible
+            && (root.playing || root.platterSpeed > 0 || root.artTurns !== 0)
         onTriggered: root.advance(frameTime)
     }
 

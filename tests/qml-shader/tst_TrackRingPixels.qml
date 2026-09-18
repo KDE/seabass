@@ -198,7 +198,7 @@ TestCase {
     function test_theCoverTurnsClockwise() {
         var cover = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'>"
             + "<rect width='100' height='200' fill='%23ff0000'/><rect x='100' width='100' height='200' fill='%230000ff'/></svg>";
-        var stage = make({progress: -1, animated: false, artworkSource: cover, spinning: true});
+        var stage = make({progress: -1, animated: false, artworkSource: cover});
         var art = findChild(stage.ring, "ringArtwork");
         tryCompare(art, "status", Image.Ready, 2000, "the test's cover loads");
         wait(200);
@@ -206,7 +206,7 @@ TestCase {
         verify(image.red(300 - 90, 300) > 200 && image.blue(300 - 90, 300) < 60, "at rest the red half is on the left");
         verify(image.blue(300 + 90, 300) > 200, "and the blue on the right");
 
-        stage.ring.positionMs = 450;      // a quarter turn at 33 1/3 rpm
+        stage.ring.artTurns = 0.25;
         wait(200);
         image = grabImage(stage);
         verify(image.red(300, 300 - 90) > 200 && image.blue(300, 300 - 90) < 60, "a quarter turn on, the red is on top: "
