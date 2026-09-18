@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
@@ -46,6 +47,14 @@
 #include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#else
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 #include "application/use_cases/manage_stick_backups.hpp"
@@ -83,6 +92,18 @@ struct Listed
     std::int64_t mtime = 0;
 };
 
+// A path string normalised for use as a map key: directory_iterator joins
+// the directory it was given to each filename with the platform's own
+// separator, so an entry built from a directory argument that used the
+// other style (this rig's own paths are all forward slashes, argv from a
+// POSIX shell) never matched archive.string() by raw text on Windows --
+// found by hand, comparing the two: same file, same bytes, one separator
+// apart, listed as MISSING every time.
+std::string normalisedKey(const fs::path &path)
+{
+    return path.lexically_normal().string();
+}
+
 std::map<std::string, Listed> listing(const fs::path &directory)
 {
     std::map<std::string, Listed> out;
@@ -98,7 +119,7 @@ std::map<std::string, Listed> listing(const fs::path &directory)
         }
         const auto stamp = fs::last_write_time(path, timeEc);
         entry.mtime = timeEc ? 0 : static_cast<std::int64_t>(stamp.time_since_epoch().count());
-        out[path.string()] = entry;
+        out[normalisedKey(path)] = entry;
     }
     return out;
 }
@@ -197,8 +218,35 @@ bool isAReference(const fs::path &archive)
 
 }  // namespace
 
+#if defined(_WIN32)
+// Windows has no fork(): the busy-refusal proof below re-execs this very
+// binary in this hidden mode instead, so a second process holds the lock
+// exactly as the POSIX child does. Readiness is a marker file rather than
+// a pipe write -- CreateProcess's anonymous pipes need overlapped I/O for
+// a bounded read, and a marker the parent polls for is the same handshake
+// with none of that.
+int holdLock(const fs::path &archive)
+{
+    const fs::path lockPath = infrastructure::stick_backup::journal::lockPathFor(archive);
+    const fs::path readyMarker = lockPath.string() + ".holding";
+    try {
+        infrastructure::backup::StickWriteLock held(lockPath.string());
+        std::ofstream(readyMarker.string()).close();
+        std::this_thread::sleep_for(std::chrono::seconds(30));
+    } catch (const std::exception &) {
+        return 2;
+    }
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv)
 {
+#if defined(_WIN32)
+    if (argc == 3 && std::string(argv[1]) == "--hold-lock") {
+        return holdLock(argv[2]);
+    }
+#endif
     const bool skipReferenceGuard = argc == 4 && std::string(argv[3]) == "--no-reference-guard";
     if (argc != 3 && !skipReferenceGuard) {
         std::cerr << "usage: rig_delete_backup <backup dir> <archive> [--no-reference-guard]\n";
@@ -251,7 +299,7 @@ int main(int argc, char **argv)
         }
 
         const std::map<std::string, Listed> before = listing(directory);
-        const auto listedEntry = before.find(archive.string());
+        const auto listedEntry = before.find(normalisedKey(archive));
         const bool listedBefore = listedEntry != before.end() && listedEntry->second.readable;
         std::cout << "Manage Backups lists " << before.size() << " backup(s); this one is "
                   << (listedEntry == before.end() ? "MISSING"
@@ -355,12 +403,71 @@ int main(int argc, char **argv)
             return 1;
         }
 #else
-        // No fork(): the refusal under a held lock cannot be proven here,
-        // and a check that deletes without proving it would report PASS for
-        // the one thing FB9 exists to show.
-        std::cout << "the busy case needs fork(), which this platform has not; FB9 cannot be proven here\n"
-                  << "RIG RESULT: FAIL\n";
-        return 1;
+        // No fork(): a second run of this executable in --hold-lock mode
+        // holds the archive's write lock instead, so the lock is still
+        // contended for real, in a real second process.
+        const fs::path lockPath = infrastructure::stick_backup::journal::lockPathFor(archive);
+        const fs::path readyMarker = lockPath.string() + ".holding";
+        std::error_code markerEc;
+        // A marker left behind by a killed prior run would look like
+        // instant readiness from a helper that never actually started.
+        fs::remove(readyMarker, markerEc);
+
+        wchar_t selfPathBuffer[MAX_PATH];
+        const DWORD selfPathLength = ::GetModuleFileNameW(nullptr, selfPathBuffer, MAX_PATH);
+        if (selfPathLength == 0 || selfPathLength == MAX_PATH) {
+            std::cout << "could not find this program's own path to start a lock holder\nRIG RESULT: FAIL\n";
+            return 1;
+        }
+        const std::wstring selfPath(selfPathBuffer, selfPathLength);
+        std::wstring commandLine = L"\"" + selfPath + L"\" --hold-lock \"" + archive.wstring() + L"\"";
+
+        STARTUPINFOW startupInfo{};
+        startupInfo.cb = sizeof(startupInfo);
+        PROCESS_INFORMATION processInfo{};
+        const BOOL started = ::CreateProcessW(selfPath.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0,
+                                               nullptr, nullptr, &startupInfo, &processInfo);
+        if (!started) {
+            std::cout << "could not start a lock holder\nRIG RESULT: FAIL\n";
+            return 1;
+        }
+        ::CloseHandle(processInfo.hThread);
+
+        // Bounded like the POSIX poll above: a helper stuck taking the lock
+        // on an unresponsive stick would otherwise hang the whole release
+        // run here.
+        bool helperHasIt = false;
+        for (int waited = 0; waited < 100; ++waited) {
+            if (fs::exists(readyMarker, markerEc)) {
+                helperHasIt = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        bool busyRefused = false;
+        bool stillThere = false;
+        if (helperHasIt) {
+            const DeleteStickBackupResult refused = ManageStickBackups::remove(archive);
+            stillThere = fs::is_regular_file(archive, ec);
+            busyRefused = refused.status == DeleteStickBackupResult::Status::Busy;
+            std::cout << "while another process writes it: " << toString(refused.status) << " -- " << refused.message
+                      << "; archive " << (stillThere ? "still there" : "GONE") << "\n";
+        } else {
+            std::cout << "the lock holder never took the lock: the refusal was not checked\n";
+        }
+        // TerminateProcess rather than a graceful ask: this helper only
+        // ever sleeps, so there is nothing for it to clean up, and the rig
+        // waits on it next regardless.
+        ::TerminateProcess(processInfo.hProcess, 1);
+        ::WaitForSingleObject(processInfo.hProcess, 5000);
+        ::CloseHandle(processInfo.hProcess);
+        fs::remove(readyMarker, markerEc);
+        if (!busyRefused || !stillThere) {
+            // Nothing is deleted after an inconclusive probe: the archive
+            // this check is about is exactly what a free lock would destroy.
+            std::cout << "refusing to delete: the refusal under a held lock was not proven\nRIG RESULT: FAIL\n";
+            return 1;
+        }
 #endif
 
         const DeleteStickBackupResult deleted = ManageStickBackups::remove(archive);
@@ -373,10 +480,11 @@ int main(int argc, char **argv)
         pass = pass && deleted.status == DeleteStickBackupResult::Status::Deleted && archiveGone && journalGone;
 
         const std::map<std::string, Listed> after = listing(directory);
-        const bool goneFromList = after.count(archive.string()) == 0;
+        const std::string archiveKey = normalisedKey(archive);
+        const bool goneFromList = after.count(archiveKey) == 0;
         bool othersKept = true;
         for (const auto &[path, entry] : before) {
-            if (path == archive.string()) {
+            if (path == archiveKey) {
                 continue;
             }
             const auto still = after.find(path);
