@@ -115,8 +115,12 @@ TestCase {
         var big = findChild(overlay.contentItem, "fullscreenRing");
         verify(big !== null);
         tryVerify(function() { return big.width > ring.width; }, 2000, "the ring there is the larger of the two");
-        compare(findChild(overlay.contentItem, "fullscreenTitle").text, "Major Tom (Reworked 2024)");
-        compare(findChild(overlay.contentItem, "fullscreenArtist").text, "DJ Amador");
+        // The ring and nothing else: the cover says what is playing.
+        compare(findChild(overlay.contentItem, "fullscreenTitle"), null, "no title under it");
+        compare(findChild(overlay.contentItem, "fullscreenArtist"), null, "and no artist");
+        verify(big.width > Math.min(overlay.width, overlay.height) * 0.9, "so the ring has the window: " + big.width + " of "
+               + Math.min(overlay.width, overlay.height));
+        fuzzyCompare(big.y + big.height / 2, overlay.height / 2, 1, "in the middle of it");
         fuzzyCompare(big.progress, 0.25, 0.0001);
         compare(big.waveformData.length, 2, "it draws what the PLAYER has loaded");
 

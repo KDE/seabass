@@ -117,11 +117,12 @@ Window {
             id: ring
             objectName: "fullscreenRing"
             playbackController: root.playbackController
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: Theme.pageMargin * 2
-            width: Math.min(parent.width - Theme.pageMargin * 4,
-                            parent.height - captions.height - Theme.iconSizeLarge - Theme.pageMargin * 6)
+            // The ring and nothing else: no title, no artist. It is a thing
+            // to look at, the cover in its middle says what is playing, and
+            // words under it made it a player's screen instead. So it has
+            // the whole window, and the controls come and go over its foot.
+            anchors.centerIn: parent
+            width: Math.min(parent.width, parent.height) - Theme.pageMargin * 4
             height: width
             // One bar to a waveform column: at this size there is room.
             bars: Math.max(200, Math.min(400, waveformData.length))
@@ -142,8 +143,8 @@ Window {
             objectName: "fullscreenTransport"
             z: 1
             anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: captions.top
-            anchors.bottomMargin: Theme.pageMargin
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: Theme.pageMargin * 2
             spacing: Theme.pageMargin / 2
             opacity: root.controlsShown ? 1 : 0
             visible: opacity > 0
@@ -203,33 +204,6 @@ Window {
                 what: "Next track (Down)"
                 enabled: root.playbackController.hasNext === true
                 onClicked: root.playbackController.next()
-            }
-        }
-
-        Column {
-            id: captions
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: Theme.pageMargin * 2
-            width: parent.width - Theme.pageMargin * 4
-            spacing: Theme.pageMargin / 4
-            Label {
-                objectName: "fullscreenTitle"
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                text: root.playbackController.title || ""
-                color: Theme.text
-                font.pointSize: Theme.fontXLarge
-            }
-            Label {
-                objectName: "fullscreenArtist"
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                text: root.playbackController.artist || ""
-                color: Theme.textMuted
-                font.pointSize: Theme.fontLarge
             }
         }
     }
