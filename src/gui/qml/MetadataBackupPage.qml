@@ -18,7 +18,7 @@ import SeabassGui
 // One list answers both, and the source picker chooses which question it
 // is answering. Pick a stick and the list is that stick measured against
 // the store -- only the tracks a backup would actually change, ticked to
-// add. Pick "Everything stored" and it is the store itself, ticked to
+// add. Pick the local database and it is the store itself, ticked to
 // forget. Two lists side by side was the alternative and it made a tall
 // page where the thing you were looking at was never the whole width.
 //
@@ -71,7 +71,10 @@ Page {
 
     function rebuildSourceModel() {
         var list = [{
-            name: "Everything stored",
+            // Named for what it is rather than for how much of it there
+            // is: the other entries are sticks, and "the database on this
+            // computer" is the distinction that matters when choosing.
+            name: "Local Cue backup database",
             isStore: true,
             catalogPath: "",
             rekordboxPath: "",
@@ -89,7 +92,7 @@ Page {
                 var path = stick.rekordboxPath.length > 0 ? stick.rekordboxPath : stick.enginePath;
                 seen[path] = true;
                 list.push({
-                    name: stick.label,
+                    name: "USB Stick " + stick.label,
                     isStore: false,
                     catalogPath: path,
                     rekordboxPath: stick.rekordboxPath,
@@ -105,7 +108,7 @@ Page {
         if (root.hasStick && !seen[root.libraryPath]) {
             seen[root.libraryPath] = true;
             list.push({
-                name: root.stickLabel,
+                name: "USB Stick " + root.stickLabel,
                 isStore: false,
                 catalogPath: root.libraryPath,
                 rekordboxPath: root.rekordboxPath,
@@ -123,7 +126,7 @@ Page {
         if (!controller.browsingStore && controller.sourceLibraryPath.length > 0
             && !seen[controller.sourceLibraryPath]) {
             list.push({
-                name: controller.sourceStickLabel + " (not connected)",
+                name: "USB Stick " + controller.sourceStickLabel + " (not connected)",
                 isStore: false,
                 catalogPath: controller.sourceLibraryPath,
                 rekordboxPath: controller.sourceLibraryPath,
@@ -134,7 +137,18 @@ Page {
         root.sourceModel = list;
     }
 
-    Component.onCompleted: root.rebuildSourceModel()
+    Component.onCompleted: {
+        root.rebuildSourceModel();
+        // Opened from a stick: show that stick, which is the question
+        // someone who just pressed "Metadata Backup" on it is asking.
+        // The store is one pick away and was what this opened on before,
+        // which meant every arrival began by choosing the stick again.
+        // Opened from the menu, with no stick, it stays on the store.
+        if (root.hasStick) {
+            controller.selectStick(root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath,
+                                   root.libraryId, root.stickLabel);
+        }
+    }
 
     // Each stick opens on the playlist last picked on any page with a
     // picker, when it has that playlist. The controller drops the
@@ -310,10 +324,10 @@ Page {
             // stick list two screens away.
             textFormat: Text.StyledText
             linkColor: Theme.accent
-            text: "The cues, ratings and comments you put on your tracks, kept on this computer. "
-                + "The audio can be re-imported from anywhere. This cannot. "
-                + "You can restore the locally backed up metadata to any stick "
-                + "<a href=\"restore\">here</a>."
+            text: "Seabass allows you to back up just the metadata, such as cues and ratings from your stick. "
+                + "It saves them in a database on your hard disk, allowing you to "
+                + "<a href=\"restore\">restore</a> the cues, ratings, etc. to USB stick libraries later. "
+                + "It works across libraries and formats by matching track name, artist and length."
             onLinkActivated: root.requestLeave(() => root.metadataRestoreRequested())
             // A link that does not say it is one is a link nobody
             // clicks.
@@ -334,7 +348,7 @@ Page {
             spacing: Theme.rowSpacing
 
             Label {
-                text: "Source:"
+                text: "Show metadata from:"
                 color: Theme.textMuted
                 font.pointSize: Theme.fontNormal
             }
@@ -381,7 +395,7 @@ Page {
                 ToolTip.text: controller.browsingStore
                     ? "Showing everything backed up on this computer. Pick a stick to see what backing it up would change."
                     : "Showing what backing up " + controller.sourceStickLabel + " would change. "
-                      + "Pick \"Everything stored\" to browse the backup itself."
+                      + "Pick the local database to browse what is already backed up."
             }
 
             Label {

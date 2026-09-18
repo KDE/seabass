@@ -49,6 +49,17 @@ TestCase {
         return page;
     }
 
+    // The page opens on its own stick (see the picker test below), so a
+    // test about the store says which one it wants.
+    function makeShowingTheStore(extra) {
+        var page = make(extra);
+        var picker = findChild(page, "sourcePicker");
+        verify(picker, "the source picker must exist");
+        picker.activated(0);
+        waitForRendering(page);
+        return page;
+    }
+
     // A pick here is what the next page with a playlist picker opens on.
     function test_aPlaylistPickIsRemembered() {
         var before = realAppSettings.lastPlaylistName;
@@ -110,22 +121,30 @@ TestCase {
     }
 
     function test_thePickerChoosesWhichPopulationTheListShows() {
-        // One list, two populations. The picker's first entry is the
-        // store itself, which is where the page opens.
+        // One list, two populations, and the page opens on the stick it
+        // was opened from: someone who pressed "Metadata Backup" on a
+        // stick is asking about that stick, and opening on the store
+        // made every arrival begin by picking it again.
         var page = make();
         var picker = findChild(page, "sourcePicker");
         verify(picker, "the source picker must exist");
         verify(picker.model.length >= 2,
                "the picker offers the store and at least the stick the page was opened on");
-        compare(picker.model[0].name, "Everything stored", "index 0 is the store");
+        compare(picker.model[0].name, "Local Cue backup database", "index 0 is the store");
         verify(picker.model[0].isStore, "and it is marked as such");
-        compare(picker.currentIndex, 0, "the page opens on the store, which is never empty-looking");
-        // The stick's list is the other population, and it is not the
-        // one showing.
+        verify(picker.model[1].name.indexOf("USB Stick") === 0, "a stick says it is one: " + picker.model[1].name);
+        compare(picker.currentIndex, 1, "the page opens on its own stick");
+
         var stored = findChild(page, "storedTrackList");
         var proposals = findChild(page, "proposalList");
-        verify(stored && stored.visible, "the stored list shows while the source is the store");
-        verify(proposals && !proposals.visible, "the stick's list is hidden until a stick is picked");
+        verify(proposals && proposals.visible, "the stick's list is the one showing");
+        verify(stored && !stored.visible, "and the store's is not");
+
+        // And the other way, which is the picker's whole job.
+        picker.activated(0);
+        waitForRendering(page);
+        verify(stored.visible, "the stored list shows once the store is picked");
+        verify(!proposals.visible, "and the stick's list steps aside");
     }
 
     function test_thePlaylistPickerBelongsToAStick() {
@@ -135,11 +154,14 @@ TestCase {
         var page = make();
         var playlist = findChild(page, "playlistPicker");
         verify(playlist, "the playlist picker must exist");
-        verify(!playlist.visible, "it stays hidden while the source is the store");
+        verify(playlist.visible, "a stick has playlists, and the page opens on one");
+        findChild(page, "sourcePicker").activated(0);
+        waitForRendering(page);
+        verify(!playlist.visible, "the store does not, so it goes away with the stick");
     }
 
     function test_saysWhereItWritesInstead() {
-        var page = make();
+        var page = makeShowingTheStore();
         // "Nothing on the stick is at risk" is only reassuring if the
         // page also says where the data does go.
         var found = false;
@@ -284,7 +306,7 @@ TestCase {
         // list, no busy indicator and the empty-state label suppressed,
         // because everything keyed off hasScanned and a cancelled scan
         // never sets it.
-        var page = make();
+        var page = makeShowingTheStore();
         var summary = findChild(page, "sourceSummary");
         verify(summary, "the source summary must exist");
         // Browsing the store: no scan has been asked for, so nothing
