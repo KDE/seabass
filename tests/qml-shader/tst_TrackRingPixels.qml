@@ -146,14 +146,15 @@ TestCase {
         verify(image.red(Math.round(300 + 300 * 0.535), 300) > 200, "and is drawn in its own colour");
     }
 
-    function test_aClickOnTheRingAsksToSeekThere() {
+    function test_aClickOnTheDiscIsAClickAndItsCornersAreNot() {
         var stage = make({progress: 0.1});
-        var asked = [];
-        stage.ring.seekRequested.connect(function(fraction) { asked.push(fraction); });
+        var clicks = 0;
+        stage.ring.clicked.connect(function() { clicks += 1; });
         mouseClick(stage.ring, 300 + 240, 300);
-        compare(asked.length, 1);
-        fuzzyCompare(asked[0], 0.25, 0.002);
+        compare(clicks, 1, "on the bars");
         mouseClick(stage.ring, 300, 300);
-        compare(asked.length, 1, "the cover art is not the ring");
+        compare(clicks, 2, "on the cover");
+        mouseClick(stage.ring, 8, 8);
+        compare(clicks, 2, "the square's corner is not the ring");
     }
 }

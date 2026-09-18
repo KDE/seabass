@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Window
 import QtTest
 import SeabassGui
 
@@ -27,6 +29,9 @@ TestCase {
         seek: function(ms) { testCase.seeks.push(ms); },
         togglePlay: function() { testCase.toggles += 1; },
         hasTrack: true, currentFormat: "engine", currentSourceId: "42",
+        title: "Major Tom (Reworked 2024)", artist: "DJ Amador", artworkPath: "",
+        waveform: [{low: 0.8, mid: 0.4, high: 0.1}, {low: 0.2, mid: 0.1, high: 0.0}],
+        cues: [{positionMs: 32000, color: "#ffcc00"}],
         playing: true, position: 93000, duration: 372000,
     })
 
@@ -69,19 +74,44 @@ TestCase {
         compare(ring.cueData.length, 1);
         compare(ring.waveformData.length, 400, "the ring draws the waveform the pane already read");
 
-        testCase.seeks = [];
-        testCase.toggles = 0;
-        mouseClick(ring, ring.width / 2 + ring.width * 0.4, ring.height / 2);
-        compare(testCase.seeks.length, 1, "a click on the ring seeks");
-        fuzzyCompare(testCase.seeks[0], 93000, 800);
-        mouseClick(ring, ring.width / 2, ring.height / 2);
-        compare(testCase.toggles, 1, "a click on the cover plays and pauses");
-        compare(testCase.seeks.length, 1);
-
         if (screenshotDir && screenshotDir.length > 0) {
             wait(400);
             grabImage(stage).save(screenshotDir + "/track-panel-ring.png");
         }
+    }
+
+    // A click on the ring puts it alone on the whole screen; a click
+    // there goes back, to the window as it was.
+    function test_aClickOnTheRingGoesFullscreenAndAClickThereGoesBack() {
+        var stage = createTemporaryObject(stageComponent, testCase);
+        var panel = stage.panel;
+        panel.showFor(track("42"));
+        var ring = findChild(panel, "trackRing");
+        var host = testCase.Window.window;
+        var before = host.visibility;
+        verify(before !== Window.FullScreen);
+        tryVerify(function() { return ring.width > 200; }, 2000);
+
+        mouseClick(ring, ring.width / 2, ring.height / 2);
+        var big = null;
+        tryVerify(function() { big = findChild(Overlay.overlay, "fullscreenRing"); return big !== null && big.visible; },
+                  2000, "the fullscreen ring opens");
+        compare(host.visibility, Window.FullScreen);
+        verify(big.width > ring.width, "and is the larger of the two");
+        compare(findChild(Overlay.overlay, "fullscreenTitle").text, "Major Tom (Reworked 2024)");
+        compare(findChild(Overlay.overlay, "fullscreenArtist").text, "DJ Amador");
+        fuzzyCompare(big.progress, 0.25, 0.0001);
+        compare(big.waveformData.length, 2, "it draws what the PLAYER has loaded");
+
+        if (screenshotDir && screenshotDir.length > 0) {
+            wait(500);
+            grabImage(Overlay.overlay).save(screenshotDir + "/track-ring-fullscreen.png");
+        }
+
+        mouseClick(big, big.width / 2, big.height / 2);
+        tryVerify(function() { return findChild(Overlay.overlay, "fullscreenRing") === null
+                                   || !findChild(Overlay.overlay, "fullscreenRing").visible; }, 2000, "a click there closes it");
+        compare(host.visibility, before, "and the window is as it was");
     }
 
     function test_anyOtherTrackKeepsItsSleeve() {

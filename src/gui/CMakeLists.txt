@@ -139,6 +139,7 @@ set(SEABASS_GUI_QML_FILES
     qml/CloneStickPage.qml
     qml/TrackDetailPanel.qml
     qml/TrackRing.qml
+    qml/TrackRingFullscreen.qml
 )
 set(SEABASS_GUI_SOURCES
     media_controller.hpp

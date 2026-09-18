@@ -184,9 +184,6 @@ Page {
                         progress: root.playbackController.duration > 0
                             ? root.playbackController.position / root.playbackController.duration : 0
                         playing: root.playbackController.playing === true
-                        onSeekRequested: function(fraction) {
-                            root.playbackController.seek(Math.round(fraction * root.playbackController.duration));
-                        }
                     }
                 }
             }

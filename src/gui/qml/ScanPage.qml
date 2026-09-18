@@ -137,6 +137,17 @@ Page {
     // The track details column: opened by clicking a row, closed by its
     // own button. Sits between the track list and the Matching panel.
     property bool trackPanelOpen: false
+
+    // Plays a row's track and turns the details pane to it. The pane is
+    // where the playing track is shown as a ring, so a track played from
+    // the list while the pane was shut, or on another track, played with
+    // nothing to show for it.
+    function playRow(row) {
+        root.playbackController.load(root.format, root.currentPath(), row.sourceId, row.filePath, row.title,
+            row.artist, row.artworkPath, row.cues);
+        trackDetailPanel.showFor(row);
+        root.trackPanelOpen = true;
+    }
     // Starts open, like the playlist column it replaced -- the header pill
     // collapses and expands it, unlike matchingPanelOpen above, which starts
     // collapsed.
@@ -627,9 +638,7 @@ Page {
                                     if (trackDelegate.streamingSource.length > 0) {
                                         return;
                                     }
-                                    playbackController.load(root.format, root.currentPath(), trackDelegate.sourceId,
-                                        trackDelegate.filePath, trackDelegate.title, trackDelegate.artist,
-                                        trackDelegate.artworkPath, trackDelegate.cues);
+                                    root.playRow(trackDelegate);
                                 }
                             }
                         }
@@ -989,6 +998,7 @@ Page {
 
         TrackDetailPanel {
             id: trackDetailPanel
+            objectName: "trackDetailPanel"
             visible: root.trackPanelOpen
             SplitView.preferredWidth: 460
             SplitView.minimumWidth: 360

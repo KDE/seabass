@@ -6,8 +6,8 @@ import QtQuick
 import QtTest
 import SeabassGui
 
-// TrackRing's own reckoning: what it takes from the waveform, where a
-// click lands, which cover file it asks for. What the shader then draws
+// TrackRing's own reckoning: what it takes from the waveform and which
+// cover file it asks for. What the shader then draws
 // is tests/qml-shader's business -- this suite runs on the offscreen
 // platform, where no shader draws anything.
 TestCase {
@@ -58,24 +58,6 @@ TestCase {
     function test_aSingleBandWaveformCountsAsItsOwnBass() {
         var ring = make({waveformData: [0.2, 0.6], playing: true, progress: 0.75});
         compare(ring.bass, 0.6);
-    }
-
-    function test_aPointOnTheRingIsAFractionOfTheTrack_data() {
-        // 400 px wide: the outer radius is 200, the bars start at 0.57 of it.
-        return [
-            {tag: "twelve o'clock", x: 200, y: 20, expected: 0},
-            {tag: "three o'clock", x: 380, y: 200, expected: 0.25},
-            {tag: "six o'clock", x: 200, y: 380, expected: 0.5},
-            {tag: "nine o'clock", x: 20, y: 200, expected: 0.75},
-            {tag: "just before twelve", x: 199, y: 20, expected: 0.999},
-            {tag: "on the cover art", x: 200, y: 200, expected: -1},
-            {tag: "between the art and the bars", x: 200 + 105, y: 200, expected: -1},
-            {tag: "in the corner, off the ring", x: 5, y: 5, expected: -1},
-        ];
-    }
-    function test_aPointOnTheRingIsAFractionOfTheTrack(data) {
-        var ring = make();
-        fuzzyCompare(ring.fractionAt(data.x, data.y), data.expected, 0.002);
     }
 
     function test_rekordboxArtAsksForTheLargeCoverAndSettlesForTheSmall() {

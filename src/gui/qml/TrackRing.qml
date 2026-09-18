@@ -30,17 +30,13 @@ Item {
 
     // The art disc's radius, in units of the ring's outer radius.
     readonly property real artRadius: 0.50
-    // Where the bars start, in the same units. Must match the shader's r0.
-    readonly property real ringInnerRadius: artRadius + 0.07
 
     readonly property bool available: GraphicsInfo.api !== GraphicsInfo.Software
         && GraphicsInfo.api !== GraphicsInfo.Unknown
         && ring.status !== ShaderEffect.Error
 
-    // Clicked on the ring itself, as a fraction of the track.
-    signal seekRequested(real fraction)
-    // Clicked on the cover art in the middle.
-    signal artClicked()
+    // Clicked anywhere on the disc the ring fills.
+    signal clicked()
 
     // The low band under the playhead: what the art and its halo move to.
     // Only while playing -- a paused track holds still.
@@ -51,27 +47,6 @@ Item {
         }
         var col = root.waveformData[Math.min(n - 1, Math.floor(root.progress * n))];
         return typeof col === "number" ? col : col.low;
-    }
-
-    // Where a point is on the ring, as a fraction of the track, or -1
-    // when it is not on the ring at all.
-    function fractionAt(x, y) {
-        var half = ring.width / 2;
-        var dx = x - root.width / 2;
-        var dy = y - root.height / 2;
-        var r = Math.sqrt(dx * dx + dy * dy) / half;
-        if (half <= 0 || r < root.ringInnerRadius || r > 1) {
-            return -1;
-        }
-        var turn = Math.atan2(dx, -dy) / (2 * Math.PI);
-        return turn < 0 ? turn + 1 : turn;
-    }
-
-    function onArt(x, y) {
-        var half = ring.width / 2;
-        var dx = x - root.width / 2;
-        var dy = y - root.height / 2;
-        return half > 0 && Math.sqrt(dx * dx + dy * dy) / half <= root.artRadius;
     }
 
     // rekordbox writes every cover twice, 80 px as aNN.jpg and 240 px as
@@ -186,12 +161,14 @@ Item {
     MouseArea {
         anchors.fill: parent
         enabled: root.available
+        cursorShape: Qt.PointingHandCursor
         onClicked: function(mouse) {
-            var fraction = root.fractionAt(mouse.x, mouse.y);
-            if (fraction >= 0) {
-                root.seekRequested(fraction);
-            } else if (root.onArt(mouse.x, mouse.y)) {
-                root.artClicked();
+            // The ring is round and this area is square: its corners are
+            // not the ring.
+            var dx = mouse.x - root.width / 2;
+            var dy = mouse.y - root.height / 2;
+            if (Math.sqrt(dx * dx + dy * dy) <= ring.width / 2) {
+                root.clicked();
             }
         }
     }

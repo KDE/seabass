@@ -70,12 +70,6 @@ TestCase {
         compare(ring.playing, true);
         compare(ring.cueData.length, 1);
 
-        // And a click on it seeks the player: three o'clock is a quarter in.
-        testCase.seeks = [];
-        mouseClick(ring, ring.width / 2 + ring.width * 0.4, ring.height / 2);
-        compare(testCase.seeks.length, 1);
-        fuzzyCompare(testCase.seeks[0], 50000, 400);
-
         if (screenshotDir && screenshotDir.length > 0) {
             wait(400);
             grabImage(page).save(screenshotDir + "/track-detail-ring.png");

@@ -71,4 +71,22 @@ TestCase {
         verify(search.mapToItem(page, 0, 0).x > pill.mapToItem(page, 0, 0).x,
                "the search field follows the pill in the same row");
     }
+
+    // The pane is where the playing track is shown. A track played from
+    // the list with the pane shut, or turned to another track, used to
+    // play with nothing to show for it.
+    function test_playingARowTurnsTheDetailsPaneToIt() {
+        var page = makePage();
+        var pane = findChild(page, "trackDetailPanel");
+        compare(page.trackPanelOpen, false);
+        var row = {sourceId: "17", title: "Played From The List", artist: "Someone", filePath: "/nonexistent/a.mp3",
+                   artworkPath: "", cues: [], durationSeconds: 300, playlistNames: [], streamingSource: "",
+                   rating: -1, bpm: 124, key: "8A", bitrate: 0, playCount: 0, comment: "", album: ""};
+        page.playRow(row);
+        compare(page.trackPanelOpen, true, "the pane opens");
+        compare(pane.trackSourceId, "17", "on the track that was played");
+        compare(realPlayback.currentSourceId, "17");
+        compare(pane.isLoadedTrack, true, "so the pane knows it is showing the loaded track");
+        realPlayback.stop();
+    }
 }

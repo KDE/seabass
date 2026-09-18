@@ -256,12 +256,14 @@ Pane {
                     progress: panel.playbackController.duration > 0
                         ? panel.playbackController.position / panel.playbackController.duration : 0
                     playing: panel.playbackController.playing === true
-                    onSeekRequested: function(fraction) {
-                        panel.playbackController.seek(Math.round(fraction * panel.playbackController.duration));
-                    }
-                    onArtClicked: panel.playbackController.togglePlay()
+                    onClicked: ringFullscreen.open()
                 }
             }
+        }
+
+        TrackRingFullscreen {
+            id: ringFullscreen
+            playbackController: panel.playbackController
         }
 
         // Title, artist and the facts in one column, with the artwork
