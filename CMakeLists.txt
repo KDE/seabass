@@ -1694,7 +1694,7 @@ add_executable(duplicate_cleanup_interruption_test
     tests/duplicate_cleanup_interruption_test.cpp
 )
 target_include_directories(duplicate_cleanup_interruption_test PRIVATE src)
-target_link_libraries(duplicate_cleanup_interruption_test PRIVATE DjInterop ZLIB::ZLIB)
+target_link_libraries(duplicate_cleanup_interruption_test PRIVATE DjInterop ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME duplicate_cleanup_interruption_test COMMAND duplicate_cleanup_interruption_test)
 
 add_executable(libdjinterop_engine_anonymizer_test
@@ -2162,7 +2162,11 @@ target_link_libraries(rig_read PRIVATE seabass_core)
 # back. The feature is otherwise GUI-only and needs real hardware to judge.
 add_executable(make_engine_library tools/make_engine_library.cpp)
 target_include_directories(make_engine_library PRIVATE src)
-target_link_libraries(make_engine_library PRIVATE seabass_core)
+# On Windows seabass_core's own sqlite3 include is PRIVATE (see the
+# WIN32 branch above), so a direct #include <sqlite3.h> here needs its
+# own link to the PUBLIC SQLite::SQLite3 alias; elsewhere seabass_core
+# already exposes it PUBLIC, so this is a harmless no-op there.
+target_link_libraries(make_engine_library PRIVATE seabass_core SQLite::SQLite3)
 
 # Release rig: a full stick backup as the app takes it, then verified, checked
 # for holes, previewed for leftovers and compared with the stick's catalogs.
@@ -2284,7 +2288,10 @@ set_tests_properties(corpus_test PROPERTIES LABELS "integration")
 # an exact restore, the far end compared with the near end.
 add_executable(library_backup_roundtrip_test tests/library_backup_roundtrip_test.cpp)
 target_include_directories(library_backup_roundtrip_test PRIVATE src)
-target_link_libraries(library_backup_roundtrip_test PRIVATE seabass_core)
+# stick_fixture.hpp #includes <sqlite3.h> directly, which needs the
+# PUBLIC SQLite::SQLite3 alias on Windows -- see make_engine_library's
+# comment above for why seabass_core alone isn't enough there.
+target_link_libraries(library_backup_roundtrip_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME library_backup_roundtrip_test COMMAND library_backup_roundtrip_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(library_backup_roundtrip_test PROPERTIES LABELS "integration")
 
