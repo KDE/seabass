@@ -164,4 +164,41 @@ TestCase {
         panel.showFor(delegate);
         compare(panel.trackStreamingSource, "TIDAL");
     }
+
+    function makeLoadedPlayer(format, sourceId) {
+        return {waveformFor: function() { return []; }, hasTrack: true, currentFormat: format,
+                currentSourceId: sourceId, playing: true, position: 93000, duration: 372000,
+                seek: function() {}, togglePlay: function() {}};
+    }
+
+    function test_thePanelKnowsWhenItsTrackIsTheLoadedOne_data() {
+        return [
+            {tag: "the same track", player: makeLoadedPlayer("engine", "42"), expected: true},
+            {tag: "another track", player: makeLoadedPlayer("engine", "7"), expected: false},
+            // rekordbox and Engine number their tracks independently.
+            {tag: "the same id in the other format", player: makeLoadedPlayer("rekordbox", "42"), expected: false},
+            {tag: "nothing loaded", player: {waveformFor: function() { return []; }}, expected: false},
+        ];
+    }
+    function test_thePanelKnowsWhenItsTrackIsTheLoadedOne(data) {
+        var panel = makePanel();
+        panel.playbackController = data.player;
+        panel.showFor(makeDelegate());
+        compare(panel.isLoadedTrack, data.expected);
+        compare(findChild(panel, "trackRing") !== null, data.expected, "the ring exists only for the loaded track");
+    }
+
+    // This suite's platform cannot run the ring's shader. The panel must
+    // then keep the sleeve where it was and open no empty row above it --
+    // tests/qml-shader has the case where the ring can be drawn.
+    function test_whereTheRingCannotBeDrawnTheSleeveStays() {
+        var panel = makePanel();
+        panel.playbackController = makeLoadedPlayer("engine", "42");
+        panel.showFor(makeDelegate());
+        compare(panel.isLoadedTrack, true);
+        var row = findChild(panel, "trackRingRow");
+        compare(row.showsRing, false);
+        compare(row.visible, false);
+        compare(findChild(panel, "trackArtwork").visible, true);
+    }
 }

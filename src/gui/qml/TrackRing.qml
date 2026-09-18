@@ -39,6 +39,8 @@ Item {
 
     // Clicked on the ring itself, as a fraction of the track.
     signal seekRequested(real fraction)
+    // Clicked on the cover art in the middle.
+    signal artClicked()
 
     // The low band under the playhead: what the art and its halo move to.
     // Only while playing -- a paused track holds still.
@@ -63,6 +65,13 @@ Item {
         }
         var turn = Math.atan2(dx, -dy) / (2 * Math.PI);
         return turn < 0 ? turn + 1 : turn;
+    }
+
+    function onArt(x, y) {
+        var half = ring.width / 2;
+        var dx = x - root.width / 2;
+        var dy = y - root.height / 2;
+        return half > 0 && Math.sqrt(dx * dx + dy * dy) / half <= root.artRadius;
     }
 
     // rekordbox writes every cover twice, 80 px as aNN.jpg and 240 px as
@@ -181,8 +190,8 @@ Item {
             var fraction = root.fractionAt(mouse.x, mouse.y);
             if (fraction >= 0) {
                 root.seekRequested(fraction);
-            } else {
-                mouse.accepted = false;
+            } else if (root.onArt(mouse.x, mouse.y)) {
+                root.artClicked();
             }
         }
     }

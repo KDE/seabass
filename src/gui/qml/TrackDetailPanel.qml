@@ -54,6 +54,13 @@ Pane {
     }
 
     property string trackSourceId: ""
+    // Whether the track shown is the one the player has loaded, playing
+    // or paused. The id alone would not do: rekordbox and Engine number
+    // their tracks independently, so "42" is a track in each.
+    readonly property bool isLoadedTrack: panel.trackSourceId.length > 0
+        && panel.playbackController.hasTrack === true
+        && panel.playbackController.currentSourceId === panel.trackSourceId
+        && panel.playbackController.currentFormat === panel.format
     property string trackTitle: ""
     property string trackArtist: ""
     property var trackCues: []
@@ -216,6 +223,47 @@ Pane {
         spacing: 10
 
 
+        // The track the player has loaded is shown as a ring around its
+        // cover art, the playhead going round: a row of its own, since a
+        // ring the size of the pane's sleeve would be mostly sleeve.
+        // Wherever the ring cannot be drawn (see TrackRing.available)
+        // this row stays shut and the sleeve below stays where it was.
+        Item {
+            id: ringRow
+            objectName: "trackRingRow"
+            readonly property bool showsRing: panel.isLoadedTrack && ringLoader.item !== null
+                && ringLoader.item.available
+            // Measured against the column, not this row: while it is shut
+            // the layout gives an invisible row no width to measure.
+            property real side: showsRing ? Math.min(Theme.iconSizeLarge * 6, ringRow.parent.width) : 0
+            Behavior on side { NumberAnimation { duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic } }
+            Layout.fillWidth: true
+            Layout.preferredHeight: side
+            visible: side > 0
+
+            Loader {
+                id: ringLoader
+                active: panel.isLoadedTrack
+                width: ringRow.side
+                height: ringRow.side
+                anchors.horizontalCenter: parent.horizontalCenter
+                sourceComponent: TrackRing {
+                    objectName: "trackRing"
+                    waveformData: waveformView.waveformData
+                    cueData: panel.trackCues
+                    trackDurationMs: panel.trackDurationMs
+                    artworkSource: panel.trackArtworkPath
+                    progress: panel.playbackController.duration > 0
+                        ? panel.playbackController.position / panel.playbackController.duration : 0
+                    playing: panel.playbackController.playing === true
+                    onSeekRequested: function(fraction) {
+                        panel.playbackController.seek(Math.round(fraction * panel.playbackController.duration));
+                    }
+                    onArtClicked: panel.playbackController.togglePlay()
+                }
+            }
+        }
+
         // Title, artist and the facts in one column, with the artwork
         // beside all of it and pinned to the top. Previously the artwork
         // sat in a row with the facts alone, so its top edge lined up
@@ -357,7 +405,8 @@ Pane {
                 Layout.preferredWidth: 154
                 Layout.preferredHeight: 154
                 Layout.alignment: Qt.AlignTop | Qt.AlignRight
-                visible: panel.trackArtworkPath.length > 0
+                // The ring above carries the cover while it is showing.
+                visible: panel.trackArtworkPath.length > 0 && !ringRow.showsRing
 
                 // Only a track with a local file can play: a streaming
                 // row's path names a cache on another machine, so it gets
