@@ -48,3 +48,43 @@ reuse:
     entrypoint: [""]
   script:
   - reuse lint
+
+# --- Windows Craft build: still runs and still reports, but does not
+# --- fail the pipeline while a dependency of ours is broken upstream.
+#
+# Temporary, and dated: remove once libvpx builds on MSVC again.
+#
+# craft-blueprints-kde broke it on 2026-09-17 (06a004fb, "[libvpx] Update
+# to 1.16.0 and enable on MSVC"). Its postInstall moves two files on MSVC
+# and one of them is never produced:
+#
+#   [Errno 2] No such file or directory:
+#     ...\libs\libvpx\image-RelWithDebInfo-1.16.0-dbg\lib\x64\vpxmd.pdb
+#   Action: post-install for libs/libvpx:1.16.0 FAILED
+#
+# libvpx itself compiles cleanly; the packaging step after it is what
+# fails. Seabass reaches libvpx through qtmultimedia -> ffmpeg, so the
+# build dies in --install-deps, long before any Seabass code is compiled.
+# Nothing here caused it and nothing here can fix it.
+#
+# It only began failing the pipeline when this repo gained KDE mainline
+# status: the shared template (sysadmin/craft-ci,
+# gitlab-templates/blocks/windows-base.yml) runs the job automatically
+# wherever $KDECI_SECURE_SERVICES_KEY is set, and that rule leaves
+# allow_failure at its default of false. Before the key existed the job
+# was manual and explicitly allow_failure: true, so a broken dependency
+# went unnoticed.
+#
+# The rules below are the template's own, with allow_failure added to the
+# automatic branch. Written out in full rather than setting allow_failure
+# at job level, because a matching rule supplies its own allow_failure
+# and a job-level value would not reliably win. Overriding `rules`
+# replaces the template's list outright; every other key of the job --
+# image, tags, script, artifacts -- still comes from the template.
+craft_windows_qt6_x86_64:
+  rules:
+  - if: $KDECI_SECURE_SERVICES_KEY
+    when: on_success
+    allow_failure: true
+  - when: manual
+    allow_failure: true
