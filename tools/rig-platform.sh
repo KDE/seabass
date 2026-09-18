@@ -96,7 +96,13 @@ everyday_settings_listing() {
         # NOTHING, before and after, and the diff agreed with itself --
         # the very guard-that-cannot-fail this function exists to remove.
         local dump
-        if dump=$(reg query 'HKCU\Software\seabass\seabass' /s 2>/dev/null); then
+        # //s, not /s: MSYS2/Git Bash rewrites a bare leading-slash
+        # argument into a Windows path before reg.exe ever sees it
+        # (the same reason taskkill needs //F elsewhere), so a plain
+        # /s here always fails with "Invalid syntax" and every call
+        # falls into the ABSENT branch -- confirmed directly, "//s"
+        # is what actually reaches reg.exe as "/s".
+        if dump=$(reg query 'HKCU\Software\seabass\seabass' //s 2>/dev/null); then
             printf '%s\n' "$dump" | sed -e 's/[[:space:]]*$//' -e '/^$/d'
         else
             echo 'HKCU\Software\seabass\seabass ABSENT'
