@@ -185,6 +185,26 @@ TestCase {
         verify(ring.rippleStrength < 0.3, "nor does its ripple, got " + ring.rippleStrength);
     }
 
+    // The cover spins at an LP's 33 1/3 rpm: one turn every 1.8 s.
+    function test_theCoverSpinsAtThirtyThreeAndAThird() {
+        var ring = gridRing();
+        ring.positionMs = 0;
+        compare(ring.artTurns, 0);
+        ring.positionMs = 900;
+        fuzzyCompare(ring.artTurns, 0.5, 0.0001, "half a turn in 0.9 s");
+        ring.positionMs = 60000;
+        fuzzyCompare((ring.artTurns + 0.5) % 1, (1 / 3 + 0.5) % 1, 0.0001, "33 1/3 turns in a minute leaves it a third round");
+
+        // It turns with the track, carried forward between reports...
+        ring.positionMs = 0;
+        ring.advance(0.45);
+        fuzzyCompare(ring.artTurns, 0.25, 0.0001, "a quarter turn in 0.45 s of playing");
+        // ...and a paused record does not turn.
+        ring.playing = false;
+        ring.advance(5);
+        fuzzyCompare(ring.artTurns, 0.25, 0.0001);
+    }
+
     function test_rekordboxArtAsksForTheLargeCoverAndSettlesForTheSmall() {
         var small = "file:///nowhere/PIONEER/Artwork/00001/a16.jpg";
         var ring = make({artworkSource: small});

@@ -132,6 +132,14 @@ Item {
     }
     onBeatTimesMsChanged: root.findBeat()
 
+    // The cover spins like the record it is the sleeve of, at an LP's
+    // 33 1/3 rpm. Reckoned from the position, not from a clock: it turns
+    // while the track plays, holds when it is paused, and a seek puts it
+    // where the record would be. In turns, kept within one so that an
+    // hour in the shader's float still has its precision.
+    readonly property real revolutionsPerMinute: 100 / 3
+    readonly property real artTurns: (Math.max(0, root.smoothPositionMs) / 60000 * root.revolutionsPerMinute) % 1
+
     // How much the recent music has had in the low band: up fast, down
     // over half a second. It scales the grid's pulse, so that the ring
     // pulses hard in a drop and barely at all in a breakdown.
@@ -259,6 +267,7 @@ Item {
         property real rippleAge: root.rippleAge
         property real rippleSpan: root.rippleSpan
         property real rippleStrength: root.rippleStrength
+        property real artTurns: root.artTurns
         property real bars: root.bars
         property real artRadius: root.artRadius
         property real hasArt: artImage.status === Image.Ready ? 1 : 0

@@ -28,6 +28,7 @@ layout(std140, binding = 0) uniform buf {
     float rippleAge;   // seconds since the last beat; large for "none"
     float rippleSpan;  // seconds a ripple takes to cross the bars
     float rippleStrength;
+    float artTurns;    // how far round the cover has spun, in turns, 0..1
     float bars;        // how many bars go round
     float artRadius;   // the art disc, in units of the ring's outer radius
     float hasArt;
@@ -159,8 +160,14 @@ void main()
 
     // The art itself, as a disc that swells a touch with the bass.
     float disc = 1.0 - smoothstep(discRadius - px, discRadius + px, r);
+    // It spins like the record it is the sleeve of: clockwise, which with
+    // y pointing down means looking the picture up turned back the other
+    // way. Only the cover turns -- the ring's colours stay where they are,
+    // because a place on the ring is a moment in the track.
+    float spin = artTurns * TAU;
+    vec2 onCover = vec2(cos(spin) * p.x + sin(spin) * p.y, -sin(spin) * p.x + cos(spin) * p.y);
     vec3 artColour = hasArt > 0.5
-        ? texture(art, clamp(vec2(0.5) + p / (discRadius * 2.0), 0.0, 1.0)).rgb
+        ? texture(art, clamp(vec2(0.5) + onCover / (discRadius * 2.0), 0.0, 1.0)).rgb
         : mix(page, fallbackColor.rgb, 0.18);
     outColour = mix(outColour, vec4(artColour, 1.0), disc);
 
