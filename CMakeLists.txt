@@ -428,6 +428,15 @@ else()
     target_link_libraries(seabass_core PUBLIC SQLite::SQLite3)
 endif()
 
+# --- Read-only detection and filesystem repair: one file with a branch ---
+# --- per platform (statvfs/udisks2, statfs/diskutil, GetVolumeInformation ---
+# --- /Repair-Volume), so it builds everywhere rather than living in the ---
+# --- platform lists below. ---
+
+target_sources(seabass_core PRIVATE
+    src/infrastructure/media/filesystem_health.cpp
+)
+
 # --- platform-specific removable-media adapters (see media_factory.cpp) ---
 # --- -- the only part of seabass_core with no single cross-platform ---
 # --- implementation, since "how do I see/mount/eject a USB stick" is ---
@@ -459,7 +468,6 @@ else()
         src/infrastructure/media/linux_udev_media_monitor.cpp
         src/infrastructure/media/udisksctl_media_mounter.cpp
         src/infrastructure/media/linux_usb_formatter.cpp
-        src/infrastructure/media/filesystem_health.cpp
         src/infrastructure/process/run_command_posix.cpp
     )
     target_link_libraries(seabass_core PUBLIC udev)

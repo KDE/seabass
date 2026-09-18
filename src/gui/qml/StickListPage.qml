@@ -572,6 +572,12 @@ Page {
                 required property bool isFolder
                 required property bool isBrowsedBackup
                 required property string libraryId
+                // The kernel mounted this stick read-only, which is what a
+                // damaged filesystem looks like after an unclean unplug.
+                // Nothing can be written until it has been checked, so
+                // every card that writes goes read-only too and points at
+                // Library Health, which offers the repair.
+                required property bool readOnly
                 readonly property bool hasKnownLibrary: hasRekordbox || hasEngine
                 // Which cards a row may offer that write: a library, and
                 // not a stick backup being browsed. Every writing card
@@ -580,6 +586,12 @@ Page {
                 // Another instance is editing this stick's library: every
                 // card that would change it goes read-only.
                 readonly property bool lockedByOther: root.isLockedByOther(delegateRoot.libraryId)
+                // What a card that writes says when the stick itself is
+                // the reason it cannot: a click opens Library Health
+                // rather than only explaining, since the repair lives
+                // there and sending someone looking for it is no help.
+                readonly property string readOnlyNote:
+                    "This stick is mounted read-only -- its filesystem needs checking. Library Health can do that."
                 // What the backup advisor found for this stick (see
                 // BackupAdvisorController); null until it has looked.
                 readonly property var advice: root.backupAdvisor.advice[mountPoint] || null
@@ -930,8 +942,17 @@ Page {
                         // Metadata Backup only read, and stay.
                         ActionCard {
                             cardTitle: "Housekeeping"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
                             cardSubtitle: "Duplicate stats, copy cues between copies, and clean up"
                             cardIcon: "edit-clear-all"
                             visible: delegateRoot.writable
@@ -966,6 +987,13 @@ Page {
                             cardTitle: "USB Stick Performance"
                             cardSubtitle: "Measure the stick the way a player reads it, per player generation"
                             cardIcon: "speedometer"
+                            // The write test has nowhere to write on a
+                            // read-only stick, and half a benchmark is
+                            // worse than none.
+                            readOnly: delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnlyNote
+                            onReadOnlyClicked: root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                           delegateRoot.enginePath)
                             // Needs no library: a stick with any files on
                             // it is measured on those, a blank one on
                             // throwaway files the page writes and removes.
@@ -991,8 +1019,17 @@ Page {
                         }
                         ActionCard {
                             cardTitle: "Restore Metadata"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
                             cardSubtitle: "Put cues from this computer back on tracks that have lost them"
                             cardIcon: "document-import"
                             visible: delegateRoot.writable
@@ -1002,8 +1039,17 @@ Page {
                         }
                         ActionCard {
                             cardTitle: "Create Engine Library"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
                             cardSubtitle: "Build a new Engine Library from this stick's DeviceLibrary export"
                             cardIcon: "server-database"
                             // Experimental (see docs/experimental-features.md):
@@ -1036,8 +1082,17 @@ Page {
                         }
                         ActionCard {
                             cardTitle: "Sync Cue Points"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
                             cardSubtitle: "Copy cues between DeviceLibrary and Engine"
                             cardIcon: "exchange-positions"
                             visible: delegateRoot.writable
@@ -1108,8 +1163,17 @@ Page {
                         // adviseStickBackup already uses for the update case.
                         ActionCard {
                             cardTitle: "Create Backup USB Stick"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
                             // Visible unconditionally (see below), so its
                             // wording must not presuppose a backup exists:
                             // "no-backups" is exactly the state where none

@@ -30,6 +30,7 @@ TestCase {
             hasRekordbox: true, hasEngine: true, rekordboxPath: "/media/MAIN/PIONEER",
             enginePath: "/media/MAIN/Engine Library", isSdCard: false, isFolder: false,
             isBrowsedBackup: false, libraryId: "lib-main", safeToUnplug: false, hasOneLibrary: false,
+            readOnly: false,
         };
         for (var key in overrides) {
             s[key] = overrides[key];
@@ -146,6 +147,36 @@ TestCase {
         compare(housekeeping.readOnly, false);
         mouseClick(housekeeping);
         compare(spy.count, 1);
+    }
+
+    // A stick the kernel mounted read-only (a damaged filesystem after an
+    // unclean unplug) can take no writes at all: every writing card goes
+    // read-only and a click sends the user to Library Health, which is
+    // where the filesystem repair lives -- and Library Health itself, plus
+    // the cards that only read, stay ordinary.
+    function test_readOnlyStickGreysOutEveryWritingCard() {
+        var page = makePage([makeStick({readOnly: true})], {});
+        var writers = ["Housekeeping", "Restore Metadata", "Sync Cue Points", "USB Stick Performance"];
+        for (var i = 0; i < writers.length; ++i) {
+            var card = findCard(page, "/media/MAIN", writers[i]);
+            verify(card !== null, writers[i] + " missing");
+            compare(card.readOnly, true, writers[i] + " should be read-only");
+            verify(card.readOnlyReason.indexOf("Library Health") >= 0, writers[i] + " should point at Library Health");
+        }
+        var health = findCard(page, "/media/MAIN", "Library Health");
+        verify(health !== null);
+        compare(health.readOnly, false);
+        compare(findCard(page, "/media/MAIN", "Browse Library").readOnly, false);
+        compare(findCard(page, "/media/MAIN", "Library Statistics").readOnly, false);
+
+        // Clicking a greyed card does not start the feature; it opens the
+        // page that can fix the stick.
+        var housekeepingSpy = createTemporaryObject(spyComponent, testCase,
+            {target: page, signalName: "duplicateTracksHubRequested"});
+        var healthSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "libraryHealthRequested"});
+        mouseClick(findCard(page, "/media/MAIN", "Housekeeping"));
+        compare(housekeepingSpy.count, 0);
+        compare(healthSpy.count, 1);
     }
 
     function test_everyMountedStickIsAssessed() {

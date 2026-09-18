@@ -103,6 +103,13 @@ Page {
     // The stick before its library: a read-only filesystem makes every
     // other finding on this page unfixable, so it is said first and in
     // its own words.
+    // Every other card's action writes to the stick, so a read-only one
+    // disables them all rather than letting a press fail a thousand times
+    // over. The offer stays on screen, greyed, with the reason on hover.
+    readonly property string blockedByReadOnly: healthController.stickReadOnly
+        ? "This stick is read-only until its filesystem has been checked -- see the card above."
+        : ""
+
     readonly property string filesystemSummary: {
         if (healthController.repairingFilesystem) {
             return "Checking and repairing this stick's filesystem. Its own permission prompt may ask first.";
@@ -239,6 +246,8 @@ Page {
 
             HealthCheckCard {
                 objectName: "brokenFilesCard"
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
                 title: "Tracks and their files"
                 summary: root.brokenSummary
                 running: root.scanning
@@ -249,6 +258,8 @@ Page {
 
             HealthCheckCard {
                 objectName: "junkCuesCard"
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
                 title: "Memory cues at 0:00"
                 summary: root.junkCueSummary
                 running: root.scanning
@@ -259,6 +270,8 @@ Page {
 
             HealthCheckCard {
                 objectName: "coverArtCard"
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
                 title: "Cover art"
                 summary: root.artworkSummary
                 running: root.scanning

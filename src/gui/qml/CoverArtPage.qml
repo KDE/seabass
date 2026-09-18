@@ -162,9 +162,14 @@ Page {
                 text: consistencyController.artworkRepairStaged ? "Unstage" : "Fix Cover Art"
                 visible: consistencyController.artworkRepairableCount > 0
                     || consistencyController.artworkRepairStaged
+                // Staging a fix onto a stick that refuses writes only
+                // moves the failure to the Save press.
                 enabled: !consistencyController.busy && !consistencyController.writing
+                    && !consistencyController.stickReadOnly
                 ToolTip.visible: hovered
-                ToolTip.text: consistencyController.artworkRepairStaged
+                ToolTip.text: consistencyController.stickReadOnly
+                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    : consistencyController.artworkRepairStaged
                     ? "Take this back out of the changes to save"
                     : "Stage copying each image into Engine Library/Artwork and pointing the track at it. "
                         + "Save writes it to the stick."

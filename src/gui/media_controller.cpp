@@ -25,6 +25,7 @@
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
 #include "gui/local_file_url.hpp"
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/media/filesystem_health.hpp"
 #include "infrastructure/media/media_factory.hpp"
 #include "infrastructure/media/stick_root_scan.hpp"
 #include "gui/future_result.hpp"
@@ -107,6 +108,9 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
         // test, and only the stick card asks.
         return stick.rekordboxPath.has_value()
                && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*stick.rekordboxPath);
+    case ReadOnlyRole:
+        return static_cast<size_t>(index.row()) < m_readOnly.size()
+               && m_readOnly[static_cast<size_t>(index.row())];
     case SafeToUnplugRole: {
         if (stick.mounted) {
             return false;
@@ -153,6 +157,7 @@ QHash<int, QByteArray> DetectedStickListModel::roleNames() const
         {IdentityStrengthRole, "identityStrength"},
         {SafeToUnplugRole, "safeToUnplug"},
         {HasOneLibraryRole, "hasOneLibrary"},
+        {ReadOnlyRole, "readOnly"},
     };
 }
 
@@ -198,6 +203,13 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
 
     beginResetModel();
     m_sticks = std::move(sticks);
+    m_readOnly.assign(m_sticks.size(), false);
+    for (size_t i = 0; i < m_sticks.size(); ++i) {
+        const application::DetectedStick &stick = m_sticks[i];
+        if (stick.mounted && !stick.mountPoint.empty()) {
+            m_readOnly[i] = infrastructure::media::isMountedReadOnly(stick.mountPoint);
+        }
+    }
     endResetModel();
     // endResetModel() tells a view its rows changed; it does not
     // re-evaluate a binding on a property of this object, so the counts

@@ -81,6 +81,12 @@ public:
         // Whether OneLibrary's exportLibrary.db sits beside export.pdb, so
         // the stick card can name every catalog on the stick.
         HasOneLibraryRole,
+        // Whether the filesystem is mounted read-only -- what a stick
+        // looks like after the kernel found damage on it (typically an
+        // unclean unplug). Every card that writes is greyed out for such
+        // a stick and points at Library Health, which can run the repair:
+        // offering a save that the kernel will refuse teaches nothing.
+        ReadOnlyRole,
     };
 
     explicit DetectedStickListModel(QObject *parent = nullptr);
@@ -105,6 +111,9 @@ signals:
 
 private:
     std::vector<application::DetectedStick> m_sticks;
+    // Parallel to m_sticks: filled once per refresh so a delegate reading
+    // the role does not pay a statvfs() per binding evaluation.
+    std::vector<bool> m_readOnly;
 };
 
 // Wraps RemovableMediaLocator for QML: detects USB sticks (mounted or not),

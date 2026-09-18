@@ -387,9 +387,12 @@ Page {
             }
             Button {
                 text: "Stage All Safe Repairs"
-                enabled: !consistencyController.busy && !consistencyController.writing && consistencyController.repairableCount > 0
+                enabled: !consistencyController.busy && !consistencyController.writing
+                    && consistencyController.repairableCount > 0 && !consistencyController.stickReadOnly
                 ToolTip.visible: hovered
-                ToolTip.text: "Repair every entry with an exact healthy match. Conflicts are left for you."
+                ToolTip.text: consistencyController.stickReadOnly
+                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    : "Repair every entry with an exact healthy match. Conflicts are left for you."
                 onClicked: confirmRepairAllDialog.open()
             }
         }
@@ -411,7 +414,7 @@ Page {
             Button {
                 visible: consistencyController.junkCues.count > 0
                 text: "Remove All"
-                enabled: !consistencyController.busy
+                enabled: !consistencyController.busy && !consistencyController.stickReadOnly
                 ToolTip.visible: hovered
                 // It stages; it does not remove. The row buttons
                 // beside it and the confirmation this opens both
@@ -421,7 +424,9 @@ Page {
                 // either avoid a reversible action thinking it is
                 // final, or click it and believe the cues are
                 // already gone.
-                ToolTip.text: "Stage removing every 0:00 memory cue listed, in all catalogs. Save writes it."
+                ToolTip.text: consistencyController.stickReadOnly
+                    ? "This stick is read-only until its filesystem has been checked -- Library Health offers that."
+                    : "Stage removing every 0:00 memory cue listed, in all catalogs. Save writes it."
                 onClicked: confirmRemoveAllJunkCuesDialog.open()
             }
             Button {
