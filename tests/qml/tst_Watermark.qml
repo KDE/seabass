@@ -119,4 +119,18 @@ TestCase {
         verify(reachesBottom,
             "the watermark does not reach the window's bottom edge any more");
     }
+
+    // The watermark's ring needs a shader. On this suite's platform there
+    // is none, and the ring must then say it does not show -- that is what
+    // Main.qml goes by to keep the cover art watermark instead.
+    Component {
+        id: watermarkRingComponent
+        WatermarkRing { playbackController: ({hasTrack: true, playing: true, position: 1000, duration: 5000}) }
+    }
+    function test_whereTheRingCannotBeDrawnItDoesNotShow() {
+        var mark = createTemporaryObject(watermarkRingComponent, testCase);
+        verify(mark !== null);
+        compare(mark.shows, false);
+        compare(mark.visible, false);
+    }
 }

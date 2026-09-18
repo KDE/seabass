@@ -335,6 +335,18 @@ ApplicationWindow {
     WatermarkLayer { id: watermarkLayerA }
     WatermarkLayer { id: watermarkLayerB }
     property bool watermarkFrontIsA: true
+    // While a track is loaded the watermark is that track's ring, moving
+    // to the music, wherever in the app one is. Where the ring cannot be
+    // drawn it never shows, and the cover art layers above carry on as
+    // they always did.
+    WatermarkRing {
+        id: watermarkRing
+        playbackController: playbackCtrl
+        onShowsChanged: window.updateWatermark()
+    }
+    // What the two image layers were last asked to show; "" for nothing,
+    // which is what they show while the ring has the corner.
+    property string watermarkSource: "unset"
 
     function updateWatermark() {
         // Read straight off playbackCtrl rather than through an
@@ -346,11 +358,18 @@ ApplicationWindow {
         // track behind. A direct property read here always gets the
         // live current value regardless of connection order.
         var isArt = playbackCtrl.hasTrack && playbackCtrl.artworkPath.length > 0;
-        var src = isArt ? playbackCtrl.artworkPath
+        var src = watermarkRing.shows ? ""
+            : isArt ? playbackCtrl.artworkPath
             : "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg";
         var front = watermarkFrontIsA ? watermarkLayerA : watermarkLayerB;
         var back = watermarkFrontIsA ? watermarkLayerB : watermarkLayerA;
-        if (front.source === src) {
+        if (window.watermarkSource === src) {
+            return;
+        }
+        window.watermarkSource = src;
+        if (src === "") {
+            // The ring fades in over this corner by itself.
+            front.opacity = 0;
             return;
         }
         back.source = src;

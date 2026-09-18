@@ -84,6 +84,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/SaveOverlayButton.qml
     qml/common/UnsavedChangesDialog.qml
     qml/common/WatermarkLayer.qml
+    qml/common/WatermarkRing.qml
     qml/common/WriteProgressDialog.qml
     qml/common/OperationSummaryDialog.qml
     qml/common/LockedLibraryDialog.qml

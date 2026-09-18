@@ -37,6 +37,9 @@ Item {
 
     // Clicked anywhere on the disc the ring fills.
     signal clicked()
+    // Off, the ring takes no input at all and clicks go to whatever is
+    // under it: for a ring that is decoration, like the watermark's.
+    property bool interactive: true
 
     // ---- What the ring moves to ----
     //
@@ -177,7 +180,9 @@ Item {
     }
 
     // The shader's clock, in seconds, and everything that runs by it. It
-    // runs only while there is something to animate; `animated` off
+    // runs only while there is something to animate and someone to see it
+    // (a ring faded out to nothing is not `visible`, and an ancestor's
+    // invisibility counts); `animated` off
     // leaves advance() to whoever calls it, which is how a test steps
     // through time.
     property bool animated: true
@@ -319,7 +324,8 @@ Item {
 
     MouseArea {
         anchors.fill: parent
-        enabled: root.available
+        enabled: root.available && root.interactive
+        visible: enabled
         cursorShape: Qt.PointingHandCursor
         onClicked: function(mouse) {
             // The ring is round and this area is square: its corners are
