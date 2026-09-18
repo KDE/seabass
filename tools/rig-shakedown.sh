@@ -511,8 +511,12 @@ refused_while_dj_software_runs() {
     # process list -- no need to reach a usable UI state, and taskkill
     # cleans it up regardless of what it's doing when the check finishes.
     # Linux has no such install here, so it fakes the name onto /bin/sleep.
-    if [ "${OS:-}" = "Windows_NT" ]; then
+    if rig_is_windows; then
         local rekordbox_exe="${RIG_REKORDBOX_EXE:-/c/Program Files/rekordbox/rekordbox 7.2.18/rekordbox.exe}"
+        # The default path is version-pinned, so the next rekordbox update
+        # moves it -- caught here with a clear message rather than as a
+        # bash "no such file" buried inside this check's log.
+        [ -x "$rekordbox_exe" ] || { echo "rekordbox.exe not found at $rekordbox_exe -- set RIG_REKORDBOX_EXE"; return 1; }
         "$rekordbox_exe" &
         sleep 3
     else
@@ -524,7 +528,7 @@ refused_while_dj_software_runs() {
     fi
     "$build/rig_backup" "$B" "$out/backups-fb/$b.zip" --expect-refused
     local rc=$?
-    if [ "${OS:-}" = "Windows_NT" ]; then
+    if rig_is_windows; then
         # rekordboxAgent.exe is a persistent watchdog that relaunches
         # rekordbox.exe if it's killed while the agent is still up --
         # confirmed directly: a single taskkill //IM rekordbox.exe left
