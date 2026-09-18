@@ -59,9 +59,22 @@ Page {
             spacing: 20
 
             HeartIcon {
+                id: pageHeart
+                objectName: "supportHeart"
                 iconSize: Theme.iconSizeLarge
                 color: "#aa0000"
                 Layout.alignment: Qt.AlignHCenter
+                // Once every three seconds, where the button that opens
+                // this page beats about every six: there the heart is a
+                // detail at the edge of the eye, here it is what the page
+                // is about, but a real heart's rate on a page someone is
+                // reading turned out to be restless rather than alive.
+                // Same movement either way -- see Heartbeat.qml.
+                Heartbeat {
+                    objectName: "supportHeartbeat"
+                    target: pageHeart
+                    period: 3000
+                }
             }
 
             Label {

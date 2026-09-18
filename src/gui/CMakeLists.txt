@@ -52,6 +52,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/BackBreadcrumb.qml
     qml/common/BigScrollBar.qml
     qml/common/BusyOverlay.qml
+    qml/common/Heartbeat.qml
     qml/common/InfoButton.qml
     qml/common/MessageDialog.qml
     qml/common/MetadataListToolbar.qml

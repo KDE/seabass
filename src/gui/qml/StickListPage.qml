@@ -434,34 +434,12 @@ Page {
                 // A slight, infrequent heartbeat -- a soft "lub-dub"
                 // every six seconds or so, not a continuous throb -- so
                 // it reads as a subtle living detail rather than a
-                // distracting animated icon. Two small swells with a
-                // slight brightening on each, on sine curves (an organic
-                // rise and settle, no snap), the second a touch weaker,
-                // then a long rest. Drives scale and opacity directly
-                // rather than through a Behavior, which would otherwise
-                // re-trigger on every intermediate value this same
-                // animation produces.
-                SequentialAnimation {
-                    running: true
-                    loops: Animation.Infinite
-                    ParallelAnimation {
-                        NumberAnimation { target: donateButton; property: "scale"; to: 1.12; duration: 260; easing.type: Easing.OutSine }
-                        NumberAnimation { target: donateButton; property: "opacity"; to: 1.0; duration: 260; easing.type: Easing.OutSine }
-                    }
-                    ParallelAnimation {
-                        NumberAnimation { target: donateButton; property: "scale"; to: 1.0; duration: 340; easing.type: Easing.InOutSine }
-                        NumberAnimation { target: donateButton; property: "opacity"; to: 0.85; duration: 340; easing.type: Easing.InOutSine }
-                    }
-                    PauseAnimation { duration: 90 }
-                    ParallelAnimation {
-                        NumberAnimation { target: donateButton; property: "scale"; to: 1.07; duration: 220; easing.type: Easing.OutSine }
-                        NumberAnimation { target: donateButton; property: "opacity"; to: 1.0; duration: 220; easing.type: Easing.OutSine }
-                    }
-                    ParallelAnimation {
-                        NumberAnimation { target: donateButton; property: "scale"; to: 1.0; duration: 520; easing.type: Easing.InOutSine }
-                        NumberAnimation { target: donateButton; property: "opacity"; to: 0.85; duration: 520; easing.type: Easing.InOutSine }
-                    }
-                    PauseAnimation { duration: 4800 }
+                // distracting animated icon. The movement itself lives in
+                // Heartbeat.qml, shared with the page this button opens,
+                // whose heart beats the same way every three seconds.
+                Heartbeat {
+                    target: donateButton
+                    period: 6230
                 }
             }
         }

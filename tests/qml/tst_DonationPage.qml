@@ -52,8 +52,46 @@ TestCase {
         verify(findChild(page, "supportKde").text.indexOf("https://kde.org/donate") >= 0);
         compare(findChild(page, "supportThanks").text, "Thank you.");
 
+        // The heart beats, once every three seconds, with the same
+        // movement as the button that opens this page. Checked as a beat
+        // rather than as a property: an animation that is declared but not
+        // running, or one whose target never moves, would pass any check
+        // of its configuration -- so this watches the scale actually
+        // change. Sampled over a little more than one whole period, since
+        // most of a period is the rest between beats and a shorter window
+        // could land entirely inside it.
+        var heart = findChild(page, "supportHeart");
+        verify(heart !== null, "the page has its heart");
+        var seen = {};
+        for (var i = 0; i < 66; ++i) {
+            seen[heart.scale.toFixed(3)] = true;
+            wait(50);
+        }
+        verify(Object.keys(seen).length > 3,
+               "the heart moves over one beat and its rest, and does not sit still: "
+               + Object.keys(seen).join(" "));
+        // And it swells rather than merely drifting: the beat's first
+        // swell is 1.12, so something above 1.05 has to have been seen.
+        var swelled = false;
+        for (var key in seen) {
+            if (parseFloat(key) > 1.05) {
+                swelled = true;
+            }
+        }
+        verify(swelled, "the heart swells: " + Object.keys(seen).join(" "));
 
         if (screenshotDir && screenshotDir.length > 0) {
+            // The heart is stopped at rest first. Grabbed mid-beat it
+            // lands anywhere between scale 1.0 at opacity 0.85 and 1.12 at
+            // 1.0, differently on every run -- and a shot caught in the
+            // quiet part reads as a washed-out heart, which is a colour
+            // bug someone would then go looking for and never find.
+            var beat = findChild(page, "supportHeartbeat");
+            verify(beat !== null, "the heartbeat must be reachable to be stopped for the shot");
+            beat.stop();
+            heart.scale = 1.0;
+            heart.opacity = 1.0;
+            waitForRendering(page);
             grabImage(page).save(screenshotDir + "/donation-page.png");
         }
     }
