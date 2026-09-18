@@ -375,8 +375,13 @@ Page {
             }
             Item { Layout.fillWidth: true }
             Label {
-                visible: consistencyController.stagedCount > 0
-                text: consistencyController.stagedCount + " staged, not saved yet"
+                objectName: "stagedIssuesNote"
+                // This check's own staged work, not the page's total: the
+                // note sat beside the repair buttons and counted staged
+                // cue removals too, so removing 29 stray cues put "29
+                // staged" next to a button about missing files.
+                visible: consistencyController.stagedIssueCount > 0
+                text: consistencyController.stagedIssueCount + " staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
@@ -411,6 +416,12 @@ Page {
                     : "I found " + consistencyController.junkCues.count + " memory cue(s) sitting at 0:00, likely accidental"
             }
             Item { Layout.fillWidth: true }
+            Label {
+                objectName: "stagedJunkCuesNote"
+                visible: consistencyController.stagedJunkCueCount > 0
+                text: consistencyController.stagedJunkCueCount + " staged, not saved yet"
+                color: Theme.warnText
+            }
             Button {
                 visible: consistencyController.junkCues.count > 0
                 text: "Remove All"

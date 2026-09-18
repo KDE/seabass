@@ -230,6 +230,11 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(bool writing READ writing NOTIFY writingChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
     Q_PROPERTY(int stagedCount READ stagedCount NOTIFY issuesChanged)
+    // Per check, because the page shows them per check: one number beside
+    // the buttons that staged it. The total above is what the Save button
+    // and the leave guard ask for.
+    Q_PROPERTY(int stagedIssueCount READ stagedIssueCount NOTIFY issuesChanged)
+    Q_PROPERTY(int stagedJunkCueCount READ stagedJunkCueCount NOTIFY issuesChanged)
     Q_PROPERTY(int scanCurrent READ scanCurrent NOTIFY scanProgressChanged)
     Q_PROPERTY(int scanTotal READ scanTotal NOTIFY scanProgressChanged)
     Q_PROPERTY(QString scanningFormat READ scanningFormat NOTIFY scanningFormatChanged)
@@ -269,6 +274,8 @@ public:
     bool writing() const;
     bool canUndo() const;
     int stagedCount() const { return static_cast<int>(m_stagedIssues.size() + m_stagedJunk.size()); }
+    int stagedIssueCount() const { return static_cast<int>(m_stagedIssues.size()); }
+    int stagedJunkCueCount() const { return static_cast<int>(m_stagedJunk.size()); }
     int scanCurrent() const { return m_scanCurrent; }
     int scanTotal() const { return m_scanTotal; }
     // "rekordbox"/"engine"/"onelibrary" while that format's scan is
