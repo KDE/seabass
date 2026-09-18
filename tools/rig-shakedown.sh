@@ -148,6 +148,16 @@ unchanged_catalogs() {  # stick -- against the baseline taken after the restores
     local checked=0
     local bad=0
     while read -r sum file; do
+        # sha256sum's own -c mode understands its "*" binary-mode marker,
+        # but this hand-rolled parse doesn't -- and GNU coreutils' default
+        # differs by platform: no marker on Linux, "*"-prefixed on this
+        # MSYS2/Windows build (confirmed directly: `sha256sum somefile`
+        # here prints "<hash> *somefile"). Left in, every comparison below
+        # tests a path that can never exist, so every catalog file reads
+        # MISSING regardless of its real state -- confirmed by reproducing
+        # `catalogs()`'s own find/sha256sum by hand and getting real,
+        # existing files, right after this check reported them all gone.
+        file="${file#\*}"
         if [ ! -e "$file" ]; then
             case "$file" in
                 *-wal|*-journal|*-shm)
@@ -494,15 +504,45 @@ metadata_between_sticks() {
 }
 
 refused_while_dj_software_runs() {
-    mkdir -p "$out/fake"
-    cp /bin/sleep "$out/fake/rekordbox"
-    "$out/fake/rekordbox" 120 &
-    local fake=$!
-    sleep 1
+    local fake=""
+    # Windows: the detector (rekordbox_process_detector.cpp) matches only
+    # on the running process's exact image name ("rekordbox.exe"), so the
+    # real, already-installed app satisfies it just by existing in the
+    # process list -- no need to reach a usable UI state, and taskkill
+    # cleans it up regardless of what it's doing when the check finishes.
+    # Linux has no such install here, so it fakes the name onto /bin/sleep.
+    if [ "${OS:-}" = "Windows_NT" ]; then
+        local rekordbox_exe="${RIG_REKORDBOX_EXE:-/c/Program Files/rekordbox/rekordbox 7.2.18/rekordbox.exe}"
+        "$rekordbox_exe" &
+        sleep 3
+    else
+        mkdir -p "$out/fake"
+        cp /bin/sleep "$out/fake/rekordbox"
+        "$out/fake/rekordbox" 120 &
+        fake=$!
+        sleep 1
+    fi
     "$build/rig_backup" "$B" "$out/backups-fb/$b.zip" --expect-refused
     local rc=$?
-    kill "$fake" 2>/dev/null
-    wait "$fake" 2>/dev/null
+    if [ "${OS:-}" = "Windows_NT" ]; then
+        # rekordboxAgent.exe is a persistent watchdog that relaunches
+        # rekordbox.exe if it's killed while the agent is still up --
+        # confirmed directly: a single taskkill //IM rekordbox.exe left
+        # it detected as running for 11+ seconds after, failing five
+        # later checks that never got a real answer either way. Kill the
+        # agent first so it stops respawning, then retry the main exe
+        # until tasklist actually shows it gone rather than trusting one
+        # taskkill call.
+        taskkill //F //IM rekordboxAgent.exe >/dev/null 2>&1 || true
+        for _ in 1 2 3 4 5; do
+            taskkill //F //IM rekordbox.exe >/dev/null 2>&1 || true
+            sleep 1
+            tasklist //FI "IMAGENAME eq rekordbox.exe" 2>/dev/null | grep -qi rekordbox.exe || break
+        done
+    else
+        kill "$fake" 2>/dev/null
+        wait "$fake" 2>/dev/null
+    fi
     return $rc
 }
 
