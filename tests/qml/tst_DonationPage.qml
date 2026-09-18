@@ -34,10 +34,24 @@ TestCase {
         var kind = findChild(page, "supportKindWords").text;
         verify(kind.indexOf("mailto:sebas@kde.org") >= 0 && kind.indexOf(">sebas@kde.org<") >= 0, kind);
         verify(findChild(page, "supportCosts").text.indexOf("isn't free for me") >= 0);
-        verify(findChild(page, "supportDonate").text.indexOf("kde.org/donate") >= 0,
-               "the donation link must be a link: " + findChild(page, "supportDonate").text);
+        // Both asks in this sentence are links, and each goes where it
+        // says. This check used to look for "kde.org/donate" here, which
+        // is the NEXT sentence's link -- so it passed while the word
+        // Patreon pointed at the KDE donation page and "one-time
+        // donation" was plain text with nowhere to click. The page
+        // offered the same third-party link twice and neither of the two
+        // things it asks for.
+        var donate = findChild(page, "supportDonate").text;
+        verify(donate.indexOf("<a href=\"https://paypal.me/sjkugler\">one-time donation</a>") >= 0,
+               "the one-time ask links to PayPal: " + donate);
+        verify(donate.indexOf("<a href=\"https://www.patreon.com/cw/SebastianKugler\">Patreon</a>") >= 0,
+               "and the regular ask links to Patreon: " + donate);
+        verify(donate.indexOf("kde.org") < 0,
+               "neither of them is the KDE donation page, which is the sentence below: " + donate);
+        // Which is still there, and still its own ask.
         verify(findChild(page, "supportKde").text.indexOf("https://kde.org/donate") >= 0);
         compare(findChild(page, "supportThanks").text, "Thank you.");
+
 
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(page).save(screenshotDir + "/donation-page.png");

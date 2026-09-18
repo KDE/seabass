@@ -112,8 +112,16 @@ Page {
                 objectName: "supportDonate"
                 textFormat: Text.StyledText
                 linkColor: Theme.accent
-                text: "You can either send a one-time donation or become a regular supporter of Seabass over "
-                    + "on <a href=\"https://kde.org/donate/\">Patreon</a>."
+                // Both halves of the sentence are links, and each goes
+                // where it says: the one-time ask to PayPal, the regular
+                // one to Patreon. "One-time donation" used to be plain
+                // text with nowhere to click, and the word Patreon linked
+                // to kde.org/donate -- which is the sentence below's link,
+                // so the page offered the KDE donation page twice and the
+                // two things it actually asks for not at all.
+                text: "You can either send a <a href=\"https://paypal.me/sjkugler\">one-time donation</a> or "
+                    + "become a regular supporter of Seabass over on "
+                    + "<a href=\"https://www.patreon.com/cw/SebastianKugler\">Patreon</a>."
                 wrapMode: Text.WordWrap
                 font.pointSize: Theme.baseFontPointSize * 1.1
                 Layout.fillWidth: true
