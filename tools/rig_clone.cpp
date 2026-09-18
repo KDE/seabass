@@ -56,6 +56,7 @@
 #include "application/use_cases/clone_stick.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
+#include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "rig_catalog.hpp"
@@ -99,7 +100,11 @@ TreeSnapshot snapshot(const fs::path &root)
         const bool isFile = it->is_regular_file(statError);
         const std::uintmax_t size = isFile ? it->file_size(statError) : 0;
         const auto mtime = it->last_write_time(statError).time_since_epoch().count();
-        tree[relative.generic_string()] = {size, static_cast<std::int64_t>(mtime)};
+        // Not generic_string(): on Windows that narrows through the
+        // process's ANSI code page, which throws for a real file or folder
+        // name outside it -- found against a stray real library, not a
+        // synthetic one. UTF-8 has no such gap.
+        tree[infrastructure::stick_backup::pathToUtf8(relative)] = {size, static_cast<std::int64_t>(mtime)};
     }
     return tree;
 }
@@ -139,7 +144,7 @@ int main(int argc, char **argv)
     try {
         application::CloneStickOptions options;
         options.backup.stickRoot = source;
-        options.backup.stickLabel = source.filename().string();
+        options.backup.stickLabel = rig::stickLabelFor(source);
         options.backup.archivePath = backupDir / (options.backup.stickLabel + ".zip");
         options.backup.stickIdentifier =
             infrastructure::system::readStickHardwareInfo(source.string(), options.backup.stickLabel).stickIdentifier;

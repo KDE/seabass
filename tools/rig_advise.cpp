@@ -82,7 +82,7 @@ Facts gather(const fs::path &root, const std::vector<application::StickBackupDes
     namespace sb = infrastructure::stick_backup;
     Facts facts;
     facts.root = root;
-    facts.label = root.filename().string();
+    facts.label = rig::stickLabelFor(root);
     const auto hardware = infrastructure::system::readStickHardwareInfo(root.string(), facts.label);
     facts.identifier = hardware.stickIdentifier;
     facts.freeBytes = hardware.freeBytes;

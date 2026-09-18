@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <cctype>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -31,6 +32,31 @@
 
 namespace seabass::rig
 {
+
+// The label the rig tools use to tell two test sticks apart: the mount
+// point's own final path component, which on Linux/macOS is the name
+// udev/DiskArbitration gave the auto-mounted volume (RIG_STICK_A/B's
+// default paths end in it) and so happens to equal the real label there.
+// A bare Windows drive root ("E:\") has no such component at all --
+// filename() is only ever non-empty below the root -- so this returned
+// empty on Windows for every caller: rig_advise's "--expect e=..." never
+// matched (every stick read back as "no such stick"), and rig_clone named
+// the archive it makes from an empty label plus ".zip", i.e. a file
+// literally called ".zip". root_name() ("E:") still holds the drive
+// letter; lower-cased, it is exactly what the rig's own RIG_STICK_A=/e
+// convention already expects.
+inline std::string stickLabelFor(const std::filesystem::path &root)
+{
+    std::string label = root.filename().string();
+    if (!label.empty()) {
+        return label;
+    }
+    const std::string rootName = root.root_name().string();
+    if (!rootName.empty() && std::isalpha(static_cast<unsigned char>(rootName.front()))) {
+        return std::string(1, static_cast<char>(std::tolower(static_cast<unsigned char>(rootName.front()))));
+    }
+    return label;
+}
 
 // The stick's library fingerprint, for information: rekordbox and Engine
 // tracks together, as the app fingerprints them -- but without filling in

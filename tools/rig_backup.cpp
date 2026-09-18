@@ -180,7 +180,7 @@ int main(int argc, char **argv)
         application::BackupStickOptions options;
         options.stickRoot = root;
         options.archivePath = archive;
-        options.stickLabel = root.filename().string();
+        options.stickLabel = rig::stickLabelFor(root);
         options.stickIdentifier = infrastructure::system::readStickHardwareInfo(root.string(), options.stickLabel).stickIdentifier;
         std::cout << "stick " << options.stickLabel << " (" << options.stickIdentifier << ") -> " << archive.string() << "\n";
 
