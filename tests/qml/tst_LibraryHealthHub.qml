@@ -52,6 +52,24 @@ TestCase {
         return null;
     }
 
+    // The repair takes the stick away and brings it back on purpose, and
+    // the window asks the page in front whether that is expected before it
+    // says "USB stick removed" -- a scary message to get for the middle of
+    // a job the user just pressed for. The repair below finds no device
+    // behind this made-up path and gives up straight away, which is all
+    // this needs: the flag has to be up for as long as it runs.
+    function test_theStickIsNotAnnouncedAsGoneWhileItIsBeingRepaired() {
+        var page = createTemporaryObject(pageComponent, testCase);
+        tryCompare(page.consistencyController, "busy", false);
+        compare(page.stickAwayExpected, false);
+        page.consistencyController.repairStickFilesystem();
+        // Set before the worker starts and nothing can run a queued slot
+        // inside this call, so this is the state during the repair.
+        compare(page.stickAwayExpected, true);
+        tryCompare(page.consistencyController, "repairingFilesystem", false);
+        compare(page.stickAwayExpected, false);
+    }
+
     function test_aCleanCheckStillGetsACard() {
         // "Nothing wrong here" is a result. A page that only lists problems
         // cannot distinguish a clean library from a check that never ran.

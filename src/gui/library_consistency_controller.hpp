@@ -369,6 +369,12 @@ signals:
     void issuesChanged();
     void artworkChanged();
     void stickHealthChanged();
+    // The repair is over and this is how it went. A property the page
+    // could poll would not do: "it worked" and "it did not" are the whole
+    // point of pressing the button, and the user who pressed it is
+    // already having a bad day -- the page says it in a dialog, once, and
+    // needs an edge to do that on.
+    void filesystemRepairFinished(bool repaired, bool declined, const QString &message);
     void canUndoChanged();
 
 private:

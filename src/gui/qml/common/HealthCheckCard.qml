@@ -80,6 +80,17 @@ Rectangle {
                 font.pointSize: Theme.fontMedium
             }
             Item { Layout.fillWidth: true }
+            // A check that passed says so with a mark, not only by the
+            // absence of a warning stripe: a page of cards where nothing
+            // is wrong should read as a row of green ticks at a glance,
+            // rather than as a page where the checks may not have run.
+            SeabassIcon {
+                objectName: "checkPassedMark"
+                visible: card.ok && !card.failed && !card.running
+                iconName: "checkmark"
+                size: Theme.iconSizeSmall
+                color: Theme.good
+            }
             BusyIndicator {
                 running: card.running
                 visible: card.running

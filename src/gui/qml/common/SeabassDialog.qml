@@ -35,7 +35,12 @@ Dialog {
         Info,
         Warning,
         Error,
-        Question
+        Question,
+        // "It worked" is a result too, and the one case where a dialog is
+        // worth putting in someone's way only to reassure them: a repair
+        // that ran while the stick vanished and came back needs an
+        // unambiguous ending.
+        Success
     }
 
     property int severity: SeabassDialog.Info
@@ -61,6 +66,7 @@ Dialog {
         case SeabassDialog.Warning: return Theme.warnIcon;
         case SeabassDialog.Error: return Theme.danger;
         case SeabassDialog.Question: return Theme.accent;
+        case SeabassDialog.Success: return Theme.good;
         default: return Theme.info;
         }
     }
@@ -69,6 +75,7 @@ Dialog {
         case SeabassDialog.Warning: return "!";
         case SeabassDialog.Error: return "✕";
         case SeabassDialog.Question: return "?";
+        case SeabassDialog.Success: return "\u2713";
         default: return "i";
         }
     }

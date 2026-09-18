@@ -949,10 +949,12 @@ void LibraryConsistencyController::onFilesystemRepairFinished()
             .string();
     m_stickReadOnly = infrastructure::media::isMountedReadOnly(stickRoot);
     emit stickHealthChanged();
+    const bool worked = result.repaired && !m_stickReadOnly;
+    emit filesystemRepairFinished(worked, result.declined, m_filesystemMessage);
     if (result.declined) {
         return;  // the user said no; not a fault to report as one
     }
-    if (result.repaired && !m_stickReadOnly) {
+    if (worked) {
         setStatusMessage(m_filesystemMessage);
         // Everything found before was found on a stick that could not be
         // written to; read it again now that it can.

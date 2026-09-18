@@ -61,6 +61,43 @@ Page {
                 internal.hasScanned = true;
             }
         }
+        // Both outcomes get said, in the same place, in so many words.
+        // Someone who just watched a stick disappear and come back is in
+        // no state to work out from a green line whether it worked.
+        function onFilesystemRepairFinished(repaired, declined, message) {
+            if (declined) {
+                repairOutcomeDialog.severity = SeabassDialog.Info;
+                repairOutcomeDialog.title = "Nothing Was Checked";
+                repairOutcomeDialog.headline = "The permission prompt was declined, so the stick was left exactly "
+                    + "as it was.";
+                repairOutcomeDialog.detailText = "Press Check and Repair again when you are ready -- the system "
+                    + "asks for your password because the check works on the whole drive.";
+            } else if (repaired) {
+                repairOutcomeDialog.severity = SeabassDialog.Success;
+                repairOutcomeDialog.title = "The Stick Was Repaired";
+                repairOutcomeDialog.headline = "The filesystem was checked and repaired, and the stick takes "
+                    + "writes again.";
+                repairOutcomeDialog.detailText = "The checks on this page have been run again on the repaired "
+                    + "stick, so what they say now is what is really there. A check can find files it could not "
+                    + "put back where they belong -- worth a look through your playlists before the next gig.";
+            } else {
+                repairOutcomeDialog.severity = SeabassDialog.Error;
+                repairOutcomeDialog.title = "The Stick Was Not Repaired";
+                repairOutcomeDialog.headline = message.length > 0 ? message
+                    : "The check could not repair this stick's filesystem.";
+                repairOutcomeDialog.detailText = "The stick still refuses writes, so nothing on this page can be "
+                    + "fixed while it is like this. Copy what is on it first -- Backups can still read it -- and "
+                    + "then a fresh format is the way back.";
+            }
+            repairOutcomeDialog.open();
+        }
+    }
+
+    MessageDialog {
+        id: repairOutcomeDialog
+        objectName: "repairOutcomeDialog"
+        showReject: false
+        acceptText: "OK"
     }
 
     // --- what each check found, as a sentence -------------------------
@@ -106,6 +143,11 @@ Page {
     // Every other card's action writes to the stick, so a read-only one
     // disables them all rather than letting a press fail a thousand times
     // over. The offer stays on screen, greyed, with the reason on hover.
+    // Read by Main while this page is in front: the repair below takes
+    // the stick away and brings it back on purpose (unmount, check,
+    // mount), so the window must not announce it as removed.
+    readonly property bool stickAwayExpected: healthController.repairingFilesystem
+
     readonly property string blockedByReadOnly: healthController.stickReadOnly
         ? "This stick is read-only until its filesystem has been checked -- see the card above."
         : ""
@@ -117,7 +159,8 @@ Page {
         if (healthController.stickReadOnly) {
             return "This stick is mounted read-only, so nothing can be written to it. That is what a stick pulled "
                 + "out mid-write leaves behind: the filesystem is damaged and the system refuses to write to it "
-                + "until it has been checked.";
+                + "until it has been checked. Back it up before the check runs -- reading still works, and a "
+                + "copy made now is the last one taken before anything moves.";
         }
         if (healthController.filesystemMessage.length > 0) {
             return healthController.filesystemMessage;

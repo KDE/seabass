@@ -191,7 +191,22 @@ ApplicationWindow {
         return "";
     }
 
+    // A page that is itself the reason the stick went away: the
+    // filesystem repair unmounts, checks and remounts it, so the row
+    // disappears for a few seconds by design. "USB stick removed" is the
+    // wrong thing to say to someone who just pressed Check and Repair --
+    // it reads as a failure, and it is the expected middle of a job they
+    // asked for.
+    function currentPageExpectsStickAway() {
+        var page = stackView.currentItem;
+        return page !== null && page.stickAwayExpected === true;
+    }
+
     function checkCurrentPageStick() {
+        if (window.currentPageExpectsStickAway()) {
+            stickGoneDialog.close();
+            return;
+        }
         // One dialog at a time. A page mid-edit gets StickRemovedDialog,
         // which offers to discard the staged changes and waits for the
         // same stick to come back; this one would be a second modal over
