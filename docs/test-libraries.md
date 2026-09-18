@@ -85,6 +85,27 @@ Files carry what a file can carry: tags, formats, sample rates, damage.
    decompress (**283 rows on the real stick**), a hot cue at the same slot but
    a different position in two catalogs, a cue at a negative position.
 
+`tools/library-build/plant_defects.py` does step 4. What it plants, and what
+the Engine schema allows, verified against the committed fixture:
+
+| Defect | How | Effect, measured |
+|---|---|---|
+| unreadable sample rate | `PerformanceData.trackData` set to three bytes | warnings 329 → 334 |
+| dangling row | path/filename suffixed `.missing` | row survives, file does not |
+| streaming row | `streamingSource = 'TIDAL'`, path into a cache | must never be treated as a local file |
+| missing artwork | `albumArtId` pointed at a row that is not there | Engine's own `image://fileart` bug |
+| same file, two paths | second row with a trailing space on the path | tracks 1564 → 1569, and duplicate detection reports it |
+
+Two things the schema settles, found by trying:
+
+- **`Track.path` is UNIQUE**, so one file listed twice under the *same* path is
+  impossible in Engine. The real form of that defect is one file under two
+  *spellings* — `export.pdb` pads paths with trailing spaces, so
+  `"/Contents/a.mp3   "` and `"/Contents/a.mp3"` are one file and two keys.
+  That is the case `path_key_test` calls "THE ONE THAT BIT".
+- **`(originDatabaseUuid, originTrackId)` is UNIQUE** too, so a copied row has
+  to arrive as a locally-added track rather than as the same import twice.
+
 Files under `unreferenced/` are deliberately left out of the XML: "audio no
 catalog mentions" is a fixture shape in its own right.
 
