@@ -235,6 +235,24 @@ Page {
         return text;
     }
 
+    readonly property string importPromptSummary: {
+        if (root.scanning) {
+            return "Checking whether a player will offer to import the rekordbox library...";
+        }
+        if (!root.scanned) {
+            return "Not checked yet.";
+        }
+        if (!healthController.playerWillOfferImport) {
+            return "A player will leave this stick's Engine library alone: it already knows the rekordbox "
+                + "library beside it.";
+        }
+        return "On the next insert, a Denon player will ask whether to update the Engine library from the "
+            + "rekordbox one on this stick, and say that existing playlist and track metadata will be "
+            + "overwritten. That is what it means: accepting replaces the Engine side, cues, playlists and "
+            + "cover art included, with whatever the rekordbox library holds. Seabass can tell Engine the "
+            + "library is already imported, and the question stops being asked.";
+    }
+
     readonly property int sampleRateMissingCount: healthController.sampleRateMissingCount
     readonly property int sampleRateFixableCount: healthController.sampleRateFixableCount
 
@@ -382,6 +400,20 @@ Page {
                 ok: root.junkCueCount === 0
                 actionLabel: root.junkCueCount > 0 ? "Review these cues" : ""
                 onActionRequested: root.detailRequested("junkcues")
+            }
+
+            HealthCheckCard {
+                objectName: "importPromptCard"
+                fixableCount: healthController.playerWillOfferImport ? 1 : 0
+                foundCount: healthController.playerWillOfferImport ? 1 : 0
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "The player's import prompt"
+                summary: root.importPromptSummary
+                running: root.scanning
+                ok: !healthController.playerWillOfferImport
+                actionLabel: healthController.playerWillOfferImport ? "Review this" : ""
+                onActionRequested: root.detailRequested("import")
             }
 
             HealthCheckCard {

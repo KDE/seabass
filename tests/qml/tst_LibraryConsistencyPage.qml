@@ -36,6 +36,10 @@ TestCase {
             property int sampleRateMissingCount: 0
             property int sampleRateFixableCount: 0
             property bool sampleRateFillStaged: false
+            property bool playerWillOfferImport: false
+            property bool importMarkStaged: false
+            function markRekordboxImported() { importMarkStaged = true; }
+            function unstageRekordboxImportMark() { importMarkStaged = false; }
             function fillSampleRates() { sampleRateFillStaged = true; }
             function unstageSampleRateFill() { sampleRateFillStaged = false; }
             property int unstagedJunkCueCount: 0
@@ -181,6 +185,39 @@ TestCase {
         compare(button.text, "Unstage", "the same button takes it back");
         button.clicked();
         compare(controller.sampleRateFillStaged, false);
+
+        page.destroy();
+        wait(0);
+    }
+
+    // The player's import prompt: the one check here that is about what a
+    // Denon player will do next time the stick is in it, and the only one
+    // whose "fix" is telling another program something rather than
+    // changing what is on the stick.
+    function test_theImportPromptIsSaidAndCanBeStagedAway() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        var summary = findChild(page, "importPromptSummary");
+        var button = findChild(page, "markImportedButton");
+        var note = findChild(page, "stagedImportMarkNote");
+        verify(summary !== null && button !== null && note !== null);
+
+        // Nothing to say when the player will leave the library alone.
+        verify(summary.text.indexOf("leave the Engine library alone") >= 0, summary.text);
+        compare(button.visible, false, "and nothing to offer");
+
+        controller.playerWillOfferImport = true;
+        verify(summary.text.indexOf("overwritten") >= 0,
+               "what accepting the prompt costs belongs in the sentence: " + summary.text);
+        compare(button.visible, true);
+        compare(note.visible, false);
+
+        button.clicked();
+        compare(controller.importMarkStaged, true, "the button stages");
+        compare(note.visible, true, "and says so beside itself");
+        compare(button.text, "Unstage");
+        button.clicked();
+        compare(controller.importMarkStaged, false);
 
         page.destroy();
         wait(0);

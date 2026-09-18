@@ -359,9 +359,10 @@ Page {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: Theme.textMuted
-            text: "Four checks on this stick: catalog rows whose audio file is missing, cues sitting at "
-                + "0:00, Engine tracks that do not say what sample rate they are, and cover art a player cannot "
-                + "show. Nothing is written until you press Save."
+            text: "Five checks on this stick: catalog rows whose audio file is missing, cues sitting at 0:00, "
+                + "whether a player will offer to overwrite the Engine library with the rekordbox one, Engine "
+                + "tracks that do not say what sample rate they are, and cover art a player cannot show. "
+                + "Nothing is written until you press Save."
         }
 
         Subtitle { text: "Missing files" }
@@ -405,6 +406,52 @@ Page {
                     ? "Every safe repair is staged already. Press Save to write them."
                     : "Repair every entry with an exact healthy match. Conflicts are left for you."
                 onClicked: confirmRepairAllDialog.open()
+            }
+        }
+
+        Subtitle {
+            objectName: "importPromptSubtitle"
+            Layout.topMargin: 12
+            text: "The player's import prompt"
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Label {
+                objectName: "importPromptSummary"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: consistencyController.playerWillOfferImport
+                    ? "A player will ask whether to update the Engine library from the rekordbox library on this "
+                      + "stick, warning that existing playlist and track metadata will be overwritten. Accepting "
+                      + "replaces the Engine side, cues and cover art included."
+                    : "A player will leave the Engine library alone: it already knows the rekordbox library "
+                      + "beside it."
+            }
+            Label {
+                objectName: "stagedImportMarkNote"
+                visible: consistencyController.importMarkStaged
+                text: "staged, not saved yet"
+                color: Theme.warnText
+            }
+            Button {
+                objectName: "markImportedButton"
+                visible: consistencyController.playerWillOfferImport || consistencyController.importMarkStaged
+                text: consistencyController.importMarkStaged ? "Unstage" : "Mark As Already Imported"
+                enabled: !consistencyController.busy && !consistencyController.writing
+                    && !consistencyController.stickReadOnly
+                ToolTip.visible: hovered
+                ToolTip.text: consistencyController.stickReadOnly
+                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
+                    : consistencyController.importMarkStaged
+                    ? "Take this back out of the changes to save"
+                    : "Writes the rekordbox library's own sequence number into the Engine library, which is what "
+                      + "the player compares. Nothing else changes, and importing stays available on the player "
+                      + "if you ever do want it."
+                onClicked: consistencyController.importMarkStaged
+                    ? consistencyController.unstageRekordboxImportMark()
+                    : consistencyController.markRekordboxImported()
             }
         }
 

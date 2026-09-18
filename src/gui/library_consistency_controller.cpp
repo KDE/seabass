@@ -37,6 +37,7 @@
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/artwork_rescue_sources.hpp"
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
+#include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #endif
@@ -535,6 +536,11 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     // counts on screen for as long as the page lived.
     m_artwork = {};
     m_sampleRates = {};
+    // A sqlite row and 24 bytes of a pdb header: cheap enough to read
+    // with the scan rather than behind its own button.
+    m_importState = infrastructure::engine::readRekordboxImportState(m_enginePath.toStdString(),
+                                                                     m_rekordboxPath.toStdString());
+    emit importStateChanged();
     // The staged fill is NOT cleared here, for the same reason the staged
     // artwork is not: a rescan re-reads the library, it does not unstage
     // what someone asked for. Clearing the flag while the change stayed
@@ -771,6 +777,13 @@ void LibraryConsistencyController::attachSession()
                     scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
                     return;
                 }
+                if (changeId == MarkRekordboxImportedChange::idFor()) {
+                    m_importMarkStaged = false;
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit importStateChanged();
+                    return;
+                }
                 if (auto staged = m_stagedSampleRates.find(changeId); staged != m_stagedSampleRates.end()) {
                     // Counted like the cover art: the numbers come from
                     // the database this just wrote, so they are re-read
@@ -843,6 +856,8 @@ void LibraryConsistencyController::attachSession()
                 m_stagedArtwork.clear();
                 m_stagedSampleRates.clear();
                 m_sampleRateFillStaged = false;
+                m_importMarkStaged = false;
+                emit importStateChanged();
                 emit sampleRatesChanged();
                 m_model.clearStaged();
                 m_junkCueModel.clearStaged();
@@ -1186,6 +1201,39 @@ void LibraryConsistencyController::fillSampleRates()
         QStringLiteral("Staged the sample rate for %1 track(s). Press Save to write it to the stick.").arg(count));
 }
 
+void LibraryConsistencyController::markRekordboxImported()
+{
+    if (m_busy || m_importMarkStaged || !m_importState.playerWillOfferImport()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    if (!m_session->stage(
+            std::make_unique<MarkRekordboxImportedChange>(m_enginePath, m_importState.librarySequence))) {
+        return;  // the session reported the refusal; the page shows it
+    }
+    m_importMarkStaged = true;
+    emit importStateChanged();
+    setStagedStatusMessage(
+        QStringLiteral("Staged marking this stick's rekordbox library as imported. Press Save to write it."));
+}
+
+void LibraryConsistencyController::unstageRekordboxImportMark()
+{
+    if (!m_importMarkStaged) {
+        return;
+    }
+    if (m_session) {
+        m_session->unstage(MarkRekordboxImportedChange::idFor());
+    }
+    m_importMarkStaged = false;
+    emit importStateChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 void LibraryConsistencyController::unstageSampleRateFill()
 {
     if (!m_sampleRateFillStaged) {
@@ -1313,7 +1361,7 @@ void LibraryConsistencyController::setStagedStatusMessage(const QString &message
 void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
-        && !m_sampleRateFillStaged) {
+        && !m_sampleRateFillStaged && !m_importMarkStaged) {
         setStatusMessage({});
     }
 }

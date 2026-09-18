@@ -352,6 +352,7 @@ add_library(seabass_core STATIC
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
     src/infrastructure/engine/engine_artwork.cpp
     src/infrastructure/engine/engine_sample_rates.cpp
+    src/infrastructure/engine/engine_import_state.cpp
     src/infrastructure/engine/rekordbox_key_parser.cpp
     src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
@@ -682,6 +683,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/repair_artwork_change.cpp
         src/gui/edit/changes/fill_sample_rate_change.hpp
         src/gui/edit/changes/fill_sample_rate_change.cpp
+        src/gui/edit/changes/mark_rekordbox_imported_change.hpp
+        src/gui/edit/changes/mark_rekordbox_imported_change.cpp
         src/gui/edit/changes/repair_issue_change.hpp
         src/gui/edit/changes/repair_issue_change.cpp
         src/gui/edit/changes/sync_plan_change.hpp
@@ -1053,6 +1056,15 @@ target_include_directories(filesystem_health_test PRIVATE src tests)
 add_test(NAME filesystem_health_test COMMAND filesystem_health_test)
 
 # Engine rows that do not say their sample rate, and the files that do.
+# The import prompt a Denon player raises, and the counter behind it.
+add_executable(engine_import_state_test
+    src/infrastructure/engine/engine_import_state.cpp
+    tests/engine_import_state_test.cpp
+)
+target_include_directories(engine_import_state_test PRIVATE src tests)
+target_link_libraries(engine_import_state_test PRIVATE DjInterop SQLite::SQLite3)
+add_test(NAME engine_import_state_test COMMAND engine_import_state_test)
+
 add_executable(engine_sample_rates_test
     src/infrastructure/engine/engine_sample_rates.cpp
     tests/engine_sample_rates_test.cpp

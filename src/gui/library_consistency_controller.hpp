@@ -23,6 +23,7 @@
 #include <set>
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/engine_sample_rates.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/qt_progress_reporter.hpp"
@@ -289,6 +290,13 @@ class LibraryConsistencyController : public QObject
     // without it, a library that would not open showed the same green
     // "every track says what it is" as a healthy one.
     Q_PROPERTY(QString sampleRateError READ sampleRateError NOTIFY sampleRatesChanged)
+    // Whether an Engine player will offer to import the rekordbox library
+    // over the Engine side on the next insert, and whether the fix for
+    // that is staged. See infrastructure/engine/engine_import_state.hpp:
+    // accepting that offer overwrites the Engine metadata this app
+    // repairs, so it is worth saying before the stick is in the player.
+    Q_PROPERTY(bool playerWillOfferImport READ playerWillOfferImport NOTIFY importStateChanged)
+    Q_PROPERTY(bool importMarkStaged READ importMarkStaged NOTIFY importStateChanged)
     Q_PROPERTY(bool artworkRepairStaged READ artworkRepairStaged NOTIFY artworkChanged)
     // Backs the Playlist picker in JunkCuePage.qml -- same shape/
     // convention as SyncController's own playlistNames/
@@ -365,6 +373,8 @@ public:
     int sampleRateFixableCount() const { return m_sampleRates.fixable(); }
     bool sampleRateFillStaged() const { return m_sampleRateFillStaged; }
     QString sampleRateError() const { return QString::fromStdString(m_sampleRates.error); }
+    bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
+    bool importMarkStaged() const { return m_importMarkStaged; }
 
     // Scans every format actually present: rekordbox if rekordboxPath is
     // non-empty, engine if enginePath is non-empty, onelibrary if
@@ -403,6 +413,9 @@ public:
     // only, like every other fix here: Save writes it.
     Q_INVOKABLE void fillSampleRates();
     Q_INVOKABLE void unstageSampleRateFill();
+    // Stages telling Engine the rekordbox library is already imported.
+    Q_INVOKABLE void markRekordboxImported();
+    Q_INVOKABLE void unstageRekordboxImportMark();
     Q_INVOKABLE void unstageArtworkRepair();
 
     // Stages rewriting the track's full cue list with the offending 0:00
@@ -434,6 +447,7 @@ signals:
     void issuesChanged();
     void artworkChanged();
     void sampleRatesChanged();
+    void importStateChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
     // could poll would not do: "it worked" and "it did not" are the whole
@@ -497,6 +511,8 @@ private:
     infrastructure::engine::SampleRateAudit m_sampleRates;
     std::set<QString> m_stagedSampleRates;
     bool m_sampleRateFillStaged = false;
+    infrastructure::engine::RekordboxImportState m_importState;
+    bool m_importMarkStaged = false;
     // A rekordbox repair's OneLibrary mirror can stale another listed
     // issue: re-scan once the save that applied one has finished.
     bool m_rescanAfterSave = false;
