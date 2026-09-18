@@ -429,4 +429,15 @@ QtObject {
     // wedge fade and MatchingPage.qml's row fade for the first
     // uses.
     readonly property int shortTransitionDuration: 120
+
+    // Long enough to be followed by the eye rather than merely smoothed:
+    // for a thing arriving or leaving that the user should SEE arrive,
+    // such as a stick appearing in the list when it is plugged in. A
+    // third of a second reads as a movement; the 120 above reads as a
+    // screen that changed while you blinked.
+    readonly property int arrivalTransitionDuration: 320
+    // Leaving is a touch quicker than arriving. A thing going away has
+    // nothing left to look at once it has gone, and matching the two
+    // makes removal feel like the list is hesitating.
+    readonly property int departureTransitionDuration: 240
 }

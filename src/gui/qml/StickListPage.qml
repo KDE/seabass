@@ -526,14 +526,46 @@ Page {
             interactive: contentHeight > height
             spacing: 4
 
-            // A plain Rectangle, not a Frame -- Qt Quick Controls' Material
-            // style gives Frame its own additional implicit chrome that a
-            // custom `background:` assignment doesn't fully replace (kept
-            // rendering a stray light margin around the real content no
-            // matter what the override's own color was set to). Every
-            // other grouping frame in this app (Sync Cue Points' expanded
-            // panels, DuplicatesPage.qml's meta-track groups) already uses this
-            // same plain-Rectangle pattern for exactly that reason.
+            // A stick appearing is the one event on this page the user
+            // did not cause from the screen -- they caused it at the USB
+            // port, and they are usually looking at the port rather than
+            // the list. So the card arrives visibly: it fades and grows
+            // into place while the cards below it slide down to make
+            // room, which is what tells the eye WHERE it went as well as
+            // that it came. The model reports an insert now rather than
+            // resetting itself, which is what makes any of this possible
+            // (see DetectedStickListModel::setSticks).
+            add: Transition {
+                // Grows past its size and settles back, the way a thing
+                // put down on a table does. A straight ease-in stops
+                // dead on arrival and reads as a redraw; the small
+                // overshoot is what makes it read as something that
+                // moved into place.
+                NumberAnimation { property: "opacity"; from: 0; to: 1
+                                   duration: Theme.arrivalTransitionDuration; easing.type: Easing.OutCubic }
+                NumberAnimation { property: "scale"; from: 0.85; to: 1
+                                   duration: Theme.arrivalTransitionDuration
+                                   easing.type: Easing.OutBack; easing.overshoot: 1.8 }
+            }
+            // The cards below getting out of the way, and closing up
+            // again afterwards. Slightly softer than the arrival so the
+            // eye follows the card that appeared rather than the ones
+            // making room for it.
+            displaced: Transition {
+                NumberAnimation { properties: "x,y"; duration: Theme.arrivalTransitionDuration
+                                   easing.type: Easing.OutQuint }
+            }
+            remove: Transition {
+                // Shrinks away rather than merely fading: a card that
+                // only loses opacity leaves a hole the eye does not
+                // connect to the stick being pulled out.
+                NumberAnimation { property: "opacity"; to: 0
+                                   duration: Theme.departureTransitionDuration; easing.type: Easing.InCubic }
+                NumberAnimation { property: "scale"; to: 0.82
+                                   duration: Theme.departureTransitionDuration; easing.type: Easing.InBack
+                                   easing.overshoot: 1.4 }
+            }
+
             delegate: Rectangle {
                 id: delegateRoot
                 // The mount point, or the device for a stick that is not

@@ -12,6 +12,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <set>
 #include <filesystem>
 #include <iterator>
 #include <system_error>
@@ -185,6 +186,19 @@ QVariantMap DetectedStickListModel::get(int row) const
     return result;
 }
 
+namespace
+{
+
+// What makes a row the same row across refreshes. A partition node is
+// stable while a stick stays plugged in, which is the span that matters
+// here; a folder library has no device, so it is its own path.
+std::string rowKey(const application::DetectedStick &stick)
+{
+    return !stick.devicePath.empty() ? stick.devicePath : stick.mountPoint;
+}
+
+}  // namespace
+
 void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> sticks)
 {
     // Sticks with a DJ library Seabass can actually do something with are
@@ -201,17 +215,80 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
         return hasKnownLibrary(a) && !hasKnownLibrary(b);
     });
 
-    beginResetModel();
-    m_sticks = std::move(sticks);
-    m_readOnly.assign(m_sticks.size(), false);
-    for (size_t i = 0; i < m_sticks.size(); ++i) {
-        const application::DetectedStick &stick = m_sticks[i];
-        if (stick.mounted && !stick.mountPoint.empty()) {
-            m_readOnly[i] = infrastructure::media::isMountedReadOnly(stick.mountPoint);
+    // That order decides where a row FIRST appears, and nothing after
+    // that moves it.
+    //
+    // This used to reset the whole model on every refresh, which had two
+    // costs. A reset re-sorted every row, so unmounting a stick -- which
+    // makes its library unknowable, and hasKnownLibrary false -- sent it
+    // to the bottom of the list while the user was looking at it; the
+    // card they had just acted on jumped somewhere else. And a reset
+    // tells a view only that everything changed, so a view can neither
+    // animate an arrival nor keep anything that was on screen: every
+    // delegate is destroyed and rebuilt, four times a second's worth of
+    // udev chatter included.
+    //
+    // So: rows that are gone are removed, rows that remain keep their
+    // place and are updated where their data moved, and a row that is new
+    // is inserted where the sort above says it belongs. The view is told
+    // which is which, so it can show the difference.
+    auto readOnlyFor = [](const application::DetectedStick &stick) {
+        return stick.mounted && !stick.mountPoint.empty()
+            && infrastructure::media::isMountedReadOnly(stick.mountPoint);
+    };
+
+    std::set<std::string> incoming;
+    for (const application::DetectedStick &stick : sticks) {
+        incoming.insert(rowKey(stick));
+    }
+    for (int row = static_cast<int>(m_sticks.size()) - 1; row >= 0; --row) {
+        if (incoming.count(rowKey(m_sticks[static_cast<size_t>(row)])) == 0) {
+            beginRemoveRows(QModelIndex(), row, row);
+            m_sticks.erase(m_sticks.begin() + row);
+            m_readOnly.erase(m_readOnly.begin() + row);
+            endRemoveRows();
         }
     }
-    endResetModel();
-    // endResetModel() tells a view its rows changed; it does not
+
+    int after = -1;  // the row the next newcomer follows
+    for (const application::DetectedStick &stick : sticks) {
+        const std::string key = rowKey(stick);
+        auto existing = std::find_if(m_sticks.begin(), m_sticks.end(),
+                                      [&key](const application::DetectedStick &have) { return rowKey(have) == key; });
+        if (existing != m_sticks.end()) {
+            const int row = static_cast<int>(std::distance(m_sticks.begin(), existing));
+            const bool wasReadOnly = m_readOnly[static_cast<size_t>(row)];
+            const bool nowReadOnly = readOnlyFor(stick);
+            // Mounting, unmounting, gaining a library: the same row,
+            // saying something different. Compared field by field rather
+            // than by an operator== on DetectedStick, because that type
+            // belongs to the application layer and would be carrying a
+            // comparison for one view's benefit.
+            const application::DetectedStick &have = *existing;
+            const bool sameRow = have.mountPoint == stick.mountPoint && have.label == stick.label
+                && have.mounted == stick.mounted && have.isSdCard == stick.isSdCard
+                && have.isFolder == stick.isFolder && have.isBrowsedBackup == stick.isBrowsedBackup
+                && have.rekordboxPath == stick.rekordboxPath && have.enginePath == stick.enginePath
+                && have.capacityBytes == stick.capacityBytes
+                && have.hasNoFilesystem == stick.hasNoFilesystem && have.rootEntries == stick.rootEntries
+                && have.identity.libraryId() == stick.identity.libraryId();
+            if (!sameRow || wasReadOnly != nowReadOnly) {
+                *existing = stick;
+                m_readOnly[static_cast<size_t>(row)] = nowReadOnly;
+                emit dataChanged(index(row), index(row));
+            }
+            after = row;
+            continue;
+        }
+        const int row = after + 1;
+        beginInsertRows(QModelIndex(), row, row);
+        m_sticks.insert(m_sticks.begin() + row, stick);
+        m_readOnly.insert(m_readOnly.begin() + row, readOnlyFor(stick));
+        endInsertRows();
+        after = row;
+    }
+
+    // Insertions and removals tell a view its rows changed; they do not
     // re-evaluate a binding on a property of this object, so the counts
     // have to say so themselves.
     emit countsChanged();

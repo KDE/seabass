@@ -179,6 +179,21 @@ TestCase {
         compare(healthSpy.count, 1);
     }
 
+    // A stick appearing or disappearing is the one thing on this page the
+    // user does at the USB port rather than on the screen, so the list
+    // has to show it happening. Without these the model's inserts and
+    // removes are still correct and the list still redraws -- which is
+    // exactly the failure worth catching, because nothing else looks
+    // wrong when a transition quietly goes missing.
+    function test_theListShowsSticksArrivingAndLeaving() {
+        var page = makePage([makeStick({label: "ONE"})], []);
+        var list = findChild(page, "stickList");
+        verify(list, "the stick list must exist");
+        verify(list.add, "an arriving stick must be animated in");
+        verify(list.remove, "a leaving stick must be animated out");
+        verify(list.displaced, "the cards making room must move rather than jump");
+    }
+
     function test_everyMountedStickIsAssessed() {
         var page = makePage([makeStick({}), makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1",
                                                        hasRekordbox: false, hasEngine: false, rekordboxPath: "", enginePath: ""})], {});

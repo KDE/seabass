@@ -1461,6 +1461,18 @@ if(TARGET Qt6::Core)
     # Links media_controller.cpp directly, the way every other GUI-class
     # test here does: the GUI is one executable target, not a library, so
     # there is nothing to link against but the sources actually needed.
+    # The stick list's order and its update semantics: a row the user is
+    # looking at must not move because its own state changed, and an
+    # arriving stick must be an insert the view can animate rather than a
+    # reset it can only redraw.
+    add_executable(stick_list_order_test
+        src/gui/media_controller.cpp
+        tests/stick_list_order_test.cpp
+    )
+    target_include_directories(stick_list_order_test PRIVATE src)
+    target_link_libraries(stick_list_order_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    add_test(NAME stick_list_order_test COMMAND stick_list_order_test)
+
     add_executable(open_folder_test
         src/gui/media_controller.cpp
         tests/open_folder_test.cpp
