@@ -8,12 +8,18 @@
 #include <system_error>
 #include <utility>
 
+#include "infrastructure/backup/stick_space.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 
 namespace seabass::application
 {
 
 namespace fs = std::filesystem;
+
+// One measurement of free space for the whole write side: stick_space.hpp
+// answers 0 for a volume it cannot ask, which every caller here already
+// treats as "do not refuse on a guess".
+using infrastructure::backup::availableBytes;
 
 namespace
 {
@@ -25,13 +31,6 @@ bool sameLocation(const fs::path &a, const fs::path &b)
         return true;
     }
     return a.lexically_normal() == b.lexically_normal();
-}
-
-std::uint64_t availableBytes(const fs::path &directory)
-{
-    std::error_code ec;
-    const fs::space_info space = fs::space(directory, ec);
-    return ec ? 0 : space.available;
 }
 
 BackupStickOptions backupOptionsFor(const CloneStickOptions &options)

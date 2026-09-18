@@ -10,6 +10,7 @@
 #include <system_error>
 #include <thread>
 
+#include "infrastructure/backup/stick_space.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/stick_backup/archive_compactor.hpp"
@@ -35,6 +36,11 @@ namespace seabass::application
 {
 
 namespace fs = std::filesystem;
+
+// One measurement of free space for the whole write side: stick_space.hpp
+// answers 0 for a volume it cannot ask, which every caller here already
+// treats as "do not refuse on a guess".
+using infrastructure::backup::availableBytes;
 using namespace infrastructure::stick_backup;
 
 namespace
@@ -88,13 +94,6 @@ struct Opened
         return true;
     }
 };
-
-std::uint64_t availableBytes(const fs::path &archivePath)
-{
-    std::error_code ec;
-    fs::space_info info = fs::space(archivePath.parent_path(), ec);
-    return ec ? 0 : info.available;
-}
 
 // Replace `archivePath` with `tempPath`. POSIX rename is atomic and just
 // needs the directory flushed afterwards; on Windows a scanner or
@@ -153,7 +152,7 @@ CompactionPreflight CompactStickBackup::preflight(const fs::path &archivePath, s
     result.compactedBytes = compactedArchiveSize(*opened.reader);
     result.reclaimableBytes = report.fileSize > result.compactedBytes ? report.fileSize - result.compactedBytes : 0;
     result.requiredFreeBytes = result.compactedBytes + freeSpaceMarginBytes;
-    result.availableFreeBytes = availableBytes(archivePath);
+    result.availableFreeBytes = availableBytes(archivePath.parent_path());
     result.enoughFreeSpace = result.availableFreeBytes >= result.requiredFreeBytes;
     return result;
 }
@@ -186,7 +185,7 @@ CompactionOutcome CompactStickBackup::execute(const CompactStickBackupOptions &o
     outcome.bytesBefore = report.fileSize;
     const std::uint64_t compactedBytes = compactedArchiveSize(*opened.reader);
     outcome.requiredFreeBytes = compactedBytes + options.freeSpaceMarginBytes;
-    outcome.availableFreeBytes = availableBytes(options.archivePath);
+    outcome.availableFreeBytes = availableBytes(options.archivePath.parent_path());
     // Dead bytes alone do not make a smaller file: the rewritten central
     // directory can outgrow a sliver of dead space.
     if (report.deadBytes == 0 || compactedBytes >= report.fileSize) {

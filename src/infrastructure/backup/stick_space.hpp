@@ -52,8 +52,9 @@ struct StickSpace
 StickSpace measureStickSpace(const std::filesystem::path &stickRoot);
 
 // The bytes a write at `path` can use, 0 when the volume cannot be asked:
-// for a caller that would rather refuse than write on a guess. (Stick
-// restore uses it; clone, compact and backup still carry their own.)
+// for a caller that would rather refuse than write on a guess. The one
+// measurement for the whole write side -- restore, clone, compact and the
+// backup store all call this.
 inline std::uint64_t availableBytes(const std::filesystem::path &path)
 {
     std::error_code ec;
