@@ -98,6 +98,24 @@ Page {
         return text;
     }
 
+    // The stick before its library: a read-only filesystem makes every
+    // other finding on this page unfixable, so it is said first and in
+    // its own words.
+    readonly property string filesystemSummary: {
+        if (healthController.repairingFilesystem) {
+            return "Checking and repairing this stick's filesystem. Its own permission prompt may ask first.";
+        }
+        if (healthController.stickReadOnly) {
+            return "This stick is mounted read-only, so nothing can be written to it. That is what a stick pulled "
+                + "out mid-write leaves behind: the filesystem is damaged and the system refuses to write to it "
+                + "until it has been checked.";
+        }
+        if (healthController.filesystemMessage.length > 0) {
+            return healthController.filesystemMessage;
+        }
+        return "This stick takes writes normally.";
+    }
+
     readonly property string junkCueSummary: {
         if (root.scanning) {
             return "Looking for memory cues sitting at the very start of a track...";
@@ -171,6 +189,19 @@ Page {
                 text: root.scanning
                     ? "Checking this library. This can take a minute on a full stick."
                     : "Everything Seabass can check about this library, and what it found."
+            }
+
+            HealthCheckCard {
+                objectName: "stickFilesystemCard"
+                title: "The stick itself"
+                summary: root.filesystemSummary
+                running: healthController.repairingFilesystem
+                ok: !healthController.stickReadOnly
+                failed: healthController.stickReadOnly
+                actionLabel: healthController.stickReadOnly ? "Check and Repair" : ""
+                actionEnabled: !healthController.repairingFilesystem && !root.scanning
+                actionDisabledReason: root.scanning ? "Wait for the scan to finish" : ""
+                onActionRequested: healthController.repairStickFilesystem()
             }
 
             HealthCheckCard {

@@ -459,6 +459,7 @@ else()
         src/infrastructure/media/linux_udev_media_monitor.cpp
         src/infrastructure/media/udisksctl_media_mounter.cpp
         src/infrastructure/media/linux_usb_formatter.cpp
+        src/infrastructure/media/filesystem_health.cpp
         src/infrastructure/process/run_command_posix.cpp
     )
     target_link_libraries(seabass_core PUBLIC udev)
@@ -995,6 +996,20 @@ add_executable(library_consistency_test
 )
 target_include_directories(library_consistency_test PRIVATE src)
 add_test(NAME library_consistency_test COMMAND library_consistency_test)
+
+add_executable(filesystem_health_test
+    tests/filesystem_health_test.cpp
+    src/infrastructure/media/filesystem_health.cpp
+)
+# The same platform split seabass_core makes for the command runner: this
+# test builds the media file on its own rather than linking the library.
+if(WIN32)
+    target_sources(filesystem_health_test PRIVATE src/infrastructure/process/run_command_windows.cpp)
+else()
+    target_sources(filesystem_health_test PRIVATE src/infrastructure/process/run_command_posix.cpp)
+endif()
+target_include_directories(filesystem_health_test PRIVATE src tests)
+add_test(NAME filesystem_health_test COMMAND filesystem_health_test)
 
 add_executable(engine_artwork_test
     tests/engine_artwork_test.cpp

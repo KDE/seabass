@@ -33,6 +33,8 @@
 #include "gui/edit/changes/delete_orphan_change.hpp"
 #include "gui/edit/changes/remove_junk_cue_change.hpp"
 #include "gui/edit/changes/repair_artwork_change.hpp"
+#include "gui/future_result.hpp"
+#include "infrastructure/media/filesystem_health.hpp"
 #include "gui/edit/changes/repair_issue_change.hpp"
 
 namespace seabass::gui
@@ -408,6 +410,8 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
 {
     connect(&m_watcher, &QFutureWatcher<LibraryConsistencyScanResult>::finished, this,
             &LibraryConsistencyController::onScanFinished);
+    connect(&m_repairWatcher, &QFutureWatcher<infrastructure::media::FilesystemRepairResult>::finished, this,
+            &LibraryConsistencyController::onFilesystemRepairFinished);
 }
 
 std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
@@ -469,6 +473,16 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     // counts on screen for as long as the page lived.
     m_artwork = {};
     emit artworkChanged();
+    const QString stickRoot = QString::fromStdString(
+        std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
+            .parent_path()
+            .string());
+    const bool wasReadOnly = m_stickReadOnly;
+    m_stickReadOnly = !stickRoot.isEmpty()
+        && infrastructure::media::isMountedReadOnly(stickRoot.toStdString());
+    if (m_stickReadOnly != wasReadOnly) {
+        emit stickHealthChanged();
+    }
     // Deliberately NOT clearing m_playlistNames/m_playlistTrackCounts
     // here: this scan() call is itself reachable synchronously from
     // inside PlaylistPickerCombo's own row-delegate onClicked handler
@@ -898,6 +912,53 @@ void LibraryConsistencyController::removeAllJunkCues()
     if (staged > 0) {
         setStatusMessage(
             QStringLiteral("Staged removing %1 stray cue(s). Press Save to write it to the stick.").arg(staged));
+    }
+}
+
+void LibraryConsistencyController::repairStickFilesystem()
+{
+    if (m_repairingFilesystem || m_busy) {
+        return;
+    }
+    const std::string stickRoot =
+        std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
+            .parent_path()
+            .string();
+    if (stickRoot.empty()) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    m_repairingFilesystem = true;
+    m_filesystemMessage.clear();
+    emit stickHealthChanged();
+    // The check unmounts, repairs and mounts again: minutes on a full
+    // stick, and none of it belongs on the UI thread.
+    m_repairWatcher.setFuture(QtConcurrent::run(
+        [stickRoot]() { return infrastructure::media::repairFilesystem(stickRoot); }));
+}
+
+void LibraryConsistencyController::onFilesystemRepairFinished()
+{
+    const auto result = gui::takeResult(m_repairWatcher);
+    m_repairingFilesystem = false;
+    m_filesystemMessage = QString::fromStdString(result.message);
+    const std::string stickRoot =
+        std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
+            .parent_path()
+            .string();
+    m_stickReadOnly = infrastructure::media::isMountedReadOnly(stickRoot);
+    emit stickHealthChanged();
+    if (result.declined) {
+        return;  // the user said no; not a fault to report as one
+    }
+    if (result.repaired && !m_stickReadOnly) {
+        setStatusMessage(m_filesystemMessage);
+        // Everything found before was found on a stick that could not be
+        // written to; read it again now that it can.
+        scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
+    } else {
+        setErrorMessage(m_filesystemMessage);
     }
 }
 

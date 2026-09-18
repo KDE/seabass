@@ -23,6 +23,7 @@
 #include <set>
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/media/filesystem_health.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
 namespace seabass::gui
@@ -225,6 +226,11 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(int repairableCount READ repairableCount NOTIFY issuesChanged)
+    // The stick itself, before anything about its library: a filesystem
+    // the kernel has set read-only takes every write down with it.
+    Q_PROPERTY(bool stickReadOnly READ stickReadOnly NOTIFY stickHealthChanged)
+    Q_PROPERTY(bool repairingFilesystem READ repairingFilesystem NOTIFY stickHealthChanged)
+    Q_PROPERTY(QString filesystemMessage READ filesystemMessage NOTIFY stickHealthChanged)
     Q_PROPERTY(int artworkTracksWithArt READ artworkTracksWithArt NOTIFY artworkChanged)
     Q_PROPERTY(int artworkReadableCount READ artworkReadableCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkUnreadableCount READ artworkUnreadableCount NOTIFY artworkChanged)
@@ -272,6 +278,11 @@ public:
     // stored the way Engine stores its own: a hash, with the image in
     // "Engine Library/Artwork". Anything still pointing at the importing
     // computer's path is art no player will show.
+    bool stickReadOnly() const { return m_stickReadOnly; }
+    bool repairingFilesystem() const { return m_repairingFilesystem; }
+    // What the last check said, empty until one has run.
+    QString filesystemMessage() const { return m_filesystemMessage; }
+
     int artworkTracksWithArt() const { return m_artwork.tracksWithArt; }
     int artworkReadableCount() const { return m_artwork.readableByAPlayer; }
     int artworkUnreadableCount() const { return static_cast<int>(m_artwork.unreadable.size()); }
@@ -321,6 +332,11 @@ public:
     // Stages giving every repairable track Engine's own artwork storage:
     // the image copied into the library, the row pointed at it. Save
     // writes it, like every other change on this page.
+    // Hands the stick to the platform's own check-and-repair: udisks2
+    // behind polkit on Linux, an elevated Repair-Volume behind UAC on
+    // Windows, diskutil on macOS. Seabass itself never elevates.
+    Q_INVOKABLE void repairStickFilesystem();
+
     Q_INVOKABLE void repairArtwork();
     Q_INVOKABLE void unstageArtworkRepair();
 
@@ -352,10 +368,12 @@ signals:
     void statusMessageChanged();
     void issuesChanged();
     void artworkChanged();
+    void stickHealthChanged();
     void canUndoChanged();
 
 private:
     void onScanFinished();
+    void onFilesystemRepairFinished();
     void scanNextPendingFormat();
     void setBusy(bool busy);
     void setScanProgress(int current, int total);
@@ -392,6 +410,10 @@ private:
     std::map<QString, StagedInfo> m_stagedIssues;  // issue key -> what is staged for it
     std::map<QString, QString> m_stagedJunk;    // junk key -> change id
     infrastructure::engine::ArtworkAudit m_artwork;
+    bool m_stickReadOnly = false;
+    bool m_repairingFilesystem = false;
+    QString m_filesystemMessage;
+    QFutureWatcher<infrastructure::media::FilesystemRepairResult> m_repairWatcher;
     // The cover-art changes this page has staged, by change id.
     std::set<QString> m_stagedArtwork;
     // A rekordbox repair's OneLibrary mirror can stale another listed
