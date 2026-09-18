@@ -8,11 +8,17 @@
 # deduplicate). Every durableWritesPerSave that moved gained exactly one
 # write per track whose .DAT legacy list changed; sync writes several
 # tracks, hence +5 there.
-engine.cues 1688
+# Changed 2026-09-18 again, deliberately: Engine stores "no main cue" as
+# a sample offset of -1, and the reader turned that into a memory cue a
+# fraction of a millisecond before the track starts. 1436 of this
+# fixture's 1564 tracks had nothing but that phantom, so the numbers here
+# were a record of the bug: engine.cues 1688 -> 219, engine.tracksWithCues
+# 1561 -> 125. What is left is the cues someone really placed.
+engine.cues 219
 engine.opensPerBatch 1
 engine.tracks 1564
 engine.tracksWithAlbum 1563
-engine.tracksWithCues 1561
+engine.tracksWithCues 125
 engine.writeRefusals 0
 matrix.addCue.durableWritesPerSave 4
 matrix.addCue.pdbParses 1

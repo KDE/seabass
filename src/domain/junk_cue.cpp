@@ -9,7 +9,7 @@ namespace seabass::domain
 
 bool isJunkMemoryCue(const CuePoint &cue)
 {
-    return cue.kind == CuePoint::Kind::Memory && cue.positionMs >= 0.0 && cue.positionMs < 1000.0;
+    return cue.kind == CuePoint::Kind::Memory && cue.positionMs < 1000.0;
 }
 
 std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)

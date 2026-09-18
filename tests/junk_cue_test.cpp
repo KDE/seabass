@@ -107,6 +107,32 @@ int main()
         std::cout << "case 4 (multiple tracks/cues, only true matches surface) OK\n";
     }
 
+    // Case 5: a memory cue BEFORE the start. Seabass wrote these itself
+    // -- Engine stores -1 as "no main cue set", and reading that as a
+    // sample offset put a cue at minus a fraction of a millisecond.
+    // Sticks and metadata backups made before that still carry them, so
+    // the rule has to name them even though the reader no longer makes
+    // them. The withoutJunkMemoryCues() filter is the same rule, and the
+    // metadata paths lean on it.
+    {
+        const double sentinel = -1.0 / 44100.0 * 1000.0;  // what one real library was full of
+        std::vector<Track> tracks = {
+            makeTrack("a", "Song", "Artist",
+                      {makeCue(CuePoint::Kind::Memory, sentinel), makeCue(CuePoint::Kind::Hot, 0.0),
+                       makeCue(CuePoint::Kind::Memory, 30'000.0)}),
+        };
+        auto issues = JunkCueFinder::find(tracks);
+        assert(issues.size() == 1);
+        assert(issues[0].cue.kind == CuePoint::Kind::Memory);
+        assert(issues[0].cue.positionMs < 0.0);
+
+        const auto kept = withoutJunkMemoryCues(tracks[0].cues);
+        assert(kept.size() == 2);
+        assert(kept[0].kind == CuePoint::Kind::Hot && "a hot cue at 0:00 is deliberate");
+        assert(kept[1].positionMs == 30'000.0);
+        std::cout << "case 5 (a cue before the start is junk; a hot cue at 0:00 is not) OK\n";
+    }
+
     std::cout << "All junk_cue tests passed.\n";
     return 0;
 }

@@ -420,6 +420,9 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
                 continue;
             }
             const auto &hotCue = *hotCues[i];
+            if (hotCue.sample_offset < 0.0) {
+                continue;  // the same "not set" sentinel as main_cue below
+            }
             domain::CuePoint cp;
             cp.kind = domain::CuePoint::Kind::Hot;
             cp.hotCueNumber = static_cast<int>(i) + 1;  // Engine slots are 0-based; rekordbox numbers from 1
@@ -443,6 +446,9 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
                 continue;
             }
             const auto &loop = *loops[i];
+            if (loop.start_sample_offset < 0.0 || loop.end_sample_offset < 0.0) {
+                continue;  // ditto: an empty loop slot, not a loop at 0
+            }
             domain::CuePoint cp;
             cp.kind = domain::CuePoint::Kind::Hot;
             cp.hotCueNumber = static_cast<int>(i) + 1;
@@ -463,7 +469,15 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
         // any other cue; see libdjinterop_engine_cue_writer.cpp for the
         // corresponding (necessarily lossy beyond one cue) write side.
         auto mainCue = safeGet<std::optional<double>>(*m_progress, id, "main_cue", [&] { return tr.main_cue(); });
-        if (mainCue) {
+        // A track with no main cue carries -1 as its sample offset, which
+        // is libdjinterop's "not set" rather than a position: dividing it
+        // by the sample rate made a memory cue a fraction of a
+        // millisecond BEFORE the track starts. Every un-cued track on a
+        // stick grew one -- 958 of them in one real library -- and they
+        // travelled into the metadata store, into restore offers and into
+        // every count of how many cues a track has. Anything at or before
+        // sample 0 that was not deliberately placed there is not a cue.
+        if (mainCue && *mainCue >= 0.0) {
             domain::CuePoint cp;
             cp.kind = domain::CuePoint::Kind::Memory;
             cp.positionMs = *mainCue / *sampleRate * 1000.0;

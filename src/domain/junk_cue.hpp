@@ -18,6 +18,13 @@ namespace seabass::domain
 // navigational purpose (the track already starts at 0:00) and most
 // often comes from a stray click during analysis or an import artifact.
 //
+// A position before the start counts too, and is the plainer case: it
+// cannot be a cue anyone placed. Seabass made those itself until the
+// Engine reader learned that a main_cue of -1 means "no cue set" rather
+// than a position (libdjinterop_engine_reader.cpp), and sticks and
+// metadata backups written before that still carry them, at minus a
+// fraction of a millisecond.
+//
 // "At the start" means positionMs < 1000 (displays as "0:00" in every
 // mm:ss field this app has, all of which floor to whole seconds -- see
 // e.g. PlayerBar.qml's formatTime()), not literally positionMs == 0.
