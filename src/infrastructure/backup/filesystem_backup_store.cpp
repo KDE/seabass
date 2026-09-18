@@ -534,12 +534,13 @@ bool FilesystemBackupStore::restoreFromArchive(const OpenedArchive &opened,
         const std::int64_t recorded = opened.reader->entries()[index].mtimeUnix;
         if (recorded > Year2000) {
             std::error_code timeEc;
-            // Inline clock_cast, as the write side does, for the same
-            // reason: the file clock's epoch is not the Unix one (MSVC
-            // counts from 1601), and this file does not depend on
-            // stick_tree_walker.cpp.
+            // Header-only toFileClock(), as the write side does, for the
+            // same reason: the file clock's epoch is not the Unix one
+            // (MSVC counts from 1601), and this file does not depend on
+            // stick_tree_walker.cpp. Apple's libc++ has no clock_cast at
+            // all, so a bare one does not compile there.
             const std::chrono::system_clock::time_point asSystem{std::chrono::seconds(recorded)};
-            fs::last_write_time(target, std::chrono::clock_cast<fs::file_time_type::clock>(asSystem), timeEc);
+            fs::last_write_time(target, infrastructure::toFileClock(asSystem), timeEc);
         }
         if (target.extension() == ".db") {
             // A database put back next to a -wal or -journal left by a
