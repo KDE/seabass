@@ -104,6 +104,34 @@ and a trailing dot or space is stripped — Windows drops those silently and the
 cannot find the file again. Components are capped well under the 255-unit limit
 so a disambiguating ` (2)` still fits.
 
+## Two libraries on one machine
+
+rekordbox's own *Preferences → Advanced → Database → Database management*
+offers **drives**, not folders — it exists to move the Master Database to an
+external drive ("With Master Database stored in a single external drive as well
+as tracks, you can manage your collection easily among multiple computers"), so
+it cannot point at a second folder on the internal disk. A test library and a
+real one therefore cannot be separated by that setting.
+
+`tools/library-build/rekordbox-switch.sh` swaps which library lives at the one
+path rekordbox always looks in, `~/Library/Pioneer/rekordbox`:
+
+```
+rekordbox-switch.sh                  # what is live, and what else exists
+rekordbox-switch.sh whaleshark       # make rekordbox-whaleshark live
+```
+
+Two renames on one filesystem: nothing is copied, nothing is deleted, and an
+interrupted switch leaves both libraries intact. It refuses while rekordbox is
+running, because rekordbox rewrites its database on quit and switching
+underneath it is how half a library gets written.
+
+Note that the analysis data (`share/PIONEER/USBANLZ`, `Artwork`) lives inside
+each library folder and is not shared, so a track analysed in one is analysed
+again in the other. Preferences are *not* per library: `rekordbox3.settings`
+sits in Application Support, outside the folder, so layout and quantize
+defaults follow you across both.
+
 ## Known limits
 
 - Playlist *merging* is proposed, never performed: `playlist-merges.tsv` lists
