@@ -183,8 +183,30 @@ TestCase {
         return [
             {tag: "CleanupPage", extra: {playbackController: realPlayback, appSettingsController: realAppSettings}},
             {tag: "SyncPage", extra: {playbackController: realPlayback, appSettingsController: realAppSettings}},
-            {tag: "JunkCuePage", extra: {appSettingsController: realAppSettings}},
         ];
+    }
+
+    // Except the health check, which opens on the whole library however
+    // it was last narrowed somewhere else: it answers "how much is wrong
+    // with this stick", and a playlist picked on the Sync page is not an
+    // answer to that. Its picker still narrows it, and a pick there is
+    // still remembered for the pages that do open on one.
+    function test_theStrayCueCheckOpensOnTheWholeLibrary() {
+        var before = realAppSettings.lastPlaylistName;
+        realAppSettings.lastPlaylistName = "Warm-Up";
+        try {
+            var page = createTemporaryObject(Qt.createComponent(qmlDir + "JunkCuePage.qml"), testCase,
+                                             stickProps({appSettingsController: realAppSettings}));
+            verify(page !== null, "JunkCuePage did not instantiate");
+            compare(page.selectedPlaylistName, "", "it must open on the whole library");
+            var picker = findChild(page, "playlistPicker");
+            verify(picker !== null, "the playlist picker must still be there");
+            picker.playlistPicked(1, {name: "Peak Time", count: ""});
+            compare(page.selectedPlaylistName, "Peak Time", "and must still narrow to one");
+            compare(realAppSettings.lastPlaylistName, "Peak Time", "a pick here is still remembered elsewhere");
+        } finally {
+            realAppSettings.lastPlaylistName = before;
+        }
     }
 
     function test_playlistPagesOpenOnTheLastPickedPlaylist(data) {

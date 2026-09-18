@@ -83,10 +83,18 @@ Page {
         return "DeviceLibrary";
     }
 
-    // Opens on the playlist last picked on any page with a picker.
+    // Opens on the whole library, every time.
+    //
+    // It used to open on the playlist last picked anywhere in the app,
+    // which made this page and Library Health -- the same check, the same
+    // controller, the same rule -- report different numbers, with nothing
+    // on either page to say why. A filter chosen on the Sync page days
+    // ago silently narrowing "how much is wrong with this stick" is not a
+    // scope anyone asked for. The picker below still narrows it, and
+    // still remembers a pick for the pages that want one.
     Component.onCompleted: {
-        root.selectedPlaylistName = root.appSettingsController.lastPlaylistName;
-        consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
+        root.selectedPlaylistName = "";
+        consistencyController.scan(root.rekordboxPath, root.enginePath, "");
     }
 
     // A remembered playlist this library does not have would scan
@@ -251,10 +259,19 @@ Page {
                 anchors.margins: 10
                 spacing: 12
                 Label {
+                    objectName: "junkCueSummary"
+                    // The scope belongs beside the count. Narrowed to a
+                    // playlist, this page answers a different question
+                    // from Library Health's card, and a number that does
+                    // not say so reads as a disagreement about the same
+                    // one.
                     text: junkCueListView.count + " memory cue(s) sitting at 0:00, likely accidental"
+                        + (root.selectedPlaylistName.length > 0
+                            ? " -- in " + root.selectedPlaylistName + " only" : " -- across the whole library")
                     font.bold: true
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
                 }
-                Item { Layout.fillWidth: true }
                 Button {
                     text: "Stage Removing All"
                     enabled: !consistencyController.busy && !consistencyController.writing
