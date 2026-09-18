@@ -151,7 +151,9 @@ ChangeOutcome MergeCuesChange::apply(SaveContext &ctx)
         auto analyzePath = pathIndex ? pathIndex->pathFor(trackId)
                                      : infrastructure::rekordbox::findAnlzPathForTrackId(root, trackId);
         if (analyzePath) {
-            ctx.backupOnce(infrastructure::rekordbox::extAnlzPath(root, *analyzePath), "local-restore");
+            for (const auto &file : infrastructure::rekordbox::rekordboxCueFilesFor(root, *analyzePath)) {
+                ctx.backupOnce(file, "local-restore");
+            }
         }
     }
 

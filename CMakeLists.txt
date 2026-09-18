@@ -333,6 +333,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/manage_stick_backups.cpp
     src/infrastructure/stick_backup/archive_anlz_source.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
+    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_file.cpp
     src/infrastructure/rekordbox/pdb_lookup.cpp
     src/infrastructure/rekordbox/anlz_path_index.cpp
@@ -1185,11 +1186,41 @@ add_executable(anlz_cue_codec_test
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
+    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_file.cpp
     tests/anlz_cue_codec_test.cpp
 )
 target_include_directories(anlz_cue_codec_test PRIVATE src)
 add_test(NAME anlz_cue_codec_test COMMAND anlz_cue_codec_test)
+
+add_executable(anlz_legacy_cue_codec_test
+    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
+    tests/anlz_legacy_cue_codec_test.cpp
+)
+target_include_directories(anlz_legacy_cue_codec_test PRIVATE src)
+add_test(NAME anlz_legacy_cue_codec_test COMMAND anlz_legacy_cue_codec_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(anlz_legacy_cue_codec_test PROPERTIES LABELS "integration")
+
+# Reads the raw bytes of all three cue lists after a write, so a writer
+# that keeps only one of them up to date fails here. See the file's own
+# comment: this is the test issue #33 did not have.
+add_executable(rekordbox_cue_lists_agree_test
+    src/infrastructure/durable_file_write.cpp
+    src/infrastructure/work_counters.cpp
+    src/infrastructure/rekordbox/anlz_cue_codec.cpp
+    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
+    src/infrastructure/rekordbox/anlz_file.cpp
+    src/infrastructure/rekordbox/anlz_path_index.cpp
+    src/infrastructure/rekordbox/pdb_lookup.cpp
+    src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
+    tests/rekordbox_cue_lists_agree_test.cpp
+)
+target_include_directories(rekordbox_cue_lists_agree_test PRIVATE src tests)
+target_link_libraries(rekordbox_cue_lists_agree_test PRIVATE rekordbox_format kaitai_cpp_stl_runtime)
+add_test(NAME rekordbox_cue_lists_agree_test COMMAND rekordbox_cue_lists_agree_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(rekordbox_cue_lists_agree_test PROPERTIES LABELS "integration")
 
 add_executable(anlz_file_test
     src/infrastructure/durable_file_write.cpp

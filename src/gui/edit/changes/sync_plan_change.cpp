@@ -161,7 +161,9 @@ ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
         auto analyzePath = pathIndex ? pathIndex->pathFor(trackId)
                                      : infrastructure::rekordbox::findAnlzPathForTrackId(catalogPath, trackId);
         if (analyzePath) {
-            ctx.backupOnce(infrastructure::rekordbox::extAnlzPath(catalogPath, *analyzePath), "sync");
+            for (const auto &file : infrastructure::rekordbox::rekordboxCueFilesFor(catalogPath, *analyzePath)) {
+                ctx.backupOnce(file, "sync");
+            }
         }
         writer.rekordbox->writeHotCues(tgt.sourceId, m_plan.cuesToApply);
         // export.pdb and exportLibrary.db are the SAME library in two

@@ -5,10 +5,12 @@
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
 
 #include "infrastructure/rekordbox/anlz_cue_codec.hpp"
+#include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
 #include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
@@ -21,21 +23,31 @@ namespace
 
 constexpr uint32_t Pco2Fourcc = 0x50434f32;  // "PCO2"
 
-// Known, deliberate gap: this writer never touches the legacy "PCOB"
-// (cue_tag) section that sits alongside PCO2 in real files -- real
-// devices/rekordbox keep both in sync on every write (confirmed via a
-// real XDJ-RX2 capture: deleting a hot cue shrank PCOB in lockstep with
-// PCO2), but per Deep Symmetry's reverse-engineering docs (the reference
-// for this whole format), PCO2 is a strict superset and well-behaved
-// readers (Beat Link, and by design intent, rekordbox/modern hardware)
-// prefer PCO2 and only fall back to PCOB when PCO2 is absent. So a track
-// edited by Seabass keeps working correctly everywhere except pre-Nexus2
-// hardware, which doesn't understand PCO2 at all and would see a stale
-// PCOB. Not implemented rather than guessed: the legacy cue_entry
-// format's own kaitai spec already flags several of its fields as
-// unresolved ("order_first"/"order_last", "status", "memory_count") and
-// no real PCOB write has ever been captured to check against -- writing
-// it blind would break this project's own real-data-only methodology.
+// This writer keeps THREE lists in step, because a real export has
+// three and rekordbox maintains all of them:
+//
+//   PCO2 in ANLZ0000.EXT   the modern list, every hot cue plus colour
+//                          and comment, read by Nexus2 and later
+//   PCOB in ANLZ0000.DAT   the legacy list, hot cues 1-3
+//   PCOB in ANLZ0000.EXT   the legacy list, hot cues 4-8
+//
+// It used to write PCO2 alone, on the reasoning that PCO2 is a strict
+// superset and well-behaved readers prefer it. That reasoning was
+// wrong about real hardware, and this file used to say so as a known
+// gap -- "everywhere except pre-Nexus2 hardware, which would see a
+// stale PCOB". An XDJ-RX2 then showed exactly that: three pads lit from
+// the untouched legacy lists while the two cues a sync had just written
+// into PCO2 were invisible (issue #33). The .DAT file had not been
+// opened since 2017.
+//
+// What stopped it being implemented before was that no real PCOB write
+// had been captured to check against, and this project does not write a
+// format it has only read about. That is now answered by the survey in
+// anlz_legacy_cue_codec.hpp: 7968 real PCOB sections, 119 real entries,
+// every field fixed or explained. The split above is the part that
+// cannot be guessed from the spec -- .DAT holds 1-3 and .EXT holds 4-8,
+// never both -- and putting every cue in both lists would give an older
+// player pads that should not be lit.
 
 bool isCueListSection(const AnlzRawSection &section, uint32_t listType)
 {
@@ -76,7 +88,83 @@ void writeCueList(AnlzFile &file, uint32_t listType, const std::vector<RawHotCue
     }
 }
 
+constexpr uint32_t PcobFourcc = 0x50434f42;  // "PCOB"
+
+bool isLegacyCueListSection(const AnlzRawSection &section, uint32_t listType)
+{
+    return section.fourcc == PcobFourcc && section.rawBytes.size() >= 20 &&
+           readU32BE(section.rawBytes, 12) == listType;
+}
+
+// The legacy list of `listType` as the file holds it now, entry bytes
+// and all. Empty when the file has no such section, which is normal.
+std::vector<LegacyCueEntry> existingLegacyCues(const AnlzFile &file, uint32_t listType)
+{
+    for (const auto &section : file.sections) {
+        if (!isLegacyCueListSection(section, listType)) {
+            continue;
+        }
+        try {
+            return AnlzLegacyCueCodec::decodeCues(section.rawBytes);
+        } catch (const std::exception &) {
+            // Damaged on the stick: the rewrite below replaces the
+            // section wholesale, which is how such damage gets repaired.
+            return {};
+        }
+    }
+    return {};
+}
+
+// Same rule writeCueList() follows for PCO2: replace the section if the
+// file has one, append one if it does not and there is something to
+// write, and leave a file that has neither and needs neither untouched.
+void writeLegacyCueList(AnlzFile &file, uint32_t listType, const std::vector<LegacyCueEntry> &entries)
+{
+    auto sectionIt = std::find_if(file.sections.begin(), file.sections.end(),
+                                   [listType](const AnlzRawSection &s) {
+                                       return isLegacyCueListSection(s, listType);
+                                   });
+    if (sectionIt == file.sections.end() && entries.empty()) {
+        return;
+    }
+    if (sectionIt != file.sections.end()) {
+        // Replacing: the section's own memory_count goes back with it.
+        sectionIt->rawBytes =
+            AnlzLegacyCueCodec::encodeCues(entries, listType, AnlzLegacyCueCodec::memoryCountOf(sectionIt->rawBytes));
+    } else {
+        file.sections.push_back({PcobFourcc, AnlzLegacyCueCodec::encodeCues(entries, listType)});
+    }
+}
+
+// A cue whose bytes the file already had is written back unchanged; one
+// that is new or has moved is built fresh. Matched on slot and position,
+// the only two fields a legacy entry carries that the domain model also
+// has, and each raw entry is handed out once.
+std::optional<LegacyCueEntry> carryOverLegacy(const LegacyCueEntry &wanted, std::vector<LegacyCueEntry> &from)
+{
+    for (auto &have : from) {
+        if (have.rawBytes.empty() || have.hotCueNumber != wanted.hotCueNumber || have.timeMs != wanted.timeMs
+            || have.isLoop != wanted.isLoop || (have.isLoop && have.loopEndMs != wanted.loopEndMs)) {
+            continue;
+        }
+        LegacyCueEntry taken = have;
+        have.rawBytes.clear();  // consumed
+        return taken;
+    }
+    return std::nullopt;
+}
+
 }  // namespace
+
+std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, const std::string &analyzePath)
+{
+    std::vector<std::string> files{extAnlzPath(pioneerRoot, analyzePath)};
+    const std::string dat = datAnlzPath(pioneerRoot, analyzePath);
+    if (std::filesystem::exists(dat)) {
+        files.push_back(dat);
+    }
+    return files;
+}
 
 RekordboxCueWriter::RekordboxCueWriter(std::string pioneerRoot) : m_pioneerRoot(std::move(pioneerRoot)) {}
 
@@ -167,7 +255,83 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
     writeCueList(file, CueListTypeHot, hotEntries);
     writeCueList(file, CueListTypeMemory, memoryEntries);
 
+    // The legacy lists, from the same cues, so the three never disagree.
+    // Built from `cues` rather than from the PCO2 entries above, because
+    // those may carry raw PCO2 bytes that must never reach a PCOB.
+    auto legacyOf = [&](bool wantHot, uint32_t lowSlot, uint32_t highSlot) {
+        std::vector<LegacyCueEntry> out;
+        for (const auto &cue : cues) {
+            const bool isHot = cue.kind == domain::CuePoint::Kind::Hot;
+            if (isHot != wantHot) {
+                continue;
+            }
+            const uint32_t slot = isHot ? static_cast<uint32_t>(cue.hotCueNumber) : 0;
+            if (isHot && (slot < lowSlot || slot > highSlot)) {
+                continue;
+            }
+            LegacyCueEntry entry;
+            entry.hotCueNumber = slot;
+            entry.timeMs = static_cast<uint32_t>(cue.positionMs);
+            entry.isLoop = cue.isLoop;
+            entry.loopEndMs = cue.isLoop ? static_cast<uint32_t>(cue.loopEndMs) : 0;
+            out.push_back(std::move(entry));
+        }
+        // Descending slot, which is how real hot lists written by the
+        // current rekordbox generation are ordered (45 of 51 real
+        // sections; see anlz_legacy_cue_codec.hpp). A memory list has no
+        // slot to sort by, so it keeps the order the cues arrived in.
+        if (wantHot) {
+            std::stable_sort(out.begin(), out.end(), [](const LegacyCueEntry &a, const LegacyCueEntry &b) {
+                return a.hotCueNumber > b.hotCueNumber;
+            });
+        }
+        return out;
+    };
+
+    auto carriedOver = [](std::vector<LegacyCueEntry> wanted, std::vector<LegacyCueEntry> have) {
+        for (auto &entry : wanted) {
+            if (auto kept = carryOverLegacy(entry, have)) {
+                entry = *kept;
+            }
+        }
+        return wanted;
+    };
+
+    // Hot cues 4-8 and nothing else go in the .EXT file's own PCOB.
+    writeLegacyCueList(file, CueListTypeHot,
+                        carriedOver(legacyOf(true, 4, 8), existingLegacyCues(file, CueListTypeHot)));
     file.writeRaw(extPath);
+
+    // Hot cues 1-3 and the memory cues go in the .DAT file's. A track
+    // whose .DAT is missing keeps working: the .EXT above is already
+    // written, and a player that reads only .DAT had nothing to read
+    // for this track in the first place.
+    const std::string datPath = datAnlzPath(m_pioneerRoot, *analyzePath);
+    if (!std::filesystem::exists(datPath)) {
+        return;
+    }
+    auto datFile = AnlzFile::readRaw(datPath);
+    auto legacySectionBytes = [&datFile]() {
+        std::string joined;
+        for (const auto &section : datFile.sections) {
+            if (section.fourcc == PcobFourcc) {
+                joined += section.rawBytes;
+            }
+        }
+        return joined;
+    };
+    const std::string before = legacySectionBytes();
+    writeLegacyCueList(datFile, CueListTypeHot,
+                        carriedOver(legacyOf(true, 1, 3), existingLegacyCues(datFile, CueListTypeHot)));
+    writeLegacyCueList(datFile, CueListTypeMemory,
+                        carriedOver(legacyOf(false, 0, 0), existingLegacyCues(datFile, CueListTypeMemory)));
+    // Only when something actually moved. Most saves change hot cues in
+    // slots this file does not hold, and rewriting it anyway would cost
+    // a durable write per track and put every .DAT on the stick into the
+    // next incremental backup for nothing.
+    if (legacySectionBytes() != before) {
+        datFile.writeRaw(datPath);
+    }
 }
 
 }  // namespace seabass::infrastructure::rekordbox

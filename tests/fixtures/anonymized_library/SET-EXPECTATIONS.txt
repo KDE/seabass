@@ -1,28 +1,36 @@
 # Written by corpus_test. Delete this file to re-record after a
 # deliberate change to the data set itself.
+# Changed 2026-09-18 for issue #33, deliberately, not by re-recording:
+# the rekordbox cue writer now keeps the legacy PCOB lists level with
+# PCO2, and the reader reads them. rekordbox.cues went 314 -> 317, the
+# three hot cues one fixture track carries in its legacy lists alone
+# (the other four such tracks hold the same cue in both lists and
+# deduplicate). Every durableWritesPerSave that moved gained exactly one
+# write per track whose .DAT legacy list changed; sync writes several
+# tracks, hence +5 there.
 engine.cues 1688
 engine.opensPerBatch 1
 engine.tracks 1564
 engine.tracksWithAlbum 1563
 engine.tracksWithCues 1561
 engine.writeRefusals 0
-matrix.addCue.durableWritesPerSave 3
+matrix.addCue.durableWritesPerSave 4
 matrix.addCue.pdbParses 1
-matrix.cleanup.durableWritesPerSave 4
+matrix.cleanup.durableWritesPerSave 5
 matrix.cleanup.pdbParses 2
-matrix.copyCues.durableWritesPerSave 3
+matrix.copyCues.durableWritesPerSave 4
 matrix.deleteOrphan.durableWritesPerSave 2
 matrix.deviceSetting.durableWritesPerSave 3
-matrix.mergeCues.durableWritesPerSave 3
-matrix.repair.durableWritesPerSave 4
+matrix.mergeCues.durableWritesPerSave 4
+matrix.repair.durableWritesPerSave 5
 matrix.repair.pdbParses 1
 matrix.strayCue.durableWritesPerSave 7
 matrix.strayCue.encryptedOpensPerSave 1
 matrix.strayCue.pdbParsesPerSave 1
-matrix.sync.durableWritesPerSave 9
+matrix.sync.durableWritesPerSave 14
 matrix.sync.engineOpens 0
 onelibrary.tracks 1644
-rekordbox.cues 314
+rekordbox.cues 317
 rekordbox.tracks 1161
 rekordbox.tracksWithAlbum 1160
 rekordbox.tracksWithCues 222

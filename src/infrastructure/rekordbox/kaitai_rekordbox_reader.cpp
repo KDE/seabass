@@ -5,11 +5,13 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
 
+#include "domain/local_restore.hpp"
 #include "infrastructure/file_clock.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_anlz.h"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
@@ -61,19 +63,104 @@ std::string cueColor(Anlz::cue_extended_entry_t &cue)
     return rekordboxCueColor(hasRgb, hasRgb ? cue.color_red() : 0, hasRgb ? cue.color_green() : 0,
                               hasRgb ? cue.color_blue() : 0, static_cast<int>(cue.color_id()));
 }
+// The legacy PCOB lists, for anything they hold that PCO2 does not.
+//
+// On a modern export PCO2 is a superset and this adds nothing. It is not
+// always a modern export: a track last written by an older rekordbox can
+// carry hot cues in PCOB alone, and a player of that generation shows
+// them. Reading only PCO2 under-reported such a track -- one real stick
+// showed one cue here and three on an XDJ-RX2 -- and, now that
+// RekordboxCueWriter rewrites the legacy lists too, under-reporting
+// would be worse than cosmetic: a save would write back a set that never
+// contained them and take them off the player. Read everything that is
+// there, and writing it back is safe.
+//
+// Called for the .EXT and again for the .DAT, because the two hold
+// different halves of the legacy set: slots 4-8 live in the .EXT and 1-3
+// in the .DAT (see anlz_legacy_cue_codec.hpp).
+//
+// "The same cue" is decided exactly as LocalRestorePlanner decides it,
+// and the reason is visible in the fixture: rekordbox stores one cue in
+// both lists at slightly different positions. One real track has all
+// eight of its pads recorded 52 ms earlier in the legacy list than in
+// PCO2; others differ by 1 ms or by half a second. Comparing positions
+// exactly would read that track as sixteen hot cues when a player shows
+// eight. So a hot cue is keyed by its slot, because the hardware has one
+// cue per pad and two entries for pad 3 are one cue however far apart
+// they sit; a memory cue has no slot, so it is the same cue when it is
+// within PositionToleranceMs. PCO2 wins either way -- it is the list
+// rekordbox refines, and the one modern players read.
+void appendLegacyCues(const std::string &anlzBytes, std::vector<domain::CuePoint> &cues)
+{
+    if (anlzBytes.empty()) {
+        return;
+    }
+    std::istringstream ifs(anlzBytes, std::ios::binary);
+    kaitai::kstream ks(&ifs);
+    Anlz anlz(&ks);
+
+    auto alreadyKnown = [&cues](const domain::CuePoint &candidate) {
+        for (const auto &have : cues) {
+            if (have.kind != candidate.kind) {
+                continue;
+            }
+            if (candidate.kind == domain::CuePoint::Kind::Hot) {
+                if (have.hotCueNumber == candidate.hotCueNumber) {
+                    return true;
+                }
+                continue;
+            }
+            if (std::abs(have.positionMs - candidate.positionMs) <= domain::LocalRestorePlanner::PositionToleranceMs) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const auto &section : *anlz.sections()) {
+        if (section->fourcc() != Anlz::SECTION_TAGS_CUES) {
+            continue;
+        }
+        auto *tag = dynamic_cast<Anlz::cue_tag_t *>(section->body());
+        if (!tag) {
+            continue;
+        }
+        const bool isHot = tag->type() == Anlz::CUE_LIST_TYPE_HOT_CUES;
+        for (const auto &cue : *tag->cues()) {
+            domain::CuePoint cp;
+            cp.kind = (isHot && cue->hot_cue() != 0) ? domain::CuePoint::Kind::Hot
+                                                      : domain::CuePoint::Kind::Memory;
+            cp.hotCueNumber = static_cast<int>(cue->hot_cue());
+            cp.positionMs = static_cast<double>(cue->time());
+            cp.isLoop = cue->type() == Anlz::CUE_ENTRY_TYPE_LOOP;
+            if (cp.isLoop) {
+                cp.loopEndMs = static_cast<double>(cue->loop_time());
+            }
+            // A legacy entry carries no colour or comment of its own.
+            if (!alreadyKnown(cp)) {
+                cues.push_back(std::move(cp));
+            }
+        }
+    }
+}
 
 // Takes the file's bytes rather than its path: where they came from is
 // the AnlzByteSource's business (a real PIONEER folder, or an entry in a
 // stick backup being browsed). Kaitai parses from any std::istream, so
 // this is the same parse either way.
-std::vector<domain::CuePoint> readCues(const std::string &anlzBytes)
+//
+// `datBytes` is the same track's .DAT file when the caller has it. It is
+// optional only because one caller (the waveform reader) has no use for
+// cues at all; a caller reading cues to write them back later must pass
+// it, or the legacy slots 1-3 are invisible and the next save deletes
+// them.
+std::vector<domain::CuePoint> readCues(const std::string &anlzBytes, const std::string &datBytes = {})
 {
     std::vector<domain::CuePoint> cues;
     if (anlzBytes.empty()) {
         return cues;
     }
     std::istringstream ifs(anlzBytes, std::ios::binary);
-
     kaitai::kstream ks(&ifs);
     Anlz anlz(&ks);
     for (const auto &section : *anlz.sections()) {
@@ -103,6 +190,8 @@ std::vector<domain::CuePoint> readCues(const std::string &anlzBytes)
             cues.push_back(std::move(cp));
         }
     }
+    appendLegacyCues(anlzBytes, cues);
+    appendLegacyCues(datBytes, cues);
     return cues;
 }
 
@@ -420,7 +509,14 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         const std::string extRelative = anlzRelativePath(analyzePath, /*wantExt=*/true);
                         auto bytes = m_anlzSource->read(extRelative);
                         if (bytes) {
-                            track.cues = readCues(*bytes);
+                            // The .DAT as well: hot cues 1-3 live only in
+                            // its legacy list, and a save writes that list
+                            // back from what was read here. It is the small
+                            // one of the pair (8 KB against 167 KB on a real
+                            // track), and a missing one just yields nothing.
+                            const std::string datRelative = anlzRelativePath(analyzePath, /*wantExt=*/false);
+                            auto datBytes = m_anlzSource->read(datRelative);
+                            track.cues = readCues(*bytes, datBytes ? *datBytes : std::string());
                         }
                         // The track's own edit time: rekordbox keeps a
                         // track's cues in its ANLZ .EXT file, so that

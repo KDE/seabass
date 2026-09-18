@@ -14,6 +14,7 @@
 #include "application/path_key.hpp"
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
 namespace seabass::gui
 {
@@ -42,7 +43,9 @@ std::vector<std::string> filesWrittenFor(WriteScope scope, const domain::TrackId
             return {};
         }
         if (scope.cueData && analyzePath) {
-            files.push_back(infrastructure::rekordbox::extAnlzPath(rootPath, *analyzePath));
+            for (const auto &file : infrastructure::rekordbox::rekordboxCueFilesFor(rootPath, *analyzePath)) {
+                files.push_back(file);
+            }
         }
         if (scope.catalogRows) {
             files.push_back((fs::path(rootPath) / "rekordbox" / "export.pdb").string());

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include <optional>
 
@@ -27,6 +28,17 @@ namespace seabass::infrastructure::rekordbox
 // independent, existing Kaitai-based reader, but NOT yet verified against
 // real rekordbox software or real CDJ/XDJ hardware. Treat output as
 // untrusted for a real gig until you've confirmed that yourself.
+// Every file writeHotCues() may write for one track, in the order it
+// writes them: the .EXT always, the .DAT when the track has one.
+//
+// Exists so a caller cannot back up less than the write touches. It used
+// to be one file, so every backup site named extAnlzPath() directly;
+// when the legacy lists brought the .DAT in, all eight of those sites
+// were suddenly backing up too little, and a failed save could no longer
+// be rolled back whole. One function now answers the question, and
+// add_cue_mirror_failure_test is what noticed.
+std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, const std::string &analyzePath);
+
 class RekordboxCueWriter : public application::CueWriter
 {
 public:

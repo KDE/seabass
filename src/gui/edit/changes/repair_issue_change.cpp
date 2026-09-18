@@ -153,7 +153,9 @@ ChangeOutcome RepairIssueChange::apply(SaveContext &ctx)
             auto analyzePath = pathIndex ? pathIndex->pathFor(survivorId)
                                          : infrastructure::rekordbox::findAnlzPathForTrackId(root, survivorId);
             if (analyzePath) {
-                ctx.backupOnce(infrastructure::rekordbox::extAnlzPath(root, *analyzePath), "consistency-repair");
+                for (const auto &file : infrastructure::rekordbox::rekordboxCueFilesFor(root, *analyzePath)) {
+                    ctx.backupOnce(file, "consistency-repair");
+                }
             }
             w.rekordboxCues->writeHotCues(survivor.sourceId, m_issue.survivorCues);
             ctx.log().record("consistency: merged cues onto survivor id=" + survivor.sourceId);

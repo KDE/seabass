@@ -187,7 +187,9 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
             ? pathIndex->pathFor(static_cast<uint32_t>(std::stoul(id)))
             : infrastructure::rekordbox::findAnlzPathForTrackId(pioneerRoot, static_cast<uint32_t>(std::stoul(id)));
         if (analyzePath) {
-            ctx.backupOnce(infrastructure::rekordbox::extAnlzPath(pioneerRoot, *analyzePath), "add-cue");
+            for (const auto &file : infrastructure::rekordbox::rekordboxCueFilesFor(pioneerRoot, *analyzePath)) {
+                ctx.backupOnce(file, "add-cue");
+            }
         }
     } else {
         // Shared for the save: opening an Engine library is a full SQLite

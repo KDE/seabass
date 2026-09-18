@@ -1047,8 +1047,10 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
             auto analyzePath = seabass::infrastructure::rekordbox::findAnlzPathForTrackId(
                 *resolved.rekordboxPath, static_cast<uint32_t>(std::stoul(targetOf(*plan)->sourceId)));
             if (analyzePath) {
-                rekordboxFiles.insert(
-                    seabass::infrastructure::rekordbox::extAnlzPath(*resolved.rekordboxPath, *analyzePath));
+                for (const auto &file :
+                     seabass::infrastructure::rekordbox::rekordboxCueFilesFor(*resolved.rekordboxPath, *analyzePath)) {
+                    rekordboxFiles.insert(file);
+                }
             }
         }
         if (hasOneLibrary && (!toOneLibrary.empty() || !toRekordbox.empty())) {
@@ -1423,7 +1425,7 @@ int main(int argc, char **argv)
                 if (!analyzePath) {
                     return {};
                 }
-                return {seabass::infrastructure::rekordbox::extAnlzPath(pioneerRoot, *analyzePath)};
+                return seabass::infrastructure::rekordbox::rekordboxCueFilesFor(pioneerRoot, *analyzePath);
             };
             handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks);
         }
