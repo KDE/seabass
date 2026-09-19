@@ -20,6 +20,7 @@ import os
 import shutil
 import sqlite3
 import sys
+import unicodedata
 
 
 def engine_db(stick):
@@ -40,14 +41,25 @@ def plant(db_path, limit_per_defect=5, dry_run=False):
     connection.isolation_level = None
     cursor = connection.cursor()
 
+    # Eight defects take limit_per_defect rows each and one takes a single
+    # row; the spare is what the NFD case draws from, since it can only use a
+    # path with something to decompose and may find none.
+    needed = limit_per_defect * 8 + 1
     tracks = cursor.execute(
         "select id, filename from Track where filename is not null order by id limit ?",
-        (limit_per_defect * 6,),
+        (needed + limit_per_defect * 2,),
     ).fetchall()
-    if len(tracks) < limit_per_defect * 4:
-        sys.exit(f"{db_path} has too few tracks ({len(tracks)}) to plant against")
+    if len(tracks) < needed:
+        sys.exit(
+            f"{db_path} has too few tracks ({len(tracks)}) to plant against: "
+            f"{needed} needed at --count {limit_per_defect}. Use a smaller --count."
+        )
 
     def take(count):
+        # Never silently plant fewer than asked: a defect that quietly did
+        # not get planted is a test that quietly passes.
+        if len(tracks) < count:
+            sys.exit(f"ran out of tracks with {len(tracks)} left, needed {count}")
         return [tracks.pop(0) for _ in range(count)]
 
     # 1. Sample rate that will not decompress. The real stick throws 283 of
@@ -121,6 +133,80 @@ def plant(db_path, limit_per_defect=5, dry_run=False):
                 (track_id,),
             )
         planted.append(("same-file-two-paths", track_id, filename))
+
+    # -- paths that CAN be recovered, and must never be reported missing ----
+    #
+    #    application::path_key exists to fold exactly these, and the header
+    #    says which way the error runs: normalising too little is the
+    #    dangerous direction, because two spellings of one file get different
+    #    keys, the file reads as unreferenced, and unreferenced files are what
+    #    Seabass offers to delete. Every case below is a spelling the catalog
+    #    really produces, with the file itself untouched on disk.
+    #
+    #    These are the opposite of defect 2. A dangling row is a file that is
+    #    gone; these are files that are right there, under a name written
+    #    differently. Nothing here should ever appear in a "missing files"
+    #    list, and a fixture that only carried genuinely-absent files would
+    #    never catch a normalisation that quietly stopped working.
+
+    # 6. Case. exFAT and NTFS are case-insensitive, so this is one file.
+    for track_id, filename in take(limit_per_defect):
+        if not dry_run:
+            cursor.execute("update Track set path = upper(path) where id = ?", (track_id,))
+        planted.append(("repairable-case", track_id, filename))
+
+    # 7. Backslashes, from a stick written on Windows and read anywhere else.
+    #    std::filesystem only treats '\' as a separator on Windows, so leaving
+    #    it to the platform makes the same stick compare differently by OS.
+    for track_id, filename in take(limit_per_defect):
+        if not dry_run:
+            cursor.execute("update Track set path = replace(path, '/', '\\') where id = ?", (track_id,))
+        planted.append(("repairable-backslashes", track_id, filename))
+
+    # 8. A decomposed filename. macOS stores NFD on FAT and exFAT, so a stick
+    #    restored there spells every accented track differently from the
+    #    catalog that wrote it; before this was folded, Clean Up called those
+    #    files unreferenced. Only plantable on a path that actually has
+    #    something to decompose.
+    accented = [
+        (track_id, name)
+        for track_id, name in tracks
+        if any(ord(character) > 127 for character in (name or ""))
+    ]
+    planted_nfd = 0
+    for track_id, filename in accented[:limit_per_defect]:
+        row = cursor.execute("select path from Track where id = ?", (track_id,)).fetchone()
+        if not row or not row[0]:
+            continue
+        decomposed = unicodedata.normalize("NFD", row[0])
+        if decomposed == row[0]:
+            continue  # already decomposed: nothing to plant
+        if not dry_run:
+            cursor.execute("update Track set path = ? where id = ?", (decomposed, track_id))
+        tracks[:] = [entry for entry in tracks if entry[0] != track_id]
+        planted.append(("repairable-nfd", track_id, filename))
+        planted_nfd += 1
+    if planted_nfd == 0:
+        # Say so rather than quietly plant nothing. This defect needs a
+        # path with a composed accent in it, and a catalog of hashed or
+        # plain-ASCII filenames has none -- the anonymized fixture is
+        # exactly that. A silently unplanted defect is a test that passes
+        # for the wrong reason, which is the one outcome worth refusing.
+        planted.append(("repairable-nfd", None, "NOT PLANTED: no path here has a composed accent to decompose"))
+
+    # -- and one that genuinely cannot be recovered -------------------------
+    #
+    # 9. A path naming a directory rather than a file. It exists, so an
+    #    existence check passes; it is not audio, so everything after that
+    #    fails. Distinct from defect 2, where nothing is there at all, and
+    #    from 6 to 8, where the file is real and only the spelling differs.
+    for track_id, filename in take(1):
+        if not dry_run:
+            cursor.execute(
+                "update Track set path = ?, filename = ? where id = ?",
+                ("Contents", "Contents", track_id),
+            )
+        planted.append(("unrepairable-path-is-a-directory", track_id, filename))
 
     if not dry_run:
         connection.commit()
