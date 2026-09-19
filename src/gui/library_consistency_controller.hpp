@@ -317,7 +317,11 @@ public:
     bool canUndo() const;
     int stagedCount() const { return static_cast<int>(m_stagedIssues.size() + m_stagedJunk.size()); }
     int stagedIssueCount() const { return static_cast<int>(m_stagedIssues.size()); }
-    int stagedJunkCueCount() const { return static_cast<int>(m_stagedJunk.size()); }
+    // Cues, not entries in m_stagedJunk: that map holds one entry per
+    // TRACK, and the page prints this beside a sentence counting cues
+    // ("I found 185 cue(s) sitting at 0:00" over "173 staged"). The
+    // model knows which rows are staged, and a row is a cue.
+    int stagedJunkCueCount() const { return m_junkCueModel.count() - m_junkCueModel.unstagedCount(); }
     int scanCurrent() const { return m_scanCurrent; }
     int scanTotal() const { return m_scanTotal; }
     // "rekordbox"/"engine"/"onelibrary" while that format's scan is

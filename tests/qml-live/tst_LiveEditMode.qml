@@ -264,8 +264,13 @@ TestCase {
         // list, which must have nothing left to offer.
         tryVerify(function() { return s.pendingCount > 0 && s.pendingCount <= count; }, 5000,
                   "one staged change per track, no more than one per cue");
-        verify(ctrl.statusMessage.indexOf(count + " stray cue") >= 0,
-               "the staged line counts cues, not changes: " + ctrl.statusMessage);
+        // Anchored on the whole sentence: "185 stray cue" is a substring
+        // of "1185 stray cue" too, and a check that agrees with a count
+        // one digit out is the kind this round exists to stop.
+        compare(ctrl.statusMessage,
+                "Staged removing " + count + " stray cue(s) on " + s.pendingCount
+                    + " track(s). Press Save to write it to the stick.",
+                "the staged line counts cues, and tracks, and says which is which");
         tryCompare(ctrl, "unstagedJunkCueCount", 0, 5000,
                    "every row of a staged track reads as staged, so Remove All has nothing left to do");
         shot(page, "live-junk-staged");

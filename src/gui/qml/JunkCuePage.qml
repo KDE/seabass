@@ -194,8 +194,13 @@ Page {
         id: confirmRemoveJunkCueDialog
         property int pendingIndex: -1
         severity: SeabassDialog.Question
-        title: "Remove This Cue?"
-        headline: "Stages removing this cue sitting at 0:00 from the track; Save writes it."
+        // What it stages is the track's stray cues, all of them: one
+        // change rewrites the cue list without any cue inside the first
+        // second, and the page now flips every one of that track's rows
+        // to "staged" as it happens. The old wording promised one cue
+        // and was contradicted on screen.
+        title: "Remove This Track's Stray Cues?"
+        headline: "Stages removing every cue this track has sitting at 0:00, not only this row; Save writes it."
         detailText: "Backed up first."
         acceptText: "Stage Removal"
         onAccepted: if (pendingIndex >= 0) consistencyController.removeJunkCue(pendingIndex)

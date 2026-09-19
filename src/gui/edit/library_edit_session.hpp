@@ -88,6 +88,18 @@ public:
     bool writing() const { return m_writing; }
     bool lockHeld() const { return m_lockHeld; }
     int pendingCount() const { return static_cast<int>(m_changes.size()); }
+    // What those changes carry, in the unit the summary names: a save of
+    // 173 stray-cue changes writes 185 cues, and a bar or a refusal that
+    // counts changes contradicts the sentence that follows it. See
+    // PendingChange::unitsWritten().
+    int pendingUnits() const
+    {
+        int units = 0;
+        for (const auto &change : m_changes) {
+            units += change->unitsWritten();
+        }
+        return units;
+    }
     QStringList pendingDescriptions() const;
     QString writeLabel() const { return m_writeLabel; }
     int writeCurrent() const { return m_writeCurrent; }

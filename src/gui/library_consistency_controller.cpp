@@ -1309,7 +1309,8 @@ void LibraryConsistencyController::unstageJunkCue(int index)
     if (index < 0 || static_cast<size_t>(index) >= issues.size()) {
         return;
     }
-    auto it = m_stagedJunk.find(junkKeyFor(issues[static_cast<size_t>(index)].track));
+    const QString key = junkKeyFor(issues[static_cast<size_t>(index)].track);
+    auto it = m_stagedJunk.find(key);
     if (it == m_stagedJunk.end()) {
         return;
     }
@@ -1317,7 +1318,18 @@ void LibraryConsistencyController::unstageJunkCue(int index)
         m_session->unstage(it->second);
     }
     m_stagedJunk.erase(it);
-    m_junkCueModel.setStaged(index, false);
+    // Every row of that track, the way staging set them. One change
+    // covers all of a track's stray cues, so clearing only the row that
+    // was clicked left its neighbours badged "staged" with an Unstage
+    // button that does nothing -- their key is gone from m_stagedJunk,
+    // so this function returns above -- for work that will never be
+    // written. It also left unstagedJunkCueCount() too low, which is
+    // what decides whether "Remove All" still has anything to offer.
+    for (size_t row = 0; row < issues.size(); ++row) {
+        if (junkKeyFor(issues[row].track) == key) {
+            m_junkCueModel.setStaged(static_cast<int>(row), false);
+        }
+    }
     clearStagedStatusIfNothingStaged();
     emit issuesChanged();
 }

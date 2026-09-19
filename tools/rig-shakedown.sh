@@ -487,13 +487,23 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     fi
     if [ "$records_may_appear" -eq 0 ] && [ "$records_settled" -ne "$records_before" ]; then
         echo "the refused save left a backup record behind: $records_before -> $records_settled entries in $A/Seabass/backups"
-        # What is in it decides how bad it is: a record with a manifest is
-        # a backup somebody can restore, one without is the truncated
+        # The record this save made, not the folder's oldest eight: a
+        # stick that already holds backups would have filled the listing
+        # with those and hidden the one the message is about. What is in
+        # it decides how bad it is -- a record with a manifest is a
+        # backup somebody can restore, one without is the truncated
         # half-record Manage Backups used to list as an empty entry.
-        find "$A/Seabass/backups" -mindepth 1 -maxdepth 2 2>/dev/null | head -8
+        while read -r record; do
+            [ -n "$record" ] || continue
+            echo "  $record"
+            find "$record" -maxdepth 1 -mindepth 1 2>/dev/null | sed 's/^/    /'
+        done < <(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d -newer "$filler" 2>/dev/null)
         rc=1
-    elif [ "$records_after" -ne "$records_before" ]; then
-        echo "a record was listed the moment the save ended and was gone $records_settled/$records_before a second later:" \
+    elif [ "$records_after" -ne "$records_before" ] && [ "$records_settled" -eq "$records_before" ]; then
+        # Only when it really did go: F4-undo's own record is allowed to
+        # appear AND to stay, and saying it had gone would be a third
+        # wrong answer about the same folder.
+        echo "a record was listed the moment the save ended and was gone a second later ($records_after -> $records_settled):" \
              "the removal lands after the process exits, so this is the rig looking too early, not a leftover"
     fi
     if [ "$keep_filler" -eq 1 ]; then
@@ -756,7 +766,22 @@ check F4-undo-on-a-nearly-full-stick full_stick_undo
 # So C6 runs here, and the filler goes immediately afterwards, before the
 # restores that would otherwise meet a full stick.
 mkdir -p "$out/backups-c6"
-check C6-target-too-small "$build/rig_clone" "$B" "$A" "$out/backups-c6" --expect-too-small
+# The precondition, asserted rather than assumed: C6 is only a check
+# while stick A is still full from F4-undo's filler. Run on its own
+# through RIG_ONLY, or after a fill that gave up, A has its whole 29 GiB
+# and rig_clone reports "BIG ENOUGH -- this target cannot check C6",
+# which is a verdict about the hardware dressed as a result. Say so
+# instead, and fail: a check that cannot run has not passed.
+c6_needs_a_full_stick() {
+    local free_kb; free_kb=$(free_kb_of "$A")
+    if [ "$free_kb" -gt 1048576 ]; then
+        echo "$A has $free_kb KB free, so no 1.2 GiB library can fail to fit: C6 needs the filler F4-undo leaves"
+        echo "behind, and RIG_ONLY must name F4-undo-on-a-nearly-full-stick alongside this check."
+        return 1
+    fi
+    "$build/rig_clone" "$B" "$A" "$out/backups-c6" --expect-too-small
+}
+check C6-target-too-small c6_needs_a_full_stick
 rm -f "$A"/RIG-FILLER-*.bin
 sync
 echo "filler removed before the restores; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free on $A"

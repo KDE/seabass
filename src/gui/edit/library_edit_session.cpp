@@ -352,8 +352,16 @@ void LibraryEditSession::save()
         return;
     }
     if (m_rekordboxPath.isEmpty() && m_enginePath.isEmpty()) {
-        m_lastSummary = {{"written", 0}, {"total", pendingCount()}, {"unit", m_changes.front()->unit()},
-                         {"cancelled", false}, {"error", QStringLiteral("no library path is known for this session")}};
+        // Same shape as the summary a real save produces: units, and the
+        // change's own verb. Without the verb OperationSummaryDialog
+        // falls back to "written", which is the wording this file's
+        // header exists to reject.
+        m_lastSummary = {{"written", 0},
+                         {"total", pendingUnits()},
+                         {"unit", m_changes.front()->unit()},
+                         {"verb", m_changes.front()->verb()},
+                         {"cancelled", false},
+                         {"error", QStringLiteral("no library path is known for this session")}};
         emit saveFinished(m_lastSummary);
         return;
     }
@@ -362,7 +370,9 @@ void LibraryEditSession::save()
     m_savingVerb = m_changes.front()->verb();
     m_writeCancel = application::CancellationToken();
     m_cancelRequested = false;
-    setWriteProgress(QStringLiteral("Preparing"), 0, pendingCount());
+    // In units, like the summary that follows: a bar that runs to 173
+    // under a dialog saying 185 is two answers to one question.
+    setWriteProgress(QStringLiteral("Preparing"), 0, pendingUnits());
     setWriting(true);
 
     auto bridge = std::make_shared<SaveProgressBridge>();
