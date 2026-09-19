@@ -5,6 +5,8 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -257,6 +259,134 @@ int main()
         assert(withoutJunkCues(t.cues).size() == 1);
         MatchingPolicy::reset();
         std::cout << "case 12 (the finder and the filter agree with the setting) OK\n";
+    }
+
+    // Case 13: switching the audio comparison ON must never make a
+    // group the exact window already found disappear. A=300, B=306,
+    // C=308 with the window at 2 s: alone, B and C are 2 s apart and
+    // {B, C} is offered. A greedy single pass that consulted the probe
+    // inline let the seed A claim B by audio, mark it used, and leave C
+    // by itself -- so turning the setting on REMOVED a duplicate pair
+    // from Clean Up. Found by /code-review, 2026-09-19.
+    //
+    // The probe must confirm A and B and REFUSE A and C for this to
+    // bite. A first version of this case had all three agree, so the
+    // greedy code grouped all three and the test passed against the
+    // bug it was written for -- checked by reverting the fix, which is
+    // the only way that is ever actually known.
+    {
+        MatchingPolicy::set(2.0, 10.0, true);
+        std::vector<Track> tracks = {
+            makeTrack("a", "Song", "Artist", 300.0, "/stick/a.mp3"),
+            makeTrack("b", "Song", "Artist", 306.0, "/stick/b.mp3"),
+            makeTrack("c", "Song", "Artist", 308.0, "/stick/c.mp3"),
+        };
+        auto without = DuplicateTrackFinder::find(tracks);
+        assert(without.size() == 1 && without[0].tracks.size() == 2 && "B and C, 2 s apart");
+
+        FakeAudioProbe probe;
+        probe.answer("/stick/a.mp3", 300.0, 0.0, 0.0);    // 300 s of music
+        probe.answer("/stick/b.mp3", 306.0, 3.0, 3.0);    // 300 s too: same as A
+        probe.answer("/stick/c.mp3", 308.0, 1.5, 1.5);    // 305 s: NOT A's
+        auto with = DuplicateTrackFinder::find(tracks, &probe);
+
+        std::set<std::string> groupedWithout;
+        for (const auto &g : without) {
+            for (const auto &t : g.tracks) {
+                groupedWithout.insert(t.sourceId);
+            }
+        }
+        std::set<std::string> groupedWith;
+        for (const auto &g : with) {
+            for (const auto &t : g.tracks) {
+                groupedWith.insert(t.sourceId);
+            }
+        }
+        for (const auto &id : groupedWithout) {
+            assert(groupedWith.count(id) == 1 && "the audio must never un-group anything");
+        }
+        assert(groupedWith.count("a") == 1 && "and A joins them");
+        std::cout << "case 13 (the audio only ever adds, never takes away) OK\n";
+    }
+
+    // Case 14: case 13 is one instance of a property, so the property
+    // itself is checked over randomly generated libraries rather than
+    // over hand-picked numbers -- hand-picked numbers are how case 13
+    // first managed to agree with the bug.
+    //
+    // Each track belongs to a real underlying recording. The probe
+    // answers with that recording's true length, so the audio agrees
+    // exactly when two tracks really are the same recording, while the
+    // stored lengths wander. The property: every track grouped without
+    // a probe is still grouped with one.
+    {
+        MatchingPolicy::set(2.0, 12.0, true);
+        std::mt19937 rng(20260919);
+        std::uniform_int_distribution<int> countDist(2, 6);
+        std::uniform_int_distribution<int> recordingDist(0, 2);
+        std::uniform_real_distribution<double> padDist(0.0, 14.0);
+        const double recordingLengths[3] = {180.0, 300.0, 420.0};
+
+        for (int trial = 0; trial < 400; ++trial) {
+            const int count = countDist(rng);
+            std::vector<Track> tracks;
+            FakeAudioProbe probe;
+            for (int i = 0; i < count; ++i) {
+                const std::string id(1, static_cast<char>('a' + i));
+                const double content = recordingLengths[recordingDist(rng)];
+                const double lead = padDist(rng) / 4.0;
+                const double trail = padDist(rng);
+                const std::string path = "/stick/" + id + ".mp3";
+                tracks.push_back(makeTrack(id, "Song", "Artist", content + lead + trail, path));
+                probe.answer(path, content + lead + trail, lead, trail);
+            }
+
+            std::set<std::string> before;
+            for (const auto &g : DuplicateTrackFinder::find(tracks)) {
+                for (const auto &t : g.tracks) {
+                    before.insert(t.sourceId);
+                }
+            }
+            std::set<std::string> after;
+            for (const auto &g : DuplicateTrackFinder::find(tracks, &probe)) {
+                for (const auto &t : g.tracks) {
+                    after.insert(t.sourceId);
+                }
+            }
+            for (const auto &id : before) {
+                if (after.count(id) != 1) {
+                    std::cerr << "trial " << trial << ": track " << id
+                              << " was grouped by stored lengths and un-grouped once the audio was "
+                                 "consulted. Lengths:";
+                    for (const auto &t : tracks) {
+                        std::cerr << " " << t.sourceId << "=" << t.durationSeconds;
+                    }
+                    std::cerr << "\n";
+                    assert(false && "a probe may only ever add");
+                }
+            }
+        }
+        std::cout << "case 14 (that property holds over 400 random libraries) OK\n";
+    }
+
+    // Case 15: the backup stores' identity window never widens, however
+    // wide the exact-match window is set. LocalCueStore::upsert() takes
+    // the first stored row inside it, then DELETEs that row's cues and
+    // writes the incoming ones -- so a wider window there lets a 3:00
+    // radio edit overwrite the backed-up cues of a 3:25 extended mix
+    // filed under the same artist and title, silently. Narrowing is
+    // safe and is honoured. Found by /code-review, 2026-09-19.
+    {
+        MatchingPolicy::set(30.0, 30.0, true);
+        assert(MatchingPolicy::exactMatchSeconds() == 30.0);
+        assert(MatchingPolicy::backupIdentitySeconds() == 2.0 && "capped, not widened");
+
+        MatchingPolicy::set(1.0, 10.0, true);
+        assert(MatchingPolicy::backupIdentitySeconds() == 1.0 && "a stricter setting is obeyed");
+
+        MatchingPolicy::reset();
+        assert(MatchingPolicy::backupIdentitySeconds() == 2.0);
+        std::cout << "case 15 (the backup stores' window never widens) OK\n";
     }
 
     std::cout << "All matching_policy tests passed.\n";

@@ -45,6 +45,8 @@ class AppSettingsController : public QObject
     // "compare audio" row's explanation on it, so a build that cannot
     // do it says so instead of offering a number that does nothing.
     Q_PROPERTY(bool audioComparisonSupported READ audioComparisonSupported CONSTANT)
+    Q_PROPERTY(int exactMatchMaxSeconds READ exactMatchMaxSeconds CONSTANT)
+    Q_PROPERTY(int compareAudioMaxSeconds READ compareAudioMaxSeconds CONSTANT)
     Q_PROPERTY(QString stickBackupDirectory READ stickBackupDirectory WRITE setStickBackupDirectory NOTIFY
                    stickBackupDirectoryChanged)
     // Where everything Seabass keeps on this computer lives: stick
@@ -116,14 +118,20 @@ public:
     bool ignoreCuesAtStart() const { return m_ignoreCuesAtStart; }
     void setIgnoreCuesAtStart(bool value);
 
-    static constexpr bool audioComparisonSupported()
-    {
-#ifdef SEABASS_HAVE_QT_AUDIO
-        return true;
-#else
-        return false;
-#endif
-    }
+    // Whether audio can actually be decoded HERE, now. Not a
+    // compile-time #ifdef: a build with QtMultimedia linked in still
+    // decodes nothing when the FFmpeg plugin did not load, and in that
+    // case Preferences would otherwise offer a window that quietly does
+    // nothing. Asked of the backend once and remembered, since
+    // constructing a decoder per binding evaluation is not free.
+    static bool audioComparisonSupported();
+
+    // The limits domain::MatchingPolicy clamps to, exposed so the spin
+    // boxes cannot offer a number it will silently refuse. They were
+    // hardcoded in the QML, which is exactly the drift the constants'
+    // own comment claimed to prevent.
+    int exactMatchMaxSeconds() const;
+    int compareAudioMaxSeconds() const;
 
     // Where full stick backups (one `<label>.zip` per stick) are kept.
     // Defaults to "<home>/Seabass/backups/full" -- a place the user can find,

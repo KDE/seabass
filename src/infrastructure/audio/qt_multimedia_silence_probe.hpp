@@ -38,11 +38,19 @@ public:
     // above it.
     //
     // `timeoutMs` bounds one file. A damaged file can otherwise leave
-    // the backend never emitting Finished, which would hang a scan on
-    // one bad track. It is generous compared to the duration probe's
-    // because this actually decodes: measured on this machine, a
-    // six-minute 320 kbps mp3 decodes in roughly 0.4 s.
-    explicit QtMultimediaSilenceProbe(double silenceDb = -60.0, int timeoutMs = 30000);
+    // the backend never emitting either finished() or error(), which
+    // would hang a scan on one bad track. Ten seconds is a backstop and
+    // not a normal cost: measured on this machine a six-minute 320 kbps
+    // mp3 decodes in roughly 0.4 s, and a file the backend refuses now
+    // answers immediately rather than waiting this out.
+    explicit QtMultimediaSilenceProbe(double silenceDb = -60.0, int timeoutMs = 10000);
+
+    // Whether this build has a decoding backend that actually loaded.
+    // Compiling QtMultimedia in is not the same as having the FFmpeg
+    // plugin present at run time, and the difference matters: without
+    // it every measure() answers nothing, and a caller that assumed
+    // otherwise would report having compared files it never opened.
+    static bool decodingAvailable();
 
     std::optional<domain::AudioContentSpan> measure(const std::string &absoluteFilePath) override;
 

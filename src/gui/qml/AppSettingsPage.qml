@@ -211,7 +211,11 @@ Page {
                         objectName: "exactMatchSpin"
                         editable: true
                         from: 0
-                        to: 30
+                        // From the controller, not a literal: the policy
+                        // clamps to this, and a spin box offering more
+                        // would let someone set a number the app
+                        // silently refuses.
+                        to: root.appSettingsController.exactMatchMaxSeconds
                         value: root.appSettingsController.exactMatchSeconds
                         // onValueModified, not onValueChanged: the latter
                         // also fires when the binding above writes the
@@ -240,7 +244,12 @@ Page {
                             + "Raise it and more copies are found, including some that are different edits. "
                             + "Lower it and only near identical lengths group, so genuine duplicates get "
                             + "missed. Nothing is ever written without asking you first, whichever way you "
-                            + "set it."
+                            + "set it.\n\n"
+                            + "One exception, on purpose: raising it does not loosen what the cue and "
+                            + "metadata backups treat as the same track. Those keep their two seconds, "
+                            + "because a looser match there could let one track's backed up cues be "
+                            + "overwritten by another's with nothing shown. Lowering it does apply to "
+                            + "them, since a stricter match can only ever keep the two apart."
                     }
                 }
 
@@ -259,7 +268,7 @@ Page {
                         // same way; this only keeps the page from
                         // offering a number it will not get.
                         from: root.appSettingsController.exactMatchSeconds
-                        to: 120
+                        to: root.appSettingsController.compareAudioMaxSeconds
                         value: root.appSettingsController.compareAudioSeconds
                         onValueModified: root.appSettingsController.compareAudioSeconds = value
                     }
@@ -302,7 +311,7 @@ Page {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Theme.textMuted
-                    text: "This build cannot decode audio, so lengths are compared but the audio is not. "
+                    text: "No audio decoder is available here, so lengths are compared but the audio is not. "
                         + "Anything already measured and cached on a stick is still used."
                 }
             }

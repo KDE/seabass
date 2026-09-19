@@ -45,6 +45,28 @@ public:
     // build with no decoder available falls back to.
     static double compareAudioSeconds();
 
+    // The window the LOCAL BACKUP STORES use to decide that a stored
+    // row describes the stick track in front of them. Never wider than
+    // 2 s, whatever the user sets, and narrower when they set it
+    // narrower: min(exactMatchSeconds(), 2.0).
+    //
+    // This is the one place the "one number, one meaning" rule is
+    // deliberately broken, because the two directions are not
+    // symmetrical here. LocalCueStore::upsert() takes the first stored
+    // row whose title+artist key matches within this window, then
+    // DELETEs that row's cues and writes the incoming ones. Widen the
+    // window and a 3:00 radio edit filed under the same artist and
+    // title as a 3:25 extended mix starts matching it, so backing up
+    // one silently destroys the other's backed-up cues, with nothing
+    // shown and nothing to undo. Narrowing costs at worst a second
+    // stored row, which loses nothing.
+    //
+    // So: a user who tightens this is obeyed everywhere, and a user who
+    // loosens it gets looser duplicate detection (where every group is
+    // reviewed before anything is written) without loosening what the
+    // backup considers to be the same track.
+    static double backupIdentitySeconds();
+
     // Whether a cue inside the first second counts as junk (see
     // domain::isJunkCue). On by default: on real sticks these are stray
     // presses and format sentinels, not markers. Off leaves them alone

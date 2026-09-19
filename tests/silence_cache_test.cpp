@@ -123,9 +123,14 @@ int main()
         std::cout << "case 4 (a changed file is re-measured) OK\n";
     }
 
-    // Case 5: a failure is not cached. An unplugged stick or a backend
-    // that was not ready is about this run, and writing it down would
-    // make one bad moment permanent for that file.
+    // Case 5: a failure is not written to the cache file -- an
+    // unplugged stick or a backend that was not ready is about this
+    // run, and writing it down would make one bad moment permanent for
+    // that file -- but it IS remembered in memory for the rest of the
+    // run. DuplicateTrackFinder asks once per *pair*, so a file in a
+    // group of five copies is asked four times, and without this each
+    // ask paid the full cost of failing again. Found by /code-review,
+    // 2026-09-19.
     {
         fs::remove_all(root / "Seabass");
         auto inner = std::make_unique<CountingProbe>();
@@ -135,8 +140,21 @@ int main()
         assert(!probe.measure(audio).has_value());
         assert(!probe.dirty() && "nothing to write down");
         assert(!probe.measure(audio).has_value());
-        assert(counter->calls == 2 && "asked again rather than remembering the failure");
-        std::cout << "case 5 (a failure is not remembered) OK\n";
+        assert(!probe.measure(audio).has_value());
+        assert(counter->calls == 1 && "asked once, then remembered for this run only");
+        assert(probe.failedCount() == 1);
+        // And the successes counter stays honest: nothing was compared.
+        assert(probe.decodedCount() == 0 && "a file that gave no answer was not compared");
+
+        // A new probe (the next scan) tries again rather than inheriting
+        // the failure, which is the half that must NOT be remembered.
+        auto retryInner = std::make_unique<CountingProbe>();
+        CountingProbe *retryCounter = retryInner.get();
+        CachedAudioContentProbe retry(root.string(), std::move(retryInner));
+        assert(retry.measure(audio).has_value());
+        assert(retryCounter->calls == 1);
+        assert(retry.decodedCount() == 1 && "a real answer is a real comparison");
+        std::cout << "case 5 (a failure is remembered for this run, and no longer) OK\n";
     }
 
     // Case 6: a file outside the stick root is measured but not cached
@@ -185,6 +203,60 @@ int main()
         assert(reloaded.size() == 1);
         assert(reloaded.measure(audio2).has_value());
         std::cout << "case 8 (the destructor saves) OK\n";
+    }
+
+    // Case 9: entries whose file is gone are dropped when the cache is
+    // written, so silence.jsonl does not grow without bound on the
+    // stick across re-rips and deletions, being re-parsed in full on
+    // every scan. Found by /code-review, 2026-09-19.
+    {
+        fs::remove_all(root / "Seabass");
+        const std::string keep = writeFile(root / "Contents" / "c" / "keep.mp3", "still here");
+        const std::string gone = writeFile(root / "Contents" / "c" / "gone.mp3", "not for long");
+        {
+            CachedAudioContentProbe probe(root.string(), std::make_unique<CountingProbe>());
+            assert(probe.measure(keep).has_value());
+            assert(probe.measure(gone).has_value());
+            assert(probe.save());
+        }
+        assert(CachedAudioContentProbe(root.string(), nullptr).size() == 2);
+
+        fs::remove(gone);
+        {
+            // A save only rewrites when something was measured, so
+            // something has to be.
+            const std::string fresh = writeFile(root / "Contents" / "c" / "fresh.mp3", "new arrival");
+            CachedAudioContentProbe probe(root.string(), std::make_unique<CountingProbe>());
+            assert(probe.measure(fresh).has_value());
+            assert(probe.save());
+        }
+        CachedAudioContentProbe reloaded(root.string(), nullptr);
+        assert(reloaded.size() == 2 && "keep and fresh survived, gone was dropped");
+        assert(reloaded.measure(keep).has_value());
+        std::cout << "case 9 (entries for deleted files are pruned) OK\n";
+    }
+
+    // Case 10: a stick mounted at a drive root must not send the cache
+    // somewhere else entirely. Stripping the trailing separator before
+    // building the path turns "H:/" into "H:", and "H:" / "Seabass/..."
+    // is drive-RELATIVE on Windows, resolved against the process's
+    // current directory rather than the stick. Checked here through the
+    // shape that reproduces on any platform: a root given with a
+    // trailing slash must land in the same place as one without.
+    // Found by /code-review, 2026-09-19.
+    {
+        fs::remove_all(root / "Seabass");
+        const std::string withSlash = root.string() + "/";
+        {
+            CachedAudioContentProbe probe(withSlash, std::make_unique<CountingProbe>());
+            assert(probe.measure(audio).has_value());
+            assert(probe.save());
+        }
+        assert(fs::exists(cacheFile) && "the cache landed under the stick root, not beside the process");
+        CachedAudioContentProbe reloaded(root.string(), nullptr);
+        assert(reloaded.size() >= 1 && "and a root without the slash reads the same file");
+        assert(reloaded.measure(audio).has_value());
+        std::cout << "case 10 (a trailing separator does not move the cache) OK\n";
     }
 
     fs::remove_all(root);

@@ -47,6 +47,14 @@ double MatchingPolicy::compareAudioSeconds()
     return compareAudioStore().load(std::memory_order_relaxed);
 }
 
+double MatchingPolicy::backupIdentitySeconds()
+{
+    // See the header: capped rather than clamped at set() time, because
+    // the exact-match window itself really is whatever the user chose
+    // -- it is only the backup stores' row identity that must not widen.
+    return std::min(exactMatchSeconds(), DefaultExactMatchSeconds);
+}
+
 bool MatchingPolicy::ignoreCuesAtStart()
 {
     return ignoreCuesAtStartStore().load(std::memory_order_relaxed);

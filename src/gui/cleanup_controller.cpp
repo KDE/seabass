@@ -26,6 +26,7 @@
 #include "domain/duplicate_cue_consolidation.hpp"
 #include "domain/matching_policy.hpp"
 #include "domain/track_scope.hpp"
+#include "gui/cancellable_audio_probe.hpp"
 #include "infrastructure/audio/silence_probe_factory.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/format_write_session.hpp"
@@ -690,9 +691,14 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
             fs::path(path.toStdString()).parent_path().string());
         result.audioComparisonUnavailable = audioProbe == nullptr
             && domain::MatchingPolicy::compareAudioSeconds() > domain::MatchingPolicy::exactMatchSeconds();
+        // Decoding is the slowest thing in the scan, so Cancel has to
+        // reach it; the finder itself takes no token. See
+        // CancellableAudioContentProbe.
+        CancellableAudioContentProbe cancellableProbe(audioProbe.get(), cancel);
+        domain::AudioContentProbe *probeForFinder = audioProbe != nullptr ? &cancellableProbe : nullptr;
 
         std::vector<domain::DuplicateCleanupPlan> plans;
-        for (const auto &group : domain::DuplicateTrackFinder::find(tracks, audioProbe.get())) {
+        for (const auto &group : domain::DuplicateTrackFinder::find(tracks, probeForFinder)) {
             auto plan = domain::DuplicateCleanupPlanner::plan(group);
             if (plan.toRemove.empty()) {
                 continue;
@@ -714,6 +720,14 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         result.plans = std::move(plans);
         if (audioProbe != nullptr) {
             result.filesAudioCompared = audioProbe->decodedCount();
+            result.filesAudioUnreadable = audioProbe->failedCount();
+            // Asked, and got nothing back for any of them: a decoder
+            // that is linked in but did not load answers instantly and
+            // would otherwise leave both counters at a shape that reads
+            // as "nothing needed comparing".
+            if (result.filesAudioCompared == 0 && result.filesAudioUnreadable > 0) {
+                result.audioComparisonUnavailable = true;
+            }
             // Explicit rather than left to the destructor, so a stick
             // that refuses the write is a thing the scan saw rather
             // than something that happens after it is over.
@@ -973,13 +987,20 @@ void CleanupController::onRescanFinished()
     // the ordinary case and needs no line of its own.
     if (result.audioComparisonUnavailable) {
         m_audioComparisonNote = QStringLiteral(
-            "This build cannot decode audio, so tracks whose lengths nearly agree were compared by "
+            "No audio could be decoded here, so tracks whose lengths nearly agree were compared by "
             "their stored lengths alone.");
     } else if (result.filesAudioCompared > 0) {
         m_audioComparisonNote = QStringLiteral("Compared the audio of %1 file%2 whose stored lengths "
                                                 "were close but not close enough to settle it.")
                                      .arg(result.filesAudioCompared)
                                      .arg(result.filesAudioCompared == 1 ? "" : "s");
+        if (result.filesAudioUnreadable > 0) {
+            // Never folded into the sentence above: a file that could
+            // not be read was not compared, and a count that quietly
+            // included it would be the thing this line exists to avoid.
+            m_audioComparisonNote += QStringLiteral(" %1 more could not be read and was left ungrouped.")
+                                          .arg(result.filesAudioUnreadable);
+        }
     } else {
         m_audioComparisonNote.clear();
     }

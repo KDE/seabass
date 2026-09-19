@@ -104,13 +104,27 @@ int main(int argc, char **argv)
     // the right few seconds is.
     constexpr double Tolerance = 0.5;
 
+    // The precondition, checked before anything is measured. This test
+    // only exists where seabass_audio_qt was built, so a backend that
+    // will not load here is a broken environment, not a configuration
+    // to be tolerated: it FAILS rather than skipping.
+    //
+    // The project's rule, in its own words: a skip or a not-fully-run
+    // check is a FAIL; plant the precondition or fail, never record it
+    // green. An earlier version of this printed "SKIP" and returned 0,
+    // which would have reported success on exactly the machine where
+    // the one piece of coverage for the real decoder does nothing.
+    if (!QtMultimediaSilenceProbe::decodingAvailable()) {
+        std::cerr << "FAIL: no audio decoding backend (QAudioDecoder::isSupported() is false).\n"
+                  << "      This test is only built where seabass_audio_qt is, so the FFmpeg\n"
+                  << "      multimedia plugin is missing or did not load.\n";
+        return 1;
+    }
+
     auto measured = probe.measure(plain);
     if (!measured) {
-        // No decoding backend on this machine. Said out loud and
-        // skipped rather than passed: a test that reports OK because it
-        // did nothing is worse than one that is not run.
-        std::cout << "SKIP: no audio decoding backend available, nothing was measured.\n";
-        return 0;
+        std::cerr << "FAIL: the backend reports it can decode, but a plain 5 s WAV measured nothing.\n";
+        return 1;
     }
 
     // Case 1: a file that is music end to end has no silence at either

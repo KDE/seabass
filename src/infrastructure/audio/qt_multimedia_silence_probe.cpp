@@ -56,6 +56,15 @@ double sampleMagnitude(const QAudioBuffer &buffer, qsizetype frame, int channel)
 
 }  // namespace
 
+bool QtMultimediaSilenceProbe::decodingAvailable()
+{
+    if (QCoreApplication::instance() == nullptr) {
+        return false;
+    }
+    QAudioDecoder decoder;
+    return decoder.isSupported();
+}
+
 QtMultimediaSilenceProbe::QtMultimediaSilenceProbe(double silenceDb, int timeoutMs)
     : m_silenceThreshold(std::pow(10.0, silenceDb / 20.0)), m_timeoutMs(timeoutMs)
 {
@@ -135,11 +144,27 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
         }
     });
 
-    QObject::connect(&decoder, &QAudioDecoder::finished, &loop, &QEventLoop::quit);
+    // `done` rather than quitting the loop directly, because start()
+    // below can emit either of these SYNCHRONOUSLY: the FFmpeg backend
+    // calls error() straight out of start() when the container will not
+    // open or carries no audio stream, and the connection is direct, so
+    // the handler runs before exec() is ever entered -- where quit() is
+    // documented to do nothing. The loop would then sit out the whole
+    // timeout for a file the backend had already refused, which on a
+    // stick with one corrupt track is 30 s of a scan spent waiting for
+    // an answer already given.
+    bool done = false;
+    QObject::connect(&decoder, &QAudioDecoder::finished, &loop, [&]() {
+        done = true;
+        loop.quit();
+    });
     // QOverload because the signal `error(Error)` shares its name with
     // the getter `error()`; without it the address is ambiguous.
     QObject::connect(&decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), &loop,
-                      [&](QAudioDecoder::Error) { loop.quit(); });
+                      [&](QAudioDecoder::Error) {
+                          done = true;
+                          loop.quit();
+                      });
 
     // Ask for the format the loop above is cheapest to read, and for
     // mono so a stereo file costs one comparison per frame rather than
@@ -166,7 +191,10 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
 
     decoder.setSource(QUrl::fromLocalFile(path));
     decoder.start();
-    loop.exec();
+    // Only wait if there is still something to wait for -- see `done`.
+    if (!done) {
+        loop.exec();
+    }
     decoder.stop();
 
     if (timedOut || unreadableFormat || decoder.error() != QAudioDecoder::NoError) {

@@ -110,10 +110,20 @@ CachedAudioContentProbe::CachedAudioContentProbe(std::string stickRoot,
                                                    std::unique_ptr<domain::AudioContentProbe> inner)
     : m_stickRoot(normalizeSeparators(std::move(stickRoot))), m_inner(std::move(inner))
 {
-    while (!m_stickRoot.empty() && m_stickRoot.back() == '/') {
+    // The cache path is built from what the caller gave us, BEFORE the
+    // trailing separator is stripped. Stripping first turns a stick
+    // mounted at a drive root into a drive-relative path: "H:/" becomes
+    // "H:", and "H:" / "Seabass/..." is "H:Seabass\..." -- resolved
+    // against whatever the process's current directory on H: happens to
+    // be, not against the stick. On Linux a library directly under "/"
+    // goes the other way and leaves an empty root, putting the cache in
+    // the process's working directory.
+    m_cachePath = paths::stickSilenceCache(m_stickRoot).string();
+    // Stripped only for relativeKey()'s prefix arithmetic below, which
+    // is what actually needs a separator-free root.
+    while (m_stickRoot.size() > 1 && m_stickRoot.back() == '/') {
         m_stickRoot.pop_back();
     }
-    m_cachePath = paths::stickSilenceCache(m_stickRoot).string();
 
     std::ifstream in(m_cachePath, std::ios::binary);
     if (!in) {
@@ -198,14 +208,23 @@ std::optional<domain::AudioContentSpan> CachedAudioContentProbe::measure(const s
     if (m_inner == nullptr) {
         return std::nullopt;
     }
-    auto measured = m_inner->measure(absoluteFilePath);
-    ++m_decoded;
-    if (!measured) {
-        // Deliberately not cached. A failure is about this run -- an
-        // unplugged stick, a backend that was not ready -- and caching
-        // it would make one bad moment permanent for that file.
+    // Asked and refused already, this run. Not written to the cache
+    // file (see m_failed's own comment) but not re-attempted either:
+    // the finder asks once per pair, so without this a file in a group
+    // of five copies is decoded four times over, each attempt paying
+    // the full cost of failing.
+    if (m_failed.count(absoluteFilePath) > 0) {
         return std::nullopt;
     }
+    auto measured = m_inner->measure(absoluteFilePath);
+    if (!measured) {
+        m_failed.insert(absoluteFilePath);
+        return std::nullopt;
+    }
+    // Counted only now. decodedCount() is printed as "compared the
+    // audio of N files", so it has to mean files that were actually
+    // read, not files that were attempted.
+    ++m_decoded;
     if (!key.empty() && current.ok && measured->totalSeconds > 0.0) {
         m_entries[key] = Entry{measured->totalSeconds, measured->leadingSilenceSeconds,
                                 measured->trailingSilenceSeconds, current.sizeBytes, current.mtimeSeconds};
@@ -220,6 +239,24 @@ bool CachedAudioContentProbe::save()
         return true;
     }
     std::string out;
+    // Entries whose file is gone are dropped on the way out rather than
+    // written again. Without this the file only ever grows: every
+    // re-rip, rename and deletion leaves a row that is re-parsed on
+    // every future scan of the stick and can never match anything.
+    // Cheap, because a save only happens when something was measured.
+    for (auto it = m_entries.begin(); it != m_entries.end();) {
+        std::error_code existsEc;
+        const bool present = std::filesystem::exists(
+            std::filesystem::path(m_stickRoot) / it->first, existsEc);
+        // A stat that ERRORS is not a missing file: an unreadable
+        // directory or a stick pulled mid-save would otherwise empty the
+        // cache. Only a clean "no" drops a row.
+        if (!existsEc && !present) {
+            it = m_entries.erase(it);
+        } else {
+            ++it;
+        }
+    }
     for (const auto &[key, entry] : m_entries) {
         out += writeFlatObject({{"path", key},
                                 {"total", toText(entry.totalSeconds)},

@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "domain/matching_policy.hpp"
+#ifdef SEABASS_HAVE_QT_AUDIO
+#include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
+#endif
 #include "gui/local_file_url.hpp"
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -82,6 +85,28 @@ void AppSettingsController::setHideStreamingTracks(bool value)
     m_hideStreamingTracks = value;
     m_settings.setValue("hideStreamingTracks", value);
     emit hideStreamingTracksChanged();
+}
+
+bool AppSettingsController::audioComparisonSupported()
+{
+#ifdef SEABASS_HAVE_QT_AUDIO
+    // Asked once. QAudioDecoder::isSupported() goes to the plugin
+    // registry, and this backs a QML binding.
+    static const bool available = infrastructure::audio::QtMultimediaSilenceProbe::decodingAvailable();
+    return available;
+#else
+    return false;
+#endif
+}
+
+int AppSettingsController::exactMatchMaxSeconds() const
+{
+    return static_cast<int>(domain::MatchingPolicy::MaxExactMatchSeconds);
+}
+
+int AppSettingsController::compareAudioMaxSeconds() const
+{
+    return static_cast<int>(domain::MatchingPolicy::MaxCompareAudioSeconds);
 }
 
 void AppSettingsController::applyMatchingPolicy()

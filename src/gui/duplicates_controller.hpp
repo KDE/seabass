@@ -91,6 +91,16 @@ struct DuplicatesTaskResult
     std::vector<domain::ConsolidationPlan> plans;
     QString errorMessage;  // empty on success
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
+
+    // What the scan did about pairs whose stored lengths nearly agreed
+    // -- see CleanupTaskResult's own copies of these three, and
+    // Preferences -> Music. Reported here too because this page groups
+    // by the same rule and decodes the same files; a scan that took a
+    // minute longer with nothing said about it is the shape of quiet
+    // behaviour this project keeps finding.
+    int filesAudioCompared = 0;
+    int filesAudioUnreadable = 0;
+    bool audioComparisonUnavailable = false;
 };
 
 // One "copy source's cues onto these targets" operation -- applyOne() and
@@ -122,12 +132,17 @@ class DuplicatesController : public StagedCueEditController
     // Purely informational -- Seabass has no feature that deletes audio
     // files, this is a number, not an action.
     Q_PROPERTY(QString totalWastedBytesHuman READ totalWastedBytesHuman NOTIFY plansChanged)
+    // What the last scan's audio comparison did, in one line, or empty
+    // when there is nothing to say. Same property CleanupController
+    // carries, for the same reason.
+    Q_PROPERTY(QString audioComparisonNote READ audioComparisonNote NOTIFY plansChanged)
 
 public:
     explicit DuplicatesController(QObject *parent = nullptr);
 
     ConsolidationPlanListModel *plansModel() { return &m_model; }
     QString totalWastedBytesHuman() const;
+    QString audioComparisonNote() const { return m_audioComparisonNote; }
 
     // format is "rekordbox", "engine", or "onelibrary"; path is the
     // corresponding DetectedStick.rekordboxPath / .enginePath (OneLibrary
@@ -164,8 +179,11 @@ protected:
     void onStagedCleared() override { emit plansChanged(); }
 
 private:
+    QString m_audioComparisonNote;
+
     void rescan();
     void onRescanFinished();
+    void setAudioComparisonNote(const DuplicatesTaskResult &result);
     void attachSession();
     void stageCopy(int index, const DuplicatesCopyOp &op);
 

@@ -71,9 +71,13 @@ public:
     // one (no decoder in this build, or the user set the wider window
     // to the same value as the exact one) only stored lengths are used
     // and a pair outside the exact window is simply not a duplicate.
-    // Either way nothing is ever grouped that the exact window alone
-    // would not have grouped *plus* pairs the audio confirmed, so a
-    // probe can only ever find more, never regroup what it already had.
+    // A probe can only ever find MORE. The clustering runs in two
+    // passes for exactly this reason: the first uses stored lengths
+    // alone, the second only attaches tracks the first left on their
+    // own, and never takes a cluster the first built apart. A single
+    // pass that consulted the probe inline could make an already-found
+    // pair disappear when the setting was switched on -- see the worked
+    // example in find()'s own body.
     static std::vector<DuplicateGroup> find(const std::vector<Track> &tracks,
                                              AudioContentProbe *probe = nullptr);
 };

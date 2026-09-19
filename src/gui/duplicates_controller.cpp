@@ -13,6 +13,8 @@
 
 #include "application/ports/cue_writer.hpp"
 #include "application/use_cases/consolidate_duplicate_cues.hpp"
+#include "domain/matching_policy.hpp"
+#include "gui/cancellable_audio_probe.hpp"
 #include "infrastructure/audio/silence_probe_factory.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -238,8 +240,20 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
         // behaviour this page has always had.
         auto audioProbe = infrastructure::audio::makeAudioContentProbe(
             std::filesystem::path(path.toStdString()).parent_path().string());
-        auto allPlans = application::ConsolidateDuplicateCues().execute(tracks, audioProbe.get());
+        result.audioComparisonUnavailable = audioProbe == nullptr
+            && domain::MatchingPolicy::compareAudioSeconds() > domain::MatchingPolicy::exactMatchSeconds();
+        // Cancel has to reach the decoding, which is the slowest thing
+        // here and which the finder itself knows nothing about. See
+        // CancellableAudioContentProbe.
+        CancellableAudioContentProbe cancellableProbe(audioProbe.get(), cancel);
+        auto allPlans = application::ConsolidateDuplicateCues().execute(
+            tracks, audioProbe != nullptr ? &cancellableProbe : nullptr);
         if (audioProbe != nullptr) {
+            result.filesAudioCompared = audioProbe->decodedCount();
+            result.filesAudioUnreadable = audioProbe->failedCount();
+            if (result.filesAudioCompared == 0 && result.filesAudioUnreadable > 0) {
+                result.audioComparisonUnavailable = true;
+            }
             // Explicit rather than left to the destructor: a stick that
             // refuses the write is a thing this scan saw.
             audioProbe->save();
@@ -340,6 +354,30 @@ void DuplicatesController::rescan()
     m_watcher.setFuture(QtConcurrent::run(runRescanTask, m_format, m_path, makeReporter(), beginScan()));
 }
 
+void DuplicatesController::setAudioComparisonNote(const DuplicatesTaskResult &result)
+{
+    // Word for word what CleanupController says, because it is the same
+    // rule doing the same work on the same files, and two pages
+    // describing one thing differently is how a DJ ends up believing
+    // they are two things.
+    if (result.audioComparisonUnavailable) {
+        m_audioComparisonNote = QStringLiteral(
+            "No audio could be decoded here, so tracks whose lengths nearly agree were compared by "
+            "their stored lengths alone.");
+    } else if (result.filesAudioCompared > 0) {
+        m_audioComparisonNote = QStringLiteral("Compared the audio of %1 file%2 whose stored lengths "
+                                                "were close but not close enough to settle it.")
+                                     .arg(result.filesAudioCompared)
+                                     .arg(result.filesAudioCompared == 1 ? "" : "s");
+        if (result.filesAudioUnreadable > 0) {
+            m_audioComparisonNote += QStringLiteral(" %1 more could not be read and was left ungrouped.")
+                                          .arg(result.filesAudioUnreadable);
+        }
+    } else {
+        m_audioComparisonNote.clear();
+    }
+}
+
 void DuplicatesController::onRescanFinished()
 {
     DuplicatesTaskResult result = m_watcher.result();
@@ -355,6 +393,7 @@ void DuplicatesController::onRescanFinished()
         return;
     }
 
+    setAudioComparisonNote(result);
     m_model.setPlans(std::move(result.plans));
     // Groups staged before this rescan keep their mark if they are still
     // listed (the change itself lives in the session either way).

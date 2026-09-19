@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "domain/audio_content_probe.hpp"
@@ -59,11 +60,20 @@ public:
     // How many entries were loaded from disk (for reporting/tests).
     std::size_t size() const { return m_entries.size(); }
 
-    // How many files this probe actually decoded, as opposed to
-    // answered from the cache. Reported so a scan can say what it did:
-    // "compared the audio of 6 pairs" is the kind of counter this
-    // project has been bitten by leaving unsaid.
+    // How many files this probe decoded AND got an answer for, as
+    // opposed to answered from the cache. Successes only, deliberately:
+    // a caller prints this as "compared the audio of N files", and a
+    // build whose decoder never loaded would otherwise report having
+    // compared every file it failed to open. Counting attempts there
+    // would be the exact silent-counter shape this project keeps
+    // finding.
     int decodedCount() const { return m_decoded; }
+
+    // How many files were asked of the decoder and gave no answer this
+    // run: no backend, a container it would not open, a file gone from
+    // the stick. Counted separately so "nothing was comparable" and
+    // "nothing needed comparing" cannot look the same.
+    int failedCount() const { return static_cast<int>(m_failed.size()); }
 
 private:
     struct Entry
@@ -82,6 +92,14 @@ private:
     std::string m_stickRoot;
     std::string m_cachePath;
     std::map<std::string, Entry> m_entries;
+    // Paths the decoder already refused THIS RUN. In memory only, never
+    // written: a failure is about this moment (an unplugged stick, a
+    // backend that was not ready) and writing it down would make one bad
+    // moment permanent for that file. But re-asking within one run is
+    // pure waste -- the finder calls measure() once per *pair*, so a
+    // file in a group of five copies is asked four times, and each ask
+    // is a decode attempt that already failed.
+    std::set<std::string> m_failed;
     std::unique_ptr<domain::AudioContentProbe> m_inner;
     bool m_dirty = false;
     int m_decoded = 0;

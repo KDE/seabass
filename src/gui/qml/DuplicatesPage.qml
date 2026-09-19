@@ -204,6 +204,14 @@ Page {
                     color: Theme.textMuted
                 }
                 Label {
+                    objectName: "audioComparisonNote"
+                    visible: duplicatesController.audioComparisonNote.length > 0
+                    text: duplicatesController.audioComparisonNote
+                    color: Theme.textMuted
+                    wrapMode: Text.WordWrap
+                    Layout.maximumWidth: 420
+                }
+                Label {
                     visible: duplicatesController.stagedCount > 0
                     text: duplicatesController.stagedCount + " staged, not saved yet"
                     color: Theme.warnText

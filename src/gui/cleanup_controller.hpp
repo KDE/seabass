@@ -230,9 +230,16 @@ struct CleanupTaskResult
     // suddenly takes a minute longer with nothing said about it is
     // exactly the kind of quiet behaviour this project keeps finding.
     int filesAudioCompared = 0;
-    // True when the setting asks for audio comparison and this build has
-    // no decoder to do it with -- so the scan fell back to comparing
-    // stored lengths alone. Said out loud for the same reason.
+    // Files the decoder was asked about and gave no answer for: a
+    // container it would not open, a file gone from the stick. Counted
+    // apart from the successes so "nothing was comparable" and "nothing
+    // needed comparing" cannot look the same on the page.
+    int filesAudioUnreadable = 0;
+    // True when the setting asks for audio comparison and nothing could
+    // do it: no decoder built in, or one that is linked but did not
+    // load and answered nothing for every file it was handed. Either
+    // way the scan fell back to comparing stored lengths alone, and
+    // says so rather than reporting a clean run.
     bool audioComparisonUnavailable = false;
 
     // True when rows from every catalog on the stick were folded into

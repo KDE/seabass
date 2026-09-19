@@ -31,12 +31,14 @@ using domain::Track;
 namespace
 {
 
-// Preferences -> Music sets this; 2 s by default. Read per call rather
-// than captured once, so a store built early in the run still honours a
-// number the user changed since.
+// Preferences -> Music sets this, but never upwards: see
+// MatchingPolicy::backupIdentitySeconds() for why a wider window here
+// would let one track's backed-up cues be overwritten by another's.
+// Read per call rather than captured once, so a store built early in
+// the run still honours a number the user changed since.
 double durationToleranceSeconds()
 {
-    return domain::MatchingPolicy::exactMatchSeconds();
+    return domain::MatchingPolicy::backupIdentitySeconds();
 }
 
 constexpr const char *Context = "local cue store";
