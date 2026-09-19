@@ -132,6 +132,8 @@ std::string BackupManifest::serialize() const
     out += escapeManifestField(libraryFingerprint);
     out += '\t';
     out += sourceReadOnly ? '1' : '0';
+    out += '\t';
+    out += escapeManifestField(userName);
     out += '\n';
 
     for (const ManifestRow &row : rows) {
@@ -209,7 +211,7 @@ std::optional<BackupManifest> BackupManifest::parse(std::string_view text, std::
         if (!headerSeen) {
             // 6 fields: written before the library fingerprint existed.
             // 7: before a backup could be taken off a read-only stick.
-            if ((fields.size() < 6 || fields.size() > 8) || fields[0] != Magic) {
+            if ((fields.size() < 6 || fields.size() > 9) || fields[0] != Magic) {
                 fail(error, "manifest header is not a seabass stick manifest");
                 return std::nullopt;
             }
@@ -238,12 +240,20 @@ std::optional<BackupManifest> BackupManifest::parse(std::string_view text, std::
                 }
                 manifest.libraryFingerprint = *fingerprint;
             }
-            if (fields.size() == 8) {
+            if (fields.size() >= 8) {
                 if (fields[7] != "0" && fields[7] != "1") {
                     fail(error, "manifest header read-only flag malformed");
                     return std::nullopt;
                 }
                 manifest.sourceReadOnly = fields[7] == "1";
+            }
+            if (fields.size() == 9) {
+                auto name = unescapeManifestField(fields[8]);
+                if (!name) {
+                    fail(error, "manifest header name malformed");
+                    return std::nullopt;
+                }
+                manifest.userName = *name;
             }
             headerSeen = true;
             continue;

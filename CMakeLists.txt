@@ -1959,6 +1959,14 @@ target_include_directories(archive_file_test PRIVATE src)
 add_test(NAME archive_file_test COMMAND archive_file_test)
 
 
+add_executable(backup_manifest_name_test
+    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
+    tests/backup_manifest_name_test.cpp
+)
+target_include_directories(backup_manifest_name_test PRIVATE src)
+target_link_libraries(backup_manifest_name_test PRIVATE ZLIB::ZLIB)
+add_test(NAME backup_manifest_name_test COMMAND backup_manifest_name_test)
+
 add_executable(backup_archive_roundtrip_test
     ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
     tests/backup_archive_roundtrip_test.cpp

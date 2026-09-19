@@ -62,7 +62,7 @@ struct ManifestRow
 // Format: tab-separated text, one row per line, so it stays readable via
 // `unzip -p backup.zip SEABASS-MANIFEST.tsv` and needs no JSON library.
 //
-//   seabass-stick-manifest<TAB>1<TAB>stickIdentifier<TAB>label<TAB>status<TAB>createdAtUnix[<TAB>libraryFingerprint[<TAB>sourceReadOnly]]
+//   seabass-stick-manifest<TAB>1<TAB>stickIdentifier<TAB>label<TAB>status<TAB>createdAtUnix[<TAB>libraryFingerprint[<TAB>sourceReadOnly[<TAB>userName]]]
 //   f<TAB>path<TAB>size<TAB>mtimeUnix<TAB>crc32hex<TAB>sha256hex<TAB>extra
 //   d<TAB>path<TAB>0<TAB>mtimeUnix<TAB><TAB><TAB>
 //   ...
@@ -88,6 +88,24 @@ struct BackupManifest
     // says so wherever it is offered -- restoring one over a working
     // library is a last resort, not an ordinary restore.
     bool sourceReadOnly = false;
+
+    // What the person called this backup, free text, empty when they
+    // never named one. "before the Berlin gig", not a filename.
+    //
+    // It lives here, inside the archive, rather than in the archive's
+    // name, because the name is identity: <stick label>.zip is how a
+    // backup is matched to its stick, and the .journal, .lock and
+    // .compacting siblings are derived from it by appending a suffix.
+    // Renaming the file would break all of that, and orphan the
+    // .seabass-backup-source marker, which stores the absolute path.
+    //
+    // The cost of keeping it here is that changing it means rewriting
+    // the manifest, and there is no way to replace one entry in a zip --
+    // compacting builds a whole new archive and needs the free space to
+    // do it. So this is set when a backup is written; a later rename
+    // reads from a sibling file that wins over this one, which is the
+    // only way to rename a multi-gigabyte archive for free.
+    std::string userName;
     std::vector<ManifestRow> rows;
 
     std::string serialize() const;
