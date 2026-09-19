@@ -60,6 +60,17 @@ step() {  # name, command...
 }
 
 keep_cue() {  # stick, position ms
+    # Wait out the filesystem's clock before writing. advise's newerThan()
+    # ignores a difference of two seconds or less, because FAT keeps
+    # mtimes at that resolution and two sticks are written by the same
+    # clock only in the best case. A round that edits a catalog within
+    # two seconds of the backup it must read as newer than therefore gets
+    # "the same time" -- and that is not hypothetical: on Linux, C1 to C4
+    # ran in seven seconds, SANDISK_2's catalog landed exactly 2 s past
+    # the backup, and C4 failed for want of a divergence the advisor had
+    # no way to see. The same round on Windows takes minutes per step and
+    # passed, which is a difference in machines, not in the product.
+    sleep 3
     SEABASS_LIVE_STICK="$1" SEABASS_RIG_KEEP_CUE_MS="$2" \
         "$build/seabass_qml_tests" -input "$root/tests/qml-live" LiveEditMode::test_11_rigKeepCue
 }

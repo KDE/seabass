@@ -205,6 +205,29 @@ int main(int argc, char **argv)
             }
             const StickBackupAdvice advice = application::adviseStickBackup(input);
             adviceByLabel[facts.label] = advice;
+            // The two numbers every ordering here rests on. advise's
+            // newerThan() ignores a difference of 2 seconds or less,
+            // because FAT keeps mtimes at that resolution, so a round
+            // that runs faster than the filesystem can distinguish gets
+            // "not newer" for a catalog it has just written. Printed on
+            // every advice so a round says which it met rather than
+            // leaving the reader to guess from the verdict: Linux runs
+            // C1-C5 in under a minute where Windows takes several.
+            {
+                std::int64_t backupAt = 0;
+                for (const auto &backup : backups) {
+                    if (backup.stickLabel == advice.backupLabel) {
+                        backupAt = backup.createdAtUnix;
+                        break;
+                    }
+                }
+                std::cout << "  catalog mtime " << facts.catalogModifiedAtUnix << ", backup " << backupAt;
+                if (backupAt > 0 && facts.catalogModifiedAtUnix > 0) {
+                    std::cout << ", catalog is " << (facts.catalogModifiedAtUnix - backupAt)
+                              << " s past it (2 s or less counts as the same time)";
+                }
+                std::cout << "\n";
+            }
             std::cout << facts.label << ": " << application::toString(advice.state) << " (matched by "
                       << application::toString(advice.matchedBy) << ", backup " << advice.backupLabel << ")"
                       << "\n  " << advice.detail
