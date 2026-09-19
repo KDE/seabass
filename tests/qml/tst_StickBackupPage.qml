@@ -48,6 +48,14 @@ TestCase {
                               uniformShiftSeconds: 0, estimatedSeconds: 240},
             deadSpace: {deadBytes: 4.2 * 1024 * 1024 * 1024, archiveBytes: 25 * 1024 * 1024 * 1024, ratio: 0.18, suggested: false},
             blockedBy: "",
+            // The page reads both of these; without them every test in
+            // this file logged "Cannot read property 'length' of
+            // undefined" and "Unable to assign [undefined] to QString"
+            // three times over. Noise, not a page defect -- the real
+            // controller always has them -- but noise that buries a real
+            // warning when one appears.
+            nameCollidedWith: "",
+            backupName: "",
             pendingCancelDecision: false,
             errorMessage: "",
             statusMessage: "",
@@ -364,7 +372,12 @@ TestCase {
         findChild(page, "compactButton").clicked();
         var dialog = findChild(page, "compactDialog");
         tryVerify(function() { return dialog.visible; });
+        // Both halves. Highlighting the accept button is the claim; the
+        // other button NOT being highlighted is what tells a real default
+        // apart from SeabassDialog's take-the-last-button fallback, which
+        // is what Windows was getting and which lands on Cancel.
         tryCompare(findChild(page, "compactAcceptButton"), "highlighted", true);
+        tryCompare(findChild(page, "compactCancelButton"), "highlighted", false);
         pressReturnOn(dialog);
         verify(called(page, "compact"), "Return must start the compaction it is showing as the default");
     }
@@ -382,6 +395,9 @@ TestCase {
         var dialog = findChild(page, "compactDialog");
         tryVerify(function() { return dialog.visible; });
         tryCompare(findChild(page, "compactAcceptButton"), "enabled", false);
+        // And the default moves with it, rather than pointing at a button
+        // nobody can press.
+        tryCompare(findChild(page, "compactCancelButton"), "highlighted", true);
         pressReturnOn(dialog);
         verify(!called(page, "compact"), "Return must not start a compaction the button refuses");
     }

@@ -322,6 +322,35 @@ Page {
         title: "Compact " + root.stickLabel + ".zip?"
         headline: "Rewrites the backup without the space left behind by replaced and removed files."
         detailText: "Every file is checked against its checksum on the way."
+        // Named, not inferred. `focus: true` on the accept button was
+        // enough on Linux and is not enough everywhere: measured on
+        // Windows, the footer came back [Compact, Cancel] in that order
+        // with focus AND highlight both on Cancel. Nothing had marked a
+        // default by the time the dialog opened, so SeabassDialog's
+        // fallback took the LAST button -- which is Cancel here -- and
+        // Return then cancelled a compaction the user had just asked
+        // for. The highlight followed focus correctly throughout; the
+        // input to that contract was simply wrong.
+        //
+        // Only when it can be pressed: footerButtons() skips a disabled
+        // button, so with no room to compact the default must fall to
+        // Cancel, and marking a disabled Compact would fight that.
+        //
+        // Reapplied on every open because selectFooterButton() assigns
+        // `highlighted` across the footer as focus moves, and because
+        // `enabled` depends on the preflight this dialog is opened with.
+        function applyDefaultButton() {
+            compactAcceptButton.highlighted = compactAcceptButton.enabled;
+            compactCancelButton.highlighted = !compactAcceptButton.enabled;
+        }
+        Component.onCompleted: compactDialog.applyDefaultButton()
+        // Runs alongside SeabassDialog's own onOpened rather than
+        // replacing it, so the focus call is repeated deliberately;
+        // Qt.callLater coalesces the two.
+        onOpened: {
+            compactDialog.applyDefaultButton();
+            Qt.callLater(compactDialog.focusDefaultFooterButton);
+        }
         footer: DialogButtonBox {
             Button {
                 id: compactAcceptButton
@@ -329,11 +358,9 @@ Page {
                 text: "Compact"
                 // Unlike the other two, this dialog only ever opens
                 // because the user asked for it, so Return confirming is
-                // what they came for. Pinned with focus rather than left
-                // to declaration order. When the button is disabled --
-                // no room, or nothing to reclaim -- footerButtons() skips
-                // it and the default falls to Cancel, so Return cannot
-                // start a compaction the button itself refuses.
+                // what they came for. applyDefaultButton() above is what
+                // makes that true; this only saves a frame of the wrong
+                // button holding focus before it runs.
                 focus: true
                 enabled: compactDialog.preflight.enoughFreeSpace === true && compactDialog.preflight.reclaimableBytes > 0
                 Keys.onReturnPressed: compactDialog.activateFooterSelection()
