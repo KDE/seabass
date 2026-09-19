@@ -437,7 +437,22 @@ std::optional<QString> SaveContext::rollBackChange()
                 // reached the remove. Prefixing only the remove would
                 // have left the bug exactly where it was.
                 const fs::path original = infrastructure::longPathSafe(it->original);
-                if (fs::exists(original, ec)) {
+                // "Is it there" can fail without being a no: EIO on a
+                // dying stick, a sharing violation on Windows, a parent
+                // directory that cannot be searched. fs::exists() answers
+                // all of those with false and sets ec, and taking that
+                // false at face value would count the file as already
+                // gone -- no put-back, nothing in notPutBack, and a
+                // rollback that reports itself complete while a file the
+                // failed change created is still on the stick. That is
+                // the same lie as a remove that did not remove, so it
+                // goes the same way.
+                const bool stillThere = fs::exists(original, ec);
+                if (ec) {
+                    throw std::runtime_error("could not tell whether " + it->original
+                                             + " is still there: " + ec.message());
+                }
+                if (stillThere) {
                     std::string failure;
                     if (!infrastructure::removeEntry(it->original, failure)) {
                         throw std::runtime_error("could not remove " + it->original + ": " + failure);

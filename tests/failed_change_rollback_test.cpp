@@ -452,6 +452,75 @@ int main()
         }
     }
 
+    // 7. A file the failed change created whose existence the rollback
+    //    cannot establish. fs::exists() answers EIO on a dying stick, a
+    //    Windows sharing violation and an unsearchable parent directory
+    //    the same way it answers "no": false, with an error code set.
+    //    Read as a no, the file is counted as already gone -- the
+    //    rollback removes nothing, reports nothing, and says it is
+    //    complete while the file the change created is still there.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_blind");
+        const fs::path &stick = scratch.path;
+        const fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
+        const fs::path locked = stick / "Seabass" / "staging";
+        const fs::path created = locked / "pending-deletions.jsonl";
+        write(pdb, "pdb-original");
+
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+        bool bRan = false;
+        bool blinded = false;
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                write(pdb, "pdb-from-a");
+                return ChangeOutcome::success();
+            }),
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pdb.string()}, [&](SaveContext &c) {
+                bRan = true;
+                write(pdb, "pdb-from-b");
+                c.protectForThisChange(created.string());
+                write(created, "line from b\n");
+                // Take away the right to search the directory the file is
+                // in: the file is untouched, only the answer about it is.
+                std::error_code ec;
+                fs::permissions(locked, fs::perms::none, ec);
+                const bool answered = fs::exists(created, ec);
+                blinded = !answered && static_cast<bool>(ec);
+                return ChangeOutcome::failure("the second catalog refused");
+            }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        std::error_code ec;
+        fs::permissions(locked, fs::perms::owner_all, ec);
+        assert(bRan && "change b never ran, so nothing in this case was checked");
+        if (!blinded) {
+            // Running as root, or on a platform where directory
+            // permissions do not gate a stat: the state this case exists
+            // to check for could not be constructed.
+            std::cout << "case 7 SKIPPED (this platform still answered whether a file in an unsearchable "
+                         "directory exists, so the blind rollback could not be constructed)\n";
+        } else {
+            assert(read(pdb) == "pdb-from-a" && "the rest of the rollback still ran");
+            assert(fs::exists(created, ec) && "the file really was left behind");
+            // Said out loud, in the save's own error and in the stick's
+            // log: a rollback that could not tell is not a rollback that
+            // succeeded, and the backup is what to go back to.
+            assert(result.error.contains("putting back what it had already written failed")
+                   && "the save says the rollback failed");
+            if (!result.error.contains("could not tell whether")) {
+                std::cerr << "case 7: " << result.error.toStdString() << "\n";
+            }
+            assert(result.error.contains("could not tell whether") && "and says it is because it could not tell");
+            const std::string logText = read(stick / "Seabass" / "seabass.log");
+            assert(logText.find("putting back what the failed change had written FAILED") != std::string::npos
+                   && "the stick's log says so too");
+            assert(logText.find("put back 2 file(s)") == std::string::npos
+                   && "and never claims it put the file back");
+            std::cout << "case 7 (a rollback that cannot tell whether a file is there says so) OK\n";
+        }
+    }
+
     std::cout << "failed_change_rollback_test: all cases passed\n";
     return 0;
 }
