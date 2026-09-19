@@ -184,7 +184,11 @@ int main()
 
         assert(leftBehind == 0);
         assert(remaining == 1);
-        fs::remove_all(fourth);
+        // Not removed here: db (opened above) still holds Database2/m.db
+        // open, and Windows refuses to delete a directory with a file in
+        // it still open -- unlike POSIX, which would unlink it happily.
+        // The next run's fs::remove_all(root.parent_path()) at the top of
+        // main() takes care of it once db has gone out of scope.
         std::cout << "case 4 (the doomed track's performance data goes with it) OK\n";
     }
 
