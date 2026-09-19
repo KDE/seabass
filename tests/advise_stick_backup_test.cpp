@@ -127,6 +127,24 @@ int main()
         assert(advice.backupPath == "/b/B.zip");
     }
 
+    // A rekordbox-only edit that never touches the database the backup
+    // captured must still make the backup read as outdated: the database
+    // fingerprint alone is not proof of "unchanged" when the content
+    // fingerprint disagrees.
+    {
+        std::vector<Track> libraryBEditedCue = libraryB;
+        libraryBEditedCue.front().cues.front().positionMs += 500.0;
+
+        StickBackupAdviceInput input;
+        input.hasLibrary = true;
+        input.stickIdentifier = "uuid-other";
+        input.liveFingerprint = fingerprintLibrary(libraryBEditedCue);
+        input.liveDatabaseFingerprints = {{"PIONEER/rekordbox/export.pdb", "db-/b/B.zip"}};  // unchanged database
+        input.backups = {backupA, backupB};
+        StickBackupAdvice advice = adviseStickBackup(input);
+        assert(advice.state != StickBackupAdvice::State::Current);
+    }
+
     // Grown since the backup: still that backup, outdated.
     {
         StickBackupAdviceInput input;
@@ -277,6 +295,25 @@ int main()
         input.peers[0].databaseFingerprints = {{"PIONEER/rekordbox/export.pdb", "db-peer"}};
         input.catalogModifiedAtUnix = 0;  // unknown: no ordering, no offer
         assert(adviseStickBackup(input).updateSource.kind == Kind::None);
+    }
+
+    // A stick with both an Engine and a rekordbox catalog: a rekordbox-only
+    // cue edit never touches Engine's own database files, so matching
+    // database fingerprints alone must not be read as "in sync" while the
+    // overall content fingerprint has moved.
+    {
+        std::vector<Track> libraryBEditedCue = libraryB;
+        libraryBEditedCue.front().cues.front().positionMs += 500.0;
+
+        StickBackupAdviceInput input;
+        input.hasLibrary = true;
+        input.liveFingerprint = fingerprintLibrary(libraryB);
+        input.liveDatabaseFingerprints = {{"PIONEER/rekordbox/export.pdb", "db-mine"}};
+        input.catalogModifiedAtUnix = 500;
+        input.peers = {makePeer("/m/peer", "PEER", libraryBEditedCue, "db-mine", 1000, 20 * GiB)};
+        StickBackupAdvice advice = adviseStickBackup(input);
+        assert(advice.updateSource.kind == Kind::Stick);
+        assert(advice.updateSource.label == "PEER");
     }
 
     // The library must fit on this stick's whole volume for an update.

@@ -99,23 +99,36 @@ const StickBackupDescription *firstByLabel(const StickBackupAdviceInput &input,
 }
 
 // Exact when the backup captured databases: every one of them must still
-// be on the stick with the same DbSetFingerprint. Otherwise the content
-// fingerprint has to be identical. Shared between "is the backup current
-// for this stick" and "is it current for that peer".
+// be on the stick with the same DbSetFingerprint, AND -- when the backup
+// also recorded a content fingerprint -- that has to be identical too.
+// Both checks matter for the same reason as peerInSync() below: a
+// database set the backup captured can stay byte-identical while a
+// different part of the same catalog (a rekordbox-only cue edit that
+// never reached one of the captured database sets) moves on without it.
+// An old backup that recorded database fingerprints but no content
+// fingerprint at all has only the one signal, and is trusted on that
+// alone, same as before this got stricter. Without any database
+// fingerprint captured at all (rekordbox-only stick), the content
+// fingerprint is the only signal there is. Shared between "is the backup
+// current for this stick" and "is it current for that peer".
 bool backupMatchesCopy(const std::map<std::string, std::string> &databaseFingerprints,
                        const std::optional<LibraryFingerprint> &fingerprint, const StickBackupDescription &backup)
 {
+    bool databasesChecked = false;
     if (!backup.databaseFingerprints.empty()) {
+        databasesChecked = true;
         for (const auto &[path, hex] : backup.databaseFingerprints) {
             const auto live = databaseFingerprints.find(path);
             if (live == databaseFingerprints.end() || live->second != hex) {
                 return false;
             }
         }
-        return true;
     }
     const std::optional<LibraryFingerprint> stored = LibraryFingerprint::parse(backup.libraryFingerprint);
-    return stored && fingerprint && *stored == *fingerprint;
+    if (!stored) {
+        return databasesChecked;
+    }
+    return fingerprint && *stored == *fingerprint;
 }
 
 bool backupIsCurrent(const StickBackupAdviceInput &input, const StickBackupDescription &backup)
@@ -124,15 +137,20 @@ bool backupIsCurrent(const StickBackupAdviceInput &input, const StickBackupDescr
 }
 
 // Two sticks hold the same copy when their database sets carry the same
-// fingerprints (Engine) or, without any database fingerprint on either
-// side (rekordbox only), the content fingerprints are identical.
+// fingerprints (Engine) AND their content fingerprints are identical.
+// Both checks matter on a stick that carries both an Engine and a
+// rekordbox catalog: an edit made through rekordbox alone never touches
+// Engine's own database files, so matching Engine fingerprints are not
+// enough by themselves to prove nothing changed. Without any database
+// fingerprint on either side (rekordbox only), the content fingerprint
+// is the only signal there is.
 bool peerInSync(const StickBackupAdviceInput &input, const PeerStick &peer)
 {
     if (input.liveDatabaseFingerprints.empty() != peer.databaseFingerprints.empty()) {
         return false;
     }
-    if (!input.liveDatabaseFingerprints.empty()) {
-        return input.liveDatabaseFingerprints == peer.databaseFingerprints;
+    if (!input.liveDatabaseFingerprints.empty() && input.liveDatabaseFingerprints != peer.databaseFingerprints) {
+        return false;
     }
     return input.liveFingerprint && peer.fingerprint && *input.liveFingerprint == *peer.fingerprint;
 }
