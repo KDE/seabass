@@ -29,6 +29,7 @@ stick, by plant_defects.py. This script does the files and the XML.
 """
 
 import argparse
+import collections
 import os
 import random
 import shutil
@@ -88,6 +89,12 @@ class TestLibraryBuilder:
         self.out_dir = os.path.expanduser(out_dir)
         self.random = random.Random(seed)  # same library every run
         self.notes = []
+        # Set name -> [(playlist name, [paths])]. Only test C uses it; the
+        # others are one playlist holding everything in their folder.
+        self.playlist_plan = {}
+        self.c_pairs = []
+        self.c_zero_cues = None
+        self.c_boundary_cues = None
         self.scratch = os.path.join(self.out_dir, ".scratch")
 
     def note(self, set_name, defect_id, path, what):
@@ -147,15 +154,23 @@ class TestLibraryBuilder:
 
         a_dir = os.path.join(self.out_dir, "TestA")
         b_dir = os.path.join(self.out_dir, "TestB")
-        for directory in (a_dir, b_dir):
+        c_dir = os.path.join(self.out_dir, "TestC")
+        for directory in (a_dir, b_dir, c_dir):
             os.makedirs(directory, exist_ok=True)
 
         self.build_a(a_dir, pool, flacs, used, shared)
         self.build_b(b_dir, pool, flacs, used, shared)
+        self.build_c(c_dir, pool=pool, used=used)
 
         shutil.rmtree(self.scratch, ignore_errors=True)
-        for set_name, directory in (("A", a_dir), ("B", b_dir)):
-            path, count = self.write_xml(set_name, directory)
+        for set_name, directory in (("A", a_dir), ("B", b_dir), ("C", c_dir)):
+            if set_name == "C":
+                entries = self.sorted_entries(directory)
+                path, count = self.write_xml(set_name, directory,
+                                              cue_plan=self.c_cue_plan(entries),
+                                              field_plan=self.c_field_plan(entries))
+            else:
+                path, count = self.write_xml(set_name, directory)
             print(f"  {os.path.basename(path)}: {count} track(s)")
         self.write_manifest()
 
@@ -319,7 +334,386 @@ class TestLibraryBuilder:
         # Artwork present on one copy, absent on its twin.
         self.plant_tag_defects(name, directory, source)
 
-    def write_xml(self, set_name, directory):
+    # A spread of distinct hot-cue colours. Cue colour survives a very
+    # long way -- XML attribute, ANLZ section, Engine row -- and nothing
+    # in the test sets currently carries more than two, so a merge that
+    # quietly normalises every cue to one colour would pass today.
+    COLOURS = {
+        "red": "#FF0017",
+        "orange": "#FFA500",
+        "yellow": "#FFEE00",
+        "green": "#00FF3C",
+        "cyan": "#00C4FF",
+        "blue": "#0034FF",
+        "magenta": "#FF00CC",
+        "purple": "#8800FF",
+    }
+
+    def build_c(self, directory, pool=None, used=None, bracket_s=2.0, pairs=3):
+        """Near-duplicates that no duration tolerance will catch.
+
+        Test A is matching and metadata, test B is repair and cleanup. This
+        is the third thing the real library threw up and neither of those
+        covers: two copies of what is plainly the same track -- same artist,
+        same title, both 320 CBR -- whose durations differ by more than any
+        tolerance worth having. The real library had 15 such pairs, from 2 to
+        8 seconds apart, in a smooth gradient with no natural cut-off. That
+        gradient is the finding: widening the bracket to catch the 8-second
+        pair would merge everything closer than 8 seconds, including edits
+        that are genuinely different recordings.
+
+        So these are not here to be merged automatically. They are here so
+        that Seabass *offers* them, and a person decides -- which is what it
+        already supports. A run that silently merges these is as wrong as one
+        that never mentions them.
+
+        The two halves of each pair go into *different playlists*, because
+        that is how the real library looks: 652 of its 1469 tracks are in
+        more than one playlist. A dedup pass that only ever compares within
+        one playlist finds none of these.
+
+        Planted alongside them, and the reason this set is worth having at
+        all: one single file that both playlists reference. That is NOT a
+        duplicate -- it is one file with two playlist memberships, the
+        distinction Seabass is built on ("a file duplicates, not a row").
+        Anything that counts playlist entries instead of files reports it as
+        a duplicate and offers to delete a track the user still has in a
+        crate. This set fails such a run on purpose.
+
+        Drawn from the source library's own reports/residual-duplicates.tsv
+        rather than a hardcoded list, so re-running against a rebuilt library
+        picks up whatever that library actually left behind.
+        """
+        name = "C"
+        report = os.path.join(self.source, "reports", "residual-duplicates.tsv")
+        if not os.path.exists(report):
+            print(f"  no {report}: skipping test C")
+            return
+
+        import csv
+
+        def seconds(value):
+            return int(str(value).rstrip("s") or 0)
+
+        rows = []
+        with open(report, encoding="utf-8") as handle:
+            for row in csv.DictReader(handle, delimiter="\t"):
+                gap = abs(seconds(row["a_len"]) - seconds(row["b_len"]))
+                if gap > bracket_s:
+                    rows.append((gap, row))
+        # Widest gaps first: those are the ones a tolerance can never reach.
+        rows.sort(key=lambda item: -item[0])
+
+        crate_one, crate_two = [], []
+        self.c_pairs = []
+        for index, (gap, row) in enumerate(rows[:pairs], 1):
+            sources = [os.path.join(self.source, row[side]) for side in ("copy_a", "copy_b")]
+            if not all(os.path.exists(path) for path in sources):
+                print(f"  missing a copy for {row['copy_a']}: skipped")
+                continue
+
+            # One half in each crate: the same recording, two files, two
+            # playlists, and no duration tolerance that links them.
+            first = self.copy_in(sources[0], os.path.join(directory, "Crate One"))
+            second = self.copy_in(sources[1], os.path.join(directory, "Crate Two"))
+            crate_one.append(first)
+            crate_two.append(second)
+            self.c_pairs.append((first, second))
+
+            for half, path in (("a", first), ("b", second)):
+                self.note(
+                    name,
+                    f"C{index}-near-dup-{half}",
+                    path,
+                    f"{gap}s apart ({row['a_len']} vs {row['b_len']}), same artist and title, "
+                    f"{row['a_kbps']}/{row['b_kbps']} kbps, and in a different playlist from its twin: "
+                    "outside any sane duration bracket, so it must be offered for a manual merge, "
+                    "never merged on its own and never missed for being in another crate",
+                )
+
+        # -- material for content matching, where the truth is known ------
+        #
+        # The pairs above come from the real library and nobody knows which
+        # of them are the same recording; that is precisely why they are
+        # for a manual merge. These next ones are built here, so the right
+        # answer is not a matter of opinion.
+        source = self.pick(pool, lambda p: True, 1, used)[0] if pool else None
+        if source:
+            wav = os.path.join(self.scratch, "c-source.wav")
+            if decode_to_wav(source, wav):
+                # Same audio, seven seconds of silence in front. Durations
+                # differ far outside any bracket; the audio is identical
+                # once shifted. Content matching must say "same".
+                padded = os.path.join(directory, "Crate One", "C4-deep-padded.mp3")
+                if self.shift_wav(wav, padded, lead_silence_s=7.0):
+                    crate_one.append(padded)
+                    self.note(name, "C4-deep-padded", padded,
+                               "7s of silence prepended: same audio as C4-deep-plain, +7s duration, "
+                               "aligns at a +7s offset. Duration matching misses it, content matching must not")
+                plain = self.copy_in(source, os.path.join(directory, "Crate Two"), "C4-deep-plain.mp3")
+                crate_two.append(plain)
+                self.note(name, "C4-deep-plain", plain, "the unmodified half of C4")
+
+                # Same audio, nine seconds cut off the end: the other
+                # direction, and no offset at all to find.
+                trimmed = os.path.join(directory, "Crate One", "C5-deep-trimmed.mp3")
+                if self.shift_wav(wav, trimmed, trim_tail_s=9.0):
+                    crate_one.append(trimmed)
+                    self.note(name, "C5-deep-trimmed", trimmed,
+                               "9s cut from the end: same audio as C5-deep-plain, -9s duration, aligns at "
+                               "offset 0. A matcher keying on duration alone calls these two different tracks")
+                plain5 = self.copy_in(source, os.path.join(directory, "Crate Two"), "C5-deep-plain.mp3")
+                crate_two.append(plain5)
+                self.note(name, "C5-deep-plain", plain5, "the unmodified half of C5")
+
+        # The negative control, and the one that matters most: two
+        # genuinely different recordings whose durations agree. Duration
+        # tolerance alone merges these, which would lose a track.
+        collision = self.duration_collision(pool, used)
+        if collision:
+            left, right = collision
+            # Keep each source's own extension: the pool holds m4a as well
+            # as mp3, and naming an m4a ".mp3" plants a container/extension
+            # mismatch nobody asked for -- and stops every decoder that
+            # trusts the extension, including the one validating this set.
+            one = self.copy_in(left.path, os.path.join(directory, "Crate One"),
+                                "C6-collision-a" + os.path.splitext(left.path)[1])
+            two = self.copy_in(right.path, os.path.join(directory, "Crate Two"),
+                                "C6-collision-b" + os.path.splitext(right.path)[1])
+            crate_one.append(one)
+            crate_two.append(two)
+            for half, path, other in (("a", one, right), ("b", two, left)):
+                self.note(name, f"C6-collision-{half}", path,
+                           f"different recording from its partner but within a second of its length "
+                           f"({int(left.duration)}s vs {int(right.duration)}s): must NEVER be merged. "
+                           "A set with no case like this scores full marks for merging everything")
+
+        # -- cues at the very start ---------------------------------------
+        #
+        # domain::isJunkCue is `!isLoop && positionMs < 1000`, so the whole
+        # first second is junk whatever the cue's kind, and a loop is exempt
+        # wherever it starts. Three of the four cases below must be removed
+        # and one must survive, which no other fixture pins.
+        if source:
+            zero = self.copy_in(source, os.path.join(directory, "Crate One"), "C7-cues-at-zero.mp3")
+            crate_one.append(zero)
+            self.c_zero_cues = zero
+            self.note(name, "C7-cues-at-zero", zero,
+                       "carries a memory cue at 0.000, a hot cue at 0.000, a hot cue at 0.999 and a LOOP "
+                       "at 0.000. The first three are junk and go; the loop is exempt and must survive")
+
+            boundary = self.copy_in(source, os.path.join(directory, "Crate Two"), "C8-cue-boundary.mp3")
+            crate_two.append(boundary)
+            self.c_boundary_cues = boundary
+            self.note(name, "C8-cue-boundary", boundary,
+                       "a hot cue at 0.999 and one at 1.001, either side of the 1000 ms line: the first "
+                       "is junk, the second is a real cue. An off-by-one here deletes someone's cue")
+
+        # The control, and the one that must NOT be reported: a single file
+        # both playlists point at.
+        #
+        # It has to be a recording with no other copy anywhere in the set.
+        # Copying one of the near-duplicates here would make it a genuine
+        # duplicate of that one, and then "must not be reported" would be
+        # wrong -- the fixture would be asserting the opposite of the truth.
+        only_copy = self.pick(pool, lambda p: True, 1, used) if pool else []
+        if only_copy:
+            shared = self.copy_in(only_copy[0], os.path.join(directory, "Crate One"),
+                                   "C0-in-both-crates.mp3")
+            crate_one.append(shared)
+            crate_two.append(shared)
+            self.note(
+                name,
+                "C0-one-file-two-playlists",
+                shared,
+                "ONE file listed by both playlists, and the only copy of this recording in the set. "
+                "Not a duplicate: a run that counts playlist entries instead of files reports it as "
+                "one and offers to delete a track still sitting in a crate",
+            )
+
+        self.playlist_plan[name] = [("Seabass test C -- Crate One", crate_one),
+                                    ("Seabass test C -- Crate Two", crate_two)]
+
+    def shift_wav(self, wav, destination, lead_silence_s=0.0, trim_tail_s=0.0):
+        """Re-encode a decoded track with silence in front or its tail cut.
+
+        The point is a pair whose durations differ by more than any
+        tolerance while the audio is provably the same, so content
+        matching has something with a known right answer to find.
+        """
+        import wave as wave_module
+
+        shifted = os.path.join(self.scratch, "c-shifted.wav")
+        try:
+            with wave_module.open(wav, "rb") as source:
+                params = source.getparams()
+                frames = source.readframes(source.getnframes())
+            width = params.sampwidth * params.nchannels
+            if trim_tail_s:
+                keep = max(0, len(frames) - int(trim_tail_s * params.framerate) * width)
+                frames = frames[:keep]
+            if lead_silence_s:
+                frames = b"\0" * (int(lead_silence_s * params.framerate) * width) + frames
+            with wave_module.open(shifted, "wb") as out:
+                out.setparams(params)
+                out.writeframes(frames)
+        except Exception:
+            return False
+
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        ok = encode_mp3(shifted, destination, ["-b", "320", "--cbr"])
+        if os.path.exists(shifted):
+            os.unlink(shifted)
+        return ok
+
+    def duration_collision(self, pool, used, within_s=1.0, sample=250):
+        """Two different recordings whose lengths agree to within a second.
+
+        Real libraries are full of these -- a few hundred techno tracks all
+        land between six and seven minutes -- and they are the reason a
+        duration bracket can never be the whole answer on its own. Taken
+        from the real pool rather than constructed, so the collision is one
+        that actually occurs in this collection.
+
+        Only a sample is read: tags come from mutagen one file at a time,
+        and a few hundred is more than enough to find a pair that collides.
+        """
+        Candidate = collections.namedtuple("Candidate", "path title artist duration")
+
+        available = [path for path in pool if path not in used][:sample]
+        tagged = []
+        for path in available:
+            copy = read_tags(path)
+            if copy.duration:
+                tagged.append(Candidate(path, copy.title or "", copy.artist or "", copy.duration))
+        tagged.sort(key=lambda candidate: candidate.duration)
+
+        for left, right in zip(tagged, tagged[1:]):
+            if abs(left.duration - right.duration) > within_s:
+                continue
+            # A length collision is only interesting when the two are
+            # plainly not the same recording to begin with.
+            if left.title.strip().lower() == right.title.strip().lower():
+                continue
+            used.add(left.path)
+            used.add(right.path)
+            return left, right
+        return None
+
+    def c_cue_plan(self, entries):
+        """Cues for test C, keyed by position in the sorted file list.
+
+        Built from the pairs recorded during build_c rather than from
+        guessed sort positions: the two halves live in different crates
+        now, so where each lands depends on what the report contained.
+        """
+        colour = self.COLOURS
+        index_of = {path: position for position, path in enumerate(entries)}
+        plan = {}
+
+        def put(path, cues):
+            if path in index_of:
+                plan[index_of[path]] = cues
+
+        if len(self.c_pairs) > 0:
+            a, b = self.c_pairs[0]
+            # Cues on one side only: a merge has to carry them across.
+            put(a, [("hot", 1, 30.765, colour["red"]), ("hot", 2, 75.259, colour["cyan"]),
+                     ("hot", 3, 121.500, colour["green"])])
+            put(b, [])
+        if len(self.c_pairs) > 1:
+            a, b = self.c_pairs[1]
+            # The same hot slot, two positions AND two colours. Only one can
+            # win; the loser must not disappear without being mentioned.
+            put(a, [("hot", 1, 12.500, colour["red"]), ("hot", 4, 200.000, colour["orange"])])
+            put(b, [("hot", 1, 64.000, colour["yellow"]), ("hot", 4, 200.000, colour["orange"])])
+        if len(self.c_pairs) > 2:
+            a, b = self.c_pairs[2]
+            # Different kinds and different colours: a union keeps all of it.
+            put(a, [("memory", -1, 45.000, ""), ("hot", 5, 100.000, colour["magenta"])])
+            put(b, [("loop", 3, 90.000, colour["green"]), ("hot", 6, 150.000, colour["purple"]),
+                     ("hot", 7, 210.000, colour["blue"])])
+
+        # Every kind of cue inside the junk window, plus the one exemption.
+        # isJunkCue is `!isLoop && positionMs < 1000`, so of these four only
+        # the loop survives -- including the hot cue at 0.000, which counted
+        # as deliberate until 2026-09-18 and does not any more.
+        put(self.c_zero_cues, [
+            ("memory", -1, 0.000, ""),
+            ("hot", 1, 0.000, colour["red"]),
+            ("hot", 2, 0.999, colour["yellow"]),
+            ("loop", 3, 0.000, colour["green"]),
+        ])
+        # Either side of the 1000 ms line, one cue apart.
+        put(self.c_boundary_cues, [
+            ("hot", 1, 0.999, colour["red"]),
+            ("hot", 2, 1.001, colour["cyan"]),
+        ])
+        return plan
+
+    def c_field_plan(self, entries):
+        """Rating, Comments and Genre for test C, deliberately disagreeing.
+
+        Cues are not the only thing a merge decides about. rekordbox
+        carries a star rating, a free-text comment and a genre per track,
+        and two copies of one recording almost never agree on them: the
+        copy actually played has the rating and the cue note, the one off
+        a stick has neither. Merging on cues alone keeps whichever side
+        won and silently drops the other's rating.
+
+        Rating is stars x 51, which is how rekordbox stores it -- 5 stars
+        is 255, not 5. Writing 5 there means one star, and that 51x is
+        exactly the sort of thing a fixture should pin.
+        """
+        index_of = {path: position for position, path in enumerate(entries)}
+        plan = {}
+
+        def put(path, fields):
+            if path in index_of:
+                plan[index_of[path]] = fields
+
+        if len(self.c_pairs) > 0:
+            a, b = self.c_pairs[0]
+            # Rated and annotated on one side, blank on the other.
+            put(a, {"Rating": "255", "Comments": "Peak time. Drop at 1:15.", "Genre": "Techno"})
+            put(b, {"Rating": "0", "Comments": "", "Genre": ""})
+        if len(self.c_pairs) > 1:
+            a, b = self.c_pairs[1]
+            # Both sides filled in, and disagreeing on every one of them.
+            put(a, {"Rating": "153", "Comments": "ripped from vinyl", "Genre": "Melodic Techno"})
+            put(b, {"Rating": "204", "Comments": "Beatport 320", "Genre": "Techno (Peak Time / Driving)"})
+        if len(self.c_pairs) > 2:
+            a, b = self.c_pairs[2]
+            # A comment carrying the characters that break naive writers:
+            # an ampersand, angle brackets, a quote and an emoji.
+            put(a, {"Rating": "51", "Comments": 'B&W <sunset> "one for 5am" \U0001F31E',
+                     "Genre": "Progressive House"})
+            # A whitespace-only comment is not an empty one, and a genre
+            # nobody normalises the same way twice.
+            put(b, {"Rating": "102", "Comments": "   ", "Genre": "progressive house"})
+        return plan
+
+    def sorted_entries(self, directory):
+        """The audio files a set's XML will list, in the order it lists them.
+
+        Shared so a cue or field plan can be built against exactly the same
+        list and index that write_xml will use; computing it twice in two
+        places is how the plan and the tracks drift apart.
+
+        Files under unreferenced/ are left out on purpose: "audio no catalog
+        mentions" is a fixture shape in its own right (rig W8).
+        """
+        entries = []
+        for dirpath, dirnames, filenames in os.walk(directory):
+            dirnames[:] = [d for d in dirnames if d != "unreferenced"]
+            for filename in sorted(filenames):
+                if os.path.splitext(filename)[1].lower() not in (".mp3", ".m4a", ".flac", ".wav"):
+                    continue
+                entries.append(os.path.join(dirpath, filename))
+        entries.sort()
+        return entries
+
+    def write_xml(self, set_name, directory, cue_plan=None, field_plan=None):
         """A rekordbox collection XML for one set, cues included.
 
         Cues cannot be written into an audio file, so this is how they get
@@ -338,16 +732,9 @@ class TestLibraryBuilder:
         ET.SubElement(root, "PRODUCT", {"Name": "Seabass", "Version": "0.1", "Company": "Seabass"})
         collection = ET.SubElement(root, "COLLECTION")
 
-        entries = []
-        for dirpath, dirnames, filenames in os.walk(directory):
-            dirnames[:] = [d for d in dirnames if d != "unreferenced"]
-            for filename in sorted(filenames):
-                if os.path.splitext(filename)[1].lower() not in (".mp3", ".m4a", ".flac", ".wav"):
-                    continue
-                entries.append(os.path.join(dirpath, filename))
-        entries.sort()
+        entries = self.sorted_entries(directory)
 
-        cue_plan = {
+        cue_plan = cue_plan if cue_plan is not None else {
             # index into the sorted file list -> what to put on it
             0: [("hot", 1, 30.765, "#FF0017"), ("hot", 2, 75.259, "#00C4FF")],
             1: [("memory", -1, 0.0, "")],       # junk: exactly 0:00
@@ -376,6 +763,10 @@ class TestLibraryBuilder:
             # purpose must not make its own collection file unimportable.
             attributes = {k: xml_safe(v) if isinstance(v, str) else v for k, v in attributes.items()}
             attributes["Location"] = "file://localhost" + urllib.parse.quote(path, safe="/")
+            # Rating/Comments/Genre overrides, where a set plants them
+            # deliberately rather than taking whatever the tags happen to say.
+            for key, value in (field_plan or {}).get(index - 1, {}).items():
+                attributes[key] = xml_safe(value)
             element = ET.SubElement(collection, "TRACK", attributes)
             track_ids[path] = str(index)
 
@@ -392,15 +783,25 @@ class TestLibraryBuilder:
 
         collection.set("Entries", str(len(entries)))
 
+        # One XML can hold as many playlists as it likes -- the real
+        # library's has 40, with 652 of its 1469 tracks in more than one of
+        # them. A set that plans playlists gets them; everything else gets
+        # the single list it always had.
+        planned = self.playlist_plan.get(set_name) or [(f"Seabass test {set_name}", entries)]
         playlists = ET.SubElement(root, "PLAYLISTS")
-        root_node = ET.SubElement(playlists, "NODE", {"Name": "ROOT", "Type": "0", "Count": "1"})
-        leaf = ET.SubElement(
-            root_node,
-            "NODE",
-            {"Name": f"Seabass test {set_name}", "Type": "1", "KeyType": "0", "Entries": str(len(entries))},
-        )
-        for path in entries:
-            ET.SubElement(leaf, "TRACK", {"Key": track_ids[path]})
+        root_node = ET.SubElement(playlists, "NODE", {"Name": "ROOT", "Type": "0", "Count": str(len(planned))})
+        for playlist_name, members in planned:
+            listed = [path for path in members if path in track_ids]
+            leaf = ET.SubElement(
+                root_node,
+                "NODE",
+                {"Name": playlist_name, "Type": "1", "KeyType": "0", "Entries": str(len(listed))},
+            )
+            for path in listed:
+                # The same Key appearing under two NODEs is one file in two
+                # playlists, not two files. That distinction is the point of
+                # test C's C0 fixture.
+                ET.SubElement(leaf, "TRACK", {"Key": track_ids[path]})
 
         out_path = os.path.join(self.out_dir, f"seabass-test-{set_name.lower()}.xml")
         ET.ElementTree(root).write(out_path, encoding="UTF-8", xml_declaration=True)
@@ -410,7 +811,7 @@ class TestLibraryBuilder:
         path = os.path.join(self.out_dir, "MANIFEST.md")
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(MANIFEST_HEADER)
-            for set_name in ("A", "B"):
+            for set_name in ("A", "B", "C"):
                 rows = [n for n in self.notes if n[0] == set_name]
                 handle.write(f"\n## Seabass test {set_name}\n\n")
                 handle.write("| id | file | what is wrong with it |\n|---|---|---|\n")
@@ -435,7 +836,7 @@ def main():
     builder = TestLibraryBuilder(args.source, args.out)
     builder.build()
 
-    for set_name in ("A", "B"):
+    for set_name in ("A", "B", "C"):
         directory = os.path.join(builder.out_dir, f"Test{set_name}")
         total = 0
         count = 0

@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
 SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 -->
 
-# Seabass test A and B
+# Seabass test A, B and C
 
-Two small libraries of real music with real defects, built by
+Three small libraries of real music with real defects, built by
 `tools/library-build/make_test_library.py` and living outside the repository
 (`~/Music/SeabassTestLibrary` by default, `SET.txt` marking them as
 non-anonymized).
@@ -13,9 +13,10 @@ non-anonymized).
 ```
 Test A   31 files   403 MB   matching and metadata torture
 Test B   58 files   690 MB   repair and cleanup torture
+Test C   15 files   153 MB   near-duplicates, across two playlists
 ```
 
-Eight tracks are in both, so cross-stick sync has something to match. Each set
+Eight tracks are in both A and B, so cross-stick sync has something to match. Each set
 fits an 8 GB stick with room for a rekordbox export and an Engine library
 beside it, and each backs up in seconds rather than the half hour a real stick
 takes.
@@ -71,6 +72,50 @@ the first second is noise whatever it is, since the track already starts there,
 while an intro loop on the first bar is real work and carries an end as well as
 a start. The set exists partly to keep that distinction honest — it is exactly
 the kind of rule that gets widened by one commit and quietly eats real cues.
+
+## Test C, and why it is separate
+
+A and B each hold one playlist. C holds **two, in one XML**, because that
+is what the real library looks like: its collection has 40 playlists and
+652 of its 1469 tracks are in more than one of them. A duplicate check
+that only ever compares within a playlist finds nothing there.
+
+So C splits each near-duplicate pair across the two crates, and plants one
+file that *both* playlists list. That one is the control, and it is the
+distinction the whole project rests on: a file duplicates, a row does not.
+Anything counting playlist entries instead of files reports it and offers
+to delete a track still sitting in a crate.
+
+The near-duplicates are the 15 pairs the real rebuild could not resolve --
+same artist, same title, both 320 CBR, durations 2 to 8 seconds apart. The
+three widest go in C. There is no duration bracket that gets these right:
+the gaps run in a smooth gradient with no natural cut-off, so widening it
+to catch the 8-second pair merges everything closer than 8 seconds, and
+some of those are genuinely different edits. They are not there to be
+merged automatically; they are there to be *offered*, which Seabass
+already supports. A run that silently merges them is as wrong as one that
+never mentions them.
+
+Nobody knows which of those three are truly the same recording, so C also
+carries material where the answer is not a matter of opinion, built here
+rather than found: one pair with 7 seconds of silence prepended, one with
+9 seconds cut off the end, both provably the same audio (correlation 1.000
+at offsets of +7.00s and 0.00s). And the negative that matters more than
+either -- two genuinely different recordings **the same length to the
+second**, which duration alone would merge.
+
+C also pins the junk-cue threshold from both sides, which nothing else
+does. `domain::isJunkCue` is `!isLoop && positionMs < 1000`, so one file
+carries a memory cue at 0.000, a hot cue at 0.000, a hot cue at 0.999 and
+a loop at 0.000 -- three to remove and one to keep -- and another carries
+hot cues at 0.999 and 1.001, one either side of the line. Note the hot cue
+at 0.000 is junk: it counted as deliberate until 2026-09-18.
+
+Finally it is the only set carrying ratings, comments and genres, all
+deliberately disagreeing between the halves of a pair, because a merge
+that reconciles cues and silently drops the other side's rating is a
+regression nothing else would catch. Rating is stars x 51 in rekordbox's
+XML, so 5 stars is 255.
 
 ## What is planted where, and when
 
