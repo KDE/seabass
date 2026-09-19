@@ -141,21 +141,32 @@ struct OpenedArchive
             existedBefore = false;
             return true;
         }
+        // All three of these refusals leave the person stuck unless the
+        // way out is named. Refusing is right -- an archive that cannot be
+        // read is one that cannot be safely appended to, and appending
+        // anyway would destroy whatever is still in there -- but "it is
+        // broken" on its own reads as "you can never back this stick up
+        // again". Deleting the archive from Manage Backups is the answer
+        // to each, and that page handles unreadable ones specifically.
+        static constexpr const char *WayOut =
+            ". Delete it from Manage Backups and back up again to start a fresh archive; "
+            "this backup's contents cannot be recovered.";
+
         std::string openError;
         reader = Zip64Reader::tryOpen(*archive, &openError);
         if (!reader) {
-            error = "the existing backup archive is unreadable: " + openError;
+            error = "the existing backup archive is unreadable: " + openError + WayOut;
             return false;
         }
         std::optional<std::size_t> manifestIndex = reader->findEntry(ManifestEntryName);
         if (!manifestIndex) {
-            error = "the existing backup archive has no manifest";
+            error = std::string("the existing backup archive has no manifest") + WayOut;
             return false;
         }
         std::string manifestError;
         manifest = BackupManifest::parse(reader->readEntryToString(*manifestIndex), &manifestError);
         if (!manifest) {
-            error = "the existing backup archive's manifest is damaged: " + manifestError;
+            error = "the existing backup archive's manifest is damaged: " + manifestError + WayOut;
             return false;
         }
         for (const ManifestRow &row : manifest->rows) {
@@ -494,6 +505,7 @@ BackupPreview BackupStick::preview(const BackupStickOptions &options, ProgressRe
         preview.previousCreatedAtUnix = opened.manifest->createdAtUnix;
         preview.previousIdentifier = opened.manifest->stickIdentifier;
         preview.previousLabel = opened.manifest->stickLabel;
+        preview.previousUserName = opened.manifest->userName;
         preview.identifierMismatch = !options.stickIdentifier.empty() && !opened.manifest->stickIdentifier.empty()
                                      && options.stickIdentifier != opened.manifest->stickIdentifier;
         preview.archiveBytes = opened.archive->size();
@@ -611,6 +623,13 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     manifest.libraryFingerprint = options.libraryFingerprint.empty() && opened.manifest
                                       ? opened.manifest->libraryFingerprint
                                       : options.libraryFingerprint;
+    // Sticky unless this run says otherwise: updating a backup must not
+    // silently drop the name it was given when it was created, and every
+    // caller that does not care about names leaves this unset. An empty
+    // value that was actually supplied still clears it, which is why this
+    // is an optional and not a string.
+    manifest.userName = options.userName ? *options.userName
+                                          : (opened.manifest ? opened.manifest->userName : std::string());
     // Sticky across generations: an update carries entries captured in
     // the run that read the damaged stick, so the archive goes on holding
     // data of unknown quality even when the stick is healthy again. The

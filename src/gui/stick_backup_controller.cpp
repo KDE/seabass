@@ -125,6 +125,13 @@ BackupStickOptions StickBackupController::baseOptions() const
     options.stickIdentifier = m_stickIdentifier.toStdString();
     options.stickLabel = m_stickLabel.toStdString();
     options.sourceReadOnly = m_stickReadOnly;
+    // Only when it actually changed. Leaving it unset is what tells
+    // BackupStick to keep the name the previous generation had, and an
+    // update that merely ran without anyone touching the field must not
+    // count as "the user cleared the name".
+    if (m_backupName != m_savedBackupName) {
+        options.userName = m_backupName.toStdString();
+    }
     return options;
 }
 
@@ -193,6 +200,16 @@ void StickBackupController::onPreviewFinished()
             last["label"] = QString::fromStdString(p.previousLabel);
             last["identifierMismatch"] = p.identifierMismatch;
         }
+        last["name"] = QString::fromStdString(p.previousUserName);
+        // Adopt the stored name, unless the field is being edited right
+        // now: a preview finishing mid-typing must not overwrite what is
+        // in the box. An edit is only in flight when the two differ.
+        const QString stored = QString::fromStdString(p.previousUserName);
+        if (m_backupName == m_savedBackupName) {
+            m_backupName = stored;
+            emit backupNameChanged();
+        }
+        m_savedBackupName = stored;
         last["archiveBytes"] = static_cast<qlonglong>(p.archiveBytes);
         last["entries"] = static_cast<qlonglong>(p.unchanged + p.changed);
         m_lastBackup = last;
@@ -366,6 +383,10 @@ void StickBackupController::keepPartial()
     if (!enterDirectWrite([this] { keepPartial(); })) {
         return;
     }
+    // Every other action clears the banner on the way in; these two did
+    // not, so a red error from before the cancel sat above "Discarded the
+    // interrupted backup." and read as though the discard had failed.
+    setErrorMessage({});
     setActivity(QStringLiteral("decide"));
     application::PendingBackup *pending = m_pending.get();
     // Awake while the archive is committed or rolled back: see SleepInhibitor.
@@ -386,6 +407,10 @@ void StickBackupController::discardPartial()
     if (!enterDirectWrite([this] { discardPartial(); })) {
         return;
     }
+    // Every other action clears the banner on the way in; these two did
+    // not, so a red error from before the cancel sat above "Discarded the
+    // interrupted backup." and read as though the discard had failed.
+    setErrorMessage({});
     setActivity(QStringLiteral("decide"));
     application::PendingBackup *pending = m_pending.get();
     // Awake while the archive is committed or rolled back: see SleepInhibitor.
@@ -675,6 +700,19 @@ void StickBackupController::setErrorMessage(const QString &message)
     }
     m_errorMessage = message;
     emit errorMessageChanged();
+}
+
+void StickBackupController::setBackupName(const QString &name)
+{
+    // Trimmed on the way in: a name typed with a trailing space would
+    // otherwise look unchanged on screen while counting as an edit, and
+    // would be written that way into the manifest.
+    const QString trimmed = name.trimmed();
+    if (m_backupName == trimmed) {
+        return;
+    }
+    m_backupName = trimmed;
+    emit backupNameChanged();
 }
 
 void StickBackupController::setStatusMessage(const QString &message)

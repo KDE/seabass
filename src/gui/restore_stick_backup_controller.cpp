@@ -196,6 +196,7 @@ void RestoreStickBackupController::refreshKnownBackups()
             map["entries"] = static_cast<qlonglong>(d.entries);
             map["bytes"] = static_cast<qlonglong>(d.archiveBytes);
             map["sourceReadOnly"] = d.sourceReadOnly;
+            map["name"] = QString::fromStdString(d.userName);
             backups.push_back(map);
         }
         return backups;

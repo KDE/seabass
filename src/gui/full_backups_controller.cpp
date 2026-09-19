@@ -123,6 +123,7 @@ void FullBackupsController::refresh()
             map["playlistCount"] = backup.playlistCount ? static_cast<qlonglong>(*backup.playlistCount) : -1;
             map["isCurrentStick"] = backup.isCurrentStick;
             map["sourceReadOnly"] = d.sourceReadOnly;
+            map["name"] = QString::fromStdString(d.userName);
             if (!d.error.empty()) {
                 // describe() leaves the size unset for an unreadable file;
                 // it still takes up space, and that is worth saying.

@@ -405,6 +405,39 @@ int main()
         std::cout << "case 11 (a backup off a read-only stick is marked, and stays marked) OK\n";
     }
 
+    // ---- the name someone gave a backup survives every later update ----
+    {
+        Fixture f("named");
+        f.options.userName = std::string("before the Berlin gig");
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        assert(f.manifest().userName == "before the Berlin gig");
+
+        // The case this exists for. An update that says nothing about the
+        // name must keep it: options.userName is how the GUI says "the
+        // field was edited", and every other caller leaves it unset. If
+        // this ever reads as empty, running a routine update silently
+        // throws away what the person called their backup.
+        writeFile(f.stick / "Contents" / "later.mp3", pseudoRandom(5'000, 78), 1'700'400'000);
+        f.options.userName.reset();
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        assert(f.manifest().userName == "before the Berlin gig");
+
+        // Renaming from an update does take effect.
+        writeFile(f.stick / "Contents" / "later2.mp3", pseudoRandom(5'000, 79), 1'700'500'000);
+        f.options.userName = std::string("after the Berlin gig");
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        assert(f.manifest().userName == "after the Berlin gig");
+
+        // And an empty name that was actually supplied clears it, which is
+        // the whole reason this option is optional rather than a string.
+        writeFile(f.stick / "Contents" / "later3.mp3", pseudoRandom(5'000, 80), 1'700'600'000);
+        f.options.userName = std::string();
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        assert(f.manifest().userName.empty());
+        assert(f.verifies());
+        std::cout << "case 12 (a backup's name survives updates, and can be changed by one) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

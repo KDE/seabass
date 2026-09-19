@@ -283,6 +283,21 @@ Page {
                                 elide: Text.ElideRight
                                 Layout.maximumWidth: rowContent.width * 0.5
                             }
+                            // The name someone gave this backup, beside the
+                            // stick it came from rather than instead of it:
+                            // "before the Berlin gig" says which backup,
+                            // the label says which stick, and a list of
+                            // names alone makes the second unanswerable.
+                            Label {
+                                objectName: "backupName"
+                                visible: backupRow.readable
+                                         && backupRow.modelData.name !== undefined
+                                         && backupRow.modelData.name.length > 0
+                                text: backupRow.modelData.name === undefined ? "" : backupRow.modelData.name
+                                color: Theme.textMuted
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: rowContent.width * 0.3
+                            }
                             Label {
                                 objectName: "currentStickBadge"
                                 visible: backupRow.modelData.isCurrentStick

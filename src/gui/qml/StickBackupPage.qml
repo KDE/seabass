@@ -535,6 +535,32 @@ Page {
                                 color: Theme.textMuted
                                 text: "Reads the whole stick into one file on this computer. Never writes to the stick."
                             }
+
+                            // Named here rather than afterwards, because
+                            // there is no afterwards: the name is written
+                            // into the archive's manifest as it is built,
+                            // and a zip cannot have one entry rewritten
+                            // without repacking the whole file. Editing it
+                            // on a stick that already has a backup is fine
+                            // -- the next update carries the change.
+                            RowLayout {
+                                visible: root.controller.backingUp !== true
+                                Layout.fillWidth: true
+                                Layout.topMargin: 4
+                                spacing: 8
+                                Label {
+                                    text: "Name"
+                                    color: Theme.textMuted
+                                }
+                                TextField {
+                                    objectName: "backupNameField"
+                                    Layout.fillWidth: true
+                                    enabled: root.controller.busy !== true
+                                    placeholderText: "Optional, e.g. before the Berlin gig"
+                                    text: root.controller.backupName
+                                    onEditingFinished: root.controller.backupName = text
+                                }
+                            }
                         }
                         // Everything in this column hugs the right edge: the
                         // hint under Cancel is wider than the button, and

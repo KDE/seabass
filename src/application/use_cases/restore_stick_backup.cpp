@@ -554,6 +554,7 @@ StickBackupDescription RestoreStickBackup::describe(const fs::path &archivePath)
     description.archiveBytes = opened.readable().size();
     description.libraryFingerprint = opened.manifest->libraryFingerprint;
     description.sourceReadOnly = opened.manifest->sourceReadOnly;
+    description.userName = opened.manifest->userName;
     for (const ManifestRow &row : opened.manifest->rows) {
         if (!row.extra.empty()) {
             description.databaseFingerprints.emplace_back(row.path, row.extra);

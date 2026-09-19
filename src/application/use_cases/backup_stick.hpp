@@ -53,6 +53,14 @@ struct BackupStickOptions
     // The stick is mounted read-only, i.e. damaged: the run still reads
     // everything it can, and the archive is marked as an emergency copy.
     bool sourceReadOnly = false;
+    // What the person called this backup, stored in the manifest header.
+    //
+    // Deliberately optional rather than a plain string, because "leave the
+    // name alone" and "clear the name" are different instructions and an
+    // empty string cannot say both. nullopt keeps whatever the previous
+    // generation had, which is what every caller that does not care about
+    // names wants; a value replaces it, including an empty one.
+    std::optional<std::string> userName;
     CancellationToken cancel = CancellationToken::none();
     // Polled between files/chunks, at most every `probeInterval`: true
     // means Engine DJ / rekordbox appeared and the database must not be
@@ -73,6 +81,9 @@ struct BackupPreview
     std::int64_t previousCreatedAtUnix = 0;
     std::string previousIdentifier;
     std::string previousLabel;
+    // The name the existing backup carries, so a page can show it and
+    // offer to change it without opening the archive a second time.
+    std::string previousUserName;
     bool identifierMismatch = false;  // same archive name, different stick
 
     std::size_t entriesOnStick = 0;

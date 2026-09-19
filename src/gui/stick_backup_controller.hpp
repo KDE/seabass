@@ -38,6 +38,12 @@ class StickBackupController : public QObject
     Q_PROPERTY(QString stickLabel READ stickLabel NOTIFY configuredChanged)
     Q_PROPERTY(QString stickRoot READ stickRoot NOTIFY configuredChanged)
     Q_PROPERTY(QString archivePath READ archivePath NOTIFY configuredChanged)
+    // What this backup is called. Set before a run and it is written into
+    // the new generation; edited on a stick that already has a backup and
+    // the next update carries the change. Display and identity are
+    // separate on purpose: the archive is still found by its path and its
+    // stick, never by this.
+    Q_PROPERTY(QString backupName READ backupName WRITE setBackupName NOTIFY backupNameChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool backingUp READ backingUp NOTIFY busyChanged)
     Q_PROPERTY(bool previewing READ previewing NOTIFY busyChanged)
@@ -75,6 +81,8 @@ public:
     QString stickLabel() const { return m_stickLabel; }
     QString stickRoot() const { return m_stickRoot; }
     QString archivePath() const { return m_archivePath; }
+    QString backupName() const { return m_backupName; }
+    void setBackupName(const QString &name);
     bool busy() const { return !m_activity.isEmpty(); }
     bool backingUp() const { return m_activity == QStringLiteral("backup"); }
     bool previewing() const { return m_previewing; }
@@ -122,6 +130,7 @@ public:
 
 signals:
     void configuredChanged();
+    void backupNameChanged();
     void busyChanged();
     void progressChanged();
     void previewChanged();
@@ -163,6 +172,10 @@ private:
     QString m_stickLabel;
     QString m_stickRoot;
     QString m_archivePath;
+    QString m_backupName;
+    // The name the archive on disk already carries, so an edit can be
+    // told apart from a page that simply loaded.
+    QString m_savedBackupName;
     DirectWriteHold m_writeHold;
     QString m_stickIdentifier;
     QString m_rekordboxPath;

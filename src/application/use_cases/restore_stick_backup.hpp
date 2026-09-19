@@ -110,6 +110,10 @@ struct StickBackupDescription
     // emergency copy of a damaged filesystem. Everything that offers this
     // backup says so, because restoring one is a last resort.
     bool sourceReadOnly = false;
+    // What the person called this backup, empty when they never named
+    // one. Display only: the archive is still identified by its path and
+    // its stick, never by this.
+    std::string userName;
     // Archive-relative path of each captured database's main file and the
     // DbSetFingerprint hex it had: the exact "has the library changed
     // since" test against the same database on a stick.
