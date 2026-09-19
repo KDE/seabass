@@ -193,6 +193,14 @@ Two things the schema settles, found by trying:
 Files under `unreferenced/` are deliberately left out of the XML: "audio no
 catalog mentions" is a fixture shape in its own right.
 
+## Once they are on a stick
+
+A and B and C become a single fixture the moment rekordbox exports them
+and a player imports them: three catalogs, real cues, and the damage only
+a database can hold. That stick, what is on it, what every platform
+should see, and the bugs it has already found are in
+[test-stick-fixture.md](test-stick-fixture.md).
+
 ## Using them
 
 - As corpus sets: point `$SEABASS_CORPUS` at a directory holding a raw stick
