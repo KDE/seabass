@@ -63,6 +63,41 @@ the fixture share.
 | `B5-truncated` | 45 KB of an mp3: no duration, **no sample rate** | 1 file |
 | `B6-flac-truncated` | FLAC cut mid-stream | — |
 | `B7-crossformat` | same recording as mp3 and FLAC | dedup and cue sync across formats |
+| `C1`/`C2`/`C3` | near-duplicate pair, **8s / 7s / 6s** apart, halves in different playlists | 15 such pairs survived the real rebuild |
+| `C4-deep-*` | same audio, 7s of silence prepended | built here, so the answer is known |
+| `C5-deep-*` | same audio, 9s cut from the end | built here, so the answer is known |
+| `C6-collision-*` | **different recordings, same length to the second** (159s vs 159s) | a library of techno is full of these |
+| `C7-cues-at-zero` | memory@0.000, hot@0.000, hot@0.999, **loop@0.000** | hot cues at 0:00 turned up at 7ms and 109ms |
+| `C8-cue-boundary` | hot cues at 0.999 and 1.001, either side of the line | an off-by-one here deletes a real cue |
+| `C0-in-both-crates` | **one file, listed by both playlists** | 652 of the real library's 1469 tracks |
+
+### What test C must produce
+
+The ids above are only useful with the answers attached, so a test can
+assert rather than a person can squint. `MANIFEST.md` beside the audio
+repeats these per file; this is the contract.
+
+| Fixture | Must happen | Must NOT happen |
+|---|---|---|
+| `C1`/`C2`/`C3` | reported as candidates, across playlist boundaries | merged automatically -- no tolerance reaches 8s without swallowing real edits |
+| `C4`, `C5` | matched as the same recording by content | rejected because the durations differ |
+| `C6` | kept apart | merged -- duration alone says they are identical |
+| `C7` | the memory cue, and **both** hot cues, removed | the loop at 0.000 removed; it is exempt |
+| `C8` | the 0.999 cue removed | the 1.001 cue removed |
+| `C0` | listed under both playlists, counted **once** | reported as a duplicate, or offered for deletion |
+
+`C6` is the one that decides whether the set is worth anything. A fixture
+with only true duplicates in it scores full marks for merging everything,
+which is the failure that loses tracks.
+
+The cue merge cases, planted as `POSITION_MARK`s in the XML: `C1` carries
+three hot cues on one side and none on the other, so a merge has to carry
+them across; `C2` has the **same hot slot at two positions and two
+colours**, so one has to win and the loser must be reported rather than
+vanish; `C3` has a memory cue on one side and a loop on the other, which a
+union keeps whole. Ratings, comments and genres disagree across every
+pair, so a merge that reconciles cues and silently drops the other side's
+rating fails here and nowhere else.
 
 Planted as cues by the XML (see below): a memory cue at exactly 0:00, one at
 0.539 s, and a loop at 0.1 s that must **survive** the clean-up.
