@@ -22,6 +22,7 @@
 #include "gui/stick_backup_paths.hpp"
 
 using seabass::gui::archiveFileNameForLabel;
+using seabass::gui::archiveFileNameFor;
 using seabass::gui::archivePathForLabel;
 
 namespace
@@ -80,6 +81,29 @@ void testPathsJoinTheDirectory()
     assert(archivePathForLabel(dir, QStringLiteral("MAIN")) == archivePathForLabel(dir, QStringLiteral("MAIN"), 1));
 }
 
+void testTheNameWinsOverTheLabel()
+{
+    // What a person recognises the backup by is what the file is called,
+    // so a stick still carrying its factory label does not name the
+    // archive after it.
+    assert(archiveFileNameFor(QStringLiteral("TESTRIG_ABC"), QStringLiteral("SANDISK_1"))
+           == QStringLiteral("TESTRIG_ABC.zip"));
+
+    // No name, or nothing but spaces: the label, exactly as before.
+    assert(archiveFileNameFor(QString(), QStringLiteral("SANDISK_1")) == QStringLiteral("SANDISK_1.zip"));
+    assert(archiveFileNameFor(QStringLiteral("   "), QStringLiteral("SANDISK_1")) == QStringLiteral("SANDISK_1.zip"));
+
+    // A name goes through the same sanitising as a label: it is free text
+    // a person typed, so it can hold anything at all.
+    assert(archiveFileNameFor(QStringLiteral("before/the gig"), QStringLiteral("MAIN"))
+           == QStringLiteral("before_the gig.zip"));
+
+    // Collisions count up on whichever of the two supplied the name.
+    assert(archiveFileNameFor(QStringLiteral("TESTRIG_ABC"), QStringLiteral("SANDISK_1"), 2)
+           == QStringLiteral("TESTRIG_ABC (2).zip"));
+    assert(archiveFileNameFor(QString(), QStringLiteral("SANDISK_1"), 2) == QStringLiteral("SANDISK_1 (2).zip"));
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -90,6 +114,7 @@ int main(int argc, char **argv)
     testCollisionsCountUpFromThePlainName();
     testOnlyTheExtensionComesOff();
     testPathsJoinTheDirectory();
+    testTheNameWinsOverTheLabel();
     std::cout << "stick_backup_paths_test passed\n";
     return 0;
 }

@@ -88,6 +88,7 @@ public:
     QString backupName() const { return m_backupName; }
     QString nameCollidedWith() const { return m_nameCollidedWith; }
     void setBackupName(const QString &name);
+    bool renameArchiveTo(const QString &target);
     bool busy() const { return !m_activity.isEmpty(); }
     bool backingUp() const { return m_activity == QStringLiteral("backup"); }
     bool previewing() const { return m_previewing; }

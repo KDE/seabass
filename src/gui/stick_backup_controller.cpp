@@ -234,6 +234,19 @@ void StickBackupController::onPreviewFinished()
             emit backupNameChanged();
         }
         m_savedBackupName = stored;
+
+        // An archive written before the file was named after the backup
+        // still sits under the stick's label. Move it once, so the file a
+        // person finds in the folder is the one they named -- and only
+        // when the destination is free, since renaming over another
+        // backup would destroy it.
+        if (!stored.isEmpty() && !busy() && !m_backupDirectory.isEmpty()) {
+            const QString target = archivePathFor(m_backupDirectory, stored, m_stickLabel, 1);
+            if (target != m_archivePath && renameArchiveTo(target)) {
+                refresh();
+                return;
+            }
+        }
         last["archiveBytes"] = static_cast<qlonglong>(p.archiveBytes);
         last["entries"] = static_cast<qlonglong>(p.unchanged + p.changed);
         m_lastBackup = last;
@@ -765,6 +778,50 @@ void StickBackupController::setErrorMessage(const QString &message)
     emit errorMessageChanged();
 }
 
+// Move an archive to the filename its name implies, with the siblings
+// that are derived from its path.
+//
+// The archive is identity: .journal and .lock are its path plus a
+// suffix, and .seabass-backup-source stores the absolute path of a
+// browsed one. So this refuses rather than half-moves -- a rename that
+// took the archive and left the journal would produce an archive whose
+// recovery record belongs to a file that no longer exists.
+bool StickBackupController::renameArchiveTo(const QString &target)
+{
+    if (target.isEmpty() || target == m_archivePath) {
+        return true;
+    }
+    const fs::path from(m_archivePath.toStdString());
+    const fs::path to(target.toStdString());
+    std::error_code ec;
+    if (!fs::exists(from, ec)) {
+        // Nothing written yet: the next backup simply creates it under
+        // the new name.
+        m_archivePath = target;
+        emit configuredChanged();
+        return true;
+    }
+    if (fs::exists(to, ec)) {
+        // Someone else's archive already has this name. The collision
+        // path handles choosing another; silently overwriting here would
+        // destroy a backup.
+        return false;
+    }
+    fs::rename(from, to, ec);
+    if (ec) {
+        setErrorMessage(QStringLiteral("Could not rename the backup file: ") + QString::fromStdString(ec.message()));
+        emit actionFeedback(m_errorMessage, true);
+        return false;
+    }
+    // The journal only exists after an interrupted run; missing is fine.
+    std::error_code journalEc;
+    fs::rename(fs::path((m_archivePath + QStringLiteral(".journal")).toStdString()),
+                fs::path((target + QStringLiteral(".journal")).toStdString()), journalEc);
+    m_archivePath = target;
+    emit configuredChanged();
+    return true;
+}
+
 void StickBackupController::setBackupName(const QString &name)
 {
     // Trimmed on the way in: a name typed with a trailing space would
@@ -776,6 +833,17 @@ void StickBackupController::setBackupName(const QString &name)
     }
     m_backupName = trimmed;
     emit backupNameChanged();
+
+    // The file on disk is called after the name, so changing the name
+    // moves it. Not while a run is in flight: the archive is open.
+    if (!busy() && !m_backupDirectory.isEmpty()) {
+        const QString target = archivePathFor(m_backupDirectory, m_backupName, m_stickLabel, 1);
+        if (renameArchiveTo(target)) {
+            m_archiveAttempt = 1;
+            m_nameCollidedWith.clear();
+            refresh();
+        }
+    }
 }
 
 void StickBackupController::setStatusMessage(const QString &message)

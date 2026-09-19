@@ -58,6 +58,28 @@ inline QString archiveFileNameForLabel(const QString &stickLabel, int attempt)
     return stem + QStringLiteral(" (") + QString::number(attempt) + QStringLiteral(").zip");
 }
 
+// What the archive is called when the backup has been given a name: the
+// name, falling back to the stick's label.
+//
+// The name is what a person recognises the backup by, so it is what they
+// look for in a folder -- "TESTRIG_ABC.zip", not "SANDISK_1.zip" after a
+// factory label nobody chose. The cost is that renaming a backup has to
+// move the file, and with it the .journal and .lock siblings, which are
+// derived from the archive path by appending a suffix. Nothing may rename
+// an archive that is open for browsing: .seabass-backup-source stores the
+// absolute path and would be left pointing at nothing.
+inline QString archiveFileNameFor(const QString &backupName, const QString &stickLabel, int attempt = 1)
+{
+    const QString chosen = backupName.trimmed().isEmpty() ? stickLabel : backupName;
+    return archiveFileNameForLabel(chosen, attempt);
+}
+
+inline QString archivePathFor(const QString &backupDirectory, const QString &backupName, const QString &stickLabel,
+                               int attempt = 1)
+{
+    return QDir(backupDirectory).filePath(archiveFileNameFor(backupName, stickLabel, attempt));
+}
+
 inline QString archivePathForLabel(const QString &backupDirectory, const QString &stickLabel, int attempt)
 {
     return QDir(backupDirectory).filePath(archiveFileNameForLabel(stickLabel, attempt));
