@@ -17,6 +17,7 @@
 #include <QString>
 #include <QStringList>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QtQuickTest/quicktest.h>
 
 #include <cstdlib>
@@ -327,6 +328,15 @@ public slots:
     // screenshot dir) is left exactly as it was.
     void applicationAvailable()
     {
+        // The same text renderer the app picks in gui/main.cpp, for the
+        // same reason, and set here as well so a screenshot taken from
+        // this binary is of the text Seabass actually draws. A harness
+        // that renders glyphs differently from the app is a harness that
+        // cannot be used to judge how they look.
+#ifdef Q_OS_LINUX
+        QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
+#endif
+
         // AppSettingsController, main.cpp's exportMaterialPalette() and
         // media_controller.cpp's opened-folders store all construct their
         // QSettings the same way -- QSettings("seabass", "seabass"),

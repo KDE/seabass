@@ -5,6 +5,7 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
+#include <QQuickWindow>
 #include <QSettings>
 #include <QStyleHints>
 #include <QThreadPool>
@@ -121,6 +122,32 @@ int main(int argc, char **argv)
     const bool useSystemTheme = exportMaterialPalette();
     QGuiApplication app(argc, argv);
     app.setWindowIcon(QIcon(QStringLiteral(":/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg")));
+
+#ifdef Q_OS_LINUX
+    // Qt Quick's default text renderer draws glyphs from a distance
+    // field: resolution independent, but unhinted and not snapped to the
+    // pixel grid, so on a fractionally scaled display every other line's
+    // baseline lands mid-pixel and the bottom row of every stem is drawn
+    // at partial coverage. On screen the letters look shaved off along
+    // the baseline (reported on a 2256x1504 panel at Plasma's 1.5
+    // scaling, Noto Sans at 11pt).
+    //
+    // Native rendering rasterises through FreeType instead, with the
+    // desktop's own hinting and subpixel antialiasing, and snaps to whole
+    // pixels -- the same thing KDE's own Qt Quick apps do, and it makes
+    // Seabass's text match every other app on the desktop rather than
+    // being the one that looks soft.
+    //
+    // Linux only for now: this is the platform the problem was seen and
+    // measured on, and the distance field renderer has its own reasons to
+    // stay the default elsewhere (it is what keeps text sharp under the
+    // scaling and animation macOS and Windows do). Widen it when there is
+    // a real screenshot from one of those to judge by, not before.
+    //
+    // Static, and read when a QQuickWindow is constructed, so it has to
+    // run before the engine loads Main.qml.
+    QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
+#endif
 
 #ifdef Q_OS_WIN
     // FluentWinUI3 (opted into above) draws native Windows 11 controls and
