@@ -27,6 +27,20 @@ if(MSVC)
     # report the real value unconditionally, so this has no MINGW
     # counterpart.
     add_compile_options(/Zc:__cplusplus)
+    # MSVC's default source-file encoding is the system's own ANSI code
+    # page, not UTF-8 (GCC/Clang assume UTF-8 unconditionally, which is
+    # why this has no MINGW counterpart either). Every source file in this
+    # project is UTF-8, so a non-ASCII byte in a string literal -- an
+    # accented name in an SPDX header is a comment and harmless, but
+    # path_key_test.cpp's own café/decomposed-form literals are not --
+    # gets silently re-decoded through the wrong code page and mangled
+    # into a different string before the program ever runs. Confirmed
+    # directly: path_key_test failed comparing "café.mp3" against its own
+    # decomposed spelling because the *composed* one had already been
+    # corrupted into a replacement character at compile time, on a target
+    # that (unlike the Qt-linked ones, which get /utf-8 for free from Qt's
+    # own CMake integration) had nothing setting the source charset at all.
+    add_compile_options(/utf-8)
 endif()
 
 # --- vendored dependencies (git submodules under third_party/) ---

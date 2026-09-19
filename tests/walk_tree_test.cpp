@@ -89,11 +89,28 @@ void testUnreadableDirectoryCostsThatDirectoryOnly()
 
     fs::permissions(root / "locked", fs::perms::none);
 
+    // Whether the OS actually enforced it, not whether the call reported
+    // success: std::filesystem::permissions() on Windows only ever
+    // toggles the read-only attribute bit, so perms::none on a directory
+    // there does not stop it from being listed, and this test's whole
+    // premise -- a directory the walk cannot read -- cannot be
+    // constructed. Checked directly, the same way
+    // failed_change_rollback_test's cases 6 and 7 check theirs.
+    std::error_code listEc;
+    fs::directory_iterator(root / "locked", listEc);
+    const bool lockEnforced = static_cast<bool>(listEc);
+
     auto walk = walkTree(root.string());
-    // Both readable files, from directories on either side of the locked one.
-    assert(walk.files.size() == 2);
-    assert(walk.skipped.size() == 1);
-    assert(walk.skipped.front() == "locked");
+    if (!lockEnforced) {
+        std::cout << "testUnreadableDirectoryCostsThatDirectoryOnly SKIPPED (this filesystem still let "
+                     "the locked directory be listed, so an unreadable directory could not be "
+                     "constructed)\n";
+    } else {
+        // Both readable files, from directories on either side of the locked one.
+        assert(walk.files.size() == 2);
+        assert(walk.skipped.size() == 1);
+        assert(walk.skipped.front() == "locked");
+    }
 
     tearDown(root);
 }

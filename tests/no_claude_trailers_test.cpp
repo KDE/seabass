@@ -46,15 +46,31 @@ fs::path scratch(const std::string &name)
 
 int run(const std::string &command)
 {
+#ifdef _WIN32
+    // std::system() always launches through cmd.exe (via COMSPEC), no
+    // matter which shell the calling process itself runs under -- and
+    // cmd.exe cannot run .githooks/commit-msg or .githooks/pre-push
+    // directly: they are extensionless shebang scripts, so it answers
+    // "the system cannot find the path specified" as if the file did not
+    // exist, rather than anything about the hook itself. Every command
+    // here is already POSIX shell syntax (2>/dev/null, &&, single-quoted
+    // pipelines), which cmd.exe would mangle differently anyway, so
+    // routing the whole thing through bash -- present on any Windows
+    // machine set up to build this project -- fixes both problems at
+    // once rather than only the one that happened to abort first.
+    const std::string status = "bash -c \"" + command + "\"";
+    const int result = std::system(status.c_str());
+    if (result == -1) {
+        return -1;
+    }
+    // system() hands back the exit code directly; there is no wait status
+    // to unpack, and WEXITSTATUS does not exist.
+    return result;
+#else
     const int status = std::system(command.c_str());
     if (status == -1) {
         return -1;
     }
-#ifdef _WIN32
-    // system() hands back the exit code directly; there is no wait status
-    // to unpack, and WEXITSTATUS does not exist.
-    return status;
-#else
     return WEXITSTATUS(status);
 #endif
 }
