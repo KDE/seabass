@@ -33,4 +33,34 @@ inline QString archivePathForLabel(const QString &backupDirectory, const QString
     return QDir(backupDirectory).filePath(archiveFileNameForLabel(stickLabel));
 }
 
+// The same name with a number on it: "MAIN.zip", then "MAIN (2).zip".
+//
+// Two sticks can carry one label -- a spare bought from the same shelf,
+// or a stick relabelled after it was first backed up -- and the archive
+// is chosen by label, so they collide on one file. Updating one stick's
+// backup with another stick's contents diffs the newcomer against it and
+// records every file of the original as removed, which is the original's
+// backup gone. So a collision takes the next free name by default, and
+// replacing the other stick's archive is something to ask for.
+//
+// `attempt` is 1-based: 1 is the plain name, so a caller can count up
+// from 1 without special-casing the first.
+inline QString archiveFileNameForLabel(const QString &stickLabel, int attempt)
+{
+    const QString base = archiveFileNameForLabel(stickLabel);
+    if (attempt <= 1) {
+        return base;
+    }
+    // chopped() rather than a split on '.': a label may contain dots of
+    // its own, and only the extension this function just added is meant
+    // to come off.
+    const QString stem = base.chopped(QStringLiteral(".zip").size());
+    return stem + QStringLiteral(" (") + QString::number(attempt) + QStringLiteral(").zip");
+}
+
+inline QString archivePathForLabel(const QString &backupDirectory, const QString &stickLabel, int attempt)
+{
+    return QDir(backupDirectory).filePath(archiveFileNameForLabel(stickLabel, attempt));
+}
+
 }  // namespace seabass::gui

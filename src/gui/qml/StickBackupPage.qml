@@ -36,7 +36,33 @@ Page {
     readonly property string blockedBy: root.conflictingSoftware.length > 0 ? root.conflictingSoftware : (controller.blockedBy || "")
     readonly property bool canBackUp: !controller.busy && !controller.pendingCancelDecision && root.blockedBy.length === 0
         && since.enoughFreeSpace !== false && !(lastBackup.error && lastBackup.error.length > 0)
-        && lastBackup.identifierMismatch !== true
+
+    SeabassDialog {
+        id: replaceCollidingDialog
+        title: "Replace another stick's backup?"
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        onAccepted: root.controller.replaceCollidingBackup()
+
+        ColumnLayout {
+            spacing: 8
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "\"" + root.controller.nameCollidedWith + "\" already has a backup under this name. "
+                      + "Replacing it deletes that backup from this computer and starts a fresh one for "
+                      + root.stickLabel + "."
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+                // Said plainly because the alternative is already chosen
+                // and working: nobody has to do this.
+                text: "You do not need to. This stick is already being backed up under a name of its own, "
+                      + "and both backups can exist side by side."
+            }
+        }
+    }
 
     Component.onCompleted: {
         if (controller.configure) {
@@ -475,12 +501,12 @@ Page {
                             tooltipText: root.statusBadge(root.lastBackup.status).tip
                         }
                         StatusBadge {
-                            visible: root.lastBackup.identifierMismatch === true
-                            label: "DIFFERENT STICK"
+                            visible: root.controller.nameCollidedWith.length > 0
+                            label: "NAME TAKEN"
                             badgeColor: Theme.warnIcon
-                            tooltipText: "This backup file was made from another stick that had the same name"
-                                + (root.lastBackup.label ? " (" + root.lastBackup.label + ")" : "")
-                                + ". Backing up continues it with this stick's contents."
+                            tooltipText: "\"" + root.controller.nameCollidedWith + "\" already has a backup under "
+                                + "this name, so this stick is being backed up under a new one. That stick's "
+                                + "backup is untouched."
                         }
                         Item { Layout.fillWidth: true }
                     }
@@ -499,6 +525,16 @@ Page {
                             text: "Open Folder"
                             visible: root.hasBackup
                             onClicked: root.controller.openArchiveFolder()
+                        }
+                        Button {
+                            objectName: "useTakenNameButton"
+                            text: "Replace it…"
+                            visible: root.controller.nameCollidedWith.length > 0
+                            enabled: root.controller.busy !== true
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Delete " + root.controller.nameCollidedWith
+                                + "'s backup and use the plain name for this stick instead"
+                            onClicked: replaceCollidingDialog.open()
                         }
                         Button {
                             objectName: "historyButton"

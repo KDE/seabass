@@ -44,6 +44,10 @@ class StickBackupController : public QObject
     // separate on purpose: the archive is still found by its path and its
     // stick, never by this.
     Q_PROPERTY(QString backupName READ backupName WRITE setBackupName NOTIFY backupNameChanged)
+    // Non-empty when the plain "<label>.zip" is already another stick's
+    // backup: the label of that other stick. The archive path has been
+    // moved to the next free name, and this is what to say about it.
+    Q_PROPERTY(QString nameCollidedWith READ nameCollidedWith NOTIFY configuredChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool backingUp READ backingUp NOTIFY busyChanged)
     Q_PROPERTY(bool previewing READ previewing NOTIFY busyChanged)
@@ -82,6 +86,7 @@ public:
     QString stickRoot() const { return m_stickRoot; }
     QString archivePath() const { return m_archivePath; }
     QString backupName() const { return m_backupName; }
+    QString nameCollidedWith() const { return m_nameCollidedWith; }
     void setBackupName(const QString &name);
     bool busy() const { return !m_activity.isEmpty(); }
     bool backingUp() const { return m_activity == QStringLiteral("backup"); }
@@ -118,6 +123,11 @@ public:
     // returning: the interesting failures ("no history yet", "cannot be
     // read") are things to say, not values to branch on.
     Q_INVOKABLE void openChangelog();
+    // Take the colliding name after all, by deleting the other stick's
+    // archive first. Destructive and explicitly asked for: updating it
+    // in place would be worse, because the diff would record every file
+    // of the other stick as removed and call the result a backup.
+    Q_INVOKABLE void replaceCollidingBackup();
     // Re-runs the action lockRefused() stopped, after "Remove Lock".
     Q_INVOKABLE void retryLockedAction() { m_writeHold.retryLockedAction(); }
     Q_INVOKABLE void keepPartial();
@@ -178,6 +188,11 @@ private:
     QString m_stickRoot;
     QString m_archivePath;
     QString m_backupName;
+    QString m_nameCollidedWith;
+    // How many names were tried: 1 is the plain one. Kept so a refresh
+    // does not walk the sequence again from the start each time.
+    int m_archiveAttempt = 1;
+    QString m_backupDirectory;
     // The name the archive on disk already carries, so an edit can be
     // told apart from a page that simply loaded.
     QString m_savedBackupName;

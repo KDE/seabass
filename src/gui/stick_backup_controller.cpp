@@ -114,7 +114,10 @@ void StickBackupController::configure(const QString &stickLabel, const QString &
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
     m_stickRoot = QString::fromStdString(fs::path(anyPath.toStdString()).parent_path().string());
-    m_archivePath = archivePathForLabel(backupDirectory, stickLabel);
+    m_backupDirectory = backupDirectory;
+    m_archiveAttempt = 1;
+    m_nameCollidedWith.clear();
+    m_archivePath = archivePathForLabel(backupDirectory, stickLabel, m_archiveAttempt);
     emit configuredChanged();
     refresh();
 }
@@ -201,6 +204,25 @@ void StickBackupController::onPreviewFinished()
             last["createdAt"] = QDateTime::fromSecsSinceEpoch(p.previousCreatedAtUnix).toString(Qt::ISODate);
             last["label"] = QString::fromStdString(p.previousLabel);
             last["identifierMismatch"] = p.identifierMismatch;
+        }
+
+        // "<label>.zip" is already a different stick's backup. Updating it
+        // with this stick would diff the newcomer against it and record
+        // every file of the other stick as removed, so the default is to
+        // step to the next free name rather than to refuse and stop. The
+        // colliding archive is left exactly as it is.
+        //
+        // The cap is not defensive decoration: each step re-previews, and
+        // a directory of same-named archives would otherwise walk forever
+        // on a page that looks merely slow.
+        static constexpr int MaxNameAttempts = 20;
+        if (p.identifierMismatch && m_archiveAttempt < MaxNameAttempts) {
+            m_nameCollidedWith = QString::fromStdString(p.previousLabel);
+            ++m_archiveAttempt;
+            m_archivePath = archivePathForLabel(m_backupDirectory, m_stickLabel, m_archiveAttempt);
+            emit configuredChanged();
+            refresh();
+            return;
         }
         last["name"] = QString::fromStdString(p.previousUserName);
         // Adopt the stored name, unless the field is being edited right
@@ -559,6 +581,34 @@ void StickBackupController::openArchiveFolder()
     QString folder = QFileInfo(m_archivePath).absolutePath();
     QDir().mkpath(folder);
     QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+}
+
+void StickBackupController::replaceCollidingBackup()
+{
+    if (m_nameCollidedWith.isEmpty() || busy()) {
+        return;
+    }
+    // Delete the other stick's archive, then start again from the plain
+    // name. Deleting and writing afresh rather than updating in place is
+    // the point: an update would keep that stick's manifest and call
+    // every one of its files removed, producing something that looks
+    // like a backup of neither stick.
+    const QString colliding = archivePathForLabel(m_backupDirectory, m_stickLabel, 1);
+    std::error_code ec;
+    fs::remove(fs::path(colliding.toStdString()), ec);
+    if (ec) {
+        setErrorMessage(QStringLiteral("Could not remove ") + colliding + QStringLiteral(": ")
+                        + QString::fromStdString(ec.message()));
+        emit actionFeedback(m_errorMessage, true);
+        return;
+    }
+    fs::remove(fs::path((colliding + QStringLiteral(".journal")).toStdString()), ec);
+
+    m_nameCollidedWith.clear();
+    m_archiveAttempt = 1;
+    m_archivePath = colliding;
+    emit configuredChanged();
+    refresh();
 }
 
 void StickBackupController::openChangelog()

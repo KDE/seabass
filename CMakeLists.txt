@@ -1542,6 +1542,11 @@ if(TARGET Qt6::Core)
     target_link_libraries(open_folder_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME open_folder_test COMMAND open_folder_test)
 
+    add_executable(stick_backup_paths_test tests/stick_backup_paths_test.cpp)
+    target_include_directories(stick_backup_paths_test PRIVATE src)
+    target_link_libraries(stick_backup_paths_test PRIVATE Qt6::Core)
+    add_test(NAME stick_backup_paths_test COMMAND stick_backup_paths_test)
+
     add_executable(backup_changelog_text_test
         ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
         src/gui/backup_changelog_text.cpp
