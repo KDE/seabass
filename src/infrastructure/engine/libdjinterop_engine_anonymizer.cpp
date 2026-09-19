@@ -335,6 +335,18 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
     } catch (const std::exception &e) {
         result.errorMessage = e.what();
     }
+    // The scrub runs BEFORE the sentence below is written, and is gated
+    // only on the exception above. A file that could not be removed
+    // makes this export unshareable, but it must not also stop the
+    // scrubbing of everything that CAN be scrubbed: gated on the final
+    // errorMessage, one stray file nothing could unlink left every real
+    // Track.filename in m.db and skipped the VACUUM as well, so the
+    // failure path shipped MORE real data than the success path.
+    if (result.errorMessage.empty()) {
+        result.filenameColumnRows = scrubFilenameColumn(destinationRoot);
+        // Last thing, after every writer above: see compactDatabase().
+        compactDatabase((std::filesystem::path(destinationRoot) / "Database2" / "m.db").string());
+    }
     // Same contract as tracksRefused: a file nothing can scrub, still in
     // Database2, means this export must not be shared. Said in
     // errorMessage as well as in the list, because that is what callers
@@ -345,11 +357,6 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
             + result.unremovedUnanonymizableFiles.front()
             + (result.unremovedUnanonymizableFiles.size() > 1 ? ", ..." : "")
             + " -- this export must not be shared.";
-    }
-    if (result.errorMessage.empty()) {
-        result.filenameColumnRows = scrubFilenameColumn(destinationRoot);
-        // Last thing, after every writer above: see compactDatabase().
-        compactDatabase((std::filesystem::path(destinationRoot) / "Database2" / "m.db").string());
     }
     return result;
 }

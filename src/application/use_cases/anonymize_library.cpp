@@ -165,6 +165,28 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
         m << "\n";
     }
 
+    // What is deliberately missing, said out loud: a receiver comparing
+    // this export against a real library would otherwise read a dropped
+    // file as a bug in the export or in their own copy.
+    if (!summary.unanonymizableFilesDropped.empty()) {
+        m << "Dropped, because nothing in Seabass can anonymize them:\n";
+        for (const std::string &name : summary.unanonymizableFilesDropped) {
+            m << "  " << name << "\n";
+        }
+        m << "They are missing from this export on purpose. Engine's play history\n"
+             "(hm.db) is one of them: real titles, artists and paths, plus which\n"
+             "set each track was played in.\n\n";
+    }
+    if (!summary.unanonymizableFilesLeftBehind.empty()) {
+        m << "*** WARNING: " << summary.unanonymizableFilesLeftBehind.size()
+          << " file(s) that cannot be anonymized are STILL in this export,\n"
+             "    because they could not be removed:\n";
+        for (const std::string &name : summary.unanonymizableFilesLeftBehind) {
+            m << "      " << name << "\n";
+        }
+        m << "    They hold real library data. DO NOT SHARE THIS EXPORT.\n\n";
+    }
+
     m << "What's included vs. stripped, on every track:\n"
          "  KEPT as-is: format, file size, bitrate, duration, BPM, key,\n"
          "    hot/memory cue positions and colors, rating, play count,\n"
@@ -284,6 +306,12 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         summary.rekordboxArtistsRenamed = result.artistsRenamed;
         summary.rekordboxPlaylistsRenamed = result.playlistsRenamed;
         summary.rekordboxError = result.errorMessage;
+        summary.unanonymizableFilesDropped.insert(summary.unanonymizableFilesDropped.end(),
+                                                  result.removedUnanonymizableFiles.begin(),
+                                                  result.removedUnanonymizableFiles.end());
+        summary.unanonymizableFilesLeftBehind.insert(summary.unanonymizableFilesLeftBehind.end(),
+                                                     result.unremovedUnanonymizableFiles.begin(),
+                                                     result.unremovedUnanonymizableFiles.end());
     }
 
     if (engineRoot) {
@@ -296,6 +324,12 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         summary.engineTracksRefused = result.tracksRefused;
         summary.engineFirstRefusalReason = result.firstRefusalReason;
         summary.engineError = result.errorMessage;
+        summary.unanonymizableFilesDropped.insert(summary.unanonymizableFilesDropped.end(),
+                                                  result.removedUnanonymizableFiles.begin(),
+                                                  result.removedUnanonymizableFiles.end());
+        summary.unanonymizableFilesLeftBehind.insert(summary.unanonymizableFilesLeftBehind.end(),
+                                                     result.unremovedUnanonymizableFiles.begin(),
+                                                     result.unremovedUnanonymizableFiles.end());
     }
 
     std::uintmax_t rekordboxBytes = infrastructure::directoryTreeSizeBytes(fs::path(outputDir) / "rekordbox");

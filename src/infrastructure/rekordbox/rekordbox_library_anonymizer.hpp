@@ -38,8 +38,9 @@ struct RekordboxAnonymizationResult
     // is one nothing in this project knows how to scrub, still sitting in
     // the export: a nonempty list means the export must not be shared,
     // and errorMessage is set to say so. Separate from the list above
-    // because "dropped" and "meant to drop" are different claims, and the
-    // manifest makes the first one to whoever receives the export.
+    // because "dropped" and "meant to drop" are different claims, and
+    // MANIFEST.txt carries both to whoever receives the export (see
+    // AnonymizationSummary::unanonymizableFilesDropped).
     //
     // It exists because std::filesystem::remove() answers "did I unlink
     // something", not "is it gone", and reports a name it cannot resolve

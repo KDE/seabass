@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "application/ports/progress_reporter.hpp"
 
@@ -70,6 +71,18 @@ struct AnonymizationSummary
     int engineTracksRefused = 0;
     std::string engineFirstRefusalReason;
     std::string engineError;  // empty on success
+
+    // Files neither anonymizer knows how to scrub, from both catalogs:
+    // dropped rather than shipped. Named in MANIFEST.txt, because an
+    // export that is deliberately missing files should say which ones
+    // to whoever receives it -- hm.db, the Engine play history, is the
+    // one that matters most. Both anonymizers kept these lists from the
+    // day they were written and nothing read them until now.
+    std::vector<std::string> unanonymizableFilesDropped;
+    // The ones that could not be dropped, each with why. Nonempty means
+    // the export holds real data and must not be shared, so it is said
+    // in MANIFEST.txt as loudly as a refused track is.
+    std::vector<std::string> unanonymizableFilesLeftBehind;
 
     // Only valid while execute() is still running -- the staging
     // directory this pointed to is removed once the zip below is

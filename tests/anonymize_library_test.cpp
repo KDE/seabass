@@ -245,6 +245,9 @@ int main()
         snapshot.relative_path = "Contents/086_Real Artist Name-Real Track Title.mp3";  // same real filename as the rekordbox fixture
         db.create_track(snapshot);
     }
+    // The play history, which no anonymizer can scrub: it goes out of the
+    // export entirely, and the manifest has to say that it did.
+    writeFile(engineSource / "Database2" / "hm.db", "real play history: who played what, when");
 
     // Both catalogs together.
     {
@@ -291,12 +294,22 @@ int main()
         assert(summary.manifestText.find("loop points sometimes drift") != std::string::npos);
         assert(summary.manifestText.find("sebas@kde.org") != std::string::npos);
         assert(summary.manifestText.find("may be published") != std::string::npos);
+        // Dropped rather than shipped, and named: a receiver seeing
+        // Database2 without an hm.db should be able to read why.
+        assert(summary.unanonymizableFilesDropped.size() == 1);
+        assert(summary.unanonymizableFilesDropped.front() == "hm.db");
+        assert(summary.unanonymizableFilesLeftBehind.empty());
+        assert(summary.manifestText.find("Dropped, because nothing in Seabass can anonymize them")
+               != std::string::npos);
+        assert(summary.manifestText.find("  hm.db\n") != std::string::npos);
+        assert(fs::exists(engineSource / "Database2" / "hm.db") && "the source keeps its own copy");
         std::cout << "case 1 (both catalogs: succeeds, output is one zip, manifest has hardware/notes/privacy text) OK\n";
 
         fs::path extracted = root / "out_both_extracted";
         extractZip(summary.outputZipPath, extracted);
         assert(fs::exists(extracted / "rekordbox" / "rekordbox" / "export.pdb"));
         assert(fs::exists(extracted / "engine" / "Database2"));
+        assert(!fs::exists(extracted / "engine" / "Database2" / "hm.db") && "and the export really is without it");
         assert(readFile(extracted / "MANIFEST.txt") == summary.manifestText);
         std::cout << "case 1a (zip contents extract back to the expected tree, manifest matches summary.manifestText) OK\n";
 
