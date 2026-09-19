@@ -813,7 +813,9 @@ ApplicationWindow {
 
     Component {
         id: aboutPageComponent
-        AboutPage {}
+        AboutPage {
+            onDonationRequested: stackView.push(donationPageComponent)
+        }
     }
 
     Component {

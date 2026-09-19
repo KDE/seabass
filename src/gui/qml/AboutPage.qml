@@ -7,8 +7,23 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
+// The short version of vizzzion.org/seabass, and a way to get to the
+// long one.
+//
+// This page used to carry the full story of the three catalogs and a
+// paragraph on streaming tracks, which is reference material rather than
+// an introduction: nobody opens About to read a format explanation. The
+// detail that belongs next to a control now lives next to that control
+// (LibrarySourceToggle's own tooltip, Preferences' streaming setting),
+// the rest is a click away on the website, and what stays here is what
+// someone opening About actually wants: what this is, what it does, what
+// it will not do, and who made it.
 Page {
     id: root
+
+    signal donationRequested()
+
+    readonly property string websiteUrl: "https://vizzzion.org/seabass/"
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
@@ -82,9 +97,9 @@ Page {
             }
 
             Label {
-                text: "Seabass reads and writes the DJ data already on a Rekordbox or Denon Engine "
-                    + "USB stick - cue points, playlists, and the metadata your DJ software already "
-                    + "computed - so you can inspect it, fix it up, and keep the two formats in sync."
+                text: "Move between the Pioneer and Denon worlds with confidence. Seabass works on the "
+                    + "library already on your USB stick: it keeps the Rekordbox and Engine DJ copies of "
+                    + "it in step, and tells you the truth about what is on there."
                 wrapMode: Text.WordWrap
                 font.pointSize: Theme.baseFontPointSize * 1.1
                 Layout.fillWidth: true
@@ -93,14 +108,15 @@ Page {
             ColumnLayout {
                 spacing: 6
                 Layout.fillWidth: true
-                Subtitle { text: "What Seabass does" }
+                Subtitle { text: "What it does" }
                 Label {
-                    text: "• Browses tracks, playlists and cue points across every catalog on a stick\n"
-                        + "• Finds duplicate tracks and consolidates their cue points onto every copy\n"
-                        + "• Syncs cues between every pair of catalogs present on the same stick\n"
-                        + "• Backs up a whole stick into one file on this computer, and browses or deletes those backups\n"
-                        + "• Backs up cues to this computer and restores them if a stick's cues are lost\n"
-                        + "• Shows a stick's saved Rekordbox player settings"
+                    text: "• Backs up a whole stick into one file on this computer, and restores it onto any drive\n"
+                        + "• Backs up cue points, ratings, comments and play counts, and puts them back when they go missing\n"
+                        + "• Carries hot cues, memory cues and loops between the catalogs on one stick, and asks when they disagree\n"
+                        + "• Browses every catalog: tracks, playlists, BPM, key, and playback with a real waveform\n"
+                        + "• Finds duplicate copies, merges what they each carry, and reclaims the space\n"
+                        + "• Checks the catalogs against each other and against the files on disk\n"
+                        + "• Measures how a stick performs, the way a player reads it"
                     wrapMode: Text.WordWrap
                     font.pointSize: Theme.baseFontPointSize * 1.1
                     color: Theme.textMuted
@@ -111,63 +127,72 @@ Page {
             ColumnLayout {
                 spacing: 6
                 Layout.fillWidth: true
-                Subtitle { text: "The three library catalogs" }
+                Subtitle { text: "What it does not do" }
                 Label {
-                    text: "A stick can carry up to three separate, independently-maintained catalogs of "
-                        + "the same tracks. Browse Library can switch between whichever ones are present:"
+                    text: "Seabass never analyzes audio to produce new analysis data. Beatgridding, BPM and "
+                        + "key detection and waveform analysis all happen in Rekordbox or Engine DJ first. "
+                        + "Seabass reads and moves around the results, and never recomputes them."
                     wrapMode: Text.WordWrap
                     font.pointSize: Theme.baseFontPointSize * 1.1
-                    color: Theme.textMuted
-                    Layout.fillWidth: true
-                }
-                Label {
-                    text: "• Engine OS - Denon Engine DJ's own library (m.db). What Denon/inMusic "
-                        + "hardware (SC5000, Prime series, ...) reads directly.\n"
-                        + "• DeviceLibrary - Rekordbox's classic per-stick export (export.pdb). What "
-                        + "CDJs and XDJs read directly; every rekordbox export has this.\n"
-                        + "• OneLibrary - Rekordbox 7's newer unified library (exportLibrary.db, also "
-                        + "called \"Device Library Plus\"). Mirrors DeviceLibrary's tracks in a richer "
-                        + "schema, kept in sync by Rekordbox itself; not present on every export."
-                    wrapMode: Text.WordWrap
-                    font.pointSize: Theme.baseFontPointSize * 1.1
-                    color: Theme.textMuted
-                    Layout.fillWidth: true
-                }
-                Label {
-                    text: "OneLibrary supports adding cues directly, same as DeviceLibrary and Engine OS. "
-                        + "Merging duplicates isn't supported on this catalog yet."
-                    wrapMode: Text.WordWrap
-                    font.pointSize: Theme.baseFontPointSize
-                    color: Theme.textMuted
-                    Layout.fillWidth: true
-                }
-                Label {
-                    text: "Engine OS can also link tracks to a streaming service (e.g. TIDAL) instead of a "
-                        + "local file. Seabass shows these (badged with the service name) for visibility, "
-                        + "but never plays, merges, syncs, or cleans them up. It only ever operates on "
-                        + "files actually present on the stick. Preferences has an option to hide them from "
-                        + "Browse Library entirely instead."
-                    wrapMode: Text.WordWrap
-                    font.pointSize: Theme.baseFontPointSize
                     color: Theme.textMuted
                     Layout.fillWidth: true
                 }
             }
 
-            ColumnLayout {
-                spacing: 6
+            // The same warning the website leads with, in the same words.
+            // It belongs in the app at least as much as on the site: this
+            // is where someone is standing when they are about to let it
+            // write to a stick.
+            Rectangle {
                 Layout.fillWidth: true
-                Subtitle { text: "What Seabass doesn't do" }
+                color: Theme.groupBackground
+                border.color: Theme.borderSubtle
+                border.width: 1
+                radius: 4
+                implicitHeight: betaText.implicitHeight + 24
                 Label {
-                    text: "Seabass never analyzes audio. Beatgridding, BPM/key detection, and waveform "
-                        + "analysis all have to happen in Rekordbox or Engine DJ software first. "
-                        + "Seabass only ever reads and moves around the results of that analysis, "
-                        + "never recomputes it."
+                    id: betaText
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    textFormat: Text.StyledText
+                    text: "<b>Seabass is beta software.</b> It writes to your DJ library, and although it "
+                        + "backs up before every write, that is not a substitute for your own backups. "
+                        + "Test on the hardware you will gig with before you trust it at a gig."
                     wrapMode: Text.WordWrap
-                    font.pointSize: Theme.baseFontPointSize * 1.1
-                    color: Theme.textMuted
+                    font.pointSize: Theme.baseFontPointSize
                     Layout.fillWidth: true
                 }
+            }
+
+            Label {
+                text: "Free software, under the GPL. No ads, no subscriptions, nothing phoning home. "
+                    + "Built by Sebastian Kügler and friends."
+                wrapMode: Text.WordWrap
+                font.pointSize: Theme.baseFontPointSize * 1.1
+                color: Theme.textMuted
+                Layout.fillWidth: true
+            }
+
+            // Buttons rather than links inside a sentence: these are the
+            // two things this page is for once it has been read, and a
+            // link buried in a paragraph is not findable the second time
+            // someone comes looking for it.
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.rowSpacing
+                Button {
+                    objectName: "aboutWebsiteButton"
+                    text: "Visit the website"
+                    onClicked: Qt.openUrlExternally(root.websiteUrl)
+                    ToolTip.visible: hovered
+                    ToolTip.text: root.websiteUrl
+                }
+                Button {
+                    objectName: "aboutSupportButton"
+                    text: "Support Seabass"
+                    onClicked: root.donationRequested()
+                }
+                Item { Layout.fillWidth: true }
             }
 
             Label {
