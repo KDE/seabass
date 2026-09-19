@@ -222,8 +222,8 @@ ColumnLayout {
 
     ColumnLayout {
         Layout.fillWidth: true
-        Layout.margins: 14 * Theme.iconScale
-        spacing: 8 * Theme.iconScale
+        Layout.margins: Theme.scaled(14)
+        spacing: Theme.scaled(8)
 
         RowLayout {
             Layout.fillWidth: true
@@ -533,7 +533,7 @@ ColumnLayout {
                             required property int index
                             width: 2
                             height: 4
-                            x: (parent.width - width) * index / (root.bpmSteps.length - 1)
+                            x: Theme.snap((parent.width - width) * index / (root.bpmSteps.length - 1))
                             color: index === root.bpmStepIndex ? Theme.accent : Theme.borderSubtle
                         }
                     }
@@ -563,9 +563,9 @@ ColumnLayout {
     Label {
         visible: root.previewStatus.length > 0
         Layout.fillWidth: true
-        Layout.leftMargin: 14 * Theme.iconScale
-        Layout.rightMargin: 14 * Theme.iconScale
-        Layout.bottomMargin: 6 * Theme.iconScale
+        Layout.leftMargin: Theme.scaled(14)
+        Layout.rightMargin: Theme.scaled(14)
+        Layout.bottomMargin: Theme.scaled(6)
         text: root.previewStatus
         color: Theme.info
         wrapMode: Text.WordWrap
@@ -730,8 +730,8 @@ ColumnLayout {
         id: candidateInfoPopup
         modal: true
         focus: true
-        x: (root.width - width) / 2
-        y: (root.height - height) / 2
+        x: Theme.snap((root.width - width) / 2)
+        y: Theme.snap((root.height - height) / 2)
         width: 340
 
         property string infoTitle: ""

@@ -92,12 +92,12 @@ Page {
     // One size for every icon in the header, the menu's included. Set, not
     // read off the menu button: KDE's ToolButton never sets icon.width, so
     // binding to it gave 0 there and the heart filled its whole button.
-    readonly property int headerIconSize: Math.round(22 * Theme.iconScale)
+    readonly property int headerIconSize: Math.round(Theme.scaled(22))
 
     // The narrowest a stick's action card is laid out at: the grid under
     // each stick drops from three columns to two, then one, rather than
     // squeezing three cards into a window that has room for fewer.
-    readonly property real minimumCardWidth: 300 * Theme.iconScale
+    readonly property real minimumCardWidth: Theme.scaled(300)
 
     function isLockedByOther(libraryId) {
         return libraryId.length > 0 && root.editRegistry !== null && root.editRegistry !== undefined

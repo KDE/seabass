@@ -47,7 +47,7 @@ RowLayout {
     signal homeRequested()
     signal backRequested()
 
-    spacing: 4 * Theme.iconScale
+    spacing: Theme.scaled(4)
     // The segments are hover pills with their own left padding, so the
     // text inside the first one starts that much further right than the
     // row does. Pulled back by exactly that, so a page's title lines up
@@ -92,13 +92,13 @@ RowLayout {
 
         ToolTip.visible: hovered
 
-        leftPadding: 8 * Theme.iconScale
-        rightPadding: 8 * Theme.iconScale
-        topPadding: 4 * Theme.iconScale
-        bottomPadding: 4 * Theme.iconScale
+        leftPadding: Theme.scaled(8)
+        rightPadding: Theme.scaled(8)
+        topPadding: Theme.scaled(4)
+        bottomPadding: Theme.scaled(4)
 
         background: Rectangle {
-            radius: 4 * Theme.iconScale
+            radius: Theme.scaled(4)
             color: crumb.pressed ? Theme.rowPressed
                 : crumb.hovered ? Theme.rowHover
                 : "transparent"
@@ -174,7 +174,7 @@ RowLayout {
         // reads as a bug rather than as an abbreviation. A few
         // characters and an ellipsis still say a name was here.
         Layout.fillWidth: true
-        Layout.minimumWidth: 64 * Theme.iconScale
+        Layout.minimumWidth: Theme.scaled(64)
         text: root.middleLabel
         onClicked: root.backRequested()
         // Names itself in full when it has been shortened -- an
@@ -198,10 +198,10 @@ RowLayout {
         elide: Text.ElideRight
         // Matches the hover pill's padding on either side so the
         // separators around it sit where they do around a Crumb.
-        leftPadding: 8 * Theme.iconScale
-        rightPadding: 8 * Theme.iconScale
+        leftPadding: Theme.scaled(8)
+        rightPadding: Theme.scaled(8)
         Layout.fillWidth: true
-        Layout.minimumWidth: 64 * Theme.iconScale
+        Layout.minimumWidth: Theme.scaled(64)
         Layout.preferredWidth: Math.ceil(implicitWidth) + 1
         Layout.maximumWidth: Math.ceil(implicitWidth) + 1
 
@@ -227,7 +227,7 @@ RowLayout {
         level: "crumb"
         elide: Text.ElideRight
         Layout.fillWidth: true
-        Layout.minimumWidth: 120 * Theme.iconScale
+        Layout.minimumWidth: Theme.scaled(120)
 
         // Same bargain as the middle segment: it may be shortened, but
         // only if hovering it gives the whole name back.

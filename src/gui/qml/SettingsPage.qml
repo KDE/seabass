@@ -27,13 +27,13 @@ Page {
     // than measured off the longest label: a German or Japanese label is
     // not what this column is sized for, and it elides instead of pushing
     // the controls out of line.
-    readonly property real labelColumnWidth: 150 * Theme.iconScale
+    readonly property real labelColumnWidth: Theme.scaled(150)
     // The width every control gets, switch or drop-down, so the (i)
     // after it lands on one line down the whole page. Sized to the
     // drop-down; a switch sits at the start of the same slot. Letting
     // each control take its own width put the (i) of every off/on
     // setting a couple of hundred pixels left of its neighbours'.
-    readonly property real controlColumnWidth: 200 * Theme.iconScale
+    readonly property real controlColumnWidth: Theme.scaled(200)
 
     SettingsController {
         id: settingsController

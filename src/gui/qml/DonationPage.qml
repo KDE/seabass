@@ -53,7 +53,7 @@ Page {
 
         ColumnLayout {
             id: content
-            x: Math.max(32, (parent.width - width) / 2)
+            x: Theme.snap(Math.max(32, (parent.width - width) / 2))
             width: Math.min(parent.width - 64, 640)
             y: 32
             spacing: 20

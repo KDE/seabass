@@ -18,8 +18,8 @@ Item {
     property real iconSize: 0
     // The size the heart is actually drawn at, for a test to compare.
     readonly property real drawnSize: box.width
-    implicitWidth: iconSize > 0 ? iconSize : Theme.iconSizeSmall * 0.7
-    implicitHeight: iconSize > 0 ? iconSize : Theme.iconSizeSmall * 0.7
+    implicitWidth: Theme.snap(iconSize > 0 ? iconSize : Theme.iconSizeSmall * 0.7)
+    implicitHeight: Theme.snap(iconSize > 0 ? iconSize : Theme.iconSizeSmall * 0.7)
 
     // Square and centred, so a non-square button still gets a heart of
     // the right shape in its middle.

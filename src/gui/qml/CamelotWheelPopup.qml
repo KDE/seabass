@@ -240,8 +240,8 @@ Popup {
                     required property int index
                     readonly property int number: index + 1
                     readonly property real angle: (index * 30 - 90) * Math.PI / 180
-                    x: wheel.cx + wheel.outerRadius * Math.cos(angle) - width / 2
-                    y: wheel.cy + wheel.outerRadius * Math.sin(angle) - height / 2
+                    x: Theme.snap(wheel.cx + wheel.outerRadius * Math.cos(angle) - width / 2)
+                    y: Theme.snap(wheel.cy + wheel.outerRadius * Math.sin(angle) - height / 2)
                     width: 42
                     height: 42
 
@@ -296,8 +296,8 @@ Popup {
                     required property int index
                     readonly property int number: index + 1
                     readonly property real angle: (index * 30 - 90) * Math.PI / 180
-                    x: wheel.cx + wheel.innerRadius * Math.cos(angle) - width / 2
-                    y: wheel.cy + wheel.innerRadius * Math.sin(angle) - height / 2
+                    x: Theme.snap(wheel.cx + wheel.innerRadius * Math.cos(angle) - width / 2)
+                    y: Theme.snap(wheel.cy + wheel.innerRadius * Math.sin(angle) - height / 2)
                     width: 38
                     height: 38
 

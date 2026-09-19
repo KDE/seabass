@@ -142,8 +142,8 @@ Frame {
         anchors.top: parent.top
         anchors.right: parent.right
         z: 1
-        implicitWidth: Theme.iconSizeSmall * 0.75
-        implicitHeight: Theme.iconSizeSmall * 0.75
+        implicitWidth: Theme.snap(Theme.iconSizeSmall * 0.75)
+        implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.75)
         padding: 0
         flat: true
         display: AbstractButton.IconOnly

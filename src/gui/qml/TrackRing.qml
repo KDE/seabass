@@ -403,9 +403,9 @@ Item {
             required property var modelData
             readonly property real angle: (modelData.positionMs / root.trackDurationMs) * 2 * Math.PI
             readonly property real orbit: ring.width / 2 * (root.artRadius + 0.035)
-            x: root.width / 2 + Math.sin(angle) * orbit - width / 2
-            y: root.height / 2 - Math.cos(angle) * orbit - height / 2
-            width: Math.max(9, ring.width * 0.032)
+            x: Theme.snap(root.width / 2 + Math.sin(angle) * orbit - width / 2)
+            y: Theme.snap(root.height / 2 - Math.cos(angle) * orbit - height / 2)
+            width: Theme.snap(Math.max(9, ring.width * 0.032))
             height: width
             Rectangle {
                 anchors.fill: parent

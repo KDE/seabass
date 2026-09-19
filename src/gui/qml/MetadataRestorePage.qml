@@ -324,7 +324,7 @@ Page {
 
             Label {
                 anchors.centerIn: parent
-                width: parent.width * 0.7
+                width: Theme.snap(parent.width * 0.7)
                 visible: proposalList.count === 0 && !controller.busy && controller.hasScanned
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap

@@ -367,7 +367,7 @@ Page {
 
             ComboBox {
                 objectName: "sourcePicker"
-                Layout.preferredWidth: Math.max(180, Math.min(300, root.width * 0.3))
+                Layout.preferredWidth: Theme.snap(Math.max(180, Math.min(300, root.width * 0.3)))
                 enabled: !controller.busy
                 id: sourcePicker
                 model: root.sourceModel
@@ -420,7 +420,7 @@ Page {
             PlaylistPickerCombo {
                 objectName: "playlistPicker"
                 visible: !controller.browsingStore
-                Layout.preferredWidth: Math.max(160, Math.min(260, root.width * 0.26))
+                Layout.preferredWidth: Theme.snap(Math.max(160, Math.min(260, root.width * 0.26)))
                 enabled: !controller.busy && controller.hasScanned
                 model: {
                     var list = [{ name: "All tracks", count: controller.proposalCount }];
@@ -717,7 +717,7 @@ Page {
 
             Label {
                 anchors.centerIn: parent
-                width: parent.width * 0.7
+                width: Theme.snap(parent.width * 0.7)
                 visible: proposalList.count === 0 && !controller.busy
                          && (controller.hasScanned || controller.scanCancelled)
                 horizontalAlignment: Text.AlignHCenter
@@ -822,7 +822,7 @@ Page {
 
             Label {
                 anchors.centerIn: parent
-                width: parent.width * 0.7
+                width: Theme.snap(parent.width * 0.7)
                 visible: trackList.count === 0 && !controller.busy
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap

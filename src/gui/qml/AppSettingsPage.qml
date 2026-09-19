@@ -16,7 +16,7 @@ Page {
     // tracks the system font size (and therefore stays sharp on a retina
     // display, which is just a higher effective DPI) instead of a fixed
     // pixel count that only looks right at today's default font size.
-    readonly property real settingIndent: 20 * Theme.iconScale
+    readonly property real settingIndent: Theme.scaled(20)
 
     signal anonymizeLibraryRequested()
 
@@ -91,7 +91,7 @@ Page {
     PageScrollView {
         objectName: "settingsScroll"
         anchors.fill: parent
-        anchors.margins: 24 * Theme.iconScale
+        anchors.margins: Theme.scaled(24)
 
         // Group header flush left, then one option per row indented beneath
         // it -- a two-column grid (label column vs. field column) has to
@@ -113,13 +113,13 @@ Page {
             readonly property int maxWidth: 640
             width: Math.min(parent.width, maxWidth)
             x: Math.round(Math.max(0, (parent.width - width) / 2))
-            spacing: 24 * Theme.iconScale
+            spacing: Theme.scaled(24)
 
             // ---- Appearance -------------------------------------------
             SectionHeader { text: "Appearance" }
 
             ColumnLayout {
-                spacing: 6 * Theme.iconScale
+                spacing: Theme.scaled(6)
                 Subtitle { text: "Theme" }
                 ButtonGroup { id: themeGroup }
                 RadioButton {
@@ -139,7 +139,7 @@ Page {
             }
 
             ColumnLayout {
-                spacing: 6 * Theme.iconScale
+                spacing: Theme.scaled(6)
                 // Explanation lives in a tooltip (hover either radio button)
                 // rather than as a permanent line of text below -- it's
                 // background detail worth having on hand, not something that
@@ -174,7 +174,7 @@ Page {
                 // switch is clearer than describing the difference in text.
                 RowLayout {
                     Layout.leftMargin: root.settingIndent
-                    spacing: 8 * Theme.iconScale
+                    spacing: Theme.scaled(8)
                     Label { text: "Preview:"; color: Theme.textMuted }
                     KeyBadge {
                         keyName: "F#m"
@@ -184,7 +184,7 @@ Page {
             }
 
             ColumnLayout {
-                spacing: 6 * Theme.iconScale
+                spacing: Theme.scaled(6)
                 Subtitle { text: "Streaming tracks" }
                 CheckBox {
                     Layout.leftMargin: root.settingIndent
@@ -368,7 +368,7 @@ Page {
             // Where full stick backups go. One `<stick label>.zip` per
             // stick, in a place the user can find and open with 7-Zip/unzip.
             ColumnLayout {
-                spacing: 6 * Theme.iconScale
+                spacing: Theme.scaled(6)
                 Subtitle { text: "Seabass data directory" }
                 Label {
                     Layout.leftMargin: root.settingIndent
@@ -408,7 +408,7 @@ Page {
             }
 
             ColumnLayout {
-                spacing: 6 * Theme.iconScale
+                spacing: Theme.scaled(6)
                 Subtitle { text: "Full backups" }
                 Label {
                     Layout.leftMargin: root.settingIndent
@@ -460,7 +460,7 @@ Page {
 
             ColumnLayout {
                 visible: root.appSettingsController.experimentalBuildSupported
-                spacing: 6 * Theme.iconScale
+                spacing: Theme.scaled(6)
                 // No Subtitle of its own: it used to read "Experimental
                 // features" above a checkbox saying "Enable experimental
                 // features", which is the same words twice.

@@ -80,7 +80,7 @@ SeabassDialog {
                 }
                 Rectangle {
                     visible: bar.indeterminate
-                    width: parent.width * 0.3
+                    width: Theme.snap(parent.width * 0.3)
                     height: parent.height
                     radius: height / 2
                     color: Theme.accent

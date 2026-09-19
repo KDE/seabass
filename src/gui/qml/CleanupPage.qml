@@ -315,7 +315,7 @@ Page {
                 }
                 PlaylistPickerCombo {
                     objectName: "playlistPicker"
-                    width: Math.max(160, Math.min(260, root.width * 0.28))
+                    width: Theme.snap(Math.max(160, Math.min(260, root.width * 0.28)))
                     enabled: !cleanupController.busy && !cleanupController.writing
                     model: root.playlistPickerModel
                     currentIndex: {
@@ -344,7 +344,7 @@ Page {
                     // playlist picker above it. The floor is what lets a
                     // genuinely narrow window still show a usable field
                     // rather than a sliver.
-                    width: Math.max(110, Math.min(280, root.width * 0.3))
+                    width: Theme.snap(Math.max(110, Math.min(280, root.width * 0.3)))
                     onTextChanged: cleanupController.search(text)
                 }
                 Label {

@@ -294,6 +294,14 @@ ApplicationWindow {
     Binding { target: Theme; property: "materialForeground"; value: window.Material.foreground }
     Binding { target: Theme; property: "materialDivider"; value: window.Material.dividerColor }
 
+    // Same one-way push for the screen's device pixel ratio, which
+    // Theme.snap() needs to round a length to a whole *device* pixel.
+    // Screen is an attached property of an Item or Window, so a QtObject
+    // singleton cannot read it either. Follows the window: dragging
+    // Seabass from the laptop panel to an unscaled external screen
+    // changes the ratio under it, and every snapped length re-rounds.
+    Binding { target: Theme; property: "devicePixelRatio"; value: window.Screen.devicePixelRatio }
+
     // Explicit, guaranteed background fill. The Material style's own
     // window-background handling doesn't reliably respect a plain
     // `color:` on ApplicationWindow (observed: it kept rendering the

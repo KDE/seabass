@@ -259,7 +259,7 @@ ComboBox {
     rightPadding: 24
     indicator: SeabassIcon {
         x: root.width - width - 8
-        y: root.topPadding + (root.availableHeight - height) / 2
+        y: Theme.snap(root.topPadding + (root.availableHeight - height) / 2)
         iconName: "arrow-down"
         size: Theme.iconSizeSmall * 0.5
         color: Theme.textMuted

@@ -326,8 +326,8 @@ Page {
                 anchors.right: parent.right
                 anchors.rightMargin: Theme.tightSpacing
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: Theme.iconSizeSmall * 0.75
-                implicitHeight: Theme.iconSizeSmall * 0.75
+                implicitWidth: Theme.snap(Theme.iconSizeSmall * 0.75)
+                implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.75)
                 padding: 0
                 display: AbstractButton.IconOnly
                 text: "Play"
@@ -642,7 +642,7 @@ Page {
                 }
                 PlaylistPickerCombo {
                     objectName: "playlistPicker"
-                    Layout.preferredWidth: Math.max(160, Math.min(240, root.width * 0.2))
+                    Layout.preferredWidth: Theme.snap(Math.max(160, Math.min(240, root.width * 0.2)))
                     Layout.minimumWidth: 0
                     enabled: !syncController.busy
                     model: root.playlistPickerModel
@@ -873,7 +873,7 @@ Page {
                         }
                         Item {
                             implicitWidth: root.directionMarkWidth
-                            implicitHeight: Theme.iconSizeSmall * 0.5
+                            implicitHeight: Theme.snap(Theme.iconSizeSmall * 0.5)
                             Label {
                                 anchors.centerIn: parent
                                 visible: row.needsDecision

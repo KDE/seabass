@@ -33,11 +33,11 @@ Item {
     // own reference to whichever badge's popup happens to be open.
     signal keyHovered(int number, bool isMinor, bool hovering)
     signal relationHovered(string relationLabel, bool hovering)
-    Layout.preferredWidth: 50 * Theme.iconScale
-    Layout.preferredHeight: 22 * Theme.iconScale
+    Layout.preferredWidth: Theme.scaled(50)
+    Layout.preferredHeight: Theme.scaled(22)
     Layout.alignment: Qt.AlignVCenter
-    implicitWidth: 50 * Theme.iconScale
-    implicitHeight: 22 * Theme.iconScale
+    implicitWidth: Theme.scaled(50)
+    implicitHeight: Theme.scaled(22)
 
     // A slight "pushed in" shrink while either MouseArea below is
     // actually held down -- the only click feedback a badge gives now

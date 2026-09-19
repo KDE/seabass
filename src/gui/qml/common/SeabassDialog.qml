@@ -99,7 +99,7 @@ Dialog {
         color: Theme.surface
         border.color: Theme.border
         border.width: 1
-        radius: 6 * Theme.iconScale
+        radius: Theme.scaled(6)
     }
     header: Label {
         text: root.title
@@ -137,11 +137,11 @@ Dialog {
             root.footer.background.visible = false;
         }
         if (root.footer.rightPadding !== undefined) {
-            root.footer.rightPadding = 16 * Theme.iconScale;
-            root.footer.bottomPadding = 16 * Theme.iconScale;
+            root.footer.rightPadding = Theme.scaled(16);
+            root.footer.bottomPadding = Theme.scaled(16);
             // A little above them too, so the buttons read as separate
             // from the message rather than as the end of it.
-            root.footer.topPadding = 8 * Theme.iconScale;
+            root.footer.topPadding = Theme.scaled(8);
         }
     }
     onFooterChanged: root.alignFooter()

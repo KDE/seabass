@@ -219,8 +219,8 @@ Page {
         id: conflictResolvePopup
         modal: true
         focus: true
-        x: (root.width - width) / 2
-        y: (root.height - height) / 2
+        x: Theme.snap((root.width - width) / 2)
+        y: Theme.snap((root.height - height) / 2)
         width: 520
 
         property string trackALabel: ""

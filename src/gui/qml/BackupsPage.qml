@@ -281,7 +281,7 @@ Page {
                                     ? backupRow.modelData.label : backupRow.modelData.fileName
                                 font.bold: true
                                 elide: Text.ElideRight
-                                Layout.maximumWidth: rowContent.width * 0.5
+                                Layout.maximumWidth: Theme.snap(rowContent.width * 0.5)
                             }
                             // The name someone gave this backup, beside the
                             // stick it came from rather than instead of it:
@@ -405,7 +405,7 @@ Page {
             Label {
                 objectName: "emptyLabel"
                 anchors.centerIn: parent
-                width: parent.width * 0.8
+                width: Theme.snap(parent.width * 0.8)
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 visible: backupsList.count === 0 && root.controller.listing !== true

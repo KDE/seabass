@@ -337,9 +337,9 @@ QtObject {
     // making this a pure refactor with no visual change until someone's
     // system font size actually differs from that default.
     readonly property real iconScale: baseFontPointSize / 10.0
-    readonly property real iconSizeSmall: 32 * iconScale
-    readonly property real iconSizeNormal: 40 * iconScale
-    readonly property real iconSizeLarge: 48 * iconScale
+    readonly property real iconSizeSmall: scaled(32)
+    readonly property real iconSizeNormal: scaled(40)
+    readonly property real iconSizeLarge: scaled(48)
 
     // The URL of a bundled Breeze icon (qml/icons/breeze/<name>.svg), for
     // a button's icon.source; SeabassIcon draws one on its own. The same
@@ -347,6 +347,44 @@ QtObject {
     // this path (see the test module in the top-level CMakeLists.txt).
     function iconUrl(name) {
         return "qrc:/qt/qml/SeabassGui/qml/icons/breeze/" + name + ".svg";
+    }
+
+    // ---- pixel snapping --------------------------------------------
+    //
+    // Anything drawn at a fraction of a pixel comes out blurred: a
+    // one-pixel separator becomes two half-lit rows, and a line of text
+    // whose baseline lands mid-pixel fades out along the bottom instead
+    // of ending, which reads on screen as the letters being shaved off
+    // at the baseline.
+    //
+    // Centring is where most of it comes from -- (parent.width - width)
+    // / 2 is a half pixel whenever those two differ by an odd number --
+    // and a fractionally scaled display makes it worse, because there a
+    // whole *logical* pixel is still a fraction of a device one: at
+    // Plasma's 1.5 scaling every other logical pixel sits on a half
+    // device pixel, so Math.round() alone is not enough.
+    //
+    // snap() therefore rounds to whole device pixels, which needs the
+    // ratio pushed in from Main.qml: Screen is an attached property,
+    // readable only from an Item or Window, and this is a QtObject
+    // singleton -- the same reason the Material colours arrive by
+    // Binding rather than being read here. The default of 1 leaves it a
+    // plain Math.round() until that binding has run, never a divide by
+    // zero.
+    property real devicePixelRatio: 1
+    function snap(value) {
+        return Math.round(value * devicePixelRatio) / devicePixelRatio;
+    }
+
+    // A length drawn from the design's own pixel counts: taken to this
+    // system's font scale and then onto the pixel grid in one step, so
+    // `Theme.scaled(8)` stands where a bare 8 used to. Every length that
+    // read `8 * Theme.iconScale` goes through here instead, because
+    // that product is a fraction for any system font size that isn't the 10pt
+    // default -- and a fraction is what puts a control's edge between two
+    // pixels and its label half a pixel off the line above it.
+    function scaled(px) {
+        return snap(px * iconScale);
     }
 
     // ---- spacing scale --------------------------------------------
@@ -379,7 +417,7 @@ QtObject {
     readonly property real sectionSpacing: 14   // between blocks down a page
     readonly property real rowSpacing: 10       // between controls across a row
     readonly property real tightSpacing: 6      // a label and the thing it labels
-    readonly property real crumbTextInset: 8 * iconScale
+    readonly property real crumbTextInset: scaled(8)
 
     // ---- Titles -- a dedicated (non-bold) display face + scale, set once
     // here and consumed only via PageTitle.qml, so every page title stays

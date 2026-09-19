@@ -16,7 +16,7 @@ Label {
     property string iconName: ""
     property color iconColor: root.color
 
-    leftPadding: root.iconName.length > 0 ? mark.width + Theme.rowSpacing / 2 : 0
+    leftPadding: root.iconName.length > 0 ? Theme.snap(mark.width + Theme.rowSpacing / 2) : 0
 
     FontMetrics {
         id: metrics
