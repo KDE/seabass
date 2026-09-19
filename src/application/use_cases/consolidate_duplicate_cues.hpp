@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "domain/audio_content_probe.hpp"
 #include "domain/duplicate_cue_consolidation.hpp"
 #include "domain/track.hpp"
 
@@ -19,10 +20,18 @@ namespace seabass::application
 class ConsolidateDuplicateCues
 {
 public:
-    std::vector<domain::ConsolidationPlan> execute(const std::vector<domain::Track> &tracks)
+    // `probe` is passed straight through to DuplicateTrackFinder, and
+    // exists so that Match Duplicate Cues and Clean Up Duplicates group
+    // by exactly the same rule. They read the same stick and both say
+    // "duplicate", so a pair that one of them groups and the other does
+    // not is not a preference, it is two pages disagreeing about what is
+    // on the stick. Null (the CLI, which has no Preferences to read)
+    // compares stored lengths alone.
+    std::vector<domain::ConsolidationPlan> execute(const std::vector<domain::Track> &tracks,
+                                                     domain::AudioContentProbe *probe = nullptr)
     {
         std::vector<domain::ConsolidationPlan> plans;
-        for (const auto &group : domain::DuplicateTrackFinder::find(tracks)) {
+        for (const auto &group : domain::DuplicateTrackFinder::find(tracks, probe)) {
             plans.push_back(domain::DuplicateCueConsolidator::plan(group));
         }
         return plans;

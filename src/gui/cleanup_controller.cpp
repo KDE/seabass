@@ -24,7 +24,9 @@
 #include "application/ports/cue_writer.hpp"
 #include "application/ports/library_cleanup_writer.hpp"
 #include "domain/duplicate_cue_consolidation.hpp"
+#include "domain/matching_policy.hpp"
 #include "domain/track_scope.hpp"
+#include "infrastructure/audio/silence_probe_factory.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -677,8 +679,20 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
             tracks = domain::filterByScope(tracks, domain::TrackScope::search(searchQuery.toStdString()));
         }
 
+        // What settles a pair whose stored lengths are close but not
+        // close enough: decode both, find where the music actually
+        // starts and stops, and compare that instead. Null when the
+        // user left no window for it or this build has no decoder, in
+        // which case the finder compares stored lengths alone exactly
+        // as it always did. The cache lives on the stick, so a second
+        // scan of the same stick decodes nothing.
+        auto audioProbe = infrastructure::audio::makeAudioContentProbe(
+            fs::path(path.toStdString()).parent_path().string());
+        result.audioComparisonUnavailable = audioProbe == nullptr
+            && domain::MatchingPolicy::compareAudioSeconds() > domain::MatchingPolicy::exactMatchSeconds();
+
         std::vector<domain::DuplicateCleanupPlan> plans;
-        for (const auto &group : domain::DuplicateTrackFinder::find(tracks)) {
+        for (const auto &group : domain::DuplicateTrackFinder::find(tracks, audioProbe.get())) {
             auto plan = domain::DuplicateCleanupPlanner::plan(group);
             if (plan.toRemove.empty()) {
                 continue;
@@ -698,6 +712,13 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
             plans.push_back(std::move(plan));
         }
         result.plans = std::move(plans);
+        if (audioProbe != nullptr) {
+            result.filesAudioCompared = audioProbe->decodedCount();
+            // Explicit rather than left to the destructor, so a stick
+            // that refuses the write is a thing the scan saw rather
+            // than something that happens after it is over.
+            audioProbe->save();
+        }
 
         // Sizes from the stick, not from a catalog. Two of the three
         // formats record no file size at all, so every "space saved"
@@ -946,6 +967,22 @@ void CleanupController::onRescanFinished()
 
     m_strays = result.strays;
     m_playlistNames = result.playlistNames;
+    // Said out loud, because it is the one part of a scan that costs
+    // noticeable time and the only sign of it otherwise is the scan
+    // taking longer. Empty when there was nothing in doubt, which is
+    // the ordinary case and needs no line of its own.
+    if (result.audioComparisonUnavailable) {
+        m_audioComparisonNote = QStringLiteral(
+            "This build cannot decode audio, so tracks whose lengths nearly agree were compared by "
+            "their stored lengths alone.");
+    } else if (result.filesAudioCompared > 0) {
+        m_audioComparisonNote = QStringLiteral("Compared the audio of %1 file%2 whose stored lengths "
+                                                "were close but not close enough to settle it.")
+                                     .arg(result.filesAudioCompared)
+                                     .arg(result.filesAudioCompared == 1 ? "" : "s");
+    } else {
+        m_audioComparisonNote.clear();
+    }
     m_model.setPlans(std::move(result.plans));
     // Groups staged before this rescan keep their mark if they are still
     // listed (the change itself lives in the session).

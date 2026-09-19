@@ -9,6 +9,7 @@
 #include <numeric>
 #include <optional>
 
+#include "domain/matching_policy.hpp"
 #include "domain/track_matching.hpp"
 
 namespace seabass::domain
@@ -17,7 +18,39 @@ namespace seabass::domain
 namespace
 {
 
-constexpr double DurationToleranceSeconds = 2.0;
+// Whether two files hold the same music, when their stored lengths are
+// close but not close enough to settle it on their own.
+//
+// Only the length of what is NOT silent is compared. Two copies of one
+// recording routinely differ by several seconds of encoder padding,
+// run-out or a trimmed re-export, and that difference is silence on one
+// side; the music between the silences is the same length on both. A
+// difference that survives the trim is a different edit.
+//
+// nullopt from either side is "no opinion" and never a match: no
+// decoder in this build, a file the backend refused, a file no longer
+// on the stick. The caller is about to offer to delete something.
+bool audioContentAgrees(const Track &a, const Track &b, AudioContentProbe &probe)
+{
+    if (a.filePath.empty() || b.filePath.empty()) {
+        return false;
+    }
+    const std::optional<AudioContentSpan> spanA = probe.measure(a.filePath);
+    if (!spanA) {
+        return false;
+    }
+    const std::optional<AudioContentSpan> spanB = probe.measure(b.filePath);
+    if (!spanB) {
+        return false;
+    }
+    // A file that decoded to nothing but silence tells us nothing about
+    // which recording it is, and comparing two of them would call every
+    // silent file a copy of every other.
+    if (spanA->contentSeconds() <= 0.0 || spanB->contentSeconds() <= 0.0) {
+        return false;
+    }
+    return std::abs(spanA->contentSeconds() - spanB->contentSeconds()) <= MatchingPolicy::exactMatchSeconds();
+}
 
 size_t findRoot(std::vector<size_t> &parent, size_t x)
 {
@@ -35,7 +68,8 @@ void unite(std::vector<size_t> &parent, size_t a, size_t b)
 
 }  // namespace
 
-std::vector<DuplicateGroup> DuplicateTrackFinder::find(const std::vector<Track> &tracks)
+std::vector<DuplicateGroup> DuplicateTrackFinder::find(const std::vector<Track> &tracks,
+                                                       AudioContentProbe *probe)
 {
     // Tracks are candidates for the same underlying song when they share
     // a title+artist. Filename is deliberately NOT a matching criterion:
@@ -110,7 +144,21 @@ std::vector<DuplicateGroup> DuplicateTrackFinder::find(const std::vector<Track> 
                 double durationA = tracks[indices[i]].durationSeconds;
                 double durationB = tracks[indices[j]].durationSeconds;
                 bool bothDurationsKnown = durationA > 0.0 && durationB > 0.0;
-                if (bothDurationsKnown && std::abs(durationA - durationB) <= DurationToleranceSeconds) {
+                if (!bothDurationsKnown) {
+                    continue;
+                }
+                const double gap = std::abs(durationA - durationB);
+                bool sameRecording = gap <= MatchingPolicy::exactMatchSeconds();
+                // Past the exact-match window, and inside the wider one
+                // the user set, the lengths stop being decisive and the
+                // audio is asked instead. Only here: decoding is orders
+                // of magnitude more expensive than comparing two numbers,
+                // so it is paid for the handful of pairs that are
+                // genuinely in doubt and never for the rest.
+                if (!sameRecording && probe != nullptr && gap <= MatchingPolicy::compareAudioSeconds()) {
+                    sameRecording = audioContentAgrees(tracks[indices[i]], tracks[indices[j]], *probe);
+                }
+                if (sameRecording) {
                     group.tracks.push_back(tracks[indices[j]]);
                     used[j] = true;
                 }

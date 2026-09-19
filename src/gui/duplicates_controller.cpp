@@ -13,6 +13,7 @@
 
 #include "application/ports/cue_writer.hpp"
 #include "application/use_cases/consolidate_duplicate_cues.hpp"
+#include "infrastructure/audio/silence_probe_factory.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/edit/pending_change.hpp"
@@ -231,7 +232,18 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
         // own end state -- for however long grouping took on a real
         // library, with nothing telling the user it was still working.
         reporter->start("Finding duplicates...", 0);
-        auto allPlans = application::ConsolidateDuplicateCues().execute(tracks);
+        // Same probe Clean Up Duplicates builds, so the two pages group
+        // by one rule rather than two. Null when the user left no window
+        // for comparing audio or this build has no decoder, which is the
+        // behaviour this page has always had.
+        auto audioProbe = infrastructure::audio::makeAudioContentProbe(
+            std::filesystem::path(path.toStdString()).parent_path().string());
+        auto allPlans = application::ConsolidateDuplicateCues().execute(tracks, audioProbe.get());
+        if (audioProbe != nullptr) {
+            // Explicit rather than left to the destructor: a stick that
+            // refuses the write is a thing this scan saw.
+            audioProbe->save();
+        }
         std::vector<ConsolidationPlan> actionable;
         for (auto &plan : allPlans) {
             if (plan.kind == ConsolidationPlan::Kind::Unambiguous || plan.kind == ConsolidationPlan::Kind::Conflict) {

@@ -158,6 +158,46 @@ Page {
                     text: plansListView.count + " duplicate group(s) need attention"
                     color: Theme.textMuted
                 }
+                // What "duplicate" means here, which is the same thing
+                // it means on Clean Up Duplicates: one rule, one
+                // explanation, and both pages ask Preferences for the
+                // numbers rather than printing their own.
+                InfoButton {
+                    readonly property int exactWindow: root.appSettingsController.exactMatchSeconds
+                    readonly property int audioWindow: root.appSettingsController.compareAudioSeconds
+                    readonly property bool audioCompared:
+                        audioWindow > exactWindow && root.appSettingsController.audioComparisonSupported
+
+                    explanationTitle: "What counts as a duplicate?"
+                    summaryText: "Same artist, same title, same length (within " + exactWindow
+                        + (exactWindow === 1 ? " second" : " seconds") + "). "
+                        + "Filenames are ignored, because a re-export renames the same recording."
+                    explanationText:
+                          "## Why length matters\n"
+                        + "It is what tells a radio edit from an extended mix filed under the same "
+                        + "artist and title. Without a length on both sides, nothing is grouped: "
+                        + "giving one of those two the other's cues would be worse than leaving both "
+                        + "alone.\n\n"
+                        + (audioCompared
+                            ? "## When the lengths nearly agree\n"
+                              + "Two copies of one recording often differ by a few seconds that are "
+                              + "silence: encoder padding, a run out kept by a rip, a trimmed "
+                              + "re-export. Where the gap is more than " + exactWindow + " but no more "
+                              + "than " + audioWindow + " seconds, both files are decoded, the silence "
+                              + "at each end is measured, and the length of the music between them is "
+                              + "compared instead of the stored numbers. Both windows are yours to "
+                              + "set, under Preferences, Music.\n\n"
+                            : "## When the lengths nearly agree\n"
+                              + "Seabass can decode two files whose lengths are close but not close "
+                              + "enough, measure the silence at each end, and compare the length of "
+                              + "the music itself. That is off right now. Turn it on under "
+                              + "Preferences, Music.\n\n")
+                        + "## Nothing here is the only way\n"
+                        + "Whatever this page finds or misses, two tracks can always be merged by "
+                        + "hand: open Browse Library, use the **Merge** button on a track, and pick "
+                        + "the other one. That path takes no notice of lengths at all, so it is the "
+                        + "answer for a pair Seabass will not group on its own.\n"
+                }
                 Label {
                     visible: plansListView.count > 0
                     text: "(" + duplicatesController.totalWastedBytesHuman + " could be freed if each were on the stick once)"

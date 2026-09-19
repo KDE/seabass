@@ -99,9 +99,19 @@ TestCase {
     // be grabbable, or the whole page slides around under the mouse with
     // nowhere to go.
     function test_tall_window_is_not_flickable() {
+        // Tall enough to hold the whole page with room to spare. The
+        // number was 1400 while the page had four groups; the Music
+        // section pushed it past that, and a height picked to be "surely
+        // enough" quietly turns this test into a second copy of the one
+        // above. So the window is sized from the content instead, and
+        // the test asserts the rule rather than a number.
         var page = make(900, 1400);
         var scroll = findChild(page, "settingsScroll");
         wait(50);
+        page.height = scroll.contentHeight + 200;
+        wait(50);
+        verify(scroll.contentHeight <= scroll.height,
+               "the window was made tall enough: content " + scroll.contentHeight + " in " + scroll.height);
         verify(!scroll.interactive);
     }
 
@@ -112,10 +122,47 @@ TestCase {
         var page = make(700, 520);
         wait(100);
         grabImage(page).save(screenshotDir + "/AppSettingsPage.png");
+        // The Music section, which is the one with controls rather than
+        // radio buttons: two spin boxes in a sentence and a checkbox,
+        // each with a "?" beside it. Whether that row still reads as a
+        // sentence at this width is not something an assertion can say.
+        var scroll = findChild(page, "settingsScroll");
+        var music = findChild(page, "exactMatchSpin");
+        scroll.contentY = Math.min(scroll.contentHeight - scroll.height,
+                                    Math.max(0, music.mapToItem(scroll.contentItem, 0, 0).y - 80));
+        wait(100);
+        grabImage(page).save(screenshotDir + "/AppSettingsPage-music.png");
+        // And the two help popups open, since their whole job is to be
+        // read and a wall of Markdown that does not wrap, or that is
+        // clipped by the window, looks fine in the source either way.
+        var helpButtons = [];
+        function collectHelp(item) {
+            for (var i = 0; i < item.children.length; ++i) {
+                var child = item.children[i];
+                if (child.explanationTitle !== undefined) {
+                    helpButtons.push(child);
+                }
+                collectHelp(child);
+            }
+        }
+        collectHelp(page);
+        for (var h = 0; h < helpButtons.length; ++h) {
+            // clicked() rather than mouseClick(): the buttons sit inside
+            // a Flickable, which takes the press for a drag, and a
+            // synthetic click on one of them opened nothing at all.
+            helpButtons[h].clicked();
+            wait(200);
+            // The whole window, not the page: a Popup is parented to
+            // the window's overlay, so grabbing the page returns the
+            // page with the popup neatly absent -- a screenshot that
+            // proves nothing while looking like it did.
+            grabImage(testCase).save(screenshotDir + "/AppSettingsPage-help-" + h + ".png");
+            keyClick(Qt.Key_Escape);
+            wait(100);
+        }
         // The bottom too: the groups that used to be unreachable, and the
         // long backup path that used to run off the right edge, are both
         // down there and neither shows in a top-of-page shot.
-        var scroll = findChild(page, "settingsScroll");
         scroll.contentY = scroll.contentHeight - scroll.height;
         wait(100);
         grabImage(page).save(screenshotDir + "/AppSettingsPage-bottom.png");

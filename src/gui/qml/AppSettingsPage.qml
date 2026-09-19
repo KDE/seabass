@@ -20,6 +20,34 @@ Page {
 
     signal anonymizeLibraryRequested()
 
+    // A named group of settings: "Appearance", "Music", "Data
+    // locations", "More settings". One step above the Subtitle each
+    // individual setting carries, because the page had grown to seven
+    // Subtitles in a flat column with nothing saying which of them
+    // belonged together -- the two folder pickers in particular read as
+    // two unrelated settings rather than as "where things go".
+    //
+    // The rule below it: a section is a heading and a rule, a setting is
+    // a Subtitle, and a setting's controls are indented under it. Three
+    // levels, and the indent is the only one.
+    component SectionHeader: ColumnLayout {
+        property alias text: sectionLabel.text
+        Layout.fillWidth: true
+        spacing: 4 * Theme.iconScale
+        Label {
+            id: sectionLabel
+            font.family: Theme.titleFamily
+            font.weight: Theme.titleWeight
+            font.pointSize: Theme.titleCrumb
+            color: Theme.accent
+        }
+        Rectangle {
+            Layout.fillWidth: true
+            height: 1
+            color: Theme.borderSubtle
+        }
+    }
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
         // and nothing else. `padding` alone does not do it: styles set
@@ -76,6 +104,9 @@ Page {
             objectName: "settingsColumn"
             width: parent.width
             spacing: 24 * Theme.iconScale
+
+            // ---- Appearance -------------------------------------------
+            SectionHeader { text: "Appearance" }
 
             ColumnLayout {
                 spacing: 6 * Theme.iconScale
@@ -159,11 +190,167 @@ Page {
                 }
             }
 
+            // ---- Music ------------------------------------------------
+            //
+            // What counts as the same recording, and what counts as a
+            // cue. These three reach the parts of Seabass that read and
+            // write libraries (domain::MatchingPolicy), not just what is
+            // drawn, which is why they sit apart from Appearance.
+            SectionHeader { text: "Music" }
+
+            ColumnLayout {
+                spacing: 6 * Theme.iconScale
+                Subtitle { text: "When two tracks are the same recording" }
+
+                RowLayout {
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    spacing: 8 * Theme.iconScale
+                    Label { text: "Same duration within" }
+                    SpinBox {
+                        objectName: "exactMatchSpin"
+                        editable: true
+                        from: 0
+                        to: 30
+                        value: root.appSettingsController.exactMatchSeconds
+                        // onValueModified, not onValueChanged: the latter
+                        // also fires when the binding above writes the
+                        // value back, which turns a clamp in the
+                        // controller into a fight between the two.
+                        onValueModified: root.appSettingsController.exactMatchSeconds = value
+                    }
+                    Label { text: "sec is considered an exact match" }
+                    InfoButton {
+                        explanationTitle: "Exact match on length"
+                        summaryText: "Two tracks that agree on artist and title are treated as the same "
+                            + "recording when their stored lengths are this close."
+                        explanationText:
+                            "## Why it is not zero\n\n"
+                            + "Rekordbox and Engine DJ record slightly different lengths for one and the same "
+                            + "file, and a length read from a file's tags differs again from one its DJ "
+                            + "software computed. Two seconds absorbs that without letting a radio edit pass "
+                            + "for an extended mix.\n\n"
+                            + "## What it affects\n\n"
+                            + "- Which copies Clean Up Duplicates groups together\n"
+                            + "- Which tracks share their cue points when cues are consolidated\n"
+                            + "- Which track in one catalog is matched to a track in another when cues are "
+                            + "synced\n"
+                            + "- Which stored track a cue or metadata backup is restored onto\n\n"
+                            + "## Choosing a number\n\n"
+                            + "Raise it and more copies are found, including some that are different edits. "
+                            + "Lower it and only near identical lengths group, so genuine duplicates get "
+                            + "missed. Nothing is ever written without asking you first, whichever way you "
+                            + "set it."
+                    }
+                }
+
+                RowLayout {
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    spacing: 8 * Theme.iconScale
+                    Label { text: "Same duration within" }
+                    SpinBox {
+                        objectName: "compareAudioSpin"
+                        editable: true
+                        // Never below the exact match window: a wider
+                        // window narrower than the exact one describes an
+                        // empty band, so the setting would be on and
+                        // never do anything. The controller clamps it the
+                        // same way; this only keeps the page from
+                        // offering a number it will not get.
+                        from: root.appSettingsController.exactMatchSeconds
+                        to: 120
+                        value: root.appSettingsController.compareAudioSeconds
+                        onValueModified: root.appSettingsController.compareAudioSeconds = value
+                    }
+                    Label { text: "sec will compare audio" }
+                    InfoButton {
+                        explanationTitle: "Comparing the audio"
+                        summaryText: "When two lengths are too far apart to call an exact match but no "
+                            + "further apart than this, Seabass listens to the two files instead of "
+                            + "trusting the numbers."
+                        explanationText:
+                            "## What it does\n\n"
+                            + "Both files are decoded, the silence at the start and at the end of each is "
+                            + "measured, and the length of the music between them is compared. Two copies of "
+                            + "one recording often differ by several seconds that are silence on one side: "
+                            + "encoder padding, a run out kept by a rip, a re-export that trimmed the "
+                            + "intro. Take the silence off and the music is the same length on both.\n\n"
+                            + "## What it costs\n\n"
+                            + "Decoding takes real time, so it only ever runs for a pair that is genuinely "
+                            + "in doubt, never for the whole library. What it finds is written to a cache on "
+                            + "the stick itself, so the next scan of that stick pays nothing and a stick "
+                            + "carried to another computer keeps the answers.\n\n"
+                            + "## Limits\n\n"
+                            + "This measures silence. It cannot tell two different recordings of the same "
+                            + "length apart, which is why it is only ever asked about a pair that already "
+                            + "agrees on artist and title. Set it to the same number as the exact match "
+                            + "window above to switch it off.\n\n"
+                            + "## You can always merge by hand\n\n"
+                            + "Whatever these two numbers find or miss, two tracks can still be merged "
+                            + "manually: open Browse Library, use the Merge button on a track, and pick the "
+                            + "other one. Nothing here ever merges anything on its own."
+                    }
+                }
+                Label {
+                    // Said on the page, not only in the help popup: a
+                    // build with no decoder cannot do this at all, and a
+                    // number that quietly does nothing is worse than an
+                    // absent one.
+                    visible: !root.appSettingsController.audioComparisonSupported
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: "This build cannot decode audio, so lengths are compared but the audio is not. "
+                        + "Anything already measured and cached on a stick is still used."
+                }
+            }
+
+            ColumnLayout {
+                spacing: 6 * Theme.iconScale
+                Subtitle { text: "Cue points" }
+                RowLayout {
+                    Layout.leftMargin: root.settingIndent
+                    spacing: 8 * Theme.iconScale
+                    CheckBox {
+                        objectName: "ignoreCuesAtStartCheck"
+                        text: "Ignore cues at 0:00"
+                        checked: root.appSettingsController.ignoreCuesAtStart
+                        onToggled: root.appSettingsController.ignoreCuesAtStart = checked
+                    }
+                    InfoButton {
+                        explanationTitle: "Cues at 0:00"
+                        summaryText: "A cue inside the first second of a track is treated as noise rather "
+                            + "than as a marker you placed."
+                        explanationText:
+                            "## Where they come from\n\n"
+                            + "A stray press while a track was being analyzed, an artifact of an import, or "
+                            + "a format's own \"no cue set\" value read back as a position. Engine DJ's "
+                            + "automatic main cue also lands a few hundred milliseconds in rather than at "
+                            + "sample zero, which still displays as 0:00.\n\n"
+                            + "## What it affects\n\n"
+                            + "With this on, such a cue is offered for cleanup in Library Health, left out "
+                            + "of metadata backups, ignored when two catalogs are compared, and never "
+                            + "written back onto a stick by a restore. With it off, they count as ordinary "
+                            + "cues everywhere.\n\n"
+                            + "## When to turn it off\n\n"
+                            + "If you deliberately keep a pad on the very start of a track. A loop starting "
+                            + "on the first bar is never touched either way, and neither is a cue at a "
+                            + "position before the start of the track: that one is a \"no cue set\" value "
+                            + "with nowhere in the track to point, so it stays noise whatever you choose."
+                    }
+                }
+            }
+
+            // ---- Data locations ---------------------------------------
+            SectionHeader { text: "Data locations" }
+
             // Where full stick backups go. One `<stick label>.zip` per
             // stick, in a place the user can find and open with 7-Zip/unzip.
             ColumnLayout {
                 spacing: 6 * Theme.iconScale
-                Subtitle { text: "Where Seabass keeps things on this computer" }
+                Subtitle { text: "Seabass data directory" }
                 Label {
                     Layout.leftMargin: root.settingIndent
                     Layout.fillWidth: true
@@ -203,7 +390,7 @@ Page {
 
             ColumnLayout {
                 spacing: 6 * Theme.iconScale
-                Subtitle { text: "Full stick backups" }
+                Subtitle { text: "Full backups" }
                 Label {
                     Layout.leftMargin: root.settingIndent
                     Layout.fillWidth: true
@@ -239,15 +426,25 @@ Page {
                 }
             }
 
+            // ---- More settings ----------------------------------------
+            //
             // Absent entirely in a build compiled with SEABASS_EXPERIMENTAL
             // off -- see docs/experimental-features.md and
             // AppSettingsController::experimentalBuildSupported()'s own doc
             // comment for why that's a real "stable-only build" rather than
-            // just a hidden toggle.
+            // just a hidden toggle. The section heading goes with it: an
+            // empty "More settings" rule would be the only thing left.
+            SectionHeader {
+                text: "More settings"
+                visible: root.appSettingsController.experimentalBuildSupported
+            }
+
             ColumnLayout {
                 visible: root.appSettingsController.experimentalBuildSupported
                 spacing: 6 * Theme.iconScale
-                Subtitle { text: "Experimental features" }
+                // No Subtitle of its own: it used to read "Experimental
+                // features" above a checkbox saying "Enable experimental
+                // features", which is the same words twice.
                 CheckBox {
                     Layout.leftMargin: root.settingIndent
                     text: "Enable experimental features"

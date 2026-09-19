@@ -4,6 +4,8 @@
 
 #include "infrastructure/local/metadata_store.hpp"
 
+#include "domain/matching_policy.hpp"
+
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -99,7 +101,7 @@ std::string stickRelativePath(const std::string &filePath, const fs::path &stick
 // real" rule matchTracks uses. A zero duration means unreadable, not a
 // zero-length track, and gating on it would split one track into two
 // rows the moment one catalog failed to report a length.
-constexpr double DurationToleranceSeconds = 2.0;
+// Preferences -> Music sets this; 2 s by default.
 
 // "2026-09-11T21:55:00Z" as seconds since the epoch, 0 for anything
 // that is not that shape.
@@ -186,7 +188,7 @@ bool durationsAgree(double a, double b)
     if (a <= 0.0 || b <= 0.0) {
         return false;
     }
-    return std::abs(a - b) <= DurationToleranceSeconds;
+    return std::abs(a - b) <= domain::MatchingPolicy::exactMatchSeconds();
 }
 
 std::string lowercased(std::string text)

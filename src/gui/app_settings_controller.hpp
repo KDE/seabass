@@ -29,6 +29,22 @@ class AppSettingsController : public QObject
     Q_PROPERTY(bool hideStreamingTracks READ hideStreamingTracks WRITE setHideStreamingTracks NOTIFY
                    hideStreamingTracksChanged)
     Q_PROPERTY(QString keyNotation READ keyNotation WRITE setKeyNotation NOTIFY keyNotationChanged)
+    // The three "Music" preferences. They are not read from here by the
+    // code that acts on them: each setter pushes the trio into
+    // domain::MatchingPolicy, which is what the Qt-free layers read --
+    // same shape as seabassHomeDirectory pushing into
+    // paths::setLocalRootOverride(). These properties exist so QML can
+    // show and change them.
+    Q_PROPERTY(int exactMatchSeconds READ exactMatchSeconds WRITE setExactMatchSeconds NOTIFY
+                   exactMatchSecondsChanged)
+    Q_PROPERTY(int compareAudioSeconds READ compareAudioSeconds WRITE setCompareAudioSeconds NOTIFY
+                   compareAudioSecondsChanged)
+    Q_PROPERTY(bool ignoreCuesAtStart READ ignoreCuesAtStart WRITE setIgnoreCuesAtStart NOTIFY
+                   ignoreCuesAtStartChanged)
+    // Whether this build can decode audio at all. QML gates the
+    // "compare audio" row's explanation on it, so a build that cannot
+    // do it says so instead of offering a number that does nothing.
+    Q_PROPERTY(bool audioComparisonSupported READ audioComparisonSupported CONSTANT)
     Q_PROPERTY(QString stickBackupDirectory READ stickBackupDirectory WRITE setStickBackupDirectory NOTIFY
                    stickBackupDirectoryChanged)
     // Where everything Seabass keeps on this computer lives: stick
@@ -78,6 +94,36 @@ public:
     // the printed label changes.
     QString keyNotation() const { return m_keyNotation; }
     void setKeyNotation(const QString &value);
+
+    // Two lengths this close are the same recording. Whole seconds
+    // because that is the precision the difference has any meaning at:
+    // rekordbox and Engine disagree by a second or so about one and the
+    // same file, and nobody can reason about 1.5.
+    int exactMatchSeconds() const { return m_exactMatchSeconds; }
+    void setExactMatchSeconds(int value);
+
+    // The wider window inside which the stored lengths stop being
+    // decisive and the audio is compared instead (leading and trailing
+    // silence taken off, then the music itself measured). Clamped up to
+    // exactMatchSeconds by domain::MatchingPolicy, since a window
+    // narrower than the exact one would be a setting that silently
+    // never applies.
+    int compareAudioSeconds() const { return m_compareAudioSeconds; }
+    void setCompareAudioSeconds(int value);
+
+    // Whether a cue inside the first second counts as junk, on
+    // everywhere at once -- see domain::isJunkCue.
+    bool ignoreCuesAtStart() const { return m_ignoreCuesAtStart; }
+    void setIgnoreCuesAtStart(bool value);
+
+    static constexpr bool audioComparisonSupported()
+    {
+#ifdef SEABASS_HAVE_QT_AUDIO
+        return true;
+#else
+        return false;
+#endif
+    }
 
     // Where full stick backups (one `<label>.zip` per stick) are kept.
     // Defaults to "<home>/Seabass/backups/full" -- a place the user can find,
@@ -135,6 +181,9 @@ signals:
     void preferredFormatChanged();
     void hideStreamingTracksChanged();
     void keyNotationChanged();
+    void exactMatchSecondsChanged();
+    void compareAudioSecondsChanged();
+    void ignoreCuesAtStartChanged();
     void stickBackupDirectoryChanged();
     void seabassHomeDirectoryChanged();
     void lastPlaylistNameChanged();
@@ -148,6 +197,15 @@ private:
     QString m_preferredFormat = QStringLiteral("rekordbox");
     bool m_hideStreamingTracks = false;
     QString m_keyNotation = QStringLiteral("camelot");
+    int m_exactMatchSeconds = 2;
+    int m_compareAudioSeconds = 10;
+    bool m_ignoreCuesAtStart = true;
+
+    // Pushes the trio into domain::MatchingPolicy, which is where every
+    // layer below the GUI actually reads them. One function called by
+    // the constructor and by all three setters, so there is no path
+    // that stores a preference without applying it.
+    void applyMatchingPolicy();
     QString m_stickBackupDirectory;
     QString m_seabassHomeDirectory;
     QString m_lastPlaylistName;

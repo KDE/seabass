@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "domain/audio_content_probe.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::domain
@@ -45,12 +46,15 @@ struct ConsolidationPlan
 
 // Groups tracks that look like duplicates of each other. Two tracks are
 // duplicates when they agree on artist + title AND on length (within
-// DurationToleranceSeconds). All three are required: filename is not a
-// matching criterion (export-assigned number prefixes and copy suffixes
-// differ between copies of one song, and truncation can make two
-// different songs share a name), and a track whose length is unknown is
-// never grouped -- artist + title alone cannot distinguish a radio edit
-// from an extended mix, and this feeds a destructive caller.
+// MatchingPolicy::exactMatchSeconds(), or -- inside the wider window
+// that setting's neighbour defines -- on the length of their audio once
+// leading and trailing silence is taken off). All three are required:
+// filename is not a matching criterion (export-assigned number prefixes
+// and copy suffixes differ between copies of one song, and truncation
+// can make two different songs share a name), and a track whose length
+// is unknown is never grouped -- artist + title alone cannot
+// distinguish a radio edit from an extended mix, and this feeds a
+// destructive caller.
 // Format-agnostic -- has no notion of which catalog a Track came from,
 // so callers can pass a single library's tracks (intra-library
 // duplicates) or a concatenation of both rekordbox's and Engine's tracks
@@ -59,7 +63,19 @@ struct ConsolidationPlan
 class DuplicateTrackFinder
 {
 public:
-    static std::vector<DuplicateGroup> find(const std::vector<Track> &tracks);
+    // `probe`, when given, is what settles a pair whose lengths differ
+    // by more than MatchingPolicy::exactMatchSeconds() but no more than
+    // MatchingPolicy::compareAudioSeconds(): the two files are decoded
+    // far enough to find where the music starts and stops, and the
+    // lengths of the music -- not of the files -- are compared. Without
+    // one (no decoder in this build, or the user set the wider window
+    // to the same value as the exact one) only stored lengths are used
+    // and a pair outside the exact window is simply not a duplicate.
+    // Either way nothing is ever grouped that the exact window alone
+    // would not have grouped *plus* pairs the audio confirmed, so a
+    // probe can only ever find more, never regroup what it already had.
+    static std::vector<DuplicateGroup> find(const std::vector<Track> &tracks,
+                                             AudioContentProbe *probe = nullptr);
 };
 
 // Decides, for a single DuplicateGroup, whether its cues can be

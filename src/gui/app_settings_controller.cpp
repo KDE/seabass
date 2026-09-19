@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include "domain/matching_policy.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -25,6 +26,19 @@ AppSettingsController::AppSettingsController(QObject *parent)
     m_preferredFormat = m_settings.value("preferredFormat", "rekordbox").toString();
     m_hideStreamingTracks = m_settings.value("hideStreamingTracks", false).toBool();
     m_keyNotation = m_settings.value("keyNotation", "camelot").toString();
+    m_exactMatchSeconds = m_settings.value("music/exactMatchSeconds",
+                                            static_cast<int>(domain::MatchingPolicy::DefaultExactMatchSeconds))
+                              .toInt();
+    m_compareAudioSeconds = m_settings.value("music/compareAudioSeconds",
+                                              static_cast<int>(domain::MatchingPolicy::DefaultCompareAudioSeconds))
+                                .toInt();
+    m_ignoreCuesAtStart =
+        m_settings.value("music/ignoreCuesAtStart", domain::MatchingPolicy::DefaultIgnoreCuesAtStart).toBool();
+    // Before anything can scan. MatchingPolicy clamps, so a hand-edited
+    // settings file cannot put a wider window into effect than the page
+    // would allow, and the members are read back from it so the page
+    // shows what is actually in force rather than what was typed.
+    applyMatchingPolicy();
     m_stickBackupDirectory = m_settings.value("stickBackupDirectory", defaultStickBackupDirectory()).toString();
     if (m_stickBackupDirectory.isEmpty()) {
         m_stickBackupDirectory = defaultStickBackupDirectory();
@@ -68,6 +82,56 @@ void AppSettingsController::setHideStreamingTracks(bool value)
     m_hideStreamingTracks = value;
     m_settings.setValue("hideStreamingTracks", value);
     emit hideStreamingTracksChanged();
+}
+
+void AppSettingsController::applyMatchingPolicy()
+{
+    domain::MatchingPolicy::set(m_exactMatchSeconds, m_compareAudioSeconds, m_ignoreCuesAtStart);
+    // Read back, never assumed. set() clamps both numbers (and raises
+    // the wider window to the exact one when it was left below it), so
+    // storing what was asked for would leave the page showing a value
+    // nothing in the app is using -- a counter that reports confidently
+    // and is wrong.
+    m_exactMatchSeconds = static_cast<int>(domain::MatchingPolicy::exactMatchSeconds());
+    m_compareAudioSeconds = static_cast<int>(domain::MatchingPolicy::compareAudioSeconds());
+    m_ignoreCuesAtStart = domain::MatchingPolicy::ignoreCuesAtStart();
+}
+
+void AppSettingsController::setExactMatchSeconds(int value)
+{
+    if (m_exactMatchSeconds == value) {
+        return;
+    }
+    m_exactMatchSeconds = value;
+    applyMatchingPolicy();
+    m_settings.setValue("music/exactMatchSeconds", m_exactMatchSeconds);
+    emit exactMatchSecondsChanged();
+    // Raising the exact window can push the wider one up with it (it is
+    // never allowed below), so the page has to hear about both.
+    m_settings.setValue("music/compareAudioSeconds", m_compareAudioSeconds);
+    emit compareAudioSecondsChanged();
+}
+
+void AppSettingsController::setCompareAudioSeconds(int value)
+{
+    if (m_compareAudioSeconds == value) {
+        return;
+    }
+    m_compareAudioSeconds = value;
+    applyMatchingPolicy();
+    m_settings.setValue("music/compareAudioSeconds", m_compareAudioSeconds);
+    emit compareAudioSecondsChanged();
+}
+
+void AppSettingsController::setIgnoreCuesAtStart(bool value)
+{
+    if (m_ignoreCuesAtStart == value) {
+        return;
+    }
+    m_ignoreCuesAtStart = value;
+    applyMatchingPolicy();
+    m_settings.setValue("music/ignoreCuesAtStart", m_ignoreCuesAtStart);
+    emit ignoreCuesAtStartChanged();
 }
 
 void AppSettingsController::setKeyNotation(const QString &value)

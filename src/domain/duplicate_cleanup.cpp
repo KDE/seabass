@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "domain/local_restore.hpp"
+#include "domain/matching_policy.hpp"
 
 namespace seabass::domain
 {
@@ -17,12 +18,11 @@ namespace
 
 // Matches sync_planning's/track_matching's own duration-tolerance
 // convention: two lengths this close are "the same track", not a
-// meaningfully different edit.
-constexpr double DurationToleranceSeconds = 2.0;
-
+// meaningfully different edit. Preferences -> Music sets the number;
+// 2 s is the default it starts at.
 bool durationsAgree(double a, double b)
 {
-    return std::abs(a - b) <= DurationToleranceSeconds;
+    return std::abs(a - b) <= MatchingPolicy::exactMatchSeconds();
 }
 
 // Index (into `tracks`) of the highest-scoring track among `candidates`,

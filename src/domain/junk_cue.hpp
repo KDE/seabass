@@ -55,6 +55,12 @@ struct JunkCueIssue
 // thing someone set, and it carries an end as well as a start, which a
 // stray press never does. Shared by the finder and the remover so the
 // two cannot disagree.
+//
+// Preferences -> Music -> "Ignore cues at 0:00" turns the first-second
+// rule off for a DJ who does keep a "track start" pad, in which case
+// nothing here is junk except a cue at a negative position -- that one
+// is a "no cue set" sentinel read as a position and points nowhere at
+// all, so it stays junk either way.
 bool isJunkCue(const CuePoint &cue);
 
 // The same cues with the junk left out.

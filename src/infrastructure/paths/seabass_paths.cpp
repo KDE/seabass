@@ -88,6 +88,11 @@ fs::path stickDurationCache(const fs::path &stickRoot)
     return stickCachesDir(stickRoot) / "durations.jsonl";
 }
 
+fs::path stickSilenceCache(const fs::path &stickRoot)
+{
+    return stickCachesDir(stickRoot) / "silence.jsonl";
+}
+
 namespace
 {
 fs::path &localRootOverride()

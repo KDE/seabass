@@ -57,6 +57,10 @@ fs::path stickOperationLog(const fs::path &stickRoot);
 fs::path stickPendingDeletions(const fs::path &stickRoot);
 fs::path stickMetadataCache(const fs::path &stickRoot);
 fs::path stickDurationCache(const fs::path &stickRoot);
+// Where the music starts and stops inside each file, once measured.
+// Separate from the duration cache because it costs a full decode to
+// fill and only a few files per scan ever need it.
+fs::path stickSilenceCache(const fs::path &stickRoot);
 
 // ---- on this computer ---------------------------------------------
 // Where everything Seabass keeps on this computer lives.

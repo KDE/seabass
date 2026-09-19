@@ -323,6 +323,7 @@ add_library(seabass_core STATIC
     src/domain/filesystem_compatibility.cpp
     src/domain/fuzzy_matcher.cpp
     src/domain/junk_cue.cpp
+    src/domain/matching_policy.cpp
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/library_statistics.cpp
@@ -434,6 +435,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/unreferenced_tracks.cpp
     src/infrastructure/cleanup/audio_file_walk.cpp
     src/infrastructure/local/duration_cache.cpp
+    src/infrastructure/local/silence_cache.cpp
     src/infrastructure/local/metadata_cache.cpp
     src/infrastructure/local/metadata_store.cpp
 )
@@ -628,13 +630,28 @@ if(TAGLIB_FOUND OR TARGET TagLib::tag)
 endif()
 
 if(TARGET Qt6::Multimedia)
-    add_library(seabass_audio_qt STATIC src/infrastructure/audio/qt_multimedia_duration_probe.cpp)
+    add_library(seabass_audio_qt STATIC
+        src/infrastructure/audio/qt_multimedia_duration_probe.cpp
+        src/infrastructure/audio/qt_multimedia_silence_probe.cpp)
     target_include_directories(seabass_audio_qt PUBLIC src)
     target_link_libraries(seabass_audio_qt PUBLIC Qt6::Core Qt6::Multimedia)
     target_compile_definitions(seabass_audio_qt PUBLIC SEABASS_HAVE_QT_AUDIO)
     # seabass-cli is declared above this point, so it is linked here
     # rather than at its own definition.
     target_link_libraries(seabass-cli PRIVATE seabass_audio_qt)
+endif()
+
+# The real decoder against generated audio. Only where the probe itself
+# was built; it refuses to answer without a QCoreApplication, which this
+# test is the only place outside the app to create.
+if(TARGET seabass_audio_qt)
+    add_executable(silence_probe_test tests/silence_probe_test.cpp)
+    target_include_directories(silence_probe_test PRIVATE src)
+    target_link_libraries(silence_probe_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
+    add_test(NAME silence_probe_test COMMAND silence_probe_test)
+    # No display, no audio device: the probe decodes to buffers and
+    # never opens an output.
+    set_tests_properties(silence_probe_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 if(SEABASS_GUI AND Qt6_FOUND)
@@ -811,6 +828,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # screenshot and mistrusts it.
         set_source_files_properties(src/gui/qml/icons/seabass_soundbass.svg
             PROPERTIES QT_RESOURCE_ALIAS qml/icons/seabass_soundbass.svg)
+        # Same aliasing, same reason: DonationPage asks for
+        # qrc:/qt/qml/SeabassGui/qml/images/sebas.png, which is where the
+        # app's own module puts it. Without the alias the portrait is a
+        # blank circle under test and perfect in the app, which is the
+        # exact failure the comment above describes.
+        set_source_files_properties(src/gui/qml/images/sebas.png
+            PROPERTIES QT_RESOURCE_ALIAS qml/images/sebas.png)
         foreach(icon IN LISTS SEABASS_GUI_ICONS_FROM_ROOT SEABASS_GUI_FONTS_FROM_ROOT)
             string(REPLACE "src/gui/" "" iconAlias "${icon}")
             set_source_files_properties(${icon} PROPERTIES QT_RESOURCE_ALIAS ${iconAlias})
@@ -822,6 +846,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 ${SEABASS_GUI_QML_FILES_FROM_ROOT}
             RESOURCES
                 src/gui/qml/icons/seabass_soundbass.svg
+                src/gui/qml/images/sebas.png
                 ${SEABASS_GUI_ICONS_FROM_ROOT}
                 ${SEABASS_GUI_FONTS_FROM_ROOT}
             SOURCES
@@ -845,6 +870,16 @@ if(SEABASS_GUI AND Qt6_FOUND)
             # cover-art page's tests.
             SQLite::SQLite3
         )
+        # The audio probes, for the same reason the icons are aliased
+        # above: what the tests render has to be what the app renders.
+        # seabass_audio_qt carries SEABASS_HAVE_QT_AUDIO as a PUBLIC
+        # definition, and Preferences draws a "this build cannot decode
+        # audio" line when it is absent -- so without this the tests
+        # screenshot a warning the real app never shows, and a screenshot
+        # nobody can trust is worse than no screenshot.
+        if(TARGET seabass_audio_qt)
+            target_link_libraries(seabass_qml_tests PRIVATE seabass_audio_qt)
+        endif()
         # See the find_package(Qt6 ...) call above for why these two are
         # conditional rather than in the list above.
         if(TARGET Qt6::QuickEffects)
@@ -952,6 +987,11 @@ add_executable(duration_cache_test tests/duration_cache_test.cpp)
 target_include_directories(duration_cache_test PRIVATE src)
 target_link_libraries(duration_cache_test PRIVATE seabass_core)
 add_test(NAME duration_cache_test COMMAND duration_cache_test)
+
+add_executable(silence_cache_test tests/silence_cache_test.cpp)
+target_include_directories(silence_cache_test PRIVATE src)
+target_link_libraries(silence_cache_test PRIVATE seabass_core)
+add_test(NAME silence_cache_test COMMAND silence_cache_test)
 
 add_executable(metadata_cache_test tests/metadata_cache_test.cpp)
 target_include_directories(metadata_cache_test PRIVATE src)
@@ -1087,6 +1127,7 @@ endif()
 add_executable(duplicate_cue_consolidation_test
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/track_matching.cpp
+    src/domain/matching_policy.cpp
     tests/duplicate_cue_consolidation_test.cpp
 )
 target_include_directories(duplicate_cue_consolidation_test PRIVATE src)
@@ -1094,6 +1135,7 @@ add_test(NAME duplicate_cue_consolidation_test COMMAND duplicate_cue_consolidati
 
 add_executable(duplicate_cleanup_test
     src/domain/duplicate_cleanup.cpp
+    src/domain/matching_policy.cpp
     src/domain/local_restore.cpp
     tests/duplicate_cleanup_test.cpp
 )
@@ -1104,6 +1146,7 @@ add_executable(library_consistency_test
     src/domain/library_consistency.cpp
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/track_matching.cpp
+    src/domain/matching_policy.cpp
     tests/library_consistency_test.cpp
 )
 target_include_directories(library_consistency_test PRIVATE src)
@@ -1157,10 +1200,21 @@ add_test(NAME engine_artwork_test COMMAND engine_artwork_test)
 
 add_executable(junk_cue_test
     src/domain/junk_cue.cpp
+    src/domain/matching_policy.cpp
     tests/junk_cue_test.cpp
 )
 target_include_directories(junk_cue_test PRIVATE src)
 add_test(NAME junk_cue_test COMMAND junk_cue_test)
+
+add_executable(matching_policy_test
+    src/domain/junk_cue.cpp
+    src/domain/matching_policy.cpp
+    src/domain/duplicate_cue_consolidation.cpp
+    src/domain/track_matching.cpp
+    tests/matching_policy_test.cpp
+)
+target_include_directories(matching_policy_test PRIVATE src)
+add_test(NAME matching_policy_test COMMAND matching_policy_test)
 
 add_executable(library_statistics_test
     src/domain/library_statistics.cpp
@@ -1185,6 +1239,7 @@ add_test(NAME filesystem_compatibility_test COMMAND filesystem_compatibility_tes
 
 add_executable(track_matching_test
     src/domain/track_matching.cpp
+    src/domain/matching_policy.cpp
     tests/track_matching_test.cpp
 )
 target_include_directories(track_matching_test PRIVATE src)
@@ -1223,6 +1278,7 @@ add_test(NAME rekordbox_key_parser_test COMMAND rekordbox_key_parser_test)
 add_executable(sync_planning_test
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
+    src/domain/matching_policy.cpp
     tests/sync_planning_test.cpp
 )
 target_include_directories(sync_planning_test PRIVATE src)
@@ -1241,6 +1297,7 @@ add_executable(cross_source_sync_conflict_test
     src/domain/cross_source_sync_conflict.cpp
     src/domain/sync_planning.cpp
     src/domain/track_matching.cpp
+    src/domain/matching_policy.cpp
     tests/cross_source_sync_conflict_test.cpp
 )
 target_include_directories(cross_source_sync_conflict_test PRIVATE src)
@@ -1413,6 +1470,7 @@ add_test(NAME pdb_rating_write_test COMMAND pdb_rating_write_test)
 
 add_executable(metadata_restore_test
     src/domain/junk_cue.cpp
+    src/domain/matching_policy.cpp
     src/domain/metadata_merge.cpp
     src/domain/metadata_restore.cpp
     src/domain/track_matching.cpp
@@ -1423,6 +1481,7 @@ add_test(NAME metadata_restore_test COMMAND metadata_restore_test)
 
 add_executable(metadata_backup_plan_test
     src/domain/junk_cue.cpp
+    src/domain/matching_policy.cpp
     src/domain/metadata_backup_plan.cpp
     src/domain/metadata_merge.cpp
     src/domain/track_matching.cpp
@@ -1434,6 +1493,7 @@ add_test(NAME metadata_backup_plan_test COMMAND metadata_backup_plan_test)
 add_executable(metadata_merge_test
     src/domain/metadata_merge.cpp
     src/domain/track_matching.cpp
+    src/domain/matching_policy.cpp
     tests/metadata_merge_test.cpp
 )
 target_include_directories(metadata_merge_test PRIVATE src)
@@ -1746,6 +1806,7 @@ add_test(NAME stick_performance_live_test COMMAND stick_performance_live_test)
 
 add_executable(local_cue_store_test
     src/domain/track_matching.cpp
+    src/domain/matching_policy.cpp
     src/application/ports/progress_reporter.cpp
     src/infrastructure/compression/zlib_compressor.cpp
     src/infrastructure/local/app_data_directory.cpp

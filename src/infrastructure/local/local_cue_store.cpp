@@ -4,6 +4,8 @@
 
 #include "infrastructure/local/local_cue_store.hpp"
 
+#include "domain/matching_policy.hpp"
+
 #include <sqlite3.h>
 
 #include <cmath>
@@ -29,7 +31,13 @@ using domain::Track;
 namespace
 {
 
-constexpr double DurationToleranceSeconds = 2.0;
+// Preferences -> Music sets this; 2 s by default. Read per call rather
+// than captured once, so a store built early in the run still honours a
+// number the user changed since.
+double durationToleranceSeconds()
+{
+    return domain::MatchingPolicy::exactMatchSeconds();
+}
 
 constexpr const char *Context = "local cue store";
 
@@ -390,7 +398,7 @@ void LocalCueStore::upsert(const std::vector<Track> &tracks, const std::string &
             Stmt find(m_db, "SELECT id, duration_seconds FROM tracks WHERE title_artist_key = ?");
             find.bind(1, *key);
             while (find.step()) {
-                if (std::abs(find.columnDouble(1) - track.durationSeconds) <= DurationToleranceSeconds) {
+                if (std::abs(find.columnDouble(1) - track.durationSeconds) <= durationToleranceSeconds()) {
                     existingId = find.columnInt64(0);
                     break;
                 }
@@ -400,7 +408,7 @@ void LocalCueStore::upsert(const std::vector<Track> &tracks, const std::string &
             Stmt find(m_db, "SELECT id, duration_seconds FROM tracks WHERE filename_normalized = ?");
             find.bind(1, domain::normalizeFilename(track.filename));
             while (find.step()) {
-                if (std::abs(find.columnDouble(1) - track.durationSeconds) <= DurationToleranceSeconds) {
+                if (std::abs(find.columnDouble(1) - track.durationSeconds) <= durationToleranceSeconds()) {
                     existingId = find.columnInt64(0);
                     break;
                 }

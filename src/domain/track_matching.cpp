@@ -4,6 +4,8 @@
 
 #include "domain/track_matching.hpp"
 
+#include "domain/matching_policy.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -16,7 +18,12 @@ namespace
 {
 
 constexpr double PositionToleranceMs = 1000.0;
-constexpr double DurationToleranceSeconds = 2.0;
+// Preferences -> Music -> "Same duration within N sec is considered
+// an exact match". 2 s unless the user says otherwise.
+double durationToleranceSeconds()
+{
+    return MatchingPolicy::exactMatchSeconds();
+}
 
 std::vector<CuePoint> sortedCues(std::vector<CuePoint> cues)
 {
@@ -154,7 +161,7 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
             // to compare.
             bool bothDurationsKnown = trackA.durationSeconds > 0.0 && trackB->durationSeconds > 0.0;
             bool agree = bothDurationsKnown
-                ? std::abs(trackA.durationSeconds - trackB->durationSeconds) <= DurationToleranceSeconds
+                ? std::abs(trackA.durationSeconds - trackB->durationSeconds) <= durationToleranceSeconds()
                 : unambiguous;
             if (agree) {
                 matches.emplace_back(&trackA, trackB);

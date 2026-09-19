@@ -183,8 +183,18 @@ Page {
                         + "freed."
                 }
                 InfoButton {
+                    // The window is a setting now (Preferences, Music),
+                    // so the text asks for it rather than repeating the
+                    // old hardcoded "two seconds" -- which would have
+                    // gone on saying two the moment anybody changed it.
+                    readonly property int exactWindow: root.appSettingsController.exactMatchSeconds
+                    readonly property int audioWindow: root.appSettingsController.compareAudioSeconds
+                    readonly property bool audioCompared:
+                        audioWindow > exactWindow && root.appSettingsController.audioComparisonSupported
+
                     explanationTitle: "What counts as a duplicate?"
-                    summaryText: "Same artist, same title, same length (within two seconds). "
+                    summaryText: "Same artist, same title, same length (within " + exactWindow
+                        + (exactWindow === 1 ? " second" : " seconds") + "). "
                         + "Filenames are ignored, because a re-export renames the same recording."
                     explanationText:
                           "## Why filenames are ignored\n"
@@ -203,6 +213,27 @@ Page {
                         + "Where a catalog recorded no length, Seabass reads it from the audio and "
                         + "remembers it on the stick, so only the first scan pays for it. A track "
                         + "whose length cannot be established is left alone rather than guessed at.\n\n"
+                        + (audioCompared
+                            ? "## When the lengths nearly agree\n"
+                              + "Two copies of one recording often differ by a few seconds that are "
+                              + "silence: encoder padding, a run out kept by a rip, a trimmed "
+                              + "re-export. Where the gap is more than " + exactWindow + " but no more "
+                              + "than " + audioWindow + " seconds, both files are decoded, the silence "
+                              + "at each end is measured, and the length of the music between them is "
+                              + "compared instead of the stored numbers. Decoding costs real time, so "
+                              + "it only runs for a pair that is genuinely in doubt, and the answers "
+                              + "are cached on the stick. Both windows are yours to set, under "
+                              + "Preferences, Music.\n\n"
+                            : "## When the lengths nearly agree\n"
+                              + "Seabass can decode two files whose lengths are close but not close "
+                              + "enough, measure the silence at each end, and compare the length of "
+                              + "the music itself. That is off right now. Turn it on under "
+                              + "Preferences, Music.\n\n")
+                        + "## Nothing here is the only way\n"
+                        + "Whatever this page finds or misses, two tracks can always be merged by "
+                        + "hand: open Browse Library, use the **Merge** button on a track, and pick "
+                        + "the other one. That path takes no notice of lengths at all, so it is the "
+                        + "answer for a pair Seabass will not group on its own.\n\n"
                         + "## What is kept\n"
                         + "- **Cues** are merged, never lost: the survivor gets every copy's cues\n"
                         + "- **Playlist membership** is preserved in every catalog\n"
@@ -477,6 +508,17 @@ Page {
             visible: cleanupController.statusMessage.length > 0
             text: cleanupController.statusMessage
             color: Theme.good
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+        // What the scan did about pairs whose lengths nearly agreed.
+        // Muted, not green: it is a note on how the answer was reached,
+        // not a success.
+        Label {
+            objectName: "audioComparisonNote"
+            visible: cleanupController.audioComparisonNote.length > 0
+            text: cleanupController.audioComparisonNote
+            color: Theme.textMuted
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }

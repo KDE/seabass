@@ -219,6 +219,22 @@ struct CleanupTaskResult
     // this, because two of the three record no file size at all.
     application::MeasuredFileSizes sizes;
 
+    // How many audio files this scan decoded in order to compare where
+    // their music starts and stops (Preferences -> Music, "Same
+    // duration within N sec will compare audio"). Zero when no pair was
+    // in doubt, when the setting leaves no window to be in doubt in, or
+    // when the answers were all already cached on the stick.
+    //
+    // Counted and shown rather than left implicit: decoding is the one
+    // part of a duplicate scan that costs real time, and a scan that
+    // suddenly takes a minute longer with nothing said about it is
+    // exactly the kind of quiet behaviour this project keeps finding.
+    int filesAudioCompared = 0;
+    // True when the setting asks for audio comparison and this build has
+    // no decoder to do it with -- so the scan fell back to comparing
+    // stored lengths alone. Said out loud for the same reason.
+    bool audioComparisonUnavailable = false;
+
     // True when rows from every catalog on the stick were folded into
     // files before grouping. False when a catalog could not be read, in
     // which case this scan saw one catalog's rows and cannot say what
@@ -277,6 +293,12 @@ class CleanupController : public QObject
     Q_PROPERTY(int scanTotal READ scanTotal NOTIFY scanProgressChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
+    // What the last scan's audio comparison did, in one line, or empty
+    // when there is nothing to say. Its own property rather than folded
+    // into statusMessage, which is the green "saved" line and would
+    // either be overwritten by the next save or colour this as a
+    // success it is not.
+    Q_PROPERTY(QString audioComparisonNote READ audioComparisonNote NOTIFY plansChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
     Q_PROPERTY(QString totalWastedBytesHuman READ totalWastedBytesHuman NOTIFY plansChanged)
     Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY plansChanged)
@@ -320,6 +342,7 @@ public:
     int scanTotal() const { return m_scanTotal; }
     QString errorMessage() const { return m_errorMessage; }
     QString statusMessage() const { return m_statusMessage; }
+    QString audioComparisonNote() const { return m_audioComparisonNote; }
     bool canUndo() const;
     QString totalWastedBytesHuman() const;
     QStringList playlistNames() const { return m_playlistNames; }
@@ -486,6 +509,7 @@ private:
     int m_scanTotal = 0;
     QString m_errorMessage;
     QString m_statusMessage;
+    QString m_audioComparisonNote;
     bool m_statusIsAboutStaging = false;
 };
 
