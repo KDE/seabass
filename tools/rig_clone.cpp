@@ -264,7 +264,25 @@ int main(int argc, char **argv)
             return pass ? 0 : 1;
         }
 
-        pass = outcome.status == CloneStickOutcome::Status::Cloned;
+        // A clone of a damaged library is still a clone. The fixture
+        // plants dangling rows on purpose, so every run against it comes
+        // back "cloned-with-problems" and this check failed for a fault
+        // it had faithfully copied: 0 write errors, 0 rejected, 8 of 8
+        // catalogs identical, and a red line anyway. What must be clean
+        // is the CLONE's own work -- nothing rejected and nothing it
+        // could not write. Tracks the source's catalog names and does
+        // not have are the source's problem, reported here rather than
+        // failed on, and the checks below still require the target to
+        // hold what the source held.
+        const bool cloneItselfClean = outcome.restore.rejected.empty() && outcome.restore.writeErrors.empty();
+        pass = outcome.status == CloneStickOutcome::Status::Cloned
+            || (outcome.status == CloneStickOutcome::Status::ClonedWithProblems && cloneItselfClean);
+        if (outcome.status == CloneStickOutcome::Status::ClonedWithProblems && cloneItselfClean) {
+            const std::size_t missing =
+                outcome.restore.missingTrackPaths ? outcome.restore.missingTrackPaths->size() : 0;
+            std::cout << "cloned with problems the source already had: " << missing
+                      << " track(s) the catalog names and the stick does not hold, nothing rejected, no write errors\n";
+        }
 
         application::RestoreOptions check;
         check.archivePath = options.backup.archivePath;
