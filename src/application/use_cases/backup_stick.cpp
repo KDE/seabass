@@ -64,6 +64,28 @@ std::int64_t nowUnix()
     return static_cast<std::int64_t>(std::time(nullptr));
 }
 
+// One line of the archive's own history, appended as it commits. Called
+// from both commit sites -- a full run and a kept partial one -- because
+// a cancelled backup that someone chose to keep is a generation too, and
+// leaving it out would make the log disagree with the archive.
+void recordGeneration(BackupManifest &manifest, const BackupStickOutcome &outcome)
+{
+    GenerationRow generation;
+    generation.createdAtUnix = manifest.createdAtUnix;
+    generation.status = manifest.status;
+    generation.added = outcome.added;
+    generation.changed = outcome.changed;
+    generation.removed = outcome.removed;
+    generation.bytesRead = outcome.bytesRead;
+    generation.userName = manifest.userName;
+    manifest.generations.push_back(std::move(generation));
+    if (manifest.generations.size() > MaxGenerationRows) {
+        manifest.generations.erase(manifest.generations.begin(),
+                                    manifest.generations.begin()
+                                        + static_cast<std::ptrdiff_t>(manifest.generations.size() - MaxGenerationRows));
+    }
+}
+
 std::string entryNameFor(const TreeEntry &entry)
 {
     return entry.isDirectory ? entry.relativePath + "/" : entry.relativePath;
@@ -351,6 +373,10 @@ BackupStickOutcome PendingBackup::keep()
     m_impl->decided = true;
     m_impl->manifest.status = BackupStatus::PartialCancelled;
     m_impl->manifest.createdAtUnix = nowUnix();
+    // `outcome`, not m_impl->partial: partial was moved from and cleared
+    // four lines up, so logging it would record a generation of all
+    // zeroes for a run that copied real files.
+    recordGeneration(m_impl->manifest, outcome);
     try {
         m_impl->updater->commit(m_impl->manifest);
     } catch (const std::exception &e) {
@@ -630,6 +656,9 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     // is an optional and not a string.
     manifest.userName = options.userName ? *options.userName
                                           : (opened.manifest ? opened.manifest->userName : std::string());
+    // The archive's own history, carried forward and appended to at
+    // commit. Without this line every update would start the log again.
+    manifest.generations = opened.manifest ? opened.manifest->generations : std::vector<GenerationRow>{};
     // Sticky across generations: an update carries entries captured in
     // the run that read the damaged stick, so the archive goes on holding
     // data of unknown quality even when the stick is healthy again. The
@@ -830,6 +859,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     }
     manifest.status = status;
     manifest.createdAtUnix = nowUnix();
+    recordGeneration(manifest, outcome);
     report(BackupProgress::Phase::Writing);
     reporter.start("Writing index", 0);
     try {

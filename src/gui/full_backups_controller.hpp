@@ -57,6 +57,9 @@ public:
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void deleteBackup(const QString &archivePath);
+    // The same history file as the stick's own Backup page writes, from
+    // the same renderer, so the two cannot disagree about one archive.
+    Q_INVOKABLE void openChangelog(const QString &archivePath);
     // The archive a browsed library was extracted from, canonical; empty
     // for any other library root.
     Q_INVOKABLE QString browsedArchiveFor(const QString &libraryRoot) const;

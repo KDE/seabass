@@ -52,6 +52,38 @@ struct ManifestRow
     std::uint32_t crc32 = 0;
 };
 
+// One run's worth of "what this update did", kept so a backup can say
+// how it got to be what it is.
+//
+// The header describes only the newest generation: an update overwrites
+// createdAtUnix, status and the counts, and what the previous runs did is
+// gone. For an archive that is updated for months that is most of its
+// story -- when it last actually changed, whether a run came off a
+// damaged stick, which one was taken before the gig. Each commit appends
+// one of these and carries the older ones forward.
+struct GenerationRow
+{
+    std::int64_t createdAtUnix = 0;
+    BackupStatus status = BackupStatus::Complete;
+    std::size_t added = 0;
+    std::size_t changed = 0;
+    std::size_t removed = 0;
+    // Read off the stick during this run. Deliberately not the archive's
+    // resulting size: the manifest is serialized inside commit(), so a
+    // generation cannot know how big it made the file, and a field that
+    // is always zero is worse than one that is not there.
+    std::uint64_t bytesRead = 0;
+    // What the backup was called at the time, so a rename does not
+    // rewrite history.
+    std::string userName;
+};
+
+// How many generations an archive remembers. A backup updated nightly
+// for a year would otherwise carry 365 rows in a file that is read on
+// every open; the oldest are dropped first. Nothing depends on a row
+// being present, so losing the tail costs only the display.
+inline constexpr std::size_t MaxGenerationRows = 50;
+
 // The archive's own index of what it holds, written as the last entry
 // before the central directory on every update. It is the integrity
 // layer ZIP lacks: the central directory has no checksum of its own, so
@@ -63,6 +95,7 @@ struct ManifestRow
 // `unzip -p backup.zip SEABASS-MANIFEST.tsv` and needs no JSON library.
 //
 //   seabass-stick-manifest<TAB>1<TAB>stickIdentifier<TAB>label<TAB>status<TAB>createdAtUnix[<TAB>libraryFingerprint[<TAB>sourceReadOnly[<TAB>userName]]]
+//   g<TAB>createdAtUnix<TAB>status<TAB>added<TAB>changed<TAB>removed<TAB>bytesRead<TAB>userName
 //   f<TAB>path<TAB>size<TAB>mtimeUnix<TAB>crc32hex<TAB>sha256hex<TAB>extra
 //   d<TAB>path<TAB>0<TAB>mtimeUnix<TAB><TAB><TAB>
 //   ...
@@ -106,6 +139,8 @@ struct BackupManifest
     // reads from a sibling file that wins over this one, which is the
     // only way to rename a multi-gigabyte archive for free.
     std::string userName;
+    // Oldest first; at most MaxGenerationRows.
+    std::vector<GenerationRow> generations;
     std::vector<ManifestRow> rows;
 
     std::string serialize() const;

@@ -136,6 +136,26 @@ std::string BackupManifest::serialize() const
     out += escapeManifestField(userName);
     out += '\n';
 
+    // Before the file rows, so `unzip -p ... | head` shows an archive's
+    // history without reading past thousands of entries.
+    for (const GenerationRow &generation : generations) {
+        out += "g\t";
+        out += std::to_string(generation.createdAtUnix);
+        out += '\t';
+        out += toString(generation.status);
+        out += '\t';
+        out += std::to_string(generation.added);
+        out += '\t';
+        out += std::to_string(generation.changed);
+        out += '\t';
+        out += std::to_string(generation.removed);
+        out += '\t';
+        out += std::to_string(generation.bytesRead);
+        out += '\t';
+        out += escapeManifestField(generation.userName);
+        out += '\n';
+    }
+
     for (const ManifestRow &row : rows) {
         out += row.kind == ManifestRow::Kind::Directory ? 'd' : 'f';
         out += '\t';
@@ -256,6 +276,27 @@ std::optional<BackupManifest> BackupManifest::parse(std::string_view text, std::
                 manifest.userName = *name;
             }
             headerSeen = true;
+            continue;
+        }
+
+        if (!fields.empty() && fields[0] == "g") {
+            if (fields.size() != 8) {
+                fail(error, "manifest generation row " + std::to_string(lineNumber) + " malformed");
+                return std::nullopt;
+            }
+            GenerationRow generation;
+            auto status = backupStatusFromString(fields[2]);
+            auto name = unescapeManifestField(fields[7]);
+            if (!status || !name || !parseNumber(fields[1], generation.createdAtUnix)
+                || !parseNumber(fields[3], generation.added) || !parseNumber(fields[4], generation.changed)
+                || !parseNumber(fields[5], generation.removed)
+                || !parseNumber(fields[6], generation.bytesRead)) {
+                fail(error, "manifest generation row " + std::to_string(lineNumber) + " malformed");
+                return std::nullopt;
+            }
+            generation.status = *status;
+            generation.userName = *name;
+            manifest.generations.push_back(std::move(generation));
             continue;
         }
 

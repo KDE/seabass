@@ -500,6 +500,15 @@ Page {
                             visible: root.hasBackup
                             onClicked: root.controller.openArchiveFolder()
                         }
+                        Button {
+                            objectName: "historyButton"
+                            text: "History"
+                            visible: root.hasBackup
+                            enabled: root.controller.busy !== true
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Open a text file listing every update this backup has had"
+                            onClicked: root.controller.openChangelog()
+                        }
                     }
                 }
             }

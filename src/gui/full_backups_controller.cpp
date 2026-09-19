@@ -5,7 +5,11 @@
 #include "full_backups_controller.hpp"
 
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QFileInfo>
+#include <QUrl>
+
+#include "gui/backup_changelog_text.hpp"
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <filesystem>
@@ -153,6 +157,22 @@ void FullBackupsController::onListFinished()
         m_refreshAgain = false;
         refresh();
     }
+}
+
+void FullBackupsController::openChangelog(const QString &archivePath)
+{
+    if (archivePath.isEmpty()) {
+        return;
+    }
+    QString error;
+    const QString path = writeChangelogFile(fs::path(canonical(archivePath).toStdString()), &error);
+    if (path.isEmpty()) {
+        // setMessages is this page's only way to speak; an error here is
+        // never fatal, so it reads as a note rather than a failure state.
+        setMessages(error, {});
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
 void FullBackupsController::deleteBackup(const QString &archivePath)

@@ -360,6 +360,17 @@ Page {
                         onClicked: root.browseRequested(backupRow.modelData.archivePath)
                     }
                     Button {
+                        objectName: "historyButton"
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "History"
+                        enabled: backupRow.readable && root.controller.deleting !== true
+                        ToolTip.visible: hovered
+                        ToolTip.text: backupRow.readable
+                            ? "Open a text file listing every update this backup has had"
+                            : "This backup cannot be read, so its history cannot be shown"
+                        onClicked: root.controller.openChangelog(backupRow.modelData.archivePath)
+                    }
+                    Button {
                         objectName: "restoreButton"
                         Layout.alignment: Qt.AlignVCenter
                         text: "Restore…"

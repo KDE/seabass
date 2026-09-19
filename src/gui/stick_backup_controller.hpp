@@ -113,6 +113,11 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void backUp();
     Q_INVOKABLE void cancel();
+    // Renders this archive's history to a text file and hands it to the
+    // system's editor. Reports through actionFeedback rather than
+    // returning: the interesting failures ("no history yet", "cannot be
+    // read") are things to say, not values to branch on.
+    Q_INVOKABLE void openChangelog();
     // Re-runs the action lockRefused() stopped, after "Remove Lock".
     Q_INVOKABLE void retryLockedAction() { m_writeHold.retryLockedAction(); }
     Q_INVOKABLE void keepPartial();

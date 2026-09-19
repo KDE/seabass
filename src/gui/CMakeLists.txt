@@ -188,6 +188,8 @@ set(SEABASS_GUI_SOURCES
     sync_controller.cpp
     full_backups_controller.hpp
     full_backups_controller.cpp
+    backup_changelog_text.hpp
+    backup_changelog_text.cpp
     metadata_backup_controller.hpp
     metadata_backup_proposal_model.hpp
     metadata_backup_controller.cpp

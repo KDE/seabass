@@ -1542,6 +1542,15 @@ if(TARGET Qt6::Core)
     target_link_libraries(open_folder_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME open_folder_test COMMAND open_folder_test)
 
+    add_executable(backup_changelog_text_test
+        ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
+        src/gui/backup_changelog_text.cpp
+        tests/backup_changelog_text_test.cpp
+    )
+    target_include_directories(backup_changelog_text_test PRIVATE src)
+    target_link_libraries(backup_changelog_text_test PRIVATE Qt6::Core ZLIB::ZLIB)
+    add_test(NAME backup_changelog_text_test COMMAND backup_changelog_text_test)
+
     # The restore page's proposal list, on its own: staging is kept per
     # proposal, so two stick tracks matched to one stored track stage and
     # unstage apart, and each row says what a restore writes and where.

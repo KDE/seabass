@@ -12,6 +12,8 @@
 
 #include <QDateTime>
 #include <QDesktopServices>
+
+#include "gui/backup_changelog_text.hpp"
 #include <QDir>
 #include <QFileInfo>
 #include <QPointer>
@@ -557,6 +559,17 @@ void StickBackupController::openArchiveFolder()
     QString folder = QFileInfo(m_archivePath).absolutePath();
     QDir().mkpath(folder);
     QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+}
+
+void StickBackupController::openChangelog()
+{
+    QString error;
+    const QString path = writeChangelogFile(fs::path(m_archivePath.toStdString()), &error);
+    if (path.isEmpty()) {
+        emit actionFeedback(error, true);
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
 void StickBackupController::finishOutcome(const BackupStickOutcome &outcome)

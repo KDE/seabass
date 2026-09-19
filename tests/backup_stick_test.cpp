@@ -438,6 +438,39 @@ int main()
         std::cout << "case 12 (a backup's name survives updates, and can be changed by one) OK\n";
     }
 
+    // ---- the archive keeps a log of what each update did ----
+    {
+        Fixture f("changelog");
+        f.options.userName = std::string("first");
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        assert(f.manifest().generations.size() == 1);
+        assert(f.manifest().generations[0].added > 0);
+        assert(f.manifest().generations[0].userName == "first");
+
+        // A second run appends rather than replacing: the header only ever
+        // describes the newest generation, and without the carry-forward
+        // every update would start the log again.
+        writeFile(f.stick / "Contents" / "later.mp3", pseudoRandom(5'000, 90), 1'700'700'000);
+        f.options.userName.reset();
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::Complete);
+        const BackupManifest after = f.manifest();
+        assert(after.generations.size() == 2);
+        assert(after.generations[1].added == 1);
+        assert(after.generations[1].bytesRead > 0);
+        // Ordered oldest first, and each row keeps the name in force at
+        // the time, so renaming later does not rewrite history.
+        assert(after.generations[0].createdAtUnix <= after.generations[1].createdAtUnix);
+        assert(after.generations[1].userName == "first");
+
+        // A run that changed nothing writes no generation: NothingToDo
+        // never commits, and a log full of "did nothing" would bury the
+        // rows that matter.
+        assert(BackupStick::execute(f.options).status == BackupOutcomeStatus::NothingToDo);
+        assert(f.manifest().generations.size() == 2);
+        assert(f.verifies());
+        std::cout << "case 13 (an archive logs every generation, oldest first) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
