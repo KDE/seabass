@@ -328,10 +328,24 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
     std::error_code ec;
     std::filesystem::create_directories(artworkDir, ec);
 
+    // Every -1 below leaves the database with no AlbumArt rows, and the
+    // images this function has already written are then files nothing
+    // points at. The caller copies the whole scratch tree to the stick
+    // regardless, so without this they travel there as orphans while the
+    // count says 0 covers: space taken on the stick that no player and
+    // no cleanup in this app would ever account for. Emptied rather than
+    // removed, so the library keeps the directory it is supposed to have.
+    const auto giveUp = [&](sqlite3 *handle) {
+        sqlite3_close(handle);
+        std::error_code cleanupEc;
+        std::filesystem::remove_all(artworkDir, cleanupEc);
+        std::filesystem::create_directories(artworkDir, cleanupEc);
+        return -1;
+    };
+
     const std::string albumArtColumn = albumArtColumnName(db);
     if (albumArtColumn.empty()) {
-        sqlite3_close(db);
-        return -1;
+        return giveUp(db);
     }
     const std::string pointStatement = "UPDATE Track SET " + albumArtColumn + " = ? WHERE path = ?;";
 
@@ -342,8 +356,7 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
     // landed -- either way the count returned would describe a database
     // that does not exist.
     if (sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr) != SQLITE_OK) {
-        sqlite3_close(db);
-        return -1;
+        return giveUp(db);
     }
     for (const auto &[trackPath, source] : artworkByTrackPath) {
         std::int64_t albumArtId = 0;
@@ -416,8 +429,7 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
         // failed commit would claim art that is in no database, with the
         // image files sitting on the stick regardless.
         sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
-        sqlite3_close(db);
-        return -1;
+        return giveUp(db);
     }
     sqlite3_close(db);
     return given;
