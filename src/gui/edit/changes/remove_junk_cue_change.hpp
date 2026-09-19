@@ -25,6 +25,9 @@ public:
     QString owner() const override;
     QString description() const override;
     QString unit() const override;
+    // Every stray cue on this track, not one: apply() rewrites the cue
+    // list without any of them.
+    int unitsWritten() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;

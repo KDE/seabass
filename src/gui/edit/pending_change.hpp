@@ -57,6 +57,15 @@ public:
     virtual QString description() const = 0;
     // Plural noun for the summary: "tracks", "settings", "groups", "cues".
     virtual QString unit() const = 0;
+    // How many of that unit this change carries. One, for the changes
+    // the model above describes. A change that unavoidably carries
+    // several says so: removing a track's stray cues takes every one of
+    // them, because they share a single rewrite of the same files, and a
+    // library where 87 tracks in 100 carry rekordbox's first-bar marker
+    // makes the difference plain. Without this the summary counts
+    // CHANGES and labels them with unit(), so a save that removed 185
+    // cues from 173 tracks reported "173 of 173 cues removed".
+    virtual int unitsWritten() const { return 1; }
     // Past-tense verb for the summary, in the user's terms rather than
     // the code's: what THEY asked for, not what the save did to make it
     // happen.

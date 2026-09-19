@@ -120,6 +120,11 @@ QString RemoveJunkCueChange::unit() const
     return QStringLiteral("cues");
 }
 
+int RemoveJunkCueChange::unitsWritten() const
+{
+    return static_cast<int>(m_track.cues.size() - cuesWithoutJunk(m_track).size());
+}
+
 QStringList RemoveJunkCueChange::formatsTouched() const
 {
     return {QString::fromStdString(m_track.format)};

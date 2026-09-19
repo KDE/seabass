@@ -69,6 +69,44 @@ int main()
         check(change, "stray cue removal", "cues", "removed");
     }
     {
+        // Saying "cues" is only half of it: the summary counts what the
+        // change reports, so a change that takes three cues and reports
+        // one says "1 of 1 cues removed" after removing three. Round 5
+        // met this on a real stick, 185 cues on 173 tracks reported as
+        // 173. A loop is not a stray cue and is not counted.
+        domain::Track track;
+        track.sourceId = "1";
+        track.format = "rekordbox";
+        domain::CuePoint strayHot;
+        strayHot.kind = domain::CuePoint::Kind::Hot;
+        strayHot.positionMs = 0.0;  // rekordbox's own first-bar marker
+        domain::CuePoint strayMemory;
+        strayMemory.positionMs = 400.0;  // inside the first second
+        domain::CuePoint realCue;
+        realCue.kind = domain::CuePoint::Kind::Hot;
+        realCue.positionMs = 32000.0;
+        domain::CuePoint loopAtZero;  // a loop on the first bar is somebody's work
+        loopAtZero.positionMs = 0.0;
+        loopAtZero.isLoop = true;
+        loopAtZero.loopEndMs = 8000.0;
+        track.cues = {strayHot, strayMemory, realCue, loopAtZero};
+        gui::RemoveJunkCueChange change(QStringLiteral("/stick/PIONEER"), track);
+        if (change.unitsWritten() != 2) {
+            std::cerr << "FAILED: stray cue removal counts " << change.unitsWritten()
+                      << " cues, expected the 2 it actually removes\n";
+            ++failures;
+        }
+    }
+    {
+        // The default every other change keeps: one of its unit.
+        domain::LibraryConsistencyIssue issue;
+        gui::DeleteOrphanChange change(QStringLiteral("/stick/PIONEER"), issue);
+        if (change.unitsWritten() != 1) {
+            std::cerr << "FAILED: delete orphaned entry counts " << change.unitsWritten() << ", expected 1\n";
+            ++failures;
+        }
+    }
+    {
         domain::LibraryConsistencyIssue issue;
         gui::DeleteOrphanChange change(QStringLiteral("/stick/PIONEER"), issue);
         check(change, "delete orphaned entry", "entries", "removed");

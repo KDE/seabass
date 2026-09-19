@@ -405,11 +405,19 @@ void LibraryEditSession::onSaveFinished()
 
     std::set<QString> applied(result.appliedIds.begin(), result.appliedIds.end());
     std::set<QString> formats;
+    // Counted here, while the changes still exist: the erase below takes
+    // the applied ones with it. In units, not in changes -- see
+    // PendingChange::unitsWritten().
+    int writtenUnits = 0;
+    int stillPendingUnits = 0;
     for (const auto &change : m_changes) {
         if (applied.count(change->id())) {
+            writtenUnits += change->unitsWritten();
             for (const QString &format : change->formatsTouched()) {
                 formats.insert(format);
             }
+        } else {
+            stillPendingUnits += change->unitsWritten();
         }
     }
     m_changes.erase(std::remove_if(m_changes.begin(), m_changes.end(),
@@ -429,8 +437,8 @@ void LibraryEditSession::onSaveFinished()
     emit canUndoChanged();
 
     m_lastSummary = {
-        {"written", static_cast<int>(applied.size())},
-        {"total", static_cast<int>(applied.size()) + pendingCount()},
+        {"written", writtenUnits},
+        {"total", writtenUnits + stillPendingUnits},
         {"unit", m_savingUnit},
         {"verb", m_savingVerb},
         {"cancelled", result.cancelled},
