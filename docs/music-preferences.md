@@ -59,11 +59,20 @@ Everything that compares two lengths to decide "same recording":
 - `infrastructure/local/metadata_store.cpp` -- the same, for the
   metadata backup
 
-One number, one meaning. A version of this that loosened duplicate
-detection while leaving the restore path strict was considered and
-dropped: a user who sets "3 seconds" has said what they think the same
-recording is, and a page that quietly disagreed would be the harder thing
-to reason about.
+One number, one meaning, with **one documented exception**: the two local
+stores use `MatchingPolicy::backupIdentitySeconds()`, which is
+`min(setting, 2 s)`. They are capped because the two directions are not
+symmetrical there. `LocalCueStore::upsert()` takes the first stored row
+whose title+artist key matches inside the window, then DELETEs that row's
+cues and writes the incoming ones; widen the window and a 3:00 radio edit
+filed under the same artist and title as a 3:25 extended mix starts
+matching it, so backing up one silently destroys the other's backed-up
+cues, with nothing shown and nothing to undo. Narrowing costs at worst a
+second stored row, which loses nothing, so a user who *tightens* the
+setting is obeyed everywhere.
+
+Everything else follows the setting, because every one of those paths
+puts a plan in front of the user before anything is written.
 
 Both directions are consequential, which is why the range stops at 30 s
 and why nothing is ever written without asking. Wider finds more copies,
@@ -109,11 +118,31 @@ forget to use it.
 `infrastructure::audio::makeAudioContentProbe()` returns null when the
 wider window is not wider than the exact one (which is how "off" is
 expressed) or when the build has no decoder and the stick has no cache.
+"Has no decoder" is a run-time question, not an `#ifdef`: QtMultimedia can
+be linked in while the FFmpeg plugin never loads, and
+`QtMultimediaSilenceProbe::decodingAvailable()` is what Preferences and the
+scan both ask.
 `DuplicateTrackFinder` takes a null probe and compares stored lengths
 alone, exactly as it did before any of this existed.
 
 A build with no decoder says so on the Preferences page and on the Clean
 Up page, rather than offering a number that does nothing.
+
+### Two invariants worth not breaking
+
+**A probe may only ever add.** The clustering runs in two passes: stored
+lengths first, then the audio attaches only tracks the first pass left on
+their own. A single greedy pass that consulted the probe inline could make
+a pair the exact window had already found *disappear* when the setting was
+switched on (A=300 s, B=306 s, C=308 s at 2 s/10 s: `{B, C}` becomes
+`{A, B}`). `tests/matching_policy_test.cpp` cases 13 and 14 hold this, the
+second as a property over 400 generated libraries.
+
+**A refusal is not an answer.** Every "no answer" is no opinion, never a
+match, so a cancelled scan, a missing decoder and a corrupt file all
+degrade to the grouping stored lengths alone would give, never to a wrong
+one. That is also what lets `CancellableAudioContentProbe` implement Cancel
+by simply refusing to answer.
 
 ## What "Ignore cues at 0:00" changes
 
