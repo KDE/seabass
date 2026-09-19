@@ -178,6 +178,16 @@ SEABASS_BUILD_DIR=~/builds/seabass RIG_STICK_A=/media/you/TEST1 RIG_STICK_B=/med
     tools/rig-shakedown.sh ~/rig-out
 ```
 
+Build the rig's own tools before a round, and rebuild them after every
+pull. A `rig_*` binary older than the archive format it reads does not say
+it is stale: it says the data is wrong. A Windows round in September 2026
+lost real time to `rig_restore` rejecting a valid, freshly written archive
+with "manifest header is not a seabass stick manifest", and a standalone
+zip probe was written to chase a reader bug that did not exist. Rebuild
+before you doubt the data. `rig_fake_dj` matters most, because it is the
+one whose absence is silent: without it, FB7 and the guard scenario have
+nothing to detect.
+
 Both sticks are overwritten, several times. The references are only read;
 their size, modification time and manifest checksum are recorded before the
 run (`RIG_REFERENCE_PRINTS`) and compared after it. Each check writes
