@@ -171,7 +171,18 @@ unchanged_catalogs() {  # stick -- against the baseline taken after the restores
             case "$file" in
                 *-wal|*-journal|*-shm)
                     local main="${file%-*}"
-                    if grep -qF " $main" <(grep -F "$1/" "$out/catalog-baseline.txt") && [ -f "$main" ]; then
+                    # The baseline is sha256sum's own output, so the
+                    # path in it carries the same "*" binary marker this
+                    # loop strips above -- on MSYS2/Windows, not on
+                    # Linux. Matching " $main" against a line reading
+                    # "<hash> *<path>" therefore never matched there, and
+                    # a -wal that had simply been checkpointed away was
+                    # reported MISSING: three checks in the Windows round
+                    # 5 failed on one checkpoint. Compare the paths, with
+                    # the hash and the marker taken off both sides.
+                    if grep -F "$1/" "$out/catalog-baseline.txt" \
+                        | sed 's/^[0-9a-f]*[[:space:]]*[*]\{0,1\}//' \
+                        | grep -qxF "$main" && [ -f "$main" ]; then
                         echo "$file: gone (checkpointed into $(basename "$main"))"
                         continue
                     fi
@@ -459,11 +470,31 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # directories; the save's .write.lock beside them is a file and stays.
     local records_before; records_before=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     SEABASS_RIG_FULL_STICK=1 live_test "$A" "$test" || rc=1
+    # Counted twice, with a sync between: the first count runs the moment
+    # the test process exits and has caught a record that was gone a
+    # second later, three rounds running. A directory entry a save has
+    # just removed can still be listed on these sticks, and "the rig saw
+    # it for a moment" is not the same claim as "the refused save left it
+    # behind" -- only the second is a bug, and the round should say which
+    # it found rather than make the reader guess.
+    sync
     local records_after; records_after=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
-    if [ "$records_may_appear" -eq 0 ] && [ "$records_after" -ne "$records_before" ]; then
-        echo "the refused save left a backup record behind: $records_before -> $records_after entries in $A/Seabass/backups"
-        find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d -newer "$filler" 2>/dev/null | head -3
+    local records_settled; records_settled=$records_after
+    if [ "$records_after" -ne "$records_before" ]; then
+        sleep 2
+        sync
+        records_settled=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+    fi
+    if [ "$records_may_appear" -eq 0 ] && [ "$records_settled" -ne "$records_before" ]; then
+        echo "the refused save left a backup record behind: $records_before -> $records_settled entries in $A/Seabass/backups"
+        # What is in it decides how bad it is: a record with a manifest is
+        # a backup somebody can restore, one without is the truncated
+        # half-record Manage Backups used to list as an empty entry.
+        find "$A/Seabass/backups" -mindepth 1 -maxdepth 2 2>/dev/null | head -8
         rc=1
+    elif [ "$records_after" -ne "$records_before" ]; then
+        echo "a record was listed the moment the save ended and was gone $records_settled/$records_before a second later:" \
+             "the removal lands after the process exits, so this is the rig looking too early, not a leftover"
     fi
     if [ "$keep_filler" -eq 1 ]; then
         echo "filler kept for the next pass; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free"
@@ -495,7 +526,13 @@ full_stick() {
 # blamed the backup is what #27 was. Records may appear: the save's own,
 # and the undo's pre-restore copy if it ever gets that far.
 full_stick_undo() {
-    fill_and_run 1600 LiveFullStick::test_undoOnANearlyFullStick 1 0
+    # Keep the filler when C6 is going to run: it is the check's only
+    # chance at a target too small for the source, and refilling 28 GiB
+    # over USB 2 afterwards costs twenty minutes for a state that is
+    # already on the stick. C6 removes it.
+    local keep=0
+    rig_wants C6-target-too-small && keep=1
+    fill_and_run 1600 LiveFullStick::test_undoOnANearlyFullStick 1 "$keep"
 }
 
 cli_sync_dry_run() {
@@ -710,15 +747,26 @@ check W8-B-at-reference-first "$build/rig_restore" "$refB" "$B" --execute || { e
 check W8-delete-orphans delete_orphans
 check F4-stick-fills-up full_stick
 check F4-undo-on-a-nearly-full-stick full_stick_undo
+# C6 wants a target that B's library does not fit on, and it has to be
+# built rather than hoped for: with a 1.2 GiB fixture and a 29 GiB stick
+# the check reported "BIG ENOUGH -- this target cannot check C6" and
+# failed, having proven nothing. F4's filler is still on A at this point,
+# which is the cheapest full stick there will ever be -- filling it again
+# after the restores costs twenty minutes over USB 2 for the same state.
+# So C6 runs here, and the filler goes immediately afterwards, before the
+# restores that would otherwise meet a full stick.
+mkdir -p "$out/backups-c6"
+check C6-target-too-small "$build/rig_clone" "$B" "$A" "$out/backups-c6" --expect-too-small
+rm -f "$A"/RIG-FILLER-*.bin
+sync
+echo "filler removed before the restores; $(/bin/df -hP "$A" | awk 'NR==2 {print $4}') free on $A"
 check FB-restore-B-from-reference "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not back at its reference; stopping"; exit 1; }
 check FB-restore-A-from-reference "$build/rig_restore" "$refA" "$A" --execute || { echo "stick A is not back at its reference; stopping"; exit 1; }
 
 # ---- Backup USB Stick between the two --------------------------------
 mkdir -p "$out/backups-clone"
 check C1-C5-backup-usb-stick "$root/tools/rig-clones.sh" "$A" "$B" "$out/backups-clone" "$refA" "$refB"
-# C6: B's library does not fit on A. A preview only -- nothing is written.
-mkdir -p "$out/backups-c6"
-check C6-target-too-small "$build/rig_clone" "$B" "$A" "$out/backups-c6" --expect-too-small
+# C6 ran earlier, up where stick A was still full -- see the comment there.
 
 # ---- both sticks back where they started -----------------------------
 check X2-A-at-reference "$build/rig_restore" "$refA" "$A"

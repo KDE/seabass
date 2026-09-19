@@ -120,9 +120,15 @@ TestCase {
                 }
             }
         }
-        verify(readable >= 2, "both reference backups are listed and readable");
-        verify(withFingerprint >= 2,
-               "at least the two references report a track count (-1 everywhere means none was read)");
+        // Every reference the rig was given, not a fixed two. A round can
+        // be run against one fixture restored to both sticks (round 5
+        // was), and asserting a number here made the page look broken for
+        // a library it had in fact read correctly. What must hold is that
+        // the folder is not empty and that everything in it was read.
+        verify(listed.length > 0, "the reference folder holds no backups at all");
+        compare(readable, listed.length, "every backup in the reference folder is listed and readable");
+        verify(withFingerprint >= 1,
+               "a reference reports a track count (-1 everywhere means none was read)");
 
         // Browsing opens the archive read-only: the page hands the path to
         // openArchivePaths, and nothing about the archive changes.
