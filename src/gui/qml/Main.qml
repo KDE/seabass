@@ -731,7 +731,9 @@ ApplicationWindow {
         id: cloneStickPageComponent
         CloneStickPage {
             appSettingsController: appSettingsCtrl
-            controller: CloneStickController {}
+            controller: CloneStickController {
+                onStickContentsChanged: mediaCtrl.detect()
+            }
             conflictingSoftware: djGuardCtrl.conflictingSoftware
             Component.onCompleted: djGuardCtrl.addWatcher()
             Component.onDestruction: djGuardCtrl.removeWatcher()
@@ -744,6 +746,12 @@ ApplicationWindow {
             appSettingsController: appSettingsCtrl
             controller: RestoreStickBackupController {
                 defaultBackupDirectory: appSettingsCtrl.stickBackupDirectory
+                // A restore rewrites the stick's whole library. The
+                // controller invalidates the catalog cache, but that only
+                // stops the stale answer being handed out again -- Home
+                // reads on detect(), so without this it went on showing
+                // the track counts the stick had before the restore.
+                onStickContentsChanged: mediaCtrl.detect()
             }
             onFormatUsbRequested: stackView.push(formatUsbPageComponent)
             onLibraryHealthRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(libraryHealthHubPageComponent, {

@@ -134,6 +134,13 @@ signals:
     // analyze() previewed -- swapped between preview and confirm. Nothing
     // was written. restoreAnyway() proceeds.
     void targetChangedSinceAnalysis(const QString &targetRoot, bool exact);
+    // Bytes reached the stick, so whatever any other page read off it is
+    // now wrong. The catalog cache is invalidated here, but invalidating
+    // a cache only stops the old answer being handed out again -- nothing
+    // re-reads until asked, so Home went on showing the library the stick
+    // had before the restore. Emitted for anything short of Failed:
+    // a cancelled or partly-failed restore has still written files.
+    void stickContentsChanged(const QString &targetRoot);
 
 private:
     struct AnalyzeResult;

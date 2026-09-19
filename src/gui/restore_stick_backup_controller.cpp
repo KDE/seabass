@@ -564,6 +564,13 @@ void RestoreStickBackupController::onRestoreFinished()
         emit actionFeedback(m_errorMessage, true);
         break;
     }
+
+    // Anything that wrote a byte counts, including a cancelled run: a
+    // stick left half restored is exactly the state Home must not keep
+    // describing with its old numbers.
+    if (s.status != RestoreSummary::Status::Failed || s.filesWritten > 0) {
+        emit stickContentsChanged(m_restoreTarget);
+    }
 }
 
 void RestoreStickBackupController::setErrorMessage(const QString &message)

@@ -378,6 +378,12 @@ void CloneStickController::onRunFinished()
         return;
     }
     const CloneStickOutcome &o = result->outcome;
+    if (o.restoreStarted) {
+        // Only once the restore half began: up to that point a clone has
+        // read the source and written an archive, and the target stick is
+        // untouched.
+        emit stickContentsChanged(m_targetRoot);
+    }
     QVariantMap map;
     map["status"] = QString::fromUtf8(std::string(application::toString(o.status)).c_str());
     map["message"] = QString::fromStdString(o.message);

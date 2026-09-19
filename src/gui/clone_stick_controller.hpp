@@ -123,6 +123,11 @@ signals:
     void errorMessageChanged();
     void statusMessageChanged();
     void actionFeedback(const QString &message, bool isError);
+    // The target stick was written to, so anything that read it before
+    // is now wrong. Same reason as the restore page's: invalidating the
+    // catalog cache stops the stale answer being reused, but nothing
+    // re-reads until asked, and Home only reads on detect().
+    void stickContentsChanged(const QString &targetRoot);
 
 private:
     struct PreviewResult;
