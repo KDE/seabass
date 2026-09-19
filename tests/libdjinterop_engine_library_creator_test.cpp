@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <fstream>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -283,6 +284,105 @@ int main()
         assert(v1Result.tracksCreated == 1);
         assert(v1Result.tracksLeftForDeviceAnalysis == 0);
         std::cout << "case (tracks handed to the player for analysis) OK\n";
+    }
+
+    // Cover art: pointed at on EVERY schema generation, and named from
+    // the bytes rather than from whatever the source file was called.
+    //
+    // Both halves shipped broken. The UPDATE said `albumArtId`, which is
+    // the 2.x/3.x spelling; a V1 library declares [idAlbumArt], so on V1
+    // the image was copied and the AlbumArt row inserted and then the
+    // UPDATE threw into a per-track catch -- covers under Artwork/ that
+    // nothing referenced, orphan rows, and artworkCopied == 0, which
+    // reads as "this library had no art to copy". And the extension came
+    // from the source's own name, so a PNG called cover.jpg was written
+    // as <hash>.jpg: a file whose name promises a format it does not
+    // hold, to a player that has only the name to go on.
+    {
+        // A real PNG and a real JPEG, each deliberately misnamed.
+        const std::string pngBytes = std::string("\x89PNG\r\n\x1a\n", 8) + "not really a png body";
+        const std::string jpegBytes = std::string("\xFF\xD8\xFF", 3) + "not really a jpeg body";
+        const auto write = [](const fs::path &at, const std::string &bytes) {
+            std::ofstream out(at, std::ios::binary);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        };
+        write(root / "cover.jpg", pngBytes);   // PNG bytes, .jpg name
+        write(root / "cover.PNG", jpegBytes);  // JPEG bytes, .PNG name
+        write(root / "cover.webp", "RIFFxxxxWEBPVP8 nonsense");  // neither
+
+        const EngineSchemaGeneration all[] = {EngineSchemaGeneration::V1, EngineSchemaGeneration::V2,
+                                              EngineSchemaGeneration::V3};
+        int which = 0;
+        for (EngineSchemaGeneration generation : all) {
+            fs::path path = root / ("Engine Library artwork" + std::to_string(++which));
+            std::vector<Track> tracks = {
+                makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string()),
+                makeTrack("r2", "Song Two", "Artist Two", (root / "song2.mp3").string()),
+                makeTrack("r3", "Song Three", "Artist Three", (root / "song3.mp3").string()),
+            };
+            tracks[0].artworkPath = (root / "cover.jpg").string();
+            tracks[1].artworkPath = (root / "cover.PNG").string();
+            tracks[2].artworkPath = (root / "cover.webp").string();
+
+            auto result = EngineLibraryCreator::create(path.string(), tracks, generation);
+            assert(result.errorMessage.empty());
+
+            // Two of the three: the third is neither JPEG nor PNG, so it
+            // is skipped rather than named for a player that cannot be
+            // promised it reads it.
+            assert(result.artworkCopied == 2);
+
+            // Named for what they are, not for what they were called.
+            int png = 0;
+            int jpg = 0;
+            int other = 0;
+            for (const auto &entry : fs::directory_iterator(path / "Artwork")) {
+                const std::string ext = entry.path().extension().string();
+                if (ext == ".png") {
+                    ++png;
+                } else if (ext == ".jpg") {
+                    ++jpg;
+                } else {
+                    ++other;
+                }
+            }
+            assert(png == 1);
+            assert(jpg == 1);
+            assert(other == 0);
+
+            // And the rows actually point at them -- the part that was
+            // silently false on V1.
+            // A 1.x library keeps m.db at the library root; 2.x and 3.x
+            // put it under Database2/.
+            sqlite3 *db = nullptr;
+            const fs::path modern = path / "Database2" / "m.db";
+            const std::string dbPath = (fs::exists(modern) ? modern : path / "m.db").string();
+            assert(sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+            const std::string column = generation == EngineSchemaGeneration::V1 ? "idAlbumArt" : "albumArtId";
+            const auto countOf = [db](const std::string &sql) {
+                sqlite3_stmt *stmt = nullptr;
+                assert(sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK);
+                assert(sqlite3_step(stmt) == SQLITE_ROW);
+                const int value = sqlite3_column_int(stmt, 0);
+                sqlite3_finalize(stmt);
+                return value;
+            };
+            // Pointing at a row is not the test: libdjinterop gives every
+            // track an empty AlbumArt row (hash '', blob NULL) to start
+            // with, and the skipped webp must stay on it. What matters is
+            // how many tracks reach a row carrying a real hash -- the
+            // rows this function inserted and named a file after.
+            const int withRealArt = countOf("SELECT count(*) FROM Track JOIN AlbumArt ON AlbumArt.id = Track."
+                                            + column + " WHERE length(AlbumArt.hash) > 0;");
+            const int realRows = countOf("SELECT count(*) FROM AlbumArt WHERE length(hash) > 0;");
+            sqlite3_close(db);
+
+            assert(withRealArt == 2);
+            // And no row was inserted that nothing points at, which is
+            // what the V1 failure left behind.
+            assert(realRows == 2);
+        }
+        std::cout << "case (cover art is pointed at on every generation, and named from its bytes) OK\n";
     }
 
     // Cancel between two tracks: nothing at all lands on the target

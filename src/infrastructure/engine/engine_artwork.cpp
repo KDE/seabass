@@ -45,26 +45,6 @@ fs::path artworkDirectory(const std::string &engineLibraryPath)
     return fs::path(engineLibraryPath) / "Artwork";
 }
 
-// The extension a repaired file gets, decided on the bytes rather than on
-// the name the source had: the audit looks for "<hash>.jpg", ".jpeg" or
-// ".png" exactly, so a source called a5_m.JPG was written as <hash>.JPG and
-// read back as still missing on any case-sensitive filesystem -- counted
-// unreadable AND unrepairable, the notice up and the button disabled. An
-// extension also says nothing about what is in the file, and that name is
-// all a player has to go on. Empty when the bytes are neither JPEG nor PNG.
-std::string extensionForImage(std::string_view bytes)
-{
-    if (bytes.size() >= 3 && static_cast<unsigned char>(bytes[0]) == 0xFF
-        && static_cast<unsigned char>(bytes[1]) == 0xD8 && static_cast<unsigned char>(bytes[2]) == 0xFF) {
-        return ".jpg";
-    }
-    static constexpr std::string_view PngMagic("\x89PNG\r\n\x1a\n", 8);
-    if (bytes.size() >= PngMagic.size() && bytes.substr(0, PngMagic.size()) == PngMagic) {
-        return ".png";
-    }
-    return {};
-}
-
 // The first bytes only: the audit asks this of every imported entry, and
 // a full read of a thousand JPEGs to answer it would be a scan of its own.
 bool isImageARepairCanName(const fs::path &file)

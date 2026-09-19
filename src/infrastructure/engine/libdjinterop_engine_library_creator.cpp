@@ -4,6 +4,8 @@
 
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
+#include "infrastructure/engine/engine_artwork.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -277,6 +279,35 @@ std::string base64Url(std::span<const std::uint8_t> bytes)
 // not be opened at all. An individual unreadable image is skipped: art is
 // the least important thing here, and losing one cover is not worth
 // failing a library whose tracks are otherwise ready to play.
+// Which spelling of Track's album-art column this database uses.
+//
+// V1 libraries declare [idAlbumArt]; 2.x and 3.x renamed it to
+// albumArtId. Writing the 2.x name at a V1 library threw into the
+// per-track catch below, so the image was copied and the AlbumArt row
+// inserted while nothing was ever pointed at it -- covers under
+// Artwork/ that no track referenced, orphan rows, and a count of zero
+// that read as "this library had no art".
+//
+// Asked of the database rather than derived from the generation the
+// caller asked for, so a library made by anything else still gets
+// pointed at correctly. Empty when Track has neither, which means: do
+// not write.
+std::string albumArtColumnName(sqlite3 *db)
+{
+    try {
+        local::Statement columns(db, "PRAGMA table_info(Track);", "Engine library creator");
+        while (columns.step()) {
+            const std::string name = columns.columnText(1);
+            if (name == "albumArtId" || name == "idAlbumArt") {
+                return name;
+            }
+        }
+    } catch (const std::exception &) {
+        return {};
+    }
+    return {};
+}
+
 int copyArtworkInto(const std::filesystem::path &databaseDirectory,
                      const std::map<std::string, std::string> &artworkByTrackPath)
 {
@@ -297,9 +328,23 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
     std::error_code ec;
     std::filesystem::create_directories(artworkDir, ec);
 
+    const std::string albumArtColumn = albumArtColumnName(db);
+    if (albumArtColumn.empty()) {
+        sqlite3_close(db);
+        return -1;
+    }
+    const std::string pointStatement = "UPDATE Track SET " + albumArtColumn + " = ? WHERE path = ?;";
+
     std::map<std::string, std::int64_t> albumArtIdBySource;  // source image -> row it got
     int given = 0;
-    sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+    // Checked, both ends. A BEGIN that does not take means every write
+    // below autocommits, and a COMMIT that fails means none of them
+    // landed -- either way the count returned would describe a database
+    // that does not exist.
+    if (sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
     for (const auto &[trackPath, source] : artworkByTrackPath) {
         std::int64_t albumArtId = 0;
         if (auto seen = albumArtIdBySource.find(source); seen != albumArtIdBySource.end()) {
@@ -317,9 +362,18 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
             const auto full = hashing::Sha256::of(std::as_bytes(std::span(bytes)));
             const std::span<const std::uint8_t> shortened(full.data(), 20);
             const std::string name = base64Url(shortened);
-            const std::string extension =
-                std::filesystem::path(source).extension().empty() ? ".jpg"
-                                                                   : std::filesystem::path(source).extension().string();
+            // From the bytes, never from the source's name. Engine looks
+            // for "<hash>.jpg", ".jpeg" or ".png" exactly, so a source
+            // called a5_m.PNG or cover.webp was written under a name no
+            // player looks for while the track was still counted as
+            // given. Empty means neither JPEG nor PNG: skip it rather
+            // than name a file we cannot promise a player reads. Same
+            // rule the repair path uses, and now literally the same
+            // function.
+            const std::string extension = extensionForImage(bytes);
+            if (extension.empty()) {
+                continue;
+            }
 
             std::ofstream copy(artworkDir / (name + extension), std::ios::binary);
             if (!copy) {
@@ -345,7 +399,7 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
         // The path is what identifies the row: it is unique by schema
         // constraint, and it is what was just written for this track.
         try {
-            local::Statement point(db, "UPDATE Track SET albumArtId = ? WHERE path = ?;", "Engine library creator");
+            local::Statement point(db, pointStatement.c_str(), "Engine library creator");
             point.bindInt64(1, albumArtId);
             point.bind(2, trackPath);
             point.run();
@@ -356,7 +410,15 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
             continue;
         }
     }
-    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        // The scratch build lives in /tmp, which is tmpfs here, so "the
+        // volume filled" is not hypothetical. Reporting `given` after a
+        // failed commit would claim art that is in no database, with the
+        // image files sitting on the stick regardless.
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        sqlite3_close(db);
+        return -1;
+    }
     sqlite3_close(db);
     return given;
 }

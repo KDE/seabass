@@ -144,6 +144,36 @@ struct ArtworkRepair
     std::string error;
 };
 
+// The extension an Engine artwork file must carry, decided on the bytes
+// rather than on the name the source had.
+//
+// Engine looks for "<hash>.jpg", ".jpeg" or ".png" exactly, so a source
+// called a5_m.JPG written as <hash>.JPG is a file no player finds and no
+// audit can match -- that one left a track counted unreadable AND
+// unrepairable, the notice up and the button disabled. An extension also
+// says nothing about what is in the file. Empty when the bytes are
+// neither JPEG nor PNG, which means: do not name this for a player,
+// because we cannot promise it reads it.
+//
+// Shared with the library creator, which used to keep a second opinion
+// and take the extension from the source's own name.
+//
+// Inline because it is a pure test on a handful of bytes, and because
+// several targets compile the library creator without linking this
+// file's object.
+inline std::string extensionForImage(std::string_view bytes)
+{
+    if (bytes.size() >= 3 && static_cast<unsigned char>(bytes[0]) == 0xFF
+        && static_cast<unsigned char>(bytes[1]) == 0xD8 && static_cast<unsigned char>(bytes[2]) == 0xFF) {
+        return ".jpg";
+    }
+    static constexpr std::string_view PngMagic("\x89PNG\r\n\x1a\n", 8);
+    if (bytes.size() >= PngMagic.size() && bytes.substr(0, PngMagic.size()) == PngMagic) {
+        return ".png";
+    }
+    return {};
+}
+
 // Gives each entry Engine's own storage: copies its image into Artwork/
 // under the hash of its bytes, adds the AlbumArt row, and points the track
 // at it. Entries with no imageOnStick are skipped. One transaction.
