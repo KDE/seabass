@@ -256,7 +256,18 @@ TestCase {
         ctrl.removeAllJunkCues();
         verify(ctrl.statusMessage.length > 0, "staging says what Save will write");
         var s = session();
-        tryCompare(s, "pendingCount", count, 5000);
+        // One row is one CUE; one staged change is one TRACK, and it takes
+        // every stray cue that track carries. So the pending count is the
+        // number of tracks, which is at most the number of cues and on a
+        // real stick is fewer: round 5 found 185 cues on 173 tracks. What
+        // must not drift is the SENTENCE, which talks about cues, and the
+        // list, which must have nothing left to offer.
+        tryVerify(function() { return s.pendingCount > 0 && s.pendingCount <= count; }, 5000,
+                  "one staged change per track, no more than one per cue");
+        verify(ctrl.statusMessage.indexOf(count + " stray cue") >= 0,
+               "the staged line counts cues, not changes: " + ctrl.statusMessage);
+        tryCompare(ctrl, "unstagedJunkCueCount", 0, 5000,
+                   "every row of a staged track reads as staged, so Remove All has nothing left to do");
         shot(page, "live-junk-staged");
         var summary = saveAndWait(false);
         compare(summary.error, "");

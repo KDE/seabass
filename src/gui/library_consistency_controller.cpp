@@ -1014,7 +1014,19 @@ void LibraryConsistencyController::stageJunkCue(int index)
         return;
     }
     m_stagedJunk[key] = changeId;
-    m_junkCueModel.setStaged(index, true);
+    // Every row of that track, not just the one clicked. One row is one
+    // CUE, one change is one TRACK, and the change removes every stray
+    // cue the track carries (cuesWithoutJunk). Marking only the clicked
+    // row left the others reading as unstaged although their cues were
+    // going: the list showed work still to do, unstagedJunkCueCount()
+    // never reached zero, so the button that goes quiet once it has
+    // staged everything it can offer never went quiet, and the staged
+    // count below undercounted the cues by one per extra cue on a track.
+    for (size_t row = 0; row < issues.size(); ++row) {
+        if (junkKeyFor(issues[row].track) == key) {
+            m_junkCueModel.setStaged(static_cast<int>(row), true);
+        }
+    }
     emit issuesChanged();
 }
 
@@ -1035,21 +1047,40 @@ void LibraryConsistencyController::removeAllJunkCues()
     }
     setErrorMessage({});
     setStatusMessage({});
-    int staged = 0;
+    // Two numbers, and the sentence needs the first: cues are what the
+    // user is looking at and what Save reports having written, tracks are
+    // how the work is carried (one change each). A real stick made the
+    // difference visible -- 185 stray cues on 173 tracks -- and the
+    // message said 173 while 185 cues went.
+    int tracksStaged = 0;
+    int cuesStaged = 0;
     const size_t count = m_junkCueModel.issues().size();
     for (size_t i = 0; i < count; ++i) {
-        if (m_stagedJunk.count(junkKeyFor(m_junkCueModel.issues()[i].track))) {
+        const QString key = junkKeyFor(m_junkCueModel.issues()[i].track);
+        if (m_stagedJunk.count(key)) {
             continue;
         }
         stageJunkCue(static_cast<int>(i));
-        staged++;
+        if (!m_stagedJunk.count(key)) {
+            // Staging was refused (no session, or the lock has gone).
+            // Counting it here would report work that is not staged.
+            break;
+        }
+        tracksStaged++;
+        for (size_t row = i; row < count; ++row) {
+            if (junkKeyFor(m_junkCueModel.issues()[row].track) == key) {
+                cuesStaged++;
+            }
+        }
         if (m_session && !m_session->lockHeld()) {
             return;
         }
     }
-    if (staged > 0) {
-        setStagedStatusMessage(
-            QStringLiteral("Staged removing %1 stray cue(s). Press Save to write it to the stick.").arg(staged));
+    if (cuesStaged > 0) {
+        setStagedStatusMessage(QStringLiteral("Staged removing %1 stray cue(s) on %2 track(s). Press Save to write "
+                                              "it to the stick.")
+                                   .arg(cuesStaged)
+                                   .arg(tracksStaged));
     }
 }
 
