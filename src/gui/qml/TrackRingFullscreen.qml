@@ -10,7 +10,8 @@ import SeabassGui
 // The playing track's ring, alone on the whole screen: something to have
 // up while a track plays. Opened by a click on the ring in the track
 // details pane; a click anywhere, or Escape, goes back. It has the
-// player's controls, and the keys to go with them.
+// player's controls, the track's title over them, and the keys to go
+// with them.
 //
 // A window of its own, fullscreen, over the screen the app is on. The
 // app's own window is left exactly as it is -- its size, its place and
@@ -87,6 +88,20 @@ Window {
     // The controls show when the pointer moves and go again when it has
     // been still a while: this is a thing to look at, not to operate.
     property bool controlsShown: false
+    // The title fades with them, on one animation rather than two, so
+    // the two halves of the overlay are never a frame apart. Eased at
+    // both ends and slow enough to read as a fade: this comes and goes
+    // over a picture somebody is watching, and an abrupt one there
+    // pulls the eye away from the ring every time the mouse moves.
+    // Not readonly: the Behavior writes it on its way to the value the
+    // binding asks for.
+    property real controlsOpacity: root.controlsShown ? 1 : 0
+    Behavior on controlsOpacity {
+        NumberAnimation {
+            duration: Theme.fadeTransitionDuration
+            easing.type: Easing.InOutQuad
+        }
+    }
     function showControls() {
         root.controlsShown = true;
         hideControls.restart();
@@ -117,10 +132,11 @@ Window {
             id: ring
             objectName: "fullscreenRing"
             playbackController: root.playbackController
-            // The ring and nothing else: no title, no artist. It is a thing
-            // to look at, the cover in its middle says what is playing, and
-            // words under it made it a player's screen instead. So it has
-            // the whole window, and the controls come and go over its foot.
+            // The ring has the whole window, centred: no strip is kept free
+            // for words, because for most of the time there are none. The
+            // title and the controls come and go together over its foot,
+            // so what is playing can be read whenever the controls are up
+            // and the ring is alone again the moment they go.
             anchors.centerIn: parent
             width: Math.min(parent.width, parent.height) - Theme.pageMargin * 4
             height: width
@@ -136,6 +152,25 @@ Window {
             onClicked: root.close()
         }
 
+        // What is playing, for as long as the controls are up. The cover
+        // in the middle of the ring says it the rest of the time; a DJ
+        // reaching for the controls is asking, and gets the words too.
+        Label {
+            objectName: "fullscreenTitle"
+            z: 1
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: transport.top
+            anchors.bottomMargin: Theme.pageMargin
+            width: parent.width - Theme.pageMargin * 4
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            text: root.playbackController.title || ""
+            color: Theme.text
+            font.pointSize: Theme.fontXLarge
+            opacity: root.controlsOpacity
+            visible: opacity > 0
+        }
+
         // Previous, back, play, forward, next. Over everything else, so a
         // click on a button is not a click on the ring under it.
         Row {
@@ -146,9 +181,8 @@ Window {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Theme.pageMargin * 2
             spacing: Theme.pageMargin / 2
-            opacity: root.controlsShown ? 1 : 0
+            opacity: root.controlsOpacity
             visible: opacity > 0
-            Behavior on opacity { NumberAnimation { duration: Theme.shortTransitionDuration } }
             readonly property bool hovered: previousButton.hovered || backButton.hovered || playButton.hovered
                 || forwardButton.hovered || nextButton.hovered
 

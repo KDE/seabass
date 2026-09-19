@@ -440,4 +440,13 @@ QtObject {
     // nothing left to look at once it has gone, and matching the two
     // makes removal feel like the list is hesitating.
     readonly property int departureTransitionDuration: 240
+
+    // Longer than any of those, for something whose fade is the point
+    // rather than the cost: the fullscreen ring's controls coming out to
+    // meet the pointer and sinking away again when it stops. Nobody is
+    // waiting on the result, so there is nothing to hurry, and over
+    // two thirds of a second the controls read as surfacing rather than
+    // as a screen that switched. Used with an eased curve, so the fade
+    // is not caught starting or stopping either.
+    readonly property int fadeTransitionDuration: 700
 }

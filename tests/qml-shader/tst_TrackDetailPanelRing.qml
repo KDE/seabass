@@ -115,9 +115,10 @@ TestCase {
         var big = findChild(overlay.contentItem, "fullscreenRing");
         verify(big !== null);
         tryVerify(function() { return big.width > ring.width; }, 2000, "the ring there is the larger of the two");
-        // The ring and nothing else: the cover says what is playing.
-        compare(findChild(overlay.contentItem, "fullscreenTitle"), null, "no title under it");
-        compare(findChild(overlay.contentItem, "fullscreenArtist"), null, "and no artist");
+        // The title is there with the controls, and nothing else is:
+        // the cover says what is playing once they have gone.
+        compare(findChild(overlay.contentItem, "fullscreenTitle").text, "Major Tom (Reworked 2024)");
+        compare(findChild(overlay.contentItem, "fullscreenArtist"), null, "no artist under it");
         verify(big.width > Math.min(overlay.width, overlay.height) * 0.9, "so the ring has the window: " + big.width + " of "
                + Math.min(overlay.width, overlay.height));
         fuzzyCompare(big.y + big.height / 2, overlay.height / 2, 1, "in the middle of it");
@@ -207,6 +208,41 @@ TestCase {
         mouseClick(findChild(overlay.contentItem, "fullscreenPlay"));
         compare(testCase.calls, ["next", "skip 4", "skip -4", "togglePlay"]);
         compare(overlay.visible, true, "and the ring is still up");
+        overlay.close();
+    }
+
+    // The title and the controls are one overlay: they come and go
+    // together, on one animation, and it takes its time. An earlier
+    // version faded the controls over Theme.shortTransitionDuration,
+    // which over a picture reads as a switch rather than a fade.
+    function test_theTitleAndTheControlsFadeTogetherAndSlowly() {
+        var overlay = openFullscreen();
+        var title = findChild(overlay.contentItem, "fullscreenTitle");
+        var controls = findChild(overlay.contentItem, "fullscreenTransport");
+        overlay.showControls();
+        tryVerify(function() { return overlay.controlsOpacity === 1; }, 2000, "both are up");
+        compare(title.opacity, controls.opacity, "on one animation, never a frame apart");
+        verify(title.visible && controls.visible);
+
+        // How long the fade takes, measured rather than waited out: a
+        // wait() of part of it only promises to be no shorter than it
+        // asks for, so on a loaded machine it can land past the end and
+        // fail a fade that was fine. The clock here is a lower bound,
+        // which overshooting only makes safer.
+        var startedFading = Date.now();
+        overlay.controlsShown = false;
+        compare(title.opacity, controls.opacity, "and they leave together");
+        tryVerify(function() { return overlay.controlsOpacity === 0; }, Theme.fadeTransitionDuration * 10, "and they go");
+        var fadeTook = Date.now() - startedFading;
+        verify(fadeTook >= Theme.fadeTransitionDuration / 2,
+               "a fade, not a switch: it took " + fadeTook + " ms of " + Theme.fadeTransitionDuration);
+        compare(title.visible, false, "gone, the title takes no clicks");
+        compare(controls.visible, false);
+
+        // The pointer brings them back, together.
+        overlay.showControls();
+        tryVerify(function() { return overlay.controlsOpacity === 1; }, Theme.fadeTransitionDuration * 3);
+        compare(title.opacity, controls.opacity);
         overlay.close();
     }
 
