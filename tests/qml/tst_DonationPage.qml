@@ -101,4 +101,24 @@ TestCase {
             grabImage(page).save(screenshotDir + "/donation-page.png");
         }
     }
+
+    // The portrait is painted into a Canvas rather than masked with a
+    // shader, precisely so it renders offscreen the same way it renders
+    // on a display. What a screenshot cannot tell apart, though, is a
+    // circle cut from a photo and a circle cut from a resource that was
+    // never registered: both are a dark disc. So the loading is asserted
+    // here and the look is left to the shot above.
+    function test_thePortraitIsThereAndRound() {
+        var page = createTemporaryObject(pageComponent, testCase);
+        waitForRendering(page);
+        var portrait = findChild(page, "supportPortrait");
+        verify(portrait !== null, "the page has its portrait");
+        // loadImage() is asynchronous, so an empty first frame is
+        // legitimate; a missing resource looks the same and never
+        // resolves.
+        tryVerify(function() { return portrait.isImageLoaded(portrait.photo); }, 3000,
+                  "the portrait resource loaded from " + portrait.photo);
+        verify(portrait.width > 0, "the portrait has a size");
+        compare(portrait.width, portrait.height, "square, so the circle is not an ellipse");
+    }
 }

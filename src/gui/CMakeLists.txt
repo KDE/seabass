@@ -316,6 +316,7 @@ qt_add_qml_module(seabass
         ${SEABASS_GUI_QML_FILES}
     RESOURCES
         qml/icons/seabass_soundbass.svg
+        qml/images/sebas.png
         ${SEABASS_GUI_ICONS}
         ${SEABASS_GUI_FONTS}
     SOURCES

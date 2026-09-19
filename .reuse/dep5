@@ -53,6 +53,15 @@ Files: src/gui/qml/icons/seabass_soundbass.svg
 Copyright: 2026 Sebastian Kügler <sebas@kde.org>
 License: CC-BY-SA-4.0
 
+# --- Portrait -------------------------------------------------------------
+# The photo on the Support page: Sebastian, of Sebastian, used with his
+# say-so. Carries no EXIF and no location data (checked: the only ancillary
+# text chunk is GIMP's own "Created with GIMP" comment), unlike
+# prime4display.jpg below.
+Files: src/gui/qml/images/sebas.png
+Copyright: 2026 Sebastian Kügler <sebas@kde.org>
+License: CC-BY-SA-4.0
+
 # --- Configuration with no comment syntax we can rely on -----------------
 Files: .gitignore
  .gitlab-ci.yml

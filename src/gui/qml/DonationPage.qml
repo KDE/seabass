@@ -77,6 +77,54 @@ Page {
                 }
             }
 
+            // Sebastian, round. The source is a square PNG, and the
+            // circle is cut here rather than in the file so the same
+            // image can be used square elsewhere.
+            //
+            // A Canvas rather than a MultiEffect/OpacityMask: those are
+            // shader-based, and this project verifies its UI by
+            // rendering pages offscreen, where a shader does not run --
+            // a masked portrait would be correct in the source and
+            // absent from every screenshot proving it. Canvas paints
+            // into an image in software, so what a screenshot shows is
+            // what a display shows.
+            Canvas {
+                id: portrait
+                objectName: "supportPortrait"
+                readonly property url photo: "qrc:/qt/qml/SeabassGui/qml/images/sebas.png"
+                // Scaled with the system font like every other size on
+                // these pages, so it stays in proportion to the text
+                // beside it rather than shrinking as the type grows.
+                readonly property int side: Math.round(120 * Theme.iconScale)
+                Layout.preferredWidth: side
+                Layout.preferredHeight: side
+                Layout.alignment: Qt.AlignHCenter
+                antialiasing: true
+
+                Component.onCompleted: loadImage(photo)
+                onImageLoaded: requestPaint()
+                // The canvas is repainted when it is resized too: a font
+                // size change moves `side`, and without this the old
+                // painting would simply be stretched.
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d");
+                    ctx.reset();
+                    if (!isImageLoaded(photo)) {
+                        return;
+                    }
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(width / 2, height / 2, Math.min(width, height) / 2, 0, Math.PI * 2);
+                    ctx.closePath();
+                    ctx.clip();
+                    ctx.drawImage(photo, 0, 0, width, height);
+                    ctx.restore();
+                }
+            }
+
             Label {
                 objectName: "supportTitle"
                 text: "Supporting Seabass"
