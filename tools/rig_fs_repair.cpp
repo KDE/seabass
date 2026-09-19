@@ -144,7 +144,27 @@ bool makeImage(const fs::path &image)
     // edited byte for byte afterwards.
     const auto made = runCommand({"hdiutil", "create", "-size", "64m", "-fs", "MS-DOS", "-volname", "RIGFS",
                                   "-layout", "NONE", "-type", "UDIF", "-ov", image.string()});
-    return made.exitCode == 0;
+    if (made.exitCode != 0) {
+        return false;
+    }
+    // hdiutil appends .dmg to whatever it is given, so asking for
+    // "rigfs.img" produces "rigfs.img.dmg". Everything after this --
+    // damaging the bytes, attaching, repairing -- uses the path that was
+    // asked for, so put the file there.
+    //
+    // This is why H1 had never passed on macOS: creation reported success
+    // and the attach that followed said "No such file or directory" about
+    // a file one suffix away.
+    std::error_code ec;
+    const fs::path withSuffix = image.string() + ".dmg";
+    if (!fs::exists(image, ec) && fs::exists(withSuffix, ec)) {
+        fs::rename(withSuffix, image, ec);
+        if (ec) {
+            std::cout << "could not rename " << withSuffix << " to " << image << ": " << ec.message() << "\n";
+            return false;
+        }
+    }
+    return fs::exists(image, ec);
 }
 
 Attached attach(const fs::path &image, bool readOnly)
