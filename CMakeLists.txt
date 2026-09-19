@@ -951,6 +951,13 @@ add_executable(no_manual_file_urls_test tests/no_manual_file_urls_test.cpp)
 target_compile_definitions(no_manual_file_urls_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_manual_file_urls_test COMMAND no_manual_file_urls_test)
 
+# Runs the real .githooks scripts, so it needs a POSIX shell and a git.
+# Both are a given on the platforms that build this; on Windows they come
+# with Git for Windows, which is already required to clone the submodules.
+add_executable(no_claude_trailers_test tests/no_claude_trailers_test.cpp)
+target_compile_definitions(no_claude_trailers_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME no_claude_trailers_test COMMAND no_claude_trailers_test)
+
 add_executable(real_file_sizes_test tests/real_file_sizes_test.cpp)
 target_include_directories(real_file_sizes_test PRIVATE src)
 target_link_libraries(real_file_sizes_test PRIVATE seabass_core)

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+# Two house rules, applied to every commit message as it is written:
+#
+#   1. No Co-Authored-By: Claude or Claude-Session trailers. KDE
+#      repositories do not carry them.
+#   2. No em-dashes. tests/no_em_dashes_test.cpp already forbids them in
+#      anything shown on screen; commit messages are read by more people
+#      than most of the UI is, so they follow the same rule. Replaced
+#      with " -- ", which is what the existing messages use.
+#
+# This rewrites rather than refuses, because the tool that introduces
+# both is the same tool that would have to react to a refusal -- and on
+# 2026-09-18 that went wrong in exactly the way a refusal cannot fix:
+# 19 trailered commits reached master, and Invent's branch protection
+# made the history unrewritable. They are permanent now. Quietly
+# correcting the message is cheaper than that.
+#
+# Anything else that looks like a trailer is left alone. The match names
+# Claude explicitly and is anchored, so a human Co-Authored-By survives.
+
+set -euo pipefail
+
+message_file="$1"
+
+# U+2014 EM DASH, spelled in escapes so this file does not contain one
+# itself -- and so it survives an editor or locale that would mangle a
+# literal.
+em_dash=$'\xe2\x80\x94'
+
+stripped="$(
+    LC_ALL=C awk -v dash="$em_dash" '
+        /^Co-Authored-By: Claude/ { next }
+        /^Claude-Session: /       { next }
+        {
+            # Byte-oriented under LC_ALL=C; the three bytes hold no
+            # regex metacharacters, so a plain gsub is safe.
+            gsub(dash, "--")
+            print
+        }
+    ' "$message_file" | LC_ALL=C awk '
+        # Hold blank lines back and emit them only if real content
+        # follows, so removing a trailing trailer block does not leave
+        # the message ending in blank lines.
+        /^[[:space:]]*$/ { blanks = blanks "\n"; next }
+        { printf "%s", blanks; blanks = ""; print }
+    '
+)"
+
+if [ "$stripped" != "$(cat "$message_file")" ]; then
+    printf '%s\n' "$stripped" > "$message_file"
+    echo "seabass: corrected the commit message (no Claude trailers, no em-dashes)" >&2
+fi

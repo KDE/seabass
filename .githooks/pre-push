@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+# The last line of defence against a Claude trailer reaching a KDE
+# remote, and the one that actually matters.
+#
+# commit-msg next to this file strips them as commits are written, but
+# it is skipped by --no-verify, it never runs on a commit that arrived
+# by cherry-pick, rebase or fetch from another machine, and it does not
+# exist in a checkout where core.hooksPath was never set. A push is the
+# point of no return: Invent's master is protected and force-push is
+# off, so a trailer that lands there cannot be removed afterwards. That
+# is not hypothetical -- it happened on 2026-09-18 and those 19 commits
+# are now permanent.
+#
+# Only commits that are not yet on the remote are checked. The ones
+# already on master are history and would otherwise make every push
+# fail forever.
+
+set -euo pipefail
+
+remote_name="$1"
+
+zero="$(git hash-object --stdin </dev/null | tr '0-9a-f' '0')"
+offenders=""
+
+# U+2014 EM DASH, in escapes so this file contains none itself.
+em_dash=$'\xe2\x80\x94'
+
+# Both house rules, as a single anchored check per commit message. See
+# .githooks/commit-msg for why they exist.
+has_violation()
+{
+    local message
+    message="$(git log -1 --format='%B' "$1")"
+    printf '%s' "$message" | grep -qE '^(Co-Authored-By: Claude|Claude-Session: )' && return 0
+    case "$message" in
+        *"$em_dash"*) return 0 ;;
+    esac
+    return 1
+}
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    # Branch deletion: nothing is being added.
+    [ "$local_sha" = "$zero" ] && continue
+
+    if [ "$remote_sha" = "$zero" ]; then
+        # New branch on the remote: everything not already published
+        # anywhere on it. Without the exclusion this would walk the
+        # whole history and trip over the commits from before the rule.
+        #
+        # Order matters and is easy to get backwards: --not negates
+        # every ref after it, so the tip has to come first. Written as
+        # `--not --remotes=X $tip` it would negate the tip as well and
+        # quietly check nothing at all.
+        range=("$local_sha" --not --remotes="$remote_name")
+    else
+        range=("$remote_sha..$local_sha")
+    fi
+
+    while read -r sha; do
+        [ -z "$sha" ] && continue
+        if has_violation "$sha"; then
+            offenders="$offenders  $(git log -1 --format='%h %s' "$sha")"$'\n'
+        fi
+    done < <(git rev-list "${range[@]}")
+done
+
+if [ -n "$offenders" ]; then
+    cat >&2 <<EOF
+seabass: refusing to push -- these commit messages carry a Claude
+trailer or an em-dash, neither of which belongs in this history:
+
+$offenders
+Rewrite them before pushing, for instance:
+
+  git filter-branch -f --msg-filter \\
+      "awk '/^Co-Authored-By: Claude/ {next} /^Claude-Session: / {next} {print}'" \\
+      <upstream>..HEAD
+
+This refusal is deliberate and worth respecting rather than bypassing
+with --no-verify: once such a commit is on Invent's protected master it
+cannot be rewritten out again.
+EOF
+    exit 1
+fi
