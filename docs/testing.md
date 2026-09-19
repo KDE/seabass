@@ -183,8 +183,11 @@ pull. A `rig_*` binary older than the archive format it reads does not say
 it is stale: it says the data is wrong. A Windows round in September 2026
 lost real time to `rig_restore` rejecting a valid, freshly written archive
 with "manifest header is not a seabass stick manifest", and a standalone
-zip probe was written to chase a reader bug that did not exist. Rebuild
-before you doubt the data. `rig_fake_dj` matters most, because it is the
+zip probe was written to chase a reader bug that did not exist. The same
+round then lost R1-R3 on both sticks to a `rig_read` of the same vintage,
+which reported "the backup recorded no fingerprint" about a backup that
+records one: two tools, two different misleading messages, one stale
+build. Rebuild before you doubt the data. `rig_fake_dj` matters most, because it is the
 one whose absence is silent: without it, FB7 and the guard scenario have
 nothing to detect.
 
