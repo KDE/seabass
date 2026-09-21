@@ -474,14 +474,34 @@ live_test() {  # <stick> <full test name>...
     # dynamic scoping, and the summary then lists a bundle under its last
     # sub-test ("LivePages::test_03" for R2-R5) -- round 4 read that way.
     local name
+    # The stick keeps its own log of what every save did, and until now
+    # the rounds threw it away: the round output said PASS or FAIL with
+    # no reasoning attached, and the one file that could have said WHY
+    # sat on the stick until the next check overwrote the catalogs.
+    # macOS round 7 is the case in point -- F4 was green there for weeks
+    # because the save was refused before it ever took a backup, and
+    # nobody could tell from the round which of the two refusals it was.
+    # Collected per test, from the line the test started at, so each
+    # check's log carries only its own.
+    local stick_log="$stick/Seabass/seabass.log"
     for name in "$@"; do
         echo "=== $name"
         local log="$out/live-${name//:/_}.txt"
+        local before=0
+        [ -f "$stick_log" ] && before=$(wc -l < "$stick_log")
         "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$name" 2>&1 | tee "$log"
         [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
         if grep -q "^SKIP" "$log"; then
             echo "   SKIPPED, which counts as a failure here"
             failed=1
+        fi
+        if [ -f "$stick_log" ] && [ "$(wc -l < "$stick_log")" -gt "$before" ]; then
+            echo "--- $stick_log, what this test added:"
+            tail -n +$((before + 1)) "$stick_log" | sed 's/^/    /'
+        elif [ ! -f "$stick_log" ]; then
+            # Not a failure on its own: a read-only check writes nothing.
+            # Said out loud so "no log" is never mistaken for "no lines".
+            echo "--- no $stick_log (this test wrote nothing to the stick)"
         fi
     done
     return $failed
@@ -656,6 +676,33 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # directories; the save's .write.lock beside them is a file and stays.
     local records_before; records_before=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     SEABASS_RIG_FULL_STICK=1 live_test "$A" "$test" || rc=1
+    # WHICH refusal this was, because only one of the two can see the bug
+    # this check is named after.
+    #
+    #  (a) the backup itself did not fit. runSaveLoop returns the moment
+    #      backupAllNow() throws and never reaches
+    #      discardBackupsTakenThisSave(); the store clears up its own
+    #      half-written record, so nothing is left and the count below
+    #      passes -- having tested nothing about the discard.
+    #  (b) the backup fitted and the change then failed to write. This is
+    #      the only path that calls discardBackupsTakenThisSave(), and the
+    #      only one in which a leftover record means what the check says.
+    #
+    # Which one a machine lands on is decided by free space, not by
+    # platform: the fill is the same on all three, but how much of it a
+    # backup needs depends on cluster size and the catalog. macOS took
+    # (a) for round after round and reported a green F4 the whole time,
+    # which reads as "the discard path works" and meant no such thing.
+    local refusal; refusal=$(cat "$out"/live-*FullStick*.txt 2>/dev/null)
+    if printf '%s' "$refusal" | grep -q "could not back up before saving"; then
+        echo "NOTE: the save was refused because the BACKUP did not fit, so it returned before"
+        echo "      discardBackupsTakenThisSave() could run. The record count below is still"
+        echo "      worth having, but this pass says nothing about the discard path -- leave a"
+        echo "      little more room (fill_and_run's margin) for a round that exercises it."
+    elif printf '%s' "$refusal" | grep -qE "failed to durably write|[Nn]o space left"; then
+        echo "NOTE: the backup fitted and the change then failed, so the discard path DID run:"
+        echo "      the record count below is a real test of it."
+    fi
     # Counted twice, with a sync between: the first count runs the moment
     # the test process exits and has caught a record that was gone a
     # second later, three rounds running. A directory entry a save has
@@ -721,6 +768,37 @@ full_stick() {
 # so it is refused for space up front, saying so -- a refusal that
 # blamed the backup is what #27 was. Records may appear: the save's own,
 # and the undo's pre-restore copy if it ever gets that far.
+# F4, the margin in between, and the only one of the three that can see
+# a backup record left behind.
+#
+# A save on a full stick is refused in one of two places, and they are
+# not interchangeable:
+#
+#   256 KB  the BACKUP does not fit. runSaveLoop returns the moment
+#           backupAllNow() throws, before discardBackupsTakenThisSave()
+#           can run at all; the store clears up its own half-written
+#           record, nothing is left, and the check passes having tested
+#           nothing about the discard.
+#   1600 KB everything fits. The save succeeds; this is the undo's pass.
+#
+# Between them is a window where the backup fits (about 460 KB on these
+# sticks) and the writes that follow it do not -- the only refusal that
+# reaches the discard path, and so the only one that can catch the
+# record this check is named after. Both machines that ran F4 landed on
+# 256 KB for round after round and reported green: macOS for weeks, and
+# Linux on the very round that was meant to prove the fix for
+# seabass#F4. Neither was wrong about what it measured; the check simply
+# could not fail.
+#
+# 768 KB is measured, not guessed: the backup is ~460 KB and a cue needs
+# an ANLZ pair and the database beside it. If the save turns out to fit
+# here too the test says so itself ("the save FITTED"), which is a
+# failure -- so a stick whose catalog has grown cannot make this pass
+# quietly, it makes it fail and asks for a new number.
+full_stick_after_its_backup() {
+    fill_and_run 768 LiveFullStick::test_saveOnAFullStickFailsCleanly 0 0
+}
+
 full_stick_undo() {
     # Keep the filler when C6 is going to run: it is the check's only
     # chance at a target too small for the source, and refilling 28 GiB
@@ -992,6 +1070,7 @@ check FB9-manage-backups-delete "$build/rig_delete_backup" "$out/backups-fb" "$o
 check W8-B-at-reference-first "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B could not be put back before W8; stopping"; exit 1; }
 check W8-delete-orphans delete_orphans
 check F4-stick-fills-up full_stick
+check F4-save-fails-after-its-backup full_stick_after_its_backup
 check F4-undo-on-a-nearly-full-stick full_stick_undo
 # C6 wants a target that B's library does not fit on, and it has to be
 # built rather than hoped for: with a 1.2 GiB fixture and a 29 GiB stick
