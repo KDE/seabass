@@ -15,6 +15,9 @@
 // It never writes to the stick: the catalogs are read as they are, without the
 // duration fill the app runs (that fill caches its results on the stick).
 //
+// With RIG_PARTS set it also writes a result line per test (see
+// tools/rig_parts.hpp): R1-browse for the counts, R3-scans for the scans.
+//
 // The last line is "RIG RESULT: PASS" or "RIG RESULT: FAIL" with a matching
 // exit code: PASS when every scan finished, and, with an archive given, the
 // fingerprint counts match the backup's.
@@ -40,6 +43,8 @@
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+
+#include "rig_parts.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 namespace fs = std::filesystem;
@@ -151,7 +156,30 @@ int main(int argc, char **argv)
         return 2;
     }
     const fs::path root = argv[1];
-    bool pass = true;
+    // One verdict per test rather than one for the lot: the board records
+    // a row for each, and a scan that throws must not take the counts it
+    // knows nothing about down with it.
+    bool browseOk = false;
+    bool scansOk = false;
+    bool reported = false;
+    const auto report = [&] {
+        if (reported) {
+            return;
+        }
+        reported = true;
+        rigPart("R1-browse", browseOk);
+        rigPart("R3-scans", scansOk);
+    };
+    // Runs one phase, and answers for that phase alone.
+    const auto phase = [](const char *what, const auto &body) {
+        try {
+            body();
+            return true;
+        } catch (const std::exception &e) {
+            std::cout << "  " << what << " could not finish: " << e.what() << "\n";
+            return false;
+        }
+    };
     try {
         std::vector<Catalog> catalogs;
         const fs::path pioneer = root / "PIONEER";
@@ -177,21 +205,26 @@ int main(int argc, char **argv)
         }
         if (catalogs.empty()) {
             std::cout << "no catalog on the stick\nRIG RESULT: FAIL\n";
+            report();
             return 1;
         }
 
         std::cout << "browse (R1):\n";
-        for (const Catalog &catalog : catalogs) {
-            describe(catalog);
-        }
+        browseOk = phase("browse", [&] {
+            for (const Catalog &catalog : catalogs) {
+                describe(catalog);
+            }
+        });
 
         std::cout << "library health and stray cues (R3):\n";
-        for (const Catalog &catalog : catalogs) {
-            health(catalog);
-        }
+        scansOk = phase("library health", [&] {
+            for (const Catalog &catalog : catalogs) {
+                health(catalog);
+            }
+        });
 
         std::cout << "duplicates across rekordbox and Engine (R3):\n";
-        {
+        scansOk = phase("duplicates", [&] {
             std::vector<domain::Track> both;
             for (const Catalog &catalog : catalogs) {
                 if (catalog.name != "onelibrary") {
@@ -202,7 +235,7 @@ int main(int argc, char **argv)
             const std::vector<domain::DuplicateGroup> groups = domain::DuplicateTrackFinder::find(both);
             std::cout << "  " << groups.size() << " duplicate groups over " << both.size() << " tracks ("
                       << secondsSince(start) << " s)\n";
-        }
+        }) && scansOk;
 
         if (argc == 3) {
             const application::StickBackupDescription description = application::RestoreStickBackup::describe(argv[2]);
@@ -217,7 +250,7 @@ int main(int argc, char **argv)
             std::cout << "fingerprint against " << fs::path(argv[2]).filename().string() << ":\n";
             if (!expected) {
                 std::cout << "  the backup recorded no fingerprint\n";
-                pass = false;
+                browseOk = false;
             } else {
                 const bool same = expected->trackCount == live.trackCount && expected->cuedTrackCount == live.cuedTrackCount
                     && expected->playlistCount == live.playlistCount;
@@ -225,13 +258,16 @@ int main(int argc, char **argv)
                           << expected->playlistCount << " playlists\n"
                           << "  stick:  " << live.trackCount << " tracks, " << live.cuedTrackCount << " cued, "
                           << live.playlistCount << " playlists -> " << (same ? "same" : "DIFFERENT") << "\n";
-                pass = pass && same;
+                browseOk = browseOk && same;
             }
         }
     } catch (const std::exception &e) {
         std::cout << "error: " << e.what() << "\nRIG RESULT: FAIL\n";
+        report();
         return 1;
     }
+    report();
+    const bool pass = browseOk && scansOk;
     std::cout << "RIG RESULT: " << (pass ? "PASS" : "FAIL") << "\n";
     return pass ? 0 : 1;
 }

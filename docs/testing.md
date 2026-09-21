@@ -197,6 +197,18 @@ run (`RIG_REFERENCE_PRINTS`) and compared after it. Each check writes
 `<out>/<check>.log` and a `PASS`/`FAIL` line to `<out>/summary.tsv`; a run of
 several hours that reports PASS in minutes is suspect, so read the logs.
 
+Some checks run several tests. Those write one `PASS`/`FAIL` line per test
+into `$RIG_PARTS` (`tools/rig-parts.sh` for shell, `tools/rig_parts.hpp` for
+the rig's C++ programs, `RIG_PART_SUFFIX` to tell two runs of one program
+apart) and `check()` puts those lines in the summary instead of its own
+single verdict. `RIG_BUNDLES` at the top of `rig-shakedown.sh` lists them.
+A test's name is its row on the shakedown board, so the board can say which
+of the ten live edit-mode tests failed rather than reddening all ten -- and
+every id those scripts write has to exist on the board, or the recorder
+refuses it. Declare the ids up front with `rig_parts_declare`: a bundle
+that dies halfway then still accounts for the tests below the fault, as
+failures, instead of leaving the board to keep last round's green for them.
+
 The sandbox profile (`SEABASS_HOME`, `XDG_*`) covers Linux fully. It does
 not cover the app's settings on macOS or Windows, where Qt ignores
 `XDG_CONFIG_HOME`: macOS writes a property list and Windows the registry

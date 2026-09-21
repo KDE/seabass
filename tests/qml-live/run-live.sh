@@ -27,6 +27,7 @@ shots="${3:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 . "$root/tools/rig-platform.sh"
+. "$root/tools/rig-parts.sh"
 # Builds usually live outside the repository: SEABASS_BUILD_DIR says where.
 build="${SEABASS_BUILD_DIR:-$root/build}"
 bin="$build/seabass_qml_tests"
@@ -45,6 +46,32 @@ export QT_QPA_PLATFORM=offscreen
 export QT_FORCE_STDERR_LOGGING=1
 failed=0
 
+# One board row per test. Declared up front, so a bundle that dies in the
+# middle still accounts for the tests below the fault -- as failures,
+# because they proved nothing. SKIP_PLAIN leaves the plain flows out, and
+# a test that was not asked for is not declared.
+rig_parts_declare live-lock-read-only live-lock-refuses-stage live-dj-guard live-stick-pulled
+[ -n "${SKIP_PLAIN:-}" ] || rig_parts_declare live-library-health-leave live-scan-cancel \
+    live-settings-save-undo live-sync-save-cancel live-junk-cues-save-undo live-pending-deletions-cancel
+trap rig_parts_finish EXIT
+
+# The board id for each test function, so the name lives in one place.
+part_for() {
+    case "$1" in
+        *test_01_scanCancel) echo live-scan-cancel ;;
+        *test_02_settingsStageSaveUndo) echo live-settings-save-undo ;;
+        *test_03_syncStageSaveCancel) echo live-sync-save-cancel ;;
+        *test_04_junkCuesStageSaveUndo) echo live-junk-cues-save-undo ;;
+        *test_05_libraryHealthLeaveDiscards) echo live-library-health-leave ;;
+        *test_07_pendingDeletionsCancel) echo live-pending-deletions-cancel ;;
+        LiveLock::test_01*) echo live-lock-read-only ;;
+        LiveLock::test_02*) echo live-lock-refuses-stage ;;
+        LiveGuard::*) echo live-dj-guard ;;
+        LiveStickPull::*) echo live-stick-pulled ;;
+        *) echo "" ;;
+    esac
+}
+
 # Always a full "TestCase::function" name: a bare TestCase name makes
 # the QtQuickTest runner exit 1 without a word.
 # A skipped test is a failure here: this is the last gate before people
@@ -61,14 +88,18 @@ run() {  # name, extra env assignments...
     # The test binary's own status, not the filter's: a pipeline ends with
     # sed, which succeeds whatever the tests did, so a run full of FAILs
     # used to exit 0 and a caller counted it as passed.
-    [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
+    local bad=0
+    [ "${PIPESTATUS[0]}" -eq 0 ] || bad=1
     # And a skip: QtTest exits 0 for it, but a test that did not run has
     # proved nothing.
     if grep -q "^SKIP" "$log" 2>/dev/null; then
         echo "   SKIPPED, which counts as a failure here"
-        failed=1
+        bad=1
     fi
     rm -f "$log"
+    local part; part="$(part_for "$name")"
+    [ -z "$part" ] || rig_part_rc "$part" "$bad"
+    [ "$bad" -eq 0 ] || failed=1
 }
 
 # test_05 needs a damaged library, which a healthy stick does not have and
@@ -81,6 +112,7 @@ if [ -z "${SKIP_PLAIN:-}" ]; then
         run "LiveEditMode::test_05_libraryHealthLeaveDiscards" SEABASS_RIG_REQUIRE_REPAIRABLE=1
     else
         echo "   could not plant a repairable issue, so test_05 proves nothing"
+        rig_part live-library-health-leave FAIL
         failed=1
     fi
     # Back even if the test failed: the next check compares this stick
@@ -116,6 +148,8 @@ else
     # The harness's own skips count too: a scenario that did not run has
     # proved nothing, whoever decided to leave it out.
     echo "=== LiveLock skipped: could not read the stick's filesystem UUID"
+    rig_part live-lock-read-only FAIL
+    rig_part live-lock-refuses-stage FAIL
     failed=1
 fi
 
@@ -148,6 +182,10 @@ wait
 # neither runs it nor claims it passed.
 if rig_is_windows; then
     echo "=== LiveStickPull is a by-hand check on Windows: no unprivileged unmount, see docs/manual-testing.md"
+    # Recorded as failed, not quietly left out: the board's own rule is
+    # that a check nobody ran has not passed. It is blocked rather than
+    # broken, and the board says so when a person marks it that way.
+    rig_part live-stick-pulled FAIL
 elif [ -n "$device" ]; then
     ( sleep 12; unmount_device "$device" && echo "--- unmounted $device"
       sleep 15; mount_device "$device" && echo "--- mounted $device again" ) &
@@ -156,6 +194,7 @@ elif [ -n "$device" ]; then
     mount_device "$device" || true
 else
     echo "=== LiveStickPull skipped: no device given"
+    rig_part live-stick-pulled FAIL
     failed=1
 fi
 

@@ -48,15 +48,54 @@ a="$(basename "$A")"
 b="$(basename "$B")"
 failed=0
 
+. "$(cd "$(dirname "$0")" && pwd)/rig-parts.sh"
+
+# One board row per scenario rather than one for C1 to C5 together: a
+# round where only C4 fell over used to read as five scenarios red, and
+# the note had to carry what the board could not say.
+rig_parts_declare C5-cancelled-create C1-create C2-update-target C3-update-source C4-diverged clone-restored
+declare -A clone_bad=()
+trap rig_parts_finish EXIT
+
+# Which scenario a step belongs to, from its own name. The steps that set
+# a change up belong to the scenario that needs the change: a cue that
+# cannot be written is that scenario failing, not a separate one.
+part_of() {
+    case "$1" in
+        C1:*|C1a:*) echo C1-create ;;
+        C5:*) echo C5-cancelled-create ;;
+        C2:*) echo C2-update-target ;;
+        C3:*) echo C3-update-source ;;
+        C4:*) echo C4-diverged ;;
+        restore*) echo clone-restored ;;
+        *) echo "" ;;
+    esac
+}
+
 step() {  # name, command...
     local name="$1"; shift
     echo "=== $name"
+    local part; part="$(part_of "$name")"
     if "$@"; then
         echo "--- $name: pass"
+        # Seen, so it is not left to rig_parts_finish to call it unrun.
+        [ -z "$part" ] || clone_bad["$part"]="${clone_bad[$part]:-0}"
     else
         echo "--- $name: FAIL"
+        [ -z "$part" ] || clone_bad["$part"]=1
         failed=1
     fi
+}
+
+clone_report() {
+    local part
+    for part in C5-cancelled-create C1-create C2-update-target C3-update-source C4-diverged clone-restored; do
+        # A scenario none of whose steps ran stays unreported here, and
+        # rig_parts_finish calls it what it is: failed, having proved
+        # nothing.
+        [ -n "${clone_bad[$part]+set}" ] || continue
+        rig_part_rc "$part" "${clone_bad[$part]}"
+    done
 }
 
 keep_cue() {  # stick, position ms
@@ -120,5 +159,6 @@ rm -rf "$B/RIG-ASIDE" "$B/RIG-STRAY.txt"
 step "restore $a" "$build/rig_restore" "$referenceA" "$A" --execute
 step "restore $b" "$build/rig_restore" "$referenceB" "$B" --execute
 
+clone_report
 echo "RIG RESULT: $([ $failed = 0 ] && echo PASS || echo FAIL)"
 exit $failed

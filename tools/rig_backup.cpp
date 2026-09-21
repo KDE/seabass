@@ -59,6 +59,8 @@
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "rig_catalog.hpp"
 
+#include "rig_parts.hpp"
+
 namespace fs = std::filesystem;
 using namespace seabass;
 using application::BackupOutcomeStatus;
@@ -326,6 +328,11 @@ int main(int argc, char **argv)
             std::cout << "run counts " << (counts ? "as expected" : "NOT as expected") << "\n";
             pass = pass && counts;
         }
+        // Two tests, not one: the stick was backed up, and the archive
+        // that came out is sound. The board carries a row for each, so a
+        // backup that runs and produces a hollow archive says so.
+        const bool backedUp = pass;
+        rigPart("FB1-backup", backedUp);
 
         std::cout << timestamp() << " verifying the archive\n" << std::flush;
         const application::VerifyOutcome verified = application::BackupStick::verify(archive);
@@ -375,6 +382,9 @@ int main(int argc, char **argv)
         const bool catalogsMatch = checked > 0 && mismatches == 0;
         std::cout << "catalogs: " << checked << " checked, " << mismatches << " differ\n";
         pass = pass && catalogsMatch;
+        // Everything since the backup itself: verified, solid on disk,
+        // nothing left to back up, catalogs matching the manifest.
+        rigPart("FB2-archive-sound", pass);
     } catch (const std::exception &e) {
         std::cout << "error: " << e.what() << "\nRIG RESULT: FAIL\n";
         return 1;

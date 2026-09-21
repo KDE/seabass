@@ -35,6 +35,7 @@ out="${1:?output directory}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 . "$here/rig-platform.sh"
+. "$here/rig-parts.sh"
 build="${SEABASS_BUILD_DIR:-$root/build}"
 if [ "$rig_os" = "Darwin" ]; then
     A="${RIG_STICK_A:-/Volumes/VSTICKA}"
@@ -121,25 +122,48 @@ if [ -n "${RIG_ONLY:-}" ] && [ -z "$(rig_only_names | tr -d ' ')" ]; then
 fi
 ran=""
 
+# The checks that run more than one test. Each writes a result per test
+# into $RIG_PARTS (tools/rig-parts.sh, tools/rig_parts.hpp) and those
+# lines go into the summary in place of its own single verdict, so the
+# board can say which test failed instead of reddening all of them.
+RIG_BUNDLES="R1-R3-read-A R1-R3-read-B R2-R5-pages W1-W3-W4-F1-F2-F3-live W2-W5-W6-edits FB1-FB2-backup-A C1-C5-backup-usb-stick"
+
 check() {
     local name="$1"; shift
     rig_wants "$name" || return 0
     ran="$ran $name"
     echo "$(date +%T) === $name"
-    if "$@" > "$out/$name.log" 2>&1; then
-        if grep -qE "^SKIP|^ *SKIPPED" "$out/$name.log"; then
-            printf '%s\tFAIL\n' "$name" >> "$summary"
-            echo "$(date +%T) --- $name: FAIL (it skipped; see $out/$name.log)"
-            grep -E "^SKIP|^ *SKIPPED" "$out/$name.log" | head -5
-            return 1
-        fi
-        printf '%s\tPASS\n' "$name" >> "$summary"
+    local parts=""
+    case " $RIG_BUNDLES " in
+        *" $name "*) parts="$out/$name.parts"; rm -f "$parts"; export RIG_PARTS="$parts" ;;
+    esac
+    local rc=0
+    "$@" > "$out/$name.log" 2>&1 || rc=1
+    unset RIG_PARTS
+    if [ $rc -eq 0 ] && grep -qE "^SKIP|^ *SKIPPED" "$out/$name.log"; then
+        echo "$(date +%T) --- $name: FAIL (it skipped; see $out/$name.log)"
+        grep -E "^SKIP|^ *SKIPPED" "$out/$name.log" | head -5
+        rc=1
+    elif [ $rc -eq 0 ]; then
         echo "$(date +%T) --- $name: PASS"
-        return 0
+    else
+        echo "$(date +%T) --- $name: FAIL (see $out/$name.log)"
     fi
-    printf '%s\tFAIL\n' "$name" >> "$summary"
-    echo "$(date +%T) --- $name: FAIL (see $out/$name.log)"
-    return 1
+    if [ -z "$parts" ]; then
+        printf '%s\t%s\n' "$name" "$([ $rc -eq 0 ] && echo PASS || echo FAIL)" >> "$summary"
+    elif [ -s "$parts" ]; then
+        cat "$parts" >> "$summary"
+        echo "           $(grep -c . "$parts") test results recorded"
+    else
+        # A bundle that reported nothing has told the board nothing, and
+        # the board would then keep whatever it said last time about
+        # every test in it. Loud and red, under its own name, which the
+        # recorder does not know and will say so about.
+        echo "$(date +%T) --- $name: wrote no test results at all"
+        printf '%s\tFAIL\n' "$name" >> "$summary"
+        rc=1
+    fi
+    return $rc
 }
 
 catalogs() {  # stick -> sha256sum lines of its catalog files
@@ -325,6 +349,16 @@ delete_orphans() {
 # One test function per process, by its FULL name: a bare TestCase name
 # makes the QtQuickTest runner exit 0 without running a thing, which is a
 # check that silently passes -- the worst kind this rig can have.
+# live_test for exactly one test, with its board row. Used where a check
+# runs several and each is answerable for itself.
+live_one_test() {  # <board id> <stick> <full test name>
+    local part="$1"; shift
+    local rc=0
+    live_test "$@" || rc=1
+    rig_part_rc "$part" "$rc"
+    return $rc
+}
+
 live_test() {  # <stick> <full test name>...
     local failed=0
     local stick="$1"; shift
@@ -355,10 +389,16 @@ live_test() {  # <stick> <full test name>...
 
 # R2 and R5: read-only pages. R5 is pointed at the folder of links.
 live_pages() {
-    SEABASS_RIG_REFERENCE_DIR="$(dirname "$refA")" \
-        live_test "$B" LivePages::test_01_statisticsLoads LivePages::test_02_performanceLoads \
-                  LivePages::test_03_manageBackupsListsTheReferences \
-        && unchanged_catalogs "$B"
+    export SEABASS_RIG_REFERENCE_DIR="$(dirname "$refA")"
+    local rc=0
+    live_one_test R2-statistics "$B" LivePages::test_01_statisticsLoads || rc=1
+    live_one_test R2-performance "$B" LivePages::test_02_performanceLoads || rc=1
+    live_one_test R5-manage-backups "$B" LivePages::test_03_manageBackupsListsTheReferences || rc=1
+    # Always, not only when the three passed: three read-only pages that
+    # leave the stick changed is a different fault from any of them
+    # failing, and it has its own row now.
+    if unchanged_catalogs "$B"; then rig_part pages-wrote-nothing PASS; else rig_part pages-wrote-nothing FAIL; rc=1; fi
+    return $rc
 }
 
 # F5: leaving with unsaved changes, both ways out.
@@ -620,7 +660,14 @@ read_only_writes_nothing() {
 }
 
 live_edit_mode() {
-    "$root/tests/qml-live/run-live.sh" "$B" "$deviceB" "$out/shots" && unchanged_catalogs "$B"
+    local rc=0
+    "$root/tests/qml-live/run-live.sh" "$B" "$deviceB" "$out/shots" || rc=1
+    # run-live.sh has written a row per test by now. This is the row for
+    # the bundle's other claim: that all of it put the stick back exactly
+    # as it found it. It runs whatever the tests did, because a stick
+    # left changed after a failed test is worth knowing about.
+    if unchanged_catalogs "$B"; then rig_part live-wrote-nothing PASS; else rig_part live-wrote-nothing FAIL; rc=1; fi
+    return $rc
 }
 
 metadata_between_sticks() {
@@ -701,7 +748,14 @@ refused_while_dj_software_runs() {
 # change: part of the check body, so RIG_ONLY filters the seeding with
 # the backup and a seed failure is FB1's, not FB3's.
 backup_a_seeded() {
-    seed_fb3 && "$build/rig_backup" "$A" "$out/backups-fb/$a.zip"
+    if ! seed_fb3; then
+        # Nothing seeded, so nothing is backed up and neither test ran.
+        # Said out loud: unreported, the board keeps last round's green.
+        rig_part FB1-backup-A FAIL
+        rig_part FB2-archive-sound-A FAIL
+        return 1
+    fi
+    env RIG_PART_SUFFIX=-A "$build/rig_backup" "$A" "$out/backups-fb/$a.zip"
 }
 
 seed_fb3() {
@@ -752,8 +806,8 @@ check B3-restore-B "$build/rig_restore" "$refB" "$B" --execute || { echo "stick 
 { catalogs "$A"; catalogs "$B"; } > "$out/catalog-baseline.txt"
 
 # ---- reads -----------------------------------------------------------
-check R1-R3-read-A "$build/rig_read" "$A" "$refA"
-check R1-R3-read-B "$build/rig_read" "$B" "$refB"
+check R1-R3-read-A env RIG_PART_SUFFIX=-A "$build/rig_read" "$A" "$refA"
+check R1-R3-read-B env RIG_PART_SUFFIX=-B "$build/rig_read" "$B" "$refB"
 check R2-R5-pages live_pages
 check R4-sync-dry-run cli_sync_dry_run
 check R7-read-only-writes-nothing read_only_writes_nothing

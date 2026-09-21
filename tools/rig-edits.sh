@@ -28,6 +28,7 @@ baseline="${2:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 . "$here/rig-platform.sh"
+. "$here/rig-parts.sh"
 build="${SEABASS_BUILD_DIR:-$root/build}"
 export SEABASS_LIVE_STICK="$stick"
 export QT_QPA_PLATFORM=offscreen
@@ -38,27 +39,40 @@ export QT_QPA_PLATFORM=offscreen
 export QT_FORCE_STDERR_LOGGING=1
 failed=0
 
-run() {  # full "TestCase::function" name
+# One board row per test: W5 skipping for want of a duplicate group on the
+# stick used to take W2 and W6 red with it, and a reader could not tell.
+rig_parts_declare W2-add-cue W5-clean-up-group W6-library-health-repair
+[ -z "$baseline" ] || rig_parts_declare edits-wrote-nothing
+trap rig_parts_finish EXIT
+
+run() {  # board id, full "TestCase::function" name
+    local part="$1"; shift
     echo "=== $1"
     local log; log="$(mktemp)"
+    local bad=0
     "$build/seabass_qml_tests" -input "$root/tests/qml-live" "$1" 2>&1 | tee "$log"
-    [ "${PIPESTATUS[0]}" -eq 0 ] || failed=1
+    [ "${PIPESTATUS[0]}" -eq 0 ] || bad=1
     # A skip proves nothing, and QtTest exits 0 for it.
     if grep -q "^SKIP" "$log"; then
         echo "   SKIPPED, which counts as a failure here"
-        failed=1
+        bad=1
     fi
     rm -f "$log"
+    rig_part_rc "$part" "$bad"
+    [ "$bad" -eq 0 ] || failed=1
 }
 
-run LiveEditMode::test_08_addCueSaveUndo
-run LiveEditMode::test_09_cleanupOneGroupSaveUndo
+run W2-add-cue LiveEditMode::test_08_addCueSaveUndo
+run W5-clean-up-group LiveEditMode::test_09_cleanupOneGroupSaveUndo
 
 echo "=== planting a repairable Library Health issue"
 if "$build/rig_plant_repairable" "$stick" --plant; then
     # Planted, so there is something to repair: a skip would pass silently.
-    SEABASS_RIG_REQUIRE_REPAIRABLE=1 run LiveEditMode::test_10_libraryHealthRepairSaveUndo
+    SEABASS_RIG_REQUIRE_REPAIRABLE=1 run W6-library-health-repair LiveEditMode::test_10_libraryHealthRepairSaveUndo
 else
+    # The setup, not the test: its own row says so rather than the whole
+    # bundle going red for a fixture that had nothing to plant.
+    rig_part W6-library-health-repair FAIL
     failed=1
 fi
 echo "=== putting the planted file back"
@@ -66,7 +80,12 @@ echo "=== putting the planted file back"
 
 if [ -n "$baseline" ]; then
     echo "=== catalog files against $baseline"
-    grep -F "$stick/" "$baseline" | sha256sum -c || failed=1
+    if grep -F "$stick/" "$baseline" | sha256sum -c; then
+        rig_part edits-wrote-nothing PASS
+    else
+        rig_part edits-wrote-nothing FAIL
+        failed=1
+    fi
 fi
 
 echo "RIG RESULT: $([ $failed = 0 ] && echo PASS || echo FAIL)"
