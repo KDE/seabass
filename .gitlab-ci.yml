@@ -179,11 +179,28 @@ craft_windows_qt6_x86_64:
   # rather than as a missing package -- see pipeline 1353951, where
   # both submodules failed with "server certificate verification
   # failed. CAfile: none".
+  #
+  # qt6-svg-plugins is separate from qt6-svg-dev and is the package
+  # that actually decodes an SVG. qt6-svg-dev brings libQt6Svg, which
+  # is a rendering library; the QImageIOHandler that lets QML's Image
+  # open a .svg at all lives in
+  # qt6/plugins/imageformats/libqsvg.so, and Ubuntu ships that in
+  # qt6-svg-plugins -- reachable only as a Recommends, which
+  # --no-install-recommends above drops. Every Seabass icon is a
+  # bundled Breeze SVG (src/gui/CMakeLists.txt's qt_add_resources
+  # list), so without it the suite fails twelve times over with
+  # "Error decoding: qrc:/qt/qml/SeabassGui/qml/icons/breeze/
+  # go-home.svg: Unsupported image format" -- and the failures read
+  # as pixel and layout bugs ("the Home icon has no size", "nothing
+  # was painted in the row", "the watermark does not reach the
+  # window's right edge any more") rather than as a missing package.
+  # See pipeline 1354151, job 5051803.
   - apt-get install -y -qq --no-install-recommends
       ca-certificates
       build-essential cmake ninja-build git pkg-config
       libsqlite3-dev zlib1g-dev libsqlcipher-dev libtag1-dev
       qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-svg-dev
+      qt6-svg-plugins
       qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
       xvfb unzip 7zip libxkbcommon-dev
       qt6-base-private-dev qt6-declarative-private-dev
