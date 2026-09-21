@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "application/ports/backup_store.hpp"
+#include "infrastructure/backup/stick_space.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/operation_log.hpp"
 #include "application/ports/progress_reporter.hpp"
@@ -111,6 +112,13 @@ public:
     // Call only after a save that SUCCEEDED. After a failure or a cancel
     // the backups are precisely the thing that saves you.
     std::uint64_t releaseAutomaticBackupsIfTight();
+    // The same decision against a StickSpace handed in rather than
+    // measured, so a test can put the stick under its headroom without a
+    // genuinely full disk. Split out because the version that measures
+    // could only ever be tested by filling a real volume, and so was
+    // never tested at all -- it spent its whole life throwing
+    // StickBusyError on a lock its own caller held and returning 0.
+    std::uint64_t releaseAutomaticBackupsIfTight(const infrastructure::backup::StickSpace &space);
 
     // Backs `file` up under `label` unless this save already did; records
     // the backup for undo. Returns true when a backup was made now.

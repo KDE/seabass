@@ -39,6 +39,7 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
+#include "infrastructure/backup/stick_space.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
 
@@ -203,12 +204,89 @@ void runCase(const std::string &name, bool holdStickLock)
               << ") OK\n";
 }
 
+// A save that goes through, so the stick ends up with an automatic backup
+// record the next save is allowed to release.
+void successfulSave(const fs::path &pioneerRoot, const Target &target, int slot)
+{
+    auto &noProgress = seabass::application::NullProgressReporter::instance();
+    CancellationToken token;
+    const QString root = QString::fromStdString(pioneerRoot.string());
+    SaveContext ctx(token, noProgress, {}, root, {});
+    std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
+        QStringLiteral("rekordbox"), root, QString::fromStdString(target.sourceId), 1000.0 * slot,
+        QStringLiteral("hot"), slot, QStringLiteral("#FF0000"), QString(), false, 0.0,
+        QString::fromStdString(target.title))};
+    const SaveLoopResult result = runSaveLoop(changes, ctx);
+    if (!result.error.isEmpty()) {
+        std::cerr << "setup save failed: " << result.error.toStdString() << "\n";
+    }
+    assert(result.error.isEmpty() && "the setup saves must go through, or there are no records to release");
+}
+
+// The other half of the same bug. releaseAutomaticBackupsIfTight() took
+// the same lock from inside the same save, threw the same StickBusyError,
+// and swallowed it -- returning 0, which is also what a stick with room
+// returns. So it has never released a byte in the GUI, and no test could
+// see that: the only way to reach it was to fill a real volume below its
+// headroom, and nothing did. The space is handed in here instead.
+void runReleaseCase()
+{
+    const fs::path stickRoot = freshStick("seabass_release_locked");
+    const fs::path pioneerRoot = stickRoot / "PIONEER";
+    const Target target = findTarget(pioneerRoot);
+    assert(target.freeSlot != 0);
+
+    // Two automatic records, because the newest is always kept: with one
+    // record there is nothing to release and a pass would prove nothing.
+    successfulSave(pioneerRoot, target, target.freeSlot);
+    const Target next = findTarget(pioneerRoot);
+    assert(next.freeSlot != 0 && next.freeSlot != target.freeSlot);
+    successfulSave(pioneerRoot, next, next.freeSlot);
+    const int before = recordCount(stickRoot);
+    assert(before >= 2 && "the setup must leave at least two automatic records");
+
+    // A stick well below its headroom, as measureStickSpace would report
+    // one. Nothing this save took is spared, because this context took
+    // nothing: the records are the earlier saves'.
+    seabass::infrastructure::backup::StickSpace tight;
+    tight.capacityBytes = 2ULL * 1024 * 1024 * 1024;
+    tight.freeBytes = 1024;
+
+    std::uint64_t released = 0;
+    {
+        std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>> locks =
+            seabass::infrastructure::backup::acquireStickLocks(
+                {seabass::infrastructure::backup::backupDirForCatalogPath(pioneerRoot.string())});
+        auto &noProgress = seabass::application::NullProgressReporter::instance();
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneerRoot.string()), {});
+        released = ctx.releaseAutomaticBackupsIfTight(tight);
+    }
+
+    const int after = recordCount(stickRoot);
+    if (released == 0 || after >= before) {
+        std::cerr << "released " << released << " bytes, " << before << " -> " << after << " records\n"
+                  << stickLog(stickRoot);
+    }
+    assert(released > 0 && "a stick below its headroom must actually give space back");
+    assert(after < before && "and a released record is a record that is gone");
+    assert(after >= 1 && "the newest automatic record is never released: it is the undo");
+    assert(stickLog(stickRoot).find("could not be released") == std::string::npos
+           && "and it must not have failed on a lock its own caller holds");
+
+    std::error_code ec;
+    fs::remove_all(stickRoot, ec);
+    std::cout << "case (release under the stick write lock) OK: " << released << " bytes, " << before << " -> "
+              << after << " records\n";
+}
+
 }  // namespace
 
 int main()
 {
     runCase("seabass_discard_unlocked", false);
     runCase("seabass_discard_locked", true);
+    runReleaseCase();
     std::cout << "save_backup_discard_under_lock_test passed\n";
     return 0;
 }

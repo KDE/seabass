@@ -93,7 +93,11 @@ infrastructure::backup::FilesystemBackupStore &SaveContext::archiveStore()
 
 std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
 {
-    const auto space = infrastructure::backup::measureStickSpace(stickRoot());
+    return releaseAutomaticBackupsIfTight(infrastructure::backup::measureStickSpace(stickRoot()));
+}
+
+std::uint64_t SaveContext::releaseAutomaticBackupsIfTight(const infrastructure::backup::StickSpace &space)
+{
     if (space.capacityBytes == 0) {
         // measureStickSpace() returns zeros for a stick it could not read
         // rather than throwing. Nothing measured means nothing deleted:
@@ -125,10 +129,20 @@ std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
             thisSave.insert(backup.id.toStdString());
         }
         return archiveStore().releaseAutomaticBackups(headroom - space.freeBytes, thisSave);
-    } catch (const std::exception &) {
-        // Another session holds the lock. Releasing space is an
-        // opportunistic tidy-up, never the point of the save, so it is
-        // dropped rather than retried or reported.
+    } catch (const std::exception &e) {
+        // Still never fails the save: this is an opportunistic tidy-up on
+        // a save that already succeeded, and a warning saying "could not
+        // free space" beside "your changes are saved" would read as half
+        // a failure. But it no longer passes in silence. The old handler
+        // returned 0 and said nothing, which is how a nested-lock throw
+        // on every single call went unnoticed for as long as it did: the
+        // stick filled up, the number said zero, and zero is also what a
+        // stick with plenty of room reports.
+        if (hasStick()) {
+            log().record(std::string("save: the stick is below its headroom and the automatic backups "
+                                     "could not be released: ")
+                         + e.what());
+        }
         return 0;
     }
 }
