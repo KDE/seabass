@@ -240,6 +240,25 @@ ComboBox {
 
     contentItem: RowLayout {
         spacing: 4
+
+        // Breeze's own ComboBox binds a mobile text-selection cursor to
+        // contentItem.positionToRectangle(contentItem.selectionStart),
+        // unconditionally, because its own default contentItem is a
+        // TextInput. Qt Quick Controls documents contentItem as a thing
+        // an application replaces, so this is Breeze's assumption rather
+        // than ours -- but the result is a TypeError on every page that
+        // shows this control under the style Linux actually ships, and
+        // an exception in a binding takes whatever else that binding was
+        // doing with it. Three pages fail to instantiate cleanly because
+        // of it: Scan, Duplicates and Stick statistics.
+        //
+        // Two stubs make the binding resolve to an empty rectangle. They
+        // cost nothing under any other style, and the day this control
+        // becomes editable they are the wrong answer -- it is not, and
+        // the picker is one-way by design (see selectEntry()).
+        readonly property int selectionStart: 0
+        function positionToRectangle(position) { return Qt.rect(0, 0, 0, 0); }
+
         CatalogGlyph {
             objectName: "catalogGlyph"
             text: {

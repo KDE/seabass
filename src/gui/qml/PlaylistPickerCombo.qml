@@ -34,7 +34,16 @@ ComboBox {
         required property int index
         required property var modelData
 
-        width: ListView.view ? ListView.view.width : implicitWidth
+        // ListView.view first, then the item it was parented into, then
+        // its own implicit width. The attached property is not always
+        // there: these rows are built through a DelegateModel and handed
+        // to a ListView this file owns, and under org.kde.desktop the
+        // attachment came back null, which left every row 0 wide. A row
+        // with no width still paints -- it has height and a background --
+        // and simply cannot be clicked, which is how it was mistaken for
+        // a popup in a window of its own (seabass#18).
+        width: ListView.view ? ListView.view.width
+                             : (parent ? parent.width : implicitWidth)
         height: 32
 
         color: rowMouseArea.pressed ? Theme.rowPressed
@@ -80,6 +89,7 @@ ComboBox {
     // customize a ComboBox popup: width matches the combo, height matches
     // the real row count up to a cap, with its own scrollbar past that.
     popup: Popup {
+        id: popupRoot
         y: root.height
         width: root.width
         implicitHeight: Math.min(contentItem.implicitHeight, 320)
@@ -88,6 +98,17 @@ ComboBox {
         contentItem: ListView {
             clip: true
             implicitHeight: contentHeight
+            // Width named rather than inherited. A Popup's contentItem is
+            // given its width by the style, and the style Linux actually
+            // ships does not give it one: under org.kde.desktop this
+            // ListView came out 0 wide, so every row delegate bound to
+            // ListView.view.width was 0 wide too. The rows were visible --
+            // they have height and they paint -- and clicking one did
+            // nothing at all, because there was nothing under the pointer
+            // to click. That is the whole of what seabass#18 recorded as
+            // "the popup must be a separate window": it is not, the rows
+            // simply had no width.
+            width: popupRoot.availableWidth
             model: root.popup.visible ? root.delegateModel : null
             // A custom popup replaces the default wiring that would
             // otherwise apply the ComboBox's own `delegate:` automatically
