@@ -36,6 +36,35 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 . "$here/rig-platform.sh"
 . "$here/rig-parts.sh"
+
+# One round at a time on one machine. The sticks are a single resource
+# with no lock of their own, and two rounds sharing them do not collide
+# loudly: they restore over each other, fill each other's free space and
+# write each other's catalogs, and both summaries come out looking like
+# ordinary results. That happened here on 2026-09-21 -- two Linux rounds
+# started a minute apart against the same A1 and TESTRIG_2, and the only
+# reason anybody noticed was a person reading pgrep. Both rounds had to
+# be thrown away.
+#
+# flock, not a pid file: it is released when the process dies however it
+# dies, including a kill -9 or a crash mid-fill, so a stale lock cannot
+# block the next round. RIG_NO_LOCK is for running a second rig against
+# DIFFERENT sticks deliberately, which is the only case this refuses
+# that it should not.
+rig_lock="${RIG_LOCK_FILE:-$HOME/Seabass/e2e/.rig-running.lock}"
+if [ -z "${RIG_NO_LOCK:-}" ]; then
+    mkdir -p "$(dirname "$rig_lock")"
+    exec 9>"$rig_lock"
+    if ! flock -n 9; then
+        echo "another shakedown round is already running on this machine:" >&2
+        cat "$rig_lock" >&2 2>/dev/null || true
+        echo >&2
+        echo "Two rounds on the same sticks make both meaningless. Wait for it, or set" >&2
+        echo "RIG_NO_LOCK=1 if you are deliberately running against different sticks." >&2
+        exit 1
+    fi
+    { echo "pid $$"; echo "out $out"; echo "started $(date -Iseconds)"; echo "sticks ${RIG_STICK_A:-default} ${RIG_STICK_B:-default}"; } >&9
+fi
 build="${SEABASS_BUILD_DIR:-$root/build}"
 if [ "$rig_os" = "Darwin" ]; then
     A="${RIG_STICK_A:-/Volumes/VSTICKA}"
