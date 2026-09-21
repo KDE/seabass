@@ -304,7 +304,27 @@ int main(int argc, char **argv)
     std::cout << "repair said: " << result.message << "\n";
     check(!result.declined, "the repair was not declined (a permission prompt may have asked)");
     check(result.repaired, "the repair reports the filesystem consistent again");
-    check(!isMountedReadOnly(attached.mountPoint), "and Seabass no longer sees it as read-only");
+    // Re-attach before asking whether it is writable again, because the
+    // two platforms make "read-only" mean different things here.
+    //
+    // Linux mounts the loop device with -o ro, a mount option over a
+    // writable device, so a remount after the repair can clear it.
+    // macOS is given `hdiutil attach -readonly`, which makes the BLOCK
+    // DEVICE read-only -- no repair and no remount can undo that, only
+    // detaching and attaching again. Asking the old mount point whether
+    // it is still read-only therefore tested the flag we passed in, not
+    // the repair, and could never pass here.
+    //
+    // What is worth asserting is the same on both: after the repair, the
+    // volume mounts writable and its files are intact. So detach, attach
+    // without forcing anything, and ask that.
+    detach(attached);
+    attached = attach(image, false);
+    if (attached.mountPoint.empty()) {
+        std::cout << "could not re-attach the repaired image\nRIG RESULT: FAIL\n";
+        return 1;
+    }
+    check(!isMountedReadOnly(attached.mountPoint), "the repaired volume mounts writable again");
 
     int found = 0;
     for (int i = 0; i < 8; ++i) {
