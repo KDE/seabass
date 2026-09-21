@@ -1111,35 +1111,23 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 "go untested in this build.")
             add_test(NAME seabass_qml_tests
                 COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
-            # The style has to be named here, and it has to be the one
-            # main.cpp names. The xcb branch above pins Basic; this
-            # branch pinned nothing, so on macOS -- which has no
-            # xvfb-run and therefore always lands here -- the suite ran
-            # under the NATIVE macOS style, which the app never uses.
+            # No style named here, on purpose. The harness calls
+            # gui::applyDefaultControlsStyle(), which is the same
+            # function main.cpp calls, so the suite runs under whatever
+            # the app would run under on this platform and the two
+            # cannot drift apart.
             #
-            # That is not a cosmetic difference. exportMaterialPalette()
-            # explains why: the macOS style refuses the background and
-            # contentItem overrides this app's controls are built on, and
-            # draws its own instead. So every control whose ground comes
-            # from Theme got the platform's ground, Theme's ink stayed
-            # dark, and the catalog popup measured as near-white text on
-            # a near-white field. It cost three sessions an evening,
-            # produced a screenshot of an unreadable page that was shown
-            # around as a shipping bug, and none of it was reachable from
-            # the application: 498 pass under Material, 498 under Basic,
-            # one fails under the native style nobody ships.
+            # Naming one here would defeat that: the shared call returns
+            # early when QT_QUICK_CONTROLS_STYLE is already set, so
+            # pinning Material for macOS -- which this did for a few
+            # hours -- would leave the one platform that most needs the
+            # shared code path as the one platform that never runs it.
             #
-            # Material rather than Basic, because Material is what
-            # main.cpp pins on macOS and the point is to test the
-            # configuration that ships. Only for Apple: Windows has its
-            # own (FluentWinUI3), and Linux deliberately leaves the style
-            # to KDE's platform integration, so naming one here would
-            # test something that machine never runs either.
-            if(APPLE)
-                set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Material;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
-            else()
-                set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
-            endif()
+            # The xcb branch above still pins Basic. That is deliberate
+            # and different: Linux leaves the style to KDE's platform
+            # integration, so there is no single answer to share, and the
+            # suite pins one to compare like with like.
+            set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
         endif()
         # MSVC only: the offscreen platform's font backend needs pointing
         # at real font files explicitly on Windows, unlike the "windows"
@@ -1155,6 +1143,18 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # layout bug. Confirmed fixed with the same screenshot once this
         # was set. $ENV{SystemRoot} rather than a literal C:/Windows,
         # since that's not guaranteed on every Windows install.
+        # Every screenshot case skipped without this, and a skip proves
+        # nothing: fourteen of them, one per page, sitting at "SKIP:
+        # SEABASS_SCREENSHOT_DIR not set" in every run this project has
+        # ever done. They render a page and grab it, so running them
+        # catches a page that throws, fails to render or produces an
+        # empty grab -- none of which the assertions elsewhere look for.
+        # The PNGs are a by-product worth having too: this project's
+        # standard for a UI claim is a real offscreen screenshot, and
+        # they now exist after every test run rather than only when
+        # somebody remembers the variable.
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots")
+        list(APPEND _seabass_qml_test_env "SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots")
         if(MSVC)
             list(APPEND _seabass_qml_test_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
         endif()
