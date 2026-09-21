@@ -171,6 +171,19 @@ craft_windows_qt6_x86_64:
   # the one failure a backup format cannot afford. -DSEABASS_TESTS=OFF
   # would silence it and empty this lane of its purpose.
   #
+  # qt6-svg-plugins is the one that decodes SVG, and qt6-svg-dev does NOT
+  # pull it in. Without it libQt6Svg is present and linkable, the build
+  # succeeds, and then every bundled Breeze icon fails at RUN time with
+  # "Error decoding: ...svg: Unsupported image format" -- 14 QML tests
+  # red across both suites on the first run that ever reached them,
+  # including ones whose names say nothing about images ("the Home icon
+  # has no size", "nothing was painted in the row"). Found by looking up
+  # which Ubuntu package ships
+  # /usr/lib/x86_64-linux-gnu/qt6/plugins/imageformats/libqsvg.so rather
+  # than by guessing at names: on KDE neon that file comes from a package
+  # called qt6-svg, which is a different distro's split and would have
+  # been the wrong answer here.
+  #
   # ca-certificates is not optional and not obvious: the ubuntu image
   # ships none, apt itself does not need any (its sources are
   # plain http), and so the gap only shows up later, when CMake runs
@@ -205,6 +218,7 @@ craft_windows_qt6_x86_64:
       xvfb unzip 7zip libxkbcommon-dev
       qt6-base-private-dev qt6-declarative-private-dev
       ccache
+      qt6-svg-plugins
 
 # One job, not two. It builds AND tests, and the reason is the 4.3 GB
 # `artifacts: paths: [build]` this used to carry: that artifact existed
@@ -294,24 +308,19 @@ linux:build-test:
     # SEABASS's tests -- a vendored dependency's suite failing would red
     # the gate for something nothing in this repo controls.
     #
-    # -O1 via CMAKE_CXX_FLAGS_RELEASE, NOT via CMAKE_CXX_FLAGS. CMake
-    # emits CMAKE_CXX_FLAGS first and CMAKE_CXX_FLAGS_<CONFIG> after it,
-    # so `-DCMAKE_CXX_FLAGS=-O1` produces the command line `-O1 -O3`,
-    # GCC takes the last one, and the build is still -O3 while looking
-    # configured. Verified against compile_commands.json rather than
-    # reasoned about, after a first measurement that compared -O3 with
-    # itself and would have "proved" the flag made no difference.
-    #
-    # Dropping to -O1 is safe for this lane's purpose. The tests keep
-    # their assertions regardless of build type: CMakeLists puts
-    # -UNDEBUG on every test target by name, after the build type's own
-    # -DNDEBUG, and then checks at the end that it really landed. What
-    # is lost is only that CI no longer proves the -O3 build compiles,
-    # which the Craft Windows and macOS lanes still do at their own
-    # optimisation levels.
+    # No optimisation override. -O1 was tried here and reverted: measured
+    # on a full clean build of this tree it was worth 7.4% (462 s to
+    # 428 s), which does not buy a lane that tests a build configuration
+    # nobody ships. Recorded because the measurement is the useful part:
+    # -DCMAKE_CXX_FLAGS=-O1 does NOTHING against a Release build, since
+    # CMake emits CMAKE_CXX_FLAGS before CMAKE_CXX_FLAGS_<CONFIG>, so the
+    # command line reads "-O1 -O3" and GCC takes the last one. The first
+    # attempt at this comparison measured -O3 against itself and would
+    # have "proved" the flag was worthless for the wrong reason. If
+    # anyone tries again, the knob is CMAKE_CXX_FLAGS_RELEASE and the
+    # check is compile_commands.json.
     - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       -DSEABASS_LIBDJINTEROP_TESTS=OFF
-      -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
     # How much machine this container actually has, printed before it is
@@ -329,6 +338,7 @@ linux:build-test:
       [ "$JOBS" -lt 1 ] && JOBS=1
       echo "nproc says $(nproc); cgroup cpu.max says '$QUOTA'; building with -j$JOBS"
       echo "memory: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown) cgroup, $(awk '/MemTotal/{print $2" kB"}' /proc/meminfo) host"
+      echo "qt imageformats plugins: $(ls /usr/lib/*/qt6/plugins/imageformats/ 2>/dev/null | tr '\n' ' ')"
       cmake --build build -j"$JOBS"
     # Printed, not silent: a cache that stopped being hit is the
     # difference between a five minute lane and a ninety minute one,
