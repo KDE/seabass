@@ -20,6 +20,16 @@ TestCase {
     visible: true
     when: windowShown
 
+    // How far the glyph's ink may sit from the name's, in pixels. The
+    // translate that lines them up is computed from unhinted metrics and
+    // painted hinted, so it is an approximation by construction: measured
+    // here it leaves 0.84 px at worst, and the UI font is the machine's,
+    // so another machine's hinting will not leave exactly that. The
+    // regression this is here to catch -- the centring gone altogether --
+    // is 3 px. The bound goes in the gap, near enough to the measurement
+    // to mean something and far enough from it not to fail on a font.
+    readonly property real allowedOffset: 1.25
+
     Component {
         id: toggleComponent
         LibrarySourceToggle {}
@@ -280,7 +290,7 @@ TestCase {
             const capitalInk = ink.capital;
             verify(ink.glyph.top >= 0 && capitalInk.top >= 0, values[i] + ": nothing was painted");
             const off = ink.glyphCentroid - ink.capitalCentroid;
-            verify(Math.abs(off) <= 1.0,
+            verify(Math.abs(off) <= testCase.allowedOffset,
                    values[i] + ": the glyph's centre is " + off + " px off the name's");
             // And the name stays centred in the box: lining the two up by
             // their baseline lifted the whole text about 2 px.
@@ -325,7 +335,7 @@ TestCase {
             verify(ink.glyph.top >= 0 && ink.capital.top >= 0,
                    name.text + ": nothing was painted in the row");
             const off = ink.glyphCentroid - ink.capitalCentroid;
-            verify(Math.abs(off) <= 1.0,
+            verify(Math.abs(off) <= testCase.allowedOffset,
                    name.text + ": the row's glyph is " + off + " px off its name");
         }
         toggle.popup.close();

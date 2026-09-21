@@ -115,27 +115,30 @@ ComboBox {
         font.family: Theme.symbolFamily
         color: Theme.text
         Layout.alignment: Qt.AlignVCenter
-        // Both this glyph and the name it lines up against are drawn the
-        // way their metrics are measured. The translate below comes from
-        // TextMetrics, which reports UNHINTED metrics; NativeRendering
-        // hints each glyph onto the pixel grid as it paints, so the ink
-        // lands somewhere the sum never accounted for. Said on both
-        // labels, since agreeing with each other is the point.
+        // The translate below is an approximation, and deliberately left
+        // as one. It comes from TextMetrics, which reports UNHINTED
+        // metrics, while the app paints with NativeRendering on Linux
+        // (main.cpp), which hints each glyph onto the pixel grid as it
+        // goes -- so the ink lands a fraction away from where the sum
+        // says it will.
         //
-        // This comment used to say the pair was 4.5 px apart without
-        // these lines. That number was the measurement, not the
-        // drawing. It came from a test that took the first and last row
-        // of pixels clearing a contrast threshold, and under
-        // NativeRendering most of the hexagon's faint outline fell below
-        // that threshold, so the band it found was a sliver near the
-        // bottom of the glyph. Measured by ink centroid instead
-        // (tst_LibrarySourceToggle.qml, 2026-09-21) the pair sits 0.36 px
-        // apart with these lines and 0.65 px apart without them, and the
-        // two screenshots are indistinguishable. What stands is the
-        // principle -- measuring with one renderer and painting with
-        // another is a sum about a glyph that is not on screen -- not
-        // the size of the error.
-        renderType: Text.QtRendering
+        // This glyph and its name were pinned to Text.QtRendering for a
+        // while to close that gap, on a reading of a test that said the
+        // pair was 4.5 px out of line. That number was the measurement,
+        // not the drawing: the test took the first and last row of
+        // pixels clearing a contrast threshold, and under NativeRendering
+        // most of this hexagon's faint outline fell below it, so the band
+        // collapsed to a sliver at the bottom of the glyph. Measured by
+        // ink centroid the pair sits 0.65 px apart painted the way the
+        // rest of the app is painted, and 0.36 px apart pinned: a third
+        // of a pixel, for the cost of being the only labels in Seabass
+        // rasterised differently from every other one. The pins came out
+        // again on 2026-09-21 and the approximation stays.
+        //
+        // What holds it honest is tst_LibrarySourceToggle.qml, which
+        // measures the painted ink of both the header and the list rows
+        // and allows them 1 px. Deleting this translate moves them 3 px
+        // and fails.
         TextMetrics { id: glyphInk; font: glyphLabel.font; text: glyphLabel.text }
         TextMetrics { id: capitalInk; font: glyphLabel.nameLabel.font; text: "H" }
         // A transform, not a position: it moves the ink without asking the
@@ -249,8 +252,6 @@ ComboBox {
         Label {
             id: currentName
             objectName: "catalogName"
-            // See CatalogGlyph: measured and painted the same way.
-            renderType: Text.QtRendering
             text: {
                 const entry = root.entries[root.currentIndex];
                 return entry ? entry.label : "";
@@ -321,8 +322,6 @@ ComboBox {
             Label {
                 id: entryName
                 objectName: "entryName"
-                // See CatalogGlyph: measured and painted the same way.
-                renderType: Text.QtRendering
                 text: entryDelegate.modelData.label
                 color: Theme.text
                 elide: Text.ElideRight
