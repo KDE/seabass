@@ -379,6 +379,23 @@ void seedMetadataStoreForTests()
                 if (read.size() > 5) {
                     read.resize(5);
                 }
+                // With a cue the stick does not have, so there is
+                // something to RESTORE. Seeding the stick's tracks
+                // unchanged stores rows identical to what is already
+                // there, the Restore page has nothing to propose, and
+                // its screenshot case fails on "the scan must produce
+                // proposals against this stick" -- which is true, and is
+                // the seed's fault rather than the page's. It passed
+                // when the stick happened to differ from the store and
+                // failed as soon as a round restored the stick to its
+                // reference first.
+                for (domain::Track &track : read) {
+                    domain::CuePoint cue;
+                    cue.kind = domain::CuePoint::Kind::Hot;
+                    cue.hotCueNumber = 7;
+                    cue.positionMs = 99000.0;
+                    track.cues.push_back(cue);
+                }
                 tracks = std::move(read);
             }
             source.stickRoot = root;
