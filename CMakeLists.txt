@@ -1817,6 +1817,18 @@ if(TARGET Qt6::Core)
     target_include_directories(interface_font_test PRIVATE src)
     target_link_libraries(interface_font_test PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
     add_test(NAME interface_font_test COMMAND interface_font_test)
+    # MSVC only, and the same reason seabass_qml_tests needs it: the
+    # offscreen platform's font backend has to be pointed at real font
+    # files on Windows, and without it QFontDatabase::families() comes
+    # back EMPTY -- "Cannot find font directory .../lib/fonts". A font
+    # database with nothing in it is not a thing this test can say
+    # anything about, and it is also the state in which the only font a
+    # process has is the one this app registers itself, which is the bug
+    # this test exists for.
+    if(MSVC)
+        set_tests_properties(interface_font_test PROPERTIES
+            ENVIRONMENT "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
+    endif()
 
     add_executable(update_decision_test
         src/gui/update_decision.cpp

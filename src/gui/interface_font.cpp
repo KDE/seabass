@@ -76,9 +76,23 @@ bool drawsLatin(const QFont &font)
 // here, while the answer is still the right one.
 QFont pinnedToConcreteFamily(QFont font)
 {
-    const QString resolved = QFontInfo(font).family();
-    if (!resolved.isEmpty()) {
-        font.setFamily(resolved);
+    // QRawFont first, QFontInfo second. QFontInfo returns an EMPTY family
+    // for every font at this point in startup under the offscreen
+    // platform on Windows -- measured there, including for a plain
+    // QFont("Arial"): family "", pixelSize -1, exactMatch false. It does
+    // no matching that early, so the guard below silently kept the
+    // ambiguous name and the pin did nothing on the one platform it was
+    // written for. QRawFont::fromFont() does load a face in exactly that
+    // environment, which is how drawsLatin() above works at all.
+    const QRawFont face = QRawFont::fromFont(font);
+    const QString fromFace = face.isValid() ? face.familyName() : QString();
+    if (!fromFace.isEmpty()) {
+        font.setFamily(fromFace);
+        return font;
+    }
+    const QString fromInfo = QFontInfo(font).family();
+    if (!fromInfo.isEmpty()) {
+        font.setFamily(fromInfo);
     }
     return font;
 }
