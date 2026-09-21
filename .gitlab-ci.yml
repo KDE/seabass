@@ -145,7 +145,15 @@ craft_windows_qt6_x86_64:
 # without this, nothing on Invent has ever run ctest at all.
 linux:build:
   stage: build
-  tags: [linux]
+  # No `tags:`. A bare `linux` tag matched no runner on Invent, so this
+  # job sat pending until it timed out and failed with
+  # stuck_pending_no_matching_runners -- and because it is the first
+  # stage and allow_failure is false, it took every other job of every
+  # pipeline down with it, including the macOS build that was working.
+  # KDE's shared container runners take untagged jobs: `reuse` and
+  # `semgrep-sast` are untagged and have always run. Confirmed against
+  # pipeline 1352819, where the only difference between the jobs that
+  # ran and the one that did not was this line.
   # Still not verified against a real KDE Invent runner: the branch this
   # came from was written on a Windows-only toolchain and never got a run.
   # Added while merging it, because the build cannot work without them:
@@ -171,7 +179,7 @@ linux:build:
 
 linux:test:
   stage: test
-  tags: [linux]
+  # Untagged, for the same reason as linux:build above.
   image: ubuntu:24.04
   needs: [linux:build]
   # Spelled out rather than reusing &full_lane_rules: a YAML merge key
