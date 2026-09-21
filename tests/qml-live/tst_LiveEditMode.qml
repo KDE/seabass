@@ -817,6 +817,14 @@ TestCase {
         tryVerify(function() { return restore.hasScanned && !restore.busy; }, 600000);
         compare(restore.errorMessage, "");
         var offered = restore.proposalCount;
+        // Captured here, beside `offered`, and not read again later. Both
+        // are live properties of the same scan: reading one before the
+        // save and the other after it compares two different scans and
+        // calls the difference a defect. That is exactly how this check
+        // failed on Linux tonight -- 7 offered with 3 conflicts, 4 back
+        // after the undo, which is the whole of what it asks for, against
+        // a conflictCount the last scan had since recomputed.
+        var conflictsWhenOffered = restore.conflictCount;
         console.log("  restore onto " + stickLabel + ": " + restore.stickTrackCount + " tracks, " + offered
                     + " proposals, " + restore.conflictCount + " conflicts (" + restore.conflictsLeftAlone + " left alone)");
         if (offered === 0) {
@@ -863,8 +871,9 @@ TestCase {
         // the files keep the undo's modification time, so for a track whose
         // cues conflict the stick can now count as the newer side. Every
         // proposal without a conflict must be offered again.
-        verify(restore.proposalCount >= offered - restore.conflictCount,
-               "undo brought back every proposal that had no conflict");
+        verify(restore.proposalCount >= offered - conflictsWhenOffered,
+               "undo brought back every proposal that had no conflict: " + offered + " offered, "
+               + conflictsWhenOffered + " of them conflicting, " + restore.proposalCount + " offered again");
         EditSessionRegistry.closeSession(testCase.libraryId);
     }
 
