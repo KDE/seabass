@@ -307,6 +307,46 @@ TestCase {
     // every case here green. The rows are also where a reader compares
     // the three catalogs against each other, which is where a glyph
     // sitting high is most visible.
+    // The most common colour in the right-hand quarter of an item, which
+    // is past the end of its text in every style seen so far. One probe
+    // pixel is not enough: the current catalog's row is highlighted, so
+    // the three rows do not share a background, and a single probe can
+    // land on a border, a gradient or a focus ring and turn the whole
+    // row into "ink".
+    function modalColour(image, item, y0, y1) {
+        const p = item.mapToItem(testCase, 0, 0);
+        const x0 = Math.floor(p.x + item.width * 0.75);
+        const x1 = Math.ceil(p.x + item.width - 2);
+        const counts = {};
+        let best = null;
+        let bestCount = 0;
+        for (let y = y0; y < y1; ++y) {
+            for (let x = x0; x < x1; ++x) {
+                const c = image.pixel(x, y);
+                const key = Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255);
+                counts[key] = (counts[key] || 0) + 1;
+                if (counts[key] > bestCount) {
+                    bestCount = counts[key];
+                    best = c;
+                }
+            }
+        }
+        return best;
+    }
+
+    function describeRect(item) {
+        const p = item.mapToItem(testCase, 0, 0);
+        return "x " + Math.round(p.x) + " y " + Math.round(p.y) + " " + Math.round(item.width) + "x"
+               + Math.round(item.height) + " in a " + testCase.width + "x" + testCase.height + " window";
+    }
+
+    // The same pair again, in the open list. CatalogGlyph is used twice
+    // -- once in the closed control, once per row of the popup -- and
+    // the test above sees only the first of them, so a translate that
+    // came out right in the header and wrong in the rows would have kept
+    // every case here green. The rows are also where a reader compares
+    // the three catalogs against each other, which is where a glyph
+    // sitting high is most visible.
     function test_everyRowInTheListLinesUpToo() {
         const toggle = createTemporaryObject(toggleComponent, testCase,
                                              {width: 220, current: "rekordbox"});
@@ -325,26 +365,28 @@ TestCase {
             const name = findChild(row, "entryName");
             verify(glyph !== null && name !== null, "row " + i + " has no glyph/name pair");
             const origin = row.mapToItem(testCase, 0, 0);
-            // The row's own background, sampled past the end of its text
-            // rather than from the control above it: the current catalog's
-            // row is highlighted, so the three rows do not share one.
-            const background = image.pixel(Math.round(origin.x + row.width - 4),
-                                           Math.round(origin.y + row.height / 2));
+            // Measuring a row the grab does not contain is measuring
+            // nothing, and it is not the same fault as a glyph out of
+            // line, so it is not reported as one. Styles put a combo's
+            // popup in different places -- below the field, or over it
+            // with the current row on top of it -- and its own window
+            // when the style says so, which this scene's grab never
+            // sees. Whichever it is, say where the row actually was.
+            verify(origin.y >= 0 && origin.y + row.height <= testCase.height && origin.x >= 0
+                       && origin.x + row.width <= testCase.width,
+                   name.text + ": the row is not inside the grabbed scene (" + describeRect(row)
+                       + "). Either the popup is a separate window in this style, or it is placed over the "
+                       + "field rather than under it; ctest pins QT_QUICK_CONTROLS_STYLE=Basic, and a direct "
+                       + "run of this binary inherits the desktop's style");
             const y0 = Math.floor(origin.y + 2), y1 = Math.ceil(origin.y + row.height - 2);
+            const background = modalColour(image, row, y0, y1);
             const ink = pairInk(image, background, glyph, name, y0, y1);
-            // A row that painted nothing is almost always the popup
-            // being a separate window rather than an item in this scene,
-            // which is what happens under a desktop style: the grab sees
-            // the test's own window and the rows are not in it. ctest
-            // pins QT_QUICK_CONTROLS_STYLE=Basic for exactly that reason
-            // (see CMakeLists.txt), so a direct run of this binary can
-            // fail here where the suite passes. Say so rather than
-            // leaving the next reader to work it out.
             verify(ink.glyph.top >= 0 && ink.capital.top >= 0,
-                   name.text + ": nothing was painted in the row, which usually means the popup is a separate "
-                   + "window in the active style rather than an item in this scene. ctest pins "
-                   + "QT_QUICK_CONTROLS_STYLE=Basic; a direct run of this binary inherits the desktop's style "
-                   + "and can fail here where the suite passes");
+                   name.text + ": nothing was painted in the row, although it is inside the scene ("
+                       + describeRect(row) + "). Background read as rgb(" + Math.round(background.r * 255) + ","
+                       + Math.round(background.g * 255) + "," + Math.round(background.b * 255) + "); glyph ink "
+                       + ink.glyph.top + ".." + ink.glyph.bottom + ", name ink " + ink.capital.top + ".."
+                       + ink.capital.bottom);
             const off = ink.glyphCentroid - ink.capitalCentroid;
             verify(Math.abs(off) <= testCase.allowedOffset,
                    name.text + ": the row's glyph is " + off + " px off its name");
