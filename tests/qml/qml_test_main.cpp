@@ -9,6 +9,8 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
+#include "application/use_cases/scan_library.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "gui/controls_style.hpp"
@@ -357,27 +359,54 @@ void seedMetadataStoreForTests()
         if (!store.readAll().empty()) {
             return;
         }
+        // From the stick's own catalog when there is a stick, because
+        // the Restore page MATCHES stored tracks against what is on the
+        // stick. Invented rows match nothing, so the page produces no
+        // proposals and its screenshot case fails on "the scan must
+        // produce proposals against this stick" -- which is the seed
+        // being wrong, not the page.
         std::vector<domain::Track> tracks;
-        for (int i = 0; i < 2; ++i) {
-            domain::Track track;
-            track.sourceId = "seed-" + std::to_string(i);
-            track.format = "rekordbox";
-            track.title = "Seeded Track " + std::to_string(i + 1);
-            track.artist = "Harness";
-            track.durationSeconds = 180.0 + i;
-            track.filePath = "/seeded/Contents/seed-" + std::to_string(i) + ".mp3";
-            domain::CuePoint cue;
-            cue.kind = domain::CuePoint::Kind::Hot;
-            cue.hotCueNumber = 0;
-            cue.positionMs = 1000.0 * (i + 1);
-            track.cues.push_back(cue);
-            tracks.push_back(track);
-        }
         infrastructure::local::MetadataSource source;
-        source.stickRoot = "/seeded";
-        source.libraryId = "harness-seed";
-        source.stickLabel = "SEEDED";
-        source.catalogModifiedAt = 0;
+        const QByteArray liveStick = qgetenv("SEABASS_LIVE_STICK");
+        if (!liveStick.isEmpty()) {
+            const std::filesystem::path root = liveStick.toStdString();
+            const std::filesystem::path pioneer = root / "PIONEER";
+            if (std::filesystem::exists(pioneer / "rekordbox" / "export.pdb")) {
+                infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+                std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
+                // A handful, not the library: this runs before every
+                // test in the binary and a full store costs seconds.
+                if (read.size() > 5) {
+                    read.resize(5);
+                }
+                tracks = std::move(read);
+            }
+            source.stickRoot = root;
+            source.libraryId = "harness-seed";
+            source.stickLabel = "SEEDED";
+            source.catalogModifiedAt = 0;
+        }
+        if (tracks.empty()) {
+            for (int i = 0; i < 2; ++i) {
+                domain::Track track;
+                track.sourceId = "seed-" + std::to_string(i);
+                track.format = "rekordbox";
+                track.title = "Seeded Track " + std::to_string(i + 1);
+                track.artist = "Harness";
+                track.durationSeconds = 180.0 + i;
+                track.filePath = "/seeded/Contents/seed-" + std::to_string(i) + ".mp3";
+                domain::CuePoint cue;
+                cue.kind = domain::CuePoint::Kind::Hot;
+                cue.hotCueNumber = 0;
+                cue.positionMs = 1000.0 * (i + 1);
+                track.cues.push_back(cue);
+                tracks.push_back(track);
+            }
+            source.stickRoot = "/seeded";
+            source.libraryId = "harness-seed";
+            source.stickLabel = "SEEDED";
+            source.catalogModifiedAt = 0;
+        }
         store.store(tracks, source, application::NullProgressReporter::instance(),
                     application::CancellationToken::none());
     } catch (const std::exception &) {

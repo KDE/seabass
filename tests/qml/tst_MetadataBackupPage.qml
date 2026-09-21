@@ -246,6 +246,14 @@ TestCase {
     // being changed.
     function test_leavingWithSomethingStagedAsks() {
         var page = make();
+        // Wait out the opening scan. requestLeave refuses while the
+        // controller is busy and says so, which is correct and is not
+        // what this test is about -- but with a real stick the page is
+        // still reading it when the first assertion runs, so the test
+        // measured the scan rather than the guard. It only showed up
+        // once the case stopped skipping.
+        tryVerify(function () { return !page.busy; }, 30000,
+                  "the opening scan must settle before leaving is asked about");
         var list = findChild(page, "storedTrackList");
         verify(list, "the stored track list must exist");
         if (list.count === 0) {
@@ -275,6 +283,8 @@ TestCase {
         // switching source throws it away -- which is a thing to be told
         // about rather than to discover afterwards.
         var page = make();
+        tryVerify(function () { return !page.busy; }, 30000,
+                  "the opening scan must settle before staging is asked about");
         var list = findChild(page, "storedTrackList");
         verify(list, "the stored track list must exist");
         if (list.count === 0) {
@@ -300,6 +310,8 @@ TestCase {
     // first. Leaving now waits for saveCompleted.
     function test_savingOnTheWayOutWaitsForTheSave() {
         var page = make();
+        tryVerify(function () { return !page.busy; }, 30000,
+                  "the opening scan must settle before staging is asked about");
         var list = findChild(page, "storedTrackList");
         verify(list, "the stored track list must exist");
         if (list.count === 0) {

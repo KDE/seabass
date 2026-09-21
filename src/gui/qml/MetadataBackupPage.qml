@@ -41,6 +41,11 @@ Page {
     property var mediaController: null
 
     readonly property bool hasStick: root.rekordboxPath.length > 0 || root.enginePath.length > 0
+    // requestLeave() refuses while a scan is running and says so, which
+    // a test of requestLeave has to be able to wait out. Exposed rather
+    // than reached through the BusyIndicator, which is a detail of the
+    // toolbar and not the state itself.
+    readonly property bool busy: controller.busy
     // Any catalog directory will do: the controller reads every catalog
     // on the stick that one belongs to.
     readonly property string libraryPath: root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath

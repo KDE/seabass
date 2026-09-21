@@ -258,7 +258,22 @@ references_unchanged() {
 # passed", S1-corpus is "the long one passed", and neither can be red
 # because of the other.
 suite() {
-    ctest --test-dir "$build" -j6 --timeout 900 --output-on-failure -E '^corpus_test$'
+    # A stick, so the two screenshot cases that want one stop skipping.
+    # They are the only tests in the non-live suite that read
+    # SEABASS_LIVE_STICK, and they only read it: they point the Metadata
+    # Backup and Restore pages at the stick's catalogs and grab the
+    # result. Everything else in the suite ignores it.
+    #
+    # B rather than A because B is the stick this rig treats as
+    # expendable, and this runs before B1/B3 have put either back to its
+    # reference, so whatever state the last round left is what gets
+    # photographed. That is fine for a screenshot and would not be for
+    # an assertion.
+    #
+    # ctest alone leaves them skipped, which is how they have always
+    # run: a skip in a release gate proves nothing, and these two are
+    # the only pages whose screenshots show real stick data.
+    SEABASS_LIVE_STICK="$B" ctest --test-dir "$build" -j6 --timeout 900 --output-on-failure -E '^corpus_test$'
 }
 
 corpus() {
