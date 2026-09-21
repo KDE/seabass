@@ -625,7 +625,7 @@ option(SEABASS_EXPERIMENTAL "Compile in the experimental-features opt-in (Settin
 # that arrived in 6.5, in an error that never mentions a version. The
 # floor is 6.8 because that is the oldest Qt this project is built and
 # tested against: Windows runs 6.8.3, and the Linux CI image ships 6.10.
-find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts QuickDialogs2 Multimedia Concurrent Svg
+find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts QuickDialogs2 Multimedia Concurrent Svg Network
     OPTIONAL_COMPONENTS Test QuickTest QuickEffects QuickShapes ShaderTools)
 # --- QtMultimedia duration probe (see TrackDurationProbe) ---
 #
@@ -895,6 +895,9 @@ if(SEABASS_GUI AND Qt6_FOUND)
             Qt6::Multimedia
             Qt6::Concurrent
             Qt6::Svg
+            # The update check, and nothing else: Seabass makes no other
+            # network request. See gui/update_checker.hpp.
+            Qt6::Network
             # ArtworkFixture builds a small Engine database for the
             # cover-art page's tests.
             SQLite::SQLite3
@@ -1696,6 +1699,14 @@ if(TARGET Qt6::Core)
     # looking at must not move because its own state changed, and an
     # arriving stick must be an insert the view can animate rather than a
     # reset it can only redraw.
+    add_executable(update_decision_test
+        src/gui/update_decision.cpp
+        tests/update_decision_test.cpp
+    )
+    target_include_directories(update_decision_test PRIVATE src)
+    target_link_libraries(update_decision_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME update_decision_test COMMAND update_decision_test)
+
     add_executable(stick_list_order_test
         src/gui/media_controller.cpp
         tests/stick_list_order_test.cpp

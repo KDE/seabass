@@ -204,6 +204,10 @@ set(SEABASS_GUI_SOURCES
     settings_controller.cpp
     app_settings_controller.hpp
     app_settings_controller.cpp
+    update_decision.hpp
+    update_decision.cpp
+    update_checker.hpp
+    update_checker.cpp
     anonymize_library_controller.hpp
     anonymize_library_controller.cpp
     dj_software_guard_controller.hpp
@@ -354,6 +358,9 @@ target_link_libraries(seabass PRIVATE
     Qt6::Multimedia
     Qt6::Concurrent
     Qt6::Svg
+    # The update check, and nothing else: Seabass makes no other
+    # network request. See gui/update_checker.hpp.
+    Qt6::Network
 )
 # See the find_package(Qt6 ...) call in the top-level CMakeLists.txt for
 # why these two are conditional: an official (aqtinstall-fetched) Qt kit

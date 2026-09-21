@@ -11,6 +11,9 @@ import SeabassGui
 Page {
     id: root
     required property var appSettingsController
+    // Null in the tests that do not care about it: every use below is
+    // guarded, so the page renders without one.
+    property var updateChecker: null
     // Scaled by Theme.iconScale, not a literal pixel count -- same
     // pt-to-px conversion KeyBadge.qml uses for its own sizing, so this
     // tracks the system font size (and therefore stays sharp on a retina
@@ -442,6 +445,95 @@ Page {
                     title: "Choose where to keep full stick backups"
                     currentFolder: root.appSettingsController.toLocalFileUrl(root.appSettingsController.stickBackupDirectory)
                     onAccepted: root.appSettingsController.stickBackupDirectory = selectedFolder.toString()
+                }
+            }
+
+            // ---- Updates ----------------------------------------------
+            //
+            // Off by default and it stays off: this is the only thing in
+            // Seabass that makes a network request, and the promise on
+            // the website is no phoning home. With the box unticked
+            // nothing is sent, ever. "Check now" is a different matter --
+            // pressing a button is the clearest consent there is.
+            SectionHeader { text: "Updates" }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Theme.scaled(6)
+
+                Subtitle { text: "This version" }
+                Label {
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: root.updateChecker === null ? ""
+                        : "Seabass " + root.updateChecker.currentVersion
+                          + " (" + root.updateChecker.currentChannel + ")"
+                          + (root.updateChecker.currentCommit.length > 0
+                             ? ", built from " + root.updateChecker.currentCommit : "")
+                }
+
+                CheckBox {
+                    Layout.leftMargin: root.settingIndent
+                    objectName: "automaticUpdateCheck"
+                    text: "Check for new versions of Seabass"
+                    enabled: root.updateChecker !== null
+                    checked: root.updateChecker !== null && root.updateChecker.automatic
+                    onToggled: root.updateChecker.automatic = checked
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Once a day, Seabass asks the website which version is the newest. "
+                        + "Nothing about you, your sticks or your library is sent, and with this off "
+                        + "Seabass makes no network request at all."
+                }
+                Label {
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    font.pointSize: Theme.fontSmall
+                    text: "It downloads one small file from vizzzion.org and compares version "
+                        + "numbers here. No account, no identifier, nothing about your library."
+                }
+
+                RowLayout {
+                    Layout.leftMargin: root.settingIndent
+                    spacing: Theme.rowSpacing
+                    Button {
+                        objectName: "checkForUpdatesNow"
+                        text: "Check Now"
+                        enabled: root.updateChecker !== null
+                            && root.updateChecker.state !== "checking"
+                        onClicked: root.updateChecker.checkNow()
+                    }
+                    BusyIndicator {
+                        running: root.updateChecker !== null && root.updateChecker.state === "checking"
+                        visible: running
+                        implicitWidth: Theme.scaled(22)
+                        implicitHeight: Theme.scaled(22)
+                    }
+                }
+
+                // The answer, whatever it is. A button that checks and
+                // says nothing leaves the user wondering whether it did.
+                Label {
+                    objectName: "updateCheckResult"
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    visible: text.length > 0
+                    text: root.updateChecker === null ? "" : root.updateChecker.message
+                    color: root.updateChecker === null ? Theme.textMuted
+                        : root.updateChecker.runningWithdrawn ? Theme.danger
+                        : root.updateChecker.updateAvailable ? Theme.good
+                        : Theme.textMuted
+                }
+                Button {
+                    Layout.leftMargin: root.settingIndent
+                    visible: root.updateChecker !== null
+                        && (root.updateChecker.updateAvailable || root.updateChecker.runningWithdrawn)
+                    text: "Open the download page"
+                    onClicked: Qt.openUrlExternally(root.updateChecker.downloadPage)
                 }
             }
 

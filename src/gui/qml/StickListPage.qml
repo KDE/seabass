@@ -20,6 +20,9 @@ Page {
     required property var playbackController
     required property var appSettingsController
     required property var backupAdvisor
+    // Null in tests and in any build that does not wire it: the label
+    // below simply never appears.
+    property var updateChecker: null
     // The edit-lock registry (EditSessionRegistry singleton; a fake in
     // tests): which libraries another instance is editing right now.
     property var editRegistry: typeof EditSessionRegistry !== "undefined" ? EditSessionRegistry : null
@@ -313,6 +316,49 @@ Page {
                 }
             }
             Item { Layout.fillWidth: true }
+
+            // The one thing worth interrupting the first screen for: a
+            // newer Seabass, or -- louder -- word that the build being
+            // used has been withdrawn. Nothing at all in the ordinary
+            // case, which is most of the time: the check is off until
+            // somebody turns it on, and says nothing when there is
+            // nothing to say.
+            Control {
+                id: updateBadgeControl
+                objectName: "updateBadge"
+                visible: root.updateChecker !== null
+                    && (root.updateChecker.updateAvailable || root.updateChecker.runningWithdrawn)
+                padding: Theme.scaled(6)
+                leftPadding: Theme.scaled(12)
+                rightPadding: Theme.scaled(12)
+                readonly property bool alarming: root.updateChecker !== null
+                    && root.updateChecker.runningWithdrawn
+                background: Rectangle {
+                    radius: height / 2
+                    color: updateBadgeControl.alarming
+                        ? Theme.dangerBg
+                        : Qt.rgba(Theme.good.r, Theme.good.g, Theme.good.b, 0.16)
+                    border.width: 1
+                    border.color: updateBadgeControl.alarming ? Theme.dangerBorder : Theme.good
+                }
+                contentItem: Label {
+                    objectName: "updateBadgeLabel"
+                    text: updateBadgeControl.alarming
+                        ? "This version was withdrawn"
+                        : "New version available"
+                    color: updateBadgeControl.alarming ? Theme.danger : Theme.good
+                    font.weight: Font.DemiBold
+                    font.pointSize: Theme.fontSmall
+                }
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                TapHandler {
+                    onTapped: Qt.openUrlExternally(root.updateChecker.downloadPage)
+                }
+                ToolTip.visible: updateBadgeControl.hovered
+                ToolTip.text: root.updateChecker === null ? ""
+                    : root.updateChecker.message + " Opens the download page."
+            }
+
             // What opens a library from this computer rather than from a
             // stick, behind one button: each is used now and then, and as
             // two header buttons plus a row under the list they crowded a

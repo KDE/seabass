@@ -65,6 +65,12 @@ ApplicationWindow {
         id: appSettingsCtrl
     }
 
+    // The only thing in Seabass that talks to the network, and it stays
+    // quiet until somebody turns it on: see gui/update_checker.hpp.
+    UpdateChecker {
+        id: updateCtrl
+    }
+
     // One process guard for the whole app: polls for rekordbox / Engine DJ
     // only while a library is in edit or write mode (see
     // dj_software_guard_controller.hpp) and raises the modal below.
@@ -405,6 +411,9 @@ ApplicationWindow {
     Component.onCompleted: {
         EditSessionRegistry.mediaController = mediaCtrl;
         window.updateWatermark();
+        // Does nothing unless the user has switched it on and the last
+        // check was over a day ago.
+        updateCtrl.checkIfDue();
     }
 
     // Shared by the stick list and every stick's Backups page: what each
@@ -418,6 +427,7 @@ ApplicationWindow {
         id: stickListPageComponent
         StickListPage {
             mediaController: mediaCtrl
+            updateChecker: updateCtrl
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
             backupAdvisor: backupAdvisorCtrl
@@ -674,6 +684,7 @@ ApplicationWindow {
     Component {
         id: appSettingsPageComponent
         AppSettingsPage {
+            updateChecker: updateCtrl
             appSettingsController: appSettingsCtrl
             onAnonymizeLibraryRequested: stackView.push(anonymizeLibraryPageComponent)
         }
