@@ -36,7 +36,9 @@ std::shared_ptr<AnlzByteSource> anlzSourceForPioneerRoot(const std::string &pion
 // handle once the last reader lets go. Called when a browsed backup is
 // closed: an open handle is otherwise held until the app exits, and on
 // Windows that blocks replacing the archive (Compact, a new backup
-// generation) with "another program keeps it open" -- Seabass itself.
+// generation) with "something still has it open" -- Seabass itself,
+// which is why that refusal now says so rather than blaming an outside
+// program somebody would go looking for in Task Manager.
 void forgetArchiveSource(const std::string &archivePath);
 
 }  // namespace seabass::infrastructure::rekordbox

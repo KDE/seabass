@@ -112,7 +112,17 @@ bool replaceArchive(const fs::path &tempPath, const fs::path &archivePath, std::
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200 * (attempt + 1)));
     }
-    error = "could not replace the archive: another program keeps it open";
+    // Not "another program". On Windows the likeliest holder by far is
+    // Seabass itself: a browse session with the archive open, or a scan
+    // of this backup still finishing. Naming an outside culprit sends
+    // somebody hunting through Task Manager for a program that is not
+    // there, and the thing they can actually do -- close the backup they
+    // are looking at -- goes unsaid. Explorer's preview pane is real too,
+    // so it stays in the sentence, second.
+    error = "could not replace the archive: something still has it open. That is usually "
+            "Seabass itself -- a backup you are browsing, or a scan of it that has not "
+            "finished -- so close it here and try again. Windows Explorer's preview pane "
+            "can hold it too.";
     return false;
 #else
     std::error_code ec;
