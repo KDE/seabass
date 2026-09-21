@@ -164,6 +164,19 @@ linux:build:
   image: ubuntu:24.04
   before_script:
     - apt-get update -qq
+    # The two -private-dev packages are what make Qt6::QuickLayouts
+    # resolve, and the error does not say so. QuickLayouts' link
+    # interface pulls in Qt6::GuiPrivate, whose
+    # INTERFACE_INCLUDE_DIRECTORIES names
+    # /usr/include/x86_64-linux-gnu/qt6/QtGui/<version> -- a directory
+    # Ubuntu ships in qt6-base-private-dev, not qt6-base-dev. CMake
+    # checks every path in an imported target's include list whether or
+    # not anything compiles against it, so configure fails over a header
+    # directory nothing here includes, and blames the one target whose
+    # interface happens to mention GuiPrivate. Reproduced and confirmed
+    # in this exact container on frame; both installed together without
+    # bisecting which is strictly required.
+    #
     # libxkbcommon-dev supplies the XKB::XKB target that Ubuntu's own
     # Qt6GuiTargets.cmake names in Qt6::GuiPrivate's link interface but
     # does not depend on. Without it configure dies inside Qt's own
@@ -192,6 +205,7 @@ linux:build:
         qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-svg-dev
         qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
         xvfb unzip p7zip-full libxkbcommon-dev
+        qt6-base-private-dev qt6-declarative-private-dev
   script:
     # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
     # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
