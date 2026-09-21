@@ -816,9 +816,22 @@ check R6-catalogs-after-reads bash -c "grep -F '$A/' '$out/catalog-baseline.txt'
 # ---- edits -----------------------------------------------------------
 check W1-W3-W4-F1-F2-F3-live live_edit_mode
 check W2-W5-W6-edits "$root/tools/rig-edits.sh" "$B" "$out/catalog-baseline.txt"
+# Directly after the saves, and before W7. A restore to the reference
+# REPLACES the stick, Seabass/backups with it, so every automatic record
+# the saves left is gone afterwards -- and metadata_between_sticks ends
+# with exactly such a restore, because its planted cue takes B off its
+# reference. W9 used to sit after that and count what was left: two
+# records, both made by W7 itself in the seconds before its restore, and
+# never the three it asks for. It failed every full round for the order
+# it ran in rather than for anything a save did.
+#
+# Measured on macOS 2026-09-21, stick B at its reference: rig-edits.sh
+# alone leaves six records -- add-cue, duplicate-file-cleanup and
+# consistency-repair, each with the pre-restore copy its undo takes --
+# and the reference restore leaves none.
+check W9-saves-left-backups "$build/rig_save_backups" "$B" --expect-at-least 3
 check W7-metadata-between-sticks metadata_between_sticks
 check F5-quit-with-unsaved-changes quit_with_changes
-check W9-saves-left-backups "$build/rig_save_backups" "$B" --expect-at-least 3
 
 # ---- full stick backups ----------------------------------------------
 mkdir -p "$out/backups-fb"
