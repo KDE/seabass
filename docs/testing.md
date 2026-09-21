@@ -109,6 +109,17 @@ rows came out **zero wide and unclickable**, and three pages failed to
 instantiate on a TypeError thrown inside the style's own `ComboBox`.
 None of it was visible from the pinned lane.
 
+The find did not stop at the lane, and that is the part worth copying.
+The same delegate binding -- `width: ListView.view ? ListView.view.width
+: implicitWidth`, a row sized by its own content whenever it is not
+inside a list view -- was also in `LibrarySourceToggle`, where no lane
+could see it and three people had been looking straight at it all
+afternoon. It was found on another platform by someone reading the fix
+and going to look for the same shape, not by running anything: one row
+painting nothing at all, another's name band five pixels tall beside a
+twenty pixel glyph (111efcf0). A lane tells you a thing is broken. The
+fix tells you what to search for.
+
 This is what seabass#18 asked for, and it is worth knowing that the
 issue's recorded diagnosis was wrong: it said the popup is a separate
 native window under this style and that a click to the test's window
@@ -375,15 +386,19 @@ build. Rebuild before you doubt the data. `rig_fake_dj` matters most, because it
 one whose absence is silent: without it, FB7 and the guard scenario have
 nothing to detect.
 
-Only one rig may run at a time. The two test sticks are a single
-resource with no lock on them, and nothing in the rig notices a second
-one: on 2026-09-21 two rounds ran against the same two sticks for about
-ten minutes, each restoring and writing under the other, and both rounds
-had to be thrown away. Neither reported anything unusual while it
-happened -- the damage looked like ordinary check failures several steps
-downstream, on a stick that had been changed by someone else. Before
-starting a round, look for another `rig-shakedown.sh`, and if another
-session is on this machine, ask it.
+Only one rig may run at a time, and `rig-shakedown.sh` now holds an
+`flock` to enforce it (d74f4e75): a second round is refused with the
+holder's pid, output directory, start time and sticks, and the lock is
+released however the first one dies, `kill -9` included. `RIG_NO_LOCK=1`
+is the deliberate way past it, for a second rig against different
+sticks.
+
+It exists because on 2026-09-21 two rounds ran against the same two
+sticks for about ten minutes, each restoring and writing under the
+other, and both had to be thrown away. What makes it worth a lock rather
+than a convention: neither round reported anything unusual while it
+happened. The damage surfaced as ordinary check failures several steps
+downstream, on a stick that had been changed by somebody else.
 
 Both sticks are overwritten, several times. The references are only read;
 their size, modification time and manifest checksum are recorded before the
