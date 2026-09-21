@@ -191,6 +191,16 @@ stick_fstype() {  # <mount point>
     local raw=""
     if [ "$rig_os" = "Darwin" ]; then
         raw="$(diskutil info "$1" 2>/dev/null | awk -F': *' '/^ *Type \(Bundle\):/ {print $2; exit}')"
+    elif rig_is_windows; then
+        # findmnt (below) is util-linux and does not exist here. fsutil
+        # ships with Windows itself and needs no elevated privileges to
+        # read a volume's own filesystem name -- confirmed directly
+        # against a real FAT32 stick. Without this branch the case
+        # unconditionally fell through to "", which D1/D2 then read as
+        # "not a filesystem this formats", failing every round's first
+        # attempt at a format check on this platform.
+        local drive; drive="$(printf '%s' "${1#/}" | cut -c1 | tr '[:lower:]' '[:upper:]')"
+        raw="$(fsutil fsinfo volumeinfo "${drive}:" 2>/dev/null | awk -F' : ' '/^File System Name/ {print $2; exit}')"
     else
         raw="$(findmnt -no FSTYPE "$1" 2>/dev/null)"
     fi
