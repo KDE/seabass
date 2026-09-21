@@ -64,6 +64,10 @@ class MetadataRestoreController : public QObject
     Q_PROPERTY(int conflictCount READ conflictCount NOTIFY analysisChanged)
     Q_PROPERTY(int conflictsLeftAlone READ conflictsLeftAlone NOTIFY analysisChanged)
     Q_PROPERTY(int stagedCount READ stagedCount NOTIFY analysisChanged)
+    // What a save will actually write: one change per catalog that
+    // lists the file, so this is >= stagedCount whenever a stick
+    // carries the same tracks in more than one catalog.
+    Q_PROPERTY(int stagedChangeCount READ stagedChangeCount NOTIFY analysisChanged)
     // Proposals offering a comment that DeviceLibrary alone cannot
     // store. Not a failure and not hidden: the page says so before the
     // save rather than the log saying so after it.
@@ -92,6 +96,7 @@ public:
     int conflictCount() const { return m_conflictCount; }
     int conflictsLeftAlone() const { return m_conflictsLeftAlone; }
     int stagedCount() const { return m_model.stagedCount(); }
+    int stagedChangeCount() const { return m_model.stagedChangeCount(); }
     int commentsRekordboxCannotTake() const { return m_commentsRekordboxCannotTake; }
     int proposalCount() const { return static_cast<int>(m_model.proposals().size()); }
     bool allStaged() const { return proposalCount() > 0 && stagedCount() == proposalCount(); }

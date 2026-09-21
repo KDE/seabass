@@ -291,6 +291,20 @@ int RestoreProposalListModel::stagedCount() const
                                           [](const QStringList &changes) { return !changes.isEmpty(); }));
 }
 
+int RestoreProposalListModel::stagedChangeCount() const
+{
+    // Rows, not changes, is what stagedCount() answers. One proposal
+    // becomes one change per catalog that lists the file, so a stick
+    // whose tracks are in both rekordbox and Engine stages two changes
+    // per row -- and comparing a row count against a change count then
+    // looks like a bug in whichever one you trusted less.
+    int total = 0;
+    for (const QStringList &changes : m_stagedChanges) {
+        total += static_cast<int>(changes.size());
+    }
+    return total;
+}
+
 int RestoreProposalListModel::indexOfChange(const QString &changeId) const
 {
     for (std::size_t i = 0; i < m_stagedChanges.size(); ++i) {

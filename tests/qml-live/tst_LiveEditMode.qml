@@ -828,7 +828,23 @@ TestCase {
         var s = EditSessionRegistry.openSession(testCase.libraryId, stickLabel, rekordboxPath, "");
         verify(s !== null);
         restore.stageAll();
-        tryVerify(function() { return s.pendingCount === restore.stagedCount && s.pendingCount > 0; }, 10000);
+        // Two steps rather than one predicate, because tryVerify on a bare
+        // function reports "function returned false" and nothing else. This
+        // assertion failed on a real stick and the log could not say whether
+        // the session had received nothing at all or merely a different
+        // number -- which are different bugs. Waiting for arrival and then
+        // comparing prints both counts.
+        tryVerify(function() { return s.pendingCount > 0; }, 10000,
+                   "staging " + restore.stagedCount + " proposal(s) put nothing in the session");
+        // stagedChangeCount, not stagedCount: the first counts changes, the
+        // second counts rows that have any. One proposal becomes one change
+        // per catalog listing the file, so on a stick carrying the same
+        // tracks in rekordbox and Engine these differ by exactly the
+        // catalogs involved -- 9 proposals, 18 changes on the A/B/C fixture.
+        // The old assertion compared the two and held only on a stick whose
+        // tracks live in a single catalog.
+        compare(s.pendingCount, restore.stagedChangeCount,
+                 "the session should hold one pending change per catalog per staged proposal");
         var staged = s.pendingCount;
         var summary = saveAndWait(false);
         compare(summary.error, "");

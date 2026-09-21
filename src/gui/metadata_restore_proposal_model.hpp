@@ -71,7 +71,8 @@ public:
     void setStagedChanges(int index, QStringList changeIds);
     QStringList stagedChanges(int index) const;
     bool isStaged(int index) const;
-    int stagedCount() const;
+    int stagedCount() const;        // rows with anything staged
+    int stagedChangeCount() const;  // changes staged across all rows
     // The proposal a staged change belongs to, or -1.
     int indexOfChange(const QString &changeId) const;
     void removeAt(int index);
