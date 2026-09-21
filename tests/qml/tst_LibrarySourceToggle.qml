@@ -291,7 +291,8 @@ TestCase {
             verify(ink.glyph.top >= 0 && capitalInk.top >= 0, values[i] + ": nothing was painted");
             const off = ink.glyphCentroid - ink.capitalCentroid;
             verify(Math.abs(off) <= testCase.allowedOffset,
-                   values[i] + ": the glyph's centre is " + off + " px off the name's");
+                   values[i] + ": the glyph's centre is " + off + " px off the name's. glyph "
+                       + describeText(glyph) + "; name " + describeText(name));
             // And the name stays centred in the box: lining the two up by
             // their baseline lifted the whole text about 2 px.
             var boxCentre = origin.y + (toggle.height - 1) / 2;
@@ -332,6 +333,18 @@ TestCase {
             }
         }
         return best;
+    }
+
+    // What a text item IS, for a failure message: its size, and the font
+    // the platform actually resolved rather than the one asked for.
+    // font.family is the request; fontInfo.family is what got used, and a
+    // glyph that paints nothing is often a bundled family that did not
+    // load, with the fallback lacking the code point.
+    function describeText(item) {
+        const resolved = item.fontInfo !== undefined ? item.fontInfo.family : "(no fontInfo)";
+        return "\"" + item.text + "\" " + Math.round(item.width) + "x" + Math.round(item.height)
+               + ", font asked \"" + item.font.family + "\" got \"" + resolved + "\" at "
+               + item.font.pixelSize + "px";
     }
 
     function describeRect(item) {
@@ -378,6 +391,15 @@ TestCase {
                        + "). Either the popup is a separate window in this style, or it is placed over the "
                        + "field rather than under it; ctest pins QT_QUICK_CONTROLS_STYLE=Basic, and a direct "
                        + "run of this binary inherits the desktop's style");
+            // A band with no width measures nothing, whatever the
+            // renderer did, so it is not the same finding as an empty
+            // band and is not reported as one. macOS sees rows whose
+            // glyph inks nothing in every configuration, including one
+            // where the name beside it inks cleanly, and a glyph item
+            // sized 0 wide would produce exactly that.
+            verify(glyph.width > 0 && glyph.height > 0 && name.width > 0,
+                   name.text + ": the pair has no area to measure. glyph " + describeText(glyph)
+                       + "; name " + describeText(name));
             const y0 = Math.floor(origin.y + 2), y1 = Math.ceil(origin.y + row.height - 2);
             const background = modalColour(image, row, y0, y1);
             const ink = pairInk(image, background, glyph, name, y0, y1);
@@ -386,10 +408,12 @@ TestCase {
                        + describeRect(row) + "). Background read as rgb(" + Math.round(background.r * 255) + ","
                        + Math.round(background.g * 255) + "," + Math.round(background.b * 255) + "); glyph ink "
                        + ink.glyph.top + ".." + ink.glyph.bottom + ", name ink " + ink.capital.top + ".."
-                       + ink.capital.bottom);
+                       + ink.capital.bottom + ". Items: glyph " + describeText(glyph) + "; name "
+                       + describeText(name));
             const off = ink.glyphCentroid - ink.capitalCentroid;
             verify(Math.abs(off) <= testCase.allowedOffset,
-                   name.text + ": the row's glyph is " + off + " px off its name");
+                   name.text + ": the row's glyph is " + off + " px off its name. glyph " + describeText(glyph)
+                       + "; name " + describeText(name));
         }
         toggle.popup.close();
     }
