@@ -164,7 +164,16 @@ linux:build:
   image: ubuntu:24.04
   before_script:
     - apt-get update -qq
+    # ca-certificates is not optional and not obvious: the ubuntu:24.04
+    # image ships none, apt itself does not need any (its sources are
+    # plain http), and so the gap only shows up later, when CMake runs
+    # `git submodule update` at configure time and git cannot verify
+    # github.com. It reads as "Failed to initialize git submodules"
+    # rather than as a missing package -- see pipeline 1353951, where
+    # both submodules failed with "server certificate verification
+    # failed. CAfile: none".
     - apt-get install -y -qq --no-install-recommends
+        ca-certificates
         build-essential cmake ninja-build git pkg-config
         libsqlite3-dev zlib1g-dev libsqlcipher-dev libtag1-dev
         qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-svg-dev
