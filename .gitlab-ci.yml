@@ -180,7 +180,14 @@ linux:build:
         qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
         xvfb
   script:
-    - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
+    # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
+    # the vendored libdjinterop's own test suite wants Boost.Filesystem
+    # compiled, and only the headers are here. Installing
+    # libboost-filesystem-dev would work too, but this lane exists to run
+    # SEABASS's tests -- a vendored dependency's suite failing would red
+    # the gate for something nothing in this repo controls.
+    - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSEABASS_LIBDJINTEROP_TESTS=OFF
     - cmake --build build
   artifacts:
     paths: [build]
