@@ -26,6 +26,7 @@ import utils
 from CraftCore import CraftCore
 from Package.AutoToolsPackageBase import AutoToolsPackageBase
 from Package.MSBuildPackageBase import MSBuildPackageBase
+from Utils.Arguments import Arguments
 from Utils import CraftHash
 
 
@@ -89,6 +90,15 @@ class PackageAutotools(AutoToolsPackageBase):
         # -j1: the install step races on mkdir (Homebrew serialises it too);
         # the last -j on make's command line wins.
         opts.install.args += [f"TCLSH_CMD={self._tclsh()}", "-j1"]
+        # Building x86_64 on an arm64 Mac is a cross build as far as Craft is
+        # concerned (it reads the kernel, so even Rosetta counts), and for
+        # those it passes --host, --build and --target. autosetup takes the
+        # first two and stops at the third: "Unknown option --target".
+        # Dropping it loses nothing -- there is no separate target machine
+        # here, and the architecture reaches the compiler through the -arch
+        # Craft appends to CC and CXX.
+        if CraftCore.compiler.isMacOS and not CraftCore.compiler.isNative():
+            self.platform = Arguments([arg for arg in self.platform.get() if not str(arg).startswith("--target=")])
 
     def _tclsh(self):
         return str(CraftCore.standardDirs.craftRoot() / "bin" / "tclsh8.6")
