@@ -20,6 +20,7 @@
 #include "infrastructure/backup/stick_space.hpp"
 
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -223,25 +224,55 @@ void SaveContext::discardBackupsTakenThisSave()
     if (m_recordByLabel.empty()) {
         return;
     }
-    int removed = 0;
-    for (const auto &[label, id] : m_recordByLabel) {
-        try {
-            archiveStore().remove(id);
-            ++removed;
-        } catch (const std::exception &e) {
-            // Said, not thrown: the save has already failed and been put
-            // back, and a record that could not be removed is untidy
-            // rather than dangerous. Swallowing it silently is what would
-            // make the next round's leftover hard to explain.
-            log().record("save: could not remove the backup record " + id + " this save had taken: " + e.what());
+    // Never throws out of here: this runs after a save has already failed
+    // and been put back, so the caller is in the middle of reporting that
+    // failure. Anything escaping would take the progress bar and the
+    // summary with it.
+    try {
+        // The same lock the Backups page and releaseAutomaticBackupsIfTight
+        // take, so a record cannot be deleted out from under another
+        // session's restore or listing.
+        std::optional<infrastructure::backup::StickWriteLock> lock;
+        if (hasStick()) {
+            lock.emplace(infrastructure::backup::backupDirForStickRoot(stickRoot()) + "/.write.lock");
         }
-    }
-    m_recordByLabel.clear();
-    m_backedUp.clear();
-    m_backups.clear();
-    if (removed > 0 && hasStick()) {
-        log().record("save: nothing was applied and everything went back, so the " + std::to_string(removed)
-                     + " backup record(s) this save had taken were removed");
+        int removed = 0;
+        std::vector<std::string> stayed;
+        for (const auto &[label, id] : m_recordByLabel) {
+            // remove() ANSWERS, it does not throw: FilesystemBackupStore
+            // works in error_code overloads throughout. Counting calls
+            // rather than removals is how a leftover survives under a log
+            // line saying it was removed, which is the shape of the very
+            // bug this function exists to fix.
+            if (archiveStore().remove(id)) {
+                ++removed;
+            } else {
+                stayed.push_back(id);
+            }
+        }
+        m_recordByLabel.clear();
+        m_backedUp.clear();
+        m_backups.clear();
+        if (hasStick() && removed > 0) {
+            log().record("save: nothing was applied and everything went back, so " + std::to_string(removed)
+                         + " backup record(s) this save had taken were removed");
+        }
+        if (hasStick() && !stayed.empty()) {
+            std::string list;
+            for (const std::string &id : stayed) {
+                list += (list.empty() ? "" : ", ") + id;
+            }
+            log().record("save: " + std::to_string(stayed.size())
+                         + " backup record(s) this save had taken could NOT be removed and are still on the stick: "
+                         + list);
+        }
+    } catch (const std::exception &e) {
+        m_recordByLabel.clear();
+        m_backedUp.clear();
+        m_backups.clear();
+        if (hasStick()) {
+            log().record(std::string("save: the backup records this save took could not be cleared up: ") + e.what());
+        }
     }
 }
 

@@ -547,13 +547,21 @@ int main()
             write(pdb, "pdb-original");
             CancellationToken token;
             SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+            // Counted from INSIDE the change, which runs after the save
+            // has taken its backup: without this, the case passes just as
+            // happily against a save that never backed anything up, since
+            // "no records afterwards" is true either way. That is the
+            // agreeable-counter shape this round kept meeting.
+            int recordsDuringTheSave = -1;
             std::vector<std::shared_ptr<PendingChange>> changes = {
                 std::make_shared<ScriptedChange>("only", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                    recordsDuringTheSave = recordsNow();
                     write(pdb, "pdb-from-the-change");
                     return ChangeOutcome::failure("the catalog refused");
                 }),
             };
             auto result = runSaveLoop(changes, ctx);
+            assert(recordsDuringTheSave == 1 && "the save did take its backup before writing");
             assert(result.appliedIds.isEmpty() && "nothing applied, which is the case this is about");
             assert(read(pdb) == "pdb-original" && "and the file went back");
             assert(recordsNow() == 0 && "the backup of a stick that never changed does not stay");

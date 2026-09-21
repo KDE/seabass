@@ -146,9 +146,14 @@ int plant(const fs::path &root)
         fs::rename(victim.filePath, moveAside);
         std::ofstream(record, std::ios::app) << victim.filePath << '\t' << relative.generic_string() << '\t'
                                              << victim.sourceId << '\t' << victim.title << '\n';
+        std::size_t cuesInGroup = 0;
+        for (const domain::Track &copy : group.tracks) {
+            cuesInGroup += copy.cues.size();
+        }
         std::cout << "planted: \"" << victim.artist << " - " << victim.title << "\" (" << victim.durationSeconds
-                  << " s), " << group.tracks.size() << " copies, "
-                  << (victim.cues.size() + survivor.cues.size()) << " cue(s) between them\n"
+                  << " s), " << group.tracks.size() << " copies, " << cuesInGroup
+                  << " cue(s) across them (" << victim.cues.size() << " on the one moved aside, "
+                  << survivor.cues.size() << " on the healthy one)\n"
                   << "  moved aside rekordbox id " << victim.sourceId << ": " << victim.filePath << "\n"
                   << "  healthy copy rekordbox id " << survivor.sourceId << ": " << survivor.filePath << "\n"
                   << "RIG RESULT: PASS\n";

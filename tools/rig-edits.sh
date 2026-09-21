@@ -13,7 +13,7 @@
 # W2  add a cue (rekordbox and its OneLibrary mirror), save, undo
 # W5  Clean Up one duplicate group, save, undo
 # W6  Library Health: tools/rig_plant_repairable moves one copy of a
-#     cue-free duplicate aside, the test repairs, saves and undoes, and the
+#     duplicate aside, the test repairs, saves and undoes, and the
 #     file is moved back whatever the test did
 #
 # Every write goes through the app's backup path and is undone. With a

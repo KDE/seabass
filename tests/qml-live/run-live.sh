@@ -135,7 +135,20 @@ run "LiveGuard::test_guardBlocksWhileEditingAndCliIsRefused" SEABASS_LIVE_GUARD=
 wait
 
 # 4. The stick goes away while editing.
-if [ -n "$device" ]; then
+#
+# By hand on Windows, and said so rather than attempted. rig-platform.sh
+# unmounts through diskutil on macOS and udisksctl everywhere else, and
+# Windows has neither: the stick would never actually go away, so the
+# test would sit waiting for an event that cannot arrive, as round 5 saw
+# it do for fourteen minutes before it was killed. Ejecting a real stick
+# through the Shell COM API unattended was considered and rejected: if
+# the volume does not come back without somebody physically reinserting
+# it, an overnight round is stranded. So this is a check for a person on
+# that platform -- docs/manual-testing.md carries it -- and the round
+# neither runs it nor claims it passed.
+if rig_is_windows; then
+    echo "=== LiveStickPull is a by-hand check on Windows: no unprivileged unmount, see docs/manual-testing.md"
+elif [ -n "$device" ]; then
     ( sleep 12; unmount_device "$device" && echo "--- unmounted $device"
       sleep 15; mount_device "$device" && echo "--- mounted $device again" ) &
     run "LiveStickPull::test_stickPulledWhileEditing" SEABASS_LIVE_STICK_PULL=1

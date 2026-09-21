@@ -2390,7 +2390,7 @@ add_executable(rig_compact tools/rig_compact.cpp)
 target_include_directories(rig_compact PRIVATE src)
 target_link_libraries(rig_compact PRIVATE seabass_core)
 
-# Release rig: move one copy of a cue-free duplicate aside so Library Health
+# Release rig: move one copy of a duplicate aside so Library Health
 # has something to repair, and put it back.
 add_executable(rig_plant_repairable tools/rig_plant_repairable.cpp)
 target_include_directories(rig_plant_repairable PRIVATE src)

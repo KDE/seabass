@@ -19,6 +19,29 @@ write down the message verbatim.
 Always start on a **scratch copy** of a stick, never the live one, the
 first time through a list.
 
+## Windows: the stick pull is one of these
+
+`LiveStickPull::test_stickPulledWhileEditing` runs in every scripted
+round on Linux and macOS, where the rig unmounts the stick through
+`udisksctl` or `diskutil` and mounts it back. Windows has neither, so the
+scripted round on that platform prints a line saying this is by hand and
+moves on: it does not run the check and does not claim it passed.
+
+Doing it by hand, on Windows, on a TEST stick:
+
+1. Open Seabass on the stick and start an edit -- stage something on
+   Library Health, enough that the session holds the write lock.
+2. Pull the stick out. Physically, mid-edit, without ejecting it first.
+3. Seabass must say the stick has gone, must not write anything further,
+   and must not lose what was staged in a way that leaves the catalog
+   half-written. Read the stick's own log afterwards.
+4. Plug it back in and check the catalogs are as they were.
+
+The reason it is not automated there: ejecting a volume through the Shell
+COM API unattended can leave it needing a physical reinsertion, which
+would strand an overnight round with nobody at the machine. A person is
+already present for this check by definition.
+
 ## Where an individual item lives
 
 This file holds the checklists -- a sequence of steps someone works

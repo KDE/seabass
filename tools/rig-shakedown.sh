@@ -624,9 +624,31 @@ live_edit_mode() {
 }
 
 metadata_between_sticks() {
+    # A difference to carry, planted first. The check takes stick B's
+    # metadata onto stick A, and a round where one fixture was restored
+    # to both sticks has nothing to take: round 5 saw 107 tracks seen, 5
+    # proposals, 0 conflicts, on all three platforms, and the check
+    # failed for want of a library difference rather than for anything
+    # the code did. So B gets a cue of its own first, and is put back
+    # afterwards whatever the check decides. keep_cue waits out FAT's
+    # two-second mtime resolution, the same reason rig-clones.sh does.
+    echo "=== planting a difference on $B for the metadata to carry"
+    sleep 3
+    if ! SEABASS_LIVE_STICK="$B" SEABASS_RIG_KEEP_CUE_MS=45000 \
+        "$build/seabass_qml_tests" -input "$root/tests/qml-live" LiveEditMode::test_11_rigKeepCue; then
+        echo "could not plant a cue on $B, so there is nothing for W7 to carry"
+        return 1
+    fi
+    local rc=0
     SEABASS_LIVE_STICK="$A" SEABASS_LIVE_SECOND_STICK="$B" \
         "$build/seabass_qml_tests" -input "$root/tests/qml-live" LiveEditMode::test_12_metadataFromSecondStickSaveUndo \
-        && unchanged_catalogs "$A"
+        || rc=1
+    unchanged_catalogs "$A" || rc=1
+    # B carried the planted cue, so it is no longer at its reference:
+    # put it back before the checks that assume it is.
+    echo "=== putting $B back to its reference after the planted cue"
+    "$build/rig_restore" "$refB" "$B" --execute || rc=1
+    return $rc
 }
 
 refused_while_dj_software_runs() {
@@ -708,7 +730,6 @@ resume_after_keep() {
 
 # ---- setup and suite -------------------------------------------------
 check S1-suite suite
-check S1-corpus corpus
 check S2-reference-links reference_links
 check S3-sandboxed-profile sandbox_profile
 check S4-references-unchanged references_unchanged
@@ -814,6 +835,10 @@ check X1-references-unchanged references_unchanged
 # S3 again, at the end: the three checks before it prove nothing about the
 # thirty that followed.
 check X4-everyday-profile-untouched sandbox_profile_still_clean
+# Last, as its own comment promises: the longest test there is, run once
+# everything that touches a stick has finished with it. It needs no stick
+# and nothing needs it, so a round loses nothing by ending here.
+check S1-corpus corpus
 
 set -f  # a name like F4-* must be reported as typed, not glob-expanded
 for wanted in $(rig_only_names); do
