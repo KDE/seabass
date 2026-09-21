@@ -514,6 +514,62 @@ int main()
         std::cout << "case 11 (copyTrackFieldsIfMissing: unknown track id throws, no edit) OK\n";
     }
 
+    {
+        // zeroUnusedSpace() and a page that has had a row deleted from
+        // the middle of it. num_row_offsets (slots ever allocated) and
+        // num_rows (slots still valid) diverge exactly then, and every
+        // slot between them belongs to a LIVE row: rekordbox does not
+        // renumber the index when a row goes.
+        //
+        // The clearing pass used to treat "index >= num_rows" as unused
+        // and zero it, which points a present row at the start of the
+        // heap. On a real stick that made the catalog unparseable,
+        // commit() refused to write it, and the anonymizer reported only
+        // "failed to commit anonymized export.pdb" -- so every rekordbox
+        // export came out completely unscrubbed, with the byte sweep at
+        // the end as the sole thing standing between that and a shared
+        // file. Nothing exercised zeroUnusedSpace() directly before this
+        // case; it was only ever reached through the anonymizer.
+        std::string buf = buildSyntheticPdb();
+        const size_t page1 = LenPage * 1;
+        constexpr size_t HeapStart = 40;
+        constexpr size_t TrackRowSize = 136;
+        constexpr size_t TrackIdFieldOffset = 72;
+        // Three slots allocated, two rows valid: slot 0 is the deleted
+        // one, slots 1 and 2 are present.
+        const uint32_t packed = (3u & 0x1FFFu) | ((2u & 0x7FFu) << 13);
+        buf[page1 + 24] = static_cast<char>(packed & 0xFF);
+        buf[page1 + 25] = static_cast<char>((packed >> 8) & 0xFF);
+        buf[page1 + 26] = static_cast<char>((packed >> 16) & 0xFF);
+        writeU16LE(buf, page1 + LenPage - 4, 0b110);  // rows 1 and 2 present, row 0 deleted
+        writeU16LE(buf, page1 + LenPage - 6, 0);                                  // slot 0 -> dead row
+        writeU16LE(buf, page1 + LenPage - 8, TrackRowSize);                       // slot 1
+        writeU16LE(buf, page1 + LenPage - 10, 2 * TrackRowSize);                  // slot 2, the one at risk
+        writeU32LE(buf, page1 + HeapStart + 2 * TrackRowSize + TrackIdFieldOffset, 102);
+
+        const fs::path dir = seabass::testing::scratchRoot() / "pdb_zero_unused_deleted_row";
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+        const fs::path pdbPath = dir / "export.pdb";
+        writeFile(pdbPath, buf);
+
+        PdbRowWriter writer(pdbPath.string());
+        const int cleared = writer.zeroUnusedSpace();
+        assert(cleared > 0);  // it must still clear the genuinely free bytes
+        assert(writer.commit());
+        std::cout << "case 12 (zeroUnusedSpace: a page with a deleted row still commits) OK\n";
+
+        const std::string after = readFile(pdbPath);
+        // The live rows' own slots are untouched, which is the whole point.
+        assert(readU16LE(after, page1 + LenPage - 10) == 2 * TrackRowSize);
+        assert(readU16LE(after, page1 + LenPage - 8) == TrackRowSize);
+        auto rbAfter = readBack(pdbPath);
+        assert(contains(rbAfter.presentTrackIds, 101));
+        assert(contains(rbAfter.presentTrackIds, 102));
+        assert(!contains(rbAfter.presentTrackIds, 100));
+        std::cout << "case 12b (the deleted row stays gone, both live rows still read) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

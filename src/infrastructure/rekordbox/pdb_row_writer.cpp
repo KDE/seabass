@@ -804,6 +804,7 @@ int PdbRowWriter::zeroUnusedSpace()
         uint32_t pageIndex = 0;
         Pdb::page_type_t pageType = Pdb::PAGE_TYPE_TRACKS;
         size_t numRows = 0;
+        size_t rowOffsets = 0;  // num_row_offsets: slots ever allocated, valid or not
         size_t groups = 0;
         size_t pageStart = 0;
         size_t lenPage = 0;
@@ -831,6 +832,7 @@ int PdbRowWriter::zeroUnusedSpace()
                 }
                 w.indexEnd = pageStart + lenPage - groups * RowGroupSizeBytes;
                 w.numRows = static_cast<size_t>(page->num_rows());
+                w.rowOffsets = static_cast<size_t>(page->num_row_offsets());
                 w.groups = groups;
                 w.pageStart = pageStart;
                 w.lenPage = lenPage;
@@ -905,19 +907,41 @@ int PdbRowWriter::zeroUnusedSpace()
 
         // The row index itself has slack too. Each group has sixteen
         // 2-byte offset slots and the last group is almost never full,
-        // so the slots past num_rows hold whatever was written over them
-        // last. A real playlist name survived every pass above by
-        // sitting in exactly those bytes, on a page whose last group had
-        // four rows in sixteen slots.
+        // so the slots past the end of the index hold whatever was
+        // written over them last. A real playlist name survived every
+        // pass above by sitting in exactly those bytes, on a page whose
+        // last group had four rows in sixteen slots.
         //
-        // Only slots at or beyond num_rows are touched. Those are unused
-        // by the format's own count, so nothing reads them; the used
-        // slots, the present flags and the transaction flags are left
+        // The end of the index is num_row_offsets, NOT num_rows. The
+        // format's own words: num_row_offsets is "the number of row
+        // offsets that have ever been allocated, including those that
+        // are no longer valid", num_rows is "the number of valid rows
+        // currently present". Delete a row from the middle of a page and
+        // the two diverge, and every slot between them is a LIVE row's
+        // offset. Zeroing those pointed present rows at the start of the
+        // heap: the catalog stopped parsing, commit()'s reparse check
+        // refused to write it, and the anonymizer reported "failed to
+        // commit anonymized export.pdb" -- so on the first real stick
+        // this met, every rekordbox title, filename and path came out of
+        // the anonymizer completely unscrubbed, and only the byte sweep
+        // at the end stopped that export being handed to anybody.
+        //
+        // Two bounds now, because one of them was wrong for a year: a
+        // slot is cleared only when it is past num_row_offsets AND its
+        // present bit is clear. Nothing reads such a slot; the used
+        // ones, the present flags and the transaction flags are left
         // exactly as they are.
         for (size_t g = 0; g < page.groups; ++g) {
             const size_t groupBase = page.pageStart + page.lenPage - g * RowGroupSizeBytes;
+            const size_t presentFlagsOffset = groupBase - 4;
+            const uint16_t presentFlags = presentFlagsOffset + 2 <= m_buffer.size()
+                                              ? readU16LE(m_buffer, presentFlagsOffset)
+                                              : 0xffff;  // unreadable: treat every slot as in use
             for (size_t r = 0; r < 16; ++r) {
-                if (g * 16 + r < page.numRows) {
+                if (g * 16 + r < page.rowOffsets) {
+                    continue;
+                }
+                if ((presentFlags >> r) & 1) {
                     continue;
                 }
                 const size_t slot = groupBase - 6 - r * 2;
