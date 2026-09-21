@@ -54,7 +54,27 @@ failed=0
 # round where only C4 fell over used to read as five scenarios red, and
 # the note had to carry what the board could not say.
 rig_parts_declare C5-cancelled-create C1-create C2-update-target C3-update-source C4-diverged clone-restored
-declare -A clone_bad=()
+# Not `declare -A`: associative arrays are bash 4, and macOS ships bash
+# 3.2. This whole file aborted on line one of its own setup there, so
+# C1-C5 had never run on macOS -- every scenario reported as "it never
+# ran, and a test that never ran has proved nothing", which was true and
+# said nothing about clones.
+#
+# The keys are a fixed, known set, so one mangled variable per scenario
+# does the same work. Unset still has to mean "no step of this scenario
+# ran", because clone_report() leans on that to tell a scenario that
+# failed from one that never started.
+clone_bad_var() {  # <part> -> a variable name
+    printf 'clone_bad_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')"
+}
+
+clone_bad_set() {  # <part> <value>
+    eval "$(clone_bad_var "$1")=\$2"
+}
+
+clone_bad_get() {  # <part> -> its value, empty when never set
+    eval "printf '%s' \"\${$(clone_bad_var "$1"):-}\""
+}
 trap rig_parts_finish EXIT
 
 # Which scenario a step belongs to, from its own name. The steps that set
@@ -79,10 +99,13 @@ step() {  # name, command...
     if "$@"; then
         echo "--- $name: pass"
         # Seen, so it is not left to rig_parts_finish to call it unrun.
-        [ -z "$part" ] || clone_bad["$part"]="${clone_bad[$part]:-0}"
+        if [ -n "$part" ]; then
+            local seen; seen="$(clone_bad_get "$part")"
+            clone_bad_set "$part" "${seen:-0}"
+        fi
     else
         echo "--- $name: FAIL"
-        [ -z "$part" ] || clone_bad["$part"]=1
+        [ -z "$part" ] || clone_bad_set "$part" 1
         failed=1
     fi
 }
@@ -93,8 +116,9 @@ clone_report() {
         # A scenario none of whose steps ran stays unreported here, and
         # rig_parts_finish calls it what it is: failed, having proved
         # nothing.
-        [ -n "${clone_bad[$part]+set}" ] || continue
-        rig_part_rc "$part" "${clone_bad[$part]}"
+        local value; value="$(clone_bad_get "$part")"
+        [ -n "$value" ] || continue
+        rig_part_rc "$part" "$value"
     done
 }
 
