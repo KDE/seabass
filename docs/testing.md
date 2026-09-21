@@ -51,6 +51,112 @@ without checking anything:
 
 Most of the suite is unit tests against small, synthetic, hand-built fixtures (a two-track `export.pdb`, a fresh `djinterop::engine::create_database()`, and so on) -- fast, and run by a bare `ctest`. One test, `anonymized_fixture_integration_test`, is tagged with the CTest label `integration` and runs the app's real use cases (`ScanLibrary`, `SyncLibraries`, `LibraryStatisticsCalculator`, `LibraryConsistencyChecker`, a real cue write) against `tests/fixtures/anonymized_library/` -- a committed, de-identified copy of a real ~1,400-track library. It's the only thing in this suite exercised at realistic scale and variety; run it before merging a larger change or cutting a release, not on every build. There's no CI in this repo (yet) to enforce that automatically -- this is a documented habit, not an automated gate.
 
+## The suite only sees what its platform can draw
+
+The QML suite runs on a real display. `seabass_qml_tests` is registered
+under `xvfb-run`, with `QT_QPA_PLATFORM=xcb`, `QSG_RHI_BACKEND=opengl`
+and `LIBGL_ALWAYS_SOFTWARE=1`, and on Linux a missing `xvfb-run` or
+Qt6 ShaderTools stops the configure rather than quietly narrowing the
+suite. It used to run under `QT_QPA_PLATFORM=offscreen`, and the reason
+that changed is worth keeping, because it is not "offscreen missed a
+bug".
+
+Offscreen falls back to the software scene graph. There, every
+`ShaderEffect` draws nothing at all, and every glyph is rasterised
+natively no matter what the application asked for. Both of those are
+whole classes of question that could not fail in that configuration --
+not questions that happened to go unasked.
+
+The glyph half is the measurable one. Two full builds of the same tree,
+differing only in whether `main.cpp` calls
+`QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering)`:
+
+- through the suite's own `grabImage()` under `offscreen`, the two
+  builds' page screenshots came out byte-identical, same md5;
+- as real `seabass` binaries under `xvfb` with the GL backend forced,
+  they differed by 0 pixels out of 1,600,000;
+- and Sebastian, looking at the same two builds on a 2256x1504 panel at
+  Plasma's 1.5 scaling, could tell them apart immediately: the letters
+  that had looked shaved off along the baseline stopped looking that
+  way.
+
+A suite that cannot distinguish two binaries a person can distinguish at
+a glance is not a strict suite. It is a blind one, and it reports green
+either way.
+
+### What it still cannot see
+
+The suite pins `QT_QUICK_CONTROLS_STYLE=Basic`. That is deliberate: on a
+real display the KDE platform theme answers with Breeze, whose metrics
+differ from Basic's, so an unpinned suite would measure Breeze on a
+developer's machine and Basic in a container and a green run on one would
+say nothing about the other.
+
+The cost is that `src/gui/main.cpp` deliberately does *not* set that
+variable, so the shipped Linux app inherits the desktop's style. Under
+`Basic` a `Popup`, `Menu`, `ComboBox` or `Dialog` is an in-scene item;
+under `org.kde.desktop` several of those are separate native windows, and
+a click delivered to the test's own window never reaches one. Every test
+that clicks into a popup is exercising a construction the user does not
+get.
+
+### Looking at the app under xvfb, and what that is worth
+
+The app runs there, with the font size a scaled desktop would give it:
+
+```
+XDG_CONFIG_HOME=$(mktemp -d) \
+QT_QPA_PLATFORM=xcb QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1 \
+QT_FONT_DPI=144 \
+    xvfb-run -a -s "-screen 0 1600x1000x24" build/src/gui/seabass
+```
+
+`QT_FONT_DPI=144` is Plasma's 1.5 scaling of a 96 dpi screen, and it is
+what puts every other baseline on a half pixel: 11 pt measures 15 px of
+ink at 96 and 21 px at 144. `QT_SCALE_FACTOR=1.5` gives you the
+fractional device pixel ratio as well. The redirected `XDG_CONFIG_HOME`
+keeps the run out of the real settings store.
+
+Two things it will not give you, both found by trying:
+
+- **The shipped style.** `QT_QUICK_CONTROLS_STYLE=org.kde.desktop` is the
+  obvious way to ask for it, and on this machine that combination hangs
+  under xvfb: no window, no warning, no output, until it is killed. The
+  style is installed and the shipped app uses it happily on a real
+  session, so this is something about the environment rather than the
+  style. Until someone works out what, the popup-versus-native-window
+  question cannot be looked at this way either.
+- **The desktop's font rendering.** Xvfb starts with no Xft resources, so
+  Plasma's hinting style and subpixel order never reach the app; what
+  fontconfig supplies through `HOME` stands in for them, and it is not
+  the same settings. Do not reach for `xrdb` to close that gap: here
+  `xrdb -merge` exits 0 and leaves `RESOURCE_MANAGER` unset -- `xprop
+  -root RESOURCE_MANAGER` says "not found" afterwards -- so a run that
+  looks like it took the desktop's settings has taken none of them. That
+  was believed and repeated in this project for two days before anyone
+  checked the property.
+
+So a hinting or baseline question ends on a real panel, with a person
+looking at it. What is above gets you close enough to ask the question.
+It does not answer it.
+
+### And measure the ink, not a threshold
+
+The same week produced the other half of this lesson. A QML test
+measured a glyph's centre as the midpoint between the first and last
+pixel row clearing a contrast threshold, and reported a catalog glyph
+4.5 px out of line with its label. Most of that glyph's outline is
+fainter than the threshold, so the band collapsed to a sliver and the
+midpoint moved by pixels nothing on screen had moved by. Re-measured as
+an ink centroid -- every pixel weighted by its distance from the
+background, which is subpixel and sees faint ink -- the real offset was
+0.36 px, and the two renderings are indistinguishable at 6x.
+
+A metric that cannot see what it claims to measure does not fail safe.
+That one invented work rather than hiding it, which is the rarer and more
+expensive direction. `tests/qml/tst_LibrarySourceToggle.qml` carries the
+centroid helper and the reasoning.
+
 ## A new guard has to be seen failing
 
 A test written from a review finding encodes the pre-fix behaviour by
