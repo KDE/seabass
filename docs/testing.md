@@ -242,6 +242,30 @@ None of this replaces the suite. It answers a narrower question that the
 suite cannot: whether the run that just went green was a run of the code
 in question.
 
+## A test that asserts its own fixture
+
+`MetadataRestorePage`'s screenshot case required the scan to have found
+proposals -- which exist only when the metadata store holds something a
+track on the stick is missing. It passed on any machine where somebody
+had been working, and failed the first time it met an empty profile or a
+stick freshly restored to its reference. The page was never wrong; the
+case was asserting the DATA it was photographing.
+
+A picture of a page should not require the page to have found something.
+The case now waits for the scan, requires no error and a non-empty grab,
+logs what it found and takes the picture either way -- and the harness
+seeds the store with a cue the stick lacks, so the usual run photographs
+a real proposal rather than an empty list. The seed makes the picture
+worth having; removing the assertion is what stops it failing.
+
+Worth recording how it was found, because neither route would have found
+it alone and both were running the same evening: on macOS by making the
+case RUN for the first time (it had been skipping on an unset variable
+since it was written), and on Linux by running it in a sandbox profile
+where its assumption could not hold. One found a test that never
+executed, the other a test that only executed where it happened to be
+true.
+
 ## A new guard has to be seen failing
 
 A test written from a review finding encodes the pre-fix behaviour by
