@@ -185,6 +185,30 @@ TestCase {
         compare(toggle.popup.visible, false);
     }
 
+    // Where the ink sits vertically, to better than a pixel: every row of
+    // the band contributes how much it differs from the background, and
+    // the answer is the weighted mean of those rows. Taking the first and
+    // last inked row instead quantises the answer to half a pixel, which
+    // is the same size as the errors worth catching here.
+    function inkCentroid(image, background, x0, x1, y0, y1) {
+        let weight = 0, moment = 0;
+        for (let y = y0; y < y1; ++y) {
+            for (let x = x0; x < x1; ++x) {
+                const c = image.pixel(x, y);
+                const d = Math.abs(c.r - background.r) + Math.abs(c.g - background.g)
+                        + Math.abs(c.b - background.b);
+                // Below this a pixel is the background plus rounding, not
+                // ink; anti-aliased edges are well above it and are what
+                // make this measurement subpixel in the first place.
+                if (d > 0.02) {
+                    weight += d;
+                    moment += d * y;
+                }
+            }
+        }
+        return weight > 0 ? moment / weight : -1;
+    }
+
     // Rows where anything differs from the background, inside a band of
     // columns.
     function inkRows(image, background, x0, x1, y0, y1) {
@@ -200,6 +224,39 @@ TestCase {
             }
         }
         return {top: top, bottom: bottom, centre: (top + bottom) / 2};
+    }
+
+    // The ink of one glyph/name pair, out of a grabbed image, in
+    // testCase coordinates: measured from the pixels rather than from
+    // the metrics the component itself used, which is the whole point.
+    // TextMetrics reports UNHINTED metrics and NativeRendering hints
+    // each glyph as it paints, so a sum that looks right on paper can
+    // paint out of line.
+    //
+    // Both measurements are returned. The centroid is what the
+    // assertions use; the extent (first and last row over a contrast
+    // threshold) is kept only for "was anything painted at all". The
+    // extent is what this file used to assert on, and on a faint
+    // outline glyph it lies: rows of the hexagon that fall under the
+    // threshold are simply not seen, so the band shrinks to a sliver at
+    // one end and the centre it reports moves by whole pixels that
+    // nothing on screen moved by. The centroid weighs every pixel by how
+    // far it is from the background, which makes it subpixel and makes
+    // it immune to that.
+    //
+    // The name is measured over its first letter only: a capital, no
+    // descender.
+    function pairInk(image, background, glyph, name, y0, y1) {
+        const g = glyph.mapToItem(testCase, 0, 0);
+        const n = name.mapToItem(testCase, 0, 0);
+        const glyphBand = [Math.floor(g.x + glyph.leftPadding), Math.ceil(g.x + glyph.width)];
+        const capitalBand = [Math.floor(n.x), Math.floor(n.x) + 7];
+        return {
+            glyph: inkRows(image, background, glyphBand[0], glyphBand[1], y0, y1),
+            capital: inkRows(image, background, capitalBand[0], capitalBand[1], y0, y1),
+            glyphCentroid: inkCentroid(image, background, glyphBand[0], glyphBand[1], y0, y1),
+            capitalCentroid: inkCentroid(image, background, capitalBand[0], capitalBand[1], y0, y1)
+        };
     }
 
     // Each catalog's glyph is centred on its name, by the ink rather than
@@ -219,13 +276,12 @@ TestCase {
             var origin = toggle.mapToItem(testCase, 0, 0);
             var background = image.pixel(Math.round(origin.x + toggle.width / 2), Math.round(origin.y + 3));
             var y0 = Math.floor(origin.y + 3), y1 = Math.ceil(origin.y + toggle.height - 3);
-            var gp = glyph.mapToItem(testCase, 0, 0), np = name.mapToItem(testCase, 0, 0);
-            var glyphInk = inkRows(image, background, Math.floor(gp.x + glyph.leftPadding), Math.ceil(gp.x + glyph.width), y0, y1);
-            // The name's first letter only: a capital, no descender.
-            var capitalInk = inkRows(image, background, Math.floor(np.x), Math.floor(np.x) + 7, y0, y1);
-            verify(glyphInk.top >= 0 && capitalInk.top >= 0, values[i] + ": nothing was painted");
-            verify(Math.abs(glyphInk.centre - capitalInk.centre) <= 1.0,
-                   values[i] + ": the glyph's centre is " + (glyphInk.centre - capitalInk.centre) + " px off the name's");
+            const ink = pairInk(image, background, glyph, name, y0, y1);
+            const capitalInk = ink.capital;
+            verify(ink.glyph.top >= 0 && capitalInk.top >= 0, values[i] + ": nothing was painted");
+            const off = ink.glyphCentroid - ink.capitalCentroid;
+            verify(Math.abs(off) <= 1.0,
+                   values[i] + ": the glyph's centre is " + off + " px off the name's");
             // And the name stays centred in the box: lining the two up by
             // their baseline lifted the whole text about 2 px.
             var boxCentre = origin.y + (toggle.height - 1) / 2;
@@ -234,4 +290,44 @@ TestCase {
         }
     }
 
+    // The same pair again, in the open list. CatalogGlyph is used twice
+    // -- once in the closed control, once per row of the popup -- and
+    // the test above sees only the first of them, so a translate that
+    // came out right in the header and wrong in the rows would have kept
+    // every case here green. The rows are also where a reader compares
+    // the three catalogs against each other, which is where a glyph
+    // sitting high is most visible.
+    function test_everyRowInTheListLinesUpToo() {
+        const toggle = createTemporaryObject(toggleComponent, testCase,
+                                             {width: 220, current: "rekordbox"});
+        verify(toggle !== null);
+        waitForRendering(toggle);
+        toggle.popup.open();
+        tryVerify(function() { return toggle.popup.visible; });
+        const view = toggle.popup.contentItem;
+        tryVerify(function() { return view.count === 3 && view.itemAtIndex(2) !== null; });
+        waitForRendering(view);
+        const image = grabImage(testCase);
+        for (let i = 0; i < 3; ++i) {
+            const row = view.itemAtIndex(i);
+            verify(row !== null, "row " + i + " is not there");
+            const glyph = findChild(row, "entryGlyph");
+            const name = findChild(row, "entryName");
+            verify(glyph !== null && name !== null, "row " + i + " has no glyph/name pair");
+            const origin = row.mapToItem(testCase, 0, 0);
+            // The row's own background, sampled past the end of its text
+            // rather than from the control above it: the current catalog's
+            // row is highlighted, so the three rows do not share one.
+            const background = image.pixel(Math.round(origin.x + row.width - 4),
+                                           Math.round(origin.y + row.height / 2));
+            const y0 = Math.floor(origin.y + 2), y1 = Math.ceil(origin.y + row.height - 2);
+            const ink = pairInk(image, background, glyph, name, y0, y1);
+            verify(ink.glyph.top >= 0 && ink.capital.top >= 0,
+                   name.text + ": nothing was painted in the row");
+            const off = ink.glyphCentroid - ink.capitalCentroid;
+            verify(Math.abs(off) <= 1.0,
+                   name.text + ": the row's glyph is " + off + " px off its name");
+        }
+        toggle.popup.close();
+    }
 }

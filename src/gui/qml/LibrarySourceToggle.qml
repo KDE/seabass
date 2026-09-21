@@ -119,11 +119,22 @@ ComboBox {
         // way their metrics are measured. The translate below comes from
         // TextMetrics, which reports UNHINTED metrics; NativeRendering
         // hints each glyph onto the pixel grid as it paints, so the ink
-        // lands somewhere the sum never accounted for. On a real display
-        // that is this pair 4.5 px apart -- invisible offscreen, where
-        // Qt picks QtRendering and the two happen to agree, which is why
-        // it went unseen until the suite moved onto a display. Said on
-        // both labels, since agreeing with each other is the point.
+        // lands somewhere the sum never accounted for. Said on both
+        // labels, since agreeing with each other is the point.
+        //
+        // This comment used to say the pair was 4.5 px apart without
+        // these lines. That number was the measurement, not the
+        // drawing. It came from a test that took the first and last row
+        // of pixels clearing a contrast threshold, and under
+        // NativeRendering most of the hexagon's faint outline fell below
+        // that threshold, so the band it found was a sliver near the
+        // bottom of the glyph. Measured by ink centroid instead
+        // (tst_LibrarySourceToggle.qml, 2026-09-21) the pair sits 0.36 px
+        // apart with these lines and 0.65 px apart without them, and the
+        // two screenshots are indistinguishable. What stands is the
+        // principle -- measuring with one renderer and painting with
+        // another is a sum about a glyph that is not on screen -- not
+        // the size of the error.
         renderType: Text.QtRendering
         TextMetrics { id: glyphInk; font: glyphLabel.font; text: glyphLabel.text }
         TextMetrics { id: capitalInk; font: glyphLabel.nameLabel.font; text: "H" }
@@ -300,11 +311,16 @@ ComboBox {
         contentItem: RowLayout {
             spacing: 4
             CatalogGlyph {
+                // Named so the pixel test can find this pair in the open
+                // list as well: the row is a second use of CatalogGlyph,
+                // and what the closed control does says nothing about it.
+                objectName: "entryGlyph"
                 text: entryDelegate.modelData.glyph
                 nameLabel: entryName
             }
             Label {
                 id: entryName
+                objectName: "entryName"
                 // See CatalogGlyph: measured and painted the same way.
                 renderType: Text.QtRendering
                 text: entryDelegate.modelData.label
