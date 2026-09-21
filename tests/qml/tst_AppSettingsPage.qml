@@ -68,6 +68,41 @@ TestCase {
         compare(scroll.contentWidth, scroll.width);
     }
 
+    // Wide enough for the cap to bite, which 700 is not: at 1600 the
+    // column must stop at its maximum and sit in the middle, with the
+    // scroll bar still on the window's edge rather than floating in
+    // beside the text. A page that simply filled the window was where
+    // the long lines came from.
+    function test_a_wide_window_caps_the_column_and_centres_it() {
+        const page = make(1600, 700);
+        const scroll = findChild(page, "settingsScroll");
+        const column = findChild(page, "settingsColumn");
+        wait(50);
+        compare(column.width, column.maxWidth, "the column stops at its maximum");
+        // Measured against the column's own parent, not the scroll view:
+        // PageScrollView insets its content by its padding and leaves a
+        // gutter for the scroll bar, so the space the column is centred
+        // in is narrower than the view by both.
+        const holder = column.parent;
+        const leftGap = column.x;
+        const rightGap = holder.width - (column.x + column.width);
+        verify(leftGap > 0, "and does not sit against the left edge");
+        fuzzyCompare(leftGap, rightGap, 1, "with equal space either side");
+        compare(scroll.contentWidth, scroll.width,
+                "while the scroll view still spans the window, so its bar stays on the edge");
+    }
+
+    // The cap must not become a floor: in a window narrower than the
+    // maximum the column still fills what there is.
+    function test_a_narrow_window_still_fills_the_width() {
+        const page = make(500, 700);
+        const column = findChild(page, "settingsColumn");
+        wait(50);
+        verify(column.width < column.maxWidth);
+        compare(column.width, column.parent.width, "no cap to apply, so it uses what it is given");
+        compare(column.x, 0);
+    }
+
     // elide is a no-op without a bounded width, so this asserts the fix
     // rather than the Label: a long path must actually be shortened to
     // fit instead of pushing the page open.
@@ -122,6 +157,14 @@ TestCase {
         var page = make(700, 520);
         wait(100);
         grabImage(page).save(screenshotDir + "/AppSettingsPage.png");
+        // And once wide enough for the cap to show. 900 rather than
+        // something larger: this TestCase's own window is 900 across,
+        // and an item wider than the window is clipped by it, so a
+        // 1600-wide grab would show the left two thirds of a centred
+        // column and look like a column pushed right.
+        const wide = make(900, 700);
+        wait(100);
+        grabImage(wide).save(screenshotDir + "/AppSettingsPage-wide.png");
         // The Music section, which is the one with controls rather than
         // radio buttons: two spin boxes in a sentence and a checkbox,
         // each with a "?" beside it. Whether that row still reads as a

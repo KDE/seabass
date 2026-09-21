@@ -102,7 +102,17 @@ Page {
         // axis to keep aligned: every group is independent.
         ColumnLayout {
             objectName: "settingsColumn"
-            width: parent.width
+            // Capped and centred, the same 640 the About and Support
+            // pages use. A preferences page has nothing to gain from a
+            // 2000 px window except lines of text too long to read back
+            // to their own start. The cap is on the COLUMN and not on
+            // the scroll view, so the scroll bar stays docked to the
+            // window's right edge rather than floating in beside the
+            // text; the section rules shorten with the column, which is
+            // the point of them.
+            readonly property int maxWidth: 640
+            width: Math.min(parent.width, maxWidth)
+            x: Math.round(Math.max(0, (parent.width - width) / 2))
             spacing: 24 * Theme.iconScale
 
             // ---- Appearance -------------------------------------------

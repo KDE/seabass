@@ -108,7 +108,7 @@ TestCase {
     // circle cut from a photo and a circle cut from a resource that was
     // never registered: both are a dark disc. So the loading is asserted
     // here and the look is left to the shot above.
-    function test_thePortraitIsThereAndRound() {
+    function test_thePortraitIsThereAndSquareAtTheTopRight() {
         var page = createTemporaryObject(pageComponent, testCase);
         waitForRendering(page);
         var portrait = findChild(page, "supportPortrait");
@@ -119,6 +119,24 @@ TestCase {
         tryVerify(function() { return portrait.isImageLoaded(portrait.photo); }, 3000,
                   "the portrait resource loaded from " + portrait.photo);
         verify(portrait.width > 0, "the portrait has a size");
-        compare(portrait.width, portrait.height, "square, so the circle is not an ellipse");
+        compare(portrait.width, portrait.height, "square, so the rounded corners are equal ones");
+
+        // Top and right flush with the text block, which is what was
+        // asked for and what a screenshot is worst at proving: a portrait
+        // a few pixels out looks deliberate. Compared in the page's own
+        // coordinates, since the row and the column have different
+        // parents.
+        const heading = findChild(page, "supportHeading");
+        const title = findChild(page, "supportTitle");
+        verify(heading !== null && title !== null);
+        const portraitInPage = portrait.mapToItem(page, 0, 0);
+        const titleInPage = title.mapToItem(page, 0, 0);
+        const headingInPage = heading.mapToItem(page, 0, 0);
+        fuzzyCompare(portraitInPage.y, titleInPage.y, 1,
+                     "the portrait's top sits on the first line of the text");
+        fuzzyCompare(portraitInPage.x + portrait.width, headingInPage.x + heading.width, 1,
+                     "and its right edge on the text block's right edge");
+        verify(portraitInPage.x > titleInPage.x,
+               "with the text to its left, not under it");
     }
 }

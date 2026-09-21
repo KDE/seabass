@@ -77,9 +77,49 @@ Page {
                 }
             }
 
-            // Sebastian, round. The source is a square PNG, and the
-            // circle is cut here rather than in the file so the same
-            // image can be used square elsewhere.
+            // The heading and the face that goes with it: the text on
+            // the left, Sebastian at the top right of it. The row spans
+            // the content column, so the portrait's right edge IS the
+            // text block's right edge, and AlignTop puts its top on the
+            // first line of the title rather than on the centre of the
+            // row. Nothing here is anchored to a number: change the
+            // column's width and both edges follow.
+            RowLayout {
+                objectName: "supportHeading"
+                Layout.fillWidth: true
+                spacing: 20
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 6
+
+                    Label {
+                        objectName: "supportTitle"
+                        text: "Supporting Seabass"
+                        font.family: Theme.titleFamily
+                        font.weight: Theme.titleWeight
+                        font.pointSize: Theme.titleLarge
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Label {
+                        objectName: "supportByline"
+                        // The heart is the page's own mark, in the
+                        // sentence it belongs to rather than as an emoji
+                        // the font may not have.
+                        text: "Seabass is created with love by Sebastian K\u00fcgler (a.k.a. Whaleshark) and friends."
+                        wrapMode: Text.WordWrap
+                        font.pointSize: Theme.baseFontPointSize * 1.1
+                        Layout.fillWidth: true
+                    }
+                }
+
+            // Sebastian, square with rounded corners, facing the text.
+            // The source is a square PNG and the shape is cut here
+            // rather than in the file, so the same image can be used
+            // differently elsewhere.
             //
             // A Canvas rather than a MultiEffect/OpacityMask: those are
             // shader-based, and this project verifies its UI by
@@ -98,7 +138,7 @@ Page {
                 readonly property int side: Math.round(120 * Theme.iconScale)
                 Layout.preferredWidth: side
                 Layout.preferredHeight: side
-                Layout.alignment: Qt.AlignHCenter
+                Layout.alignment: Qt.AlignTop | Qt.AlignRight
                 antialiasing: true
 
                 Component.onCompleted: loadImage(photo)
@@ -109,41 +149,44 @@ Page {
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
 
+                // The corner radius, as a share of the side rather than
+                // a fixed number of pixels: `side` follows the system
+                // font, and a fixed radius would read as rounder on a
+                // small portrait and squarer on a large one.
+                readonly property real cornerRadius: Math.round(side * 0.16)
+
                 onPaint: {
-                    var ctx = getContext("2d");
+                    const ctx = getContext("2d");
                     ctx.reset();
                     if (!isImageLoaded(photo)) {
                         return;
                     }
                     ctx.save();
+                    // arcTo rather than roundRect: context2d has no
+                    // roundRect on every Qt this targets, and a missing
+                    // method here would throw inside a paint handler,
+                    // where the failure is a blank canvas rather than an
+                    // error anybody sees.
+                    const r = Math.min(cornerRadius, Math.min(width, height) / 2);
                     ctx.beginPath();
-                    ctx.arc(width / 2, height / 2, Math.min(width, height) / 2, 0, Math.PI * 2);
+                    ctx.moveTo(r, 0);
+                    ctx.arcTo(width, 0, width, height, r);
+                    ctx.arcTo(width, height, 0, height, r);
+                    ctx.arcTo(0, height, 0, 0, r);
+                    ctx.arcTo(0, 0, width, 0, r);
                     ctx.closePath();
                     ctx.clip();
+                    // Mirrored about the vertical axis, so the face looks
+                    // INTO the text it sits beside rather than off the
+                    // page. Done in the paint rather than with an item
+                    // transform so the clip above is not mirrored with
+                    // it: the corners stay where the layout put them.
+                    ctx.translate(width, 0);
+                    ctx.scale(-1, 1);
                     ctx.drawImage(photo, 0, 0, width, height);
                     ctx.restore();
                 }
-            }
-
-            Label {
-                objectName: "supportTitle"
-                text: "Supporting Seabass"
-                font.family: Theme.titleFamily
-                font.weight: Theme.titleWeight
-                font.pointSize: Theme.titleLarge
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            Label {
-                objectName: "supportByline"
-                // The heart is the page's own mark, in the sentence it
-                // belongs to rather than as an emoji the font may not
-                // have.
-                text: "Seabass is created with love by Sebastian K\u00fcgler (a.k.a. Whaleshark) and friends."
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                font.pointSize: Theme.baseFontPointSize * 1.1
-                Layout.fillWidth: true
+                }
             }
 
             Label {
