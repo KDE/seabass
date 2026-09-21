@@ -35,6 +35,12 @@ Page {
     // once. The key is never empty, so nothing starts out expanded.
     property string expandedKey: ""
 
+    // Readable from outside the page, for the live screenshot case: it
+    // waits for the scan to finish rather than for proposals to appear,
+    // because how many a real stick offers is data and not a property of
+    // the page.
+    readonly property alias controller: controller
+
     MetadataRestoreController {
         id: controller
     }

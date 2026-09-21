@@ -132,12 +132,29 @@ TestCase {
         });
         var list = findChild(page, "proposalList");
         verify(list, "the proposal list must exist");
-        // The scan runs on a worker thread over a real stick, so this
-        // waits on the list rather than on a fixed delay.
-        tryVerify(function () { return list.count > 0; }, 60000,
-                  "the scan must produce proposals against this stick");
+        // Waits for the SCAN to finish, not for proposals to exist. The
+        // rig points this case at a stick to photograph whatever state
+        // that stick is in -- its own comment says so, "fine for a
+        // screenshot and would not be for an assertion" -- and the case
+        // then asserted proposals anyway. It passed on a developer
+        // machine, where the everyday profile holds a store somebody has
+        // been filling for weeks, and failed in the rig's sandbox
+        // profile, where the store is empty at S1 time because the
+        // checks that fill it run later. A proposal only exists where
+        // the store holds metadata a stick track is missing; two sticks
+        // restored from the same backup have nothing to offer each
+        // other, which is the normal state at the start of a round.
+        //
+        // So: the page must build, the scan must finish without error,
+        // and the picture gets taken either way. How many rows are in it
+        // is data, and it is logged rather than asserted.
+        tryVerify(function () { return !page.controller.busy && page.controller.hasScanned; }, 120000,
+                  "the scan over this stick must finish");
+        compare(page.controller.errorMessage, "", "the scan must not error");
+        console.log("  live stick offered " + list.count + " proposal(s)");
         waitForRendering(page);
         var image = grabImage(page);
+        verify(image.width > 0 && image.height > 0, "the page grabbed nothing");
         image.save(screenshotDir + "/MetadataRestorePage-live.png");
     }
 
