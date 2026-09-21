@@ -95,6 +95,29 @@ include:
 # say so loudly rather than sit orange.
 - project: sysadmin/ci-utilities
   file: /gitlab-templates/craft-macos-arm64-qt6.yml
+
+# Intel, added now that the arm64 lane has run green on Invent
+# (craft_macos_qt6_arm64, 6.2 min, pipeline 1354481) -- which was the
+# condition for adding it rather than a preference.
+#
+# It exists because Rosetta only translates x86_64 to ARM and never the
+# reverse, so an Intel user handed the arm64 .dmg gets a bundle that
+# mounts and refuses to launch. That is the whole of the reason: not
+# performance, not coverage, but a download that cannot work.
+#
+# This CROSS-COMPILES on KDE's single ARM macOS builder, so a green job
+# here means it built, linked and packaged, never that it runs. The one
+# functional check either of these lanes gets is a person, or a Rosetta
+# smoke test on a developer machine, opening a stick and reading a
+# catalog -- SQLCipher for OneLibrary is the dependency most likely to
+# be quietly broken in a cross-built binary, and a launch alone does not
+# exercise it. Label anything found that way manual-testing.
+#
+# Both targets queue on that one builder, so this roughly doubles the
+# wall-clock of a full macOS pipeline. Worth it against shipping a
+# download that does not start.
+- project: sysadmin/ci-utilities
+  file: /gitlab-templates/craft-macos-x86-64-qt6.yml
 variables:
   SECRET_DETECTION_ENABLED: 'true'
 secret_detection:
