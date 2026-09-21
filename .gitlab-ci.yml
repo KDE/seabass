@@ -143,6 +143,51 @@ craft_windows_qt6_x86_64:
 # runs the test suite -- the Windows one packages and the macOS one is
 # build-and-package only (craft-ci sets /.buildTests = False) -- so
 # without this, nothing on Invent has ever run ctest at all.
+.linux_packages: &linux_packages
+  - apt-get update -qq
+  # The two -private-dev packages are what make Qt6::QuickLayouts
+  # resolve, and the error does not say so. QuickLayouts' link
+  # interface pulls in Qt6::GuiPrivate, whose
+  # INTERFACE_INCLUDE_DIRECTORIES names
+  # /usr/include/x86_64-linux-gnu/qt6/QtGui/<version> -- a directory
+  # Ubuntu ships in qt6-base-private-dev, not qt6-base-dev. CMake
+  # checks every path in an imported target's include list whether or
+  # not anything compiles against it, so configure fails over a header
+  # directory nothing here includes, and blames the one target whose
+  # interface happens to mention GuiPrivate. Reproduced and confirmed
+  # in this exact container on frame; both installed together without
+  # bisecting which is strictly required.
+  #
+  # libxkbcommon-dev supplies the XKB::XKB target that Ubuntu's own
+  # Qt6GuiTargets.cmake names in Qt6::GuiPrivate's link interface but
+  # does not depend on. Without it configure dies inside Qt's own
+  # cmake files, which reads as a Qt bug rather than a missing package.
+  #
+  # unzip and 7zip are TEST dependencies, and installing them is
+  # the right answer rather than configuring them away:
+  # backup_archive_crossvalidation_test reads archives Seabass wrote
+  # using two implementations nobody here maintains. It is the check
+  # that would catch us writing a zip only Seabass can open, which is
+  # the one failure a backup format cannot afford. -DSEABASS_TESTS=OFF
+  # would silence it and empty this lane of its purpose.
+  #
+  # ca-certificates is not optional and not obvious: the ubuntu image
+  # ships none, apt itself does not need any (its sources are
+  # plain http), and so the gap only shows up later, when CMake runs
+  # `git submodule update` at configure time and git cannot verify
+  # github.com. It reads as "Failed to initialize git submodules"
+  # rather than as a missing package -- see pipeline 1353951, where
+  # both submodules failed with "server certificate verification
+  # failed. CAfile: none".
+  - apt-get install -y -qq --no-install-recommends
+      ca-certificates
+      build-essential cmake ninja-build git pkg-config
+      libsqlite3-dev zlib1g-dev libsqlcipher-dev libtag1-dev
+      qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-svg-dev
+      qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
+      xvfb unzip 7zip libxkbcommon-dev
+      qt6-base-private-dev qt6-declarative-private-dev
+
 linux:build:
   stage: build
   # No `tags:`. A bare `linux` tag matched no runner on Invent, so this
@@ -175,50 +220,7 @@ linux:build:
   # provides /usr/bin/7z, which is the binary the cross-validation test
   # shells out to.
   image: ubuntu:26.04
-  before_script:
-    - apt-get update -qq
-    # The two -private-dev packages are what make Qt6::QuickLayouts
-    # resolve, and the error does not say so. QuickLayouts' link
-    # interface pulls in Qt6::GuiPrivate, whose
-    # INTERFACE_INCLUDE_DIRECTORIES names
-    # /usr/include/x86_64-linux-gnu/qt6/QtGui/<version> -- a directory
-    # Ubuntu ships in qt6-base-private-dev, not qt6-base-dev. CMake
-    # checks every path in an imported target's include list whether or
-    # not anything compiles against it, so configure fails over a header
-    # directory nothing here includes, and blames the one target whose
-    # interface happens to mention GuiPrivate. Reproduced and confirmed
-    # in this exact container on frame; both installed together without
-    # bisecting which is strictly required.
-    #
-    # libxkbcommon-dev supplies the XKB::XKB target that Ubuntu's own
-    # Qt6GuiTargets.cmake names in Qt6::GuiPrivate's link interface but
-    # does not depend on. Without it configure dies inside Qt's own
-    # cmake files, which reads as a Qt bug rather than a missing package.
-    #
-    # unzip and 7zip are TEST dependencies, and installing them is
-    # the right answer rather than configuring them away:
-    # backup_archive_crossvalidation_test reads archives Seabass wrote
-    # using two implementations nobody here maintains. It is the check
-    # that would catch us writing a zip only Seabass can open, which is
-    # the one failure a backup format cannot afford. -DSEABASS_TESTS=OFF
-    # would silence it and empty this lane of its purpose.
-    #
-    # ca-certificates is not optional and not obvious: the ubuntu image
-    # ships none, apt itself does not need any (its sources are
-    # plain http), and so the gap only shows up later, when CMake runs
-    # `git submodule update` at configure time and git cannot verify
-    # github.com. It reads as "Failed to initialize git submodules"
-    # rather than as a missing package -- see pipeline 1353951, where
-    # both submodules failed with "server certificate verification
-    # failed. CAfile: none".
-    - apt-get install -y -qq --no-install-recommends
-        ca-certificates
-        build-essential cmake ninja-build git pkg-config
-        libsqlite3-dev zlib1g-dev libsqlcipher-dev libtag1-dev
-        qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-svg-dev
-        qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
-        xvfb unzip 7zip libxkbcommon-dev
-        qt6-base-private-dev qt6-declarative-private-dev
+  before_script: *linux_packages
   script:
     # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
     # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
@@ -238,6 +240,17 @@ linux:test:
   # Untagged, for the same reason as linux:build above.
   image: ubuntu:26.04
   needs: [linux:build]
+  # The same packages as the build, from the same anchor. This job gets a
+  # FRESH ubuntu:26.04 and downloads the build's artifacts into it: the
+  # apt-get in linux:build ran in linux:build's container and left
+  # nothing behind here, so without this ctest is not installed at all
+  # ("ctest: command not found", 18 seconds after a 27-minute build).
+  # Sharing the list rather than copying it is deliberate -- a
+  # divergence between the two would surface at the far end of that
+  # build, and xvfb is the example that would not even fail: the
+  # shader-drawing QML tests do not register without it, so the suite
+  # would pass having quietly run fewer tests.
+  before_script: *linux_packages
   # Spelled out rather than reusing &full_lane_rules: a YAML merge key
   # (<<:) merges a *mapping* into another mapping -- it cannot expand a
   # multi-item list (what that anchor is) into several rule entries each
@@ -253,7 +266,18 @@ linux:test:
       variables:
         CTEST_LABEL_ARGS: "-LE integration"
   script:
-    - cd build && ctest --output-on-failure $CTEST_LABEL_ARGS
+    # As a NORMAL USER, not as root. CI containers run as root, and
+    # root ignores the file permissions several tests take away on
+    # purpose: durable_file_write_test drops write on a directory and
+    # requires the write to fail, and add_cue_mirror_failure_test and
+    # pending_deletion_applier_test do the same. As root those writes
+    # SUCCEED and the assertions fail -- and the worse version of this
+    # is a test that asserts the other way round and passes without
+    # proving anything. Measured in this exact image: three abort as
+    # root, all three pass as a user.
+    - useradd -m runner
+    - chown -R runner .
+    - su runner -c "cd build && ctest --output-on-failure $CTEST_LABEL_ARGS"
 
 # ---- Windows: full lane only (build, test, package, installer-test) ----
 # The MSYS2/UCRT64 build, which is a different thing from the Craft job
