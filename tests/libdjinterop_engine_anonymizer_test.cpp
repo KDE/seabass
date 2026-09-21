@@ -37,7 +37,12 @@ int main()
         snapshot.title = "Real Title 1";
         snapshot.artist = "Real Artist A";
         snapshot.comment = "Real Comment 1";
-        snapshot.relative_path = "Contents/real1.mp3";
+        // What a real stick holds: out of Engine Library, then down
+        // into the stick's own Contents, beside real artist and album
+        // folders. The test used to spell every path the way only an
+        // export does, which is why nothing here noticed that the
+        // hops were being dropped (seabass#13).
+        snapshot.relative_path = "../Contents/Real Artist A/Real Album/real1.mp3";
         auto track1 = db.create_track(snapshot);
         track1Id = track1.id();
 
@@ -51,13 +56,16 @@ int main()
         snapshot.title = "Real Title 2";
         snapshot.artist = "Real Artist A";
         snapshot.comment = "Real Comment 2";
-        snapshot.relative_path = "Contents/real2.mp3";
+        snapshot.relative_path = "../Contents/Real Artist A/Real Album/real2.mp3";
         auto track2 = db.create_track(snapshot);
         track2Id = track2.id();
 
         snapshot.title = "Real Title 3";
         snapshot.artist = "Real Artist B";
         snapshot.comment = "Real Comment 3";
+        // Deliberately hopless: a library whose paths are already
+        // relative to the same directory must not gain hops it never
+        // had.
         snapshot.relative_path = "Contents/real3.mp3";
         auto track3 = db.create_track(snapshot);
         track3Id = track3.id();
@@ -125,12 +133,27 @@ int main()
     assert(keptCue->sample_offset == 44100.0);  // position untouched, only the label changed
     std::cout << "case 6 (real hot cue label is obfuscated, not left verbatim; position untouched) OK\n";
 
+    // Where the audio is, relative to the catalog, has to survive: the
+    // two catalogs of one stick describe ONE set of files, and the path
+    // is the matcher's most reliable signal for saying so. The real
+    // artist and album folders are gone; the hops out of Engine Library
+    // are not.
+    assert(t1.relative_path().rfind("../Contents/", 0) == 0);
+    assert(t2.relative_path().rfind("../Contents/", 0) == 0);
+    assert(t1.relative_path().find("Real Artist A") == std::string::npos);
+    assert(t1.relative_path().find("Real Album") == std::string::npos);
+    assert(t1.relative_path().find("real1.mp3") == std::string::npos);
+    // And a path that never had hops does not acquire any.
+    assert(t3.relative_path().rfind("Contents/", 0) == 0);
+    assert(t3.relative_path().find("..") == std::string::npos);
+    std::cout << "case 7 (the path keeps its hops out of Engine Library, loses the real folders) OK\n";
+
     // Source untouched -- every edit happens on the destination copy.
     auto dbSource = djinterop::engine::load_database(sourceRoot.string());
     auto sourceTrack1 = *dbSource.track_by_id(track1Id);
     assert(sourceTrack1.title() == std::optional<std::string>("Real Title 1"));
     assert(sourceTrack1.hot_cue_at(0)->label == "Real Drop Cue");
-    std::cout << "case 7 (source library untouched) OK\n";
+    std::cout << "case 8 (source library untouched) OK\n";
 
     std::cout << "all cases passed\n";
     return 0;

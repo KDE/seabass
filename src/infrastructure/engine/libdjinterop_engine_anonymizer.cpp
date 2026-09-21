@@ -146,6 +146,21 @@ int renamePlaylistTree(djinterop::playlist pl, size_t &nextIndex)
     return renamed;
 }
 
+// The leading "../" (or "..\\") segments of a relative path, and nothing
+// else. Engine writes a track's path relative to the Engine Library
+// directory, so the hops are what make it resolve to the stick root; see
+// where this is used.
+std::string parentHops(const std::string &relativePath)
+{
+    std::string hops;
+    std::size_t at = 0;
+    while (relativePath.compare(at, 3, "../") == 0 || relativePath.compare(at, 3, "..\\") == 0) {
+        hops += "../";
+        at += 3;
+    }
+    return hops;
+}
+
 void copyTreeIfPresent(const fs::path &from, const fs::path &to)
 {
     std::error_code ec;
@@ -278,7 +293,24 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
             t.set_title(anonymizationPlaceholder("Track", realFilename));
             t.set_artist(artistIt->second);
             t.set_comment(anonymizationPlaceholder("Comment", realFilename));
-            t.set_relative_path("Contents/" + obfuscatedFilename);
+            // The leading "../" hops are kept; everything after them is
+            // replaced. Engine stores a track's path relative to the
+            // Engine Library directory, so on a real stick it reads
+            // "../Contents/<artist>/<album>/<file>.mp3" -- out of Engine
+            // Library, then down into the stick's own Contents, the same
+            // directory rekordbox's catalog names. Writing a bare
+            // "Contents/..." here dropped those hops and pointed the
+            // export's Engine catalog at a Contents INSIDE the Engine
+            // tree, so the two catalogs of one stick came out describing
+            // two disjoint sets of files (seabass#13): 1161 shared
+            // filenames, zero shared paths, and cross-format collapse
+            // impossible to exercise on anonymized data.
+            //
+            // The directory names between the hops and the file are real
+            // -- artist and album folders -- so they go, as before. What
+            // survives is only the shape that says where the audio lives
+            // relative to the catalog.
+            t.set_relative_path(parentHops(t.relative_path()) + "Contents/" + obfuscatedFilename);
             // Album, genre and record label are free text a person or a
             // tagging tool typed, exactly as identifying as the title, and
             // they were never scrubbed at all. Only set them when the real
