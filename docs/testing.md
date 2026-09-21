@@ -282,6 +282,43 @@ fine and only then turns out to hold no catalog -- past the point of no
 return. Rewritten that way it fails against the pre-fix code and passes
 against the fix.
 
+## Plant your own precondition, never inherit one
+
+A test that needs the world to be a certain way, and does not put it
+that way itself, passes wherever somebody has already been working and
+fails on a clean machine. Three of those turned up in one day, which is
+what makes it a rule rather than an anecdote:
+
+- a round started outside the sandbox profile, which S3 caught in ten
+  seconds -- the check exists precisely because the rig cannot be
+  trusted to have been launched correctly;
+- an assertion that held only because the path it ran under happened to
+  contain "Seabass";
+- and a live screenshot case that asserted the data it was
+  photographing.
+
+The third is the instructive one (bff1919e). The rig points that case at
+a stick to photograph whatever state the stick is in -- its own comment
+says "fine for a screenshot and would not be for an assertion" -- and
+the case then required the scan to produce proposals. It passed on a
+developer machine, where the everyday profile holds a metadata store
+somebody has been filling for weeks, and failed in the rig's sandbox
+profile, where the store is empty at S1 time because the checks that
+fill it run later.
+
+Planting was tried first, from the second stick, the way
+`test_12_metadataFromSecondStickSaveUndo` does, and rejected: storing a
+hundred tracks' metadata reads a hundred tracks' artwork and costs ten
+minutes a run, and it still yields nothing when both sticks were
+restored from the same backup, because a proposal only exists where the
+store holds metadata a stick track is missing. So the case now waits for
+the scan to finish, requires no error and a non-empty grab, logs the
+count and takes the picture either way.
+
+Which is the other half of the rule: when a precondition cannot be
+planted cheaply, the answer is to assert something the test can actually
+own, not to keep asserting the thing it cannot.
+
 ## The anonymized fixture
 
 `tests/fixtures/anonymized_library/` holds a real rekordbox export and a real Engine Library, both de-identified: every track's title/artist/comment/filename/playlist name is replaced with placeholder text, artwork and detailed waveform-display data are stripped, but everything else (BPM, key, cue positions and colors, ratings, play counts, playlist structure, beatgrid) is real. See `MANIFEST.txt` inside that directory for the exact counts and field-by-field policy from when it was last generated, and `src/infrastructure/rekordbox/rekordbox_library_anonymizer.hpp` / `src/infrastructure/engine/libdjinterop_engine_anonymizer.hpp` for exactly what each step does.
@@ -410,6 +447,13 @@ after the lock is held (c0f28751). Worth knowing as a shape rather than
 as a bash detail: the diagnostic was destroyed by the thing that was
 about to print it, and only running two real rigs against a scratch lock
 showed it.
+
+It then happened for real, within the hour, to the round that was
+running: a test invocation of a second rig -- made before the fix -- had
+erased the live lock file, so when that round needed killing, the pid to
+kill it by was gone and it had to be found with `ps`. The shape was
+written down from reading the diff before it had cost anybody anything,
+and then it cost somebody something.
 
 It exists because on 2026-09-21 two rounds ran against the same two
 sticks for about ten minutes, each restoring and writing under the
