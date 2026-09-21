@@ -40,6 +40,26 @@ TestCase {
         SignalSpy {}
     }
 
+    // A single glyph, large, white on black, with nothing else in the
+    // item: the smallest thing that can answer "does the bundled face
+    // paint at all on this machine".
+    Component {
+        id: glyphProbeComponent
+        Rectangle {
+            property alias glyphText: probeLabel.text
+            width: 80
+            height: 80
+            color: "black"
+            Text {
+                id: probeLabel
+                anchors.centerIn: parent
+                font.family: Theme.symbolFamily
+                font.pixelSize: 48
+                color: "white"
+            }
+        }
+    }
+
     function test_showsTheCatalogItIsOn() {
         var toggle = createTemporaryObject(toggleComponent, testCase, {current: "engine", width: 240});
         waitForRendering(toggle);
@@ -234,6 +254,57 @@ TestCase {
             }
         }
         return {top: top, bottom: bottom, centre: (top + bottom) / 2};
+    }
+
+    // Before any question about where a glyph sits: does it paint.
+    //
+    // The three catalog glyphs are U+2B21, U+25CE and U+25C8, and most
+    // fonts have none of them. Theme bundles a three-glyph subset as a
+    // QML resource precisely so the toggle looks the same on a machine
+    // without Noto installed, and falls back to the real Noto family
+    // when that resource does not load. Two environments have now been
+    // found where nothing paints: a CI container carrying only DejaVu,
+    // which has none of the three, and macOS, where the family resolves
+    // to the bundled name and still inks nothing.
+    //
+    // Every other case in this file measures where the ink is, so all of
+    // them fail together and none of them says why. This one says why,
+    // in one line, with the loader's own status beside it.
+    function test_theBundledSymbolFontPaintsItsGlyphs() {
+        const glyphs = ["\u2B21", "\u25CE", "\u25C8"];
+        const where = "family \"" + Theme.symbolFamily + "\", loader status " + Theme.symbolFont.status
+                      + " (" + FontLoader.Ready + " is Ready), source " + Theme.symbolFont.source;
+        // Two assertions, because either one alone is fooled by a
+        // different machine. The loader being Ready is the only evidence
+        // that the BUNDLED subset is available at all: on a machine that
+        // has Noto Sans Symbols2 installed, the ink check below passes
+        // through the system font whatever the resource did -- verified
+        // by pointing the probe at a family name that does not exist,
+        // which still painted here. And the ink check is the only
+        // evidence that a loaded face draws anything: macOS resolves the
+        // bundled family by name and still inks nothing.
+        verify(Theme.symbolFont.status === FontLoader.Ready,
+               "the bundled symbol subset did not load, so the toggle is relying on whatever the system has: "
+                   + where);
+        for (let i = 0; i < glyphs.length; ++i) {
+            const probe = createTemporaryObject(glyphProbeComponent, testCase, {glyphText: glyphs[i]});
+            verify(probe !== null);
+            waitForRendering(probe);
+            const image = grabImage(probe);
+            let lit = 0;
+            for (let y = 0; y < probe.height; ++y) {
+                for (let x = 0; x < probe.width; ++x) {
+                    const c = image.pixel(x, y);
+                    if (c.r + c.g + c.b > 0.3) {
+                        ++lit;
+                    }
+                }
+            }
+            verify(lit > 20,
+                   "the catalog glyph " + glyphs[i] + " painted " + lit + " lit pixels of 6400 at 48px, white on "
+                       + "black. Either the bundled subset is not loading and the fallback family is absent "
+                       + "here, or the face loads and paints nothing. " + where);
+        }
     }
 
     // The ink of one glyph/name pair, out of a grabbed image, in
@@ -438,7 +509,9 @@ TestCase {
             }
             measured.push(m);
         }
-        const table = measured.map(describeRow).join("\n      ");
+        const table = measured.map(describeRow).join("\n      ")
+                      + "\n      symbol font: family \"" + Theme.symbolFamily + "\", loader status "
+                      + Theme.symbolFont.status + " (" + FontLoader.Ready + " is Ready)";
 
         for (let i = 0; i < measured.length; ++i) {
             const m = measured[i];
