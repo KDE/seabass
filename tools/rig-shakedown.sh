@@ -718,7 +718,17 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
         sync
         records_settled=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     fi
-    if [ "$records_may_appear" -eq 0 ] && [ "$records_settled" -ne "$records_before" ]; then
+    # A save that FITTED keeps its record, and should: that record IS the
+    # undo the user has just been offered. Saying "the refused save left a
+    # backup record behind" about a save that was not refused is a second,
+    # wrong answer next to the real failure -- the fill left too much room,
+    # which the test itself reports. Round 8's first run of
+    # F4-save-fails-after-its-backup printed both and the record line was
+    # the louder one.
+    local save_fitted=0
+    grep -q "the save FITTED" "$out"/live-*FullStick*.txt 2>/dev/null && save_fitted=1
+    if [ "$records_may_appear" -eq 0 ] && [ "$save_fitted" -eq 0 ] \
+       && [ "$records_settled" -ne "$records_before" ]; then
         echo "the refused save left a backup record behind: $records_before -> $records_settled entries in $A/Seabass/backups"
         # The record this save made, not the folder's oldest eight: a
         # stick that already holds backups would have filled the listing
@@ -790,13 +800,21 @@ full_stick() {
 # seabass#F4. Neither was wrong about what it measured; the check simply
 # could not fail.
 #
-# 768 KB is measured, not guessed: the backup is ~460 KB and a cue needs
-# an ANLZ pair and the database beside it. If the save turns out to fit
-# here too the test says so itself ("the save FITTED"), which is a
-# failure -- so a stick whose catalog has grown cannot make this pass
-# quietly, it makes it fail and asks for a new number.
+# The number is measured on this rig, and it is narrow. Round 8 walked it:
+# at 256 KB the backup does not fit (path one), at 768 KB everything fits
+# and the save succeeds, which the test reports as "the save FITTED" and
+# the rig counts as a failure. So the window is between them, and 512 KB
+# sits above the backup's ~460 KB and below what the ANLZ pair and the
+# database need after it.
+#
+# It is a margin, not a constant, and it depends on the catalog and the
+# filesystem's cluster size. That is survivable only because BOTH ways of
+# missing it are loud: a save that fits says so and fails, and a save
+# refused before its backup gets the NOTE above saying the discard path
+# was never reached. Neither can pass quietly, which is the whole reason
+# this check exists.
 full_stick_after_its_backup() {
-    fill_and_run 768 LiveFullStick::test_saveOnAFullStickFailsCleanly 0 0
+    fill_and_run 512 LiveFullStick::test_saveOnAFullStickFailsCleanly 0 0
 }
 
 full_stick_undo() {
