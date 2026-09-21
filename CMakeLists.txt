@@ -1775,6 +1775,16 @@ if(TARGET Qt6::Core)
     # looking at must not move because its own state changed, and an
     # arriving stick must be an insert the view can animate rather than a
     # reset it can only redraw.
+    # Needs Qt6::Gui, not just Core: the font database is a GUI thing, and
+    # so is the offscreen platform plugin this runs under deliberately.
+    add_executable(interface_font_test
+        src/gui/interface_font.cpp
+        tests/interface_font_test.cpp
+    )
+    target_include_directories(interface_font_test PRIVATE src)
+    target_link_libraries(interface_font_test PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    add_test(NAME interface_font_test COMMAND interface_font_test)
+
     add_executable(update_decision_test
         src/gui/update_decision.cpp
         tests/update_decision_test.cpp

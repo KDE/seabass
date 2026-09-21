@@ -9,6 +9,7 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
+#include "gui/interface_font.hpp"
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -336,6 +337,15 @@ public slots:
 #ifdef Q_OS_LINUX
         QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 #endif
+
+        // The same interface font the app names for itself in
+        // gui/main.cpp, and for the same reason: a harness whose labels
+        // resolve to a different font from the app's is a harness that
+        // cannot be used to judge them. This is also where the fault was
+        // first visible -- the Windows rig's labels asked for the
+        // generic "Sans Serif" and were handed the bundled symbol
+        // subset, which has no Latin coverage.
+        QGuiApplication::setFont(seabass::gui::interfaceFont());
 
         // AppSettingsController, main.cpp's exportMaterialPalette() and
         // media_controller.cpp's opened-folders store all construct their

@@ -10,6 +10,7 @@
 #include <QStyleHints>
 #include <QThreadPool>
 
+#include "gui/interface_font.hpp"
 #include "gui/seabass_settings.hpp"
 
 namespace
@@ -148,6 +149,27 @@ int main(int argc, char **argv)
     // run before the engine loads Main.qml.
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 #endif
+
+    // The interface font, named explicitly, because "whatever Qt decides"
+    // is not a font on every platform. Nothing in this app sets a family
+    // on ordinary labels, so they inherit the default one -- which on a
+    // Linux desktop is a real family the platform theme supplies, and on
+    // Windows was reported as the generic "Sans Serif". A generic name
+    // the platform cannot resolve falls back to an application font
+    // instead, and the only application font this app loads is the
+    // three-glyph symbol subset behind Theme.symbolFamily, which has no
+    // Latin coverage whatsoever.
+    //
+    // That is what the Windows rig measured: every catalog name asking
+    // for "Sans Serif" and getting "Seabass Symbols", inking nothing.
+    // Not a missing glyph and not a layout fault -- the wrong font on
+    // the wrong label, and it would empty every label in the app, not
+    // just the ones a test happens to look at.
+    //
+    // systemFont(GeneralFont) is the platform's own interface font, so
+    // this changes nothing where the default already resolved and gives
+    // a real family where it did not.
+    app.setFont(seabass::gui::interfaceFont());
 
 #ifdef Q_OS_WIN
     // FluentWinUI3 (opted into above) draws native Windows 11 controls and
