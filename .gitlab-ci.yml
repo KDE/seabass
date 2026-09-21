@@ -278,11 +278,18 @@ craft_windows_qt6_x86_64:
       xvfb unzip 7zip libxkbcommon-dev
       qt6-base-private-dev qt6-declarative-private-dev
       ccache
-      qt6-svg-plugins
       fonts-noto-core
   - fc-cache -f
-  - echo "fonts visible to fontconfig: $(fc-list | wc -l) total, $(fc-list | grep -ci symbols) matching 'symbols'"
-  - fc-list | grep -i "symbols" | head -3 || echo "  NO Symbols font is visible to fontconfig"
+  # Block scalars, NOT plain ones. A colon followed by a space inside an
+  # unquoted YAML scalar turns the whole shell command into a MAPPING:
+  # `- echo "fonts seen: $(...)"` parses as {'echo "fonts seen': '$(...)'},
+  # GitLab then finds a non-string in before_script, every job using this
+  # anchor becomes invalid, and the pipeline is created with ZERO jobs and
+  # a null yaml_errors. That is what ceb519fa did to master. `- |` has no
+  # such trap, which is why the cgroup block below uses it too.
+  - |
+    echo "fonts visible to fontconfig: $(fc-list | wc -l) total, $(fc-list | grep -ci symbols) matching symbols"
+    fc-list | grep -i symbols | head -3 || echo "  NO Symbols font is visible to fontconfig"
 
 
 # One job, not two. It builds AND tests, and the reason is the 4.3 GB
