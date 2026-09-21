@@ -96,7 +96,7 @@ like.
 It cannot tell you whether the program a Linux user runs behaves,
 because `src/gui/main.cpp` deliberately does *not* set that variable and
 the shipped app inherits the desktop's style. So there is a second lane
-(`seabass_qml_desktop_style_tests`, 353c01d1) running the same suite
+(`seabass_qml_desktop_style_tests`, 8d970086) running the same suite
 under `org.kde.desktop`, with the same xvfb lock as the others so three
 X servers cannot race. It registers only where `org/kde/desktop/qmldir`
 is found, and says so rather than failing where it is not -- a container
@@ -117,8 +117,16 @@ could see it and three people had been looking straight at it all
 afternoon. It was found on another platform by someone reading the fix
 and going to look for the same shape, not by running anything: one row
 painting nothing at all, another's name band five pixels tall beside a
-twenty pixel glyph (111efcf0). A lane tells you a thing is broken. The
+twenty pixel glyph (9b55c8e8). A lane tells you a thing is broken. The
 fix tells you what to search for.
+
+There were three. `PlaylistRowDelegate` carried the same binding and is
+used both in a plain list and in the Matching page's combo (f5515ac1).
+And measuring the original on macOS found it *resolving* there, rows at
+220 where `implicitWidth` is 160 -- which is the useful version of "it
+does not fail on this platform": the control was never correct, it was
+lucky, and which way the luck falls is decided by how a particular style
+builds its popup.
 
 This is what seabass#18 asked for, and it is worth knowing that the
 issue's recorded diagnosis was wrong: it said the popup is a separate
@@ -387,11 +395,21 @@ one whose absence is silent: without it, FB7 and the guard scenario have
 nothing to detect.
 
 Only one rig may run at a time, and `rig-shakedown.sh` now holds an
-`flock` to enforce it (d74f4e75): a second round is refused with the
+`flock` to enforce it (d9137a14): a second round is refused with the
 holder's pid, output directory, start time and sticks, and the lock is
 released however the first one dies, `kill -9` included. `RIG_NO_LOCK=1`
 is the deliberate way past it, for a second rig against different
 sticks.
+
+The lock's first version could refuse a round and then not say who held
+it: `exec 9>"$file"` opens for write, which truncates, and the process
+being refused opens the file before it finds out it cannot lock it. It
+erased the pid, directory, start time and sticks, and then printed the
+empty file it had just made. `<>` instead, and the truncation moved to
+after the lock is held (c0f28751). Worth knowing as a shape rather than
+as a bash detail: the diagnostic was destroyed by the thing that was
+about to print it, and only running two real rigs against a scratch lock
+showed it.
 
 It exists because on 2026-09-21 two rounds ran against the same two
 sticks for about ten minutes, each restoring and writing under the
