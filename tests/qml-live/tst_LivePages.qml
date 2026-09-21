@@ -20,6 +20,8 @@ import "LiveHelpers.js" as Live
 //     both write to the stick, and this phase of a round may not.
 // R5  Manage Backups lists both reference backups with the right stick,
 //     size and counts, and browsing one opens it read-only.
+// R6  The Full Stick Backup page's Name field starts out holding the real
+//     stick's own name, so a backup is named without anybody typing.
 TestCase {
     id: testCase
     name: "LivePages"
@@ -36,6 +38,8 @@ TestCase {
     Component { id: statisticsController; StickStatisticsController {} }
     Component { id: performanceController; StickPerformanceController {} }
     Component { id: fullBackupsController; FullBackupsController {} }
+    Component { id: stickBackupController; StickBackupController {} }
+    Component { id: stickBackupPage; StickBackupPage { width: 1100; height: 820 } }
 
     function waitIdle(controller, timeout) {
         tryVerify(function() { return controller.busy === false; }, timeout === undefined ? 600000 : timeout);
@@ -83,6 +87,60 @@ TestCase {
         verify(Object.keys(perf.measurement).length > 0, "the page measured something");
         verify(perf.needsScratchFiles === true || Object.keys(perf.score).length > 0,
                "either a score, or it says it needs scratch files first");
+    }
+
+    // The Name field's default, against a real stick and the real
+    // controller: the pure decision is covered by
+    // stick_backup_paths_test, but only configure() on the live object
+    // proves the field a person sees is filled in.
+    //
+    // The run's own scratch directory, not the real backup folder:
+    // configure() previews, and a preview is a read -- but a folder with
+    // no archive in it is what makes "no stored name yet" the case under
+    // test, and it keeps this out of the way of the backups a round
+    // wrote.
+    function test_04_backupNameDefaultsToTheStickName() {
+        if (stickRoot.length === 0) {
+            skip("SEABASS_LIVE_STICK is not set");
+        }
+        // The real page with the real controller, configured the way the
+        // app configures it (Component.onCompleted), and a stub settings
+        // object so the backup folder is this run's scratch directory
+        // rather than the developer's own.
+        var page = createTemporaryObject(stickBackupPage, testCase, {
+            stickLabel: stickLabel,
+            rekordboxPath: rekordboxPath,
+            enginePath: enginePath,
+            appSettingsController: ({stickBackupDirectory: testScratchDir}),
+            controller: createTemporaryObject(stickBackupController, testCase),
+        });
+        verify(page !== null, "the Full Stick Backup page did not load");
+
+        // What a person actually sees: the text in the Name box, not just
+        // the property behind it.
+        var field = Live.findByObjectName(page, "backupNameField");
+        verify(field !== null, "the page has no Name field");
+        compare(field.text, stickLabel, "the Name field starts out holding the stick's own name");
+        compare(page.controller.backupName, stickLabel, "and the controller agrees with the box");
+
+        // A finished preview of a stick with no named backup leaves the
+        // default alone rather than blanking it. Waited for on
+        // `previewing`, not `busy`: busy() covers runs, and a preview
+        // leaves it false throughout -- so waiting on it returned at once
+        // and re-checked the state from before the preview, which is the
+        // one thing this assertion must not do.
+        tryVerify(function() { return page.controller.previewing === false; }, 600000);
+        compare(field.text, stickLabel, "the preview cleared the default name instead of keeping it");
+
+        // The archive it would write is the file the label alone produced,
+        // so defaulting the name renames nothing.
+        verify(page.controller.archivePath.indexOf(stickLabel + ".zip") >= 0,
+               "the archive is still named after the stick: " + page.controller.archivePath);
+
+        if (screenshotDir && screenshotDir.length > 0) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/stick-backup-name-default.png");
+        }
     }
 
     function test_03_manageBackupsListsTheReferences() {

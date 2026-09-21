@@ -475,6 +475,13 @@ public slots:
         engine->rootContext()->setContextProperty(
             QStringLiteral("shaderExpected"),
             QString::fromLocal8Bit(qgetenv("SEABASS_SHADER_EXPECTED")) == QStringLiteral("1"));
+        // A writable directory a QML test may point a controller at: the
+        // same per-pid scratch tree the C++ fixtures use, already created.
+        // Without it a live test that needs a folder of its own has to
+        // invent an absolute path, which means either the developer's real
+        // ~/Seabass or a path that does not exist.
+        engine->rootContext()->setContextProperty(
+            QStringLiteral("testScratchDir"), QString::fromStdString(seabass::testing::scratchRoot().string()));
         // tests/qml-live/: the mount point of a real (scratch) stick to
         // drive the real pages and controllers against. Empty under
         // ctest, and every live test skips itself then.

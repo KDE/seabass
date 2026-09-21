@@ -23,7 +23,10 @@
 
 using seabass::gui::archiveFileNameForLabel;
 using seabass::gui::archiveFileNameFor;
+using seabass::gui::archivePathFor;
 using seabass::gui::archivePathForLabel;
+using seabass::gui::backupNameFor;
+using seabass::gui::shouldRecordBackupName;
 
 namespace
 {
@@ -104,6 +107,65 @@ void testTheNameWinsOverTheLabel()
     assert(archiveFileNameFor(QString(), QStringLiteral("SANDISK_1"), 2) == QStringLiteral("SANDISK_1 (2).zip"));
 }
 
+void testTheFieldStartsOutHoldingTheStickName()
+{
+    // What the Name field on the Full Stick Backup page shows before
+    // anybody types: the stick's own label, because an empty field made a
+    // person guess what the backup would end up called.
+    assert(backupNameFor(QString(), QStringLiteral("SANDISK_1")) == QStringLiteral("SANDISK_1"));
+    // A backup that already carries a name keeps it: that name is the one
+    // its owner chose, and the field is also how they rename it.
+    assert(backupNameFor(QStringLiteral("Seabass test fixture A"), QStringLiteral("SANDISK_1"))
+           == QStringLiteral("Seabass test fixture A"));
+    // A stored name of nothing but spaces is no name at all.
+    assert(backupNameFor(QStringLiteral("   "), QStringLiteral("SANDISK_1")) == QStringLiteral("SANDISK_1"));
+    // Trimmed both ways, so the field never starts out with whitespace
+    // that would be written into the manifest.
+    assert(backupNameFor(QString(), QStringLiteral("  SANDISK_1 ")) == QStringLiteral("SANDISK_1"));
+    assert(backupNameFor(QStringLiteral(" Before Berlin "), QStringLiteral("SANDISK_1"))
+           == QStringLiteral("Before Berlin"));
+    // The default changes no filename: the archive was already called
+    // after the label when the name was empty, so a field defaulting to
+    // the label lands on exactly the same file.
+    assert(archiveFileNameFor(backupNameFor(QString(), QStringLiteral("SANDISK_1")), QStringLiteral("SANDISK_1"))
+           == archiveFileNameFor(QString(), QStringLiteral("SANDISK_1")));
+}
+
+void testTheDefaultNameIsNotWrittenUntilAPreviewSaysItMay()
+{
+    const QString label = QStringLiteral("SANDISK_1");
+    const QString stored = QStringLiteral("Seabass test fixture A");
+    // The page opens, the field holds the label, no preview has come back:
+    // starting a backup now must not record a name, because the archive
+    // may already carry one this has not read yet. Back Up Now really is
+    // live here -- busy() covers runs, not previews.
+    assert(!shouldRecordBackupName(true, false, label, QString()));
+    // The preview came back and said there is no name: now the default is
+    // the name, and the backup is called after its stick.
+    assert(shouldRecordBackupName(true, true, label, QString()));
+    // The preview came back with a name, which the field adopted: nothing
+    // changed, so nothing is written and the stored name survives.
+    assert(!shouldRecordBackupName(false, true, stored, stored));
+    // A typed name is written whether or not a preview ever answered --
+    // including a preview that failed, which never settles.
+    assert(shouldRecordBackupName(false, false, QStringLiteral("Before Berlin"), stored));
+    // Clearing the box is a decision too: an empty name differs from the
+    // stored one, so it is recorded as the clearing it is.
+    assert(shouldRecordBackupName(false, false, QString(), stored));
+}
+
+void testNamingABackupAfterItsStickLandsOnTheCollidedName()
+{
+    // Why StickBackupController refuses to rename an archive back onto the
+    // plain label once it has stepped off it: with the name defaulting to
+    // the label, the file the name asks for IS the file the collision
+    // stepped around, which belongs to the other stick.
+    const QString dir = QStringLiteral("/b");
+    const QString label = QStringLiteral("MAIN");
+    assert(archivePathFor(dir, label, label, 1) == archivePathForLabel(dir, label, 1));
+    assert(archivePathForLabel(dir, label, 2) != archivePathForLabel(dir, label, 1));
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -115,6 +177,9 @@ int main(int argc, char **argv)
     testOnlyTheExtensionComesOff();
     testPathsJoinTheDirectory();
     testTheNameWinsOverTheLabel();
+    testTheFieldStartsOutHoldingTheStickName();
+    testTheDefaultNameIsNotWrittenUntilAPreviewSaysItMay();
+    testNamingABackupAfterItsStickLandsOnTheCollidedName();
     std::cout << "stick_backup_paths_test passed\n";
     return 0;
 }

@@ -118,6 +118,15 @@ void StickBackupController::configure(const QString &stickLabel, const QString &
     m_archiveAttempt = 1;
     m_nameCollidedWith.clear();
     m_archivePath = archivePathForLabel(backupDirectory, stickLabel, m_archiveAttempt);
+    // The field starts out holding the stick's name rather than empty: it
+    // is what the backup would be called anyway, and a filled field says
+    // so where a placeholder only hinted at it. refresh() replaces it with
+    // the stored name if this stick's backup already has one.
+    m_backupName = backupNameFor(QString(), stickLabel);
+    m_savedBackupName.clear();
+    m_backupNameIsDefault = true;
+    m_previewSettled = false;
+    emit backupNameChanged();
     emit configuredChanged();
     refresh();
 }
@@ -134,7 +143,15 @@ BackupStickOptions StickBackupController::baseOptions() const
     // BackupStick to keep the name the previous generation had, and an
     // update that merely ran without anyone touching the field must not
     // count as "the user cleared the name".
-    if (m_backupName != m_savedBackupName) {
+    //
+    // The default the field starts out holding is not a change until a
+    // preview has come back and said this stick's backup has no name of
+    // its own. Nothing stops a backup being started before then -- busy()
+    // covers runs, not previews, so Back Up Now is live the moment the
+    // page opens -- and without this the stick's label would be stamped
+    // over a name its owner chose, or over every name at all if the
+    // preview failed and the stored one was never read.
+    if (shouldRecordBackupName(m_backupNameIsDefault, m_previewSettled, m_backupName, m_savedBackupName)) {
         options.userName = m_backupName.toStdString();
     }
     return options;
@@ -227,13 +244,22 @@ void StickBackupController::onPreviewFinished()
         last["name"] = QString::fromStdString(p.previousUserName);
         // Adopt the stored name, unless the field is being edited right
         // now: a preview finishing mid-typing must not overwrite what is
-        // in the box. An edit is only in flight when the two differ.
+        // in the box. An edit is only in flight when the two differ --
+        // except straight after configure(), where they differ because the
+        // field holds the default name and nobody has typed anything.
         const QString stored = QString::fromStdString(p.previousUserName);
-        if (m_backupName == m_savedBackupName) {
-            m_backupName = stored;
-            emit backupNameChanged();
+        if (m_backupNameIsDefault || m_backupName == m_savedBackupName) {
+            const QString shown = backupNameFor(stored, m_stickLabel);
+            if (m_backupName != shown) {
+                m_backupName = shown;
+                emit backupNameChanged();
+            }
+            // Still only a default while this backup has no name of its own.
+            m_backupNameIsDefault = stored.trimmed().isEmpty();
         }
         m_savedBackupName = stored;
+        // The stored name is known now, so the default may be written.
+        m_previewSettled = true;
 
         // An archive written before the file was named after the backup
         // still sits under the stick's label. Move it once, so the file a
@@ -242,7 +268,21 @@ void StickBackupController::onPreviewFinished()
         // backup would destroy it.
         if (!stored.isEmpty() && !busy() && !m_backupDirectory.isEmpty()) {
             const QString target = archivePathFor(m_backupDirectory, stored, m_stickLabel, 1);
-            if (target != m_archivePath && renameArchiveTo(target)) {
+            // Never back onto the plain label when this page stepped off
+            // it on purpose: that file is the other stick's backup, and
+            // the step is the only thing keeping the two apart. Reachable
+            // since the name defaults to the label, which makes the
+            // target and the collided name the same file.
+            const bool wouldWalkBackIntoTheCollision =
+                m_archiveAttempt > 1 && target == archivePathForLabel(m_backupDirectory, m_stickLabel, 1);
+            if (!wouldWalkBackIntoTheCollision && target != m_archivePath && renameArchiveTo(target)) {
+                // The archive is called after its name now, so the label
+                // collision this page stepped around is no longer the one
+                // it is in. Left standing, the page kept offering to
+                // replace "the other stick's backup" at a path that had
+                // become this stick's own.
+                m_archiveAttempt = 1;
+                m_nameCollidedWith.clear();
                 refresh();
                 return;
             }
@@ -837,8 +877,15 @@ void StickBackupController::setBackupName(const QString &name)
     // would be written that way into the manifest.
     const QString trimmed = name.trimmed();
     if (m_backupName == trimmed) {
+        // Nothing was typed. QML sends editingFinished on plain focus
+        // loss too, so clicking into the box and out again must leave the
+        // default a default -- otherwise the stored name a preview is
+        // still fetching would never be allowed to replace it.
         return;
     }
+    // Typed, so it is the person's name now and no longer the default --
+    // including an empty field, which is a name deliberately cleared.
+    m_backupNameIsDefault = false;
     m_backupName = trimmed;
     emit backupNameChanged();
 

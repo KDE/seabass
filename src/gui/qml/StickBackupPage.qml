@@ -628,9 +628,28 @@ Page {
                                     objectName: "backupNameField"
                                     Layout.fillWidth: true
                                     enabled: root.controller.busy !== true
-                                    placeholderText: "Optional, e.g. before the Berlin gig"
+                                    // No placeholder: the field starts out
+                                    // holding the stick's name, and this
+                                    // style floats a placeholder above a
+                                    // filled field as if it were its title
+                                    // -- "Optional, e.g. before the Berlin
+                                    // gig" sat over "SANDISK_1" and read
+                                    // like the label of the box. The hint
+                                    // it used to give is beside it.
                                     text: root.controller.backupName
                                     onEditingFinished: root.controller.backupName = text
+                                }
+                                Label {
+                                    // Says the name may be changed or
+                                    // cleared, which an already-filled box
+                                    // no longer says for itself. Sized like
+                                    // this page's other hints rather than
+                                    // by a width of its own: a literal wide
+                                    // enough here elides the hint on the
+                                    // next font or screen.
+                                    text: "Optional, e.g. before the Berlin gig"
+                                    color: Theme.textMuted
+                                    font.pointSize: Theme.fontSmall
                                 }
                             }
                         }

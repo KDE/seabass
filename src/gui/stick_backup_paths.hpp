@@ -74,6 +74,39 @@ inline QString archiveFileNameFor(const QString &backupName, const QString &stic
     return archiveFileNameForLabel(chosen, attempt);
 }
 
+// The name a backup's Name field starts out holding: the stick's own
+// label, so the field a person looks at already says what the backup is
+// of, and the archive and the manifest agree with it without anybody
+// typing. A backup that was named before keeps that name -- the stored
+// name is the one its owner chose, and adopting it is what lets the field
+// double as "rename this backup".
+//
+// Deliberately NOT the same thing as archiveFileNameFor's fallback: that
+// one decides a filename when the name is empty, which stays true; this
+// one decides what to show, and an empty field is what a person sees when
+// they have cleared the name on purpose.
+inline QString backupNameFor(const QString &storedName, const QString &stickLabel)
+{
+    return storedName.trimmed().isEmpty() ? stickLabel.trimmed() : storedName.trimmed();
+}
+
+// Whether what is in the Name box is a name to write into the archive's
+// manifest, or only the default nobody has confirmed yet.
+//
+// Leaving it unwritten is what tells BackupStick to keep the name the
+// previous generation had. The field now starts out holding the stick's
+// label, and that default must not count as a name until a preview has
+// come back and said this stick's backup has none of its own: a backup
+// can be started before that -- the page's Back Up Now is live while a
+// preview runs -- and a preview that fails never says anything at all.
+// Either way the stick's label would otherwise be stamped over a name its
+// owner chose.
+inline bool shouldRecordBackupName(bool isStillTheDefault, bool previewSettled, const QString &name,
+                                    const QString &savedName)
+{
+    return (previewSettled || !isStillTheDefault) && name != savedName;
+}
+
 inline QString archivePathFor(const QString &backupDirectory, const QString &backupName, const QString &stickLabel,
                                int attempt = 1)
 {

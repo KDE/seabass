@@ -189,6 +189,14 @@ private:
     QString m_stickRoot;
     QString m_archivePath;
     QString m_backupName;
+    // True while m_backupName is only the default (the stick's label) that
+    // configure() put there, so a stored name may still replace it. A typed
+    // name never may -- see setBackupName.
+    bool m_backupNameIsDefault = false;
+    // Whether a preview has come back and said what name this stick's
+    // backup already carries. Until it has, the default in the field is
+    // not something to write down: see baseOptions().
+    bool m_previewSettled = false;
     QString m_nameCollidedWith;
     // How many names were tried: 1 is the plain one. Kept so a refresh
     // does not walk the sequence again from the start each time.
