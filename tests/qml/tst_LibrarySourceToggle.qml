@@ -431,9 +431,18 @@ TestCase {
     // load, with the fallback lacking the code point.
     function describeText(item) {
         const resolved = item.fontInfo !== undefined ? item.fontInfo.family : "(no fontInfo)";
+        // The application font is printed beside the item's own, because
+        // the two answer different questions. QGuiApplication::setFont()
+        // decides the first; a STYLE can decide the second, and where a
+        // style supplies its own font the app's choice never reaches the
+        // label. Windows reports names asking for the generic "Sans
+        // Serif" and being handed the bundled symbol subset even after
+        // the app font was named explicitly, and this line is what tells
+        // us whether the app font took and the style overrode it, or the
+        // app font never took at all.
         return "\"" + item.text + "\" " + Math.round(item.width) + "x" + Math.round(item.height)
                + ", font asked \"" + item.font.family + "\" got \"" + resolved + "\" at "
-               + item.font.pixelSize + "px";
+               + item.font.pixelSize + "px (application font \"" + Qt.application.font.family + "\")";
     }
 
     function describeRect(item) {
@@ -532,6 +541,8 @@ TestCase {
         const table = measured.map(describeRow).join("\n      ")
                       + "\n      grab " + image.width + "x" + image.height + " for a " + testCase.width + "x"
                       + testCase.height + " window, scale " + testCase.grabScale
+                      + "\n      application font: \"" + Qt.application.font.family + "\" at "
+                      + Qt.application.font.pixelSize + "px"
                       + "\n      symbol font: family \"" + Theme.symbolFamily + "\", loader status "
                       + Theme.symbolFont.status + " (" + FontLoader.Ready + " is Ready)";
 
