@@ -2509,6 +2509,12 @@ add_executable(rig_read tools/rig_read.cpp)
 target_include_directories(rig_read PRIVATE src)
 target_link_libraries(rig_read PRIVATE seabass_core)
 
+# X3: plants a directory where a track's file should be, and asks whether
+# the app tells anyone. Needs the catalog readers, like rig_read.
+add_executable(rig_file_failure tools/rig_file_failure.cpp)
+target_include_directories(rig_file_failure PRIVATE src)
+target_link_libraries(rig_file_failure PRIVATE seabass_core)
+
 # Create Engine Library, headless: build a candidate library from a stick's
 # rekordbox export into a folder, at a chosen schema generation, and read it
 # back. The feature is otherwise GUI-only and needs real hardware to judge.

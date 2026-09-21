@@ -959,6 +959,13 @@ check X4-everyday-profile-untouched sandbox_profile_still_clean
 # full restore on top of the round. A round that leaves it off says so
 # in the log and writes no result for it at all, so the board cannot keep
 # a green D2 from whenever it last ran.
+# X3: a file that cannot be read has to become an issue somebody can act
+# on. Plants a directory where a track's file should be -- the only way
+# to make a read fail that behaves the same on FAT, macOS, Linux and
+# Windows -- and puts the file back whatever happens. Runs on B, which is
+# already at its reference here, and leaves it there.
+check X3-file-failures-as-issues "$build/rig_file_failure" "$B"
+
 check D1-format-preflight "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a"
 if [ -n "${RIG_FORMAT_EXECUTE:-}" ]; then
     check D2-format-stick-A "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a" --execute

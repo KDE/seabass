@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 
+#include "application/track_file_presence.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/track_scope.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -436,9 +437,10 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             if (!t.streamingSource.empty()) {
                 continue;
             }
-            std::error_code ec;
-            bool exists = !t.filePath.empty() && fs::exists(t.filePath, ec);
-            (exists ? healthy : broken).push_back(std::move(t));
+            // is_regular_file, via the shared rule: a directory at a
+            // track's path exists() but cannot be played, and calling it
+            // healthy is how an unreadable file was reported as fine.
+            (application::trackFileIsPresent(t) ? healthy : broken).push_back(std::move(t));
         }
         result.issues = domain::LibraryConsistencyChecker::check(healthy, broken);
     } catch (const application::OperationCancelled &) {

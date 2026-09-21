@@ -37,6 +37,7 @@
 #include "application/use_cases/scan_library.hpp"
 #include "domain/duplicate_cue_consolidation.hpp"
 #include "domain/junk_cue.hpp"
+#include "application/track_file_presence.hpp"
 #include "domain/library_consistency.hpp"
 #include "domain/library_fingerprint.hpp"
 #include "domain/track.hpp"
@@ -97,9 +98,7 @@ void health(const Catalog &catalog)
         if (!track.streamingSource.empty()) {
             continue;
         }
-        std::error_code ec;
-        const bool exists = !track.filePath.empty() && fs::exists(track.filePath, ec);
-        (exists ? healthy : broken).push_back(track);
+        (application::trackFileIsPresent(track) ? healthy : broken).push_back(track);
     }
     const std::vector<domain::LibraryConsistencyIssue> issues = domain::LibraryConsistencyChecker::check(healthy, broken);
     const std::vector<domain::JunkCueIssue> junk = domain::JunkCueFinder::find(catalog.tracks);
