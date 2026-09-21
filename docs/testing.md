@@ -84,21 +84,37 @@ A suite that cannot distinguish two binaries a person can distinguish at
 a glance is not a strict suite. It is a blind one, and it reports green
 either way.
 
-### What it still cannot see
+### Two lanes, because one style cannot answer both questions
 
-The suite pins `QT_QUICK_CONTROLS_STYLE=Basic`. That is deliberate: on a
+The first lane pins `QT_QUICK_CONTROLS_STYLE=Basic`, deliberately: on a
 real display the KDE platform theme answers with Breeze, whose metrics
 differ from Basic's, so an unpinned suite would measure Breeze on a
-developer's machine and Basic in a container and a green run on one would
-say nothing about the other.
+developer's machine and Basic in a container, and a green run on one
+would say nothing about the other. That lane compares pixels like with
+like.
 
-The cost is that `src/gui/main.cpp` deliberately does *not* set that
-variable, so the shipped Linux app inherits the desktop's style. Under
-`Basic` a `Popup`, `Menu`, `ComboBox` or `Dialog` is an in-scene item;
-under `org.kde.desktop` several of those are separate native windows, and
-a click delivered to the test's own window never reaches one. Every test
-that clicks into a popup is exercising a construction the user does not
-get.
+It cannot tell you whether the program a Linux user runs behaves,
+because `src/gui/main.cpp` deliberately does *not* set that variable and
+the shipped app inherits the desktop's style. So there is a second lane
+(`seabass_qml_desktop_style_tests`, 353c01d1) running the same suite
+under `org.kde.desktop`, with the same xvfb lock as the others so three
+X servers cannot race. It registers only where `org/kde/desktop/qmldir`
+is found, and says so rather than failing where it is not -- a container
+without `kf6-qqc2-desktop-style` skips it. `ctest` reports three QML
+lanes: pinned, desktop-style, shader.
+
+The two answers have already differed, which is the whole argument for
+the second lane. Under `org.kde.desktop` the playlist picker's popup
+rows came out **zero wide and unclickable**, and three pages failed to
+instantiate on a TypeError thrown inside the style's own `ComboBox`.
+None of it was visible from the pinned lane.
+
+This is what seabass#18 asked for, and it is worth knowing that the
+issue's recorded diagnosis was wrong: it said the popup is a separate
+native window under this style and that a click to the test's window
+never reaches it. It is not a window. The rows were there and had no
+width. A cause written down confidently is still a guess until a lane
+exists to check it.
 
 ### Looking at the app under xvfb, and what that is worth
 
@@ -119,13 +135,14 @@ keeps the run out of the real settings store.
 
 Two things it will not give you, both found by trying:
 
-- **The shipped style.** `QT_QUICK_CONTROLS_STYLE=org.kde.desktop` is the
-  obvious way to ask for it, and on this machine that combination hangs
-  under xvfb: no window, no warning, no output, until it is killed. The
-  style is installed and the shipped app uses it happily on a real
-  session, so this is something about the environment rather than the
-  style. Until someone works out what, the popup-versus-native-window
-  question cannot be looked at this way either.
+- **The shipped style, reliably.** `QT_QUICK_CONTROLS_STYLE=org.kde.desktop`
+  is the obvious way to ask for it, and the desktop-style lane above now
+  runs the whole suite that way, 498 of 498. It hung once here, from a
+  plain `qml6` process under xvfb: no window, no warning, no output,
+  until it was killed. That was never reproduced afterwards and the lane
+  runs reliably, so treat it as something that happened rather than as a
+  property of the environment -- and if it happens to you, the lane is
+  the thing that works.
 - **The desktop's font rendering.** Xvfb starts with no Xft resources, so
   Plasma's hinting style and subpixel order never reach the app; what
   fontconfig supplies through `HOME` stands in for them, and it is not
@@ -357,6 +374,16 @@ records one: two tools, two different misleading messages, one stale
 build. Rebuild before you doubt the data. `rig_fake_dj` matters most, because it is the
 one whose absence is silent: without it, FB7 and the guard scenario have
 nothing to detect.
+
+Only one rig may run at a time. The two test sticks are a single
+resource with no lock on them, and nothing in the rig notices a second
+one: on 2026-09-21 two rounds ran against the same two sticks for about
+ten minutes, each restoring and writing under the other, and both rounds
+had to be thrown away. Neither reported anything unusual while it
+happened -- the damage looked like ordinary check failures several steps
+downstream, on a stick that had been changed by someone else. Before
+starting a round, look for another `rig-shakedown.sh`, and if another
+session is on this machine, ask it.
 
 Both sticks are overwritten, several times. The references are only read;
 their size, modification time and manifest checksum are recorded before the
