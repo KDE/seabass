@@ -9,6 +9,8 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
+#include "infrastructure/local/metadata_store.hpp"
+#include "application/ports/progress_reporter.hpp"
 #include "gui/controls_style.hpp"
 #include "gui/interface_font.hpp"
 #include "../scratch_path.hpp"
@@ -328,6 +330,62 @@ public slots:
     // and every contrast judgement is wrong. Material Dark is the closest
     // stand-in that needs no platform theme. The plain test run (no
     // screenshot dir) is left exactly as it was.
+
+// Two rows in the metadata store, so the page that lists them has
+// something to list.
+//
+// Four cases skipped without this -- three about leaving the page with
+// staged work, and one screenshot -- on "no stored tracks in this run's
+// metadata store". A skip proves nothing, and these are the cases that
+// cover walking away from work you cannot see, which is the whole
+// reason the page grew a guard.
+//
+// Seeded here rather than in the test, because the page reads the
+// DEFAULT store and there is no way to hand it another path from QML.
+// SEABASS_HOME is already sandboxed per test binary by the time this
+// runs, so the rows land in the run's own directory and nothing
+// reaches a real store.
+//
+// Only when the store is empty. A store with rows in it is a store some
+// other setup meant to arrange, and overwriting it would replace a
+// deliberate fixture with this one.
+void seedMetadataStoreForTests()
+{
+    using namespace seabass;
+    try {
+        infrastructure::local::MetadataStore store;
+        if (!store.readAll().empty()) {
+            return;
+        }
+        std::vector<domain::Track> tracks;
+        for (int i = 0; i < 2; ++i) {
+            domain::Track track;
+            track.sourceId = "seed-" + std::to_string(i);
+            track.format = "rekordbox";
+            track.title = "Seeded Track " + std::to_string(i + 1);
+            track.artist = "Harness";
+            track.durationSeconds = 180.0 + i;
+            track.filePath = "/seeded/Contents/seed-" + std::to_string(i) + ".mp3";
+            domain::CuePoint cue;
+            cue.kind = domain::CuePoint::Kind::Hot;
+            cue.hotCueNumber = 0;
+            cue.positionMs = 1000.0 * (i + 1);
+            track.cues.push_back(cue);
+            tracks.push_back(track);
+        }
+        infrastructure::local::MetadataSource source;
+        source.stickRoot = "/seeded";
+        source.libraryId = "harness-seed";
+        source.stickLabel = "SEEDED";
+        source.catalogModifiedAt = 0;
+        store.store(tracks, source, application::NullProgressReporter::instance(),
+                    application::CancellationToken::none());
+    } catch (const std::exception &) {
+        // Not fatal: the four cases go back to skipping and say so,
+        // which is what they did before this existed.
+    }
+}
+
     void applicationAvailable()
     {
         // The same text renderer the app picks in gui/main.cpp, for the
@@ -350,6 +408,8 @@ public slots:
         // it. ctest pins QT_QUICK_CONTROLS_STYLE on Linux and that still
         // wins; where nothing is pinned, this is what ships.
         seabass::gui::applyDefaultControlsStyle();
+
+        seedMetadataStoreForTests();
 
         QGuiApplication::setFont(seabass::gui::interfaceFont());
 
