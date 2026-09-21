@@ -312,7 +312,14 @@ linux:test:
 linux:package:
   stage: package
   image: ubuntu:26.04
-  needs: [linux:test]
+  # No `needs:`, on purpose. Naming a job ties this to whatever the Linux
+  # lane is called this week, and a `needs:` pointing at a job that no
+  # longer exists is not one red job -- GitLab calls the whole pipeline
+  # invalid and nothing runs at all. Stage order is the stronger gate
+  # anyway: `package` comes after `build` and `test`, so this waits for
+  # every one of them, whatever they are named and however they are
+  # split. A package is not built from a tree whose tests have not
+  # passed.
   rules:
     - if: '$CI_COMMIT_TAG'
   before_script: *linux_packages
