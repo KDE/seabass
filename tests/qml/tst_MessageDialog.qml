@@ -215,17 +215,42 @@ TestCase {
         tryCompare(dialog, "visible", false);
 
         // The arrow keys walk all three buttons, the alternate included.
+        //
+        // Which button sits where is the STYLE's business, not ours:
+        // DialogButtonBox lays its buttons out in the platform's own
+        // order, so Breeze on a real display and the style behind the
+        // offscreen platform disagree about what is to the right of the
+        // default. Asserting a fixed order tested the style. What this
+        // dialog owes is that the arrows reach every button, that the
+        // highlight goes with the focus, and that going round comes back
+        // -- all three true whatever order the buttons are in.
         dialog.open();
         tryCompare(dialog, "opened", true);
-        var accept = findChild(dialog, "acceptButton");
-        var reject = findChild(dialog, "rejectButton");
+        const accept = findChild(dialog, "acceptButton");
+        const reject = findChild(dialog, "rejectButton");
+        const buttons = [accept, alternate, reject];
+        const focused = function() {
+            for (let i = 0; i < buttons.length; ++i) {
+                if (buttons[i].activeFocus) {
+                    return buttons[i];
+                }
+            }
+            return null;
+        };
         accept.forceActiveFocus();
-        keyClick(Qt.Key_Right);
-        verify(alternate.activeFocus, "Right from the default must reach the alternate");
-        keyClick(Qt.Key_Right);
-        verify(reject.activeFocus, "and Right again Cancel");
+        const seen = [];
+        for (let step = 0; step < buttons.length; ++step) {
+            const here = focused();
+            verify(here !== null, "one of the three buttons always has the focus");
+            verify(here.highlighted, "and the highlight is on it, so Return presses what is shown");
+            verify(seen.indexOf(here) === -1, "each button is reached once before any is reached twice");
+            seen.push(here);
+            keyClick(Qt.Key_Right);
+        }
+        compare(seen.length, 3, "Right reaches all three, the alternate included");
+        compare(focused(), accept, "and the fourth Right comes back to the start");
         keyClick(Qt.Key_Left);
-        verify(alternate.activeFocus, "Left from Cancel must come back to the alternate");
+        verify(focused() !== accept, "Left goes the other way");
         dialog.close();
 
         dialog.acceptEnabled = false;

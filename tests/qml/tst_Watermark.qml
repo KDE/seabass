@@ -127,10 +127,21 @@ TestCase {
         id: watermarkRingComponent
         WatermarkRing { playbackController: ({hasTrack: true, playing: true, position: 1000, duration: 5000}) }
     }
-    function test_whereTheRingCannotBeDrawnItDoesNotShow() {
-        var mark = createTemporaryObject(watermarkRingComponent, testCase);
+    // The mark follows the platform: drawn where a shader runs, absent
+    // where one cannot. Asserted through `available` rather than against
+    // a fixed expectation, so the same case covers a machine with a GPU,
+    // this suite's software OpenGL, and a software-rendered fallback.
+    function test_theMarkFollowsWhetherAShaderCanRun() {
+        const mark = createTemporaryObject(watermarkRingComponent, testCase);
         verify(mark !== null);
-        compare(mark.shows, false);
-        compare(mark.visible, false);
+        // The mark has no `available` of its own: it asks the ring
+        // inside it, which is where GraphicsInfo is read.
+        const ring = findChild(mark, "watermarkTrackRing");
+        verify(ring !== null, "the mark is built around a ring");
+        const canDraw = ring.available;
+        compare(mark.shows, canDraw,
+                canDraw ? "a shader runs here, so the mark is drawn"
+                        : "no shader runs here, so the mark stays away");
+        compare(mark.visible, canDraw);
     }
 }

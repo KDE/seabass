@@ -31,11 +31,25 @@ TestCase {
 
     // The suite's platform has the software scene graph. There the ring
     // must say so, and draw nothing, so its caller keeps the plain art.
-    function test_itIsUnavailableWhereNoShaderCanRun() {
-        var ring = make({cueData: [{positionMs: 1000, color: "#ff0000"}], trackDurationMs: 4000});
-        compare(ring.available, false, "the offscreen platform cannot run a shader");
-        compare(findChild(ring, "ringShader").visible, false);
-        compare(findChild(ring, "ringCueMark"), null, "cue marks belong to a ring that is drawn");
+    // What the ring does with the platform it finds. This suite runs on a
+    // real display with Mesa's software OpenGL, so `available` is true
+    // here and the shader and its cue marks are drawn; on a machine
+    // without one the same case requires them gone. The parts either
+    // way have to agree with each other, which is the thing worth
+    // asserting: a visible shader with no cue marks, or cue marks over
+    // nothing, would both be wrong.
+    function test_theShaderAndItsCueMarksFollowTheSamePlatform() {
+        const ring = make({cueData: [{positionMs: 1000, color: "#ff0000"}], trackDurationMs: 4000});
+        const canDraw = ring.available;
+        compare(findChild(ring, "ringShader").visible, canDraw,
+                canDraw ? "a shader runs here, so the ring is drawn"
+                        : "no shader runs here, so the ring is not");
+        const mark = findChild(ring, "ringCueMark");
+        if (canDraw) {
+            verify(mark !== null, "cue marks belong to a ring that is drawn");
+        } else {
+            compare(mark, null, "and have no business over one that is not");
+        }
     }
 
     function test_theBassIsTheLowBandUnderThePlayhead() {

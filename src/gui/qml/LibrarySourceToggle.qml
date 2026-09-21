@@ -115,6 +115,16 @@ ComboBox {
         font.family: Theme.symbolFamily
         color: Theme.text
         Layout.alignment: Qt.AlignVCenter
+        // Both this glyph and the name it lines up against are drawn the
+        // way their metrics are measured. The translate below comes from
+        // TextMetrics, which reports UNHINTED metrics; NativeRendering
+        // hints each glyph onto the pixel grid as it paints, so the ink
+        // lands somewhere the sum never accounted for. On a real display
+        // that is this pair 4.5 px apart -- invisible offscreen, where
+        // Qt picks QtRendering and the two happen to agree, which is why
+        // it went unseen until the suite moved onto a display. Said on
+        // both labels, since agreeing with each other is the point.
+        renderType: Text.QtRendering
         TextMetrics { id: glyphInk; font: glyphLabel.font; text: glyphLabel.text }
         TextMetrics { id: capitalInk; font: glyphLabel.nameLabel.font; text: "H" }
         // A transform, not a position: it moves the ink without asking the
@@ -228,6 +238,8 @@ ComboBox {
         Label {
             id: currentName
             objectName: "catalogName"
+            // See CatalogGlyph: measured and painted the same way.
+            renderType: Text.QtRendering
             text: {
                 const entry = root.entries[root.currentIndex];
                 return entry ? entry.label : "";
@@ -293,6 +305,8 @@ ComboBox {
             }
             Label {
                 id: entryName
+                // See CatalogGlyph: measured and painted the same way.
+                renderType: Text.QtRendering
                 text: entryDelegate.modelData.label
                 color: Theme.text
                 elide: Text.ElideRight

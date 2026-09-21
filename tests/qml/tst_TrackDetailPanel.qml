@@ -194,14 +194,29 @@ TestCase {
     // This suite's platform cannot run the ring's shader. The panel must
     // then keep the sleeve where it was and open no empty row above it --
     // tests/qml-shader has the case where the ring can be drawn.
-    function test_whereTheRingCannotBeDrawnTheSleeveStays() {
-        var panel = makePanel();
+    // The loaded track gets the ring where a shader can draw it, and its
+    // sleeve where one cannot. One case for both, keyed on the row's own
+    // decision, so neither platform is the one nobody checks.
+    function test_theLoadedTrackGetsTheRingOrItsSleeve() {
+        const panel = makePanel();
         panel.playbackController = makeLoadedPlayer("engine", "42");
         panel.showFor(makeDelegate());
         compare(panel.isLoadedTrack, true);
-        var row = findChild(panel, "trackRingRow");
-        compare(row.showsRing, false);
-        compare(row.visible, false);
-        compare(findChild(panel, "trackArtwork").visible, true);
+        const row = findChild(panel, "trackRingRow");
+        // The ring arrives through a Loader, so it is not there on the
+        // frame the page is built: waited for rather than sampled, or
+        // this reads "no shader here" on a machine that has one.
+        tryVerify(function() { return findChild(panel, "trackRing") !== null || !row.showsRing; }, 2000);
+        const ring = findChild(panel, "trackRing");
+        const canDraw = ring !== null && ring.available;
+        compare(row.showsRing, canDraw);
+        // The row OPENS to the ring's size rather than appearing at it:
+        // `side` is animated, and `visible` follows `side > 0`, so on
+        // the first frame after showFor the row is still shut. Waited
+        // for, not sampled.
+        tryCompare(row, "visible", canDraw, 2000);
+        tryCompare(findChild(panel, "trackArtwork"), "visible", !canDraw, 2000,
+                   canDraw ? "the ring carries the cover, so the sleeve steps aside"
+                           : "no ring, so the sleeve stays");
     }
 }

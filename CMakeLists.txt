@@ -912,16 +912,40 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 BASE src/gui
                 FILES src/gui/shaders/track_ring.frag)
         endif()
-        add_test(NAME seabass_qml_tests
-            COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
-        # No real display needed -- Qt's "offscreen" platform plugin renders
-        # without one, which is both faster and far more reliable in a
-        # headless/CI/agent environment than anything Xvfb-dependent.
+        # Both QML suites want a display; look for the thing that gives
+        # them one before either is registered.
+        find_program(SEABASS_XVFB_RUN xvfb-run)
+
+        # On a real display, not offscreen. The offscreen platform draws
+        # no ShaderEffect at all -- silently, the item is simply empty --
+        # so every page this project checks by rendering it was checked
+        # without the one part of it that needs a GPU, and the tests that
+        # noticed had to assert the ABSENCE of the ring rather than the
+        # ring. Xvfb with Mesa's software OpenGL costs no GPU, gives the
+        # same pixels on every machine, and renders what a user sees.
+        #
         # XDG_CONFIG_HOME is redirected because the QML tests build real
         # controllers, and AppSettingsController is backed by QSettings --
         # without this a test could read, or a future one write, the
         # developer's own Seabass settings.
-        set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+        if(SEABASS_XVFB_RUN)
+            add_test(NAME seabass_qml_tests
+                COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
+                    $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
+            set(_seabass_qml_test_env
+                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+        else()
+            # No xvfb-run: fall back to offscreen rather than register
+            # nothing, and say so loudly. A build that tests every page
+            # without a shader is worth having; one that tests no page is
+            # not, and a silent gap is how this was missed for months.
+            message(WARNING "xvfb-run not found: seabass_qml_tests falls back to the offscreen platform, "
+                "where no ShaderEffect draws. The ring, the watermark and anything else shader-drawn "
+                "go untested in this build.")
+            add_test(NAME seabass_qml_tests
+                COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
+            set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+        endif()
         # MSVC only: the offscreen platform's font backend needs pointing
         # at real font files explicitly on Windows, unlike the "windows"
         # platform (which uses DirectWrite directly, no directory needed)
@@ -941,13 +965,9 @@ if(SEABASS_GUI AND Qt6_FOUND)
         endif()
         set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT "${_seabass_qml_test_env}")
 
-        # What a shader draws. The offscreen platform above falls back to
-        # the software scene graph, which draws no ShaderEffect at all --
-        # silently, the item is just empty -- so tests/qml-shader runs on
-        # a real X server instead, with Mesa's software OpenGL: no GPU
-        # needed, and the same pixels on every machine. Only where there
-        # is an xvfb-run to give it that server.
-        find_program(SEABASS_XVFB_RUN xvfb-run)
+        # What a shader draws, pixel by pixel. Same display as the suite
+        # above, kept as its own check because these read back real
+        # pixels and are the slowest of the lot.
         if(SEABASS_XVFB_RUN AND Qt6ShaderTools_FOUND)
             add_test(NAME seabass_qml_shader_tests
                 COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"

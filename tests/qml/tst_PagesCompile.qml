@@ -248,7 +248,15 @@ TestCase {
         failOnWarning(/TypeError/);
         failOnWarning(/ReferenceError/);
         failOnWarning(/is not a function/);
-        failOnWarning(/Unable to assign/);
+        // "Unable to assign" is ours to fix, EXCEPT when it comes out of
+        // the Breeze style's own QML. org/kde/breeze/TextArea.qml:92
+        // fails to assign its TextArea to a QQuickTextInput on Qt 6.10,
+        // which is an upstream bug in a file this project does not own
+        // and cannot fix from here. It appears only with a real display,
+        // since that is where the KDE style loads at all, so moving this
+        // suite onto one turned a third party's warning into our red.
+        // The lookahead keeps the teeth for every other file.
+        failOnWarning(/^(?!.*org\/kde\/breeze).*Unable to assign/);
         failOnWarning(/Cannot read property/);
     }
 

@@ -413,6 +413,19 @@ QtObject {
     // that is bundled, a three-glyph subset of Noto Sans Symbols2, because
     // their centring is measured against its metrics and a system
     // fallback (macOS and Windows have no Noto) puts them off by pixels.
+    //
+    // It is called "Seabass Symbols" and not "Noto Sans Symbols2", which
+    // is what the subset declared until the QML suite moved onto a real
+    // display and caught it. A Linux box with Noto installed then has
+    // TWO faces answering to that one family name, the system's full one
+    // and this three-glyph subset, and which one gets painted is not
+    // ours to decide -- while TextMetrics, which the glyph's centring is
+    // computed from, measures the other. That is a 4.5 px offset in the
+    // toggle on a machine that has the font, and nothing at all on one
+    // that does not, which is exactly the kind of difference a bundled
+    // face exists to remove. A name nothing else can answer to settles
+    // it. The fallback string below is the real Noto family, still worth
+    // having where the resource fails to load at all.
     readonly property FontLoader symbolFont: FontLoader {
         source: "qrc:/qt/qml/SeabassGui/qml/fonts/NotoSansSymbols2-Seabass.ttf"
     }
