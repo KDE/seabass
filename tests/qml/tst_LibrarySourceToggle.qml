@@ -30,6 +30,16 @@ TestCase {
     // to mean something and far enough from it not to fail on a font.
     readonly property real allowedOffset: 1.25
 
+    // grabImage() returns DEVICE pixels; mapToItem() returns logical
+    // ones. On a Retina Mac those differ by two, so every band this file
+    // samples landed at half its true position -- a row's band fell
+    // across the boundary into its neighbour, one row read as empty, and
+    // the backgrounds came back attributed to the wrong rows. It looked
+    // exactly like a glyph that would not paint. Set from the grab
+    // itself rather than assumed, because the only honest source for it
+    // is the image that came back.
+    property real grabScale: 1
+
     Component {
         id: toggleComponent
         LibrarySourceToggle {}
@@ -328,10 +338,11 @@ TestCase {
     // The name is measured over its first letter only: a capital, no
     // descender.
     function pairInk(image, background, glyph, name, y0, y1) {
+        const s = testCase.grabScale;
         const g = glyph.mapToItem(testCase, 0, 0);
         const n = name.mapToItem(testCase, 0, 0);
-        const glyphBand = [Math.floor(g.x + glyph.leftPadding), Math.ceil(g.x + glyph.width)];
-        const capitalBand = [Math.floor(n.x), Math.floor(n.x) + 7];
+        const glyphBand = [Math.floor((g.x + glyph.leftPadding) * s), Math.ceil((g.x + glyph.width) * s)];
+        const capitalBand = [Math.floor(n.x * s), Math.floor(n.x * s) + Math.round(7 * s)];
         return {
             glyph: inkRows(image, background, glyphBand[0], glyphBand[1], y0, y1),
             capital: inkRows(image, background, capitalBand[0], capitalBand[1], y0, y1),
@@ -354,21 +365,25 @@ TestCase {
             var name = findChild(toggle.contentItem, "catalogName");
             verify(glyph !== null && name !== null);
             var image = grabImage(testCase);
+            testCase.grabScale = image.width / testCase.width;
             var origin = toggle.mapToItem(testCase, 0, 0);
-            var background = image.pixel(Math.round(origin.x + toggle.width / 2), Math.round(origin.y + 3));
-            var y0 = Math.floor(origin.y + 3), y1 = Math.ceil(origin.y + toggle.height - 3);
+            var background = image.pixel(Math.round((origin.x + toggle.width / 2) * testCase.grabScale),
+                                         Math.round((origin.y + 3) * testCase.grabScale));
+            var y0 = Math.floor((origin.y + 3) * testCase.grabScale);
+            var y1 = Math.ceil((origin.y + toggle.height - 3) * testCase.grabScale);
             const ink = pairInk(image, background, glyph, name, y0, y1);
             const capitalInk = ink.capital;
             verify(ink.glyph.top >= 0 && capitalInk.top >= 0, values[i] + ": nothing was painted");
-            const off = ink.glyphCentroid - ink.capitalCentroid;
+            const off = (ink.glyphCentroid - ink.capitalCentroid) / testCase.grabScale;
             verify(Math.abs(off) <= testCase.allowedOffset,
                    values[i] + ": the glyph's centre is " + off + " px off the name's. glyph "
                        + describeText(glyph) + "; name " + describeText(name));
             // And the name stays centred in the box: lining the two up by
             // their baseline lifted the whole text about 2 px.
-            var boxCentre = origin.y + (toggle.height - 1) / 2;
-            verify(Math.abs(capitalInk.centre - boxCentre) <= 1.5,
-                   values[i] + ": the name sits " + (capitalInk.centre - boxCentre) + " px off the box's centre");
+            var boxCentre = (origin.y + (toggle.height - 1) / 2) * testCase.grabScale;
+            var boxOff = (capitalInk.centre - boxCentre) / testCase.grabScale;
+            verify(Math.abs(boxOff) <= 1.5,
+                   values[i] + ": the name sits " + boxOff + " px off the box's centre");
         }
     }
 
@@ -386,9 +401,10 @@ TestCase {
     // land on a border, a gradient or a focus ring and turn the whole
     // row into "ink".
     function modalColour(image, item, y0, y1) {
+        const s = testCase.grabScale;
         const p = item.mapToItem(testCase, 0, 0);
-        const x0 = Math.floor(p.x + item.width * 0.75);
-        const x1 = Math.ceil(p.x + item.width - 2);
+        const x0 = Math.floor((p.x + item.width * 0.75) * s);
+        const x1 = Math.ceil((p.x + item.width - 2) * s);
         const counts = {};
         let best = null;
         let bestCount = 0;
@@ -461,6 +477,7 @@ TestCase {
         tryVerify(function() { return view.count === 3 && view.itemAtIndex(2) !== null; });
         waitForRendering(view);
         const image = grabImage(testCase);
+        testCase.grabScale = image.width / testCase.width;
         // The picture, when a run asks for one. Three integers per row is
         // inference; the pixels are evidence, and this project's rule is
         // that a UI claim gets a screenshot rather than an argument.
@@ -495,7 +512,8 @@ TestCase {
                 hasArea: glyph.width > 0 && glyph.height > 0 && name.width > 0
             };
             if (inside && m.hasArea) {
-                const y0 = Math.floor(origin.y + 2), y1 = Math.ceil(origin.y + row.height - 2);
+                const y0 = Math.floor((origin.y + 2) * testCase.grabScale);
+                const y1 = Math.ceil((origin.y + row.height - 2) * testCase.grabScale);
                 const background = modalColour(image, row, y0, y1);
                 const ink = pairInk(image, background, glyph, name, y0, y1);
                 m.bg = Math.round(background.r * 255) + "," + Math.round(background.g * 255) + ","
@@ -504,12 +522,14 @@ TestCase {
                 m.nameInk = ink.capital.top + ".." + ink.capital.bottom;
                 m.painted = ink.glyph.top >= 0 && ink.capital.top >= 0;
                 if (m.painted) {
-                    m.off = ink.glyphCentroid - ink.capitalCentroid;
+                    m.off = (ink.glyphCentroid - ink.capitalCentroid) / testCase.grabScale;
                 }
             }
             measured.push(m);
         }
         const table = measured.map(describeRow).join("\n      ")
+                      + "\n      grab " + image.width + "x" + image.height + " for a " + testCase.width + "x"
+                      + testCase.height + " window, scale " + testCase.grabScale
                       + "\n      symbol font: family \"" + Theme.symbolFamily + "\", loader status "
                       + Theme.symbolFont.status + " (" + FontLoader.Ready + " is Ready)";
 
