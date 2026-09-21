@@ -4,6 +4,8 @@
 
 import QtQuick
 import QtTest
+
+import "PixelScale.js" as PixelScale
 import SeabassGui
 
 TestCase {
@@ -36,10 +38,16 @@ TestCase {
         var image = grabImage(track);
         var origin = track.contentItem.mapToItem(track, 0, 0);
         var h = track.contentItem.height;
-        var middle = image.pixel(Math.round(origin.x) + 3, Math.round(origin.y + h / 2));
+        // Through PixelScale: these are logical coordinates and the grab
+        // is in device pixels. At devicePixelRatio 2 the "corner" was a
+        // quarter of the way into the bar, which is the accent colour --
+        // macOS reported exactly that, #3daee9 where a round corner
+        // should be, and the same failure reproduces here under
+        // QT_SCALE_FACTOR=2.
+        var middle = PixelScale.pixel(image, track, Math.round(origin.x) + 3, Math.round(origin.y + h / 2));
         verify(isAccent(middle), "the fill must be drawn at mid height, got " + middle);
-        var top = image.pixel(Math.round(origin.x) + 2, Math.round(origin.y) + 1);
-        var bottom = image.pixel(Math.round(origin.x) + 2, Math.round(origin.y + h) - 2);
+        var top = PixelScale.pixel(image, track, Math.round(origin.x) + 2, Math.round(origin.y) + 1);
+        var bottom = PixelScale.pixel(image, track, Math.round(origin.x) + 2, Math.round(origin.y + h) - 2);
         verify(!isAccent(top), "the top left corner must stay round, got " + top);
         verify(!isAccent(bottom), "the bottom left corner must stay round, got " + bottom);
     }

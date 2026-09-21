@@ -4,6 +4,8 @@
 
 import QtQuick
 import QtTest
+
+import "PixelScale.js" as PixelScale
 import SeabassGui
 
 TestCase {
@@ -27,11 +29,14 @@ TestCase {
         var image = grabImage(heart);
         // (11, 11) on Breeze's 22 grid, twice over: inside the inner
         // contour an outline leaves open.
-        var middle = image.pixel(22, 22);
+        // Logical coordinates through PixelScale: on a 2x display the
+        // grab of this 44x44 icon is 88x88, and pixel(22, 22) reads the
+        // top-left quadrant rather than the middle.
+        var middle = PixelScale.pixel(image, heart, 22, 22);
         verify(middle.r > 0.8 && middle.g < 0.2 && middle.b < 0.2,
                "the inside of the heart must be painted, got " + middle);
         // And it is a heart, not a filled square: the corners stay clear.
-        var corner = image.pixel(1, 42);
+        var corner = PixelScale.pixel(image, heart, 1, 42);
         verify(!(corner.r > 0.8 && corner.g < 0.2 && corner.b < 0.2), "the bottom corner must be left unpainted, got " + corner);
     }
 }

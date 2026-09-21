@@ -5,6 +5,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
+
+import "PixelScale.js" as PixelScale
 import SeabassGui
 
 // The catalog picker, since it became a combo box. What matters here is
@@ -365,7 +367,7 @@ TestCase {
             var name = findChild(toggle.contentItem, "catalogName");
             verify(glyph !== null && name !== null);
             var image = grabImage(testCase);
-            testCase.grabScale = image.width / testCase.width;
+            testCase.grabScale = PixelScale.scale(image, testCase);
             var origin = toggle.mapToItem(testCase, 0, 0);
             var background = image.pixel(Math.round((origin.x + toggle.width / 2) * testCase.grabScale),
                                          Math.round((origin.y + 3) * testCase.grabScale));
@@ -477,7 +479,7 @@ TestCase {
         tryVerify(function() { return view.count === 3 && view.itemAtIndex(2) !== null; });
         waitForRendering(view);
         const image = grabImage(testCase);
-        testCase.grabScale = image.width / testCase.width;
+        testCase.grabScale = PixelScale.scale(image, testCase);
         // The picture, when a run asks for one. Three integers per row is
         // inference; the pixels are evidence, and this project's rule is
         // that a UI claim gets a screenshot rather than an argument.

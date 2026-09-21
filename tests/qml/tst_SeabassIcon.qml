@@ -6,6 +6,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtTest
+
+import "PixelScale.js" as PixelScale
 import SeabassGui
 
 // The bundled Breeze icons load, and draw in one flat colour.
@@ -49,9 +51,13 @@ TestCase {
         waitForRendering(icon);
         var image = grabImage(icon);
         var painted = 0;
+        // The whole icon, not the top-left corner of it: the loop counts
+        // in logical pixels while the grab is in device ones, so on a 2x
+        // display a bare image.pixel(x, y) would walk a quarter of the
+        // shape and still report a number that looks like an answer.
         for (var y = 0; y < 44; ++y) {
             for (var x = 0; x < 44; ++x) {
-                var p = image.pixel(x, y);
+                var p = PixelScale.pixel(image, icon, x, y);
                 if (p.g > 0.5 && p.r < 0.3 && p.b < 0.3) {
                     ++painted;
                 }
