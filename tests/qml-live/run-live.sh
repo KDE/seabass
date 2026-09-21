@@ -211,7 +211,21 @@ elif [ -n "$device" ]; then
       sleep 15; mount_device "$device" && echo "--- mounted $device again" ) &
     run "LiveStickPull::test_stickPulledWhileEditing" SEABASS_LIVE_STICK_PULL=1
     wait
-    mount_device "$device" || true
+    # The stick has to come back, and this has to say so when it does not.
+    #
+    # It used to be `mount_device "$device" || true`: one attempt, its
+    # answer thrown away. Round 7 unmounted /dev/sdb1 here, never got it
+    # back, and reported this check PASS -- and then FB4, FB5, FB6, FB8
+    # and W8 failed with "No such file or directory" about a stick that
+    # was still plugged in, four checks downstream of the one that
+    # actually broke. A check that takes the stick away and cannot give
+    # it back has not passed, whatever the test process decided, so this
+    # overwrites its row: read_summary takes the last line for an id.
+    if ! mount_device_until_back "$device"; then
+        echo "   the stick did not come back, so nothing after this can be trusted"
+        rig_part live-stick-pulled FAIL
+        failed=1
+    fi
 else
     echo "=== LiveStickPull skipped: no device given"
     rig_part live-stick-pulled FAIL

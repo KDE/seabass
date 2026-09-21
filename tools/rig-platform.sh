@@ -237,6 +237,55 @@ mount_device() {  # <device>
     fi
 }
 
+# Where a device is mounted right now, or nothing. The reverse of
+# stick_device(), and the only honest way to tell whether a mount
+# actually happened: udisksctl and diskutil both exit 0 for requests that
+# leave the volume exactly where it was.
+device_mount_point() {  # <device>
+    if [ "$rig_os" = "Darwin" ]; then
+        diskutil info "$1" 2>/dev/null | awk -F': *' '/^ *Mount Point:/ {print $2; exit}'
+    else
+        findmnt -no TARGET "$1" 2>/dev/null | head -1
+    fi
+}
+
+# mount_device(), but it keeps asking and then proves it worked.
+#
+# One attempt is not enough after a simulated pull: the volume is busy for
+# a moment after the app lets go of it, udisks answers the one request
+# with a quiet failure, and the caller carries on with no stick. Round 7
+# lost five checks to exactly that -- the pull test unmounted /dev/sdb1,
+# the single remount after it was discarded with `|| true`, and the four
+# checks that followed reported "No such file or directory" about a stick
+# that was sitting right there, unmounted. By hand, seconds later, one
+# `udisksctl mount` worked first time.
+#
+# Returns non-zero only when the device is still not mounted after all of
+# the tries, which is a real failure and has to be treated as one.
+mount_device_until_back() {  # <device> [tries, default 10]
+    local device="$1"
+    local tries="${2:-10}"
+    local attempt=1
+    local where
+    while [ "$attempt" -le "$tries" ]; do
+        where="$(device_mount_point "$device")"
+        if [ -n "$where" ] && [ -d "$where" ]; then
+            echo "--- $device is mounted at $where (attempt $attempt)"
+            return 0
+        fi
+        mount_device "$device"
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    where="$(device_mount_point "$device")"
+    if [ -n "$where" ] && [ -d "$where" ]; then
+        echo "--- $device is mounted at $where"
+        return 0
+    fi
+    echo "--- $device did NOT come back after $tries attempts" >&2
+    return 1
+}
+
 # What infrastructure::system::currentProcessStartId() records for a
 # process: /proc's start time in clock ticks on Linux, the start time in
 # whole seconds on macOS.
