@@ -454,6 +454,17 @@ public slots:
         // every one of those the same way.
         engine->rootContext()->setContextProperty(QStringLiteral("controlsStyleForced"),
                                                   QQuickStyle::name() != QStringLiteral("Basic"));
+        // Whether this run is entitled to a working shader. The suite is
+        // registered on a real display with Qt6 ShaderTools present, and
+        // sets SEABASS_SHADER_EXPECTED=1 to say so; a test that asks the
+        // platform "can you draw?" and accepts no for an answer would
+        // otherwise pass on a build where the shader never got compiled
+        // in, which is the whole ring going untested under a green run.
+        // Where it is unset -- somebody running the binary by hand, or a
+        // platform without a display -- the tests still cover both paths.
+        engine->rootContext()->setContextProperty(
+            QStringLiteral("shaderExpected"),
+            QString::fromLocal8Bit(qgetenv("SEABASS_SHADER_EXPECTED")) == QStringLiteral("1"));
         // tests/qml-live/: the mount point of a real (scratch) stick to
         // drive the real pages and controllers against. Empty under
         // ctest, and every live test skips itself then.

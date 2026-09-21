@@ -247,7 +247,10 @@ TestCase {
             seen.push(here);
             keyClick(Qt.Key_Right);
         }
-        compare(seen.length, 3, "Right reaches all three, the alternate included");
+        // Named, not counted: seen.length is 3 by construction after
+        // three pushes, so it measured the loop rather than the dialog.
+        verify(seen.indexOf(accept) >= 0 && seen.indexOf(alternate) >= 0 && seen.indexOf(reject) >= 0,
+               "Right reaches all three, the alternate included");
         compare(focused(), accept, "and the fourth Right comes back to the start");
         keyClick(Qt.Key_Left);
         verify(focused() !== accept, "Left goes the other way");

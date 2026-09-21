@@ -95,7 +95,18 @@ Files: src/gui/qml/fonts/NotoSansSymbols2-Seabass.ttf
 Copyright: 2017 Google Inc.
 License: OFL-1.1
 Comment: Subset of Noto Sans Symbols2 2.003 to U+25C8, U+25CE and U+2B21
- (pyftsubset, all name IDs and layout features kept).
+ (pyftsubset, all name IDs and layout features kept), then RENAMED: name
+ IDs 1, 4 and 6 read "Seabass Symbols", "Seabass Symbols Regular" and
+ "SeabassSymbols-Regular". The rename is load-bearing rather than
+ cosmetic. Declared under its upstream family name, this subset and a
+ system-installed Noto Sans Symbols2 both answer to "Noto Sans Symbols2",
+ and which of them gets painted is not the application's to choose --
+ while the catalog glyph's centring is computed from the metrics of the
+ other. Regenerating the subset without redoing the rename brings that
+ back, on Linux machines with Noto installed only, which is the hardest
+ version of it to notice. The OFL notice (name ID 0) and the licence
+ URLs (13, 14) are untouched, and ID 3 still records the upstream
+ version it was cut from.
 
 Files: src/gui/qml/icons/breeze/*
 Copyright: 2014-2026 The KDE Visual Design Group and breeze-icons contributors

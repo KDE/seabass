@@ -916,6 +916,30 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # them one before either is registered.
         find_program(SEABASS_XVFB_RUN xvfb-run)
 
+        # On Linux these are requirements, not preferences. Without
+        # xvfb-run there is no display and every shader-drawn item is
+        # simply absent; without Qt6 ShaderTools the shader is not built
+        # into the binary at all. Either way the ring, the watermark and
+        # the fullscreen player go untested while the suite reports
+        # green -- and the tests that would have noticed now ask the
+        # platform what it can do, so they take the "nothing is drawn"
+        # branch and agree with it. A build that cannot test the shader
+        # should say so before the tests run, not after they pass.
+        if(UNIX AND NOT APPLE)
+            if(NOT SEABASS_XVFB_RUN)
+                message(FATAL_ERROR
+                    "xvfb-run not found, and SEABASS_TESTS=ON. The QML tests run on a real display so that "
+                    "shader-drawn items are actually drawn. Install it (Debian/Ubuntu: xvfb), or configure "
+                    "with -DSEABASS_TESTS=OFF if you do not want the tests at all.")
+            endif()
+            if(NOT Qt6ShaderTools_FOUND)
+                message(FATAL_ERROR
+                    "Qt6 ShaderTools not found, and SEABASS_TESTS=ON. Without it TrackRing's shader is not "
+                    "compiled into the test binary and everything drawn with it silently disappears. "
+                    "Install it (Debian/Ubuntu: qt6-shadertools-dev), or configure with -DSEABASS_TESTS=OFF.")
+            endif()
+        endif()
+
         # On a real display, not offscreen. The offscreen platform draws
         # no ShaderEffect at all -- silently, the item is simply empty --
         # so every page this project checks by rendering it was checked
@@ -932,8 +956,17 @@ if(SEABASS_GUI AND Qt6_FOUND)
             add_test(NAME seabass_qml_tests
                 COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
                     $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
+            # The style is pinned, which it never had to be offscreen:
+            # that platform offered no style hint, so every machine got
+            # Basic. On a real display the KDE platform theme answers
+            # with Breeze, which has its own metrics -- so the same
+            # pixel assertions would measure Breeze here and Basic in a
+            # container, and a green run on one would say nothing about
+            # the other. Override it deliberately (QT_QUICK_CONTROLS_STYLE
+            # in the environment) to look at the app in its desktop
+            # style; the suite itself compares like with like.
             set(_seabass_qml_test_env
-                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=Basic;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
         else()
             # No xvfb-run: fall back to offscreen rather than register
             # nothing, and say so loudly. A build that tests every page
@@ -973,7 +1006,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
                     $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-shader)
             set_tests_properties(seabass_qml_shader_tests PROPERTIES ENVIRONMENT
-                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=Basic;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+            # Both suites start their own `xvfb-run -a`, whose search for
+            # a free display and the lock it then takes are not one
+            # atomic step: run in parallel they can choose the same
+            # number and one dies with "Server is already active". Only
+            # the shader suite used xvfb before this, so the race is new.
+            set_tests_properties(seabass_qml_tests seabass_qml_shader_tests PROPERTIES RESOURCE_LOCK xvfb)
         else()
             # A warning, not a status line: without it nothing at all checks
             # what the shader draws, and that should not scroll past unseen.

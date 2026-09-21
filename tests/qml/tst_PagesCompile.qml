@@ -151,10 +151,18 @@ TestCase {
     // screenshot mode and a run under the desktop's own style both set
     // one) or, as on Windows, a native default style picked with no
     // override at all.
+    // The gap under the breadcrumb, on two pages that build their body
+    // differently. Bounded rather than exact: the numbers here were 16
+    // and 19 against one platform's fonts, and the second is 16 on a
+    // real display, where the search field's height follows the desktop
+    // font. Neither number was the point -- the point is that the body
+    // clears the crumb by about a page margin and does not drift into
+    // either a collision or a hole. It also no longer skips itself when
+    // the style is not the suite's default, which is how a test that had
+    // stopped running locally went unnoticed.
     function test_theBreadcrumbHasRoomUnderIt() {
-        if (controlsStyleForced) {
-            skip("measured against the suite's default style, and this run picked another");
-        }
+        const floor = Theme.pageMargin;
+        const ceiling = Theme.pageMargin * 2;
         var backups = createTemporaryObject(Qt.createComponent(qmlDir + "BackupsPage.qml"), testCase, {controller: ({backupDirectory: "/tmp", currentArchivePath: "", openArchivePaths: [], backups: [], totalBytes: 0, listing: false, deleting: false, errorMessage: "", statusMessage: "", refresh: function() {}, deleteBackup: function(p) {}, browsedArchiveFor: function(r) { return ""; }, isOpen: function(p) { return false; }})});
         verify(backups !== null);
         waitForRendering(backups);
@@ -162,7 +170,9 @@ TestCase {
         verify(crumb !== null, "BackupsPage must have a breadcrumb");
         // The body starts pageMargin below the header.
         var bodyTop = backups.header.height + Theme.pageMargin;
-        compare(Math.round(bodyTop - crumb.mapToItem(backups, 0, crumb.height).y), 16);
+        const backupsGap = Math.round(bodyTop - crumb.mapToItem(backups, 0, crumb.height).y);
+        verify(backupsGap >= floor && backupsGap <= ceiling,
+               "BackupsPage: " + backupsGap + " px under the crumb, wanted between " + floor + " and " + ceiling);
 
         var scan = createTemporaryObject(Qt.createComponent(qmlDir + "ScanPage.qml"), testCase,
                                          stickProps({playbackController: realPlayback, appSettingsController: realAppSettings}));
@@ -171,7 +181,10 @@ TestCase {
         var scanCrumb = crumbIn(scan.header);
         var search = findChild(scan, "searchField");
         verify(scanCrumb !== null && search !== null);
-        compare(Math.round(search.mapToItem(scan, 0, 0).y - scanCrumb.mapToItem(scan, 0, scanCrumb.height).y), 19);
+        const scanGap = Math.round(search.mapToItem(scan, 0, 0).y - scanCrumb.mapToItem(scan, 0, scanCrumb.height).y);
+        verify(scanGap >= floor && scanGap <= ceiling,
+               "ScanPage: " + scanGap + " px between the crumb and the search field, wanted between "
+               + floor + " and " + ceiling);
     }
 
     // Pages with a playlist picker open on the playlist last picked on
@@ -255,8 +268,11 @@ TestCase {
         // and cannot fix from here. It appears only with a real display,
         // since that is where the KDE style loads at all, so moving this
         // suite onto one turned a third party's warning into our red.
-        // The lookahead keeps the teeth for every other file.
-        failOnWarning(/^(?!.*org\/kde\/breeze).*Unable to assign/);
+        // Pinned to that one file, not to the whole style: a binding of
+        // ours that feeds a bad value into any other Breeze control must
+        // still fail here, and when upstream fixes TextArea.qml this
+        // exemption stops matching and can go.
+        failOnWarning(/^(?!.*breeze\/TextArea\.qml).*Unable to assign/);
         failOnWarning(/Cannot read property/);
     }
 

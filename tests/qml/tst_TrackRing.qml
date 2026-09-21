@@ -41,6 +41,13 @@ TestCase {
     function test_theShaderAndItsCueMarksFollowTheSamePlatform() {
         const ring = make({cueData: [{positionMs: 1000, color: "#ff0000"}], trackDurationMs: 4000});
         const canDraw = ring.available;
+        // Where the harness says a shader is expected, "it cannot draw"
+        // is a failure and not a branch: otherwise a build without
+        // ShaderTools takes the empty path everywhere and the ring goes
+        // untested under a green suite.
+        if (typeof shaderExpected !== "undefined" && shaderExpected) {
+            verify(canDraw, "this run is on a display with a shader, so the ring must be drawable");
+        }
         compare(findChild(ring, "ringShader").visible, canDraw,
                 canDraw ? "a shader runs here, so the ring is drawn"
                         : "no shader runs here, so the ring is not");

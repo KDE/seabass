@@ -139,6 +139,9 @@ TestCase {
         const ring = findChild(mark, "watermarkTrackRing");
         verify(ring !== null, "the mark is built around a ring");
         const canDraw = ring.available;
+        if (typeof shaderExpected !== "undefined" && shaderExpected) {
+            verify(canDraw, "this run is on a display with a shader, so the mark must be drawable");
+        }
         compare(mark.shows, canDraw,
                 canDraw ? "a shader runs here, so the mark is drawn"
                         : "no shader runs here, so the mark stays away");

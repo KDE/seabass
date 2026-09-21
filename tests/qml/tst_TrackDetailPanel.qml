@@ -209,6 +209,9 @@ TestCase {
         tryVerify(function() { return findChild(panel, "trackRing") !== null || !row.showsRing; }, 2000);
         const ring = findChild(panel, "trackRing");
         const canDraw = ring !== null && ring.available;
+        if (typeof shaderExpected !== "undefined" && shaderExpected) {
+            verify(canDraw, "this run is on a display with a shader, so the ring must be drawable");
+        }
         compare(row.showsRing, canDraw);
         // The row OPENS to the ring's size rather than appearing at it:
         // `side` is animated, and `visible` follows `side > 0`, so on
