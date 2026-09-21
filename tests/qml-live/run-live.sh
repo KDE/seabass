@@ -44,6 +44,13 @@ export QT_QPA_PLATFORM=offscreen
 # failure on Windows prints nothing at all (Qt routes it to
 # OutputDebugString instead of stderr when there is no attached console).
 export QT_FORCE_STDERR_LOGGING=1
+# Also rig-shakedown.sh's own copy: without a real font directory, the
+# offscreen platform's font backend on Windows has nothing to enumerate
+# and QFontDatabase::families() comes back EMPTY, which asserts inside
+# Qt itself the moment anything asks for a raw font.
+if rig_is_windows; then
+    export QT_QPA_FONTDIR="${SYSTEMROOT:-C:/Windows}/Fonts"
+fi
 failed=0
 
 # One board row per test. Declared up front, so a bundle that dies in the

@@ -52,27 +52,62 @@ root="$(cd "$here/.." && pwd)"
 # DIFFERENT sticks deliberately, which is the only case this refuses
 # that it should not.
 rig_lock="${RIG_LOCK_FILE:-$HOME/Seabass/e2e/.rig-running.lock}"
+rig_lock_dir=""
 if [ -z "${RIG_NO_LOCK:-}" ]; then
     mkdir -p "$(dirname "$rig_lock")"
-    # <> rather than >: opening for write TRUNCATES, and the process that
-    # gets refused opens the file before it discovers it cannot lock it.
-    # The first version of this printed "another round is already
-    # running:" followed by nothing, having just erased the lines it was
-    # about to read -- the refusal worked and the one useful thing about
-    # it did not.
-    exec 9<>"$rig_lock"
-    if ! flock -n 9; then
-        echo "another shakedown round is already running on this machine:" >&2
-        cat "$rig_lock" >&2 2>/dev/null || true
-        echo >&2
-        echo "Two rounds on the same sticks make both meaningless. Wait for it, or set" >&2
-        echo "RIG_NO_LOCK=1 if you are deliberately running against different sticks." >&2
-        exit 1
+    if rig_is_windows; then
+        # flock needs a real fd->HANDLE mapping from the same MSYS
+        # runtime it was built against. This shell (Git for Windows' own
+        # bash) and the flock.exe a full MSYS2 install carries are
+        # different runtimes, and handing an inherited fd number across
+        # them fails outright -- confirmed directly, "flock: 9: Bad file
+        # descriptor" every time, on a machine where flock.exe is right
+        # there on disk. mkdir is atomic here too, the same guarantee
+        # flock gives on a real fd, and a stale lock (the process that
+        # made it is gone) is told apart from a live one with `kill -0`,
+        # which -- also confirmed directly, across two separate bash
+        # invocations -- resolves an MSYS PID correctly, unlike asking
+        # tasklist for that same number: that is the WINPID/PID split
+        # `ps aux` already prints two separate columns for.
+        rig_lock_dir="$rig_lock.d"
+        if [ -d "$rig_lock_dir" ]; then
+            held_pid="$(cat "$rig_lock_dir/pid" 2>/dev/null || true)"
+            if [ -z "$held_pid" ] || ! kill -0 "$held_pid" 2>/dev/null; then
+                rm -rf "$rig_lock_dir"
+            fi
+        fi
+        if ! mkdir "$rig_lock_dir" 2>/dev/null; then
+            echo "another shakedown round is already running on this machine:" >&2
+            cat "$rig_lock_dir/info" >&2 2>/dev/null || true
+            echo >&2
+            echo "Two rounds on the same sticks make both meaningless. Wait for it, or set" >&2
+            echo "RIG_NO_LOCK=1 if you are deliberately running against different sticks." >&2
+            exit 1
+        fi
+        echo "$$" > "$rig_lock_dir/pid"
+        { echo "pid $$"; echo "out $out"; echo "started $(date -Iseconds)"
+          echo "sticks ${RIG_STICK_A:-default} ${RIG_STICK_B:-default}"; } > "$rig_lock_dir/info"
+    else
+        # <> rather than >: opening for write TRUNCATES, and the process that
+        # gets refused opens the file before it discovers it cannot lock it.
+        # The first version of this printed "another round is already
+        # running:" followed by nothing, having just erased the lines it was
+        # about to read -- the refusal worked and the one useful thing about
+        # it did not.
+        exec 9<>"$rig_lock"
+        if ! flock -n 9; then
+            echo "another shakedown round is already running on this machine:" >&2
+            cat "$rig_lock" >&2 2>/dev/null || true
+            echo >&2
+            echo "Two rounds on the same sticks make both meaningless. Wait for it, or set" >&2
+            echo "RIG_NO_LOCK=1 if you are deliberately running against different sticks." >&2
+            exit 1
+        fi
+        # Truncate now that the lock is held, then write who holds it.
+        : > "$rig_lock"
+        { echo "pid $$"; echo "out $out"; echo "started $(date -Iseconds)"
+          echo "sticks ${RIG_STICK_A:-default} ${RIG_STICK_B:-default}"; } >> "$rig_lock"
     fi
-    # Truncate now that the lock is held, then write who holds it.
-    : > "$rig_lock"
-    { echo "pid $$"; echo "out $out"; echo "started $(date -Iseconds)"
-      echo "sticks ${RIG_STICK_A:-default} ${RIG_STICK_B:-default}"; } >> "$rig_lock" 
 fi
 build="${SEABASS_BUILD_DIR:-$root/build}"
 if [ "$rig_os" = "Darwin" ]; then
@@ -99,12 +134,24 @@ export QT_QPA_PLATFORM=offscreen
 # assertion, and there was simply nothing to read. Confirmed directly by
 # setting this and immediately seeing the real failure message.
 export QT_FORCE_STDERR_LOGGING=1
+if rig_is_windows; then
+    # Without this the offscreen platform's font backend on Windows has
+    # no font directory to read and QFontDatabase::families() comes back
+    # EMPTY -- confirmed directly, an assert inside Qt itself
+    # ("!isEmpty()", qlist.h:652) the moment anything asks for a raw
+    # font, which is exactly what F4's LiveFullStick test does before it
+    # can say anything about the fill it exists to check. CMakeLists.txt
+    # already sets this for seabass_qml_tests and interface_font_test;
+    # the live QML binary this script calls directly needs it too, for
+    # the same reason.
+    export QT_QPA_FONTDIR="${SYSTEMROOT:-C:/Windows}/Fonts"
+fi
 
 mkdir -p "$out" "$out/shots"
 # F4 writes gigabytes to stick A. An interrupt between the fill and its
 # removal would leave the stick full for every later check and for the
 # next round; this costs nothing when there is no filler.
-trap 'rm -f "$A"/RIG-FILLER-*.bin "$B"/RIG-FILLER-*.bin 2>/dev/null' EXIT
+trap 'rm -f "$A"/RIG-FILLER-*.bin "$B"/RIG-FILLER-*.bin 2>/dev/null; rm -rf "${rig_lock_dir:-}" 2>/dev/null' EXIT
 # For S3: what the everyday profile looks like before the run.
 # The everyday profile, listed so that a file APPEARING counts as a change
 # too: the run creating ~/.config/seabass/seabass.conf is the damage this
