@@ -521,6 +521,72 @@ int main()
         }
     }
 
+    // 8. What the save's own backup is for, and when it is not for
+    //    anything. A save takes a backup before it writes; if it then
+    //    writes nothing and puts everything back, that backup is a copy
+    //    of a stick that never changed. Round 5 found one on a stick too
+    //    full for the save to proceed: a complete record, backup.zip and
+    //    manifest, taking the space the save had just been refused for.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_records");
+        const fs::path &stick = scratch.path;
+        const fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
+        const fs::path records = stick / "Seabass" / "backups";
+        const auto recordsNow = [&] {
+            int n = 0;
+            std::error_code ec;
+            for (const auto &entry : fs::directory_iterator(records, ec)) {
+                if (entry.is_directory()) {
+                    ++n;
+                }
+            }
+            return n;
+        };
+
+        {
+            write(pdb, "pdb-original");
+            CancellationToken token;
+            SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+            std::vector<std::shared_ptr<PendingChange>> changes = {
+                std::make_shared<ScriptedChange>("only", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                    write(pdb, "pdb-from-the-change");
+                    return ChangeOutcome::failure("the catalog refused");
+                }),
+            };
+            auto result = runSaveLoop(changes, ctx);
+            assert(result.appliedIds.isEmpty() && "nothing applied, which is the case this is about");
+            assert(read(pdb) == "pdb-original" && "and the file went back");
+            assert(recordsNow() == 0 && "the backup of a stick that never changed does not stay");
+            assert(result.backups.empty() && "and the save does not offer it as something to undo from");
+            std::cout << "case 8 (a save that wrote nothing keeps no backup of it) OK\n";
+        }
+
+        {
+            // The other half, and the more important one: a change that
+            // DID apply needs its backup, because that backup is the way
+            // back from it. Undo lives on exactly this.
+            write(pdb, "pdb-original");
+            CancellationToken token;
+            SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+            std::vector<std::shared_ptr<PendingChange>> changes = {
+                std::make_shared<ScriptedChange>("a", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                    write(pdb, "pdb-from-a");
+                    return ChangeOutcome::success();
+                }),
+                std::make_shared<ScriptedChange>("b", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                    write(pdb, "pdb-from-b");
+                    return ChangeOutcome::failure("the second catalog refused");
+                }),
+            };
+            auto result = runSaveLoop(changes, ctx);
+            assert(result.appliedIds == QStringList{"a"});
+            assert(read(pdb) == "pdb-from-a");
+            assert(recordsNow() > 0 && "a save that applied something keeps the backup to undo from");
+            assert(!result.backups.empty() && "and offers it");
+            std::cout << "case 8b (a save that applied something keeps its backup) OK\n";
+        }
+    }
+
     std::cout << "failed_change_rollback_test: all cases passed\n";
     return 0;
 }

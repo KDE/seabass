@@ -80,6 +80,16 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
                 result.error += QStringLiteral(" -- and putting back what it had already written failed (%1); "
                                                "restore this save's backup")
                                     .arg(*undoError);
+            } else if (result.appliedIds.isEmpty()) {
+                // Nothing was applied and everything went back, so the
+                // backup this save took is a copy of a stick that never
+                // changed. Round 5 found one left on a stick too full to
+                // save to: a complete record, taking the space the save
+                // had just been refused for. Only in this one case --
+                // a change that DID apply needs its backup to undo from,
+                // and a rollback that left anything behind needs it
+                // more than that.
+                ctx.discardBackupsTakenThisSave();
             }
             break;
         }

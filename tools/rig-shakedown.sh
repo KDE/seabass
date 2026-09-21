@@ -224,8 +224,21 @@ references_unchanged() {
     return $ok
 }
 
+# corpus_test runs on its own, after the rest. It is the longest test
+# there is -- every matrix case copies and rescans a whole library -- and
+# under -j6 it competes with five siblings for one disk. On Windows that
+# tipped it past the 900 s cap while the same test, alone on the same
+# machine, finishes in 511 s; on Linux it takes 27 s either way. So the
+# cap stayed honest and the scheduling was what failed. Split out, each
+# side of the line means one thing: S1-suite is "everything else
+# passed", S1-corpus is "the long one passed", and neither can be red
+# because of the other.
 suite() {
-    ctest --test-dir "$build" -j6 --timeout 900 --output-on-failure
+    ctest --test-dir "$build" -j6 --timeout 900 --output-on-failure -E '^corpus_test$'
+}
+
+corpus() {
+    ctest --test-dir "$build" --timeout 1800 --output-on-failure -R '^corpus_test$'
 }
 
 # S2: the folder the app is pointed at holds links to the references, and
@@ -695,6 +708,7 @@ resume_after_keep() {
 
 # ---- setup and suite -------------------------------------------------
 check S1-suite suite
+check S1-corpus corpus
 check S2-reference-links reference_links
 check S3-sandboxed-profile sandbox_profile
 check S4-references-unchanged references_unchanged

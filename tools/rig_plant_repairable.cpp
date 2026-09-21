@@ -9,7 +9,7 @@
 //
 // --plant looks for a rekordbox duplicate pair (same artist, title and
 // length, as DuplicateTrackFinder groups them) where every copy has its
-// own audio file on the stick and no copy has cues, and moves one copy's
+// own audio file on the stick, and moves one copy's
 // file into <stick root>/RIG-HIDDEN/ under its relative path. The move is
 // recorded in RIG-HIDDEN/planted.tsv. That copy's rows now point at a
 // missing file while its duplicate is healthy, which is the Repairable
@@ -108,7 +108,16 @@ int plant(const fs::path &root)
         ++considered;
         bool usable = true;
         for (const domain::Track &track : group.tracks) {
-            if (!track.cues.empty() || track.filePath.empty() || !fs::is_regular_file(track.filePath)
+            // Cues are allowed on the copies. The case being planted is
+            // a catalog row whose file is no longer where it says, next
+            // to a healthy duplicate -- cues have no bearing on that,
+            // and requiring none made the check unplantable against a
+            // real export: rekordbox marks its own cue on nearly every
+            // track, so round 5 found a usable pair once in three
+            // passes. What the copies carry is recorded below instead,
+            // so a repair that loses cues is visible rather than
+            // impossible to reach.
+            if (track.filePath.empty() || !fs::is_regular_file(track.filePath)
                 || !insideRoot(track.filePath, root)) {
                 usable = false;
                 break;
@@ -138,13 +147,14 @@ int plant(const fs::path &root)
         std::ofstream(record, std::ios::app) << victim.filePath << '\t' << relative.generic_string() << '\t'
                                              << victim.sourceId << '\t' << victim.title << '\n';
         std::cout << "planted: \"" << victim.artist << " - " << victim.title << "\" (" << victim.durationSeconds
-                  << " s), " << group.tracks.size() << " copies without cues\n"
+                  << " s), " << group.tracks.size() << " copies, "
+                  << (victim.cues.size() + survivor.cues.size()) << " cue(s) between them\n"
                   << "  moved aside rekordbox id " << victim.sourceId << ": " << victim.filePath << "\n"
                   << "  healthy copy rekordbox id " << survivor.sourceId << ": " << survivor.filePath << "\n"
                   << "RIG RESULT: PASS\n";
         return 0;
     }
-    std::cout << "no duplicate group of separate files without cues (" << considered << " groups looked at)\n"
+    std::cout << "no duplicate group of separate files (" << considered << " groups looked at)\n"
               << "RIG RESULT: FAIL\n";
     return 1;
 }

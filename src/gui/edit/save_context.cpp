@@ -218,6 +218,33 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
     }
 }
 
+void SaveContext::discardBackupsTakenThisSave()
+{
+    if (m_recordByLabel.empty()) {
+        return;
+    }
+    int removed = 0;
+    for (const auto &[label, id] : m_recordByLabel) {
+        try {
+            archiveStore().remove(id);
+            ++removed;
+        } catch (const std::exception &e) {
+            // Said, not thrown: the save has already failed and been put
+            // back, and a record that could not be removed is untidy
+            // rather than dangerous. Swallowing it silently is what would
+            // make the next round's leftover hard to explain.
+            log().record("save: could not remove the backup record " + id + " this save had taken: " + e.what());
+        }
+    }
+    m_recordByLabel.clear();
+    m_backedUp.clear();
+    m_backups.clear();
+    if (removed > 0 && hasStick()) {
+        log().record("save: nothing was applied and everything went back, so the " + std::to_string(removed)
+                     + " backup record(s) this save had taken were removed");
+    }
+}
+
 bool SaveContext::backupOnce(const std::string &file, const std::string &label)
 {
     // Before the dedup: a file backed up once for the whole save is still

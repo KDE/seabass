@@ -114,6 +114,15 @@ public:
     // the whole backup is on the stick before the first live file is
     // touched, which the per-item path could not promise.
     void backupAllNow(const std::vector<BackupTarget> &targets);
+    // Throws away the records this save took, for the one case where
+    // they are certainly not wanted: nothing was applied and the
+    // rollback put everything back, so they are backups of a stick that
+    // never changed. Round 5 found one on a stick too full for the save
+    // to proceed -- a complete record, backup.zip and manifest, taking
+    // space that the save had just refused for want of. NOT called when
+    // a change applied (its backup is the way back from it) or when the
+    // rollback left anything behind (then it is the only way back).
+    void discardBackupsTakenThisSave();
     // The id of the backup this save made for `file` (empty if none yet),
     // for records that want to name it (the pending-deletion manifest).
     std::string backupIdOf(const std::string &file) const;
