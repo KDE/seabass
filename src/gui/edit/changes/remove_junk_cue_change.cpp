@@ -167,11 +167,38 @@ ChangeOutcome RemoveJunkCueChange::apply(SaveContext &ctx)
             }
         }
         w.rekordbox->writeHotCues(m_track.sourceId, remainingCues);
+        // export.pdb and exportLibrary.db are one library in two formats,
+        // so a cue removed from one and not the other is a library that
+        // disagrees with itself. This used to be logged and the change
+        // reported success: the page said the junk cue was gone while a
+        // player reading Device Library Plus still showed it, and Undo
+        // offered nothing, because nothing had failed. AddCueChange was
+        // fixed for exactly this (see its own comment) and this is the
+        // same write; failing here also takes the DeviceLibrary half back
+        // out, because the save loop restores every file this change
+        // declared.
+        //
+        // A file OneLibrary does not list is not a disagreement: there is
+        // no Device Library Plus copy to keep in step. Asked before the
+        // write, as AddCueChange asks it, rather than inferred from the
+        // exception -- 635 of 1118 tracks on a real stick are in that
+        // position and none of them is a failure.
         if (w.hasOneLibrary && !m_track.filePath.empty()) {
             try {
-                sharedOneLibraryWriter(ctx, root).writeCuesForPath(m_track.filePath, remainingCues);
+                auto &oneLibrary = sharedOneLibraryWriter(ctx, root);
+                if (!oneLibrary.hasTrackAtPath(m_track.filePath)) {
+                    ctx.log().record("junk-cue: OneLibrary does not list this file; nothing to mirror");
+                } else {
+                    ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "junk-cue-cleanup");
+                    oneLibrary.writeCuesForPath(m_track.filePath, remainingCues);
+                }
             } catch (const std::exception &e) {
                 ctx.log().record(std::string("junk-cue: OneLibrary cue mirror failed: ") + e.what());
+                return ChangeOutcome::failure(
+                    QStringLiteral("Could not remove the cue from Device Library Plus: %1. The save stops here "
+                                   "and puts back what this change wrote, so DeviceLibrary and Device Library "
+                                   "Plus stay in agreement.")
+                        .arg(QString::fromUtf8(e.what())));
             }
         }
     } else if (format == "engine") {

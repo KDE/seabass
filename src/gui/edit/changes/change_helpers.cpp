@@ -40,6 +40,30 @@ std::vector<std::string> filesWrittenFor(WriteScope scope, const domain::TrackId
             analyzePath = index ? index->pathFor(id)
                                 : infrastructure::rekordbox::findAnlzPathForTrackId(rootPath, id);
         } catch (const std::exception &) {
+            // Nothing, rather than a path guessed from an id that is not
+            // one (corpus_test pins this).
+            //
+            // What makes it safe is not obvious and is worth writing
+            // down, because the shape is the dangerous one: callers back
+            // up exactly this list and then write regardless --
+            // CopyCuesChange::apply() walks it calling backupOnce() and
+            // then calls writeHotCues() whether or not anything came
+            // back. An empty list from a FAILURE would therefore be a
+            // write with no backup behind it.
+            //
+            // It is safe only because every writer reached from here does
+            // the same lookup and throws on the same input:
+            // RekordboxCueWriter::writeHotCues() does its own std::stoul
+            // and its own analyzePathFor(), and refuses when either
+            // fails. So the write cannot succeed where this failed, and
+            // the change fails cleanly instead.
+            //
+            // That is a coincidence of two call sites agreeing, not a
+            // guarantee. A writer that stops needing the analysis path --
+            // one that only touched export.pdb or the OneLibrary mirror,
+            // both of which this function lists without consulting the
+            // lookup at all -- would turn this into a silent unbacked
+            // write. Anyone adding one should make this throw instead.
             return {};
         }
         if (scope.cueData && analyzePath) {

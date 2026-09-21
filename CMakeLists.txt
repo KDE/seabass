@@ -1975,6 +1975,16 @@ if(TARGET Qt6::Core)
     endif()
     add_test(NAME save_backup_discard_under_lock_test COMMAND save_backup_discard_under_lock_test)
 
+    add_executable(junk_cue_mirror_failure_test tests/junk_cue_mirror_failure_test.cpp)
+    target_include_directories(junk_cue_mirror_failure_test PRIVATE src)
+    target_compile_definitions(junk_cue_mirror_failure_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(junk_cue_mirror_failure_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(junk_cue_mirror_failure_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME junk_cue_mirror_failure_test COMMAND junk_cue_mirror_failure_test)
+
     add_executable(onelibrary_wal_checkpoint_test tests/onelibrary_wal_checkpoint_test.cpp)
     target_include_directories(onelibrary_wal_checkpoint_test PRIVATE src)
     target_compile_definitions(onelibrary_wal_checkpoint_test PRIVATE
