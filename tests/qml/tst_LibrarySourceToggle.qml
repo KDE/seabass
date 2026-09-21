@@ -360,6 +360,25 @@ TestCase {
     // every case here green. The rows are also where a reader compares
     // the three catalogs against each other, which is where a glyph
     // sitting high is most visible.
+    // One row's measurements, as a line. Every assertion below prints
+    // the whole table rather than only the row it failed on: which rows
+    // pass is half the evidence, and reading "this row inked nothing"
+    // beside "the two either side of it inked normally" is a different
+    // conclusion from reading it alone.
+    function describeRow(m) {
+        return m.text + " [" + m.rect + "] bg rgb(" + m.bg + ")"
+               + " glyph ink " + m.glyphInk + " name ink " + m.nameInk
+               + " off " + (m.off === null ? "n/a" : m.off.toFixed(2))
+               + " colours glyph " + m.glyphColour + " name " + m.nameColour;
+    }
+
+    // The same pair again, in the open list. CatalogGlyph is used twice
+    // -- once in the closed control, once per row of the popup -- and
+    // the test above sees only the first of them, so a translate that
+    // came out right in the header and wrong in the rows would have kept
+    // every case here green. The rows are also where a reader compares
+    // the three catalogs against each other, which is where a glyph
+    // sitting high is most visible.
     function test_everyRowInTheListLinesUpToo() {
         const toggle = createTemporaryObject(toggleComponent, testCase,
                                              {width: 220, current: "rekordbox"});
@@ -371,6 +390,15 @@ TestCase {
         tryVerify(function() { return view.count === 3 && view.itemAtIndex(2) !== null; });
         waitForRendering(view);
         const image = grabImage(testCase);
+        // The picture, when a run asks for one. Three integers per row is
+        // inference; the pixels are evidence, and this project's rule is
+        // that a UI claim gets a screenshot rather than an argument.
+        if (screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/library-source-toggle-open.png");
+        }
+
+        // Measure every row before asserting anything about any of them.
+        const measured = [];
         for (let i = 0; i < 3; ++i) {
             const row = view.itemAtIndex(i);
             verify(row !== null, "row " + i + " is not there");
@@ -378,42 +406,69 @@ TestCase {
             const name = findChild(row, "entryName");
             verify(glyph !== null && name !== null, "row " + i + " has no glyph/name pair");
             const origin = row.mapToItem(testCase, 0, 0);
+            const inside = origin.y >= 0 && origin.y + row.height <= testCase.height && origin.x >= 0
+                           && origin.x + row.width <= testCase.width;
+            const m = {
+                text: name.text,
+                row: row,
+                glyph: glyph,
+                name: name,
+                inside: inside,
+                rect: describeRect(row),
+                glyphColour: String(glyph.color),
+                nameColour: String(name.color),
+                bg: "?",
+                glyphInk: "not measured",
+                nameInk: "not measured",
+                off: null,
+                hasArea: glyph.width > 0 && glyph.height > 0 && name.width > 0
+            };
+            if (inside && m.hasArea) {
+                const y0 = Math.floor(origin.y + 2), y1 = Math.ceil(origin.y + row.height - 2);
+                const background = modalColour(image, row, y0, y1);
+                const ink = pairInk(image, background, glyph, name, y0, y1);
+                m.bg = Math.round(background.r * 255) + "," + Math.round(background.g * 255) + ","
+                       + Math.round(background.b * 255);
+                m.glyphInk = ink.glyph.top + ".." + ink.glyph.bottom;
+                m.nameInk = ink.capital.top + ".." + ink.capital.bottom;
+                m.painted = ink.glyph.top >= 0 && ink.capital.top >= 0;
+                if (m.painted) {
+                    m.off = ink.glyphCentroid - ink.capitalCentroid;
+                }
+            }
+            measured.push(m);
+        }
+        const table = measured.map(describeRow).join("\n      ");
+
+        for (let i = 0; i < measured.length; ++i) {
+            const m = measured[i];
             // Measuring a row the grab does not contain is measuring
             // nothing, and it is not the same fault as a glyph out of
-            // line, so it is not reported as one. Styles put a combo's
-            // popup in different places -- below the field, or over it
-            // with the current row on top of it -- and its own window
-            // when the style says so, which this scene's grab never
-            // sees. Whichever it is, say where the row actually was.
-            verify(origin.y >= 0 && origin.y + row.height <= testCase.height && origin.x >= 0
-                       && origin.x + row.width <= testCase.width,
-                   name.text + ": the row is not inside the grabbed scene (" + describeRect(row)
-                       + "). Either the popup is a separate window in this style, or it is placed over the "
-                       + "field rather than under it; ctest pins QT_QUICK_CONTROLS_STYLE=Basic, and a direct "
-                       + "run of this binary inherits the desktop's style");
+            // line. Styles put a combo's popup below the field, over it
+            // with the current row on top, or in a window of its own,
+            // which this scene's grab never sees.
+            verify(m.inside,
+                   m.text + ": the row is not inside the grabbed scene. Either the popup is a separate window "
+                       + "in this style, or it is placed over the field rather than under it; ctest pins "
+                       + "QT_QUICK_CONTROLS_STYLE=Basic, and a direct run inherits the desktop's style.\n      "
+                       + table);
             // A band with no width measures nothing, whatever the
-            // renderer did, so it is not the same finding as an empty
-            // band and is not reported as one. macOS sees rows whose
-            // glyph inks nothing in every configuration, including one
-            // where the name beside it inks cleanly, and a glyph item
-            // sized 0 wide would produce exactly that.
-            verify(glyph.width > 0 && glyph.height > 0 && name.width > 0,
-                   name.text + ": the pair has no area to measure. glyph " + describeText(glyph)
-                       + "; name " + describeText(name));
-            const y0 = Math.floor(origin.y + 2), y1 = Math.ceil(origin.y + row.height - 2);
-            const background = modalColour(image, row, y0, y1);
-            const ink = pairInk(image, background, glyph, name, y0, y1);
-            verify(ink.glyph.top >= 0 && ink.capital.top >= 0,
-                   name.text + ": nothing was painted in the row, although it is inside the scene ("
-                       + describeRect(row) + "). Background read as rgb(" + Math.round(background.r * 255) + ","
-                       + Math.round(background.g * 255) + "," + Math.round(background.b * 255) + "); glyph ink "
-                       + ink.glyph.top + ".." + ink.glyph.bottom + ", name ink " + ink.capital.top + ".."
-                       + ink.capital.bottom + ". Items: glyph " + describeText(glyph) + "; name "
-                       + describeText(name));
-            const off = ink.glyphCentroid - ink.capitalCentroid;
-            verify(Math.abs(off) <= testCase.allowedOffset,
-                   name.text + ": the row's glyph is " + off + " px off its name. glyph " + describeText(glyph)
-                       + "; name " + describeText(name));
+            // renderer did.
+            verify(m.hasArea,
+                   m.text + ": the pair has no area to measure. glyph " + describeText(m.glyph) + "; name "
+                       + describeText(m.name) + "\n      " + table);
+            // An empty band on a row whose neighbours inked is not a
+            // blank grab: it is this row. Both text colours are printed
+            // because the likeliest such row is one whose text is the
+            // same colour as what is behind it -- a highlight drawn by
+            // the style, under a palette the app chose.
+            verify(m.painted,
+                   m.text + ": nothing was painted in this row, although it is inside the scene and has area. "
+                       + "Items: glyph " + describeText(m.glyph) + "; name " + describeText(m.name)
+                       + "\n      " + table);
+            verify(Math.abs(m.off) <= testCase.allowedOffset,
+                   m.text + ": the row's glyph is " + m.off + " px off its name. glyph "
+                       + describeText(m.glyph) + "; name " + describeText(m.name) + "\n      " + table);
         }
         toggle.popup.close();
     }
