@@ -42,6 +42,7 @@
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -212,7 +213,17 @@ bool everyTrackResolves(const fs::path &stagedLibrary, const fs::path &finalLibr
         // the leading "../" run collapses at the filesystem root and lands
         // back on the stick purely because that is where it happens to be
         // mounted here. A deck mounts it somewhere else and finds nothing.
-        const fs::path withinStick = (fs::path("Engine Library") / fs::path(stored)).lexically_normal();
+        // fs::path(stored) would construct straight from SQLite's UTF-8
+        // bytes, which on Windows a narrow-string fs::path constructor
+        // reads as the system's ANSI codepage instead -- any non-ASCII
+        // byte (an umlaut, a stroke through an o) comes out corrupted,
+        // and fs::exists() below then compares that mangled path against
+        // the real file and reports it "missing" though it is sitting
+        // right there. pathFromUtf8() goes through the wide-string
+        // constructor instead, which is unambiguous either way.
+        const fs::path withinStick =
+            (fs::path("Engine Library") / seabass::infrastructure::stick_backup::pathFromUtf8(stored))
+                .lexically_normal();
         const bool onTheStick = withinStick.empty() || *withinStick.begin() != "..";
         if (!onTheStick) {
             if (escaping == 0) {
