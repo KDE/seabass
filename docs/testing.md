@@ -157,6 +157,53 @@ That one invented work rather than hiding it, which is the rarer and more
 expensive direction. `tests/qml/tst_LibrarySourceToggle.qml` carries the
 centroid helper and the reasoning.
 
+## Check the artifact, not the reasoning
+
+Four times in one day, across three machines, a measurement was correct
+and its conclusion was wrong, because the thing measured was not the
+thing under test. The reasoning was sound every time. That is what makes
+this class expensive: there is nothing in the argument to find a hole in.
+
+What actually happened, kept because the shapes differ and the lesson
+does not:
+
+- A QML suite was verified as passing "in every configuration". Every run
+  had inherited a developer's saved settings. Against an empty profile it
+  failed, and the failure was reported to a colleague as a defect in
+  their fix.
+- A before/after screenshot was rendered under a style neither platform
+  ships -- Basic on Linux, the native style on macOS -- and shown around
+  as a shipping bug. Under the style each app actually starts with, both
+  pictures were fine. Two people did this independently on the same day.
+- A round recorded three checks as "wrote no test results at all". The
+  checks had passed; the rig binary was forty minutes older than the
+  source that was supposed to be under test.
+- A branch was declared not to work, with 1758 log lines as evidence,
+  from a binary that did not contain the branch's new source file at all.
+  Checking out a branch that ADDS a file needs a reconfigure; `cmake
+  --build` relinks the old objects and says nothing.
+
+The habit that caught every one of them is the same, and it is cheap:
+
+- `nm <binary> | grep <the symbol you changed>` before believing a result
+  about a branch. If the symbol is absent, the run proved nothing.
+- Compare the built binary's mtime against the source you edited. The rig
+  scripts do this for their own tools; do it by eye for anything else.
+- Ask what the APPLICATION does at startup that the harness does not.
+  `src/gui/controls_style.hpp` exists because the answer was "picks a
+  different Qt Quick Controls style", and the suite had been testing a
+  program nobody runs.
+- Run against an empty `SEABASS_HOME` before calling anything verified.
+  Inherited settings are invisible and they are what ctest and a new user
+  will not have.
+- For an archive, compare the manifest sha256, not the counts it reports.
+  Two backups of the same library agree on every count and share no
+  bytes.
+
+None of this replaces the suite. It answers a narrower question that the
+suite cannot: whether the run that just went green was a run of the code
+in question.
+
 ## A new guard has to be seen failing
 
 A test written from a review finding encodes the pre-fix behaviour by
