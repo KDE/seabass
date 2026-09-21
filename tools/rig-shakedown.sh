@@ -54,7 +54,13 @@ root="$(cd "$here/.." && pwd)"
 rig_lock="${RIG_LOCK_FILE:-$HOME/Seabass/e2e/.rig-running.lock}"
 if [ -z "${RIG_NO_LOCK:-}" ]; then
     mkdir -p "$(dirname "$rig_lock")"
-    exec 9>"$rig_lock"
+    # <> rather than >: opening for write TRUNCATES, and the process that
+    # gets refused opens the file before it discovers it cannot lock it.
+    # The first version of this printed "another round is already
+    # running:" followed by nothing, having just erased the lines it was
+    # about to read -- the refusal worked and the one useful thing about
+    # it did not.
+    exec 9<>"$rig_lock"
     if ! flock -n 9; then
         echo "another shakedown round is already running on this machine:" >&2
         cat "$rig_lock" >&2 2>/dev/null || true
@@ -63,7 +69,10 @@ if [ -z "${RIG_NO_LOCK:-}" ]; then
         echo "RIG_NO_LOCK=1 if you are deliberately running against different sticks." >&2
         exit 1
     fi
-    { echo "pid $$"; echo "out $out"; echo "started $(date -Iseconds)"; echo "sticks ${RIG_STICK_A:-default} ${RIG_STICK_B:-default}"; } >&9
+    # Truncate now that the lock is held, then write who holds it.
+    : > "$rig_lock"
+    { echo "pid $$"; echo "out $out"; echo "started $(date -Iseconds)"
+      echo "sticks ${RIG_STICK_A:-default} ${RIG_STICK_B:-default}"; } >> "$rig_lock" 
 fi
 build="${SEABASS_BUILD_DIR:-$root/build}"
 if [ "$rig_os" = "Darwin" ]; then
