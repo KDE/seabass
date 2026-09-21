@@ -380,10 +380,21 @@ linux:build-test:
     # SEABASS's tests -- a vendored dependency's suite failing would red
     # the gate for something nothing in this repo controls.
     #
-    # No optimisation override. -O1 was tried here and reverted: measured
-    # on a full clean build of this tree it was worth 7.4% (462 s to
-    # 428 s), which does not buy a lane that tests a build configuration
-    # nobody ships. Recorded because the measurement is the useful part:
+    # -O1, via CMAKE_CXX_FLAGS_RELEASE. This was reverted two commits ago
+    # on a local measurement of 7.4% (462 s to 428 s at -j4) and is back,
+    # because that inference was wrong even though the number was honest:
+    # at -j4 on a desktop with memory bandwidth to spare -O3 costs little,
+    # while on the runner at -j12 over huge Qt translation units it is
+    # worth about 2x. Object 1000 arrived at 15.9 min with -O1 against
+    # 29.3 without, on the same lane days apart. A local build does not
+    # predict this runner: it is ~30x slower per core-second than the
+    # desktop, with ~3x run-to-run variance.
+    #
+    # The cost is real and accepted: CI no longer proves the -O3 build
+    # compiles. The Craft Windows and macOS lanes still build at their
+    # own optimisation levels, and e2e testing covers the rest.
+    #
+    # Recorded because the measurement trap is the useful part:
     # -DCMAKE_CXX_FLAGS=-O1 does NOTHING against a Release build, since
     # CMake emits CMAKE_CXX_FLAGS before CMAKE_CXX_FLAGS_<CONFIG>, so the
     # command line reads "-O1 -O3" and GCC takes the last one. The first
@@ -393,6 +404,7 @@ linux:build-test:
     # check is compile_commands.json.
     - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       -DSEABASS_LIBDJINTEROP_TESTS=OFF
+      -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
     # How much machine this container actually has, printed before it is

@@ -471,6 +471,88 @@ add_library(seabass_core STATIC
 target_include_directories(seabass_core PUBLIC src "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
 
+# The production sources the tests kept re-compiling, compiled once.
+#
+# Measured first, from a full Ninja build's own .ninja_log: 532 s of
+# 2340 s of compile CPU went on re-compiling src/ files another test
+# target had already compiled -- 466 redundant objects, 22.7% of compile
+# time and 20.5% of all build work. Worst offenders zip64_reader.cpp (18
+# targets), durable_file_write.cpp (23), work_counters.cpp (31). Linking
+# is 11% of the work, so this is a compile-side fix, not a linker one.
+#
+# Why not just link seabass_core: it is built for the application and
+# keeps NDEBUG. Tests need assert() live, hence -UNDEBUG, and that is
+# precisely why they were listing these sources by hand.
+#
+# Only sources seabass_core ALREADY builds are in here, so this target
+# needs no include dirs or dependencies beyond the ones mirrored below.
+# Three others are duplicated across tests and deliberately left alone:
+# src/gui/media_controller.cpp needs Qt, and the onelibrary readers need
+# SQLCipher. Putting those here would hand Qt and SQLCipher to every
+# Qt-free test, and staying Qt-free is a property this project keeps on
+# purpose (see seabass_core's own comment and corpus_test).
+#
+# STATIC rather than OBJECT: an OBJECT library puts every object into
+# every consumer, while a static archive lets the linker take only what
+# a test references, so a small domain test does not grow to carry the
+# zip writer.
+#
+# -UNDEBUG explicitly, because the loop near the end of this file that
+# applies it automatically matches target NAMES ending in _test/_tests,
+# and this is a library. Do not rely on a name to do it.
+add_library(seabass_core_testing STATIC
+    src/application/path_key.cpp
+    src/application/ports/progress_reporter.cpp
+    src/application/use_cases/backup_stick.cpp
+    src/application/use_cases/compact_stick_backup.cpp
+    src/application/use_cases/restore_stick_backup.cpp
+    src/domain/duplicate_cue_consolidation.cpp
+    src/domain/junk_cue.cpp
+    src/domain/local_restore.cpp
+    src/domain/matching_policy.cpp
+    src/domain/metadata_merge.cpp
+    src/domain/stick_performance.cpp
+    src/domain/sync_planning.cpp
+    src/domain/track_matching.cpp
+    src/domain/usb_filesystem.cpp
+    src/infrastructure/backup/filesystem_backup_store.cpp
+    src/infrastructure/backup/stick_write_lock.cpp
+    src/infrastructure/benchmark/stick_performance_probe.cpp
+    src/infrastructure/benchmark/stick_surface_check.cpp
+    src/infrastructure/benchmark/stick_write_probe.cpp
+    src/infrastructure/cleanup/pending_deletion_manifest.cpp
+    src/infrastructure/cleanup/stick_containment.cpp
+    src/infrastructure/durable_file_write.cpp
+    src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
+    src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
+    src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
+    src/infrastructure/engine/libdjinterop_engine_reader.cpp
+    src/infrastructure/engine/rekordbox_key_parser.cpp
+    src/infrastructure/fs_remove.cpp
+    src/infrastructure/hashing/sha256.cpp
+    src/infrastructure/local/app_data_directory.cpp
+    src/infrastructure/local/browsed_backup_root.cpp
+    src/infrastructure/long_paths.cpp
+    src/infrastructure/paths/seabass_paths.cpp
+    src/infrastructure/rekordbox/anlz_cue_codec.cpp
+    src/infrastructure/rekordbox/anlz_file.cpp
+    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
+    src/infrastructure/rekordbox/anlz_path_index.cpp
+    src/infrastructure/rekordbox/pdb_lookup.cpp
+    src/infrastructure/rekordbox/pdb_row_writer.cpp
+    src/infrastructure/stick_backup/archive_compactor.cpp
+    src/infrastructure/stick_backup/backup_manifest.cpp
+    src/infrastructure/stick_backup/posix_archive_file.cpp
+    src/infrastructure/stick_backup/restore_path_sanitizer.cpp
+    src/infrastructure/stick_backup/stick_tree_walker.cpp
+    src/infrastructure/work_counters.cpp
+)
+target_include_directories(seabass_core_testing PUBLIC src)
+target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
+target_compile_options(seabass_core_testing PRIVATE
+    "$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>"
+    "$<$<CXX_COMPILER_ID:MSVC>:/FI${CMAKE_SOURCE_DIR}/tests/msvc_assert_no_dialog.hpp>")
+
 if(WIN32)
     # See the SYSTEM_SQLITE note above - same bundled amalgamation
     # libdjinterop uses privately, compiled straight into seabass_core
@@ -1128,8 +1210,8 @@ add_test(NAME walk_tree_test COMMAND walk_tree_test)
 add_executable(linux_usb_formatter_test
     tests/linux_usb_formatter_test.cpp
     src/infrastructure/media/linux_usb_formatter.cpp
-    src/domain/usb_filesystem.cpp
 )
+target_link_libraries(linux_usb_formatter_test PRIVATE seabass_core_testing)
 target_include_directories(linux_usb_formatter_test PRIVATE src)
 target_link_libraries(linux_usb_formatter_test PRIVATE seabass_core)
 add_test(NAME linux_usb_formatter_test COMMAND linux_usb_formatter_test)
@@ -1216,30 +1298,25 @@ if(TARGET seabass_taglib)
 endif()
 
 add_executable(duplicate_cue_consolidation_test
-    src/domain/duplicate_cue_consolidation.cpp
-    src/domain/track_matching.cpp
-    src/domain/matching_policy.cpp
     tests/duplicate_cue_consolidation_test.cpp
 )
+target_link_libraries(duplicate_cue_consolidation_test PRIVATE seabass_core_testing)
 target_include_directories(duplicate_cue_consolidation_test PRIVATE src)
 add_test(NAME duplicate_cue_consolidation_test COMMAND duplicate_cue_consolidation_test)
 
 add_executable(duplicate_cleanup_test
     src/domain/duplicate_cleanup.cpp
-    src/domain/matching_policy.cpp
-    src/domain/local_restore.cpp
     tests/duplicate_cleanup_test.cpp
 )
+target_link_libraries(duplicate_cleanup_test PRIVATE seabass_core_testing)
 target_include_directories(duplicate_cleanup_test PRIVATE src)
 add_test(NAME duplicate_cleanup_test COMMAND duplicate_cleanup_test)
 
 add_executable(library_consistency_test
     src/domain/library_consistency.cpp
-    src/domain/duplicate_cue_consolidation.cpp
-    src/domain/track_matching.cpp
-    src/domain/matching_policy.cpp
     tests/library_consistency_test.cpp
 )
+target_link_libraries(library_consistency_test PRIVATE seabass_core_testing)
 target_include_directories(library_consistency_test PRIVATE src)
 add_test(NAME library_consistency_test COMMAND library_consistency_test)
 
@@ -1278,32 +1355,25 @@ add_test(NAME engine_sample_rates_test COMMAND engine_sample_rates_test)
 add_executable(engine_artwork_test
     tests/engine_artwork_test.cpp
     src/infrastructure/engine/engine_artwork.cpp
-    src/infrastructure/hashing/sha256.cpp
     # The repaired image is written durably, like every other write onto a
     # stick, so this test needs the writer and its long-path helper.
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/long_paths.cpp
-    src/infrastructure/work_counters.cpp
 )
+target_link_libraries(engine_artwork_test PRIVATE seabass_core_testing)
 target_include_directories(engine_artwork_test PRIVATE src tests)
 target_link_libraries(engine_artwork_test PRIVATE SQLite::SQLite3)
 add_test(NAME engine_artwork_test COMMAND engine_artwork_test)
 
 add_executable(junk_cue_test
-    src/domain/junk_cue.cpp
-    src/domain/matching_policy.cpp
     tests/junk_cue_test.cpp
 )
+target_link_libraries(junk_cue_test PRIVATE seabass_core_testing)
 target_include_directories(junk_cue_test PRIVATE src)
 add_test(NAME junk_cue_test COMMAND junk_cue_test)
 
 add_executable(matching_policy_test
-    src/domain/junk_cue.cpp
-    src/domain/matching_policy.cpp
-    src/domain/duplicate_cue_consolidation.cpp
-    src/domain/track_matching.cpp
     tests/matching_policy_test.cpp
 )
+target_link_libraries(matching_policy_test PRIVATE seabass_core_testing)
 target_include_directories(matching_policy_test PRIVATE src)
 add_test(NAME matching_policy_test COMMAND matching_policy_test)
 
@@ -1329,10 +1399,9 @@ target_include_directories(filesystem_compatibility_test PRIVATE src)
 add_test(NAME filesystem_compatibility_test COMMAND filesystem_compatibility_test)
 
 add_executable(track_matching_test
-    src/domain/track_matching.cpp
-    src/domain/matching_policy.cpp
     tests/track_matching_test.cpp
 )
+target_link_libraries(track_matching_test PRIVATE seabass_core_testing)
 target_include_directories(track_matching_test PRIVATE src)
 add_test(NAME track_matching_test COMMAND track_matching_test)
 
@@ -1359,38 +1428,32 @@ target_include_directories(audio_levels_test PRIVATE src)
 add_test(NAME audio_levels_test COMMAND audio_levels_test)
 
 add_executable(rekordbox_key_parser_test
-    src/infrastructure/engine/rekordbox_key_parser.cpp
     tests/rekordbox_key_parser_test.cpp
 )
+target_link_libraries(rekordbox_key_parser_test PRIVATE seabass_core_testing)
 target_include_directories(rekordbox_key_parser_test PRIVATE src)
 target_link_libraries(rekordbox_key_parser_test PRIVATE DjInterop)
 add_test(NAME rekordbox_key_parser_test COMMAND rekordbox_key_parser_test)
 
 add_executable(sync_planning_test
-    src/domain/sync_planning.cpp
-    src/domain/track_matching.cpp
-    src/domain/matching_policy.cpp
     tests/sync_planning_test.cpp
 )
+target_link_libraries(sync_planning_test PRIVATE seabass_core_testing)
 target_include_directories(sync_planning_test PRIVATE src)
 add_test(NAME sync_planning_test COMMAND sync_planning_test)
 
 add_executable(format_usb_stick_test
-    src/domain/usb_filesystem.cpp
-    src/application/ports/progress_reporter.cpp
     tests/format_usb_stick_test.cpp
 )
+target_link_libraries(format_usb_stick_test PRIVATE seabass_core_testing)
 target_include_directories(format_usb_stick_test PRIVATE src)
 add_test(NAME format_usb_stick_test COMMAND format_usb_stick_test)
 
 add_executable(cross_source_sync_conflict_test
-    src/application/path_key.cpp
     src/domain/cross_source_sync_conflict.cpp
-    src/domain/sync_planning.cpp
-    src/domain/track_matching.cpp
-    src/domain/matching_policy.cpp
     tests/cross_source_sync_conflict_test.cpp
 )
+target_link_libraries(cross_source_sync_conflict_test PRIVATE seabass_core_testing)
 target_include_directories(cross_source_sync_conflict_test PRIVATE src)
 add_test(NAME cross_source_sync_conflict_test COMMAND cross_source_sync_conflict_test)
 
@@ -1448,8 +1511,6 @@ target_include_directories(track_queries_test PRIVATE src)
 add_test(NAME track_queries_test COMMAND track_queries_test)
 
 add_executable(cue_color_normalization_test
-    src/application/ports/progress_reporter.cpp
-    src/infrastructure/engine/libdjinterop_engine_reader.cpp
     src/infrastructure/rekordbox/kaitai_rekordbox_reader.cpp
     src/infrastructure/rekordbox/anlz_byte_source.cpp
     # KaitaiRekordboxReader resolves its analysis-file source from the
@@ -1459,17 +1520,12 @@ add_executable(cue_color_normalization_test
     # in the archive stack, so a test that lists its own sources has to
     # list those too.
     src/infrastructure/rekordbox/anlz_source_for_root.cpp
-    src/infrastructure/local/browsed_backup_root.cpp
-    src/infrastructure/durable_file_write.cpp
     src/infrastructure/stick_backup/archive_anlz_source.cpp
-    src/infrastructure/stick_backup/posix_archive_file.cpp
     src/infrastructure/stick_backup/zip64_reader.cpp
     src/infrastructure/stick_backup/zip_format.cpp
-    src/infrastructure/rekordbox/pdb_lookup.cpp
-    src/infrastructure/rekordbox/anlz_path_index.cpp
-    src/infrastructure/work_counters.cpp
     tests/cue_color_normalization_test.cpp
 )
+target_link_libraries(cue_color_normalization_test PRIVATE seabass_core_testing)
 target_include_directories(cue_color_normalization_test PRIVATE src)
 target_link_libraries(cue_color_normalization_test PRIVATE DjInterop rekordbox_format kaitai_cpp_stl_runtime
     ZLIB::ZLIB SQLite::SQLite3)
@@ -1479,11 +1535,9 @@ add_test(NAME cue_color_normalization_test COMMAND cue_color_normalization_test)
 # is checked against the single-id lookup it replaces on every id the
 # fixture holds, on every id it does not, and on databases it cannot read.
 add_executable(anlz_path_index_test
-    src/infrastructure/rekordbox/pdb_lookup.cpp
-    src/infrastructure/rekordbox/anlz_path_index.cpp
-    src/infrastructure/work_counters.cpp
     tests/anlz_path_index_test.cpp
 )
+target_link_libraries(anlz_path_index_test PRIVATE seabass_core_testing)
 target_include_directories(anlz_path_index_test PRIVATE src)
 target_link_libraries(anlz_path_index_test PRIVATE rekordbox_format kaitai_cpp_stl_runtime)
 add_test(NAME anlz_path_index_test COMMAND anlz_path_index_test
@@ -1491,20 +1545,16 @@ add_test(NAME anlz_path_index_test COMMAND anlz_path_index_test
 set_tests_properties(anlz_path_index_test PROPERTIES LABELS "integration")
 
 add_executable(anlz_cue_codec_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/rekordbox/anlz_cue_codec.cpp
-    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
-    src/infrastructure/rekordbox/anlz_file.cpp
     tests/anlz_cue_codec_test.cpp
 )
+target_link_libraries(anlz_cue_codec_test PRIVATE seabass_core_testing)
 target_include_directories(anlz_cue_codec_test PRIVATE src)
 add_test(NAME anlz_cue_codec_test COMMAND anlz_cue_codec_test)
 
 add_executable(anlz_legacy_cue_codec_test
-    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
     tests/anlz_legacy_cue_codec_test.cpp
 )
+target_link_libraries(anlz_legacy_cue_codec_test PRIVATE seabass_core_testing)
 target_include_directories(anlz_legacy_cue_codec_test PRIVATE src)
 add_test(NAME anlz_legacy_cue_codec_test COMMAND anlz_legacy_cue_codec_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
@@ -1514,16 +1564,10 @@ set_tests_properties(anlz_legacy_cue_codec_test PROPERTIES LABELS "integration")
 # that keeps only one of them up to date fails here. See the file's own
 # comment: this is the test issue #33 did not have.
 add_executable(rekordbox_cue_lists_agree_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/rekordbox/anlz_cue_codec.cpp
-    src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
-    src/infrastructure/rekordbox/anlz_file.cpp
-    src/infrastructure/rekordbox/anlz_path_index.cpp
-    src/infrastructure/rekordbox/pdb_lookup.cpp
     src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
     tests/rekordbox_cue_lists_agree_test.cpp
 )
+target_link_libraries(rekordbox_cue_lists_agree_test PRIVATE seabass_core_testing)
 target_include_directories(rekordbox_cue_lists_agree_test PRIVATE src tests)
 target_link_libraries(rekordbox_cue_lists_agree_test PRIVATE rekordbox_format kaitai_cpp_stl_runtime)
 add_test(NAME rekordbox_cue_lists_agree_test COMMAND rekordbox_cue_lists_agree_test
@@ -1531,11 +1575,9 @@ add_test(NAME rekordbox_cue_lists_agree_test COMMAND rekordbox_cue_lists_agree_t
 set_tests_properties(rekordbox_cue_lists_agree_test PROPERTIES LABELS "integration")
 
 add_executable(anlz_file_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/rekordbox/anlz_file.cpp
     tests/anlz_file_test.cpp
 )
+target_link_libraries(anlz_file_test PRIVATE seabass_core_testing)
 target_include_directories(anlz_file_test PRIVATE src)
 add_test(NAME anlz_file_test COMMAND anlz_file_test)
 
@@ -1547,9 +1589,9 @@ target_link_libraries(rekordbox_loop_cue_test PRIVATE rekordbox_format)
 add_test(NAME rekordbox_loop_cue_test COMMAND rekordbox_loop_cue_test)
 
 add_executable(local_restore_test
-    src/domain/local_restore.cpp
     tests/local_restore_test.cpp
 )
+target_link_libraries(local_restore_test PRIVATE seabass_core_testing)
 target_include_directories(local_restore_test PRIVATE src)
 add_test(NAME local_restore_test COMMAND local_restore_test)
 
@@ -1560,41 +1602,32 @@ target_link_libraries(pdb_rating_write_test PRIVATE seabass_core)
 add_test(NAME pdb_rating_write_test COMMAND pdb_rating_write_test)
 
 add_executable(metadata_restore_test
-    src/domain/junk_cue.cpp
-    src/domain/matching_policy.cpp
-    src/domain/metadata_merge.cpp
     src/domain/metadata_restore.cpp
-    src/domain/track_matching.cpp
     tests/metadata_restore_test.cpp
 )
+target_link_libraries(metadata_restore_test PRIVATE seabass_core_testing)
 target_include_directories(metadata_restore_test PRIVATE src)
 add_test(NAME metadata_restore_test COMMAND metadata_restore_test)
 
 add_executable(metadata_backup_plan_test
-    src/domain/junk_cue.cpp
-    src/domain/matching_policy.cpp
     src/domain/metadata_backup_plan.cpp
-    src/domain/metadata_merge.cpp
-    src/domain/track_matching.cpp
     tests/metadata_backup_plan_test.cpp
 )
+target_link_libraries(metadata_backup_plan_test PRIVATE seabass_core_testing)
 target_include_directories(metadata_backup_plan_test PRIVATE src)
 add_test(NAME metadata_backup_plan_test COMMAND metadata_backup_plan_test)
 
 add_executable(metadata_merge_test
-    src/domain/metadata_merge.cpp
-    src/domain/track_matching.cpp
-    src/domain/matching_policy.cpp
     tests/metadata_merge_test.cpp
 )
+target_link_libraries(metadata_merge_test PRIVATE seabass_core_testing)
 target_include_directories(metadata_merge_test PRIVATE src)
 add_test(NAME metadata_merge_test COMMAND metadata_merge_test)
 
 add_executable(durable_file_write_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
     tests/durable_file_write_test.cpp
 )
+target_link_libraries(durable_file_write_test PRIVATE seabass_core_testing)
 target_include_directories(durable_file_write_test PRIVATE src)
 add_test(NAME durable_file_write_test COMMAND durable_file_write_test)
 
@@ -1631,20 +1664,18 @@ target_include_directories(stick_space_test PRIVATE src)
 add_test(NAME stick_space_test COMMAND stick_space_test)
 
 add_executable(filesystem_backup_store_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/backup/filesystem_backup_store.cpp
     ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
     tests/filesystem_backup_store_test.cpp
 )
+target_link_libraries(filesystem_backup_store_test PRIVATE seabass_core_testing)
 target_include_directories(filesystem_backup_store_test PRIVATE src)
 target_link_libraries(filesystem_backup_store_test PRIVATE ZLIB::ZLIB)
 add_test(NAME filesystem_backup_store_test COMMAND filesystem_backup_store_test)
 
 add_executable(stick_write_lock_test
-    src/infrastructure/backup/stick_write_lock.cpp
     tests/stick_write_lock_test.cpp
 )
+target_link_libraries(stick_write_lock_test PRIVATE seabass_core_testing)
 target_include_directories(stick_write_lock_test PRIVATE src)
 target_link_libraries(stick_write_lock_test PRIVATE Threads::Threads)
 add_test(NAME stick_write_lock_test COMMAND stick_write_lock_test)
@@ -1664,14 +1695,11 @@ add_test(NAME stick_presence_diff_test COMMAND stick_presence_diff_test)
 # Forks a child process on POSIX to prove the pid-liveness staleness rule
 # against a real second process, not just an injected fake.
 add_executable(library_edit_lock_store_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/local/app_data_directory.cpp
-    src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/local/file_library_edit_lock_store.cpp
     src/infrastructure/system/process_liveness.cpp
     tests/library_edit_lock_store_test.cpp
 )
+target_link_libraries(library_edit_lock_store_test PRIVATE seabass_core_testing)
 target_include_directories(library_edit_lock_store_test PRIVATE src)
 add_test(NAME library_edit_lock_store_test COMMAND library_edit_lock_store_test)
 
@@ -1856,10 +1884,9 @@ add_executable(rekordbox_settings_test
     src/infrastructure/rekordbox/rekordbox_settings_fields.cpp
     src/infrastructure/rekordbox/rekordbox_settings_reader.cpp
     src/infrastructure/rekordbox/rekordbox_settings_writer.cpp
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
     tests/rekordbox_settings_test.cpp
 )
+target_link_libraries(rekordbox_settings_test PRIVATE seabass_core_testing)
 target_include_directories(rekordbox_settings_test PRIVATE src)
 add_test(NAME rekordbox_settings_test COMMAND rekordbox_settings_test)
 
@@ -1867,25 +1894,18 @@ add_test(NAME rekordbox_settings_test COMMAND rekordbox_settings_test)
 # real (scratch) files ---
 
 add_executable(stick_performance_test
-    src/domain/stick_performance.cpp
     tests/stick_performance_test.cpp
 )
+target_link_libraries(stick_performance_test PRIVATE seabass_core_testing)
 target_include_directories(stick_performance_test PRIVATE src)
 target_link_libraries(stick_performance_test PRIVATE storageprobe)
 add_test(NAME stick_performance_test COMMAND stick_performance_test)
 
 add_executable(stick_performance_probe_test
-    src/infrastructure/benchmark/stick_performance_probe.cpp
-    src/infrastructure/benchmark/stick_surface_check.cpp
-    src/infrastructure/benchmark/stick_write_probe.cpp
     src/infrastructure/local/stick_performance_history.cpp
-    src/infrastructure/local/app_data_directory.cpp
-    src/infrastructure/paths/seabass_paths.cpp
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/domain/stick_performance.cpp
     tests/stick_performance_probe_test.cpp
 )
+target_link_libraries(stick_performance_probe_test PRIVATE seabass_core_testing)
 target_include_directories(stick_performance_probe_test PRIVATE src)
 target_link_libraries(stick_performance_probe_test PRIVATE storageprobe)
 add_test(NAME stick_performance_probe_test COMMAND stick_performance_probe_test)
@@ -1893,36 +1913,27 @@ add_test(NAME stick_performance_probe_test COMMAND stick_performance_probe_test)
 # Both probes against a real stick; skips itself unless SEABASS_LIVE_STICK
 # (and, for the write half, SEABASS_LIVE_WRITE=1) is set.
 add_executable(stick_performance_live_test
-    src/infrastructure/benchmark/stick_performance_probe.cpp
-    src/infrastructure/benchmark/stick_surface_check.cpp
-    src/infrastructure/benchmark/stick_write_probe.cpp
-    src/domain/stick_performance.cpp
     tests/stick_performance_live_test.cpp
 )
+target_link_libraries(stick_performance_live_test PRIVATE seabass_core_testing)
 target_include_directories(stick_performance_live_test PRIVATE src)
 target_link_libraries(stick_performance_live_test PRIVATE storageprobe)
 add_test(NAME stick_performance_live_test COMMAND stick_performance_live_test)
 
 add_executable(local_cue_store_test
-    src/domain/track_matching.cpp
-    src/domain/matching_policy.cpp
-    src/application/ports/progress_reporter.cpp
     src/infrastructure/compression/zlib_compressor.cpp
-    src/infrastructure/local/app_data_directory.cpp
-    src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/local/local_cue_store.cpp
     tests/local_cue_store_test.cpp
 )
+target_link_libraries(local_cue_store_test PRIVATE seabass_core_testing)
 target_include_directories(local_cue_store_test PRIVATE src)
 target_link_libraries(local_cue_store_test PRIVATE SQLite::SQLite3 ZLIB::ZLIB)
 add_test(NAME local_cue_store_test COMMAND local_cue_store_test)
 
 add_executable(pdb_row_writer_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/rekordbox/pdb_row_writer.cpp
     tests/pdb_row_writer_test.cpp
 )
+target_link_libraries(pdb_row_writer_test PRIVATE seabass_core_testing)
 target_include_directories(pdb_row_writer_test PRIVATE src)
 target_link_libraries(pdb_row_writer_test PRIVATE rekordbox_format ZLIB::ZLIB)
 add_test(NAME pdb_row_writer_test COMMAND pdb_row_writer_test)
@@ -1933,11 +1944,9 @@ add_test(NAME pdb_row_writer_test COMMAND pdb_row_writer_test)
 # than a hand-built two-page buffer would be. SEABASS_SOURCE_DIR is how
 # it finds that fixture, same as the corpus runner below.
 add_executable(pdb_row_writer_staleness_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/rekordbox/pdb_row_writer.cpp
     tests/pdb_row_writer_staleness_test.cpp
 )
+target_link_libraries(pdb_row_writer_staleness_test PRIVATE seabass_core_testing)
 target_include_directories(pdb_row_writer_staleness_test PRIVATE src)
 target_link_libraries(pdb_row_writer_staleness_test PRIVATE rekordbox_format ZLIB::ZLIB)
 target_compile_definitions(pdb_row_writer_staleness_test PRIVATE
@@ -1945,13 +1954,9 @@ target_compile_definitions(pdb_row_writer_staleness_test PRIVATE
 add_test(NAME pdb_row_writer_staleness_test COMMAND pdb_row_writer_staleness_test)
 
 add_executable(pdb_row_writer_string_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/rekordbox/pdb_row_writer.cpp
-    src/infrastructure/rekordbox/pdb_lookup.cpp
-    src/infrastructure/rekordbox/anlz_path_index.cpp
     tests/pdb_row_writer_string_test.cpp
 )
+target_link_libraries(pdb_row_writer_string_test PRIVATE seabass_core_testing)
 target_include_directories(pdb_row_writer_string_test PRIVATE src)
 target_link_libraries(pdb_row_writer_string_test PRIVATE rekordbox_format ZLIB::ZLIB)
 add_test(NAME pdb_row_writer_string_test COMMAND pdb_row_writer_string_test)
@@ -1962,12 +1967,10 @@ target_link_libraries(rekordbox_library_anonymizer_test PRIVATE seabass_core)
 add_test(NAME rekordbox_library_anonymizer_test COMMAND rekordbox_library_anonymizer_test)
 
 add_executable(rekordbox_cleanup_writer_test
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/rekordbox/pdb_row_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cleanup_writer.cpp
     tests/rekordbox_cleanup_writer_test.cpp
 )
+target_link_libraries(rekordbox_cleanup_writer_test PRIVATE seabass_core_testing)
 target_include_directories(rekordbox_cleanup_writer_test PRIVATE src)
 target_link_libraries(rekordbox_cleanup_writer_test PRIVATE rekordbox_format ZLIB::ZLIB)
 add_test(NAME rekordbox_cleanup_writer_test COMMAND rekordbox_cleanup_writer_test)
@@ -1983,78 +1986,54 @@ add_test(NAME rekordbox_cleanup_writer_test COMMAND rekordbox_cleanup_writer_tes
 # .../ucrt64/include/sqlite3.h resolved with no -I naming it. MSVC has
 # no equivalent implicit search path, and fails outright without this.
 add_executable(libdjinterop_engine_library_creator_test
-    src/application/ports/progress_reporter.cpp
-    src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
-    src/infrastructure/hashing/sha256.cpp
-    src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/engine/libdjinterop_engine_reader.cpp
-    src/infrastructure/engine/rekordbox_key_parser.cpp
     tests/libdjinterop_engine_library_creator_test.cpp
 )
+target_link_libraries(libdjinterop_engine_library_creator_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_library_creator_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_library_creator_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_library_creator_test COMMAND libdjinterop_engine_library_creator_test)
 
 add_executable(libdjinterop_engine_sync_scratch_replace_test
-    src/application/ports/progress_reporter.cpp
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
-    src/infrastructure/hashing/sha256.cpp
-    src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
-    src/infrastructure/engine/libdjinterop_engine_reader.cpp
-    src/infrastructure/engine/rekordbox_key_parser.cpp
     tests/libdjinterop_engine_sync_scratch_replace_test.cpp
 )
+target_link_libraries(libdjinterop_engine_sync_scratch_replace_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_sync_scratch_replace_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_sync_scratch_replace_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_sync_scratch_replace_test COMMAND libdjinterop_engine_sync_scratch_replace_test)
 
 add_executable(libdjinterop_engine_loop_cue_test
-    src/application/ports/progress_reporter.cpp
-    src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
-    src/infrastructure/hashing/sha256.cpp
-    src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/engine/libdjinterop_engine_reader.cpp
-    src/infrastructure/engine/rekordbox_key_parser.cpp
     tests/libdjinterop_engine_loop_cue_test.cpp
 )
+target_link_libraries(libdjinterop_engine_loop_cue_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_loop_cue_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_loop_cue_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_loop_cue_test COMMAND libdjinterop_engine_loop_cue_test)
 
 add_executable(libdjinterop_engine_cleanup_writer_test
-    src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     tests/libdjinterop_engine_cleanup_writer_test.cpp
 )
+target_link_libraries(libdjinterop_engine_cleanup_writer_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_cleanup_writer_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_cleanup_writer_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_cleanup_writer_test COMMAND libdjinterop_engine_cleanup_writer_test)
 
 add_executable(duplicate_cleanup_interruption_test
-    src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
-    src/infrastructure/backup/filesystem_backup_store.cpp
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
     ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
     tests/duplicate_cleanup_interruption_test.cpp
 )
+target_link_libraries(duplicate_cleanup_interruption_test PRIVATE seabass_core_testing)
 target_include_directories(duplicate_cleanup_interruption_test PRIVATE src)
 target_link_libraries(duplicate_cleanup_interruption_test PRIVATE DjInterop ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME duplicate_cleanup_interruption_test COMMAND duplicate_cleanup_interruption_test)
 
 add_executable(libdjinterop_engine_anonymizer_test
     src/infrastructure/engine/libdjinterop_engine_anonymizer.cpp
-    src/application/ports/progress_reporter.cpp
     # The anonymizer counts a file as dropped only once removeEntry()
     # says it is gone, so this test links the real one rather than
     # asserting against a remove() that answers a different question.
-    src/infrastructure/fs_remove.cpp
-    src/application/path_key.cpp
     tests/libdjinterop_engine_anonymizer_test.cpp
 )
+target_link_libraries(libdjinterop_engine_anonymizer_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_anonymizer_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_anonymizer_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_anonymizer_test COMMAND libdjinterop_engine_anonymizer_test)
@@ -2065,50 +2044,40 @@ target_link_libraries(anonymize_library_test PRIVATE seabass_core)
 add_test(NAME anonymize_library_test COMMAND anonymize_library_test)
 
 add_executable(libdjinterop_engine_cue_writer_propagate_test
-    src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/engine/rekordbox_key_parser.cpp
     tests/libdjinterop_engine_cue_writer_propagate_test.cpp
 )
+target_link_libraries(libdjinterop_engine_cue_writer_propagate_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_cue_writer_propagate_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_cue_writer_propagate_test PRIVATE DjInterop)
 add_test(NAME libdjinterop_engine_cue_writer_propagate_test COMMAND libdjinterop_engine_cue_writer_propagate_test)
 
 add_executable(libdjinterop_engine_cue_writer_main_cue_test
-    src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/engine/rekordbox_key_parser.cpp
     tests/libdjinterop_engine_cue_writer_main_cue_test.cpp
 )
+target_link_libraries(libdjinterop_engine_cue_writer_main_cue_test PRIVATE seabass_core_testing)
 target_include_directories(libdjinterop_engine_cue_writer_main_cue_test PRIVATE src)
 target_link_libraries(libdjinterop_engine_cue_writer_main_cue_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME libdjinterop_engine_cue_writer_main_cue_test COMMAND libdjinterop_engine_cue_writer_main_cue_test)
 
 add_executable(pending_deletion_manifest_test
-    src/infrastructure/cleanup/pending_deletion_manifest.cpp
     tests/pending_deletion_manifest_test.cpp
 )
+target_link_libraries(pending_deletion_manifest_test PRIVATE seabass_core_testing)
 target_include_directories(pending_deletion_manifest_test PRIVATE src)
 add_test(NAME pending_deletion_manifest_test COMMAND pending_deletion_manifest_test)
 
 add_executable(fs_remove_test
-    src/infrastructure/long_paths.cpp
-    src/infrastructure/fs_remove.cpp
-    src/application/path_key.cpp
     tests/fs_remove_test.cpp
 )
+target_link_libraries(fs_remove_test PRIVATE seabass_core_testing)
 target_include_directories(fs_remove_test PRIVATE src tests)
 add_test(NAME fs_remove_test COMMAND fs_remove_test)
 
 add_executable(pending_deletion_applier_test
-    src/infrastructure/long_paths.cpp
-    src/infrastructure/fs_remove.cpp
-    src/application/path_key.cpp
-    src/infrastructure/cleanup/pending_deletion_manifest.cpp
-    src/infrastructure/cleanup/stick_containment.cpp
     src/infrastructure/cleanup/pending_deletion_applier.cpp
     tests/pending_deletion_applier_test.cpp
 )
+target_link_libraries(pending_deletion_applier_test PRIVATE seabass_core_testing)
 target_include_directories(pending_deletion_applier_test PRIVATE src)
 add_test(NAME pending_deletion_applier_test COMMAND pending_deletion_applier_test)
 
@@ -2123,9 +2092,9 @@ add_test(NAME zip_archive_writer_test COMMAND zip_archive_writer_test)
 # --- stick backup (docs/stick-backup-plan.md) ---
 
 add_executable(sha256_test
-    src/infrastructure/hashing/sha256.cpp
     tests/sha256_test.cpp
 )
+target_link_libraries(sha256_test PRIVATE seabass_core_testing)
 target_include_directories(sha256_test PRIVATE src)
 add_test(NAME sha256_test COMMAND sha256_test)
 
@@ -2148,9 +2117,9 @@ if(WIN32)
 endif()
 
 add_executable(archive_file_test
-    src/infrastructure/stick_backup/posix_archive_file.cpp
     tests/archive_file_test.cpp
 )
+target_link_libraries(archive_file_test PRIVATE seabass_core_testing)
 target_include_directories(archive_file_test PRIVATE src)
 add_test(NAME archive_file_test COMMAND archive_file_test)
 
@@ -2208,16 +2177,16 @@ if(TARGET seabass_edit)
 endif()
 
 add_executable(path_key_test
-    src/application/path_key.cpp
     tests/path_key_test.cpp
 )
+target_link_libraries(path_key_test PRIVATE seabass_core_testing)
 target_include_directories(path_key_test PRIVATE src)
 add_test(NAME path_key_test COMMAND path_key_test)
 
 add_executable(seabass_paths_test
-    src/infrastructure/paths/seabass_paths.cpp
     tests/seabass_paths_test.cpp
 )
+target_link_libraries(seabass_paths_test PRIVATE seabass_core_testing)
 target_include_directories(seabass_paths_test PRIVATE src)
 add_test(NAME seabass_paths_test COMMAND seabass_paths_test)
 
@@ -2264,40 +2233,33 @@ set(SEABASS_STICK_BACKUP_STICK_SOURCES
 )
 
 add_executable(library_catalog_mtime_test
-    src/infrastructure/long_paths.cpp
-    src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/stick_backup/library_catalog_mtime.cpp
     tests/library_catalog_mtime_test.cpp
 )
+target_link_libraries(library_catalog_mtime_test PRIVATE seabass_core_testing)
 target_include_directories(library_catalog_mtime_test PRIVATE src)
 add_test(NAME library_catalog_mtime_test COMMAND library_catalog_mtime_test)
 
 add_executable(long_paths_test
-    src/infrastructure/long_paths.cpp
-    src/infrastructure/hashing/sha256.cpp
-    src/infrastructure/stick_backup/backup_manifest.cpp
-    src/infrastructure/stick_backup/stick_tree_walker.cpp
     tests/long_paths_test.cpp
 )
+target_link_libraries(long_paths_test PRIVATE seabass_core_testing)
 target_include_directories(long_paths_test PRIVATE src)
 add_test(NAME long_paths_test COMMAND long_paths_test)
 
 add_executable(stat_diff_test
-    src/infrastructure/hashing/sha256.cpp
-    src/infrastructure/stick_backup/backup_manifest.cpp
-    src/infrastructure/long_paths.cpp
-    src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/stick_backup/stat_diff.cpp
     tests/stat_diff_test.cpp
 )
+target_link_libraries(stat_diff_test PRIVATE seabass_core_testing)
 target_include_directories(stat_diff_test PRIVATE src)
 add_test(NAME stat_diff_test COMMAND stat_diff_test)
 
 add_executable(backup_database_capture_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
     tests/backup_database_capture_test.cpp
-    src/application/path_key.cpp
 )
+target_link_libraries(backup_database_capture_test PRIVATE seabass_core_testing)
 target_include_directories(backup_database_capture_test PRIVATE src)
 target_link_libraries(backup_database_capture_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME backup_database_capture_test COMMAND backup_database_capture_test)
@@ -2330,111 +2292,66 @@ set_tests_properties(backup_fingerprint_describes_archive_test PROPERTIES LABELS
 
 add_executable(backup_stick_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    src/application/ports/progress_reporter.cpp
-    src/application/use_cases/backup_stick.cpp
-    src/infrastructure/local/browsed_backup_root.cpp
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
     tests/backup_stick_test.cpp
-    src/application/path_key.cpp
 )
+target_link_libraries(backup_stick_test PRIVATE seabass_core_testing)
 target_include_directories(backup_stick_test PRIVATE src)
 target_link_libraries(backup_stick_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME backup_stick_test COMMAND backup_stick_test)
 
 add_executable(backup_archive_concurrent_reader_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/stick_backup/archive_compactor.cpp
-    src/infrastructure/stick_backup/restore_path_sanitizer.cpp
-    src/application/ports/progress_reporter.cpp
-    src/application/use_cases/backup_stick.cpp
-    src/infrastructure/local/browsed_backup_root.cpp
-    src/application/use_cases/restore_stick_backup.cpp
-    src/application/path_key.cpp
-    src/infrastructure/work_counters.cpp
     tests/backup_archive_concurrent_reader_test.cpp
 )
+target_link_libraries(backup_archive_concurrent_reader_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_concurrent_reader_test PRIVATE src)
 target_link_libraries(backup_archive_concurrent_reader_test PRIVATE ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
 add_test(NAME backup_archive_concurrent_reader_test COMMAND backup_archive_concurrent_reader_test)
 
 add_executable(backup_archive_compaction_test
     ${SEABASS_STICK_BACKUP_UPDATE_SOURCES}
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/stick_backup/archive_compactor.cpp
-    src/infrastructure/backup/stick_write_lock.cpp
-    src/application/use_cases/compact_stick_backup.cpp
     tests/backup_archive_compaction_test.cpp
 )
+target_link_libraries(backup_archive_compaction_test PRIVATE seabass_core_testing)
 target_include_directories(backup_archive_compaction_test PRIVATE src)
 target_link_libraries(backup_archive_compaction_test PRIVATE ZLIB::ZLIB)
 add_test(NAME backup_archive_compaction_test COMMAND backup_archive_compaction_test)
 
 add_executable(backup_restore_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/stick_backup/archive_compactor.cpp
-    src/infrastructure/stick_backup/restore_path_sanitizer.cpp
-    src/application/ports/progress_reporter.cpp
-    src/application/use_cases/backup_stick.cpp
-    src/infrastructure/local/browsed_backup_root.cpp
-    src/application/use_cases/compact_stick_backup.cpp
-    src/application/use_cases/restore_stick_backup.cpp
-    src/application/path_key.cpp
     tests/backup_restore_test.cpp
 )
+target_link_libraries(backup_restore_test PRIVATE seabass_core_testing)
 target_include_directories(backup_restore_test PRIVATE src)
 target_link_libraries(backup_restore_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME backup_restore_test COMMAND backup_restore_test)
 
 add_executable(archive_write_lock_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/stick_backup/archive_compactor.cpp
-    src/infrastructure/stick_backup/restore_path_sanitizer.cpp
-    src/application/ports/progress_reporter.cpp
-    src/application/use_cases/backup_stick.cpp
-    src/infrastructure/local/browsed_backup_root.cpp
-    src/application/use_cases/compact_stick_backup.cpp
-    src/application/use_cases/restore_stick_backup.cpp
-    src/application/path_key.cpp
     tests/archive_write_lock_test.cpp
 )
+target_link_libraries(archive_write_lock_test PRIVATE seabass_core_testing)
 target_include_directories(archive_write_lock_test PRIVATE src)
 target_link_libraries(archive_write_lock_test PRIVATE ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
 add_test(NAME archive_write_lock_test COMMAND archive_write_lock_test)
 
 add_executable(clone_stick_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
-    src/infrastructure/durable_file_write.cpp
-    src/infrastructure/work_counters.cpp
-    src/infrastructure/stick_backup/archive_compactor.cpp
-    src/infrastructure/stick_backup/restore_path_sanitizer.cpp
-    src/application/ports/progress_reporter.cpp
-    src/application/use_cases/backup_stick.cpp
-    src/infrastructure/local/browsed_backup_root.cpp
-    src/application/use_cases/compact_stick_backup.cpp
-    src/application/use_cases/restore_stick_backup.cpp
-    src/application/path_key.cpp
     src/application/use_cases/clone_stick.cpp
     tests/clone_stick_test.cpp
 )
+target_link_libraries(clone_stick_test PRIVATE seabass_core_testing)
 target_include_directories(clone_stick_test PRIVATE src)
 target_link_libraries(clone_stick_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME clone_stick_test COMMAND clone_stick_test)
 
 add_executable(pending_deletion_resolver_test
-    src/application/path_key.cpp
     src/application/use_cases/find_unreferenced_files.cpp
     src/infrastructure/stick_layout.cpp
     src/infrastructure/cleanup/pending_deletion_resolver.cpp
-    src/infrastructure/cleanup/stick_containment.cpp
     tests/pending_deletion_resolver_test.cpp
 )
+target_link_libraries(pending_deletion_resolver_test PRIVATE seabass_core_testing)
 target_include_directories(pending_deletion_resolver_test PRIVATE src)
 add_test(NAME pending_deletion_resolver_test COMMAND pending_deletion_resolver_test)
 
@@ -2443,14 +2360,13 @@ add_test(NAME pending_deletion_resolver_test COMMAND pending_deletion_resolver_t
 # libsqlcipher's runtime library actually present on whichever machine
 # runs this test (see the target_sources block above for package names).
 add_executable(onelibrary_cue_writer_test
-    src/application/ports/progress_reporter.cpp
     src/infrastructure/onelibrary/onelibrary_key.cpp
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/work_counters.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
     tests/onelibrary_cue_writer_test.cpp
 )
+target_link_libraries(onelibrary_cue_writer_test PRIVATE seabass_core_testing)
 target_include_directories(onelibrary_cue_writer_test PRIVATE src)
 target_link_libraries(onelibrary_cue_writer_test PRIVATE ZLIB::ZLIB)
 if(NOT WIN32)
@@ -2459,14 +2375,13 @@ endif()
 add_test(NAME onelibrary_cue_writer_test COMMAND onelibrary_cue_writer_test)
 
 add_executable(onelibrary_cue_writer_adapter_test
-    src/application/ports/progress_reporter.cpp
     src/infrastructure/onelibrary/onelibrary_key.cpp
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/work_counters.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
     tests/onelibrary_cue_writer_adapter_test.cpp
 )
+target_link_libraries(onelibrary_cue_writer_adapter_test PRIVATE seabass_core_testing)
 target_include_directories(onelibrary_cue_writer_adapter_test PRIVATE src)
 target_link_libraries(onelibrary_cue_writer_adapter_test PRIVATE ZLIB::ZLIB)
 if(NOT WIN32)
@@ -2477,14 +2392,13 @@ add_test(NAME onelibrary_cue_writer_adapter_test COMMAND onelibrary_cue_writer_a
 # Covers OneLibraryReader::readAll(), the read side (content/artist/key/
 # image/playlist/cue joins), independent of the write-path fixture above.
 add_executable(onelibrary_reader_test
-    src/application/ports/progress_reporter.cpp
     src/infrastructure/onelibrary/onelibrary_key.cpp
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
-    src/infrastructure/work_counters.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
     tests/onelibrary_reader_test.cpp
 )
+target_link_libraries(onelibrary_reader_test PRIVATE seabass_core_testing)
 target_include_directories(onelibrary_reader_test PRIVATE src)
 target_link_libraries(onelibrary_reader_test PRIVATE ZLIB::ZLIB)
 if(NOT WIN32)
