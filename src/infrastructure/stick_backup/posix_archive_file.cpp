@@ -173,9 +173,28 @@ PosixArchiveFile::PosixArchiveFile(const std::filesystem::path &path, OpenMode m
 #if defined(O_CLOEXEC)
     flags |= O_CLOEXEC;
 #endif
-    int fd = ::open(path.c_str(), flags, 0644);
+    int fd = ::open(path.c_str(), flags, 0755);
     if (fd < 0) {
         throwIo("could not open", path);
+    }
+    // Asked for explicitly, because the mode above is only a REQUEST:
+    // open() masks it with the process umask, so a umask of 077 would
+    // land 0700 and the archive would be unreadable to anyone but this
+    // user. fchmod is not masked.
+    //
+    // Only when we may write. Opening an archive read-only must not
+    // re-permission it: the release rig deliberately holds its reference
+    // archive at 444 for the length of a round so that nothing can damage
+    // the one artifact a round must not touch, and restoring FROM that
+    // archive opens it read-only. Changing its mode from under the rig
+    // would quietly remove that protection.
+    //
+    // Best-effort, and deliberately not an error. A backup can be written
+    // to the stick itself, and FAT and exFAT have no POSIX modes at all,
+    // so this fails there by nature. A backup that copied every byte must
+    // not be failed over the permission bits of the file holding it.
+    if (mode != OpenMode::ReadOnly) {
+        ::fchmod(fd, 0755);
     }
     struct stat st{};
     if (::fstat(fd, &st) != 0) {
