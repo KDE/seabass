@@ -171,6 +171,23 @@ craft_windows_qt6_x86_64:
   # the one failure a backup format cannot afford. -DSEABASS_TESTS=OFF
   # would silence it and empty this lane of its purpose.
   #
+  # fonts-noto-core ships NotoSansSymbols2-Regular.ttf, which is the
+  # family Theme.symbolFamily falls back to when the BUNDLED subset fails
+  # to load. The container has fontconfig and DejaVu (pulled in by Qt),
+  # and DejaVu has no U+2B21/U+25CE/U+25C8 -- so LibrarySourceToggle's
+  # glyphs painted nothing at all and two tests failed with "nothing was
+  # painted in the row ... glyph ink -1..-1, name ink 39..47": the NAME
+  # rendered, the glyph did not.
+  #
+  # SUSPICION WORTH CHASING, not settled here: the bundled font may be
+  # failing to load everywhere, and every developer machine masks it by
+  # having Noto installed for the fallback to find. This container is the
+  # first environment without it, which is exactly when a bundled face is
+  # supposed to earn its keep. Installing the system font makes the lane
+  # green and does NOT prove the resource loads. Someone should make the
+  # test report Theme.symbolFont.status when it fails, rather than only
+  # "nothing was painted".
+  #
   # qt6-svg-plugins is the one that decodes SVG, and qt6-svg-dev does NOT
   # pull it in. Without it libQt6Svg is present and linkable, the build
   # succeeds, and then every bundled Breeze icon fails at RUN time with
@@ -219,6 +236,7 @@ craft_windows_qt6_x86_64:
       qt6-base-private-dev qt6-declarative-private-dev
       ccache
       qt6-svg-plugins
+      fonts-noto-core
 
 # One job, not two. It builds AND tests, and the reason is the 4.3 GB
 # `artifacts: paths: [build]` this used to carry: that artifact existed
