@@ -259,6 +259,15 @@ craft_windows_qt6_x86_64:
   # was painted in the row", "the watermark does not reach the
   # window's right edge any more") rather than as a missing package.
   # See pipeline 1354151, job 5051803.
+  # fc-cache after the installs, not before, and not skipped as a
+  # formality: fonts-noto-core lands after the image's fontconfig cache
+  # was built, and an unindexed font is invisible to Qt's fallback even
+  # though the file is on disk. Installing the font alone did NOT fix
+  # the glyph tests, which is what pointed here.
+  #
+  # The fc-list line is the diagnostic that settles it either way: if
+  # Symbols2 is listed and the glyphs still ink nothing, the fault is
+  # not font availability and nobody should spend another run on fonts.
   - apt-get install -y -qq --no-install-recommends
       ca-certificates
       build-essential cmake ninja-build git pkg-config
@@ -271,6 +280,10 @@ craft_windows_qt6_x86_64:
       ccache
       qt6-svg-plugins
       fonts-noto-core
+  - fc-cache -f
+  - echo "fonts visible to fontconfig: $(fc-list | wc -l) total, $(fc-list | grep -ci symbols) matching 'symbols'"
+  - fc-list | grep -i "symbols" | head -3 || echo "  NO Symbols font is visible to fontconfig"
+
 
 # One job, not two. It builds AND tests, and the reason is the 4.3 GB
 # `artifacts: paths: [build]` this used to carry: that artifact existed
@@ -392,9 +405,22 @@ linux:build-test:
       echo "memory: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown) cgroup, $(awk '/MemTotal/{print $2" kB"}' /proc/meminfo) host"
       echo "qt imageformats plugins: $(ls /usr/lib/*/qt6/plugins/imageformats/ 2>/dev/null | tr '\n' ' ')"
       cmake --build build -j"$JOBS"
-    # Printed, not silent: a cache that stopped being hit is the
-    # difference between a five minute lane and a ninety minute one,
-    # and it would otherwise only show up as "CI got slow again".
+    # Printed, not silent -- and what it printed corrected me. The
+    # cache section reports "No URL provided, cache will not be
+    # downloaded": this GitLab instance has no cache storage configured,
+    # so `cache:` does NOTHING here and ccache never persists between
+    # runs. Three runs in a row scored exactly 452/1307 (34.58%), which
+    # is not a cache being warm, it is the SAME intra-run number every
+    # time.
+    #
+    # It is still worth having, for a reason that has nothing to do with
+    # persistence: CMakeLists lists 301 source files across its
+    # add_executable() blocks and 194 of them are re-compiles of a file
+    # another target already compiles (work_counters.cpp thirty times,
+    # durable_file_write.cpp twenty-two). ccache collapses those within
+    # a single run. What it cannot do here is make the NEXT run cheap,
+    # so every run is a cold build and the lane must fit in its budget
+    # on that basis.
     - ccache --show-stats
     # As a NORMAL USER, not as root. CI containers run as root, and
     # root ignores the file permissions several tests take away on
