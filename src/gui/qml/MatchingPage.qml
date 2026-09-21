@@ -386,7 +386,15 @@ ColumnLayout {
                 popup: Popup {
                     y: playlistCombo.height
                     width: playlistCombo.width
-                    implicitHeight: Math.min(contentItem.implicitHeight, 320)
+                    // + topPadding/bottomPadding: without them the popup's
+                    // own bounding box comes out `padding`-times-2 short of
+                    // what the ListView actually needs, so the last row's
+                    // real geometry ends up partly below the popup's OWN
+                    // outer bounds -- and a click there reads as "outside
+                    // the popup" (closing it) rather than reaching the
+                    // row's MouseArea. Same bug, same fix, as
+                    // PlaylistPickerCombo.qml's own popup.
+                    implicitHeight: Math.min(contentItem.implicitHeight, 320) + topPadding + bottomPadding
                     padding: 1
 
                     contentItem: ListView {

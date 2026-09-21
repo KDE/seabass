@@ -92,7 +92,16 @@ ComboBox {
         id: popupRoot
         y: root.height
         width: root.width
-        implicitHeight: Math.min(contentItem.implicitHeight, 320)
+        // + topPadding/bottomPadding: without them the popup's own
+        // bounding box comes out `padding`-times-2 short of what the
+        // ListView actually needs, so the last row's real geometry
+        // (inside a ListView positioned at the padding-inset content
+        // area) ends up partly below the popup's OWN outer bounds --
+        // and a click there reads as "outside the popup" (closing it)
+        // rather than reaching the row's MouseArea. Confirmed directly:
+        // clicking the last row of a 3-row list closed the popup
+        // instead of picking it, every time, before this.
+        implicitHeight: Math.min(contentItem.implicitHeight, 320) + topPadding + bottomPadding
         padding: 1
 
         contentItem: ListView {
