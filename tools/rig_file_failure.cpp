@@ -48,6 +48,10 @@
 // should be would fail every later check for a reason that has nothing to
 // do with them.
 
+#include <csignal>
+#include <cstdio>
+#include <cstring>
+#include <unistd.h>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -112,11 +116,98 @@ bool opens(const fs::path &path)
     return read;
 }
 
+// APPENDED to the whole filename, never replacing its extension:
+// "track.mp3" stashes as "track.mp3.x3-stashed", so removing the suffix
+// gives the original name back exactly.
+//
+// Replacing the extension was the first version and it was wrong in a
+// way the happy path could not show. undo() holds the real target in
+// memory, so a normal run restored correctly; only sweepLeftovers(),
+// which has nothing but the stash filename to work from, had to
+// reconstruct it -- and "track.x3-stashed" reconstructs as "track",
+// with no extension. The sweep then left an extensionless orphan beside
+// the empty directory it was supposed to remove, which is worse damage
+// than the interrupted run it was cleaning up after. Caught by planting
+// damage by hand and sweeping it, not by any run of the check itself.
+constexpr const char *StashSuffix = ".x3-stashed";
+
+// Set while a plant is in the ground, for the signal handler. Raw paths
+// rather than std::string because a handler may only call
+// async-signal-safe things, and that rules out allocating.
+char g_plantedTarget[4096];
+char g_plantedStash[4096];
+volatile sig_atomic_t g_planted = 0;
+
+// SIGINT and SIGTERM skip destructors, and a killed check would leave a
+// DIRECTORY where a track's audio should be. That is worse than an
+// ordinary failure: the stick then carries a defect this tool invented,
+// Library Health reports it as a real one, and the next run of this
+// check picks a different victim because the first no longer opens.
+//
+// rmdir(2) and rename(2) are both async-signal-safe, which is why the
+// plant is an EMPTY directory and the file is moved aside rather than
+// copied: undoing it needs exactly those two calls and no allocation.
+extern "C" void restoreOnSignal(int sig)
+{
+    if (g_planted) {
+        ::rmdir(g_plantedTarget);
+        ::rename(g_plantedStash, g_plantedTarget);
+        g_planted = 0;
+    }
+    ::signal(sig, SIG_DFL);
+    ::raise(sig);
+}
+
+// Damage left by a run that was killed before it could undo itself, on
+// this stick or any earlier one. Swept at startup rather than left for a
+// person to find: the alternative is a stick that fails Library Health
+// for a reason nobody can explain and that no code in Seabass caused.
+void sweepLeftovers(const fs::path &root)
+{
+    std::error_code ec;
+    if (!fs::exists(root, ec)) {
+        return;
+    }
+    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) {
+            break;
+        }
+        const fs::path stashed = it->path();
+        if (stashed.extension() != StashSuffix) {
+            continue;
+        }
+        // Drop the appended suffix, which gives the original name back
+        // including its extension.
+        const std::string full = stashed.string();
+        const fs::path original = full.substr(0, full.size() - std::strlen(StashSuffix));
+        std::cout << "  sweeping up after an interrupted run: " << original.filename().string() << "\n";
+        std::error_code undoEc;
+        if (fs::is_directory(original, undoEc)) {
+            fs::remove(original, undoEc);  // remove, not remove_all: it should be empty
+        }
+        fs::rename(stashed, original, undoEc);
+        if (undoEc) {
+            std::cout << "    WARNING: could not put it back: " << undoEc.message() << "\n";
+        }
+    }
+}
+
 struct Plant
 {
     fs::path target;
     fs::path stashed;
     bool planted = false;
+
+    void arm()
+    {
+        std::snprintf(g_plantedTarget, sizeof g_plantedTarget, "%s", target.string().c_str());
+        std::snprintf(g_plantedStash, sizeof g_plantedStash, "%s", stashed.string().c_str());
+        g_planted = 1;
+        planted = true;
+        ::signal(SIGINT, restoreOnSignal);
+        ::signal(SIGTERM, restoreOnSignal);
+    }
 
     void undo()
     {
@@ -127,6 +218,7 @@ struct Plant
         fs::remove_all(target, ec);
         fs::rename(stashed, target, ec);
         planted = false;
+        g_planted = 0;
         if (ec) {
             std::cout << "  WARNING: could not put " << target.string() << " back: " << ec.message() << "\n";
         }
@@ -147,6 +239,7 @@ int main(int argc, char **argv)
     Plant plant;
     bool ok = true;
     try {
+        sweepLeftovers(root);
         const std::vector<domain::Track> before = readTracks(root);
         std::cout << "read " << before.size() << " track(s) from " << root.string() << "\n";
 
@@ -167,11 +260,11 @@ int main(int argc, char **argv)
         }
 
         plant.target = victim->filePath;
-        plant.stashed = fs::path(victim->filePath).replace_extension(".x3-stashed");
+        plant.stashed = fs::path(victim->filePath + StashSuffix);
         std::cout << "planting a directory where a file should be:\n  " << plant.target.string() << "\n";
         fs::rename(plant.target, plant.stashed);
         fs::create_directory(plant.target);
-        plant.planted = true;
+        plant.arm();
 
         // The plant has to be a real failure or the rest proves nothing.
         if (opens(plant.target)) {
