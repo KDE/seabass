@@ -12,8 +12,35 @@ stages:
 - installer-test
 - secret-detection
 - deploy
+# `needs: []` on the checks below, and the reason is not speed.
+#
+# Stage order means every job in `test` waits for `build` to succeed.
+# linux:build sat in `build` and never once passed, so for the whole time
+# this lane has existed master has not had a red licence check and a red
+# security check -- it has had NO licence check and NO security check,
+# both stuck at `created`, along with the macOS build. The project was
+# not failing those gates, it was blind to them. The .gitlab-ci.yml
+# history already records this happening once before, when a `tags:` line
+# nothing answered to "took every other job of every pipeline down with
+# it, including the macOS build that was working".
+#
+# An empty `needs:` detaches a job from stage ordering entirely, so it
+# starts at once and answers for itself. These three check the SOURCE and
+# need nothing built: reuse lints file headers, and the two scanners read
+# the tree. Nothing they look at can be affected by whether the compiler
+# succeeded, so making them wait for it only ever loses information.
+#
+# Deliberately NOT applied to the packaging and deploy jobs: a package
+# built from a tree whose tests failed is exactly what stage order should
+# keep from being produced.
 sast:
   stage: test
+  needs: []
+semgrep-sast:
+  # The SAST template generates this as a concrete job; overriding `sast`
+  # above does not reach it, so it is detached by name too. Without this
+  # the security scan keeps waiting for a build it does not use.
+  needs: []
 include:
 - template: Security/SAST.gitlab-ci.yml
 - template: Security/Secret-Detection.gitlab-ci.yml
@@ -72,6 +99,9 @@ variables:
   SECRET_DETECTION_ENABLED: 'true'
 secret_detection:
   stage: secret-detection
+  # See the note above sast: this reads the source and must not be
+  # gated behind a build.
+  needs: []
 
 # REUSE 3.0 compliance, as the KDE licensing policy requires: every file
 # carries copyright and an SPDX licence identifier, and every licence used
@@ -79,6 +109,10 @@ secret_detection:
 # is the same one reuse.software publishes.
 reuse:
   stage: test
+  # See the note above sast. A licence check that only runs when the
+  # code compiles is a licence check that stops running exactly when
+  # someone is busy and likely to paste a file in without a header.
+  needs: []
   image:
     name: fsfe/reuse:latest
     entrypoint: [""]
