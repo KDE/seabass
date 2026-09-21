@@ -1111,7 +1111,35 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 "go untested in this build.")
             add_test(NAME seabass_qml_tests
                 COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
-            set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+            # The style has to be named here, and it has to be the one
+            # main.cpp names. The xcb branch above pins Basic; this
+            # branch pinned nothing, so on macOS -- which has no
+            # xvfb-run and therefore always lands here -- the suite ran
+            # under the NATIVE macOS style, which the app never uses.
+            #
+            # That is not a cosmetic difference. exportMaterialPalette()
+            # explains why: the macOS style refuses the background and
+            # contentItem overrides this app's controls are built on, and
+            # draws its own instead. So every control whose ground comes
+            # from Theme got the platform's ground, Theme's ink stayed
+            # dark, and the catalog popup measured as near-white text on
+            # a near-white field. It cost three sessions an evening,
+            # produced a screenshot of an unreadable page that was shown
+            # around as a shipping bug, and none of it was reachable from
+            # the application: 498 pass under Material, 498 under Basic,
+            # one fails under the native style nobody ships.
+            #
+            # Material rather than Basic, because Material is what
+            # main.cpp pins on macOS and the point is to test the
+            # configuration that ships. Only for Apple: Windows has its
+            # own (FluentWinUI3), and Linux deliberately leaves the style
+            # to KDE's platform integration, so naming one here would
+            # test something that machine never runs either.
+            if(APPLE)
+                set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Material;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+            else()
+                set(_seabass_qml_test_env "QT_QPA_PLATFORM=offscreen;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+            endif()
         endif()
         # MSVC only: the offscreen platform's font backend needs pointing
         # at real font files explicitly on Windows, unlike the "windows"
