@@ -332,8 +332,19 @@ TestCase {
                                            Math.round(origin.y + row.height / 2));
             const y0 = Math.floor(origin.y + 2), y1 = Math.ceil(origin.y + row.height - 2);
             const ink = pairInk(image, background, glyph, name, y0, y1);
+            // A row that painted nothing is almost always the popup
+            // being a separate window rather than an item in this scene,
+            // which is what happens under a desktop style: the grab sees
+            // the test's own window and the rows are not in it. ctest
+            // pins QT_QUICK_CONTROLS_STYLE=Basic for exactly that reason
+            // (see CMakeLists.txt), so a direct run of this binary can
+            // fail here where the suite passes. Say so rather than
+            // leaving the next reader to work it out.
             verify(ink.glyph.top >= 0 && ink.capital.top >= 0,
-                   name.text + ": nothing was painted in the row");
+                   name.text + ": nothing was painted in the row, which usually means the popup is a separate "
+                   + "window in the active style rather than an item in this scene. ctest pins "
+                   + "QT_QUICK_CONTROLS_STYLE=Basic; a direct run of this binary inherits the desktop's style "
+                   + "and can fail here where the suite passes");
             const off = ink.glyphCentroid - ink.capitalCentroid;
             verify(Math.abs(off) <= testCase.allowedOffset,
                    name.text + ": the row's glyph is " + off + " px off its name");
