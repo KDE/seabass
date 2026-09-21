@@ -714,7 +714,30 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
 
                 std::error_code relError;
                 fs::path relative = fs::relative(track.filePath, directory, relError);
-                snapshot.relative_path = relError ? track.filePath : relative.generic_string();
+                // fs::relative() does NOT report "no relation possible" as
+                // an error: per the standard it is lexically_relative()
+                // underneath, which returns an empty path when the two
+                // paths share no root -- different Windows drives, here,
+                // since this project's own rig creates the library on C:
+                // from tracks read off a stick's own drive letter.
+                // relError stays clear either way, confirmed directly
+                // (its message on this run: "De bewerking is voltooid",
+                // Dutch for "the operation completed successfully"), so
+                // checking it was never going to catch this; emptiness is
+                // the only signal fs::relative() actually gives.
+                //
+                // The fallback needs generic_string() too, not just the
+                // usual case: track.filePath is a platform-native
+                // absolute path -- backslashes on Windows -- and
+                // libdjinterop's own get_filename() only ever splits on
+                // '/' (its own TODO says as much), so a raw backslash
+                // path reads as one filename with no directory in it at
+                // all, and if that "filename" happens to carry no dot
+                // either, create_track() throws "cannot auto-determine
+                // file type based on extension" for a track whose
+                // extension was never in question.
+                snapshot.relative_path =
+                    relative.empty() ? fs::path(track.filePath).generic_string() : relative.generic_string();
 
                 // Simple, approximate two-point beatgrid: assumes the track
                 // starts exactly on a downbeat at sample 0, then a second
