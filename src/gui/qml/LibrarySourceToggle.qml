@@ -309,6 +309,26 @@ ComboBox {
         ToolTip.text: modelData.tooltip
         ToolTip.delay: 400
 
+        // The row paints its own ground, for the same reason the field
+        // below carries an explicit background: what the style draws
+        // there comes from the PLATFORM's palette, while every colour in
+        // this app comes from Theme, which is an always-dark palette
+        // unless the user asks for the system one. Where the two
+        // disagree the text is drawn on a surface Theme never chose.
+        //
+        // macOS is where that showed: Theme's #e8ecef text on the
+        // style's white popup, fourteen levels of contrast on the tinted
+        // row and twenty on the plain ones. Not a pixel-threshold
+        // argument -- a white list with three ghost-grey labels on it,
+        // unreadable, which anybody running Seabass on a Mac in light
+        // appearance would see. The test that found it was measuring
+        // where the glyph sat, and could not see the ink at all.
+        background: Rectangle {
+            color: entryDelegate.highlighted
+                   ? Theme.rowPressed
+                   : (entryDelegate.hovered ? Theme.rowHover : Theme.surface)
+        }
+
         contentItem: RowLayout {
             spacing: 4
             CatalogGlyph {
