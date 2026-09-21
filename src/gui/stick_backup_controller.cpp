@@ -7,6 +7,7 @@
 
 #include "domain/library_fingerprint.hpp"
 #include "gui/library_fingerprint_reader.hpp"
+#include "application/find_stick_archive.hpp"
 #include "gui/stick_backup_paths.hpp"
 #include "gui/future_result.hpp"
 
@@ -71,10 +72,14 @@ QString phaseName(BackupProgress::Phase phase)
 
 }  // namespace
 
+
 struct StickBackupController::PreviewResult
 {
     BackupPreview preview;
     QString stickIdentifier;
+    // Set when this stick's backup was found in the folder under a name
+    // other than the one the page assumed. See findStickArchive().
+    QString adoptedArchivePath;
     double readMbps = 0.0;  // last measured audio read speed for this stick, 0 = unknown
     QString blockedBy;
     bool stickReadOnly = false;
@@ -180,6 +185,19 @@ void StickBackupController::refresh()
             options.stickIdentifier = info.stickIdentifier;
         }
         result->stickIdentifier = QString::fromStdString(options.stickIdentifier);
+        // Only when the page's guess is not there: an archive that exists
+        // at the expected path is this stick's by construction, and
+        // opening every file in the folder to confirm it would cost a
+        // read of each on every page open.
+        std::error_code archiveEc;
+        if (!fs::exists(options.archivePath, archiveEc)) {
+            const fs::path found = application::findStickArchive(
+                options.archivePath.parent_path(), options.stickIdentifier, label.toStdString());
+            if (!found.empty()) {
+                options.archivePath = found;
+                result->adoptedArchivePath = QString::fromStdString(found.string());
+            }
+        }
         result->preview = BackupStick::preview(options);
         // The newest streaming rate USB Stick Performance recorded for
         // this stick on this computer, if it ever measured it; otherwise
@@ -212,6 +230,13 @@ void StickBackupController::onPreviewFinished()
     }
     if (result) {
         m_stickIdentifier = result->stickIdentifier;
+        // The preview found this stick's backup under a name the page did
+        // not guess. Take it, or every later action -- update, changelog,
+        // rename, replace -- keeps addressing the file that is not there.
+        if (!result->adoptedArchivePath.isEmpty() && result->adoptedArchivePath != m_archivePath) {
+            m_archivePath = result->adoptedArchivePath;
+            emit configuredChanged();
+        }
         const BackupPreview &p = result->preview;
         QVariantMap last;
         last["exists"] = p.archiveExists;

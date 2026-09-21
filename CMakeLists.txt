@@ -2329,6 +2329,12 @@ target_include_directories(manage_stick_backups_test PRIVATE src)
 target_link_libraries(manage_stick_backups_test PRIVATE seabass_core)
 add_test(NAME manage_stick_backups_test COMMAND manage_stick_backups_test)
 
+# The archive-path bug: a named backup has to be findable again.
+add_executable(find_stick_archive_test tests/find_stick_archive_test.cpp)
+target_include_directories(find_stick_archive_test PRIVATE src)
+target_link_libraries(find_stick_archive_test PRIVATE seabass_core)
+add_test(NAME find_stick_archive_test COMMAND find_stick_archive_test)
+
 # Reads the committed fixture's real catalogs, so it needs the source dir
 # and the two catalog readers -- a fingerprint over filler bytes would
 # agree with itself whatever the code did.
