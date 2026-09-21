@@ -92,6 +92,52 @@ Before anything is published, on each platform:
 4. On Linux and Windows, run the shakedown rig against the packaged build
    if the release is a stable one.
 
+## A universal macOS package
+
+Craft builds one architecture per root and has no universal mode, so the
+two packages are built separately and merged afterwards. Both steps run on
+a Mac -- `lipo` has a Linux equivalent in `llvm-lipo`, and `rcodesign` can
+sign there, but the `.dmg` itself needs `hdiutil`, and both halves are
+produced on Macs anyway -- while being scriptable from the Linux publisher
+over ssh: each script is non-interactive and exits non-zero on any fault.
+
+```sh
+# on the Mac, once per architecture, from the same source tree
+craft -i --src-dir <worktree> seabass && craft --src-dir <worktree> --package seabass
+
+# merge the two PACKAGED bundles (not <root>/Applications/KDE/seabass.app,
+# which is a four-file stub -- Qt is only inside the bundle after --package)
+tools/macos-universal-dmg.sh \
+    <arm64 root>/build/qt-apps/seabass/archive/Applications/KDE/seabass.app \
+    <x86_64 root>/build/qt-apps/seabass/archive/Applications/KDE/seabass.app \
+    seabass-<version>_<channel>_macos.dmg
+
+# then prove it, against a stick or a restored reference carrying all three
+# catalogs -- it reads once per architecture and compares the answers
+tools/macos-verify-dmg.sh seabass-<version>_<channel>_macos.dmg <stick or folder>
+```
+
+Three things the merge is not allowed to get wrong, each of which it
+checks rather than assumes:
+
+- **The two Craft roots must hold the same package versions.** Roots whose
+  clones of `craft-blueprints-kde` are days apart produce bundles that
+  differ in ways `lipo` cannot see: libvpx 1.15.2 against 1.16.0 changed
+  the soname and showed up as a file on one side only, but ffmpeg 8.1.1-4
+  against 8.1.1-6 kept every filename and would have merged one ffmpeg per
+  slice silently. The script diffs both roots' `install.db` and refuses on
+  any difference; `git pull` in the older root's blueprint clone, then
+  `craft --update <package>`, then re-package.
+- **Every framework's `_CodeSignature/CodeResources` hashes its binary**,
+  so it is wrong for a merged binary whichever side it came from. They are
+  regenerated innermost-first, then the bundle is ad-hoc signed and
+  verified `--deep --strict`. Signing and notarisation stay CI's.
+- **A universal binary can carry an architecture it cannot run.** Both
+  slices are executed before the `.dmg` is built, and the verify script
+  reads a real library once per architecture and compares the counts: a
+  cross-built SQLCipher that fails to decrypt is the failure nobody would
+  notice until a user opened a Denon stick.
+
 ## Grave bugs
 
 A release with a data-loss bug is not published. If one is found after
@@ -118,8 +164,14 @@ the download directory.
   downloading it can read a dependency list. Not good enough for a stable
   release aimed at DJs; that needs a self-contained build, and it is not
   written yet.
-- **macOS is arm64 only.** Intel Macs have no package. `docs/ci.md` has
-  why.
+- **The macOS package has to be universal, and CI does not merge it yet.**
+  Rosetta translates x86_64 to ARM and never the reverse, so an arm64-only
+  `.dmg` mounts on an Intel Mac and refuses to launch -- and
+  `publish-release.py` has one macOS slot, which is the right shape only if
+  what goes in it carries both architectures. `tools/macos-universal-dmg.sh`
+  merges an arm64 and an x86_64 Craft bundle into one package; see "A
+  universal macOS package" above. Until the merge runs in CI, the published
+  `.dmg` is not the build CI tested, and the release notes have to say so.
 - **The release text.** `publish-release.py` proposes one from the
   commits on the tag, grouped and trimmed, and will not publish until a
   person has edited it. A changelog nobody read is a changelog nobody
