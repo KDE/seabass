@@ -22,7 +22,15 @@ Rectangle {
     property bool isCurrent: false
     signal picked()
 
-    width: ListView.view ? ListView.view.width : implicitWidth
+    // The same fallback the other two pickers needed. This delegate is
+    // used inside a ComboBox popup on the Matching page as well as in a
+    // plain list, and in the popup the rows are built through a
+    // DelegateModel, where the ListView.view attachment comes back null.
+    // implicitWidth for a row like this is nearly nothing, so the row
+    // paints and cannot be clicked -- which is what the playlist picker
+    // was doing under org.kde.desktop until tonight.
+    width: ListView.view ? ListView.view.width
+                         : (parent ? parent.width : implicitWidth)
     height: 32
 
     color: mouseArea.pressed ? Theme.rowPressed
