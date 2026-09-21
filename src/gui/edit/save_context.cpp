@@ -15,7 +15,6 @@
 
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
 
-#include "infrastructure/backup/stick_write_lock.hpp"
 
 #include "infrastructure/backup/stick_space.hpp"
 
@@ -108,11 +107,17 @@ std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
     }
 
     try {
-        // The same lock the Backups page takes for every action, so a
-        // record cannot be deleted out from under another session's
-        // restore or listing.
-        infrastructure::backup::StickWriteLock lock(
-            infrastructure::backup::backupDirForStickRoot(stickRoot()) + "/.write.lock");
+        // No lock is taken here. The stick's write lock is already held,
+        // by whoever started this save (LibraryEditSession takes it around
+        // the whole save loop), and StickWriteLock is flock() on an open
+        // file description: deliberately NOT reentrant, so a second
+        // acquisition from inside the first one throws StickBusyError
+        // exactly as a second session would. Taking it here therefore did
+        // not protect the records, it guaranteed this never ran -- the
+        // catch below turned every call into a silent "released 0 bytes".
+        // The caller's lock is the stronger guarantee and covers the whole
+        // save, this tidy-up included.
+        //
         // Every record this save made, not only the newest: together they
         // are the undo the user has just been offered.
         std::set<std::string> thisSave;
@@ -229,13 +234,12 @@ void SaveContext::discardBackupsTakenThisSave()
     // failure. Anything escaping would take the progress bar and the
     // summary with it.
     try {
-        // The same lock the Backups page and releaseAutomaticBackupsIfTight
-        // take, so a record cannot be deleted out from under another
-        // session's restore or listing.
-        std::optional<infrastructure::backup::StickWriteLock> lock;
-        if (hasStick()) {
-            lock.emplace(infrastructure::backup::backupDirForStickRoot(stickRoot()) + "/.write.lock");
-        }
+        // No lock is taken here, for the reason spelled out in
+        // releaseAutomaticBackupsIfTight(): the save already holds the
+        // stick's write lock and flock() does not nest, so asking for it
+        // again threw StickBusyError on every single save. Round 4's
+        // leftover record was not a missing call -- this function ran,
+        // failed on its own lock, and said so only in the stick log.
         int removed = 0;
         std::vector<std::string> stayed;
         for (const auto &[label, id] : m_recordByLabel) {

@@ -41,6 +41,13 @@ namespace seabass::gui
 // Everything one Save shares across the changes it applies. Lives on the
 // worker thread for exactly one save loop; never touched by the GUI.
 //
+// PRECONDITION: the caller holds the stick's write lock for the whole
+// lifetime of this object (LibraryEditSession::save() takes it around the
+// save loop). Nothing in here takes that lock itself, and nothing in here
+// may: StickWriteLock is flock() on an open file description and does not
+// nest, so a second acquisition from inside the save throws StickBusyError
+// exactly as a competing session would.
+//
 // - backupOnce(): the pre-write backup of a file, made at most once per
 //   save however many changes touch it. All files backed up under one
 //   label go into ONE backup record per save (a cue removed from 200
