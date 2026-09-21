@@ -646,9 +646,11 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     BackupManifest &manifest = impl->manifest;
     manifest.stickIdentifier = options.stickIdentifier;
     manifest.stickLabel = options.stickLabel;
-    manifest.libraryFingerprint = options.libraryFingerprint.empty() && opened.manifest
-                                      ? opened.manifest->libraryFingerprint
-                                      : options.libraryFingerprint;
+    // Starts as whatever the previous generation recorded. A run that
+    // completes replaces it further down, once the files are captured; a
+    // run that is cancelled keeps this, because a partial archive does
+    // not hold the library its header would otherwise claim.
+    manifest.libraryFingerprint = opened.manifest ? opened.manifest->libraryFingerprint : std::string();
     // Sticky unless this run says otherwise: updating a backup must not
     // silently drop the name it was given when it was created, and every
     // caller that does not care about names leaves this unset. An empty
@@ -858,6 +860,33 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         status = BackupStatus::PartialSkipped;
     }
     manifest.status = status;
+    // Read here, with every file already captured, and only for a backup
+    // that holds the whole library. Taken any earlier it would describe
+    // the catalogs as some caller last saw them rather than as this
+    // archive stores them, which is the gap that let a header claim 143
+    // tracks over catalogs holding 156. A partial keeps the previous
+    // generation's, set when the manifest was built: a half-copied stick
+    // has no library identity of its own to record.
+    //
+    // Failure is not fatal and not silent. The fingerprint is an
+    // advisory number -- it decides what the advisor says, never what is
+    // written -- so a backup that copied every byte must not be thrown
+    // away because a catalog would not parse. It leaves the previous
+    // value and says so in the outcome.
+    if (status == BackupStatus::Complete && options.readLibraryFingerprint) {
+        try {
+            if (const std::string fresh = options.readLibraryFingerprint(); !fresh.empty()) {
+                manifest.libraryFingerprint = fresh;
+            } else {
+                outcome.warnings.push_back(
+                    "the library's catalogs could not be read after the copy, so this backup keeps the previous "
+                    "fingerprint and the stick list may not recognise it");
+            }
+        } catch (const std::exception &e) {
+            outcome.warnings.push_back(std::string("the library fingerprint could not be taken after the copy (")
+                                       + e.what() + "), so this backup keeps the previous one");
+        }
+    }
     manifest.createdAtUnix = nowUnix();
     recordGeneration(manifest, outcome);
     report(BackupProgress::Phase::Writing);

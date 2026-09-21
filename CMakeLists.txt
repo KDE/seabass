@@ -2309,6 +2309,25 @@ target_include_directories(manage_stick_backups_test PRIVATE src)
 target_link_libraries(manage_stick_backups_test PRIVATE seabass_core)
 add_test(NAME manage_stick_backups_test COMMAND manage_stick_backups_test)
 
+# Reads the committed fixture's real catalogs, so it needs the source dir
+# and the two catalog readers -- a fingerprint over filler bytes would
+# agree with itself whatever the code did.
+add_executable(backup_fingerprint_describes_archive_test tests/backup_fingerprint_describes_archive_test.cpp)
+target_include_directories(backup_fingerprint_describes_archive_test PRIVATE src)
+target_link_libraries(backup_fingerprint_describes_archive_test PRIVATE seabass_core)
+target_compile_definitions(backup_fingerprint_describes_archive_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME backup_fingerprint_describes_archive_test COMMAND backup_fingerprint_describes_archive_test)
+# "integration", with library_backup_roundtrip_test (127 s) and the other
+# fixture-backed ones: this backs up 2725 real tracks, restores them and
+# reads the catalogs on both sides, so it costs minutes rather than
+# milliseconds. Deliberately not trimmed to fit the fast lane -- reading
+# a SMALL library would not exercise the fingerprint, and reading the
+# source stick instead of the restored archive would pass however wrong
+# the header was. The label is what that cost is for: skipped on an
+# ordinary push, run on a schedule and on every tag, which is where a
+# backup's correctness has to hold.
+set_tests_properties(backup_fingerprint_describes_archive_test PROPERTIES LABELS "integration")
+
 add_executable(backup_stick_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
     src/application/ports/progress_reporter.cpp

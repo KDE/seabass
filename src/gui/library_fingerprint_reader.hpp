@@ -23,4 +23,12 @@ namespace seabass::gui
 // library" means.
 std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &rekordboxPath, const QString &enginePath);
 
+// The same, but guaranteed to have read the catalogs rather than a cached
+// copy of them. For the one caller whose answer is written down and
+// compared against later -- a backup's manifest header -- where a stale
+// number is indistinguishable from a true one and turns into "this is a
+// different library" about a stick that never changed.
+std::optional<domain::LibraryFingerprint> readLibraryFingerprintUncached(const QString &rekordboxPath,
+                                                                          const QString &enginePath);
+
 }  // namespace seabass::gui

@@ -47,9 +47,25 @@ struct BackupStickOptions
     std::filesystem::path archivePath;  // the journal lives at archivePath + ".journal"
     std::string stickIdentifier;
     std::string stickLabel;
-    // domain::LibraryFingerprint::serialize() of the live library, stored
-    // in the manifest header; empty keeps the previous backup's.
-    std::string libraryFingerprint;
+    // How to read the library's content identity, as
+    // domain::LibraryFingerprint::serialize(). Called by the backup ITSELF
+    // once every file has been captured, and only for a backup that
+    // completed; an empty result keeps the previous backup's.
+    //
+    // A callback rather than a plain string, and called late rather than
+    // supplied early, because the header has to describe the library this
+    // archive HOLDS. A caller that reads the catalogs at some earlier
+    // moment is describing whatever it saw then, and nothing afterwards
+    // ever checks the two against each other. That is not hypothetical:
+    // TESTRIG_ABC.zip records 143 tracks in its header while the catalogs
+    // stored beside it in the same archive fingerprint as 156, so a stick
+    // restored from that archive compares as a DIFFERENT library from the
+    // archive it came out of. Both sides say "v1", so nothing notices.
+    //
+    // Callers must read fresh here. Reading through a cache reintroduces
+    // exactly the gap this closes: the cache answers for the catalogs as
+    // they were, the archive holds them as they are.
+    std::function<std::string()> readLibraryFingerprint;
     // The stick is mounted read-only, i.e. damaged: the run still reads
     // everything it can, and the archive is marked as an emergency copy.
     bool sourceReadOnly = false;

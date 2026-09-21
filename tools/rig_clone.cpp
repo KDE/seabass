@@ -190,9 +190,12 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        if (const auto fingerprint = rig::fingerprintStick(source)) {
-            options.backup.libraryFingerprint = fingerprint->serialize();
-        }
+        // Read when the copy is done, not now: see
+        // BackupStickOptions::readLibraryFingerprint.
+        options.backup.readLibraryFingerprint = [&source]() -> std::string {
+            const auto fingerprint = rig::fingerprintStick(source);
+            return fingerprint ? fingerprint->serialize() : std::string();
+        };
 
         const TreeSnapshot before = cancelAtPercent > 0 ? snapshot(target) : TreeSnapshot{};
         application::CancellationToken cancel;

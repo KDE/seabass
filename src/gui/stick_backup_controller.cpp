@@ -399,9 +399,17 @@ void StickBackupController::backUp()
         // the stick list can later tell "this backup is of that library"
         // regardless of which stick (or format) it ends up on. Read-only,
         // and a failure here just leaves the previous fingerprint in place.
-        if (const auto fingerprint = readLibraryFingerprint(rekordboxPath, enginePath)) {
-            options.libraryFingerprint = fingerprint->serialize();
-        }
+        //
+        // Handed to the backup to call rather than read here: it takes it
+        // once the copy is done, so the header describes what the archive
+        // holds. Read FRESH, around the catalog cache, because the cache
+        // answers for the catalogs as it last saw them and the archive
+        // holds them as they are -- the two disagreeing is what put 143
+        // tracks in a header over catalogs holding 156.
+        options.readLibraryFingerprint = [rekordboxPath, enginePath]() -> std::string {
+            const auto fingerprint = readLibraryFingerprintUncached(rekordboxPath, enginePath);
+            return fingerprint ? fingerprint->serialize() : std::string();
+        };
         result->backup = std::make_shared<BackupStickOutcome>(BackupStick::execute(options));
         return result;
     }));

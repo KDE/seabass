@@ -238,9 +238,13 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        if (const auto fingerprint = rig::fingerprintStick(root)) {
-            options.libraryFingerprint = fingerprint->serialize();
-        }
+        // The backup takes this itself once the copy is done -- see
+        // BackupStickOptions::readLibraryFingerprint -- so the header
+        // describes what the archive holds.
+        options.readLibraryFingerprint = [&root]() -> std::string {
+            const auto fingerprint = rig::fingerprintStick(root);
+            return fingerprint ? fingerprint->serialize() : std::string();
+        };
         options.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
         int lastPhase = -1;
         int lastPercent = -1;

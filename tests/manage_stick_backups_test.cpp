@@ -45,7 +45,7 @@ fs::path backUp(const fs::path &root, const std::string &label, const std::strin
     options.archivePath = root / "Backups" / (label + ".zip");
     options.stickIdentifier = "uuid-" + label;
     options.stickLabel = label;
-    options.libraryFingerprint = fingerprint;
+    options.readLibraryFingerprint = [fingerprint] { return fingerprint; };
     const BackupStickOutcome outcome = BackupStick::execute(options);
     assert(outcome.status == BackupOutcomeStatus::Complete);
     return options.archivePath;

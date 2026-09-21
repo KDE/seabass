@@ -329,9 +329,14 @@ void CloneStickController::start(bool exact)
         }
         options.backup.stickIdentifier =
             infrastructure::system::readStickHardwareInfo(sourceRoot.toStdString(), sourceLabel.toStdString()).stickIdentifier;
-        if (const auto fingerprint = readLibraryFingerprint(rekordboxPath, enginePath)) {
-            options.backup.libraryFingerprint = fingerprint->serialize();
-        }
+        // Handed over rather than read now, and read fresh when it is:
+        // see BackupStickOptions::readLibraryFingerprint. A clone writes
+        // the same manifest header a backup does and has the same way of
+        // getting it wrong.
+        options.backup.readLibraryFingerprint = [rekordboxPath, enginePath]() -> std::string {
+            const auto fingerprint = readLibraryFingerprintUncached(rekordboxPath, enginePath);
+            return fingerprint ? fingerprint->serialize() : std::string();
+        };
         result->outcome = CloneStick::execute(options);
         return result;
     }));
