@@ -2565,6 +2565,12 @@ if(NOT WIN32)
     target_link_libraries(rig_fs_repair PRIVATE seabass_core)
 endif()
 
+# D1: formats a real stick, so it is built everywhere the rig runs but
+# only ever erases anything when handed --execute.
+add_executable(rig_format tools/rig_format.cpp)
+target_include_directories(rig_format PRIVATE src)
+target_link_libraries(rig_format PRIVATE seabass_core)
+
 add_executable(rig_compact tools/rig_compact.cpp)
 target_include_directories(rig_compact PRIVATE src)
 target_link_libraries(rig_compact PRIVATE seabass_core)

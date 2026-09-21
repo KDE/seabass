@@ -181,6 +181,26 @@ stick_device() {  # <mount point>
     fi
 }
 
+# What filesystem a mounted stick actually carries, in the words
+# rig_format takes ("fat32" or "exfat"). Read rather than assumed: D2
+# formats a stick back to what it already was, and a round that guessed
+# would hand a 128 GB stick FAT32 and be refused by the use case's own
+# size ceiling -- or worse, succeed and hand the next round a stick the
+# references no longer fit on.
+stick_fstype() {  # <mount point>
+    local raw=""
+    if [ "$rig_os" = "Darwin" ]; then
+        raw="$(diskutil info "$1" 2>/dev/null | awk -F': *' '/^ *Type \(Bundle\):/ {print $2; exit}')"
+    else
+        raw="$(findmnt -no FSTYPE "$1" 2>/dev/null)"
+    fi
+    case "$(printf '%s' "$raw" | tr 'A-Z' 'a-z')" in
+        *exfat*) echo exfat ;;
+        *msdos*|*vfat*|*fat32*|*fat*) echo fat32 ;;
+        *) echo "" ;;
+    esac
+}
+
 unmount_device() {  # <device>
     if [ "$rig_os" = "Darwin" ]; then
         diskutil unmount "$1" >/dev/null 2>&1

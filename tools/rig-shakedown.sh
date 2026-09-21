@@ -126,7 +126,7 @@ ran=""
 # into $RIG_PARTS (tools/rig-parts.sh, tools/rig_parts.hpp) and those
 # lines go into the summary in place of its own single verdict, so the
 # board can say which test failed instead of reddening all of them.
-RIG_BUNDLES="R1-R3-read-A R1-R3-read-B R2-R5-pages W1-W3-W4-F1-F2-F3-live W2-W5-W6-edits FB1-FB2-backup-A C1-C5-backup-usb-stick"
+RIG_BUNDLES="R1-R3-read-A R1-R3-read-B R2-R5-pages W1-W3-W4-F1-F2-F3-live W2-W5-W6-edits FB1-FB2-backup-A C1-C5-backup-usb-stick E1-create-engine-library"
 
 check() {
     local name="$1"; shift
@@ -398,6 +398,39 @@ live_pages() {
     # leave the stick changed is a different fault from any of them
     # failing, and it has its own row now.
     if unchanged_catalogs "$B"; then rig_part pages-wrote-nothing PASS; else rig_part pages-wrote-nothing FAIL; rc=1; fi
+    return $rc
+}
+
+# E1: Create Engine Library, the one feature a player has already called
+# corrupt on us (a Prime 4 rejected the first library it was ever given,
+# RV2, 2026-09-17) and the one with no rig row until now.
+#
+# make_engine_library reads the stick's rekordbox export the way the app
+# does, runs the creator into a folder, and then reads the result back
+# with this project's own Engine reader, so a library that cannot be read
+# fails here instead of on the player. Generation 3 is what current Denon
+# hardware writes for itself; the tool takes 1 and 2 for the firmware
+# matrix nobody has verified yet, and a round that wants one passes
+# RIG_ENGINE_GENERATION.
+#
+# Into $out, never onto the stick: creating a candidate library must not
+# touch the library it was read from, and the second row says whether it
+# did. That is a different fault from the creation failing and it gets its
+# own answer, the same way live_pages reports pages-wrote-nothing.
+create_engine_library() {
+    local dir="$out/engine-library"
+    # A previous round's candidate would make the creator refuse, and a
+    # refusal is not the answer this check is asking for.
+    rm -rf "$dir"
+    local rc=0
+    "$build/make_engine_library" "$B" "$dir" "${RIG_ENGINE_GENERATION:-3}" || rc=1
+    rig_part E1-engine-library-created "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"
+    if unchanged_catalogs "$B"; then
+        rig_part engine-creation-wrote-nothing PASS
+    else
+        rig_part engine-creation-wrote-nothing FAIL
+        rc=1
+    fi
     return $rc
 }
 
@@ -812,6 +845,7 @@ check R2-R5-pages live_pages
 check R4-sync-dry-run cli_sync_dry_run
 check R7-read-only-writes-nothing read_only_writes_nothing
 check R6-catalogs-after-reads bash -c "grep -F '$A/' '$out/catalog-baseline.txt' | sha256sum -c && grep -F '$B/' '$out/catalog-baseline.txt' | sha256sum -c"
+check E1-create-engine-library create_engine_library
 
 # ---- edits -----------------------------------------------------------
 check W1-W3-W4-F1-F2-F3-live live_edit_mode
@@ -902,6 +936,45 @@ check X1-references-unchanged references_unchanged
 # S3 again, at the end: the three checks before it prove nothing about the
 # thirty that followed.
 check X4-everyday-profile-untouched sandbox_profile_still_clean
+# ---- Format USB Stick ------------------------------------------------
+#
+# The most destructive thing this app does, and until now the only write
+# path with no rig row at all. It sits here, after X1/X2 have already
+# said both sticks are back at their references, because a format is the
+# one check whose subject does not survive it: the partition table goes,
+# the filesystem UUID changes, and on a stick whose label decides its
+# mount point the path every earlier check used would change too. Nothing
+# may depend on stick A after this point.
+#
+# D1 runs every round. It detects the stick through the app's own
+# RemovableMediaLocator, resolves the whole disk behind the partition,
+# and proves all four refusals -- no such drive, no whole-disk path, over
+# the capacity ceiling, a reference's own directory -- without erasing
+# anything. That is the half a round can afford unconditionally, and it
+# is a real row: a locator that stops resolving wholeDiskPath fails here.
+#
+# D2 is the format itself and only runs with RIG_FORMAT_EXECUTE set. It
+# formats stick A back to the filesystem and label it already had (read,
+# never assumed: see stick_fstype) and then restores it, which costs a
+# full restore on top of the round. A round that leaves it off says so
+# in the log and writes no result for it at all, so the board cannot keep
+# a green D2 from whenever it last ran.
+check D1-format-preflight "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a"
+if [ -n "${RIG_FORMAT_EXECUTE:-}" ]; then
+    check D2-format-stick-A "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a" --execute
+    # Whatever D2 decided: a stick left empty is worse than a failed
+    # format, and the next round starts from the references.
+    check D2-restore-A-after-format "$build/rig_restore" "$refA" "$A" --execute
+else
+    # Deliberately no summary line. The recorder takes PASS or FAIL and
+    # nothing else, so a third word here would be dropped on the floor
+    # and the board would keep whatever it last said about D2 -- the
+    # exact "goes on reading green" failure this rig is built against.
+    # D2 is a by-hand row instead, like P1 and P3: set by the person who
+    # ran a format round, left alone by every round that did not.
+    echo "D2 not run: RIG_FORMAT_EXECUTE is unset, so nothing was erased"
+fi
+
 # Last, as its own comment promises: the longest test there is, run once
 # everything that touches a stick has finished with it. It needs no stick
 # and nothing needs it, so a round loses nothing by ending here.
