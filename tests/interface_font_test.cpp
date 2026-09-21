@@ -23,6 +23,7 @@
 
 #include <QFont>
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QGuiApplication>
 #include <QRawFont>
 #include <QString>
@@ -62,6 +63,16 @@ int main(int argc, char **argv)
     // be the symbol subset, whose whole coverage is three shapes.
     assert(font.family() != QStringLiteral("Seabass Symbols"));
     std::cout << "case 3 (it is not the bundled symbol subset) OK\n";
+
+    // The family must be CONCRETE. A generic name is resolved afresh
+    // every time it is used, and this app registers a three-glyph symbol
+    // font of its own the moment the QML engine starts -- after which
+    // Windows resolved "Sans Serif" to that subset and every label in the
+    // app lost its letters. The test for it is that asking for what
+    // interfaceFont() returns gets back the same family, which a generic
+    // name does not.
+    assert(QFontInfo(font).family().compare(font.family(), Qt::CaseInsensitive) == 0);
+    std::cout << "case 4 (the family is concrete, not a category) OK\n";
 
     std::cout << "all cases passed\n";
     return 0;

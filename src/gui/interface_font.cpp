@@ -5,6 +5,7 @@
 #include "gui/interface_font.hpp"
 
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QRawFont>
 #include <QString>
 #include <QStringList>
@@ -57,25 +58,51 @@ bool drawsLatin(const QFont &font)
     return true;
 }
 
+// The family a request actually resolves to, right now. A GENERIC name
+// -- "Sans Serif" is what Windows hands back -- is resolved afresh every
+// time it is used, and what it resolves to changes the moment this app
+// registers a font of its own. Theme loads a three-glyph symbol subset
+// through a FontLoader as soon as the QML engine starts, which is after
+// this runs, and Windows then resolved "Sans Serif" to that subset:
+// every label asking for the app font and being handed a face with no
+// Latin coverage at all.
+//
+// Measured rather than reasoned. On Windows the app font read "Sans
+// Serif" from the very first test in the process, before any failing
+// one, and which face it resolved to differed BETWEEN PROCESS LAUNCHES
+// of the same binary: "Segoe UI Variable" in one run, the symbol subset
+// in the next two, same commit and same environment. A name that can
+// mean two things is not a choice, so the concrete family is pinned
+// here, while the answer is still the right one.
+QFont pinnedToConcreteFamily(QFont font)
+{
+    const QString resolved = QFontInfo(font).family();
+    if (!resolved.isEmpty()) {
+        font.setFamily(resolved);
+    }
+    return font;
+}
+
 }  // namespace
 
 QFont interfaceFont()
 {
     QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
     if (drawsLatin(font)) {
-        return font;
+        return pinnedToConcreteFamily(font);
     }
 
     for (const QString &candidate : fallbackFamilies()) {
         QFont trial = font;
         trial.setFamily(candidate);
         if (drawsLatin(trial)) {
-            return trial;
+            return pinnedToConcreteFamily(trial);
         }
     }
 
     // Nothing here can draw a letter: keep what the platform said rather
-    // than inventing a name. A font database in that state is a problem
+    // than inventing a name. Not pinned either -- pinning a family that
+    // cannot draw would only make the wrong answer permanent. A font database in that state is a problem
     // this function cannot fix, and pretending otherwise would hide it.
     return font;
 }
