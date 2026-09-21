@@ -1160,6 +1160,39 @@ if(SEABASS_GUI AND Qt6_FOUND)
         endif()
         set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT "${_seabass_qml_test_env}")
 
+        # The same suite again, under the style the Linux build actually
+        # starts with. The pinned lane above compares pixels like with
+        # like across machines; this one answers a different question --
+        # does the program a Linux user runs behave -- and the two
+        # answers have already differed. Under org.kde.desktop the
+        # playlist picker's rows came out zero wide and could not be
+        # clicked at all, three pages failed to instantiate on a
+        # TypeError thrown inside the style's own ComboBox, and none of
+        # it was visible from the pinned lane. That is what seabass#18
+        # asked for and it stayed open for months because nobody had a
+        # lane to run it in.
+        #
+        # Registered only where the style is installed, so a container
+        # without kf6-qqc2-desktop-style skips the lane rather than
+        # failing it, and it takes the same xvfb lock as the others.
+        if(SEABASS_XVFB_RUN)
+            find_path(SEABASS_KDE_STYLE_QMLDIR "org/kde/desktop/qmldir"
+                HINTS ${QT6_INSTALL_PREFIX}/${QT6_INSTALL_QML} /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/qt6/qml
+                      /usr/lib/qt6/qml
+                NO_CACHE)
+            if(SEABASS_KDE_STYLE_QMLDIR)
+                add_test(NAME seabass_qml_desktop_style_tests
+                    COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
+                        $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
+                set_tests_properties(seabass_qml_desktop_style_tests PROPERTIES
+                    ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config"
+                    RESOURCE_LOCK xvfb)
+            else()
+                message(STATUS "org.kde.desktop not found: the desktop-style QML lane is not registered. "
+                    "Install kf6-qqc2-desktop-style to run the suite under the style the Linux build ships.")
+            endif()
+        endif()
+
         # What a shader draws, pixel by pixel. Same display as the suite
         # above, kept as its own check because these read back real
         # pixels and are the slowest of the lot.
