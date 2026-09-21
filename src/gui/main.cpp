@@ -10,6 +10,7 @@
 #include <QStyleHints>
 #include <QThreadPool>
 
+#include "gui/controls_style.hpp"
 #include "gui/interface_font.hpp"
 #include "gui/seabass_settings.hpp"
 
@@ -103,15 +104,10 @@ bool exportMaterialPalette()
     // them and honours the palette exported above; Fusion was tried and
     // drew light pages from the system palette around the app's dark
     // cards. Material is also what tests/qml's screenshot mode renders.
-#ifdef Q_OS_WIN
-    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
-        qputenv("QT_QUICK_CONTROLS_STYLE", "FluentWinUI3");
-    }
-#elif defined(Q_OS_MACOS)
-    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
-        qputenv("QT_QUICK_CONTROLS_STYLE", "Material");
-    }
-#endif
+    // Moved to gui/controls_style.hpp so the QML harness can make the
+    // same choice: a suite running under a style the app replaces before
+    // it draws anything is testing a different program.
+    seabass::gui::applyDefaultControlsStyle();
 
     return useSystemTheme;
 }

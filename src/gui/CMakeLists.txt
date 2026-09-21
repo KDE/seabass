@@ -204,6 +204,8 @@ set(SEABASS_GUI_SOURCES
     settings_controller.cpp
     app_settings_controller.hpp
     app_settings_controller.cpp
+    controls_style.hpp
+    controls_style.cpp
     interface_font.hpp
     interface_font.cpp
     update_decision.hpp

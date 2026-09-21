@@ -26,8 +26,12 @@ namespace seabass::gui
 // platform plugin and does NOT answer under the offscreen one, which is
 // what the whole test suite runs on, so asking the platform is necessary
 // and not sufficient. The rule here is the one thing that holds in both:
-// the family must be one the font database actually lists. A name that
-// is merely a category is not a font.
+// the face the font resolves to has to be able to draw a letter.
+//
+// Deliberately NOT "the family must be one the database lists", which
+// this tried first: macOS's own interface font is ".AppleSystemUIFont",
+// which families() does not list, so that rule discarded the right font
+// and changed every metric in the app.
 QFont interfaceFont();
 
 }  // namespace seabass::gui

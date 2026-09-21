@@ -5,6 +5,8 @@
 #include "gui/interface_font.hpp"
 
 #include <QFontDatabase>
+#include <QRawFont>
+#include <QString>
 #include <QStringList>
 
 namespace seabass::gui
@@ -30,25 +32,50 @@ const QStringList &fallbackFamilies()
     return families;
 }
 
+// Whether the face a font actually resolves to can draw the interface.
+// Not whether the family is LISTED, which was the first rule here and
+// was wrong: macOS's own interface font is ".AppleSystemUIFont", which
+// QFontDatabase::families() deliberately does not list, so that rule
+// threw away a perfectly good platform font and replaced it with
+// Helvetica Neue. Different metrics, different elision, and a page test
+// that had been green went red -- caught on macOS before this landed.
+//
+// Coverage is the property that actually matters, and it is what fails
+// in the case this exists for: the three-glyph symbol subset resolves,
+// is a real face, and cannot draw a letter.
+bool drawsLatin(const QFont &font)
+{
+    const QRawFont face = QRawFont::fromFont(font);
+    if (!face.isValid()) {
+        return false;
+    }
+    for (const QChar c : QStringLiteral("EngineOS")) {
+        if (!face.supportsCharacter(c)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 QFont interfaceFont()
 {
     QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-    const QStringList available = QFontDatabase::families();
-    if (available.contains(font.family(), Qt::CaseInsensitive)) {
+    if (drawsLatin(font)) {
         return font;
     }
 
     for (const QString &candidate : fallbackFamilies()) {
-        if (available.contains(candidate, Qt::CaseInsensitive)) {
-            font.setFamily(candidate);
-            return font;
+        QFont trial = font;
+        trial.setFamily(candidate);
+        if (drawsLatin(trial)) {
+            return trial;
         }
     }
 
-    // Nothing recognised: keep what the platform said rather than
-    // inventing a name. A database with no families in it is a problem
+    // Nothing here can draw a letter: keep what the platform said rather
+    // than inventing a name. A font database in that state is a problem
     // this function cannot fix, and pretending otherwise would hide it.
     return font;
 }

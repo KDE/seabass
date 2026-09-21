@@ -45,8 +45,11 @@ int main(int argc, char **argv)
 
     assert(!font.family().isEmpty());
     assert(!families.isEmpty());
-    assert(families.contains(font.family(), Qt::CaseInsensitive));
-    std::cout << "case 1 (the family is one the font database lists) OK\n";
+    // Deliberately NOT "the family is one families() lists". macOS's own
+    // interface font is ".AppleSystemUIFont", which is hidden from that
+    // list, and asserting on it was what made an earlier version of this
+    // throw the platform's font away and change every metric in the app.
+    std::cout << "case 1 (a family was chosen, and the database is not empty) OK\n";
 
     const QRawFont face = QRawFont::fromFont(font);
     assert(face.isValid());

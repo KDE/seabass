@@ -9,6 +9,7 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
+#include "gui/controls_style.hpp"
 #include "gui/interface_font.hpp"
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
@@ -345,6 +346,11 @@ public slots:
         // first visible -- the Windows rig's labels asked for the
         // generic "Sans Serif" and were handed the bundled symbol
         // subset, which has no Latin coverage.
+        // The same style the app picks, for the same reason it picks
+        // it. ctest pins QT_QUICK_CONTROLS_STYLE on Linux and that still
+        // wins; where nothing is pinned, this is what ships.
+        seabass::gui::applyDefaultControlsStyle();
+
         QGuiApplication::setFont(seabass::gui::interfaceFont());
 
         // AppSettingsController, main.cpp's exportMaterialPalette() and
