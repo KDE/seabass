@@ -164,6 +164,14 @@ linux:build:
   image: ubuntu:24.04
   before_script:
     - apt-get update -qq
+    # unzip and p7zip-full are TEST dependencies, and installing them is
+    # the right answer rather than configuring them away:
+    # backup_archive_crossvalidation_test reads archives Seabass wrote
+    # using two implementations nobody here maintains. It is the check
+    # that would catch us writing a zip only Seabass can open, which is
+    # the one failure a backup format cannot afford. -DSEABASS_TESTS=OFF
+    # would silence it and empty this lane of its purpose.
+    #
     # ca-certificates is not optional and not obvious: the ubuntu:24.04
     # image ships none, apt itself does not need any (its sources are
     # plain http), and so the gap only shows up later, when CMake runs
@@ -178,7 +186,7 @@ linux:build:
         libsqlite3-dev zlib1g-dev libsqlcipher-dev libtag1-dev
         qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-svg-dev
         qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
-        xvfb
+        xvfb unzip p7zip-full
   script:
     # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
     # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
