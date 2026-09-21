@@ -204,8 +204,21 @@ craft_windows_qt6_x86_64:
       qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
       xvfb unzip 7zip libxkbcommon-dev
       qt6-base-private-dev qt6-declarative-private-dev
+      ccache
 
-linux:build:
+# One job, not two. It builds AND tests, and the reason is the 4.3 GB
+# `artifacts: paths: [build]` this used to carry: that artifact existed
+# for exactly one purpose, handing the built tree to a separate
+# linux:test in a fresh container. Uploading a full build directory to
+# do it costs more than rebuilding would, blows past artifact limits,
+# and is charged against the same one-hour budget the compile already
+# could not fit inside. Merged, the tree never has to move at all.
+#
+# The cost of merging, stated plainly: a red test leaves no build
+# behind to poke at. That is the right trade here -- the tree is
+# reproducible from the sha, and 4.3 GB is not worth moving to save a
+# rebuild -- but it is a real loss and not an oversight.
+linux:build-test:
   stage: build
   # No `tags:`. A bare `linux` tag matched no runner on Invent, so this
   # job sat pending until it timed out and failed with
@@ -216,13 +229,7 @@ linux:build:
   # `semgrep-sast` are untagged and have always run. Confirmed against
   # pipeline 1352819, where the only difference between the jobs that
   # ran and the one that did not was this line.
-  # Still not verified against a real KDE Invent runner: the branch this
-  # came from was written on a Windows-only toolchain and never got a run.
-  # Added while merging it, because the build cannot work without them:
-  # pkg-config and TagLib (CMakeLists reaches TagLib 1.x through
-  # taglib.pc), qt6-shadertools-dev and xvfb (the shader-drawing QML
-  # tests register only when both exist, and silently do not otherwise),
-  # and qt6-tools-dev for Qt6::Test/QuickTest.
+  #
   # 26.04 rather than 24.04, and it has to be at least this new: Qt is
   # what decides. src/gui/main.cpp calls QQmlApplicationEngine's
   # loadFromModule, which arrived in Qt 6.5; 24.04 ships 6.4.2, so that
@@ -230,43 +237,39 @@ linux:build:
   # "no member named loadFromModule" -- an error that says nothing about
   # versions. 26.04 LTS ships Qt 6.10.2 with GCC 15.2, which is past the
   # 6.8 this project now requires (see find_package in CMakeLists).
-  # Verified in this exact container on frame before the bump: configure
-  # 1.5 s, full build exit 0, no errors and no warnings.
   #
   # p7zip-full does not exist on 26.04; 7zip replaces it and still
   # provides /usr/bin/7z, which is the binary the cross-validation test
   # shells out to.
   image: ubuntu:26.04
-  before_script: *linux_packages
-  script:
-    # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
-    # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
-    # the vendored libdjinterop's own test suite wants Boost.Filesystem
-    # compiled, and only the headers are here. Installing
-    # libboost-filesystem-dev would work too, but this lane exists to run
-    # SEABASS's tests -- a vendored dependency's suite failing would red
-    # the gate for something nothing in this repo controls.
-    - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSEABASS_LIBDJINTEROP_TESTS=OFF
-    - cmake --build build
-  artifacts:
-    paths: [build]
-    expire_in: 1h
-
-linux:test:
-  stage: test
-  # Untagged, for the same reason as linux:build above.
-  image: ubuntu:26.04
-  needs: [linux:build]
-  # The same packages as the build, from the same anchor. This job gets a
-  # FRESH ubuntu:26.04 and downloads the build's artifacts into it: the
-  # apt-get in linux:build ran in linux:build's container and left
-  # nothing behind here, so without this ctest is not installed at all
-  # ("ctest: command not found", 18 seconds after a 27-minute build).
-  # Sharing the list rather than copying it is deliberate -- a
-  # divergence between the two would surface at the far end of that
-  # build, and xvfb is the example that would not even fail: the
-  # shader-drawing QML tests do not register without it, so the suite
-  # would pass having quietly run fewer tests.
+  # An hour was never enough and never will be. Measured on this
+  # runner from pipeline 1354103's own log: objects 1-500 took 10
+  # minutes, 501-1000 took 19, 1001-1500 took 23, and the job was
+  # killed at 1585 of 1859 -- the deceleration is the Qt-heavy GUI
+  # translation units arriving at the end. Extrapolated, the build
+  # alone wants 75-80 minutes, and the tests come after it.
+  #
+  # This is a ceiling, not a target: with a warm ccache below, a rerun
+  # should finish in a small fraction of it. If the runner refuses this
+  # value the job fails immediately with a message saying so, which is
+  # a far better failure than an hour of compiling thrown away.
+  timeout: 3h
+  variables:
+    # Inside CI_PROJECT_DIR because that is the only place GitLab's
+    # `cache:` can reach.
+    CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
+    CCACHE_MAXSIZE: "3G"
+    # `content` rather than ccache's default mtime check: the compiler
+    # here comes from an apt image that is rebuilt upstream without
+    # warning, and an mtime that moved while the compiler did not would
+    # throw away a whole cache for nothing.
+    CCACHE_COMPILERCHECK: content
+  cache:
+    # Versioned by hand. Bump the suffix to throw the cache away
+    # deliberately; nothing else should.
+    key: linux-ccache-v1
+    paths:
+      - .ccache
   before_script: *linux_packages
   # Spelled out rather than reusing &full_lane_rules: a YAML merge key
   # (<<:) merges a *mapping* into another mapping -- it cannot expand a
@@ -283,6 +286,54 @@ linux:test:
       variables:
         CTEST_LABEL_ARGS: "-LE integration"
   script:
+    # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
+    # blueprint passes it (craft-blueprint/qt-apps/seabass/seabass.py):
+    # the vendored libdjinterop's own test suite wants Boost.Filesystem
+    # compiled, and only the headers are here. Installing
+    # libboost-filesystem-dev would work too, but this lane exists to run
+    # SEABASS's tests -- a vendored dependency's suite failing would red
+    # the gate for something nothing in this repo controls.
+    #
+    # -O1 via CMAKE_CXX_FLAGS_RELEASE, NOT via CMAKE_CXX_FLAGS. CMake
+    # emits CMAKE_CXX_FLAGS first and CMAKE_CXX_FLAGS_<CONFIG> after it,
+    # so `-DCMAKE_CXX_FLAGS=-O1` produces the command line `-O1 -O3`,
+    # GCC takes the last one, and the build is still -O3 while looking
+    # configured. Verified against compile_commands.json rather than
+    # reasoned about, after a first measurement that compared -O3 with
+    # itself and would have "proved" the flag made no difference.
+    #
+    # Dropping to -O1 is safe for this lane's purpose. The tests keep
+    # their assertions regardless of build type: CMakeLists puts
+    # -UNDEBUG on every test target by name, after the build type's own
+    # -DNDEBUG, and then checks at the end that it really landed. What
+    # is lost is only that CI no longer proves the -O3 build compiles,
+    # which the Craft Windows and macOS lanes still do at their own
+    # optimisation levels.
+    - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      -DSEABASS_LIBDJINTEROP_TESTS=OFF
+      -DCMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    # How much machine this container actually has, printed before it is
+    # used. `nproc` on a shared runner reports the HOST's cores, not the
+    # cgroup's quota, and Ninja's default job count is nproc + 2 -- so a
+    # container allowed two cores can end up running eighteen compilers,
+    # which is a plausible reading of why the build decelerated from 50
+    # objects a minute to 21 as the memory-hungry Qt translation units
+    # arrived. Computing the job count from the cgroup quota instead
+    # costs nothing and makes the next log say which it was.
+    - |
+      QUOTA=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo "max 100000")
+      set -- $QUOTA
+      if [ "$1" = "max" ]; then JOBS=$(nproc); else JOBS=$(( ($1 + $2 - 1) / $2 )); fi
+      [ "$JOBS" -lt 1 ] && JOBS=1
+      echo "nproc says $(nproc); cgroup cpu.max says '$QUOTA'; building with -j$JOBS"
+      echo "memory: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown) cgroup, $(awk '/MemTotal/{print $2" kB"}' /proc/meminfo) host"
+      cmake --build build -j"$JOBS"
+    # Printed, not silent: a cache that stopped being hit is the
+    # difference between a five minute lane and a ninety minute one,
+    # and it would otherwise only show up as "CI got slow again".
+    - ccache --show-stats
     # As a NORMAL USER, not as root. CI containers run as root, and
     # root ignores the file permissions several tests take away on
     # purpose: durable_file_write_test drops write on a directory and
@@ -292,8 +343,11 @@ linux:test:
     # is a test that asserts the other way round and passes without
     # proving anything. Measured in this exact image: three abort as
     # root, all three pass as a user.
+    #
+    # .ccache is left owned by root on purpose: chowning it would make
+    # the cache upload rewrite every file for no benefit.
     - useradd -m runner
-    - chown -R runner .
+    - chown -R runner build
     - su runner -c "cd build && ctest --output-on-failure $CTEST_LABEL_ARGS"
 
 # ---- Linux: the package, on a release tag only ----
