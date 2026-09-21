@@ -41,7 +41,8 @@ failed=0
 
 # One board row per test: W5 skipping for want of a duplicate group on the
 # stick used to take W2 and W6 red with it, and a reader could not tell.
-rig_parts_declare W2-add-cue W5-clean-up-group W6-library-health-repair W6-import-prompt-not-armed
+rig_parts_declare W2-add-cue W5-clean-up-group W5-import-prompt-not-armed \
+    W6-library-health-repair W6-import-prompt-not-armed
 [ -z "$baseline" ] || rig_parts_declare edits-wrote-nothing
 trap rig_parts_finish EXIT
 
@@ -63,7 +64,29 @@ run() {  # board id, full "TestCase::function" name
 }
 
 run W2-add-cue LiveEditMode::test_08_addCueSaveUndo
+
+# Clean Up is the save issue #42 actually names. It says export.pdb's
+# sequence moves whenever the library is rewritten, and that Clean Up and
+# the duplicate cleanup do rewrite it -- so a dedup today should mean a
+# player offering, tomorrow, to overwrite the Engine library the dedup
+# just tidied.
+#
+# The same check around W6 came back level (engine 513, library 513,
+# still level afterwards, round 7), which answers one of that issue's own
+# open questions: a Library Health repair does not move it. That is why
+# this one is here rather than only there. If this comes back level too,
+# that is a bigger finding than the issue expects, and either way the log
+# prints both numbers so the answer is readable without re-running.
+cleanup_state="$(mktemp)"
+"$build/rig_import_prompt" "$stick" --record "$cleanup_state" || failed=1
 run W5-clean-up-group LiveEditMode::test_09_cleanupOneGroupSaveUndo
+if "$build/rig_import_prompt" "$stick" --compare "$cleanup_state"; then
+    rig_part W5-import-prompt-not-armed PASS
+else
+    rig_part W5-import-prompt-not-armed FAIL
+    failed=1
+fi
+rm -f "$cleanup_state"
 
 echo "=== planting a repairable Library Health issue"
 # What a Denon player would say about this stick before the repair, so
