@@ -282,10 +282,18 @@ ComboBox {
     // app's own Material palette (same issue already worked around for
     // ToolBar elsewhere) and draws square corners, unlike every other
     // radius: 4 element this app draws itself.
+    //
+    // Opaque, not transparent. Transparent meant the catalog's name was
+    // drawn on whatever happened to be behind the control, and Theme's
+    // ink is near-white unless the user has asked for the system
+    // palette: on macOS in light appearance that is #e8ecef on white,
+    // and the closed control reads as an empty box until it is clicked.
+    // The list below had the same fault and this is the same fix, so
+    // both halves of the control stand on a ground Theme chose.
     background: Rectangle {
         implicitWidth: 160
         radius: 4
-        color: root.hovered ? Theme.rowHover : "transparent"
+        color: root.hovered ? Theme.rowHover : Theme.surface
         border.color: Theme.border
         border.width: 1
     }
