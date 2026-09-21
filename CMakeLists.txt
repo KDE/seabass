@@ -549,21 +549,41 @@ add_library(seabass_core_testing STATIC
 )
 target_include_directories(seabass_core_testing PUBLIC src)
 target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
+
+# COMPILE_LANGUAGE:CXX-gated: this target also compiles sqlite3.c (below,
+# Windows only) as a plain C file, and both of these are C++-only. The
+# forced include in particular does not merely not-apply to a C file --
+# msvc_assert_no_dialog.hpp pulls in <yvals_core.h>, and cl.exe's C
+# frontend refuses that STL header outright ("STL1003: Unexpected
+# compiler, expected C++ compiler"), which looks nothing like what
+# these two options are for and cost a rebuild to trace.
 target_compile_options(seabass_core_testing PRIVATE
-    "$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>"
-    "$<$<CXX_COMPILER_ID:MSVC>:/FI${CMAKE_SOURCE_DIR}/tests/msvc_assert_no_dialog.hpp>")
+    "$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>>"
+    "$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<COMPILE_LANGUAGE:CXX>>:/FI${CMAKE_SOURCE_DIR}/tests/msvc_assert_no_dialog.hpp>")
 
 if(WIN32)
     # See the SYSTEM_SQLITE note above - same bundled amalgamation
     # libdjinterop uses privately, compiled straight into seabass_core
-    # instead of going through find_package(SQLite3).
+    # instead of going through find_package(SQLite3). seabass_core_testing
+    # compiles several of the same engine/.cpp files (its own comment
+    # above promises its needs are "mirrored below"), so it needs the
+    # same amalgamation or sqlite3.h is simply not on its include path --
+    # confirmed directly: without this, seabass_core_testing fails to
+    # build at all on Windows with "Cannot open include file: 'sqlite3.h'".
     target_sources(seabass_core PRIVATE
         third_party/libdjinterop/ext/sqlite-amalgamation/sqlite3.c)
     target_include_directories(seabass_core PRIVATE
         third_party/libdjinterop/ext/sqlite-amalgamation)
     target_compile_definitions(seabass_core PRIVATE SQLITE_OMIT_LOAD_EXTENSION)
+
+    target_sources(seabass_core_testing PRIVATE
+        third_party/libdjinterop/ext/sqlite-amalgamation/sqlite3.c)
+    target_include_directories(seabass_core_testing PRIVATE
+        third_party/libdjinterop/ext/sqlite-amalgamation)
+    target_compile_definitions(seabass_core_testing PRIVATE SQLITE_OMIT_LOAD_EXTENSION)
 else()
     target_link_libraries(seabass_core PUBLIC SQLite::SQLite3)
+    target_link_libraries(seabass_core_testing PUBLIC SQLite::SQLite3)
 endif()
 
 # --- Read-only detection and filesystem repair: one file with a branch ---
