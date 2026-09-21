@@ -302,7 +302,16 @@ ComboBox {
         id: entryDelegate
         required property int index
         required property var modelData
-        width: ListView.view ? ListView.view.width : implicitWidth
+        // The same fallback the playlist picker's rows needed: under
+        // org.kde.desktop the ListView.view attachment comes back null
+        // for rows built through a DelegateModel, and a row that falls
+        // back to implicitWidth is narrow or empty rather than the width
+        // of the list. Windows reports the same shape under FluentWinUI3
+        // -- one row painting nothing at all, another's name band 5 px
+        // tall beside a 20 px glyph -- which is what a delegate sized by
+        // its own content instead of its list looks like.
+        width: ListView.view ? ListView.view.width
+                             : (parent ? parent.width : implicitWidth)
         highlighted: root.currentIndex === index
         hoverEnabled: true
 
