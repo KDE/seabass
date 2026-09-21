@@ -11,7 +11,34 @@ cmake_minimum_required(VERSION 3.16)
 # from within third_party/libdjinterop's own project() call left
 # CMAKE_C_COMPILE_OBJECT unset for the Unix Makefiles generator when
 # cross-compiling, breaking the Generate step.
-project(seabass CXX C)
+# One version for the whole project, and the only place it is written
+# down. A release tag (releases/<channel>/X.Y.Z) has to agree with it --
+# tools/release.sh refuses to tag a tree that says something else -- so
+# the tag stays a statement about this file rather than a second opinion.
+project(seabass VERSION 0.1.0 LANGUAGES CXX C)
+
+# Which shelf this build came off. Set by CI from the release tag; a
+# build from a working tree is "dev", and says so in Settings and in the
+# version check, because it is not any published release.
+set(SEABASS_RELEASE_CHANNEL "dev" CACHE STRING "alpha, beta, stable or dev")
+set_property(CACHE SEABASS_RELEASE_CHANNEL PROPERTY STRINGS dev alpha beta stable)
+
+# The commit, for a bug report to be actionable. Not fatal when git is
+# absent (a source tarball, a Craft build from an export): the version
+# above is what identifies the release, this only sharpens it.
+set(SEABASS_GIT_DESCRIBE "")
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" describe --always --dirty --abbrev=8
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE SEABASS_GIT_DESCRIBE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+endif()
+
+configure_file("${CMAKE_SOURCE_DIR}/src/seabass_version.hpp.in"
+               "${CMAKE_BINARY_DIR}/generated/seabass_version.hpp" @ONLY)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -439,7 +466,9 @@ add_library(seabass_core STATIC
     src/infrastructure/local/metadata_cache.cpp
     src/infrastructure/local/metadata_store.cpp
 )
-target_include_directories(seabass_core PUBLIC src)
+# generated/ alongside src/: seabass_version.hpp is written there at
+# configure time, and everything that links the core can ask what it is.
+target_include_directories(seabass_core PUBLIC src "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
 
 if(WIN32)

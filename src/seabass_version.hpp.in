@@ -1,0 +1,32 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+#pragma once
+
+// Generated from src/seabass_version.hpp.in. The version itself lives in
+// CMakeLists.txt's project() call and nowhere else; this only carries it
+// into the binary, together with the channel the build came off and the
+// commit it was built from.
+
+namespace seabass::version {
+
+inline constexpr const char *Number = "@PROJECT_VERSION@";
+inline constexpr int Major = @PROJECT_VERSION_MAJOR@;
+inline constexpr int Minor = @PROJECT_VERSION_MINOR@;
+inline constexpr int Patch = @PROJECT_VERSION_PATCH@;
+
+// "alpha", "beta", "stable", or "dev" for a build from a working tree,
+// which is no published release and must never be compared against one.
+inline constexpr const char *Channel = "@SEABASS_RELEASE_CHANNEL@";
+
+// git describe --always --dirty, or empty where git was not there.
+inline constexpr const char *Commit = "@SEABASS_GIT_DESCRIBE@";
+
+inline constexpr bool isRelease()
+{
+    // A char-by-char compare: constexpr, and no <cstring> for three letters.
+    return !(Channel[0] == 'd' && Channel[1] == 'e' && Channel[2] == 'v' && Channel[3] == '\0');
+}
+
+}  // namespace seabass::version

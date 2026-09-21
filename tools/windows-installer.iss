@@ -22,7 +22,17 @@
 ; gets past QQmlApplicationEngine::load(). Confirmed directly.
 
 #define MyAppName "Seabass"
-#define MyAppVersion "0.1.0-d1d8379"
+; CI passes the version and channel from the release tag
+; (/DMyAppVersion=0.2.1 /DMyAppChannel=beta). The fallback is for a build
+; by hand and is deliberately not a version anybody could mistake for a
+; release: the one source of truth is project(seabass VERSION ...) in
+; CMakeLists.txt, and tools/release.sh refuses a tag that disagrees.
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0-dev"
+#endif
+#ifndef MyAppChannel
+  #define MyAppChannel "dev"
+#endif
 #define MyAppPublisher "Sebastian Kugler"
 #define BuildDir "..\build-win"
 
@@ -41,7 +51,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=commandline
 OutputDir=..\installer-out
-OutputBaseFilename=Seabass-Setup-{#MyAppVersion}
+OutputBaseFilename=Seabass-Setup-{#MyAppVersion}-{#MyAppChannel}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

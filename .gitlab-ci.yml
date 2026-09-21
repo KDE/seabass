@@ -296,6 +296,59 @@ linux:test:
     - chown -R runner .
     - su runner -c "cd build && ctest --output-on-failure $CTEST_LABEL_ARGS"
 
+# ---- Linux: the package, on a release tag only ----
+#
+# A tarball of the two binaries and the desktop/icon files, not an
+# AppImage: it needs the distribution's own Qt 6 and says so in the
+# README it carries. That is honest for alpha and beta, where the people
+# downloading it are the people who can read that sentence, and it is not
+# good enough for a stable release aimed at DJs -- see docs/releasing.md,
+# "What is still by hand".
+#
+# Its own configure rather than reusing linux:build's tree: that one is a
+# test build (SEABASS_TESTS on, channel "dev"), and a release package has
+# to carry the channel it was tagged with, because the app shows it and
+# the update check compares against it.
+linux:package:
+  stage: package
+  image: ubuntu:26.04
+  needs: [linux:test]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  before_script: *linux_packages
+  script:
+    - . tools/release-version.sh
+    # Refuses a tag whose version disagrees with CMakeLists.txt, before
+    # anything is built under a name that would then be wrong.
+    - seabass_release_from_tag . "$CI_COMMIT_TAG"
+    - cmake -S . -B build-rel -G Ninja -DCMAKE_BUILD_TYPE=Release
+        -DSEABASS_LIBDJINTEROP_TESTS=OFF -DSEABASS_TESTS=OFF
+        -DSEABASS_RELEASE_CHANNEL="$SEABASS_CHANNEL"
+    - cmake --build build-rel --target seabass seabass-cli
+    - name="seabass-${SEABASS_VERSION}_${SEABASS_CHANNEL}_linux"
+    - mkdir -p "stage/$name/bin" package-out
+    - cp build-rel/seabass build-rel/seabass-cli "stage/$name/bin/"
+    - cp README.md LICENSES/* "stage/$name/" 2>/dev/null || true
+    - |
+      cat > "stage/$name/README-package.txt" <<EOF
+      Seabass $SEABASS_VERSION ($SEABASS_CHANNEL), Linux x86_64.
+
+      Run bin/seabass. This package carries Seabass only: it uses the Qt 6
+      your distribution ships (Qt 6.5 or newer, with QtQuick, QtMultimedia,
+      QtSvg and the shader tools runtime), plus sqlite3, zlib, sqlcipher
+      and taglib. On Ubuntu/Debian:
+
+        sudo apt install qt6-base qt6-declarative qt6-multimedia qt6-svg \
+             libsqlite3-0 zlib1g libsqlcipher0 libtag1v5
+
+      Built from $CI_COMMIT_SHA.
+      EOF
+    - tar -czf "package-out/$name.tar.gz" -C stage "$name"
+    - sha256sum "package-out/$name.tar.gz"
+  artifacts:
+    paths: [package-out/*.tar.gz]
+    expire_in: 1 year
+
 # ---- Windows: full lane only (build, test, package, installer-test) ----
 # The MSYS2/UCRT64 build, which is a different thing from the Craft job
 # above: Craft builds and signs what KDE ships, this builds what
@@ -339,13 +392,27 @@ windows:package:
   script:
     - $env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
     - .\tools\deploy-windows.ps1
-    # Quoted: a leading & is a YAML anchor indicator when unquoted, not
-    # literal text -- this is PowerShell's call operator, invoking a
-    # path that needs quoting because of the space in "Inno Setup 6".
-    - '& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" tools\windows-installer.iss'
+    # The version the tag names, not the literal in the .iss: an
+    # installer called 0.1.0 built from the 0.3.0 tag is the kind of
+    # thing nobody notices until a user reports a bug against the wrong
+    # release. Without a tag the .iss keeps its own default.
+    - |
+      $ver = ""
+      if ($env:CI_COMMIT_TAG) { $ver = ($env:CI_COMMIT_TAG -split "/")[-1] }
+      $chan = "dev"
+      if ($env:CI_COMMIT_TAG) { $chan = ($env:CI_COMMIT_TAG -split "/")[-2] }
+      $defs = @()
+      if ($ver) { $defs += "/DMyAppVersion=$ver"; $defs += "/DMyAppChannel=$chan" }
+      # Quoted path: "Inno Setup 6" has a space in it.
+      & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" @defs tools\windows-installer.iss
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      if ($ver) {
+        $out = "installer-out\seabass-${ver}_${chan}_windows.exe"
+        Move-Item -Force (Get-ChildItem installer-out\*.exe | Select-Object -First 1).FullName $out
+      }
   artifacts:
     paths: [installer-out/*.exe]
-    expire_in: 1w
+    expire_in: 1 year
 
 windows:installer-test:
   stage: installer-test
