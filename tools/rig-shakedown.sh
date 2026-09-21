@@ -304,6 +304,35 @@ unchanged_catalogs() {  # stick -- against the baseline taken after the restores
         checked=$((checked + 1))
         if [ "$(sha256sum "$file" | cut -d" " -f1)" = "$sum" ]; then
             echo "$file: OK"
+        elif [ ! -e "$file-wal" ] && grep -F "$1/" "$out/catalog-baseline.txt" \
+                | sed 's/^[0-9a-f]*[[:space:]]*[*]\{0,1\}//' | grep -qxF "$file-wal"; then
+            # A database whose write-ahead log was in the baseline and is
+            # now gone has been checkpointed: SQLite folded the log into
+            # the database, which rewrites it. These bytes are SUPPOSED to
+            # differ.
+            #
+            # Deliberately still a failure. This comparison is sha256 over
+            # bytes and cannot tell "the log was folded in" from "the
+            # library changed" -- both look exactly like this. Telling
+            # them apart means reading the file as a database, and
+            # exportLibrary.db is SQLCipher-encrypted, so neither
+            # sha256sum nor sqlite3 can; only Seabass can. Until it does,
+            # the round says what it knows rather than choosing.
+            #
+            # Windows round 7's F4-undo failed here, on the first run in
+            # which an undo on a near-full stick actually completed --
+            # which is also the first run since the nested-lock fixes in
+            # which the save's own clean-up did anything at all.
+            #
+            # The test is narrow on purpose: the log was in the baseline
+            # and is not on the stick now. A -wal that is still there has
+            # not been folded into anything, so a database differing
+            # beside one is not this case and keeps the bare message.
+            echo "$file: DIFFERS, and its write-ahead log was checkpointed into it."
+            echo "    A checkpoint rewrites the database, so differing bytes are expected here;"
+            echo "    this check compares bytes and cannot tell that from a real change."
+            echo "    Read the undo's own lines in the stick log above before calling it data loss."
+            bad=1
         else
             echo "$file: DIFFERS"
             bad=1
