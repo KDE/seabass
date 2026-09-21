@@ -55,7 +55,18 @@ rig_lock="${RIG_LOCK_FILE:-$HOME/Seabass/e2e/.rig-running.lock}"
 rig_lock_dir=""
 if [ -z "${RIG_NO_LOCK:-}" ]; then
     mkdir -p "$(dirname "$rig_lock")"
-    if rig_is_windows; then
+    # Not "is this Windows": is flock actually here. macOS has no flock(1)
+    # at all -- it is util-linux, and the BSDs ship the syscall without the
+    # command -- so the flock branch below died with "flock: command not
+    # found", the `if !` then read that failure as "the lock is held", and
+    # EVERY round on this platform refused to start with "another shakedown
+    # round is already running". A lock whose failure mode is refusing all
+    # work is worse than the collision it prevents.
+    #
+    # Asking for the command rather than the OS also means any platform
+    # that lacks it gets the mkdir path automatically, instead of the next
+    # one finding this the same way.
+    if rig_is_windows || ! command -v flock >/dev/null 2>&1; then
         # flock needs a real fd->HANDLE mapping from the same MSYS
         # runtime it was built against. This shell (Git for Windows' own
         # bash) and the flock.exe a full MSYS2 install carries are
