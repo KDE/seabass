@@ -25,9 +25,19 @@ class FakeMounter : public RemovableMediaMounter
 {
 public:
     std::vector<std::string> releasedPaths;
+    std::vector<std::string> mountedPaths;
     bool releaseShouldFail = false;
+    bool mountShouldFail = false;
 
-    std::optional<std::string> mount(const std::string &, std::string &) override { return std::nullopt; }
+    std::optional<std::string> mount(const std::string &devicePath, std::string &errorMessage) override
+    {
+        if (mountShouldFail) {
+            errorMessage = "fake mount failure";
+            return std::nullopt;
+        }
+        mountedPaths.push_back(devicePath);
+        return "/media/fake/STICK";
+    }
     bool unmount(const std::string &, std::string &) override
     {
         assert(false && "FormatUsbStick must use release(), not unmount() -- unmount() ejects on Windows");
@@ -189,6 +199,50 @@ int main()
         assert(formatter.lastFs == UsbFilesystem::ExFat);
         assert(formatter.lastLabel == "MYLABEL");
         std::cout << "case 5 (successful format passes exact args) OK\n";
+    }
+
+    // What the app owes a person who just formatted a stick: a stick.
+    // Until this landed, execute() returned as soon as the formatter did
+    // and left the mounting to the desktop's device notifier -- true on a
+    // Plasma or Finder session, false headless, where the rig formatted a
+    // stick and every check after it looked at a drive that was not
+    // there.
+    {
+        FakeLocator locator;
+        auto disk = makeDisk("/dev/sdb", 8ULL * 1024 * 1024 * 1024);
+        disk.devicePath = "/dev/sdb1";
+        disk.mounted = false;
+        locator.disks = {disk};
+        FakeMounter mounter;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        std::string error;
+        assert(useCase.execute("/dev/sdb", UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance()));
+        assert(mounter.mountedPaths.size() == 1);
+        assert(mounter.mountedPaths.front() == "/dev/sdb1");
+        std::cout << "case 6 (a successful format mounts what it made) OK\n";
+    }
+
+    // And a mount that cannot be had does not turn a format that worked
+    // into a failure: the partition table is written either way, and the
+    // desktop may still mount it a moment later.
+    {
+        FakeLocator locator;
+        auto disk = makeDisk("/dev/sdb", 8ULL * 1024 * 1024 * 1024);
+        disk.devicePath = "/dev/sdb1";
+        disk.mounted = false;
+        locator.disks = {disk};
+        FakeMounter mounter;
+        mounter.mountShouldFail = true;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        std::string error;
+        assert(useCase.execute("/dev/sdb", UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance()));
+        assert(formatter.formatCalled);
+        assert(error.empty());
+        std::cout << "case 7 (a format that worked survives a mount that did not) OK\n";
     }
 
     std::cout << "All format_usb_stick tests passed.\n";

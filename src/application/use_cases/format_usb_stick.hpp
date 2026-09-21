@@ -8,6 +8,8 @@
 
 #include "application/ports/progress_reporter.hpp"
 #include "application/ports/removable_media_locator.hpp"
+#include <chrono>
+#include <thread>
 #include "application/ports/removable_media_mounter.hpp"
 #include "application/ports/usb_formatter.hpp"
 #include "domain/usb_filesystem.hpp"
@@ -82,7 +84,45 @@ public:
             }
         }
 
-        return m_formatter.format(wholeDiskPath, fs, volumeLabel, errorMessage, progress);
+        if (!m_formatter.format(wholeDiskPath, fs, volumeLabel, errorMessage, progress)) {
+            return false;
+        }
+
+        // Mount what we just made. Until now this returned as soon as the
+        // formatter did and left the mounting to the desktop, which is
+        // true of a Plasma or Finder session with a device notifier
+        // running and false everywhere else: the rig formats a stick
+        // headlessly and the drive simply never came back, so every check
+        // after it was looking at a stick that was not there. A person
+        // who formats a stick inside this app is asking for a stick to
+        // use, not for a partition table.
+        //
+        // Best effort by design. A format that worked is not undone by a
+        // mount that did not, and the desktop may well mount it a moment
+        // later anyway -- so a failure here is reported through the
+        // return value only if the caller asked for the mount point,
+        // which nothing does yet, and never turns a successful format
+        // into a failed one.
+        // Six attempts over three seconds: long enough for udisks to
+        // publish a freshly written partition, short enough that a
+        // machine where mounting simply is not going to work costs a
+        // test three seconds rather than a minute.
+        for (int attempt = 0; attempt < 6; ++attempt) {
+            for (const auto &disk : m_locator.detect()) {
+                if (disk.wholeDiskPath != wholeDiskPath || disk.devicePath.empty()) {
+                    continue;
+                }
+                if (disk.mounted && !disk.mountPoint.empty()) {
+                    return true;
+                }
+                std::string mountError;
+                if (m_mounter.mount(disk.devicePath, mountError)) {
+                    return true;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+        return true;
     }
 
 private:
