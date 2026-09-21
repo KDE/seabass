@@ -46,6 +46,7 @@
 #include "application/use_cases/collapse_catalog_rows.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "application/use_cases/sync_libraries.hpp"
+#include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include "domain/library_statistics.hpp"
 #include "domain/track_scope.hpp"
@@ -229,6 +230,19 @@ std::vector<DataSet> discoverSets()
         sets.push_back(*committed);
     } else {
         std::cout << "WARNING: the committed fixture was not found -- run from the repository root\n";
+        ++g_failures;
+    }
+    // The second committed set exists for one property the first cannot
+    // have: its two catalogs name the SAME files. It is an anonymized
+    // export of the rig's own stick, small (100 tracks against the other
+    // fixture's 1161) and kept for the cross-format cases rather than for
+    // scale -- see caseCollapseGroupsAcrossFormats, which could only
+    // report that it was not exercisable until this landed.
+    if (auto oneStick = asDataSet("tests/fixtures/one_stick_two_catalogs")) {
+        oneStick->name = "committed fixture (one stick, two catalogs)";
+        sets.push_back(*oneStick);
+    } else {
+        std::cout << "WARNING: the one-stick fixture was not found -- run from the repository root\n";
         ++g_failures;
     }
     const char *corpus = std::getenv("SEABASS_CORPUS");
@@ -571,8 +585,30 @@ void caseSyncMatching(const DataSet &set, const Catalogs &catalogs, Expectations
         // catalogs were anonymized in two independent runs and must still
         // pair up. A floor rather than equality so an incidental hash
         // collision does not fail a freshly generated fixture.
-        check(matched >= static_cast<long long>(catalogs.rekordbox.size() * 0.95),
-              "at least 95% of tracks matched across independently anonymized catalogs");
+        // Against the files the two catalogs actually share, not against
+        // the whole rekordbox side. A set where one catalog lists files
+        // the other does not (the rig's stick plants exactly that: a
+        // missing file and a duplicate, Engine-side only) can never
+        // match 95% of everything, and reading the floor that way turned
+        // a correct result into a failure. What this case is really
+        // about is whether two independent anonymization runs still
+        // produce matchable placeholders.
+        std::set<std::string> rekordboxKeys, engineKeys;
+        for (const auto &track : catalogs.rekordbox) {
+            rekordboxKeys.insert(application::normalizedPathKey(track.filePath));
+        }
+        for (const auto &track : catalogs.engine) {
+            engineKeys.insert(application::normalizedPathKey(track.filePath));
+        }
+        std::size_t shared = 0;
+        for (const auto &key : rekordboxKeys) {
+            shared += engineKeys.count(key);
+        }
+        const auto floor = static_cast<long long>((shared > 0 ? shared : catalogs.rekordbox.size()) * 0.95);
+        check(matched >= floor,
+              "at least 95% of the files both catalogs list matched across independently anonymized catalogs (matched "
+                  + std::to_string(matched) + " of " + std::to_string(shared > 0 ? shared : catalogs.rekordbox.size())
+                  + ")");
     }
     expected.expectAtLeast("sync.matched", matched, "matching did not get worse");
     std::cout << "    matched " << matched << " of " << catalogs.rekordbox.size() << "\n";
@@ -1655,7 +1691,15 @@ void caseStrayCueRemoval(const DataSet &set, const fs::path &scratch, const Cata
     std::vector<const domain::Track *> withJunk;
     for (const auto &t : catalogs.rekordbox) {
         for (const auto &c : t.cues) {
-            if (c.kind == domain::CuePoint::Kind::Memory && c.positionMs == 0.0) {
+            // domain::isJunkCue, not a local copy of what it used to
+            // mean. The predicate moved twice -- to anything under a
+            // second, then to hot cues as well -- and this case kept the
+            // older rule, so it picked tracks by one definition and
+            // judged the result by another. On the rig's stick that read
+            // as the remover eating four good cues off one track. The
+            // four were junk by the real rule, at 26 ms and the like, and
+            // removing them was correct.
+            if (domain::isJunkCue(c)) {
                 withJunk.push_back(&t);
                 break;
             }
@@ -1672,9 +1716,18 @@ void caseStrayCueRemoval(const DataSet &set, const fs::path &scratch, const Cata
 
     std::vector<std::shared_ptr<gui::PendingChange>> changes;
     std::map<std::string, size_t> cuesBefore;
+    // Per track, because a track can carry more than one. This used to
+    // assume exactly one stray per track and assert "one fewer cue
+    // afterwards"; the rig's own stick has three tracks with two, and the
+    // change removes both, correctly. The count has to come from the data
+    // rather than from the assumption.
+    std::map<std::string, size_t> straysBefore;
     for (const auto *t : withJunk) {
         domain::Track copy = *t;
         cuesBefore[t->sourceId] = t->cues.size();
+        straysBefore[t->sourceId] = static_cast<size_t>(std::count_if(t->cues.begin(), t->cues.end(), [](const auto &c) {
+            return domain::isJunkCue(c);
+        }));
         changes.push_back(std::make_shared<gui::RemoveJunkCueChange>(QString::fromStdString(root.string()), copy));
     }
 
@@ -1695,13 +1748,16 @@ void caseStrayCueRemoval(const DataSet &set, const fs::path &scratch, const Cata
         }
         int junk = 0;
         for (const auto &c : reread->cues) {
-            if (c.kind == domain::CuePoint::Kind::Memory && c.positionMs == 0.0) {
+            if (domain::isJunkCue(c)) {
                 ++junk;
             }
         }
-        check(junk == 0, "track " + id + " has no 0:00 memory cue left");
-        // Exactly the stray cue went, and nothing else with it.
-        check(reread->cues.size() == before - 1, "track " + id + " kept every other cue it had");
+        check(junk == 0, "track " + id + " has no cue at the start left");
+        // Exactly the stray cues went, and nothing else with them.
+        const size_t strays = straysBefore[id];
+        check(reread->cues.size() == before - strays,
+              "track " + id + " kept every other cue it had (had " + std::to_string(before) + " with "
+                  + std::to_string(strays) + " stray, now " + std::to_string(reread->cues.size()) + ")");
     }
     // The total for the whole save, not a per-item average: the point of
     // the index is that this stays flat as the batch grows, and a

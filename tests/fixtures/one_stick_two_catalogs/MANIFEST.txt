@@ -1,0 +1,72 @@
+Seabass anonymized library export
+==================================
+
+Seabass version: 0.6 (beta)
+Host OS: Linux
+Hardware (as entered by the submitter): (none given)
+Notes (as entered by the submitter): (none given)
+
+rekordbox:
+Tracks anonymized: 100
+Distinct artists renamed: 52
+Playlists/folders renamed: 4
+
+Engine:
+Tracks anonymized: 103
+Playlists/folders renamed: 4
+
+Dropped, because nothing in Seabass can anonymize them:
+  exportLibrary.db-wal
+  exportExt.pdb
+  stm.db-journal
+  stm.db
+  sm.db
+  hm.db-journal
+  hm.db
+  m.db.before-defects
+They are missing from this export on purpose. Engine's play history
+(hm.db) is one of them: real titles, artists and paths, plus which
+set each track was played in.
+
+What's included vs. stripped, on every track:
+  KEPT as-is: format, file size, bitrate, duration, BPM, key,
+    hot/memory cue positions and colors, rating, play count,
+    last-played date, whether it's a streaming-service track,
+    playlist membership/position, the low-resolution monochrome
+    waveform preview actually used by this app, beatgrid.
+  REPLACED with placeholder text (e.g. "Track 014"): title,
+    artist, comment, cue comments, filename/file path,
+    playlist/folder names.
+  REPLACED inside the analysis files too: the file path each
+    one embeds, which is where the artist, album and title
+    would otherwise still be readable.
+  ALSO INCLUDED: your player preference files (MYSETTING.DAT
+    and friends). They hold settings like LCD brightness and
+    jog feel, nothing about you or your music, and this app's
+    Device Profile feature cannot be tested without them.
+  ALSO SCRUBBED AND INCLUDED: your Device Library Plus
+    database (exportLibrary.db), the mirror rekordbox keeps
+    beside export.pdb. Its titles, artists, albums, genres,
+    labels, playlist names, cue comments and file paths are
+    replaced the same way, and the same real track gets the
+    same placeholder in all three catalogs.
+  REMOVED entirely: artwork images, the detailed color and
+    scrolling waveform data rekordbox's own UI uses during
+    playback (not read by this app), original file paths, and
+    your My Tag vocabulary (exportExt.pdb), which has no
+    anonymizer yet and so is left out rather than sent as it is.
+
+Everything above is CHECKED, not just intended: this export was
+read back through the app's own readers and every analysis file
+was inspected before the zip was written. Had anything still
+held real data, no file would have been produced.
+
+Output size: 2.2 MB before compression (307 files).
+
+Nothing has been sent anywhere; this only wrote a single zip
+file. Review its contents, then attach that zip to an email to
+sebas@kde.org if you'd like to help test against your
+hardware/library. This dataset may be published as part of the
+project's test suite. If there's anything in the hardware or
+notes text above you'd rather not have published, leave it out
+here and mention it directly in your email instead.

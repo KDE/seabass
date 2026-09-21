@@ -15,6 +15,16 @@
 .seabass-backups/
 .seabass.log
 
+# SQLite's side files beside a fixture's OneLibrary mirror. Reading the
+# mirror creates them, so any test run leaves them in tests/fixtures/ and
+# every checkout looks dirty. They are transient by definition and a -wal
+# holds PRE-write pages, which is exactly the content an anonymized
+# fixture must not carry -- the anonymizer deletes them before it zips
+# an export for the same reason.
+tests/fixtures/**/*.db-wal
+tests/fixtures/**/*.db-shm
+tests/fixtures/**/*-journal
+
 # Claude Code project memory, moved here from ~/.claude/projects/.../
 # memory/ so it's readable from other machines this repo is checked
 # out on -- local-only by default, not confirmed for git tracking.

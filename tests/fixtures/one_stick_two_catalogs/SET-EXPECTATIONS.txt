@@ -1,0 +1,29 @@
+# Written by corpus_test. Delete this file to re-record after a
+# deliberate change to the data set itself.
+engine.cues 123
+engine.opensPerBatch 1
+engine.tracks 103
+engine.tracksWithAlbum 92
+engine.tracksWithCues 99
+engine.writeRefusals 0
+matrix.addCue.durableWritesPerSave 4
+matrix.addCue.pdbParses 1
+matrix.cleanup.durableWritesPerSave 5
+matrix.cleanup.pdbParses 2
+matrix.copyCues.durableWritesPerSave 4
+matrix.deleteOrphan.durableWritesPerSave 2
+matrix.deviceSetting.durableWritesPerSave 3
+matrix.mergeCues.durableWritesPerSave 4
+matrix.repair.durableWritesPerSave 5
+matrix.repair.pdbParses 1
+matrix.strayCue.durableWritesPerSave 12
+matrix.strayCue.encryptedOpensPerSave 1
+matrix.strayCue.pdbParsesPerSave 1
+matrix.sync.durableWritesPerSave 2
+matrix.sync.engineOpens 1
+onelibrary.tracks 100
+rekordbox.cues 131
+rekordbox.tracks 100
+rekordbox.tracksWithAlbum 90
+rekordbox.tracksWithCues 99
+sync.matched 85
