@@ -586,7 +586,15 @@ option(SEABASS_EXPERIMENTAL "Compile in the experimental-features opt-in (Settin
 # an MSVC build built from an official Qt kit just proceeds without
 # them (losing MultiEffect/Shape QML types) rather than failing to
 # configure at all.
-find_package(Qt6 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts QuickDialogs2 Multimedia Concurrent Svg
+# 6.8, said here rather than only in qt_standard_project_setup below.
+# Without a version this call accepts whatever Qt a distribution has and
+# the build finds out later, in the worst way: Ubuntu 24.04 ships 6.4.2,
+# configure completed cleanly, and 1156 objects in, main.cpp failed with
+# "QQmlApplicationEngine has no member named loadFromModule" -- a member
+# that arrived in 6.5, in an error that never mentions a version. The
+# floor is 6.8 because that is the oldest Qt this project is built and
+# tested against: Windows runs 6.8.3, and the Linux CI image ships 6.10.
+find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 QuickLayouts QuickDialogs2 Multimedia Concurrent Svg
     OPTIONAL_COMPONENTS Test QuickTest QuickEffects QuickShapes ShaderTools)
 # --- QtMultimedia duration probe (see TrackDurationProbe) ---
 #
@@ -630,7 +638,7 @@ if(TARGET Qt6::Multimedia)
 endif()
 
 if(SEABASS_GUI AND Qt6_FOUND)
-    qt_standard_project_setup(REQUIRES 6.5)
+    qt_standard_project_setup(REQUIRES 6.8)
     if(WIN32)
         # Needed to compile src/gui/win/app_icon.rc (the .exe's icon
         # resource), not enabled by the top-level project(seabass CXX

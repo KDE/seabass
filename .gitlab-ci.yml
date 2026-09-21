@@ -161,7 +161,20 @@ linux:build:
   # taglib.pc), qt6-shadertools-dev and xvfb (the shader-drawing QML
   # tests register only when both exist, and silently do not otherwise),
   # and qt6-tools-dev for Qt6::Test/QuickTest.
-  image: ubuntu:24.04
+  # 26.04 rather than 24.04, and it has to be at least this new: Qt is
+  # what decides. src/gui/main.cpp calls QQmlApplicationEngine's
+  # loadFromModule, which arrived in Qt 6.5; 24.04 ships 6.4.2, so that
+  # image configured cleanly and then failed 1156 objects later with
+  # "no member named loadFromModule" -- an error that says nothing about
+  # versions. 26.04 LTS ships Qt 6.10.2 with GCC 15.2, which is past the
+  # 6.8 this project now requires (see find_package in CMakeLists).
+  # Verified in this exact container on frame before the bump: configure
+  # 1.5 s, full build exit 0, no errors and no warnings.
+  #
+  # p7zip-full does not exist on 26.04; 7zip replaces it and still
+  # provides /usr/bin/7z, which is the binary the cross-validation test
+  # shells out to.
+  image: ubuntu:26.04
   before_script:
     - apt-get update -qq
     # The two -private-dev packages are what make Qt6::QuickLayouts
@@ -182,7 +195,7 @@ linux:build:
     # does not depend on. Without it configure dies inside Qt's own
     # cmake files, which reads as a Qt bug rather than a missing package.
     #
-    # unzip and p7zip-full are TEST dependencies, and installing them is
+    # unzip and 7zip are TEST dependencies, and installing them is
     # the right answer rather than configuring them away:
     # backup_archive_crossvalidation_test reads archives Seabass wrote
     # using two implementations nobody here maintains. It is the check
@@ -190,8 +203,8 @@ linux:build:
     # the one failure a backup format cannot afford. -DSEABASS_TESTS=OFF
     # would silence it and empty this lane of its purpose.
     #
-    # ca-certificates is not optional and not obvious: the ubuntu:24.04
-    # image ships none, apt itself does not need any (its sources are
+    # ca-certificates is not optional and not obvious: the ubuntu image
+    # ships none, apt itself does not need any (its sources are
     # plain http), and so the gap only shows up later, when CMake runs
     # `git submodule update` at configure time and git cannot verify
     # github.com. It reads as "Failed to initialize git submodules"
@@ -204,7 +217,7 @@ linux:build:
         libsqlite3-dev zlib1g-dev libsqlcipher-dev libtag1-dev
         qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-svg-dev
         qt6-shadertools-dev qt6-tools-dev qt6-l10n-tools libqt6qml6
-        xvfb unzip p7zip-full libxkbcommon-dev
+        xvfb unzip 7zip libxkbcommon-dev
         qt6-base-private-dev qt6-declarative-private-dev
   script:
     # -DSEABASS_LIBDJINTEROP_TESTS=OFF for the same reason the Craft
@@ -223,7 +236,7 @@ linux:build:
 linux:test:
   stage: test
   # Untagged, for the same reason as linux:build above.
-  image: ubuntu:24.04
+  image: ubuntu:26.04
   needs: [linux:build]
   # Spelled out rather than reusing &full_lane_rules: a YAML merge key
   # (<<:) merges a *mapping* into another mapping -- it cannot expand a
