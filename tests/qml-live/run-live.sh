@@ -51,8 +51,9 @@ failed=0
 # because they proved nothing. SKIP_PLAIN leaves the plain flows out, and
 # a test that was not asked for is not declared.
 rig_parts_declare live-lock-read-only live-lock-refuses-stage live-dj-guard live-stick-pulled
-[ -n "${SKIP_PLAIN:-}" ] || rig_parts_declare live-library-health-leave live-scan-cancel \
-    live-settings-save-undo live-sync-save-cancel live-junk-cues-save-undo live-pending-deletions-cancel
+[ -n "${SKIP_PLAIN:-}" ] || rig_parts_declare live-library-health-leave live-library-health-leave-wrote-nothing \
+    live-scan-cancel live-settings-save-undo live-sync-save-cancel live-junk-cues-save-undo \
+    live-pending-deletions-cancel
 trap rig_parts_finish EXIT
 
 # The board id for each test function, so the name lives in one place.
@@ -108,6 +109,14 @@ run() {  # name, extra env assignments...
 # something planted a skip would be a silent pass, so it is required to run.
 if [ -z "${SKIP_PLAIN:-}" ]; then
     echo "=== planting a repairable Library Health issue for test_05"
+    # What a Denon player would say about this stick before the test, to
+    # compare against afterwards. test_05 leaves Library Health without
+    # saving, so neither number may move at all: the sequence in
+    # export.pdb only changes when something writes it, and a discard
+    # that still moved it has written to the stick. See issue #42 and
+    # tools/rig_import_prompt.cpp.
+    leave_state="$(mktemp)"
+    "$build/rig_import_prompt" "$stick" --record "$leave_state" || failed=1
     if "$build/rig_plant_repairable" "$stick" --plant; then
         run "LiveEditMode::test_05_libraryHealthLeaveDiscards" SEABASS_RIG_REQUIRE_REPAIRABLE=1
     else
@@ -118,6 +127,17 @@ if [ -z "${SKIP_PLAIN:-}" ]; then
     # Back even if the test failed: the next check compares this stick
     # against its reference.
     "$build/rig_plant_repairable" "$stick" --restore || failed=1
+    # After the restore, so the planted file is not itself the change
+    # being measured. Its own row: leaving without saving and leaving the
+    # player alone are two claims, and a reader needs to know which one
+    # broke.
+    if "$build/rig_import_prompt" "$stick" --compare "$leave_state" --identical; then
+        rig_part live-library-health-leave-wrote-nothing PASS
+    else
+        rig_part live-library-health-leave-wrote-nothing FAIL
+        failed=1
+    fi
+    rm -f "$leave_state"
 fi
 
 # 1. The plain flows, one process per test function so a failure in one

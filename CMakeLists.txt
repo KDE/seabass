@@ -2567,6 +2567,13 @@ endif()
 
 # D1: formats a real stick, so it is built everywhere the rig runs but
 # only ever erases anything when handed --execute.
+# The rig half of issue #42: reads only, so it is built and run
+# everywhere, and it is what makes a save that re-arms the player's
+# import prompt fail a round instead of surfacing on a player weeks later.
+add_executable(rig_import_prompt tools/rig_import_prompt.cpp)
+target_include_directories(rig_import_prompt PRIVATE src)
+target_link_libraries(rig_import_prompt PRIVATE seabass_core)
+
 add_executable(rig_format tools/rig_format.cpp)
 target_include_directories(rig_format PRIVATE src)
 target_link_libraries(rig_format PRIVATE seabass_core)

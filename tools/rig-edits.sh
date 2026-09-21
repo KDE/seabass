@@ -41,7 +41,7 @@ failed=0
 
 # One board row per test: W5 skipping for want of a duplicate group on the
 # stick used to take W2 and W6 red with it, and a reader could not tell.
-rig_parts_declare W2-add-cue W5-clean-up-group W6-library-health-repair
+rig_parts_declare W2-add-cue W5-clean-up-group W6-library-health-repair W6-import-prompt-not-armed
 [ -z "$baseline" ] || rig_parts_declare edits-wrote-nothing
 trap rig_parts_finish EXIT
 
@@ -66,15 +66,38 @@ run W2-add-cue LiveEditMode::test_08_addCueSaveUndo
 run W5-clean-up-group LiveEditMode::test_09_cleanupOneGroupSaveUndo
 
 echo "=== planting a repairable Library Health issue"
+# What a Denon player would say about this stick before the repair, so
+# the check after it can tell the difference between "Seabass armed the
+# import prompt" and "this stick was already going to be asked about".
+# See tools/rig_import_prompt.cpp and issue #42: a repair rewrites
+# export.pdb, which moves the sequence Engine compares against, so a
+# player offers to rebuild the Engine side from the rekordbox one -- and
+# accepting that undoes the very repair this check just made.
+import_state="$(mktemp)"
+"$build/rig_import_prompt" "$stick" --record "$import_state" || failed=1
 if "$build/rig_plant_repairable" "$stick" --plant; then
     # Planted, so there is something to repair: a skip would pass silently.
     SEABASS_RIG_REQUIRE_REPAIRABLE=1 run W6-library-health-repair LiveEditMode::test_10_libraryHealthRepairSaveUndo
+    # Its own row. The repair passing and the player being left asking
+    # are two different answers, and a reader needs both: W6 is about the
+    # repair Seabass made, this is about what the next insert does to it.
+    if "$build/rig_import_prompt" "$stick" --compare "$import_state"; then
+        rig_part W6-import-prompt-not-armed PASS
+    else
+        rig_part W6-import-prompt-not-armed FAIL
+        failed=1
+    fi
 else
     # The setup, not the test: its own row says so rather than the whole
     # bundle going red for a fixture that had nothing to plant.
     rig_part W6-library-health-repair FAIL
+    # Nothing was repaired, so nothing can be said about what a repair
+    # does to the prompt. Unreported would let the board keep last
+    # round's answer, which is the failure this rig is built against.
+    rig_part W6-import-prompt-not-armed FAIL
     failed=1
 fi
+rm -f "$import_state"
 echo "=== putting the planted file back"
 "$build/rig_plant_repairable" "$stick" --restore || failed=1
 
