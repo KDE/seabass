@@ -128,6 +128,20 @@ One design point worth knowing if you're touching the anonymizer: the same real 
   `ignoreUnknownSignals: true` for that reason.
 - `SEABASS_SCREENSHOT_DIR=<dir> QT_QPA_PLATFORM=offscreen build/seabass_qml_tests -input tests/qml`
   saves a PNG per page the tests render; look at them for any visual claim.
+- **Run the QML suite through `ctest`, not by starting the binary.** Two
+  things go wrong otherwise, and both of them look like the code. Without
+  `-input tests/qml` the runner takes whatever `tst_*.qml` it finds
+  beside the binary, and a build directory can hold an old copy under
+  `diag/` -- on 2026-09-21 that reported StickListPage at 6 passed and 22
+  failed, with "Cannot create delegate" and uninitialised required
+  properties, against a tree whose suite was green. And a direct run
+  inherits the desktop's Quick Controls style, while `ctest` pins
+  `QT_QUICK_CONTROLS_STYLE=Basic` along with a redirected
+  `XDG_CONFIG_HOME` and a sandboxed `SEABASS_HOME`; under the desktop
+  style a ComboBox popup is a separate window `grabImage()` cannot see,
+  so the tests that measure painted ink fail for the environment rather
+  than for the page. `ctest -R seabass_qml_tests` is the one that
+  answers the question asked.
 
 ## Live tests against a real stick
 

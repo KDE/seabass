@@ -322,6 +322,15 @@ linux:package:
   # passed.
   rules:
     - if: '$CI_COMMIT_TAG'
+  # Measured, not guessed: this build is SEABASS_TESTS=OFF, which is 505
+  # ninja edges against the test lane's 1859 -- roughly three quarters of
+  # that lane is the suite, which a package does not contain. But the
+  # runner varies about threefold between runs from host contention (the
+  # same object took 15.9 and 29.3 minutes on consecutive runs), so a
+  # number that fits comfortably today can fail tomorrow on identical
+  # work. Whether a job timeout above the hour is honoured here is not
+  # established; if this ever fails at exactly 1h, that is the answer.
+  timeout: 2h
   before_script: *linux_packages
   script:
     - . tools/release-version.sh
