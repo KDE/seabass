@@ -188,12 +188,25 @@ TestCase {
             }
         }
         walk(page);
+        // What this asserts: the sentence is there AND something follows
+        // it. It used to require the literal word "Seabass" in the label,
+        // which passed on a developer machine only because the checkout
+        // happens to sit under ~/Seabass with a capital S. On CI the
+        // project lives at /builds/multimedia/seabass, lowercase, and
+        // indexOf is case-sensitive -- so the test was really asserting
+        // where somebody keeps their source tree, and it went red the
+        // first time it ever ran anywhere else.
+        var marker = "only ever writes here: ";
+        var namedLocation = "";
         for (var i = 0; i < labels.length; ++i) {
-            if (labels[i].indexOf("Seabass") >= 0 && labels[i].indexOf("only ever writes here") >= 0) {
-                found = true;
+            var at = labels[i].indexOf(marker);
+            if (at >= 0) {
+                namedLocation = labels[i].substring(at + marker.length).trim();
+                found = namedLocation.length > 0;
             }
         }
-        verify(found, "the page must name the location it writes to");
+        verify(found, "the page must name the location it writes to; saw "
+               + JSON.stringify(labels.filter(function (t) { return t.indexOf("writes here") >= 0; })));
     }
 
     function test_backUpNeedsAStick() {
