@@ -5,6 +5,28 @@
 # Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
+# Every job is interruptible, so a newer push cancels the older
+# pipeline's running jobs instead of both finishing.
+#
+# This is aimed at one measured waste rather than at speed in general.
+# On 2026-09-21 five master pipelines were running at once, four of them
+# already superseded, each carrying roughly 36 minutes of jobs: about
+# 144 minutes of shared KDE runner time producing results nobody would
+# ever read. A superseded pipeline is waste by definition -- its commit
+# is not master's tip any more and nothing will be decided by its
+# answer.
+#
+# `interruptible: true` only has effect when the project also has
+# "Auto-cancel redundant pipelines" enabled (Settings -> CI/CD ->
+# General pipelines). That is a project setting, not a file one, so if
+# this appears to do nothing, check there first.
+#
+# linux:package opts out below. It runs only on release tags and it
+# publishes; a half-made release artifact cancelled in flight is worse
+# than a redundant one finishing.
+default:
+  interruptible: true
+
 stages:
 - build
 - test
@@ -499,6 +521,9 @@ linux:build-test:
 # the update check compares against it.
 linux:package:
   stage: package
+  # Not interruptible: this runs on release tags only and publishes. See
+  # the default: block at the top.
+  interruptible: false
   image: ubuntu:26.04
   # No `needs:`, on purpose. Naming a job ties this to whatever the Linux
   # lane is called this week, and a `needs:` pointing at a job that no
