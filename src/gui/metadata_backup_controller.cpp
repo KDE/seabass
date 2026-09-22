@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "metadata_backup_controller.hpp"
+
+#include "gui/future_result.hpp"
 #include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -397,12 +399,15 @@ MetadataBackupController::MetadataBackupController(QObject *parent) : QObject(pa
 MetadataBackupController::~MetadataBackupController()
 {
     m_cancel.cancel();
-    if (m_scanWatcher.isRunning()) {
-        m_scanWatcher.waitForFinished();
-    }
-    if (m_saveWatcher.isRunning()) {
-        m_saveWatcher.waitForFinished();
-    }
+    // awaitQuietly(), not waitForFinished(): a destructor is noexcept,
+    // and waitForFinished() rethrows whatever the task stored, so
+    // leaving this page while its scan had thrown called std::terminate
+    // straight out of the unwinder. That crash is why the helper exists
+    // (see future_result.hpp); every other controller here uses it.
+    // isRunning() is dropped with it -- awaitQuietly() on a watcher with
+    // no future is a no-op, and the check invited the raw call back.
+    awaitQuietly(m_scanWatcher);
+    awaitQuietly(m_saveWatcher);
 }
 
 QString MetadataBackupController::storeLocation() const
@@ -561,7 +566,11 @@ void MetadataBackupController::cancel()
 
 void MetadataBackupController::onScanFinished()
 {
-    const MetadataBackupScanResult result = m_scanWatcher.result();
+    QString thrown;
+    MetadataBackupScanResult result = takeResult(m_scanWatcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setBusy(false);
     setCurrentPhase({});
     m_stickTracks = result.stickTracks;
@@ -722,7 +731,11 @@ void MetadataBackupController::beginSave()
 
 void MetadataBackupController::onSaveFinished()
 {
-    const MetadataBackupTaskResult result = m_saveWatcher.result();
+    QString thrown;
+    MetadataBackupTaskResult result = takeResult(m_saveWatcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setBusy(false);
     setWriting(false);
     setCurrentPhase({});

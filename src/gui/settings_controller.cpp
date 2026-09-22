@@ -4,6 +4,8 @@
 
 #include "settings_controller.hpp"
 
+#include "gui/future_result.hpp"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <filesystem>
@@ -242,7 +244,11 @@ void SettingsController::rebuildGroupsView()
 
 void SettingsController::onTaskFinished()
 {
-    SettingsTaskResult result = m_watcher.result();
+    QString thrown;
+    SettingsTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     m_groups = result.groups;
     rebuildGroupsView();
     if (!result.errorMessage.isEmpty()) {

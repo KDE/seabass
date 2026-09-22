@@ -35,6 +35,7 @@
 #include "gui/edit/changes/delete_orphan_change.hpp"
 #include "gui/edit/changes/remove_junk_cue_change.hpp"
 #include "gui/edit/changes/repair_artwork_change.hpp"
+
 #include "gui/future_result.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/artwork_rescue_sources.hpp"
@@ -672,7 +673,11 @@ void LibraryConsistencyController::cancelScan()
 
 void LibraryConsistencyController::onScanFinished()
 {
-    LibraryConsistencyScanResult result = m_watcher.result();
+    QString thrown;
+    LibraryConsistencyScanResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     if (result.cancelled) {
         // Whatever earlier formats contributed stays on screen (it is
         // complete for those formats); the rest of the queue is dropped.

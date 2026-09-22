@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "engine_library_creator_controller.hpp"
+
+#include "gui/future_result.hpp"
 #include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -152,7 +154,11 @@ void EngineLibraryCreatorController::create(const QString &rekordboxPath, int sc
 
 void EngineLibraryCreatorController::onCreateFinished()
 {
-    EngineLibraryCreationTaskResult result = m_watcher.result();
+    QString thrown;
+    EngineLibraryCreationTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     if (m_holdsDirectWrite) {
         m_holdsDirectWrite = false;
         EditSessionRegistry::instance()->leaveDirectWrite(m_libraryId);

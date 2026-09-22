@@ -1281,6 +1281,13 @@ add_executable(no_manual_file_urls_test tests/no_manual_file_urls_test.cpp)
 target_compile_definitions(no_manual_file_urls_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_manual_file_urls_test COMMAND no_manual_file_urls_test)
 
+# Source guard, same shape as the one above: no QFutureWatcher result
+# read raw in the GUI, because the exception it rethrows lands on the
+# GUI thread and terminates the process.
+add_executable(no_raw_future_reads_test tests/no_raw_future_reads_test.cpp)
+target_compile_definitions(no_raw_future_reads_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME no_raw_future_reads_test COMMAND no_raw_future_reads_test)
+
 # Runs the real .githooks scripts, so it needs a POSIX shell and a git.
 # Both are a given on the platforms that build this; on Windows they come
 # with Git for Windows, which is already required to clone the submodules.

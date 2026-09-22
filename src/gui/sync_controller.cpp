@@ -4,6 +4,8 @@
 
 #include "sync_controller.hpp"
 
+#include "gui/future_result.hpp"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -260,7 +262,11 @@ void SyncController::analyze(const QString &rekordboxPath, const QString &engine
 
 void SyncController::onAnalyzeFinished()
 {
-    SyncTaskResult result = m_watcher.result();
+    QString thrown;
+    SyncTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
 
     if (result.cancelled) {
         setBusy(false);

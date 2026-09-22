@@ -4,6 +4,8 @@
 
 #include "stick_statistics_controller.hpp"
 
+#include "gui/future_result.hpp"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -276,7 +278,11 @@ void StickStatisticsController::cancelScan()
 
 void StickStatisticsController::onScanFinished()
 {
-    StickStatisticsScanResult result = m_watcher.result();
+    QString thrown;
+    StickStatisticsScanResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setBusy(false);
     if (result.cancelled) {
         emit scanCancelled();

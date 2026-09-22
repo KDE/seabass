@@ -18,6 +18,7 @@
 
 #include "domain/filesystem_compatibility.hpp"
 #include "domain/stick_performance.hpp"
+
 #include "gui/future_result.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/write_guard.hpp"
@@ -691,7 +692,11 @@ void StickPerformanceController::applyWearProgress(qlonglong bytesDone, qlonglon
 
 void StickPerformanceController::onWearFinished()
 {
-    StickWearResult result = m_wearWatcher.result();
+    QString thrown;
+    StickWearResult result = takeResult(m_wearWatcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setWearBusy(false);
     if (result.cancelled) {
         return;
@@ -776,7 +781,11 @@ void StickPerformanceController::cancelWrites()
 
 void StickPerformanceController::onWriteFinished()
 {
-    StickWriteResult result = m_writeWatcher.result();
+    QString thrown;
+    StickWriteResult result = takeResult(m_writeWatcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setWriteBusy(false);
     if (result.cancelled) {
         return;
@@ -868,7 +877,11 @@ void StickPerformanceController::cancel()
 
 void StickPerformanceController::onFinished()
 {
-    StickPerformanceResult result = m_watcher.result();
+    QString thrown;
+    StickPerformanceResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setBusy(false);
     if (result.cancelled) {
         emit cancelled();

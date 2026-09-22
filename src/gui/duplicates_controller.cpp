@@ -4,6 +4,8 @@
 
 #include "duplicates_controller.hpp"
 
+#include "gui/future_result.hpp"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -380,7 +382,11 @@ void DuplicatesController::setAudioComparisonNote(const DuplicatesTaskResult &re
 
 void DuplicatesController::onRescanFinished()
 {
-    DuplicatesTaskResult result = m_watcher.result();
+    QString thrown;
+    DuplicatesTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
 
     if (result.cancelled) {
         setBusy(false);

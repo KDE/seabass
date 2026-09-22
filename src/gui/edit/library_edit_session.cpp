@@ -4,6 +4,7 @@
 
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "gui/edit/library_edit_session.hpp"
+
 #include "gui/future_result.hpp"
 
 #include <QtConcurrent>
@@ -411,7 +412,11 @@ void LibraryEditSession::save()
 
 void LibraryEditSession::onSaveFinished()
 {
-    SaveLoopResult result = m_watcher.result();
+    QString thrown;
+    SaveLoopResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.error = thrown;
+    }
 
     std::set<QString> applied(result.appliedIds.begin(), result.appliedIds.end());
     std::set<QString> formats;

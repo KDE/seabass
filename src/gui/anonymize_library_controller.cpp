@@ -4,6 +4,8 @@
 
 #include "anonymize_library_controller.hpp"
 
+#include "gui/future_result.hpp"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <filesystem>
@@ -169,7 +171,11 @@ void AnonymizeLibraryController::run(const QString &rekordboxPath, const QString
 
 void AnonymizeLibraryController::onRunFinished()
 {
-    AnonymizeLibraryTaskResult result = m_watcher.result();
+    QString thrown;
+    AnonymizeLibraryTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setBusy(false);
     if (!result.succeeded) {
         setErrorMessage(result.errorMessage.isEmpty() ? "Anonymization failed." : result.errorMessage);

@@ -4,6 +4,8 @@
 
 #include "scan_controller.hpp"
 
+#include "gui/future_result.hpp"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -260,7 +262,11 @@ void ScanController::cancelScan()
 
 void ScanController::onScanFinished()
 {
-    ScanTaskResult result = m_watcher.result();
+    QString thrown;
+    ScanTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
 
     if (result.cancelled) {
         setBusy(false);

@@ -16,6 +16,7 @@
 #include "gui/edit/changes/restore_metadata_change.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/future_result.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
 #include "gui/stick_catalogs.hpp"
@@ -145,9 +146,9 @@ MetadataRestoreController::MetadataRestoreController(QObject *parent) : QObject(
 MetadataRestoreController::~MetadataRestoreController()
 {
     m_cancel.cancel();
-    if (m_watcher.isRunning()) {
-        m_watcher.waitForFinished();
-    }
+    // See MetadataBackupController's destructor, and future_result.hpp:
+    // waitForFinished() rethrows in a noexcept context.
+    awaitQuietly(m_watcher);
 }
 
 bool MetadataRestoreController::writing() const
@@ -178,7 +179,11 @@ void MetadataRestoreController::cancelScan()
 
 void MetadataRestoreController::onScanFinished()
 {
-    const MetadataRestoreTaskResult result = m_watcher.result();
+    QString thrown;
+    MetadataRestoreTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     setBusy(false);
     setCurrentPhase({});
     if (!result.errorMessage.isEmpty()) {

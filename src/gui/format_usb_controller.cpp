@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "format_usb_controller.hpp"
+
+#include "gui/future_result.hpp"
 #include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -197,7 +199,11 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
 
 void FormatUsbController::onFormatFinished()
 {
-    FormatUsbTaskResult result = m_watcher.result();
+    QString thrown;
+    FormatUsbTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     m_writeHold.release();
     setBusy(false);
     if (!result.errorMessage.isEmpty()) {

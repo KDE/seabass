@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/paths/seabass_paths.hpp"
+
+#include "gui/future_result.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "cleanup_controller.hpp"
 
@@ -989,7 +991,11 @@ std::shared_ptr<QtProgressReporter> CleanupController::makeReporter()
 
 void CleanupController::onRescanFinished()
 {
-    CleanupTaskResult result = m_watcher.result();
+    QString thrown;
+    CleanupTaskResult result = takeResult(m_watcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
 
     if (result.cancelled) {
         setBusy(false);
@@ -1374,7 +1380,11 @@ void CleanupController::cancelWrite()
 
 void CleanupController::onDeletePendingFinished()
 {
-    PendingDeletionApplyResult result = m_pendingWriteWatcher.result();
+    QString thrown;
+    PendingDeletionApplyResult result = takeResult(m_pendingWriteWatcher, &thrown);
+    if (!thrown.isEmpty()) {
+        result.errorMessage = thrown;
+    }
     if (m_holdsDirectWrite) {
         m_holdsDirectWrite = false;
         EditSessionRegistry::instance()->leaveDirectWrite(EditSessionRegistry::instance()->libraryIdForPath(m_path));
