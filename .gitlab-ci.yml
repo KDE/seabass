@@ -5,6 +5,22 @@
 # Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
+# Cancel superseded pipelines from the FILE, not from project settings.
+#
+# `workflow: auto_cancel: on_new_commit: interruptible` does what the
+# "Auto-cancel redundant pipelines" checkbox does, and does it here,
+# where anyone with push access can change it. That checkbox lives under
+# Settings -> CI/CD, which needs Maintainer; on a mainline KDE
+# repository the project is owned by sysadmins, so a Developer who can
+# push to master still cannot reach it. Configuring it in .gitlab-ci.yml
+# removes the dependency on a role nobody here has.
+#
+# It needs the jobs to be interruptible, which the default: below makes
+# them.
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+
 # Every job is interruptible, so a newer push cancels the older
 # pipeline's running jobs instead of both finishing.
 #
