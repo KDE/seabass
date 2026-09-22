@@ -18,7 +18,9 @@ to see afterwards.
 ## Refuse, do not transliterate
 
 **When a write path meets input outside what it was designed for, it must
-fail loudly rather than do its best.**
+fail loudly rather than do its best.** And -- the half that is easy to
+lose -- it must not mistake input it *can* handle for input it cannot.
+Both directions are in the table below, because both happened this week.
 
 The tempting answer is always to widen it: make the function handle the
 other case properly. Sometimes that is right. But when the "best effort"
@@ -30,31 +32,62 @@ The live example, and the one this was written for.
 `PdbRowWriter`'s `fitAsciiToCapacity()` fits replacement text into a
 fixed-width `device_sql_string`. Its comment says "anonymized placeholder
 text is always plain ASCII, so byte-level truncation/padding never splits
-a multi-byte character". That is true of every caller today. Nothing
-enforces it, and the UTF-16 branch writes each byte with a zero high
-byte, so a non-ASCII name reaching it would be silently mangled into
-valid-looking nonsense rather than rejected.
+a multi-byte character". That is true of every caller today, and nothing
+enforces it.
+
+Measured rather than predicted, because the first draft of this section
+said "would be mangled" and that was a guess. Writing `Cé` into a
+`device_sql_long_utf16le` field stores `CÃ`:
+
+```
+in:     C    é           43 c3 a9   (UTF-8, 3 bytes)
+stored: C    Ã           43 c3 83   (2 UTF-16 code units)
+result: overwriteTrackText() returns TRUE
+```
+
+Two separate things go wrong and neither is visible afterwards. The
+UTF-16 branch writes each *byte* of the UTF-8 input as the low half of a
+code unit with a zero high byte, so `é` (`c3 a9`) becomes `Ã` plus a
+second character; and capacity is counted in code units while the input
+is counted in bytes, so the tail is silently dropped. Every length is
+right, the field reparses, the call reports success, and one character of
+a DJ's text is gone.
 
 ### Why "handle it properly" is the wrong instinct here
 
-Because of what failure looks like in this format. Three separate
-silent-corruption bugs in `src/infrastructure/rekordbox/` in one week,
-all with the same signature:
+Because of what failure looks like here. Four write-path bugs in one
+week, every one of them a path meeting input outside what it was built
+for -- and each giving a *different* wrong answer:
 
-| Bug | What it did | Why nothing noticed |
-|---|---|---|
-| `tag_row` keep-range two bytes short | Zeroed a live field in all 28 rows | Names read back, tests passed, file reparsed |
-| Sync's OneLibrary mirror | Failed the save and rolled back a good write | Only visible if you synced a track with no mirror row |
-| Clean Up's merged-cue mirror | Swallowed the failure, reported success | The deletion it guards then ran anyway |
+| Bug | Where | Input it was not built for | Wrong answer |
+|---|---|---|---|
+| `tag_row` keep-range two bytes short | `infrastructure/rekordbox/pdb_row_writer.cpp` | A row shape with a field it did not know about | **Corrupted silently.** Zeroed a live field in all 28 rows; names still read back, tests passed, file reparsed |
+| `fitAsciiToCapacity` UTF-16 branch | same file | Non-ASCII text | **Corrupted silently.** Stores `CÃ` for `Cé` and returns true; every length right, field reparses |
+| Sync's OneLibrary mirror | `gui/edit/changes/sync_plan_change.cpp` | A track with no Device Library Plus row | **Refused wrongly.** Failed the save and rolled back a good write, for 635 of 1118 tracks |
+| Clean Up's merged-cue mirror | `gui/edit/changes/cleanup_group_change.cpp` | A mirror write that failed | **Succeeded falsely.** Logged it and reported success -- and Clean Up then deletes the duplicates those cues were merged from, so the merged set is the only copy and half of it is missing |
 
-In every case the file stayed parseable and every counter stayed green.
-The damage was only visible byte by byte against the original. A write
-path that quietly does its best is how each of those got as far as it
-did.
+Two things that set is worth noticing for.
 
-Refusing is loud, and loud is repairable. A save that stops with a
-message costs someone a minute; a save that writes plausible wrong bytes
-into a library costs them the library, and they find out at a gig.
+**The failure follows the kind of code, not the module.** Two are deep in
+the binary format layer and two are in GUI change classes. What they have
+in common is that each is a *write path*, not that they live near each
+other.
+
+**And "refuse" is only half the rule.** One of the four is a refusal that
+was itself the bug. Sync met a perfectly ordinary situation -- a track
+with no mirror row, which is most tracks on a real stick -- and treated
+it as a failure. So:
+
+> Refuse what you cannot represent. Do not refuse what you can handle,
+> and do not report success for what you did not do.
+
+The three wrong answers are the three ways out of that, and only one of
+them is right for any given input. What makes silent corruption the worst
+of them is not that it is the most likely, but that it is the only one
+nothing downstream can detect: a wrong refusal is a message on screen,
+and a false success is at least visible in a log. Corrupted bytes in a
+DJ's library are found at a gig, months later, by the person who needed
+them.
 
 ### The corollary, which is where this actually bites
 
