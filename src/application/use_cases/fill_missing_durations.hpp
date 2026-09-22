@@ -23,6 +23,12 @@ struct FillMissingDurationsResult
     size_t fromCache = 0;     // served from the stick's duration cache
     size_t probed = 0;        // read from the audio file this run
     size_t unreadable = 0;    // no length available even after probing
+
+    // The four add up to the number of tracks that went in, always.
+    // Rows after the first pointing at one file are filled from what
+    // this run already worked out for it, and are counted under where
+    // that came from rather than not at all: several rows per file is
+    // the ordinary shape here, since duplicates are what this feeds.
 };
 
 // Fills `durationSeconds` on every track that has none, from the cache
