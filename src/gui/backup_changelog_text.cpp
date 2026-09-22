@@ -21,9 +21,6 @@ namespace seabass::gui
 namespace fs = std::filesystem;
 using namespace seabass::infrastructure::stick_backup;
 
-namespace
-{
-
 QString humanBytes(std::uint64_t bytes)
 {
     static const char *units[] = {"bytes", "KiB", "MiB", "GiB", "TiB"};
@@ -36,6 +33,9 @@ QString humanBytes(std::uint64_t bytes)
     return unit == 0 ? QString::number(bytes) + QStringLiteral(" bytes")
                      : QString::number(value, 'f', 1) + QLatin1Char(' ') + QLatin1String(units[unit]);
 }
+
+namespace
+{
 
 QString describeStatus(BackupStatus status)
 {

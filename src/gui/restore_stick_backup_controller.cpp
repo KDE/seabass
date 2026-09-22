@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include "gui/backup_changelog_text.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "gui/library_catalog_cache.hpp"
@@ -542,6 +543,20 @@ void RestoreStickBackupController::onRestoreFinished()
     map["rejected"] = rejected;
     map["writeErrors"] = toVariantList(s.writeErrors);
     map["warnings"] = toVariantList(s.warnings);
+    // Files the backup only holds part of, because it was taken off a
+    // stick that had already failed. Said as a sentence per file rather
+    // than as a count, because "which of my tracks is short" is the
+    // question, and a number cannot answer it.
+    QVariantList partial;
+    for (const auto &entry : s.partial) {
+        const QString what = QStringLiteral("%1: the backup holds %2 of %3")
+                                 .arg(QString::fromStdString(entry.path))
+                                 .arg(humanBytes(entry.bytesAvailable))
+                                 .arg(humanBytes(entry.originalSize));
+        partial.push_back(entry.written ? what + QStringLiteral(" (put back; the rest was never readable)")
+                                        : what + QStringLiteral(" (left alone: the copy already here is whole)"));
+    }
+    map["partial"] = partial;
     map["missingTracks"] = s.missingTrackPaths ? toVariantList(*s.missingTrackPaths) : QVariantList{};
     map["databaseChecked"] = s.missingTrackPaths.has_value();
     m_result = map;
@@ -553,7 +568,18 @@ void RestoreStickBackupController::onRestoreFinished()
         emit actionFeedback(m_statusMessage, false);
         break;
     case RestoreSummary::Status::RestoredWithProblems:
-        setStatusMessage(QStringLiteral("Restored %1 files, but with problems; see the report below.").arg(s.filesWritten));
+        if (!s.partial.empty()) {
+            // Named ahead of the general wording: a restore that put back
+            // truncated files is a different thing from one that hit a
+            // checksum, and the person is about to play these tracks.
+            setStatusMessage(QStringLiteral("Restored %1 files. %2 of them could only be read in part off the "
+                                            "damaged stick; see the report below.")
+                                 .arg(s.filesWritten)
+                                 .arg(s.partial.size()));
+        } else {
+            setStatusMessage(
+                QStringLiteral("Restored %1 files, but with problems; see the report below.").arg(s.filesWritten));
+        }
         emit actionFeedback(m_statusMessage, true);
         break;
     case RestoreSummary::Status::Cancelled:

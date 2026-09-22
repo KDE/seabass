@@ -6,10 +6,17 @@
 
 #include <QString>
 
+#include <cstdint>
+
 #include <filesystem>
 
 namespace seabass::gui
 {
+
+// A byte count as a person writes it: "4,0 MiB", not 4194304. Shared
+// rather than copied, because two places wording the same number two
+// different ways is how a report ends up disagreeing with itself.
+QString humanBytes(std::uint64_t bytes);
 
 // An archive's own history, as a plain text file someone can open.
 //

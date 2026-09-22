@@ -753,6 +753,27 @@ void StickBackupController::finishOutcome(const BackupStickOutcome &outcome)
         emit actionFeedback(m_errorMessage, true);
         break;
     }
+
+    // A salvage run says what it could not get, whatever else happened
+    // above. This is the one number the person needs off a dying stick,
+    // and it must not be buried under "Backed up 1 431 files": those
+    // files are not all there.
+    if (!outcome.salvaged.empty()) {
+        QString said = QStringLiteral("%1 file(s) could not be read in full off this stick: ")
+                           .arg(outcome.salvaged.size());
+        for (std::size_t i = 0; i < outcome.salvaged.size() && i < 3; ++i) {
+            const auto &entry = outcome.salvaged[i];
+            said += (i == 0 ? QString() : QStringLiteral(", ")) + QString::fromStdString(entry.path)
+                + QStringLiteral(" (") + humanBytes(entry.bytesSalvaged) + QStringLiteral(" of ")
+                + humanBytes(entry.expectedSize) + QStringLiteral(")");
+        }
+        if (outcome.salvaged.size() > 3) {
+            said += QStringLiteral(" and %1 more").arg(outcome.salvaged.size() - 3);
+        }
+        said += QStringLiteral(". The backup lists every one of them in SEABASS-SALVAGE.txt.");
+        setStatusMessage(said);
+        emit actionFeedback(said, true);
+    }
 }
 
 void StickBackupController::onRunFinished()
