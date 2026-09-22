@@ -14,10 +14,10 @@
 // awaitQuietly() exist -- see src/gui/future_result.hpp.
 //
 // The helpers were then added controller by controller, as each crash
-// was found, and eighteen slots plus three destructors still read the
-// future raw. Nothing was reaching them, because every QtConcurrent
-// body in src/gui happens to catch std::exception -- but "happens to"
-// is the whole point: it holds only for as long as the next task body
+// was found, and eighteen slots plus three waits in two destructors
+// still read the future raw. Nothing was reaching them, because every
+// QtConcurrent body in src/gui happens to catch std::exception -- but
+// "happens to" is the whole point: it holds only for as long as the next task body
 // written also catches, and the failure is a hard crash with no message.
 //
 // So this is a guard on the source rather than a test of behaviour: the
@@ -49,18 +49,45 @@ bool isCommentLine(const std::string &line)
         return true;
     }
     const std::string rest = line.substr(first);
-    return rest.rfind("//", 0) == 0 || rest.rfind("/*", 0) == 0 || rest.rfind("*", 0) == 0;
+    if (rest.rfind("//", 0) == 0 || rest.rfind("/*", 0) == 0 || rest.rfind("*/", 0) == 0) {
+        return true;
+    }
+    // A block comment's continuation line is "* something" or a bare
+    // "*". A leading star with no space after it is code -- "*out =
+    // m_watcher.result();" is a dereference, and taking it for a comment
+    // would hide exactly what this scans for.
+    return rest == "*" || rest.rfind("* ", 0) == 0;
 }
 
-// ".result()" and ".waitForFinished()" on anything. QProcess has a
-// waitForFinished() of its own and would be a false positive, but
-// src/gui has no QProcess: the one place this project runs a program is
-// infrastructure/process, which this does not scan. If that changes,
-// this comment is the place to say so rather than quietly widening the
-// pattern.
+// Every spelling that rethrows what a task stored, through a value or
+// through a pointer. The first version of this listed two of them and
+// was blind to the rest: a watcher held as a unique_ptr, or a read
+// through results()/resultAt(), would have put the crash back with the
+// guard still reporting clean. QFuture::takeResult() is the sharpest of
+// them, because it reads like this project's own helper and is not one.
+//
+// The helper IS "takeResult(watcher, &thrown)", a free call with no dot
+// or arrow in front of it, which is why the member spellings can be
+// matched without catching every correct call site in the tree.
+//
+// QProcess has a waitForFinished() of its own and would be a false
+// positive, but src/gui has no QProcess: the one place this project runs
+// a program is infrastructure/process, which this does not scan. If that
+// changes, this comment is the place to say so rather than quietly
+// narrowing the pattern again.
 bool readsAFutureRaw(const std::string &line)
 {
-    return line.find(".result()") != std::string::npos || line.find(".waitForFinished()") != std::string::npos;
+    static const std::vector<std::string> spellings = {
+        ".result()",      "->result()",      ".results()",    "->results()",
+        ".resultAt(",     "->resultAt(",     ".takeResult(",  "->takeResult(",
+        ".waitForFinished()", "->waitForFinished()",
+    };
+    for (const std::string &spelling : spellings) {
+        if (line.find(spelling) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string trimmed(const std::string &line)
