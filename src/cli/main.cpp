@@ -769,11 +769,30 @@ int runBackupsCommand(bool wantRekordbox, bool wantEngine, const std::optional<s
         if (refuseIfLockedByGui(resolved.enginePath ? *resolved.enginePath : *resolved.rekordboxPath, force)) {
             return 1;
         }
-        // The same on-stick write lock the GUI's writes hold.
-        auto locks = seabass::infrastructure::backup::acquireStickLocks({backupDirFor(resolved)});
-        auto freed = store.prune(keepCount);
-        Console::info("freed " + humanSize(freed) + " (kept up to " + std::to_string(keepCount) +
+        // The same on-stick write lock the GUI's writes hold. It throws
+        // when another Seabass is mid-write, and this command sat
+        // outside every try in this file, so the answer to "can I tidy
+        // up while a save is running" was an abort and a C++ exception
+        // name rather than a sentence.
+        seabass::application::PruneResult pruned;
+        try {
+            auto locks = seabass::infrastructure::backup::acquireStickLocks({backupDirFor(resolved)});
+            pruned = store.prune(keepCount);
+        } catch (const std::exception &e) {
+            Console::error(e.what());
+            return 1;
+        }
+        Console::info("freed " + humanSize(pruned.bytesFreed) + " from " + std::to_string(pruned.removed) +
+                       " backup(s) (kept up to " + std::to_string(keepCount) +
                        " most recent automatic backup(s), and every backup you made yourself)");
+        if (pruned.failed > 0) {
+            // Said out loud rather than folded into the byte count: the
+            // space the user asked for is still gone, and a backup that
+            // would not delete is worth looking at.
+            Console::error(std::to_string(pruned.failed) +
+                            " backup(s) could not be deleted and are still on the stick");
+            return 1;
+        }
         return resolved.ok ? 0 : 1;
     }
 

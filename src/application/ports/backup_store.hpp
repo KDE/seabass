@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -39,6 +40,19 @@ struct BackupRecord
     BackupOrigin origin = BackupOrigin::Automatic;
 };
 
+// What a prune did. It used to be just the byte count, which cannot
+// tell "there was nothing old enough to remove" from "three backups are
+// still there because the filesystem refused to remove them" -- both
+// report nothing freed, and the second is the one worth saying out
+// loud, since the space the user asked for is still gone and something
+// is wrong with the stick or the folder.
+struct PruneResult
+{
+    std::uint64_t bytesFreed = 0;
+    size_t removed = 0;
+    size_t failed = 0;  // selected for removal, still on disk afterwards
+};
+
 // Port for keeping "undo" copies of files before a mutating write touches
 // them. Every write Seabass performs must go through here first -- see
 // the plan's Backups section: manageable size (only the files actually
@@ -53,7 +67,7 @@ public:
     virtual std::vector<BackupRecord> list() = 0;
 
     // Deletes the oldest AUTOMATIC backups so at most keepCount of them
-    // remain. Returns the number of bytes freed.
+    // remain.
     //
     // User-requested records are neither deleted nor counted towards
     // keepCount: they are not Seabass's to tidy away, and counting them
@@ -61,7 +75,7 @@ public:
     // copy Seabass still needs. Deleting one of those is remove(), which
     // takes an id and therefore only ever happens because someone named
     // it.
-    virtual std::uint64_t prune(size_t keepCount) = 0;
+    virtual PruneResult prune(size_t keepCount) = 0;
 
     // Attaches/replaces a user-editable note on an existing backup (e.g.
     // "before Berlin gig"). No-op if id doesn't exist.

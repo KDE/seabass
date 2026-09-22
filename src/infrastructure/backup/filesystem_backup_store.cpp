@@ -645,20 +645,29 @@ std::vector<BackupRecord> FilesystemBackupStore::pruneCandidates(size_t keepCoun
     return automatic;
 }
 
-std::uint64_t FilesystemBackupStore::prune(size_t keepCount)
+application::PruneResult FilesystemBackupStore::prune(size_t keepCount)
 {
     sweepDeadRecords(m_baseDirectory);
     const std::vector<BackupRecord> automatic = pruneCandidates(keepCount);
-    std::uint64_t freed = 0;
-    size_t toRemove = automatic.size();
-    for (size_t i = 0; i < toRemove; ++i) {
+    application::PruneResult result;
+    for (const BackupRecord &record : automatic) {
         std::error_code ec;
-        fs::remove_all(automatic[i].path, ec);
-        if (!ec) {
-            freed += automatic[i].sizeBytes;
+        fs::remove_all(record.path, ec);
+        // remove_all() answers "how many did I remove", and 0 with no
+        // error is the directory having gone already -- which is fine,
+        // it is not there any more either way. What is not fine is
+        // counting bytes freed for a record still sitting on the stick:
+        // a refusal here (a read-only folder, a name this filesystem
+        // will not resolve for unlink) used to leave the caller
+        // reporting nothing freed and nothing wrong.
+        if (ec || fs::exists(record.path)) {
+            result.failed++;
+            continue;
         }
+        result.removed++;
+        result.bytesFreed += record.sizeBytes;
     }
-    return freed;
+    return result;
 }
 
 std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytesWanted,

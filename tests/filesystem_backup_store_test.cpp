@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <algorithm>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -226,9 +230,11 @@ int main()
             }
         }
 
-        auto freed = store.prune(3);
-        assert(freed == expectedFreed);
-        assert(freed > 0);
+        auto pruned = store.prune(3);
+        assert(pruned.bytesFreed == expectedFreed);
+        assert(pruned.bytesFreed > 0);
+        assert(pruned.removed == 2);
+        assert(pruned.failed == 0);
 
         auto remaining = store.list();
         assert(remaining.size() == 3);
@@ -256,12 +262,16 @@ int main()
         store.backup({targetFile.string()}, "two");
         assert(store.list().size() == 2);
 
-        std::uint64_t prunedCount1 = store.prune(2);
-        assert(prunedCount1 == 0);
+        auto keepAll = store.prune(2);
+        assert(keepAll.bytesFreed == 0);
+        assert(keepAll.removed == 0);
+        assert(keepAll.failed == 0);  // nothing to do is not a failure
         assert(store.list().size() == 2);
 
-        std::uint64_t prunedCount2 = store.prune(10);
-        assert(prunedCount2 == 0);  // keepCount well beyond what exists
+        auto keepMore = store.prune(10);
+        assert(keepMore.bytesFreed == 0);  // keepCount well beyond what exists
+        assert(keepMore.removed == 0);
+        assert(keepMore.failed == 0);
         assert(store.list().size() == 2);
         std::cout << "case 6 (prune: keepCount >= existing count is a true no-op) OK\n";
     }
@@ -276,11 +286,61 @@ int main()
         store.backup({targetFile.string()}, "two");
         assert(store.list().size() == 2);
 
-        auto freed = store.prune(0);
-        assert(freed > 0);
+        auto pruned = store.prune(0);
+        assert(pruned.bytesFreed > 0);
+        assert(pruned.removed == 2);
+        assert(pruned.failed == 0);
         assert(store.list().empty());
         std::cout << "case 7 (prune(0): removes every backup, the true empty-keep edge case) OK\n";
     }
+
+    // prune(): a backup it selected but could not remove is reported,
+    // not passed over in silence.
+    //
+    // The byte count on its own cannot tell "there was nothing old
+    // enough to remove" from "two backups are still there because the
+    // filesystem refused" -- both used to come back as zero, and the
+    // second is the one worth saying, because the space the user asked
+    // for is still gone. A read-only backups folder is the cheapest way
+    // to make a real removal fail; on a stick it is a sharing violation
+    // or a name the filesystem will not resolve for unlink.
+    //
+    // POSIX only, and skipped for a run as root: Windows does not
+    // refuse a delete for a read-only parent directory the way this
+    // needs, and root ignores the permission bits entirely -- either
+    // would report this green while proving nothing.
+#if !defined(_WIN32)
+    if (::geteuid() != 0) {
+        fs::remove_all(backupsDir);
+        FilesystemBackupStore store(backupsDir.string());
+        store.backup({targetFile.string()}, "one");
+        store.backup({targetFile.string()}, "two");
+        store.backup({targetFile.string()}, "three");
+        assert(store.list().size() == 3);
+
+        // The two oldest are what prune(1) will go for. Made
+        // unremovable from the inside -- a read-only record directory,
+        // so its own contents cannot be unlinked -- rather than by
+        // taking write permission off the folder above, which would let
+        // remove_all() empty each record and only then fail, leaving
+        // the backup destroyed anyway and nothing to assert about.
+        auto before = store.list();  // oldest first
+        assert(before.size() == 3);
+        const fs::perms originalPerms = fs::status(before[0].path).permissions();
+        fs::permissions(before[0].path, fs::perms::owner_read | fs::perms::owner_exec);
+        fs::permissions(before[1].path, fs::perms::owner_read | fs::perms::owner_exec);
+
+        auto pruned = store.prune(1);
+        fs::permissions(before[0].path, originalPerms);
+        fs::permissions(before[1].path, originalPerms);
+
+        assert(pruned.failed == 2);
+        assert(pruned.removed == 0);
+        assert(pruned.bytesFreed == 0);   // nothing was freed, so nothing is claimed
+        assert(store.list().size() == 3);  // and all three really are still there
+        std::cout << "case 8 (prune: a removal the filesystem refused is reported, not counted as freed) OK\n";
+    }
+#endif
 
     fs::remove_all(root);
     // A stick does not come back at the same mount point after a reboot,
@@ -477,8 +537,10 @@ int main()
         // keepCount counts automatic records only. Were the user's
         // counted, three of their own backups would push out every
         // safety copy Seabass still needs.
-        std::uint64_t freed = store.prune(1);
-        assert(freed > 0);
+        auto pruned = store.prune(1);
+        assert(pruned.bytesFreed > 0);
+        assert(pruned.removed == 1);
+        assert(pruned.failed == 0);
         assert(fs::exists(mine.path));   // never Seabass's to delete
         assert(fs::exists(auto2.path));  // newest automatic, the keepCount survivor
         assert(!fs::exists(auto1.path));
