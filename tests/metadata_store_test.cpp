@@ -973,5 +973,80 @@ int main()
         std::cout << "case 22 (opening an older store deletes the phantom cues it took in) OK\n";
     }
 
+    // ---- case 23: the migration's own safety net ---------------------
+    //
+    // Migrating 2 -> 3 deletes rows, and this database is the one place
+    // that may hold cues no stick has any more, so a copy is taken
+    // beside it first. That copy failing used to be ignored and the
+    // deletion ran regardless -- a net that is allowed to not be there.
+    //
+    // The failure is arranged with a dangling symlink: fs::exists()
+    // follows it and says no, so the copy is attempted, and the copy
+    // cannot create a file inside a directory that is not there. The
+    // store's own folder stays writable throughout, so SQLite is not
+    // what fails here -- which is the point, since a read-only folder
+    // would have stopped the migration for an unrelated reason and
+    // proved nothing.
+#if !defined(_WIN32)
+    {
+        const fs::path oldDb = root / "no-room-to-copy" / "metadata.db";
+        {
+            MetadataStore metadata(oldDb);
+            Track track = sampleTrack(stick, "Contents/Kalte Nacht/Fuenfte.mp3", "Fuenfte");
+            track.cues = {hotCue(1, 64'000.0)};
+            store(metadata, {track}, sourceFor(stick));
+        }
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            const char *insert = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
+                                 "is_loop, loop_end_ms) SELECT id, 'memory', 0, -0.0226757, '', '', 0, 0 FROM tracks";
+            assert(sqlite3_exec(raw, insert, nullptr, nullptr, nullptr) == SQLITE_OK);
+            assert(sqlite3_exec(raw, "UPDATE schema_version SET version = 2", nullptr, nullptr, nullptr) == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+
+        fs::path beside = oldDb;
+        beside += ".before-schema-3";
+        fs::create_symlink(oldDb.parent_path() / "no-such-folder" / "somewhere.db", beside);
+
+        bool refused = false;
+        try {
+            MetadataStore reopened(oldDb);
+        } catch (const std::exception &e) {
+            refused = true;
+            assert(std::string(e.what()).find("migration was not") != std::string::npos);
+        }
+        assert(refused && "a migration whose copy failed must not run");
+
+        // And the rows it would have deleted are still there, which is
+        // the assertion that matters: the store is intact and a later
+        // open, once the copy can be made, still has something to
+        // migrate.
+        fs::remove(beside);
+        int cueRows = 0;
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            sqlite3_stmt *statement = nullptr;
+            assert(sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM cues", -1, &statement, nullptr) == SQLITE_OK);
+            assert(sqlite3_step(statement) == SQLITE_ROW);
+            cueRows = sqlite3_column_int(statement, 0);
+            sqlite3_finalize(statement);
+            sqlite3_close(raw);
+        }
+        assert(cueRows == 2 && "the phantom is still there, so nothing was migrated");
+
+        // Now that the copy can be made, the same open migrates, which
+        // proves the refusal above was about the copy and not about
+        // anything else in this fixture.
+        MetadataStore reopened(oldDb);
+        assert(fs::exists(beside));
+        const auto rows = reopened.browse("Fuenfte", 10, 0);
+        assert(rows.size() == 1 && rows[0].cueCount == 1);
+        std::cout << "case 23 (a migration whose safety copy failed does not run) OK\n";
+    }
+#endif
+
     return 0;
 }

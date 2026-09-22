@@ -391,11 +391,30 @@ void MetadataStore::openAndMigrate()
         // stick has any more. The copy is the same move-aside the
         // unknown-version path makes, minus the part where the store
         // itself goes away.
-        std::error_code copyEc;
+        std::error_code existsEc;
         fs::path beside = m_databasePath;
         beside += ".before-schema-" + std::to_string(SchemaVersion);
-        if (!fs::exists(beside, copyEc)) {
+        if (!fs::exists(beside, existsEc)) {
+            std::error_code copyEc;
             fs::copy_file(m_databasePath, beside, copyEc);
+            if (copyEc) {
+                // The copy failing used to be ignored, and the migration
+                // below -- which deletes rows -- ran anyway. A safety net
+                // that is allowed to not be there is not one: the
+                // move-aside path a paragraph up throws for exactly this,
+                // and this path is the one protecting cues no stick has
+                // any more.
+                //
+                // The database is already open at this point and the
+                // destructor does not run for a constructor that throws,
+                // so it is closed here, the same as every other throw in
+                // this function.
+                sqlite3_close(m_db);
+                m_db = nullptr;
+                throw std::runtime_error(std::string(Context) + ": could not copy the store aside before migrating it "
+                                          "to schema " + std::to_string(SchemaVersion) + ", so the migration was not "
+                                          "run: " + copyEc.message());
+            }
         }
         exec(m_db, "BEGIN IMMEDIATE");
         struct RollbackGuard

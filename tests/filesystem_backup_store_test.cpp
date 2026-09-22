@@ -771,6 +771,33 @@ int main()
         std::cout << "case: restoring a database removes stale sidecars beside it OK\n";
     }
 
+    // And a sidecar it could NOT remove fails the restore rather than
+    // reporting one. The sweep in #35 filed every -wal/-shm removal
+    // under "a generated name, a failure is cleanup noise", which is
+    // true everywhere except here: the case above says why, and this is
+    // what happens when that removal is refused. On Windows the refusal
+    // is ordinary -- something still has the -wal open.
+    //
+    // Arranged with a non-empty directory in the sidecar's place, which
+    // no filesystem will unlink, and which needs no permission games
+    // that would have stopped the database write first and proved
+    // nothing.
+    {
+        fs::path walDir = root / "Seabass4" / "backups";
+        FilesystemBackupStore store(walDir.string());
+        fs::path db = root / "stuck-wal" / "exportLibrary.db";
+        writeFile(db, "generation 1");
+        auto record = store.backup({db.string()}, "sync");
+        writeFile(db, "generation 2");
+        const fs::path stuck = root / "stuck-wal" / "exportLibrary.db-wal";
+        fs::create_directories(stuck);
+        writeFile(stuck / "keeps-it-alive", "not going anywhere");
+
+        assert(!store.restore(record.id) && "a sidecar that survives means the restore did not hold");
+        assert(fs::exists(stuck) && "and it really is still there");
+        std::cout << "case: a sidecar that cannot be removed fails the restore OK\n";
+    }
+
 #ifndef _WIN32
     // A backup that fails part-way leaves nothing broken behind. The
     // release rig's full-stick check found the opposite: a save refused

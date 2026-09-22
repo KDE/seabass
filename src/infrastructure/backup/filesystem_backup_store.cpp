@@ -6,6 +6,7 @@
 
 #include "infrastructure/backup/stick_space.hpp"
 #include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/fs_remove.hpp"
 #include "infrastructure/file_clock.hpp"
 #include "infrastructure/work_counters.hpp"
 
@@ -551,9 +552,27 @@ bool FilesystemBackupStore::restoreFromArchive(const OpenedArchive &opened,
             for (const char *sidecar : {"-wal", "-shm", "-journal"}) {
                 fs::path side = target;
                 side += sidecar;
-                if (!inArchive.contains(side)) {
-                    std::error_code sideEc;
-                    fs::remove(side, sideEc);
+                if (inArchive.contains(side)) {
+                    continue;
+                }
+                // Through removeEntry(), and the result is the restore's
+                // result. The sweep in #35 put every -wal/-shm site under
+                // "a generated name, and a failure is cleanup noise" --
+                // true of the others, not of this one. The paragraph
+                // above says what a surviving sidecar does: its frames
+                // are replayed over the file on the next open, and the
+                // restore is undone or half-undone. Reporting that as a
+                // completed restore is the worst answer available.
+                //
+                // The realistic trigger here is Windows rather than
+                // decomposition: something still has the -wal open, and
+                // the delete is refused.
+                std::string sidecarFailure;
+                if (!infrastructure::removeEntry(side, sidecarFailure)) {
+                    *failure = "restored " + target.string() + ", but " + side.filename().string()
+                               + " beside it could not be removed, and its contents would be replayed over the "
+                                 "restored file: " + sidecarFailure;
+                    return false;
                 }
             }
         }
