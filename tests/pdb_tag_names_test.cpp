@@ -172,11 +172,21 @@ int main()
     // it points at. Two bytes per row, 56 across this fixture.
     //
     // Nothing above could see it. The names still read back, this test
-    // passed, and the file still reparsed. Nor would comparing the
-    // fields the parser exposes: the vendored rekordbox_pdb.h predates
-    // ofs_unknown_near and has no accessor for it, so the one field that
-    // was being destroyed is invisible to the generated parser. It has
-    // to be checked at the byte level.
+    // passed, and the file still reparsed.
+    //
+    // A correction, because the first version of this comment got it
+    // wrong and the wrong version is in the history: it claimed the
+    // generated parser had no accessor for ofs_unknown_near and that a
+    // field-level comparison therefore could not have caught this. The
+    // parser does expose it -- the accessor was one line past the end of
+    // the range that was grepped -- so a field-level check WOULD have
+    // worked. kaitai_spec_matches_parser_test now checks that claim
+    // instead of anyone asserting it.
+    //
+    // The byte-level check below is still the right one, for a plainer
+    // reason: it does not depend on knowing which fields a row has. A
+    // check written from the offsets is a check written from the same
+    // understanding that produced the bug.
     //
     // The invariant: after the names are rewritten, every remaining
     // non-zero byte in this file is live. The fixture is produced by

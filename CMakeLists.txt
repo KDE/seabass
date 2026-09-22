@@ -1278,6 +1278,13 @@ add_executable(no_em_dashes_test tests/no_em_dashes_test.cpp)
 target_compile_definitions(no_em_dashes_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_em_dashes_test COMMAND no_em_dashes_test)
 
+# The vendored crate-digger specs and the parser generated from them have
+# to describe the same thing: nothing forces two vendored files to agree,
+# and a spec updated without regenerating the parser fails silently.
+add_executable(kaitai_spec_matches_parser_test tests/kaitai_spec_matches_parser_test.cpp)
+target_compile_definitions(kaitai_spec_matches_parser_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME kaitai_spec_matches_parser_test COMMAND kaitai_spec_matches_parser_test)
+
 add_executable(no_manual_file_urls_test tests/no_manual_file_urls_test.cpp)
 target_compile_definitions(no_manual_file_urls_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_manual_file_urls_test COMMAND no_manual_file_urls_test)
