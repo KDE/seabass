@@ -576,6 +576,16 @@ int main()
         assert(manifest.status == BackupStatus::PartialSkipped);
         assert(manifest.sourceReadOnly);
         assert(f.verifies() && "a salvaged archive is still a valid archive");
+
+        // The archive carries its own account of what is missing, in
+        // plain words, for the machine somebody reaches for when a stick
+        // has died -- one that has never heard of Seabass.
+        const auto logNames = f.archiveNames();
+        assert(logNames.count(std::string(SalvageLogEntryName)));
+        const std::string log = f.entryContent(std::string(SalvageLogEntryName));
+        assert(log.find("Contents/a.mp3") != std::string::npos);
+        assert(log.find("PARTIAL") != std::string::npos);
+        assert(log.find("Contents/Sub/b.mp3") == std::string::npos && "whole files are not listed as losses");
         std::cout << "case 15 (a salvage run keeps the part it could read, and says how much is missing) OK\n";
     }
 
@@ -607,6 +617,21 @@ int main()
         assert(said && "and it is reported as the fault it is");
         assert(f.manifest().status == BackupStatus::PartialSkipped);
         std::cout << "case 16 (a short read off a healthy stick is still a fault, not a salvage) OK\n";
+    }
+
+    // A backup of a healthy stick that lost nothing carries no salvage
+    // log at all. A file that says "some of the files below are here
+    // only in part" inside an archive where none of them are is worse
+    // than no file: it is there when somebody is frightened, and it
+    // says the wrong thing.
+    {
+        Fixture f("salvage-absent");
+        BackupStickOutcome outcome = BackupStick::execute(f.options);
+        assert(outcome.status == BackupOutcomeStatus::Complete);
+        assert(outcome.salvaged.empty());
+        assert(!f.archiveNames().count(std::string(SalvageLogEntryName)));
+        assert(f.manifest().status == BackupStatus::Complete);
+        std::cout << "case 17 (a backup that lost nothing carries no salvage log) OK\n";
     }
 
     std::cout << "all cases passed\n";

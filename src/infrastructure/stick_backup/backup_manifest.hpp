@@ -17,6 +17,24 @@ namespace seabass::infrastructure::stick_backup
 
 inline constexpr std::string_view ManifestEntryName = "SEABASS-MANIFEST.tsv";
 
+// Written into a backup only when the run that made it could not read
+// everything off the stick: what was lost, and why. Plain text, readable
+// with `unzip -p backup.zip SEABASS-SALVAGE.txt` on a machine that has
+// never heard of Seabass, which is the point -- a salvage backup is the
+// one somebody reads in a hurry.
+//
+// Archive metadata, not stick content: like the manifest, it is never
+// restored onto a stick.
+inline constexpr std::string_view SalvageLogEntryName = "SEABASS-SALVAGE.txt";
+
+// True for the entries that describe the archive rather than belonging
+// to the library inside it. One list, so a reader and a writer cannot
+// disagree about which is which.
+inline bool isArchiveMetadataEntry(std::string_view name)
+{
+    return name == ManifestEntryName || name == SalvageLogEntryName;
+}
+
 enum class BackupStatus
 {
     Complete,

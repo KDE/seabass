@@ -178,10 +178,18 @@ bool verifyArchiveTail(const ArchiveFile &archive, std::uint64_t fromOffset, std
     }
     // The manifest must describe exactly the archive's entries -- a name
     // that differs on either side is the CD-corruption case ZIP itself
-    // cannot detect.
-    if (manifest->rows.size() + 1 != reader->entries().size()) {
+    // cannot detect. Entries that describe the archive rather than the
+    // library inside it are the exception, and there are two: the
+    // manifest, and the salvage log a damaged-stick backup carries.
+    std::size_t metadataEntries = 0;
+    for (const CentralEntry &entry : reader->entries()) {
+        if (isArchiveMetadataEntry(entry.name)) {
+            ++metadataEntries;
+        }
+    }
+    if (manifest->rows.size() + metadataEntries != reader->entries().size()) {
         return fail("manifest lists " + std::to_string(manifest->rows.size()) + " rows for "
-                    + std::to_string(reader->entries().size() - 1) + " entries");
+                    + std::to_string(reader->entries().size() - metadataEntries) + " entries");
     }
     std::unordered_map<std::string, const ManifestRow *> listed;
     listed.reserve(manifest->rows.size());
@@ -189,10 +197,10 @@ bool verifyArchiveTail(const ArchiveFile &archive, std::uint64_t fromOffset, std
         listed.emplace(row.kind == ManifestRow::Kind::Directory ? row.path + "/" : row.path, &row);
     }
     for (std::size_t i = 0; i < reader->entries().size(); ++i) {
-        if (i == *manifestIndex) {
+        const CentralEntry &entry = reader->entries()[i];
+        if (i == *manifestIndex || isArchiveMetadataEntry(entry.name)) {
             continue;
         }
-        const CentralEntry &entry = reader->entries()[i];
         auto it = listed.find(entry.name);
         if (it == listed.end()) {
             return fail("entry not in manifest: " + entry.name);

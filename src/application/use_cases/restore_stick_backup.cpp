@@ -286,7 +286,7 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
     }
     for (std::size_t i = 0; i < reader.entries().size(); ++i) {
         const CentralEntry &entry = reader.entries()[i];
-        if (entry.name == ManifestEntryName) {
+        if (infrastructure::stick_backup::isArchiveMetadataEntry(entry.name)) {
             continue;
         }
         std::string reason;

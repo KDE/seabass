@@ -149,6 +149,46 @@ private:
     std::uint64_t m_done = 0;
 };
 
+// The salvage log's text: every file this archive holds only part of,
+// plus everything this run could not read at all, in plain words.
+//
+// Built from the MANIFEST rather than from this run's counters, so it
+// describes the archive as it now is rather than as this run left it. A
+// backup updated later by a healthy run still holds the entries an
+// earlier salvage saved, and their rows are carried forward, so they
+// belong in the log even though this run never touched them.
+//
+// The run's own warnings are appended because they say what is NOT in
+// the archive at all -- a file whose open failed leaves no row behind to
+// find later.
+std::string salvageLogText(const BackupManifest &manifest, const std::vector<std::string> &warnings)
+{
+    std::string out = "This backup was taken off a stick that could not be read in full.\n"
+                      "Some of the files below are here only in part, and some are not here at all.\n\n";
+    std::size_t partial = 0;
+    for (const ManifestRow &row : manifest.rows) {
+        if (row.salvagedFromSize == 0) {
+            continue;
+        }
+        ++partial;
+        out += "PARTIAL  " + row.path + "\n";
+        out += "         " + humanBytes(row.size) + " of " + humanBytes(row.salvagedFromSize) + " was readable\n";
+    }
+    if (partial == 0) {
+        out += "No file in this backup is truncated.\n";
+    }
+    if (!warnings.empty()) {
+        out += "\nWhat this run could not do:\n";
+        for (const std::string &warning : warnings) {
+            out += "  " + warning + "\n";
+        }
+    }
+    out += "\nThe authoritative record is SEABASS-MANIFEST.tsv: each row's eighth\n"
+           "field is the size the file had on the stick, where the archive holds\n"
+           "less than that. This file is the readable companion to it.\n";
+    return out;
+}
+
 // The archive and its journal, opened and recovered, plus what the
 // previous generation says. Owns the files: Zip64Reader keeps a pointer
 // into `archive`.
@@ -517,7 +557,7 @@ VerifyOutcome BackupStick::verify(const fs::path &archivePath, CancellationToken
     std::uint64_t done = 0;
     for (std::size_t i = 0; i < opened.reader->entries().size(); ++i) {
         const CentralEntry &entry = opened.reader->entries()[i];
-        if (entry.isDirectory || entry.name == ManifestEntryName) {
+        if (entry.isDirectory || isArchiveMetadataEntry(entry.name)) {
             continue;
         }
         if (cancel.cancelled()) {
@@ -978,6 +1018,28 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     }
     manifest.createdAtUnix = nowUnix();
     recordGeneration(manifest, outcome);
+    // A salvage backup carries its own account of what is missing, so it
+    // can be read on a machine that has never heard of Seabass -- which
+    // is the machine somebody reaches for when a stick has died.
+    //
+    // Written whenever the archive holds a truncated file or this run
+    // could not read something, and rewritten every commit rather than
+    // carried, so it can never describe a state the archive has left.
+    // The old copy becomes dead space, which compaction reclaims; it is
+    // a few hundred bytes.
+    // Only when there is really something to say. A backup of a healthy
+    // stick that skipped a symlink has a warning and has lost nothing,
+    // and a file headed "some of these are here only in part" inside an
+    // archive where none of them are is worse than no file at all: it is
+    // there when somebody is frightened, and it says the wrong thing.
+    const bool holdsATruncatedFile = std::any_of(manifest.rows.begin(), manifest.rows.end(),
+                                                  [](const ManifestRow &row) { return row.salvagedFromSize != 0; });
+    const bool anythingToSalvageLog = holdsATruncatedFile || (options.sourceReadOnly && !outcome.warnings.empty());
+    if (anythingToSalvageLog) {
+        const std::string log = salvageLogText(manifest, outcome.warnings);
+        updater.appendFromMemory(std::string(SalvageLogEntryName), manifest.createdAtUnix,
+                                 std::as_bytes(std::span<const char>(log.data(), log.size())));
+    }
     report(BackupProgress::Phase::Writing);
     reporter.start("Writing index", 0);
     try {
