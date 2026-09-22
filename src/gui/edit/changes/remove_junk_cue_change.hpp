@@ -7,6 +7,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <vector>
+
 #include "domain/track.hpp"
 #include "gui/edit/pending_change.hpp"
 
@@ -19,7 +21,16 @@ namespace seabass::gui
 class RemoveJunkCueChange : public PendingChange
 {
 public:
-    RemoveJunkCueChange(QString path, domain::Track track);
+    // `alsoRemove` names cues to strip that isJunkCue() does not cover:
+    // the clustered hot cues (domain/clustered_cue.hpp), which sit past
+    // the first second and so are invisible to that rule.
+    //
+    // Passed in rather than re-derived, and that is the point. This
+    // class used to work out what to remove from the track alone, so a
+    // cue the list had shown, the user had staged and the counter had
+    // counted survived the rewrite -- the same shape as the 12 ms bug
+    // its own comment records. What the rows named is what goes.
+    RemoveJunkCueChange(QString path, domain::Track track, std::vector<domain::CuePoint> alsoRemove = {});
 
     QString id() const override;
     QString owner() const override;
@@ -36,6 +47,7 @@ public:
 private:
     QString m_path;
     domain::Track m_track;
+    std::vector<domain::CuePoint> m_alsoRemove;
 };
 
 }  // namespace seabass::gui

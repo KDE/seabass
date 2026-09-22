@@ -1964,6 +1964,14 @@ if(TARGET Qt6::Core)
     endif()
     add_test(NAME restore_metadata_change_test COMMAND restore_metadata_change_test)
 
+    add_executable(remove_junk_cue_change_test tests/remove_junk_cue_change_test.cpp)
+    target_include_directories(remove_junk_cue_change_test PRIVATE src)
+    target_link_libraries(remove_junk_cue_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(remove_junk_cue_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME remove_junk_cue_change_test COMMAND remove_junk_cue_change_test)
+
     add_executable(merge_cues_change_test tests/merge_cues_change_test.cpp)
     target_include_directories(merge_cues_change_test PRIVATE src)
     target_compile_definitions(merge_cues_change_test PRIVATE

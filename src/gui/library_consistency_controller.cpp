@@ -1054,8 +1054,20 @@ void LibraryConsistencyController::stageJunkCue(int index)
     if (!ensureSessionForStaging()) {
         return;
     }
-    auto change = std::make_unique<RemoveJunkCueChange>(pathForFormat(QString::fromStdString(track.format)), track);
     QString key = junkKeyFor(track);
+    // Every cue this track has a row for that isJunkCue() cannot see --
+    // the clustered hot cues, which sit past the first second. The
+    // change strips what it is handed rather than re-deriving it, so a
+    // row the user staged cannot survive the rewrite while the counters
+    // say it went.
+    std::vector<domain::CuePoint> alsoRemove;
+    for (const auto &issue : issues) {
+        if (junkKeyFor(issue.track) == key && !domain::isJunkCue(issue.cue)) {
+            alsoRemove.push_back(issue.cue);
+        }
+    }
+    auto change = std::make_unique<RemoveJunkCueChange>(pathForFormat(QString::fromStdString(track.format)), track,
+                                                         std::move(alsoRemove));
     QString changeId = change->id();
     if (!m_session->stage(std::move(change))) {
         return;

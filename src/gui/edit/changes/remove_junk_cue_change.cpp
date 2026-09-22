@@ -4,6 +4,8 @@
 
 #include "gui/edit/changes/remove_junk_cue_change.hpp"
 
+#include <algorithm>
+
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -27,7 +29,17 @@ namespace fs = std::filesystem;
 namespace
 {
 
-std::vector<domain::CuePoint> cuesWithoutJunk(const domain::Track &track)
+// Two cues are the same cue when they are the same kind at the same
+// place with the same pad number. Position alone is not enough: a hot
+// cue and a memory cue can sit on the same millisecond, and only one of
+// them was listed.
+bool sameCue(const domain::CuePoint &a, const domain::CuePoint &b)
+{
+    return a.kind == b.kind && a.hotCueNumber == b.hotCueNumber && a.positionMs == b.positionMs;
+}
+
+std::vector<domain::CuePoint> cuesWithoutJunk(const domain::Track &track,
+                                               const std::vector<domain::CuePoint> &alsoRemove)
 {
     std::vector<domain::CuePoint> remainingCues;
     for (const auto &c : track.cues) {
@@ -35,9 +47,19 @@ std::vector<domain::CuePoint> cuesWithoutJunk(const domain::Track &track)
         // cue inside the first second. The remover used to test == 0.0,
         // so a cue at 12 ms was listed, "removed", and survived the
         // rewrite.
-        if (!domain::isJunkCue(c)) {
-            remainingCues.push_back(c);
+        if (domain::isJunkCue(c)) {
+            continue;
         }
+        // And the ones that rule cannot see. A clustered hot cue sits
+        // past the first second, so deriving the set here instead of
+        // taking what the rows named would leave it on the stick while
+        // every count said it had gone.
+        const bool named = std::any_of(alsoRemove.begin(), alsoRemove.end(),
+                                       [&c](const domain::CuePoint &other) { return sameCue(c, other); });
+        if (named) {
+            continue;
+        }
+        remainingCues.push_back(c);
     }
     return remainingCues;
 }
@@ -90,8 +112,9 @@ struct JunkCueWriterContext
 
 }  // namespace
 
-RemoveJunkCueChange::RemoveJunkCueChange(QString path, domain::Track track)
-    : m_path(std::move(path)), m_track(std::move(track))
+RemoveJunkCueChange::RemoveJunkCueChange(QString path, domain::Track track,
+                                         std::vector<domain::CuePoint> alsoRemove)
+    : m_path(std::move(path)), m_track(std::move(track)), m_alsoRemove(std::move(alsoRemove))
 {
 }
 
@@ -122,7 +145,7 @@ QString RemoveJunkCueChange::unit() const
 
 int RemoveJunkCueChange::unitsWritten() const
 {
-    return static_cast<int>(m_track.cues.size() - cuesWithoutJunk(m_track).size());
+    return static_cast<int>(m_track.cues.size() - cuesWithoutJunk(m_track, m_alsoRemove).size());
 }
 
 QStringList RemoveJunkCueChange::formatsTouched() const
@@ -154,7 +177,7 @@ ChangeOutcome RemoveJunkCueChange::apply(SaveContext &ctx)
     std::string root = m_path.toStdString();
     JunkCueWriterContext &w = ctx.shared<JunkCueWriterContext>(
         "junk:" + m_track.format, [&]() { return std::make_unique<JunkCueWriterContext>(format, m_path, ctx); });
-    auto remainingCues = cuesWithoutJunk(m_track);
+    auto remainingCues = cuesWithoutJunk(m_track, m_alsoRemove);
 
     if (format == "rekordbox") {
         const auto *pathIndex = sharedAnlzPathIndex(ctx, m_path);
