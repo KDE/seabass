@@ -1440,6 +1440,12 @@ target_include_directories(engine_restore_check_test PRIVATE src tests)
 target_link_libraries(engine_restore_check_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME engine_restore_check_test COMMAND engine_restore_check_test)
 
+add_executable(waveform_readers_test tests/waveform_readers_test.cpp)
+target_include_directories(waveform_readers_test PRIVATE src tests)
+target_link_libraries(waveform_readers_test PRIVATE seabass_core DjInterop)
+target_compile_definitions(waveform_readers_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME waveform_readers_test COMMAND waveform_readers_test)
+
 add_executable(engine_sample_rates_test
     src/infrastructure/engine/engine_sample_rates.cpp
     tests/engine_sample_rates_test.cpp
