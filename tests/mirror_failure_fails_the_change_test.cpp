@@ -54,6 +54,7 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
 
@@ -116,18 +117,49 @@ std::vector<Track> mirroredTracks(const fs::path &pioneerRoot, std::size_t wante
     return picked;
 }
 
+// A rekordbox row whose file Device Library Plus does not list: the
+// case the rules here call a non-event rather than a failure.
+//
+// Built rather than found. Every rekordbox track in the committed
+// fixture is also in exportLibrary.db, while on a real stick 635 of
+// 1118 are not -- and the mirror is keyed on the path, so a row whose
+// path that catalog has never heard of is exactly what those 635 look
+// like from here. The rekordbox row stays real, which is what the
+// removal on that side needs.
+Track withAPathTheMirrorDoesNotKnow(const Track &real, const std::string &name)
+{
+    Track track = real;
+    track.filePath = "/Contents/UNLISTED/" + name + ".mp3";
+    return track;
+}
+
+// What the stick says is waiting to be deleted. Kept beside the stick's
+// own Seabass folder rather than inside PIONEER, so snapshot() above
+// cannot see it -- and a clean-up writes a line here per copy it
+// removes, which is exactly what a failed change has to take back.
+std::string pendingDeletionBytes(const fs::path &pioneerRoot)
+{
+    const fs::path manifest = seabass::infrastructure::paths::stickPendingDeletions(pioneerRoot.parent_path());
+    std::ifstream in(manifest, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    return std::string(std::istreambuf_iterator<char>(in), {});
+}
+
 // One group to clean up, built by hand rather than through the planner:
 // which two copies the fixture happens to offer is not the point here,
 // only that both halves of the library list them. withAnExtraCue picks
 // which of the two mirror sites the case exercises -- a merged set
 // bigger than the survivor's own runs the cue mirror, an unchanged one
 // leaves the row removal as the only mirror write in the change.
-DuplicateCleanupPlan cleanupPlan(const Track &survivor, const Track &doomed, bool withAnExtraCue)
+DuplicateCleanupPlan cleanupPlan(const Track &survivor, const std::vector<Track> &doomed, bool withAnExtraCue)
 {
     DuplicateCleanupPlan plan;
-    plan.group.tracks = {survivor, doomed};
+    plan.group.tracks = doomed;
+    plan.group.tracks.insert(plan.group.tracks.begin(), survivor);
     plan.survivor = survivor;
-    plan.toRemove = {doomed};
+    plan.toRemove = doomed;
     plan.mergedCuesForSurvivor = survivor.cues;
     if (withAnExtraCue) {
         CuePoint extra;
@@ -321,7 +353,7 @@ int main()
     bothWays("cleanup-merged-cues", 2, true, [](const fs::path &root, const std::vector<Track> &tracks) {
         return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
                                                     QString::fromStdString(root.string()),
-                                                    cleanupPlan(tracks[0], tracks[1], true), 1);
+                                                    cleanupPlan(tracks[0], {tracks[1]}, true), 1);
     });
 
     // CleanupGroupChange, site two -- removing the copy's row. Nothing
@@ -333,8 +365,172 @@ int main()
     bothWays("cleanup-row-removal", 2, true, [](const fs::path &root, const std::vector<Track> &tracks) {
         return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
                                                     QString::fromStdString(root.string()),
-                                                    cleanupPlan(tracks[0], tracks[1], false), 1);
+                                                    cleanupPlan(tracks[0], {tracks[1]}, false), 1);
     });
+
+    // ---- what is NOT a failure, and what still is ------------------
+    //
+    // The rule the cases above enforce has an edge on either side, and
+    // both used to be decided by one exception type doing two jobs.
+    auto cleanupChange = [](const fs::path &root, const Track &survivor, const std::vector<Track> &doomed,
+                            bool withAnExtraCue) {
+        return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
+                                                    QString::fromStdString(root.string()),
+                                                    cleanupPlan(survivor, doomed, withAnExtraCue), 1);
+    };
+
+    // A copy Device Library Plus does not list has no second row to
+    // remove, so the clean-up goes through with that half unwritable.
+    // Treated as a failure this would refuse the commonest case there
+    // is: 635 of 1118 tracks on a real stick are not listed there.
+    {
+        const fs::path root = freshCopy("seabass_cleanup_unlisted_doomed");
+        const std::vector<Track> kept = mirroredTracks(root, 1, true);
+        assert(!kept.empty());
+        const std::vector<Track> second = mirroredTracks(root, 2, true);
+        assert(second.size() == 2);
+        const Track stray = withAPathTheMirrorDoesNotKnow(second[1], "doomed");
+        const auto before = snapshot(root);
+        setMirrorReadOnly(root, true);
+        const SaveLoopResult result = runOne(root, cleanupChange(root, kept[0], {stray}, false));
+        setMirrorReadOnly(root, false);
+
+        if (!result.error.isEmpty()) {
+            std::cerr << "cleanup-unlisted-doomed: refused a copy Device Library Plus never listed: "
+                      << result.error.toStdString() << "\n";
+        }
+        assert(result.error.isEmpty() && "a copy the mirror does not list is nothing to mirror, not a refusal");
+        assert(result.appliedIds.size() == 1);
+        assert(snapshot(root) != before && "and the clean-up must really have run");
+        assert(pendingDeletionBytes(root).find(stray.filePath) != std::string::npos
+               && "the removed copy is recorded as waiting for deletion");
+        std::error_code ec;
+        fs::remove_all(root.parent_path(), ec);
+        std::cout << "  cleanup-unlisted-doomed: a copy Device Library Plus does not list is not a refusal\n";
+    }
+
+    // The other side of that one exception type: Device Library Plus
+    // lists the copy being REMOVED and not the copy being kept. Nothing
+    // is written there, the doomed row stays, and this save schedules
+    // its file for deletion -- so it must refuse, with a writable
+    // mirror and all.
+    {
+        const fs::path root = freshCopy("seabass_cleanup_unlisted_survivor");
+        const std::vector<Track> listed = mirroredTracks(root, 1, false);
+        assert(!listed.empty());
+        const std::vector<Track> pair = mirroredTracks(root, 2, false);
+        assert(pair.size() == 2);
+        const Track keptButUnlisted = withAPathTheMirrorDoesNotKnow(pair[1], "kept");
+        const auto before = snapshot(root);
+        const std::string pendingBefore = pendingDeletionBytes(root);
+        const SaveLoopResult result = runOne(root, cleanupChange(root, keptButUnlisted, {listed[0]}, false));
+
+        if (result.error.isEmpty()) {
+            std::cerr << "cleanup-unlisted-survivor: removed a copy whose Device Library Plus row stays behind\n";
+        }
+        assert(!result.error.isEmpty() && "a row left in Device Library Plus pointing at a doomed file is not a "
+                                          "success");
+        assert(result.error.contains(QStringLiteral("Device Library Plus")));
+        assert(result.appliedIds.isEmpty());
+        assert(snapshot(root) == before && "and every file goes back");
+        assert(pendingDeletionBytes(root) == pendingBefore && "including the list of files waiting to be deleted");
+        std::error_code ec;
+        fs::remove_all(root.parent_path(), ec);
+        std::cout << "  cleanup-unlisted-survivor: the kept copy missing from the mirror is a refusal\n";
+    }
+
+    // A group with two copies to remove, failing on the second: the
+    // first has already had its line written into the stick's list of
+    // files waiting to be deleted, and that line has to come back out
+    // with the rest of the change. The manifest lives outside PIONEER,
+    // where snapshot() cannot see it, which is why it is read directly.
+    {
+        const fs::path root = freshCopy("seabass_cleanup_two_doomed");
+        const std::vector<Track> listed = mirroredTracks(root, 2, true);
+        assert(listed.size() == 2);
+        const std::vector<Track> three = mirroredTracks(root, 3, true);
+        assert(three.size() == 3);
+        const Track stray = withAPathTheMirrorDoesNotKnow(three[2], "first-doomed");
+        setMirrorReadOnly(root, true);
+        const auto before = snapshot(root);
+        const std::string pendingBefore = pendingDeletionBytes(root);
+        // The unlisted copy first, so it is fully applied (its manifest
+        // line written) before the listed one reaches the mirror and
+        // fails.
+        const SaveLoopResult result = runOne(root, cleanupChange(root, listed[0], {stray, listed[1]}, false));
+        setMirrorReadOnly(root, false);
+
+        assert(!result.error.isEmpty() && "the second copy's mirror write failed, so the change did");
+        assert(result.appliedIds.isEmpty());
+        assert(snapshot(root) == before && "every file back as it was");
+        const std::string pendingAfter = pendingDeletionBytes(root);
+        if (pendingAfter != pendingBefore) {
+            std::cerr << "cleanup-two-doomed: a rolled-back change left a file listed for deletion:\n"
+                      << pendingAfter << "\n";
+        }
+        assert(pendingAfter == pendingBefore
+               && "the first copy's pending-deletion line must come back out with the change");
+        std::error_code ec;
+        fs::remove_all(root.parent_path(), ec);
+        std::cout << "  cleanup-two-doomed: a failure mid-group takes back the lines already written\n";
+    }
+
+    // Two rekordbox rows for one audio file: a duplicate group like any
+    // other on that side, and one content row on the other, because
+    // Device Library Plus is keyed on the path. The removal there would
+    // be the survivor's own row replacing itself, which the writer
+    // refuses -- rightly, and this must not turn into a failed save, or
+    // that pair could never be cleaned up at all.
+    {
+        const fs::path root = freshCopy("seabass_cleanup_same_row");
+        const std::vector<Track> pair = mirroredTracks(root, 2, false);
+        assert(pair.size() == 2);
+        Track doomed = pair[1];
+        doomed.filePath = pair[0].filePath;  // a second row for the kept copy's file
+        const auto before = snapshot(root);
+
+        const SaveLoopResult result = runOne(root, cleanupChange(root, pair[0], {doomed}, false));
+        if (!result.error.isEmpty()) {
+            std::cerr << "cleanup-same-row: refused a group whose two rows are one row in the mirror: "
+                      << result.error.toStdString() << "\n";
+        }
+        assert(result.error.isEmpty() && "one content row standing for both copies is nothing to remove");
+        assert(result.appliedIds.size() == 1);
+        assert(snapshot(root) != before && "and the rekordbox side really was cleaned up");
+        std::error_code ec;
+        fs::remove_all(root.parent_path(), ec);
+        std::cout << "  cleanup-same-row: two rows sharing one mirror row is not a refusal\n";
+    }
+
+    // The same not-listed question on Library Health's side. Its broken
+    // rows are rows in DeviceLibrary; whether Device Library Plus has
+    // ever heard of the file is a separate matter, and on a real stick
+    // usually it has not. That removal caught std::exception and failed
+    // the change over it, so a repair on such a stick refused outright.
+    {
+        const fs::path root = freshCopy("seabass_repair_unlisted_broken");
+        const std::vector<Track> pair = mirroredTracks(root, 2, false);
+        assert(pair.size() == 2);
+        const auto before = snapshot(root);
+
+        LibraryConsistencyIssue issue;
+        issue.kind = LibraryConsistencyIssue::Kind::Repairable;
+        issue.survivor = pair[0];
+        issue.brokenGroup = {withAPathTheMirrorDoesNotKnow(pair[1], "broken")};
+        const SaveLoopResult result =
+            runOne(root, std::make_shared<RepairIssueChange>(QString::fromStdString(root.string()), issue, 1));
+
+        if (!result.error.isEmpty()) {
+            std::cerr << "repair-unlisted-broken: refused a broken row Device Library Plus never listed: "
+                      << result.error.toStdString() << "\n";
+        }
+        assert(result.error.isEmpty() && "a broken row the mirror does not list is nothing to mirror");
+        assert(result.appliedIds.size() == 1);
+        assert(snapshot(root) != before && "and the repair really ran");
+        std::error_code ec;
+        fs::remove_all(root.parent_path(), ec);
+        std::cout << "  repair-unlisted-broken: a broken row the mirror never listed is not a refusal\n";
+    }
 
     std::cout << "mirror_failure_fails_the_change_test passed\n";
     return 0;

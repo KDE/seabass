@@ -673,14 +673,40 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                     .removeTrackByPathReplacingWith(doomed.filePath, plan.survivor.filePath);
                 log.record("cleanup: also removed OneLibrary row for id=" + doomed.sourceId);
             } catch (const infrastructure::onelibrary::OneLibraryRowMissing &e) {
-                // Not listed there at all: no second copy to remove and
-                // nothing in disagreement. The same non-event
-                // hasTrackAtPath() stands for in mirrorCuesOrExplain(),
-                // and the same one the field propagation above tolerates
-                // -- 635 of 1118 tracks on a real stick are in that
-                // position.
+                // The copy being removed is not listed there at all: no
+                // second row to remove and nothing in disagreement. The
+                // same non-event hasTrackAtPath() stands for in
+                // mirrorCuesOrExplain(), and the same one the field
+                // propagation above tolerates -- 635 of 1118 tracks on a
+                // real stick are in that position.
+                //
+                // This used to cover the survivor's row going missing
+                // too, because both lookups threw one type: Device
+                // Library Plus listing the doomed copy and not the copy
+                // being kept left the doomed row in place, pointing at a
+                // file this same save schedules for deletion, and said
+                // nothing. OneLibrarySurvivorMissing is its own type for
+                // that reason and lands in the failure below.
                 log.record("cleanup: OneLibrary does not list \"" + doomed.title + "\", nothing to remove: "
                            + e.what());
+            } catch (const infrastructure::onelibrary::OneLibrarySameRow &e) {
+                // Two catalog rows for one audio file: a duplicate group
+                // like any other in DeviceLibrary, but OneLibrary keys on
+                // the path, so both sides are one content row there. The
+                // row the group keeps is already the row it has, and
+                // there is nothing to remove. Failing the save over it
+                // would leave that pair impossible to clean up at all.
+                log.record("cleanup: OneLibrary lists \"" + doomed.title
+                           + "\" under the same row as the copy being kept, nothing to remove: " + e.what());
+            } catch (const infrastructure::onelibrary::OneLibrarySurvivorMissing &e) {
+                log.record("cleanup: OneLibrary lists \"" + doomed.title
+                           + "\" but not the copy being kept, so its row cannot be repointed: " + e.what());
+                return ChangeOutcome::failure(
+                    QStringLiteral("Could not remove \"%1\" from Device Library Plus: the copy being kept is not "
+                                   "listed there, so the duplicate's entry has nothing to point at and removing "
+                                   "it would take the track out of that catalog. Nothing was kept from this "
+                                   "change.")
+                        .arg(QString::fromStdString(doomed.title)));
             } catch (const std::exception &e) {
                 log.record("cleanup: OneLibrary row removal failed for \"" + doomed.title + "\": " + e.what());
                 // The row is listed and could not be removed, so the copy

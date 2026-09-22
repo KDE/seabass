@@ -404,9 +404,28 @@ void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doom
     std::string survivorContentPath = toContentPath(m_stickRoot, survivorFilePath);
     SqlCipherDb &db = writeConnection();
 
-    const std::vector<int64_t> doomedIds = contentIdsAt(db, doomedContentPath);
+    // Both lookups throw OneLibraryRowMissing, and a caller cannot tell
+    // from the exception which side was missing -- which matters, because
+    // the two mean opposite things. A doomed copy this catalog does not
+    // list is nothing to do; a SURVIVOR it does not list means the row
+    // that would be removed has nothing to be repointed at, and removing
+    // it anyway would take the track out of this catalog entirely. The
+    // message names the side so a caller's log and refusal can too.
+    std::vector<int64_t> doomedIds;
+    try {
+        doomedIds = contentIdsAt(db, doomedContentPath);
+    } catch (const OneLibraryRowMissing &) {
+        throw OneLibraryRowMissing("onelibrary: no content row for the copy being removed, path "
+                                   + doomedContentPath);
+    }
     // Any one of the survivor's rows will do to repoint playlists at.
-    const int64_t survivorId = contentIdsAt(db, survivorContentPath).front();
+    int64_t survivorId = 0;
+    try {
+        survivorId = contentIdsAt(db, survivorContentPath).front();
+    } catch (const OneLibraryRowMissing &) {
+        throw OneLibrarySurvivorMissing("onelibrary: the copy being kept has no content row, path "
+                                        + survivorContentPath);
+    }
 
     for (int64_t doomedId : doomedIds) {
         removeTrackByIdReplacingWith(doomedId, survivorId);
@@ -417,8 +436,8 @@ void OneLibraryCueWriter::removeTrackByIdReplacingWith(int64_t doomedContentId, 
 {
     checkNotStale();
     if (doomedContentId == survivorContentId) {
-        throw std::runtime_error("onelibrary: refusing to replace content row id=" + std::to_string(doomedContentId)
-                                 + " with itself");
+        throw OneLibrarySameRow("onelibrary: refusing to replace content row id=" + std::to_string(doomedContentId)
+                                + " with itself");
     }
 
     auto rowExists = [](SqlCipherDb &db, int64_t contentId) {

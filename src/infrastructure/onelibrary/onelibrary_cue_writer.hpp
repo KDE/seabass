@@ -69,6 +69,36 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// The row a removal would repoint playlists AT is the one missing. The
+// opposite of OneLibraryRowMissing above in what it means for a caller:
+// the row to remove is right there, and removing it with nowhere to send
+// its playlist entries would take the track out of this catalog
+// altogether. Deliberately NOT derived from OneLibraryRowMissing, so a
+// caller treating "not listed" as a non-event cannot swallow this one by
+// accident -- which is exactly what happened while both cases threw the
+// same type.
+class OneLibrarySurvivorMissing : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
+// The doomed row and the row it would be replaced by are the same row.
+// Also not a failure of the write: two catalog rows for one audio file
+// are a duplicate group like any other, and OneLibrary keys on the
+// path, so both sides of that group land on one content row. There is
+// then nothing to remove and nothing to repoint -- the row the group
+// keeps is already the row it has.
+//
+// Its own type for the same reason as OneLibraryRowMissing above: a
+// caller that must fail a save when a mirror write goes wrong cannot
+// tell this apart from one by reading a message.
+class OneLibrarySameRow : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class OneLibraryCueWriter
 {
 public:

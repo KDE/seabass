@@ -187,6 +187,25 @@ ChangeOutcome RepairIssueChange::apply(SaveContext &ctx)
                     // removeTrackByPathReplacingWith()'s own comment.
                     sharedOneLibraryWriter(ctx, root).removeTrackByPathReplacingWith(broken.filePath,
                                                                                      survivor.filePath);
+                } catch (const infrastructure::onelibrary::OneLibraryRowMissing &e) {
+                    // The broken row is not in Device Library Plus at
+                    // all, so there is no second copy of it to remove and
+                    // nothing left disagreeing. Brought into line with
+                    // the cue mirror beside it, which asks
+                    // hasTrackAtPath() first for exactly this reason:
+                    // without it a repair failed outright on any stick
+                    // whose Device Library Plus does not list the file,
+                    // and 635 of 1118 tracks on a real stick are in that
+                    // position.
+                    ctx.log().record(std::string("consistency: OneLibrary does not list the broken row, nothing "
+                                                 "to remove: ")
+                                     + e.what());
+                } catch (const infrastructure::onelibrary::OneLibrarySameRow &e) {
+                    // One content row standing for both the broken copy
+                    // and the survivor: already what the repair wants.
+                    ctx.log().record(std::string("consistency: OneLibrary lists the broken row and the survivor "
+                                                 "as one row, nothing to remove: ")
+                                     + e.what());
                 } catch (const std::exception &e) {
                     // Was logged and carried on, which left the broken row
                     // gone from DeviceLibrary and still listed in Device
