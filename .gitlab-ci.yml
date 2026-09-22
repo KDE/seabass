@@ -145,20 +145,41 @@ reuse:
 # --- Windows Craft build: still runs and still reports, but does not
 # --- fail the pipeline while a dependency of ours is broken upstream.
 #
-# Temporary, and dated: remove once libvpx builds on MSVC again.
+# Temporary, and dated. THE REASON HAS CHANGED -- read this before
+# assuming the failure is still somebody else's.
 #
-# craft-blueprints-kde broke it on 2026-09-17 (06a004fb, "[libvpx] Update
-# to 1.16.0 and enable on MSVC"). Its postInstall moves two files on MSVC
-# and one of them is never produced:
+# Originally libvpx: craft-blueprints-kde broke it on 2026-09-17
+# (06a004fb, "[libvpx] Update to 1.16.0 and enable on MSVC"), whose
+# postInstall moved a .pdb that is never produced. **Upstream fixed that
+# on 2026-09-18** (f6cbf855, "[libvpx] Fix install with patch instead of
+# blueprint logic"), so that reason is spent.
 #
-#   [Errno 2] No such file or directory:
-#     ...\libs\libvpx\image-RelWithDebInfo-1.16.0-dbg\lib\x64\vpxmd.pdb
-#   Action: post-install for libs/libvpx:1.16.0 FAILED
+# As of 2026-09-22 the job fails on OUR OWN blueprint instead:
 #
-# libvpx itself compiles cleanly; the packaging step after it is what
-# fails. Seabass reaches libvpx through qtmultimedia -> ffmpeg, so the
-# build dies in --install-deps, long before any Seabass code is compiled.
-# Nothing here caused it and nothing here can fix it.
+#   *** Craft all failed: libs/sqlcipher4 after 4s ***
+#   lemon.obj : error LNK2019: unresolved external symbol strlen
+#   LINK      : error LNK2001: unresolved external symbol mainCRTStartup
+#   lemon.exe : fatal error LNK1120: 43 unresolved externals
+#
+# lemon is SQLite's parser generator, built as a NATIVE host tool, and it
+# is failing to find the C runtime at link time. That is
+# craft-blueprint/libs/sqlcipher4/sqlcipher4.py's business, which lives
+# in this repository. So "not our fault" no longer applies, and
+# allow_failure is now hiding a broken Windows package rather than
+# waiting out an upstream regression.
+#
+# Checked and RULED OUT: the blueprint overrides LTLIBS on the nmake
+# command line, and an nmake command-line macro replaces the makefile's
+# value rather than appending, which looks like an obvious way to lose
+# the CRT. It is not this. In sqlcipher 4.19.0's Makefile.msc lemon.exe
+# does not use $(LTLIBS) at all; it links with $(NLTLINKOPTS) and
+# $(NLTLIBPATHS), the native-tool path. Whoever picks this up should
+# start there and not re-tread LTLIBS.
+#
+# Why this only surfaced now: the job had never actually run. It sits
+# behind a build stage that never passed until 2026-09-21, so every
+# craft job was starved at `created`. Getting the Linux lane green is
+# what exposed it.
 #
 # It only began failing the pipeline when this repo gained KDE mainline
 # status: the shared template (sysadmin/craft-ci,
