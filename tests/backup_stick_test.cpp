@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -511,6 +512,102 @@ int main()
         std::cout << "case 14 (a destination that cannot be written is a refusal, not an exception) OK\n";
     }
 #endif
+
+    // ---- Salvage: an emergency copy keeps what it could read ----------
+    //
+    // A stick that has gone read-only after an unclean unplug is a
+    // salvage job, and the run should behave like one. Today a file that
+    // reads short is discarded whole, which on a healthy stick is right
+    // (the file is presumably being written) and on a damaged one is
+    // backwards: those bytes are the only copy anybody is going to get,
+    // and what is at stake is somebody's own cue points and years of
+    // edits.
+    //
+    // The read that stops part-way comes from options.readLimitForTesting,
+    // because nothing else can arrange one: truncating the file changes
+    // its size, which is the other branch. Everything before the limit is
+    // the file's own bytes, read normally.
+    {
+        Fixture f("salvage");
+        const fs::path damaged = f.stick / "Contents" / "a.mp3";
+        const std::string whole = readFile(damaged);
+        assert(whole.size() == 100'000);
+
+        BackupStickOptions options = f.options;
+        options.sourceReadOnly = true;
+        options.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Contents/a.mp3") {
+                return std::uint64_t{40'000};
+            }
+            return std::nullopt;
+        };
+
+        BackupStickOutcome outcome = BackupStick::execute(options);
+        assert(outcome.status != BackupOutcomeStatus::Failed);
+
+        // Kept, not dropped, and named.
+        assert(outcome.salvaged.size() == 1);
+        assert(outcome.salvaged[0].path == "Contents/a.mp3");
+        assert(outcome.salvaged[0].bytesSalvaged == 40'000);
+        assert(outcome.salvaged[0].expectedSize == 100'000);
+        assert(!outcome.salvaged[0].reason.empty());
+
+        // In the archive, and it really is the first 40 kB of the file
+        // rather than 40 kB of something.
+        const auto names = f.archiveNames();
+        assert(names.count("Contents/a.mp3") && "the readable part is in the backup");
+        const std::string stored = f.entryContent("Contents/a.mp3");
+        assert(stored.size() == 40'000);
+        assert(stored == whole.substr(0, 40'000));
+
+        // And the manifest says how much is missing, so nothing
+        // downstream can present it as a whole file.
+        const BackupManifest manifest = f.manifest();
+        const ManifestRow *row = manifest.findRow("Contents/a.mp3");
+        assert(row != nullptr);
+        assert(row->size == 40'000);
+        assert(row->salvagedFromSize == 100'000);
+        // Its neighbours are untouched: a salvage run is not an excuse
+        // to mark the whole archive as damaged.
+        const ManifestRow *intact = manifest.findRow("Contents/Sub/b.mp3");
+        assert(intact != nullptr && intact->salvagedFromSize == 0);
+
+        // A record with a hole in it must not present itself as complete.
+        assert(manifest.status == BackupStatus::PartialSkipped);
+        assert(manifest.sourceReadOnly);
+        assert(f.verifies() && "a salvaged archive is still a valid archive");
+        std::cout << "case 15 (a salvage run keeps the part it could read, and says how much is missing) OK\n";
+    }
+
+    // The same short read on a HEALTHY stick is a real fault and stays
+    // one: the entry is dropped and the run says so. A stick that is not
+    // read-only can be written, so a file that reads short is most
+    // likely being written right now, and half of it is not worth
+    // keeping when the next run can have all of it.
+    {
+        Fixture f("salvage-healthy");
+        BackupStickOptions options = f.options;  // sourceReadOnly stays false
+        options.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Contents/a.mp3") {
+                return std::uint64_t{40'000};
+            }
+            return std::nullopt;
+        };
+
+        BackupStickOutcome outcome = BackupStick::execute(options);
+        assert(outcome.salvaged.empty() && "nothing is salvaged off a stick that is not in trouble");
+        assert(!f.archiveNames().count("Contents/a.mp3") && "the short read is not kept");
+        bool said = false;
+        for (const std::string &warning : outcome.warnings) {
+            if (warning.find("Contents/a.mp3") != std::string::npos
+                && warning.find("could not be read in full") != std::string::npos) {
+                said = true;
+            }
+        }
+        assert(said && "and it is reported as the fault it is");
+        assert(f.manifest().status == BackupStatus::PartialSkipped);
+        std::cout << "case 16 (a short read off a healthy stick is still a fault, not a salvage) OK\n";
+    }
 
     std::cout << "all cases passed\n";
     return 0;

@@ -50,6 +50,17 @@ struct ManifestRow
     // so damage to a carried entry's CD record is caught without
     // re-reading its data.
     std::uint32_t crc32 = 0;
+    // What this file was on the stick, when the archive holds less of it
+    // than that: a salvage read that stopped part-way. Zero means the
+    // entry is whole, which is every row a healthy stick produces.
+    //
+    // Both numbers are needed and neither can be dropped. `size` is what
+    // the archive holds, so a restore knows how many bytes to write;
+    // this is what the file was, so anything reading the backup can say
+    // how much is missing instead of presenting a truncated file as
+    // complete. A restore that writes 4 MB of a 9 MB track over a good
+    // copy, silently, is the failure this exists to prevent.
+    std::uint64_t salvagedFromSize = 0;
 };
 
 // One run's worth of "what this update did", kept so a backup can say

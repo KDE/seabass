@@ -96,14 +96,57 @@ class FileSource : public EntrySource
 public:
     explicit FileSource(const fs::path &path) : m_in(path, std::ios::binary) {}
     bool ok() const { return static_cast<bool>(m_in); }
+    // Whether a read failed, as opposed to reaching the end of the file.
+    // istream signals those two differently and the difference is the
+    // whole of this feature: eofbit is an ordinary finish, badbit is the
+    // device refusing, and a stream that reports fewer bytes without
+    // badbit has simply ended. Latched, because the caller reads in a
+    // loop and only asks afterwards.
+    bool readFailed() const { return m_readFailed; }
     std::size_t read(std::span<std::byte> out) override
     {
         m_in.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(out.size()));
+        if (m_in.bad()) {
+            m_readFailed = true;
+        }
         return static_cast<std::size_t>(m_in.gcount());
     }
 
 private:
     std::ifstream m_in;
+    bool m_readFailed = false;
+};
+
+// Stops handing out bytes at `limit`, the way a stick with a bad
+// cluster stops. Wraps rather than replaces the real source, so
+// everything before the limit is the file's own bytes read the usual
+// way -- a stand-in that generated its own data would prove the archive
+// stores what the stand-in made up.
+class LimitedSource : public EntrySource
+{
+public:
+    LimitedSource(EntrySource &inner, std::optional<std::uint64_t> limit) : m_inner(inner), m_limit(limit) {}
+    std::size_t read(std::span<std::byte> out) override
+    {
+        if (!m_limit) {
+            return m_inner.read(out);
+        }
+        if (m_done >= *m_limit) {
+            return 0;
+        }
+        const std::uint64_t room = *m_limit - m_done;
+        if (out.size() > room) {
+            out = out.first(static_cast<std::size_t>(room));
+        }
+        const std::size_t got = m_inner.read(out);
+        m_done += got;
+        return got;
+    }
+
+private:
+    EntrySource &m_inner;
+    std::optional<std::uint64_t> m_limit;
+    std::uint64_t m_done = 0;
 };
 
 // The archive and its journal, opened and recovered, plus what the
@@ -755,6 +798,14 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         progress.currentFile = file->relativePath;
         fs::path fullPath = options.stickRoot / pathFromUtf8(file->relativePath);
         FileSource source(fullPath);
+        // A stick that stops giving bytes part-way through a file. The
+        // hook is unset in every real run, so this is the plain source.
+        std::optional<std::uint64_t> limit;
+        if (options.readLimitForTesting) {
+            limit = options.readLimitForTesting(file->relativePath);
+        }
+        LimitedSource limited(source, limit);
+        EntrySource &bytes = limit ? static_cast<EntrySource &>(limited) : static_cast<EntrySource &>(source);
         if (!source.ok()) {
             outcome.warnings.push_back(file->relativePath + ": could not open, skipped");
             continue;
@@ -762,7 +813,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         std::uint64_t bytesBefore = progress.bytesDone;
         std::optional<ArchiveUpdater::AppendedEntry> appended;
         try {
-            appended = updater.appendFile(file->relativePath, file->mtimeUnix, source, options.cancel,
+            appended = updater.appendFile(file->relativePath, file->mtimeUnix, bytes, options.cancel,
                                           [&](std::uint64_t bytes) {
                                               progress.bytesDone = bytesBefore + bytes;
                                               report(BackupProgress::Phase::Reading);
@@ -780,9 +831,37 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         std::error_code ec;
         std::uint64_t sizeNow = fs::file_size(fullPath, ec);
         std::int64_t mtimeNow = ec ? 0 : toUnixSeconds(fs::last_write_time(fullPath, ec));
-        if (ec || sizeNow != file->size || mtimeNow != file->mtimeUnix || appended->entry.size != file->size) {
+        const bool changedUnderneath = ec || sizeNow != file->size || mtimeNow != file->mtimeUnix;
+        const bool shortRead = appended->entry.size != file->size;
+        if (changedUnderneath) {
             updater.forgetLastEntries(1);
             outcome.warnings.push_back(file->relativePath + ": changed while it was being read, left for the next run");
+        } else if (shortRead && options.sourceReadOnly) {
+            // A salvage run keeps what it got. The file did not change --
+            // it cannot, the kernel has already refused writes to this
+            // stick -- so fewer bytes than the stick claims means the
+            // read stopped, and those bytes are the only copy anybody is
+            // going to get. Throwing them away to keep the archive tidy
+            // is the wrong trade when what is at stake is somebody's own
+            // work.
+            //
+            // The row says both numbers, so nothing downstream can
+            // present four megabytes of a nine megabyte track as a whole
+            // one. See ManifestRow::salvagedFromSize.
+            ManifestRow row = rowForEntry(*file, &*appended);
+            row.salvagedFromSize = file->size;
+            manifest.rows.push_back(row);
+            outcome.salvaged.push_back({file->relativePath, appended->entry.size, file->size,
+                                        source.readFailed() ? "the stick refused to read past this point"
+                                                            : "the file ended sooner than the stick said it would"});
+            outcome.warnings.push_back(file->relativePath + ": only " + humanBytes(appended->entry.size) + " of "
+                                        + humanBytes(file->size) + " could be read");
+        } else if (shortRead) {
+            // A healthy stick that reads short is a real fault, and
+            // stays one. Named for what it is rather than as a change:
+            // nothing about this file moved.
+            updater.forgetLastEntries(1);
+            outcome.warnings.push_back(file->relativePath + ": could not be read in full, left for the next run");
         } else {
             manifest.rows.push_back(rowForEntry(*file, &*appended));
         }

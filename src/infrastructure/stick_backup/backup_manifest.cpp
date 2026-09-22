@@ -177,6 +177,14 @@ std::string BackupManifest::serialize() const
         }
         out += '\t';
         out += escapeManifestField(row.extra);
+        // An eighth field, and only when there is something to say. Every
+        // row a healthy stick writes stays seven fields wide, so an
+        // archive that has never met a damaged stick is byte-identical to
+        // one written before this field existed.
+        if (row.salvagedFromSize != 0) {
+            out += '\t';
+            out += std::to_string(row.salvagedFromSize);
+        }
         out += '\n';
     }
 
@@ -300,7 +308,9 @@ std::optional<BackupManifest> BackupManifest::parse(std::string_view text, std::
             continue;
         }
 
-        if (fields.size() != 7 || fields[0].size() != 1 || (fields[0][0] != 'f' && fields[0][0] != 'd')) {
+        // Seven fields, or eight when the row carries a salvage size.
+        if ((fields.size() != 7 && fields.size() != 8) || fields[0].size() != 1
+            || (fields[0][0] != 'f' && fields[0][0] != 'd')) {
             fail(error, "manifest row " + std::to_string(lineNumber) + " malformed");
             return std::nullopt;
         }
@@ -314,6 +324,10 @@ std::optional<BackupManifest> BackupManifest::parse(std::string_view text, std::
         }
         row.path = *path;
         row.extra = *extra;
+        if (fields.size() == 8 && !parseNumber(fields[7], row.salvagedFromSize)) {
+            fail(error, "manifest row " + std::to_string(lineNumber) + " has a malformed salvage size");
+            return std::nullopt;
+        }
         if (row.kind == ManifestRow::Kind::File) {
             auto digest = hashing::digestFromHex(fields[5]);
             std::uint32_t crc = 0;

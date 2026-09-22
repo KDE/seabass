@@ -69,6 +69,24 @@ struct BackupStickOptions
     // The stick is mounted read-only, i.e. damaged: the run still reads
     // everything it can, and the archive is marked as an emergency copy.
     bool sourceReadOnly = false;
+    // How far into a file the stick will let this run read, per
+    // stick-relative path; nullopt (and an unset hook) means "all of
+    // it", which is every real backup.
+    //
+    // This exists because the salvage path cannot otherwise be
+    // exercised. A read that stops part-way WITHOUT the file changing is
+    // a device refusing, and no test and no rig can arrange one on a
+    // healthy filesystem: truncating the file changes its size, which is
+    // a different branch and the one that says "changed while it was
+    // being read". The rig's own fault injection
+    // (tools/rig_file_failure.cpp) can make an OPEN fail, which is a
+    // third branch again, and its header explains why even that took a
+    // directory to arrange.
+    //
+    // So: the one thing a damaged stick does that nothing here can
+    // imitate is handed in. It is read only by the loop that copies
+    // files, and an unset hook costs nothing.
+    std::function<std::optional<std::uint64_t>(const std::string &relativePath)> readLimitForTesting;
     // What the person called this backup, stored in the manifest header.
     //
     // Deliberately optional rather than a plain string, because "leave the
@@ -136,6 +154,17 @@ enum class BackupOutcomeStatus
 
 class PendingBackup;
 
+// One file the run could not read in full off a damaged stick. What was
+// readable is in the archive; this says how much of it that was, and
+// why the rest is not there.
+struct SalvagedFile
+{
+    std::string path;                 // stick-relative
+    std::uint64_t bytesSalvaged = 0;  // what reached the archive
+    std::uint64_t expectedSize = 0;   // what the stick said the file was
+    std::string reason;
+};
+
 struct BackupStickOutcome
 {
     BackupOutcomeStatus status = BackupOutcomeStatus::Failed;
@@ -149,6 +178,9 @@ struct BackupStickOutcome
     std::uint64_t deadBytes = 0;
     bool databaseCaptured = false;
     std::vector<std::string> warnings;
+    // Files kept in part rather than dropped, which only a salvage run
+    // (sourceReadOnly) produces. Empty on every healthy-stick backup.
+    std::vector<SalvagedFile> salvaged;
     std::unique_ptr<PendingBackup> pending;
 };
 

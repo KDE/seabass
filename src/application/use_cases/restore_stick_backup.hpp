@@ -120,6 +120,20 @@ struct StickBackupDescription
     std::vector<std::pair<std::string, std::string>> databaseFingerprints;
 };
 
+// An entry the backup holds only part of, because it was taken off a
+// damaged stick (see BackupStickOptions::sourceReadOnly and
+// ManifestRow::salvagedFromSize). A restore must say so rather than
+// producing a shorter file that looks like every other file it wrote.
+struct PartiallyRestored
+{
+    std::string path;
+    std::uint64_t bytesAvailable = 0;  // what the backup holds
+    std::uint64_t originalSize = 0;    // what the file was before the stick failed
+    // false when a whole copy already sat on the target and was left
+    // alone rather than overwritten with this.
+    bool written = false;
+};
+
 struct RestoreSummary
 {
     enum class Status
@@ -140,6 +154,8 @@ struct RestoreSummary
     std::vector<std::string> writeErrors;
     std::optional<std::vector<std::string>> missingTrackPaths;  // nullopt: no database / no check
     std::vector<std::string> warnings;
+    // Empty for every backup taken off a healthy stick.
+    std::vector<PartiallyRestored> partial;
 };
 
 // Streams entries out of the archive onto the target -- one seek and one

@@ -11,6 +11,7 @@
 // sitting on real sticks right now, and this project is pre-1.0 about its
 // own code but not about data already written. So every shorter header
 // this format has ever produced is checked here, not just the newest.
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -20,6 +21,7 @@
 
 using seabass::infrastructure::stick_backup::BackupManifest;
 using seabass::infrastructure::stick_backup::BackupStatus;
+using seabass::infrastructure::stick_backup::ManifestRow;
 
 namespace
 {
@@ -143,8 +145,85 @@ void testOlderHeadersStillParse()
 
 }  // namespace
 
+// A salvage read stops part-way, so the archive holds less of the file
+// than the stick had. Both numbers have to survive: what is stored, so a
+// restore knows what to write, and what the file was, so nothing
+// presents a truncated track as a whole one.
+void testASalvagedRowKeepsBothSizes()
+{
+    BackupManifest manifest = basicManifest();
+    ManifestRow whole;
+    whole.kind = ManifestRow::Kind::File;
+    whole.path = "Contents/whole.mp3";
+    whole.size = 9'000'000;
+    whole.mtimeUnix = 1700000001;
+    ManifestRow salvaged;
+    salvaged.kind = ManifestRow::Kind::File;
+    salvaged.path = "Contents/damaged.mp3";
+    salvaged.size = 4'194'304;            // what was readable
+    salvaged.salvagedFromSize = 9'000'000;  // what the stick said it was
+    salvaged.mtimeUnix = 1700000002;
+    manifest.rows = {whole, salvaged};
+
+    const BackupManifest parsed = roundTrip(manifest);
+    assert(parsed.rows.size() == 2);
+    assert(parsed.rows[0].salvagedFromSize == 0 && "a whole file says nothing about salvage");
+    assert(parsed.rows[1].size == 4'194'304);
+    assert(parsed.rows[1].salvagedFromSize == 9'000'000);
+    assert(parsed.rows[1].path == "Contents/damaged.mp3" && "the field beside it is still itself");
+}
+
+// Every row a healthy stick writes stays seven fields wide, so an
+// archive that has never met a damaged stick serializes exactly as it
+// did before this field existed. Checked by counting tabs rather than
+// by trusting the round trip, which would agree with a writer that
+// always wrote eight.
+void testAWholeRowIsStillSevenFields()
+{
+    BackupManifest manifest = basicManifest();
+    ManifestRow row;
+    row.kind = ManifestRow::Kind::File;
+    row.path = "Contents/whole.mp3";
+    row.size = 12;
+    row.mtimeUnix = 1700000001;
+    manifest.rows = {row};
+
+    const std::string document = manifest.serialize();
+    std::size_t lineStart = document.find("f\tContents/whole.mp3");
+    assert(lineStart != std::string::npos);
+    const std::size_t lineEnd = document.find('\n', lineStart);
+    const std::string line = document.substr(lineStart, lineEnd - lineStart);
+    assert(std::count(line.begin(), line.end(), '\t') == 6 && "seven fields, six tabs");
+
+    manifest.rows[0].salvagedFromSize = 99;
+    const std::string salvagedDocument = manifest.serialize();
+    lineStart = salvagedDocument.find("f\tContents/whole.mp3");
+    const std::size_t salvagedEnd = salvagedDocument.find('\n', lineStart);
+    const std::string salvagedLine = salvagedDocument.substr(lineStart, salvagedEnd - lineStart);
+    assert(std::count(salvagedLine.begin(), salvagedLine.end(), '\t') == 7 && "eight fields, seven tabs");
+}
+
+// A manifest written before the field existed has seven-field rows and
+// must still parse, because it is sitting on real sticks right now.
+void testSevenFieldRowsStillParse()
+{
+    std::string body = "seabass-stick-manifest\t1\t1234-ABCD\tWHALESHARK\tcomplete\t1700000000\n";
+    body += "f\tContents/a.mp3\t12\t1700000001\t00000000\t";
+    body += std::string(64, '0');
+    body += "\t\n";
+
+    std::string error;
+    auto parsed = BackupManifest::parse(withTrailer(body), &error);
+    assert(parsed && error.empty());
+    assert(parsed->rows.size() == 1);
+    assert(parsed->rows[0].salvagedFromSize == 0 && "an old row is a whole row, not an unknown one");
+}
+
 int main()
 {
+    testASalvagedRowKeepsBothSizes();
+    testAWholeRowIsStillSevenFields();
+    testSevenFieldRowsStillParse();
     testNameSurvivesARoundTrip();
     testNoNameIsEmptyNotMissing();
     testNameEscapesTheCharactersThatWouldBreakTheGrammar();

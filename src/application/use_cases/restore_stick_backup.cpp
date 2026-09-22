@@ -737,6 +737,26 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         std::uint64_t bytesBefore = progress.bytesDone;
         auto rowIt = rowsByPath.find(file.name);
         const ManifestRow *row = rowIt == rowsByPath.end() ? nullptr : rowIt->second;
+        // A file the backup only holds part of, because the stick it came
+        // off had stopped giving bytes. Writing it is usually right --
+        // on a fresh stick it is all there is, and part of a track beats
+        // none of it -- but not over a copy that is whole. Four megabytes
+        // of a nine megabyte track written silently over the nine is the
+        // one outcome a salvage backup must never cause, and a restore
+        // that says "Restored" afterwards is how it would happen.
+        if (row != nullptr && row->salvagedFromSize != 0) {
+            std::error_code existsEc;
+            const std::uint64_t onTarget = fs::file_size(longPathSafe(destination), existsEc);
+            const bool wholeCopyIsThere = !existsEc && onTarget >= row->salvagedFromSize;
+            summary.partial.push_back({file.name, row->size, row->salvagedFromSize, !wholeCopyIsThere});
+            if (wholeCopyIsThere) {
+                // Counted as unchanged rather than written: nothing was
+                // put on the target for this entry, and the file that is
+                // there is the better one.
+                ++summary.filesUnchanged;
+                continue;
+            }
+        }
         std::string error = writeEntry(*opened.reader, file, row, destination, options.chunkSize, [&](std::uint64_t bytes) {
             progress.bytesDone = bytesBefore + bytes;
             report(RestoreProgress::Phase::Writing);
@@ -805,7 +825,10 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         }
     }
 
-    bool problems = !summary.rejected.empty() || !summary.writeErrors.empty()
+    // A restore that put back files the backup only holds part of has
+    // not restored the library, whatever the counts say. It is the one
+    // thing the page must not report as a clean Restored.
+    bool problems = !summary.rejected.empty() || !summary.writeErrors.empty() || !summary.partial.empty()
                     || (summary.missingTrackPaths && !summary.missingTrackPaths->empty()) || !summary.warnings.empty();
     summary.status = problems ? RestoreSummary::Status::RestoredWithProblems : RestoreSummary::Status::Restored;
     return summary;

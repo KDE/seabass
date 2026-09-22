@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -538,6 +539,63 @@ int main()
         assert(preview.error.empty());
         assert(preview.sourceReadOnly);
         std::cout << "case: an emergency copy is still marked when it is offered for restore OK\n";
+    }
+
+    // ---- Restoring a salvage backup ----------------------------------
+    //
+    // A backup taken off a stick that had already gone read-only holds
+    // part of some files: what was readable before the device stopped.
+    // Restoring one onto a FRESH stick should put that part back, since
+    // part of a track beats none of it. Restoring it over a copy that is
+    // whole must not.
+    //
+    // Four megabytes of a nine megabyte track written silently over the
+    // nine is the outcome this whole feature exists to avoid, and a
+    // restore reporting "Restored" afterwards is how it would happen.
+    {
+        Fixture f("salvage");
+        BackupStickOptions salvage = f.backup;
+        salvage.sourceReadOnly = true;
+        salvage.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Contents/a.mp3") {
+                return std::uint64_t{30'000};
+            }
+            return std::nullopt;
+        };
+        const BackupStickOutcome taken = BackupStick::execute(salvage);
+        assert(taken.salvaged.size() == 1);
+        const std::string wholeFile = readFile(f.stick / "Contents" / "a.mp3");
+
+        // Onto an empty target: the readable part goes back, and the
+        // restore says which file it is and how much of it there is.
+        {
+            RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+            assert(summary.status == RestoreSummary::Status::RestoredWithProblems
+                   && "a restore that put back part of a file is not a clean Restored");
+            assert(summary.partial.size() == 1);
+            assert(summary.partial[0].path == "Contents/a.mp3");
+            assert(summary.partial[0].bytesAvailable == 30'000);
+            assert(summary.partial[0].originalSize == 90'000);
+            assert(summary.partial[0].written && "on a fresh stick, part of the track beats none of it");
+            assert(readFile(f.target / "Contents" / "a.mp3") == wholeFile.substr(0, 30'000));
+            // The files beside it are whole and say nothing.
+            assert(readFile(f.target / "Contents" / "Sub" / "b.mp3")
+                   == readFile(f.stick / "Contents" / "Sub" / "b.mp3"));
+        }
+
+        // Now the dangerous one. The target already holds the whole
+        // track -- the copy the DJ still has -- and the backup holds a
+        // third of it.
+        {
+            writeFile(f.target / "Contents" / "a.mp3", wholeFile, 1'700'000'000);
+            RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+            assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
+            assert(summary.partial.size() == 1);
+            assert(!summary.partial[0].written && "the whole copy is left alone");
+            assert(readFile(f.target / "Contents" / "a.mp3") == wholeFile
+                   && "and it really is untouched, byte for byte");
+        }
+        std::cout << "case salvage-restore (part of a file goes back, but never over a whole copy) OK\n";
     }
 
     std::cout << "all cases passed\n";
