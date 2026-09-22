@@ -90,6 +90,24 @@ CompactionResult compactArchive(const Zip64Reader &source, const BackupManifest 
             result.cancelled = true;
             return result;
         }
+        // The salvage log is copied across as it stands: it describes the
+        // archive, so no manifest row describes IT, and compaction is
+        // exactly what somebody runs on a salvage backup -- every
+        // discarded read attempt is dead space in it. Refusing to
+        // compact one, which is what demanding a row here did, left the
+        // archive that most needs compacting the one archive that could
+        // not be.
+        //
+        // Not regenerated, because compaction does not re-read the
+        // stick and has nothing new to say; the rows it carries forward
+        // still record which files are short.
+        if (isArchiveMetadataEntry(entry.name)) {
+            Zip64Writer::EntrySink copy = writer.beginFile(entry.name, entry.mtimeUnix);
+            source.readEntry(i, [&](std::span<const std::byte> piece) { copy.write(piece); });
+            copy.finish();
+            ++result.entries;
+            continue;
+        }
         auto row = rows.find(entry.name);
         if (row == rows.end()) {
             throw ArchiveFormatError("entry not described by the manifest: " + entry.name);

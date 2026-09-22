@@ -70,7 +70,11 @@ using Model = std::map<std::string, std::string>;  // path -> content ("" + trai
 // whose content is unchanged are carried, everything else appended,
 // dropped paths removed. Mirrors the real updater flow closely enough to
 // produce realistic dead space.
-void generation(InMemoryArchiveFile &archive, InMemoryArchiveFile &journal, const Model &model)
+// `salvageLog` non-empty writes SEABASS-SALVAGE.txt into this
+// generation, the way a run off a damaged stick does: an entry that
+// describes the archive, so no manifest row describes it.
+void generation(InMemoryArchiveFile &archive, InMemoryArchiveFile &journal, const Model &model,
+                const std::string &salvageLog = {})
 {
     std::vector<CentralEntry> carried;
     std::map<std::string, ManifestRow> carriedRows;
@@ -82,7 +86,7 @@ void generation(InMemoryArchiveFile &archive, InMemoryArchiveFile &journal, cons
         std::size_t manifestIndex = *reader.findEntry(ManifestEntryName);
         BackupManifest previous = *BackupManifest::parse(reader.readEntryToString(manifestIndex));
         for (std::size_t i = 0; i < reader.entries().size(); ++i) {
-            if (i == manifestIndex) continue;
+            if (i == manifestIndex || isArchiveMetadataEntry(reader.entries()[i].name)) continue;
             const CentralEntry &e = reader.entries()[i];
             std::string content = e.isDirectory ? "" : reader.readEntryToString(i);
             auto it = model.find(e.name);
@@ -121,6 +125,10 @@ void generation(InMemoryArchiveFile &archive, InMemoryArchiveFile &journal, cons
             row.crc32 = done->entry.crc32;
         }
         manifest.rows.push_back(row);
+    }
+    if (!salvageLog.empty()) {
+        updater.appendFromMemory(std::string(SalvageLogEntryName), manifest.createdAtUnix,
+                                 std::as_bytes(std::span<const char>(salvageLog.data(), salvageLog.size())));
     }
     updater.commit(manifest);
 }
@@ -317,6 +325,38 @@ int main()
         const std::uint64_t directoryFirst = compactedArchiveSize(std::vector<CentralEntry>{dir, big, manifestEntry});
         assert(listed - directoryFirst == zip64Offset);
         std::cout << "case 5 (compacted size follows the rewritten layout: a directory moved past 4 GiB costs 12 bytes) OK\n";
+    }
+
+    // ---- A salvage backup can be compacted, and keeps its log ---------
+    //
+    // A salvage archive carries SEABASS-SALVAGE.txt, which describes the
+    // archive and so has no manifest row of its own -- and compaction
+    // demanded a row for every entry it copied. That made the archive
+    // that most needs compacting (every discarded read attempt is dead
+    // space in it) the one archive that could not be compacted at all.
+    {
+        auto salvageClock = std::make_shared<FaultClock>();
+        InMemoryArchiveFile salvageArchive(salvageClock);
+        InMemoryArchiveFile salvageJournal(salvageClock);
+        Model salvaged = {{"d/", ""}, {"d/a", pseudoRandom(9'000, 11)}};
+        generation(salvageArchive, salvageJournal, salvaged);
+        salvaged["d/a"] = pseudoRandom(9'500, 12);
+        generation(salvageArchive, salvageJournal, salvaged, "PARTIAL  d/a\n");
+
+        Zip64Reader reader = Zip64Reader::open(salvageArchive);
+        assert(reader.findEntry(SalvageLogEntryName).has_value());
+        BackupManifest manifest = *BackupManifest::parse(reader.readEntryToString(*reader.findEntry(ManifestEntryName)));
+        InMemoryArchiveFile compacted;
+        CompactionResult result = compactArchive(reader, manifest, compacted, CancellationToken::none());
+        assert(!result.cancelled);
+        assert(compacted.size() < salvageArchive.size() && "it really did reclaim something");
+
+        Zip64Reader after = Zip64Reader::open(compacted);
+        auto logIndex = after.findEntry(SalvageLogEntryName);
+        assert(logIndex && "the account of what is missing survives compaction");
+        assert(after.readEntryToString(*logIndex) == "PARTIAL  d/a\n");
+        assert(after.findEntry("d/a").has_value() && "and so does the library");
+        std::cout << "case 6 (a salvage archive compacts, and its log comes through) OK\n";
     }
 
     std::cout << "all cases passed\n";

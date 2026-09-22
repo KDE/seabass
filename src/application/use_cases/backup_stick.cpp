@@ -951,8 +951,13 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
             // every other status does, would throw away the one thing on
             // the stick worth most.
             if (capture.status == DbSetCapture::Status::Salvaged) {
+                // A warning, not a SalvagedFile. A salvaged database set
+                // is not a truncated file: every member that is here is
+                // here in full, and what is wrong with it is that they
+                // may not agree with one another. Reporting it as one
+                // would have printed "12 MiB of 12 MiB" and added it to
+                // the count of files read only in part, which it is not.
                 outcome.warnings.push_back(mainDb + ": " + capture.detail);
-                outcome.salvaged.push_back({mainDb, capture.bytesRead, capture.bytesRead, capture.detail});
             }
             if (capture.status == DbSetCapture::Status::Captured
                 || capture.status == DbSetCapture::Status::Salvaged) {
