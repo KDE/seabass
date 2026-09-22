@@ -195,6 +195,94 @@ That one invented work rather than hiding it, which is the rarer and more
 expensive direction. `tests/qml/tst_LibrarySourceToggle.qml` carries the
 centroid helper and the reasoning.
 
+### A test count is not an invariant
+
+"The suite is 181 tests" is a statement about one machine, one configure,
+and one moment. It is not a fact about a commit, and it must never be
+used as a tripwire for "did everything build".
+
+Most `add_test` calls sit under `SEABASS_TESTS` and `TARGET
+Qt6::Core`, which is not the interesting part. Ten are gated on
+something that varies by **machine or by configure**:
+
+| Test | Gate |
+|---|---|
+| `seabass_qml_desktop_style_tests` | `SEABASS_KDE_STYLE_QMLDIR` (kf6-qqc2-desktop-style) |
+| `seabass_qml_shader_tests` | `SEABASS_XVFB_RUN AND Qt6ShaderTools_FOUND` |
+| `seabass_qml_tests` | `SEABASS_XVFB_RUN` (falls back to an offscreen registration) |
+| `silence_probe_test` | `TARGET seabass_audio_qt` |
+| `taglib_metadata_probe_test` | `TARGET seabass_taglib` |
+| `taglib_duration_probe_test` | `TARGET seabass_taglib` |
+| `stray_file_scan_test` | `TARGET seabass_taglib` |
+| `stray_scan_live_test` | `TARGET seabass_taglib AND SEABASS_LIVE_STICK` |
+| `change_summary_wording_test` | `TARGET seabass_edit` |
+| `windows_removable_media_monitor_test` | `WIN32` |
+
+On a macOS build directory, four of those ten do not register at all:
+the two that need `xvfb-run` or the KDE style, the Windows one, and
+`stray_scan_live_test`.
+
+`stray_scan_live_test` settles it: it is gated on `SEABASS_LIVE_STICK`
+**at configure time**, so two build directories on the same machine, at
+the same commit, with the same compiler, legitimately register different
+totals depending on whether a stick was plugged in when `cmake` last ran.
+
+This was not theoretical. A count quoted from one machine as a property
+of master was wrong by one on the platform it was measured on -- it had
+been taken one commit earlier -- and wrong by two on the other platform,
+for an entirely different reason. Both halves of the tripwire, green and
+red, meant something narrower than they sounded.
+
+The portable question is whether anything stopped being registered, and
+the portable check is a name diff, not a number:
+
+```sh
+# on the base, then on the branch, in each build directory
+ctest -N | sed -n 's/^ *Test *#[0-9]*: //p' | sort > /tmp/names.before
+ctest -N | sed -n 's/^ *Test *#[0-9]*: //p' | sort > /tmp/names.after
+
+comm -23 /tmp/names.before /tmp/names.after   # gone: the real alarm
+comm -13 /tmp/names.before /tmp/names.after   # new: should be exactly yours
+```
+
+One thing that check does *not* answer, because it is easy to assume it
+does: `ctest -N` lists what CMake registered, not what compiled. A test
+that fails to build still appears.
+
+Measured rather than reasoned about, since that is the point of this
+section. A build directory configured from a clean worktree, with
+nothing built in it at all -- zero test binaries on disk -- reports:
+
+```
+Total Tests: 181
+```
+
+So a name diff cannot tell "built and registered" from "registered and
+failed to compile". **"Did everything build" is the build's own exit
+status, and nothing else.** That check belongs beside the name diff, not
+downstream of it.
+
+### The move behind all of these
+
+Every failure in this section and the ones around it is the same move,
+and it is worth naming because it does not look like carelessness from
+the inside: a measurement that was correct in a narrow frame, carried
+into a wider one.
+
+A mirror read as a silent no-op -- true of a mirror that no-ops, not of
+this one, which throws. A sweep for swallowed failures matching
+`ctx.log().record` -- true, and blind to the site that uses a local
+`log.record`. A suite total -- true of one build directory at one
+commit. A sampler preferring plans that exercise the OneLibrary mirror --
+true of mirror coverage, and it silently dropped Engine coverage, because
+every such plan targets rekordbox by definition.
+
+None of those is a wrong measurement. Each is a right one asked to answer
+a question it was never measuring. The habit that catches them is not
+more care; it is stating the frame out loud -- *true of what, on which
+machine, at which commit* -- because the frame is what goes missing, and
+a number never carries its own.
+
 ## Check the artifact, not the reasoning
 
 Four times in one day, across three machines, a measurement was correct
