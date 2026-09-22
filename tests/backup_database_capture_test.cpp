@@ -203,6 +203,53 @@ int main()
         std::cout << "case 4 (concurrent writer -> Unstable after retries, nothing listed; quiet -> byte-exact capture) OK\n";
     }
 
+    // ---- The same set, salvaged off a stick that has already failed ----
+    //
+    // Refusing an inconsistent set is right for a healthy stick: it means
+    // something IS writing, and half a transaction is a database that
+    // will not open, and the next run can have a clean one. Off a stick
+    // the kernel has remounted read-only there is no writer and no next
+    // run, so "kept changing while being read" means the device is
+    // handing back different bytes -- and an Engine database that
+    // probably opens beats none at all. It is the cues, the playlists
+    // and the edits, which is most of what anyone wants the stick back
+    // for.
+    //
+    // The writer thread stands in for that, because it produces the one
+    // thing that matters here: a set whose members do not agree.
+    {
+        fs::path busyDb = root / "Engine Library" / "Database2" / "salvage.db";
+        createDatabase(busyDb, 1500);
+        std::atomic<bool> stop{false};
+        std::thread writer([&] {
+            sqlite3 *db = openDb(busyDb);
+            execSql(db, "PRAGMA synchronous=OFF");
+            while (!stop.load()) {
+                execSql(db, "UPDATE t SET v = v + 1 WHERE id = 1");
+            }
+            sqlite3_close(db);
+        });
+        Harness h;
+        DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/salvage.db", *h.updater, 2, {},
+                                            /*salvage=*/true);
+        stop.store(true);
+        writer.join();
+
+        assert(capture.status == DbSetCapture::Status::Salvaged);
+        assert(!capture.entries.empty() && "the attempt is kept, not thrown away");
+        assert(capture.entries.size() == capture.memberRelativePaths.size());
+        assert(capture.entries.size() == capture.memberMtimes.size());
+        assert(h.updater->newEntryCount() == static_cast<int>(capture.entries.size())
+               && "and the entries it lists are really in the archive");
+        assert(!capture.detail.empty() && "with what happened said out loud");
+        assert(capture.detail.find("may not agree") != std::string::npos);
+
+        // Only on the last attempt: an intermittent fault is still worth
+        // retrying, so the earlier passes are discarded as before. With
+        // two retries that is three passes, and only the third is kept.
+        std::cout << "case 4b (a salvage run keeps the database set it could not read cleanly) OK\n";
+    }
+
     // ---- >= 1 GiB refused without reading ----
     {
         fs::path huge = root / "Engine Library" / "Database2" / "huge.db";

@@ -931,17 +931,31 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
             std::uint64_t bytesBefore = progress.bytesDone;
             DbSetCapture capture;
             try {
-                capture = captureDbSet(options.stickRoot, mainDb, updater, 3, [&](std::uint64_t bytes) {
-                    progress.bytesDone = bytesBefore + bytes;
-                    report(BackupProgress::Phase::Database);
-                });
+                capture = captureDbSet(
+                    options.stickRoot, mainDb, updater, 3,
+                    [&](std::uint64_t bytes) {
+                        progress.bytesDone = bytesBefore + bytes;
+                        report(BackupProgress::Phase::Database);
+                    },
+                    options.sourceReadOnly);
             } catch (const std::exception &e) {
                 outcome.message = std::string("write failed: ") + e.what();
                 return outcome;
             }
             outcome.bytesRead += capture.bytesRead;
             progress.bytesDone = bytesBefore + capture.bytesRead;
-            if (capture.status == DbSetCapture::Status::Captured) {
+            // Salvaged is stored exactly like Captured -- the entries are
+            // there and the rows describe them truthfully -- and then
+            // said out loud, because what is in the archive may not be a
+            // database that opens. Refusing it instead, which is what
+            // every other status does, would throw away the one thing on
+            // the stick worth most.
+            if (capture.status == DbSetCapture::Status::Salvaged) {
+                outcome.warnings.push_back(mainDb + ": " + capture.detail);
+                outcome.salvaged.push_back({mainDb, capture.bytesRead, capture.bytesRead, capture.detail});
+            }
+            if (capture.status == DbSetCapture::Status::Captured
+                || capture.status == DbSetCapture::Status::Salvaged) {
                 for (std::size_t i = 0; i < capture.entries.size(); ++i) {
                     ManifestRow row;
                     row.kind = ManifestRow::Kind::File;

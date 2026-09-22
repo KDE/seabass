@@ -60,6 +60,19 @@ struct DbSetCapture
         TooLarge,   // a member is >= MaxCapturableDbBytes; nothing was read
         Unstable,   // still changing after every retry; nothing is listed
         ReadError,  // a member vanished or could not be read
+        // Salvage runs only. The set could not be read consistently and
+        // the last attempt was KEPT rather than thrown away: the entries
+        // are listed and the caller should store them, knowing they may
+        // not agree with one another.
+        //
+        // Off a read-only stick "still changing" cannot mean a writer --
+        // the kernel has already refused writes -- so it means the
+        // device is handing back different bytes on different reads.
+        // Retrying will not fix that, and an Engine or rekordbox
+        // database that is probably readable beats none at all: it is
+        // the cues, the playlists and the edits, which is most of what
+        // anyone wants the stick back for.
+        Salvaged,
     };
     Status status = Status::Captured;
     std::vector<ArchiveUpdater::AppendedEntry> entries;  // one per member, in dbSetMembers() order
@@ -77,7 +90,13 @@ struct DbSetCapture
 // up to `retries` times. Members must be read as one set -- committed
 // transactions may sit in the WAL, a leftover journal means the main file
 // is mid-transaction -- so a mismatch on any member restarts all of them.
+// `salvage`: the stick is already damaged (BackupStickOptions::
+// sourceReadOnly), so a set that will not read cleanly is kept as it
+// came rather than refused. Never pass true for a healthy stick: there,
+// an inconsistent set means something IS writing it, and half a
+// transaction is a database that will not open.
 DbSetCapture captureDbSet(const std::filesystem::path &stickRoot, const std::string &relativeMainDb, ArchiveUpdater &updater,
-                          int retries = 3, const std::function<void(std::uint64_t)> &progress = {});
+                          int retries = 3, const std::function<void(std::uint64_t)> &progress = {},
+                          bool salvage = false);
 
 }  // namespace seabass::infrastructure::stick_backup

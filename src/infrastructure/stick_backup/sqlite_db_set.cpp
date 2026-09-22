@@ -142,7 +142,7 @@ std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
 }
 
 DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relativeMainDb, ArchiveUpdater &updater, int retries,
-                          const std::function<void(std::uint64_t)> &progress)
+                          const std::function<void(std::uint64_t)> &progress, bool salvage)
 {
     DbSetCapture capture;
     const fs::path mainDb = stickRoot / pathFromUtf8(relativeMainDb);
@@ -229,6 +229,25 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         if (!torn && !readError) {
             capture.status = DbSetCapture::Status::Captured;
             capture.fingerprint = before.value_or(DbSetFingerprint{});
+            return capture;
+        }
+        // A salvage run keeps the attempt instead. The database is the
+        // most valuable thing on the stick -- the cues, the playlists,
+        // the edits -- and off a failing device a copy that may be
+        // inconsistent is still the only copy on offer. Only on the last
+        // attempt: the earlier ones are still worth retrying, since the
+        // fault may be intermittent.
+        // Whatever it got, as long as it got the main file. A sidecar
+        // that appeared or vanished mid-pass leaves fewer entries than
+        // members, and on a failing device that is the ordinary case
+        // rather than a reason to keep nothing: the main database is
+        // where the cues and playlists are.
+        const bool lastAttempt = attempt == retries;
+        if (salvage && lastAttempt && !readError && !capture.entries.empty()) {
+            capture.status = DbSetCapture::Status::Salvaged;
+            capture.fingerprint = before.value_or(DbSetFingerprint{});
+            capture.detail = relativeMainDb + " could not be read consistently off this stick; what is here is one "
+                                              "attempt and its parts may not agree with each other";
             return capture;
         }
         updater.forgetLastEntries(appended);
