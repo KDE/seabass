@@ -2081,6 +2081,19 @@ if(TARGET Qt6::Core)
     # reporting a pass it did not earn.
     set_tests_properties(pending_deletion_unreadable_test PROPERTIES SKIP_RETURN_CODE 77)
 
+    # #14: syncing a track Device Library Plus does not list must not fail
+    # the save. Sync wrote the mirror inline rather than through
+    # mirrorCuesOrExplain(), so OneLibraryRowMissing read as a failure.
+    add_executable(sync_mirror_claim_test tests/sync_mirror_claim_test.cpp)
+    target_include_directories(sync_mirror_claim_test PRIVATE src)
+    target_compile_definitions(sync_mirror_claim_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(sync_mirror_claim_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(sync_mirror_claim_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME sync_mirror_claim_test COMMAND sync_mirror_claim_test)
+
     add_executable(onelibrary_wal_checkpoint_test tests/onelibrary_wal_checkpoint_test.cpp)
     target_include_directories(onelibrary_wal_checkpoint_test PRIVATE src)
     target_compile_definitions(onelibrary_wal_checkpoint_test PRIVATE

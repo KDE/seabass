@@ -1816,6 +1816,44 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
     auto now = std::chrono::system_clock::now();
     auto plans = application::SyncLibraries().execute(rekordboxHere, engineHere, now, now);
 
+    // The OneLibrary mirror as it stands BEFORE anything is written
+    // (#14). Read now because the assertion further down is otherwise
+    // vacuous: on a real stick 1133 of 1157 tracks already agree between
+    // export.pdb and exportLibrary.db, so "the mirror has the cue
+    // afterwards" is true of almost every cue whether the mirror ran or
+    // not. Only a cue the mirror did NOT already have says anything, and
+    // the one sampled track where that was so -- 617, five hot cues,
+    // zero on the OneLibrary side -- is the one the check went red on.
+    //
+    // Keyed by basename + hot cue number + rounded position, which is
+    // what the comparison below matches on.
+    std::set<std::string> mirrorCuesBefore;
+    auto basenameKey = [](std::string path) {
+        while (!path.empty() && path.back() == ' ') {
+            path.pop_back();
+        }
+        return fs::path(path).filename().string();
+    };
+    auto cueKey = [&basenameKey](const std::string &path, int hotCueNumber, double positionMs) {
+        return basenameKey(path) + "|" + std::to_string(hotCueNumber) + "|"
+            + std::to_string(static_cast<long long>(positionMs + 0.5));
+    };
+    const bool haveMirror = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string());
+    if (haveMirror) {
+        try {
+            infrastructure::onelibrary::OneLibraryReader reader(rekordboxRoot.string());
+            for (const auto &t : reader.readAll()) {
+                for (const auto &c : t.cues) {
+                    if (c.kind == domain::CuePoint::Kind::Hot) {
+                        mirrorCuesBefore.insert(cueKey(t.filePath, c.hotCueNumber, c.positionMs));
+                    }
+                }
+            }
+        } catch (const std::exception &e) {
+            check(false, std::string("could not read OneLibrary before the sync: ") + e.what());
+        }
+    }
+
     // Plans carrying at least one HOT cue, preferred over ones carrying
     // only memory cues at 0:00. Formats disagree about memory cues by
     // design -- Engine keeps one whatever you write -- so a plan made only
@@ -1823,6 +1861,27 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
     // the fixture has plenty of them.
     std::vector<domain::SyncPlan> withCues;
     std::vector<domain::SyncPlan> memoryOnly;
+    std::vector<domain::SyncPlan> exercisesMirror;
+    std::vector<domain::SyncPlan> agreesAlready;
+
+    // True when this plan would write a hot cue the OneLibrary copy of
+    // its rekordbox target does not already have -- i.e. when applying it
+    // actually asks the mirror to do something.
+    auto mirrorIsBehindOn = [&](const domain::SyncPlan &plan) {
+        const domain::Track &target =
+            plan.direction == domain::SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
+        if (!haveMirror || target.format != "rekordbox" || target.filePath.empty()) {
+            return false;
+        }
+        for (const auto &c : plan.cuesToApply) {
+            if (c.kind == domain::CuePoint::Kind::Hot
+                && mirrorCuesBefore.count(cueKey(target.filePath, c.hotCueNumber, c.positionMs)) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     for (const auto &plan : plans) {
         if (plan.cuesToApply.empty()) {
             continue;
@@ -1840,13 +1899,62 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
                 hasHot = true;
             }
         }
-        if (hasHot && withCues.size() < 5) {
-            withCues.push_back(plan);
-        } else if (!hasHot && memoryOnly.size() < 5) {
+        if (hasHot) {
+            (mirrorIsBehindOn(plan) ? exercisesMirror : agreesAlready).push_back(plan);
+        } else if (memoryOnly.size() < 5) {
             memoryOnly.push_back(plan);
         }
-        if (withCues.size() >= 5) {
+    }
+    // A RESERVED share of the sample goes to plans the OneLibrary mirror
+    // is behind on, and the rest is filled in the planner's own order.
+    //
+    // The reservation is the point of #14. A plan whose rekordbox target
+    // already has these cues in its OneLibrary copy exercises nothing:
+    // the mirror assertion downstream passes on it whether the mirror ran
+    // or was skipped entirely, and on a real stick that describes 1133 of
+    // 1157 tracks. Taking whichever five the planner emitted first is how
+    // a run came to announce "15 cue(s) verified in the OneLibrary copy"
+    // having never once written to it.
+    //
+    // Only a share, though, and this is worth stating because taking the
+    // whole sample was tried first and quietly cost coverage: every
+    // mirror-exercising plan targets rekordbox by definition, so
+    // preferring them wholesale pushed every Engine-target plan out and
+    // the case stopped opening an Engine database at all (engineOpens
+    // 1 -> 0). Fixing a vacuous check by silently dropping a real one is
+    // not a trade worth making.
+    constexpr size_t Sample = 5;
+    constexpr size_t ReservedForMirror = 2;
+    for (const auto &plan : exercisesMirror) {
+        if (withCues.size() >= ReservedForMirror) {
             break;
+        }
+        withCues.push_back(plan);
+    }
+    auto alreadyTaken = [&withCues](const domain::SyncPlan &plan) {
+        const domain::Track &t =
+            plan.direction == domain::SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
+        for (const auto &taken : withCues) {
+            const domain::Track &u =
+                taken.direction == domain::SyncPlan::Direction::ToB ? taken.match.trackB : taken.match.trackA;
+            if (u.format == t.format && u.sourceId == t.sourceId) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (const auto &plan : plans) {
+        if (withCues.size() >= Sample) {
+            break;
+        }
+        if (plan.cuesToApply.empty() || plan.hotCuesNeedChoice || alreadyTaken(plan)) {
+            continue;
+        }
+        const bool hasHot = std::any_of(plan.cuesToApply.begin(), plan.cuesToApply.end(), [](const auto &c) {
+            return c.kind == domain::CuePoint::Kind::Hot;
+        });
+        if (hasHot) {
+            withCues.push_back(plan);
         }
     }
     if (withCues.empty()) {
@@ -1916,7 +2024,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
     // not the other leaves rekordbox 7 disagreeing with the older export
     // about the same track. Every other cue-writing workflow mirrors;
     // Sync did not until this was asserted.
-    if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string())) {
+    if (haveMirror) {
         std::vector<domain::Track> oneLibraryAfter;
         try {
             infrastructure::onelibrary::OneLibraryReader reader(rekordboxRoot.string());
@@ -1925,6 +2033,10 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
             check(false, std::string("could not re-read OneLibrary after the sync: ") + e.what());
         }
         int checked = 0;
+        // Of those, the ones the mirror actually had to write -- absent
+        // from the OneLibrary copy before the save. This is the number
+        // that decides whether the assertion proved anything (#14).
+        int exercised = 0;
         for (const auto &plan : withCues) {
             const domain::Track &target =
                 plan.direction == domain::SyncPlan::Direction::ToB ? plan.match.trackB : plan.match.trackA;
@@ -1935,12 +2047,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
             // the same file differently -- and in this fixture the
             // rekordbox path is space-padded, because the anonymizer must
             // preserve each field's original byte length.
-            auto basename = [](std::string path) {
-                while (!path.empty() && path.back() == ' ') {
-                    path.pop_back();
-                }
-                return fs::path(path).filename().string();
-            };
+            auto basename = basenameKey;
             const std::string wanted = basename(target.filePath);
             const domain::Track *mirrored = nullptr;
             for (const auto &t : oneLibraryAfter) {
@@ -1965,9 +2072,16 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
                     }
                 }
                 ++checked;
+                const bool wasAlreadyThere =
+                    mirrorCuesBefore.count(cueKey(mirrored->filePath, planned.hotCueNumber, planned.positionMs)) > 0;
+                if (!wasAlreadyThere) {
+                    ++exercised;
+                }
                 check(landed, "the OneLibrary copy of rekordbox track " + target.sourceId + " also has the cue at "
-                                  + std::to_string(static_cast<long long>(planned.positionMs))
-                                  + " ms -- one library written twice must not disagree with itself");
+                                  + std::to_string(static_cast<long long>(planned.positionMs)) + " ms"
+                                  + (wasAlreadyThere ? " (it was already there, so this proves nothing about the mirror)"
+                                                     : " (the mirror had to write this one)")
+                                  + " -- one library written twice must not disagree with itself");
             }
         }
         int rekordboxTargets = 0;
@@ -1979,7 +2093,27 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
             }
         }
         if (checked > 0) {
-            std::cout << "    sync: " << checked << " cue(s) verified in the OneLibrary copy too\n";
+            std::cout << "    sync: " << checked << " cue(s) verified in the OneLibrary copy, " << exercised
+                      << " of which the mirror had to write\n";
+            // #14: `checked > 0` was reported as if it meant the mirror
+            // works. It does not. A cue the OneLibrary copy already had
+            // reads back correctly whether the mirror ran or was skipped
+            // entirely, and on a real stick that describes 1133 of 1157
+            // tracks -- so the run announced "15 cue(s) verified" while
+            // having exercised the write path zero times.
+            //
+            // Not a hard failure, now that the sampler above prefers
+            // exactly these plans: reaching zero means the planner
+            // emitted none, i.e. the two halves of this library already
+            // agree everywhere there was a cue to sync. That is a
+            // property of the data and nothing this case can plant. But
+            // it is said out loud, so a green run is never mistaken for
+            // evidence that the mirror works.
+            if (exercised == 0) {
+                std::cout << "    sync: NONE of them -- every cue was already in the OneLibrary copy before the "
+                             "save, and no plan in this set would have written one that was not, so this data "
+                             "set cannot tell a mirror that ran from one that did not\n";
+            }
         } else {
             // Say so rather than pass quietly: an assertion that examines
             // nothing is indistinguishable from one that holds.

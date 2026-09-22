@@ -180,17 +180,31 @@ ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
         // takes the DeviceLibrary half back out -- the save loop restores
         // every file the change declared -- so the stick is left as it was
         // before this track, not half synced.
+        //
+        // Through mirrorCuesOrExplain() rather than a writeCuesForPath()
+        // of its own, because writing blind here was refusing syncs that
+        // are perfectly fine (#14). A track Device Library Plus does not
+        // list has no copy to keep in step, so there is nothing to
+        // disagree -- but contentIdsAt() throws OneLibraryRowMissing for
+        // it, the catch below took that for a mirror failure, and the
+        // save loop then rolled back the rekordbox cue write that had
+        // already succeeded. On the hardware capture in #14, 635 of 1118
+        // tracks have no OneLibrary row, so this was not an edge case:
+        // syncing any of them failed the whole save and undid itself.
+        //
+        // mirrorCuesOrExplain() asks hasTrackAtPath() first and treats
+        // "no row" as nothing to do, which is what it is. A write that
+        // genuinely fails still fails the change, and the log now
+        // separates the two -- "also wrote into OneLibrary" against
+        // "does not list this file; nothing to mirror" -- so the line
+        // #14 wanted to assert on can actually carry that weight.
         if (!tgt.filePath.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(catalogPath)) {
-            try {
-                sharedOneLibraryWriter(ctx, catalogPath).writeCuesForPath(tgt.filePath, m_plan.cuesToApply);
-                ctx.log().record("sync: also wrote cues to the OneLibrary copy of track id=" + tgt.sourceId);
-            } catch (const std::exception &e) {
-                ctx.log().record(std::string("sync: OneLibrary cue mirror failed: ") + e.what());
-                return ChangeOutcome::failure(
-                    QStringLiteral("Could not write the cues for \"%1\" into Device Library Plus: %2. The save "
-                                   "stops here and puts back what this change wrote, so DeviceLibrary and Device "
-                                   "Library Plus stay in agreement.")
-                        .arg(QString::fromStdString(tgt.title), QString::fromUtf8(e.what())));
+            const QString failed =
+                mirrorCuesOrExplain(sharedOneLibraryWriter(ctx, catalogPath), tgt.filePath, m_plan.cuesToApply, ctx,
+                                    "sync", QStringLiteral("write the cues for \"%1\"")
+                                                .arg(QString::fromStdString(tgt.title)));
+            if (!failed.isEmpty()) {
+                return ChangeOutcome::failure(failed);
             }
         }
     } else if (targetFormat == "engine") {
