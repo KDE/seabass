@@ -197,18 +197,28 @@ wait
 
 # 4. The stick goes away while editing.
 #
-# By hand on Windows, and said so rather than attempted. rig-platform.sh
-# unmounts through diskutil on macOS and udisksctl everywhere else, and
-# Windows has neither: the stick would never actually go away, so the
-# test would sit waiting for an event that cannot arrive, as round 5 saw
-# it do for fourteen minutes before it was killed. Ejecting a real stick
-# through the Shell COM API unattended was considered and rejected: if
-# the volume does not come back without somebody physically reinserting
-# it, an overnight round is stranded. So this is a check for a person on
-# that platform -- docs/manual-testing.md carries it -- and the round
-# neither runs it nor claims it passed.
+# By hand on Windows, and said so rather than attempted. rig-platform.sh's
+# own unmount_device()/mount_device() go through diskutil on macOS and
+# udisksctl everywhere else, and neither exists here -- but that is a gap
+# in these two shell helpers, not a platform limitation: Seabass's own
+# eject button (WindowsRemovableMediaMounter::unmount(), used for real)
+# does the identical FSCTL_LOCK_VOLUME -> FSCTL_DISMOUNT_VOLUME ->
+# IOCTL_STORAGE_EJECT_MEDIA sequence Explorer's own "Safely Remove
+# Hardware" performs, and it needs no elevation. Confirmed directly: a
+# real stick ejected this way with no admin prompt at all.
+#
+# The reason this still has to be a person is the step after the eject,
+# not the eject itself. mount()'s own comment already says it: Windows
+# will not reassign a drive letter to an ejected volume without a
+# physical reinsertion, unlike udisksctl's mount on Linux, which can
+# genuinely bring an unmounted device back on its own. An unattended
+# round that ejects a stick this way has no way to give it back, so it
+# would sit waiting for an event that cannot arrive -- round 5 saw
+# exactly that, for fourteen minutes, before it was killed. So this is a
+# check for a person on this platform -- docs/manual-testing.md carries
+# it -- and the round neither runs it nor claims it passed.
 if rig_is_windows; then
-    echo "=== LiveStickPull is a by-hand check on Windows: no unprivileged unmount, see docs/manual-testing.md"
+    echo "=== LiveStickPull is a by-hand check on Windows: ejecting works, but Windows cannot bring the stick back without a physical reinsertion, see docs/manual-testing.md"
     # Recorded as failed, not quietly left out: the board's own rule is
     # that a check nobody ran has not passed. It is blocked rather than
     # broken, and the board says so when a person marks it that way.

@@ -23,9 +23,13 @@ first time through a list.
 
 `LiveStickPull::test_stickPulledWhileEditing` runs in every scripted
 round on Linux and macOS, where the rig unmounts the stick through
-`udisksctl` or `diskutil` and mounts it back. Windows has neither, so the
-scripted round on that platform prints a line saying this is by hand and
-moves on: it does not run the check and does not claim it passed.
+`udisksctl` or `diskutil` and mounts it back. `rig-platform.sh`'s own
+`unmount_device()`/`mount_device()` have no Windows equivalent, but that
+is a gap in those two shell helpers, not a platform limitation --
+`WindowsRemovableMediaMounter::unmount()` (Seabass's own eject button)
+does the identical unprivileged lock/dismount/eject sequence, confirmed
+directly against a real stick. The scripted round on Windows still
+prints a line saying this is by hand and moves on, for the reason below.
 
 Doing it by hand, on Windows, on a TEST stick:
 
@@ -133,10 +137,23 @@ formatted with an unrelated file on it.
 
 ## 4. Windows
 
-- [ ] `WindowsRemovableMediaMounter`'s eject sequence and
-      `WindowsRemovableMediaMonitor`'s polling hotplug detection are
-      compile- and Wine-verified only. Neither has met a real stick on
-      real Windows.
+- [x] `WindowsRemovableMediaMounter`'s eject sequence met a real stick on
+      real Windows: 2026-09-22, a real USB drive (SanDisk, exFAT) ejected
+      with no elevation prompt and no error, `FSCTL_LOCK_VOLUME` through
+      `IOCTL_STORAGE_EJECT_MEDIA` in order, matching Explorer's own
+      "Safely Remove Hardware". Tested the OS mechanism directly rather
+      than through the app's own button, so the click-to-eject path in
+      the UI itself is still unverified. Confirmed the corollary too:
+      the drive would not remount on its own (`Update-HostStorageCache`,
+      `pnputil /scan-devices`) -- needs the physical reinsertion this
+      file already expects. That stick is still waiting on it as of this
+      entry.
+- [ ] `WindowsRemovableMediaMonitor`'s polling hotplug detection --
+      watching the running app actually notice a real stick's arrival
+      and removal -- is still compile-verified only.
+- [ ] Click eject in Seabass itself (not just the underlying OS call) on
+      a real Windows stick and confirm the row updates and the drive
+      letter is gone.
 - [ ] Import an XML for a track rekordbox has genuinely never seen. Only
       the already-known-file case has been tested (2026-08-28, worked).
 
