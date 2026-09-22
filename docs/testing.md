@@ -19,6 +19,45 @@ exclude anything by itself; only an explicit `-LE` does. (This section
 used to say the opposite -- that a bare `ctest` skipped the integration
 suite -- which was wrong in the direction that makes you run work twice.)
 
+### `ctest` does not build, and a green suite does not mean your tree is green
+
+Nothing checks that the binaries `ctest` runs were built from the source
+that is checked out. Switch branches, or build one target and run the
+whole suite, and it will happily report on a mixture -- and the failure
+looks exactly like a real one: same test name, same abort, reproducible
+as often as you re-run it.
+
+The guard is one number, and it is not "did the build succeed":
+
+```
+cmake --build .    # must report NOTHING to do -- "ninja: no work to do"
+ctest              # only now does green mean anything
+```
+
+**A build at the tip that rebuilds zero targets, followed by a green
+suite, is the only combination that says the suite ran against what is
+checked out.** `cmake --build . && ctest` alone does not say it, because
+`cmake --build . --target one_test && ctest` passes that test too: one
+target current, everything else stale.
+
+Both halves of this happened within an hour of it being written down.
+One session checked out a branch with a deliberately failing test, built
+it, switched back, and got a failure against a tree that no longer
+contained the test. Another reported a suite total measured after
+building a single target, with 148 targets stale behind it. The totals
+turned out to be right both times, which is the point: there was no way
+to know that from the run, and a wrong one would have looked identical.
+
+The same family, worth knowing about because nothing warns you: the QML
+suite can pick up a stale `tst_*.qml` sitting beside the binary, and a
+suite total is a fact about one build directory at one moment (see *A
+test count is not an invariant*, below).
+
+And check what your shell actually gates on. `ctest | grep -E "passed|
+failed" && git push` is not a gate -- `grep` succeeds whether it matched
+"passed" or "failed", so the push always runs. Neither is
+`git commit && git push`, which consults the tests not at all.
+
 Nothing in the suite is allowed to pass without running. A missing test
 dependency stops the **configure** with a message naming the package,
 rather than quietly subtracting a target or turning a test into a skip:
