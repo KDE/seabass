@@ -648,14 +648,30 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # save has to refuse, which is the outcome this check exists for.
     local size_kb=$((free_kb - leave_kb))
     local rc=0
-    if [ -n "$filler" ] && [ "$free_kb" -lt "$leave_kb" ]; then
+    if [ "$free_kb" -le "$leave_kb" ]; then
         # The filler from the pass before, shrunk to the new margin: exFAT
         # shrinks a file in place, where writing 13 GB again costs eleven
         # minutes over USB 2 for less than a megabyte of difference. (Seen
         # before the "too little to fill" guard below, which the kept
         # filler would trip: 256 KB free IS too little to fill from.)
-        echo "shrinking the filler from the pass before: $free_kb KB free -> leaving about $leave_kb KB"
-        filler_shrink $((leave_kb - free_kb))
+        #
+        # "-le", not "-lt", and without requiring a filler. Two checks in a
+        # row asking for the SAME margin is now the normal case -- F4
+        # keeps its filler for F4-save-fails-after-its-backup, and hands it
+        # over sitting at exactly 256 KB. free_kb == leave_kb then took
+        # neither this branch nor the grow branch: it fell into the guard
+        # below, which computes size_kb as 0 and reports "too little to
+        # fill down to 256 KB" about a stick that was already exactly
+        # there. The hand-off the keep was written for could not work.
+        # Found on Windows, where the pair runs together in a full round;
+        # the Linux runs missed it because RIG_ONLY ran the second check
+        # on its own, from an empty stick.
+        if [ -n "$filler" ] && [ "$free_kb" -lt "$leave_kb" ]; then
+            echo "shrinking the filler from the pass before: $free_kb KB free -> leaving about $leave_kb KB"
+            filler_shrink $((leave_kb - free_kb))
+        else
+            echo "$A is already at $free_kb KB free, at or under the $leave_kb KB this check wants; no fill needed"
+        fi
         sync
     elif [ "$size_kb" -lt "$leave_kb" ]; then
         # What the stick actually has, not the margin: this is the one
