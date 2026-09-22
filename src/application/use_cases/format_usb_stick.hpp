@@ -12,6 +12,7 @@
 #include <thread>
 #include "application/ports/removable_media_mounter.hpp"
 #include "application/ports/usb_formatter.hpp"
+#include "application/stick_identity.hpp"
 #include "domain/usb_filesystem.hpp"
 
 namespace seabass::application
@@ -26,7 +27,12 @@ namespace seabass::application
 //    RemovableMediaLocator::detect() and only proceeds if wholeDiskPath
 //    is still present in the fresh result, the same "never trust a
 //    stale/merely-typed path" discipline PdbRowWriter already established
-//    for file writes.
+//    for file writes. Present is not enough, though: a device node is
+//    handed to whatever is plugged in next (StickIdentity exists because
+//    devicePath and mountPoint are reassigned on every replug), so the
+//    drive found there must also be the drive the caller chose. Without
+//    that, unplugging the stick shown in the list and plugging in
+//    another one before pressing Format wipes the second.
 // 2. Never start a destructive operation that's already known to fail --
 //    checks UsbFormatter::maxSizeFor() *before* unmounting or formatting
 //    anything, because on Windows Format-Volume accepts a FAT32 request
@@ -41,8 +47,13 @@ public:
     {
     }
 
-    bool execute(const std::string &wholeDiskPath, domain::UsbFilesystem fs, const std::string &volumeLabel,
-                 std::string &errorMessage, ProgressReporter &progress)
+    // chosen: who the drive was when the caller decided to erase it (the
+    // identity out of the same detect() the caller listed). Compared
+    // against who is at that path now; see sameDrive() below for the
+    // blank-drive case, which has no identity to compare and is the
+    // commonest reason to format anything.
+    bool execute(const std::string &wholeDiskPath, const StickIdentity &chosen, domain::UsbFilesystem fs,
+                 const std::string &volumeLabel, std::string &errorMessage, ProgressReporter &progress)
     {
         auto disks = m_locator.detect();
 
@@ -55,6 +66,12 @@ public:
         }
         if (target == nullptr) {
             errorMessage = "That drive is no longer present. Reconnect it and try again.";
+            return false;
+        }
+
+        if (!sameDrive(chosen, target->identity, target->capacityBytes)) {
+            errorMessage = "The drive at that connection is not the one you chose. Refresh the list and pick it "
+                           "again.";
             return false;
         }
 
@@ -126,6 +143,31 @@ public:
     }
 
 private:
+    // "Still the same drive", for a decision that destroys everything on
+    // it. StickIdentity::isSameStick() is the rule wherever there is
+    // anything to key on; what it cannot answer is the blank unlabelled
+    // drive, where it says no to two readings of one drive because
+    // neither side has a label, a UUID or a serial. That case is the
+    // reason this feature exists, so it is decided here instead: nothing
+    // to key on on EITHER side, and the same size, passes. A drive that
+    // had nothing and now has a label (someone else's stick in the same
+    // port) does not, and neither does the reverse.
+    static bool sameDrive(const StickIdentity &chosen, const StickIdentity &found, std::uint64_t foundCapacityBytes)
+    {
+        const bool chosenIsAnonymous = chosen.strength() == StickIdentity::Strength::None;
+        const bool foundIsAnonymous = found.strength() == StickIdentity::Strength::None;
+        if (chosenIsAnonymous || foundIsAnonymous) {
+            if (chosenIsAnonymous != foundIsAnonymous) {
+                return false;
+            }
+            // capacityBytes is copied into the identity by every locator,
+            // but a caller that built one by hand may not have; the
+            // detected capacity is the one to trust for the found side.
+            return chosen.capacityBytes == foundCapacityBytes;
+        }
+        return chosen.isSameStick(found);
+    }
+
     RemovableMediaLocator &m_locator;
     RemovableMediaMounter &m_mounter;
     UsbFormatter &m_formatter;

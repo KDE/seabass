@@ -85,11 +85,27 @@ public:
     }
 };
 
+// Unlabelled and unpartitioned, the drive this feature exists for. The
+// identity carries the capacity because every real locator copies it in
+// (see DetectedStick::identity), and the staleness check compares it.
 DetectedStick makeDisk(std::string wholeDiskPath, std::uint64_t capacityBytes)
 {
     DetectedStick d;
     d.wholeDiskPath = std::move(wholeDiskPath);
     d.capacityBytes = capacityBytes;
+    d.identity.capacityBytes = capacityBytes;
+    return d;
+}
+
+// The same, with something to be recognised by: a stick that has been
+// used before.
+DetectedStick makeKnownDisk(std::string wholeDiskPath, std::uint64_t capacityBytes, std::string label,
+                            std::string filesystemUuid)
+{
+    DetectedStick d = makeDisk(std::move(wholeDiskPath), capacityBytes);
+    d.label = label;
+    d.identity.label = std::move(label);
+    d.identity.filesystemUuid = std::move(filesystemUuid);
     return d;
 }
 
@@ -109,7 +125,7 @@ int main()
 
         std::string error;
         bool ok =
-            useCase.execute("/dev/sdc", UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance());
+            useCase.execute("/dev/sdc", locator.disks.front().identity, UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance());
         assert(!ok);
         assert(!error.empty());
         assert(!formatter.formatCalled);
@@ -131,7 +147,7 @@ int main()
 
         std::string error;
         bool ok =
-            useCase.execute("/dev/sdb", UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance());
+            useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance());
         assert(!ok);
         assert(!error.empty());
         assert(!formatter.formatCalled);
@@ -153,7 +169,7 @@ int main()
 
         std::string error;
         bool ok =
-            useCase.execute("/dev/sdb", UsbFilesystem::ExFat, "LABEL", error, NullProgressReporter::instance());
+            useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::ExFat, "LABEL", error, NullProgressReporter::instance());
         assert(ok);
         assert(mounter.releasedPaths.size() == 1);
         assert(mounter.releasedPaths[0] == "/dev/sdb1");
@@ -177,7 +193,7 @@ int main()
 
         std::string error;
         bool ok =
-            useCase.execute("/dev/sdb", UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance());
+            useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance());
         assert(!ok);
         assert(!formatter.formatCalled);
         std::cout << "case 4 (release failure refuses formatting) OK\n";
@@ -193,7 +209,7 @@ int main()
 
         std::string error;
         bool ok =
-            useCase.execute("/dev/sdb", UsbFilesystem::ExFat, "MYLABEL", error, NullProgressReporter::instance());
+            useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::ExFat, "MYLABEL", error, NullProgressReporter::instance());
         assert(ok);
         assert(formatter.lastWholeDiskPath == "/dev/sdb");
         assert(formatter.lastFs == UsbFilesystem::ExFat);
@@ -218,7 +234,7 @@ int main()
         FormatUsbStick useCase(locator, mounter, formatter);
 
         std::string error;
-        assert(useCase.execute("/dev/sdb", UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance()));
+        assert(useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance()));
         assert(mounter.mountedPaths.size() == 1);
         assert(mounter.mountedPaths.front() == "/dev/sdb1");
         std::cout << "case 6 (a successful format mounts what it made) OK\n";
@@ -239,10 +255,69 @@ int main()
         FormatUsbStick useCase(locator, mounter, formatter);
 
         std::string error;
-        assert(useCase.execute("/dev/sdb", UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance()));
+        assert(useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance()));
         assert(formatter.formatCalled);
         assert(error.empty());
         std::cout << "case 7 (a format that worked survives a mount that did not) OK\n";
+    }
+
+    // A device node belongs to whatever is plugged into that port. The
+    // list a person picked from is a moment old, and the check that the
+    // path is still there says nothing about whose path it is now.
+    {
+        FakeLocator locator;
+        locator.disks = {makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "MY-SET", "1234ABCD")};
+        const StickIdentity chosen = locator.disks.front().identity;
+        // Unplugged, and someone else's stick of the same size is in that
+        // port by the time Format is pressed.
+        locator.disks = {makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "WEDDING-2026", "DEADBEEF")};
+        FakeMounter mounter;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        std::string error;
+        const bool ok =
+            useCase.execute("/dev/sdb", chosen, UsbFilesystem::Fat32, "LABEL", error, NullProgressReporter::instance());
+        assert(!ok);
+        assert(!error.empty());
+        assert(!formatter.formatCalled && "and nothing was wiped finding out");
+        assert(mounter.releasedPaths.empty() && "not even unmounted: the refusal comes before anything is touched");
+        std::cout << "case 8 (a different stick in the same port is refused) OK\n";
+    }
+
+    // The other direction, and the one a person actually hits: the drive
+    // chosen was blank, and by now it is a stick with a library on it.
+    {
+        FakeLocator locator;
+        locator.disks = {makeDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024)};
+        const StickIdentity chosen = locator.disks.front().identity;
+        locator.disks = {makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "MY-SET", "1234ABCD")};
+        FakeMounter mounter;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        std::string error;
+        assert(!useCase.execute("/dev/sdb", chosen, UsbFilesystem::Fat32, "LABEL", error,
+                                NullProgressReporter::instance()));
+        assert(!formatter.formatCalled);
+        std::cout << "case 9 (a blank drive replaced by a labelled stick is refused) OK\n";
+    }
+
+    // And the case the whole feature is for still goes through: a blank,
+    // unlabelled drive has no identity to match, and refusing it on that
+    // basis would refuse every new stick.
+    {
+        FakeLocator locator;
+        locator.disks = {makeDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024)};
+        FakeMounter mounter;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        std::string error;
+        assert(useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::ExFat, "LABEL", error,
+                               NullProgressReporter::instance()));
+        assert(formatter.formatCalled);
+        std::cout << "case 10 (a blank unlabelled drive is still formattable) OK\n";
     }
 
     std::cout << "All format_usb_stick tests passed.\n";

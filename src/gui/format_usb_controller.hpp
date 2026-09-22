@@ -5,6 +5,7 @@
 #pragma once
 
 #include <QFutureWatcher>
+#include <QHash>
 #include <QObject>
 #include <QQmlEngine>
 #include <QTimer>
@@ -13,6 +14,7 @@
 #include <memory>
 
 #include "application/ports/removable_media_monitor.hpp"
+#include "application/stick_identity.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/edit/direct_write_hold.hpp"
 
@@ -98,6 +100,9 @@ private:
     std::unique_ptr<application::RemovableMediaMonitor> m_monitor;
     QTimer m_debounceTimer;
     QVariantList m_disks;
+    // wholeDiskPath -> who that drive was when it was listed; see
+    // refresh() and format().
+    QHash<QString, application::StickIdentity> m_identities;
     DirectWriteHold m_writeHold;
     bool m_busy = false;
     QString m_errorMessage;

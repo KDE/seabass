@@ -245,7 +245,10 @@ int main(int argc, char **argv)
         // straight back, so the use case's own re-detection is comparing
         // against a path this process never composed.
         const std::string wholeDiskPath = target->wholeDiskPath;
-        if (!useCase.execute(wholeDiskPath, filesystem, label, error, progress)) {
+        // Who it is, not only where it is: the use case refuses if the
+        // drive at that path is a different one by the time it looks.
+        const application::StickIdentity chosen = target->identity;
+        if (!useCase.execute(wholeDiskPath, chosen, filesystem, label, error, progress)) {
             std::cout << "format refused or failed: " << error << "\nRIG RESULT: FAIL\n";
             return 1;
         }

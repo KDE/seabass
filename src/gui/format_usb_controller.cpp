@@ -65,8 +65,8 @@ QVariantMap diskToVariant(const DetectedStick &disk)
 // formatter instances rather than sharing the app-wide MediaController's,
 // same as every other write controller in this codebase constructs its
 // own use case dependencies per task.
-FormatUsbTaskResult runFormatTask(QString wholeDiskPath, QString filesystem, QString volumeLabel,
-                                    std::shared_ptr<QtProgressReporter> reporter)
+FormatUsbTaskResult runFormatTask(QString wholeDiskPath, application::StickIdentity chosen, QString filesystem,
+                                    QString volumeLabel, std::shared_ptr<QtProgressReporter> reporter)
 {
     FormatUsbTaskResult result;
     QString refusal = refuseIfDjSoftwareRunning();
@@ -81,7 +81,7 @@ FormatUsbTaskResult runFormatTask(QString wholeDiskPath, QString filesystem, QSt
         application::FormatUsbStick useCase(*locator, *mounter, *formatter);
 
         std::string errorMessage;
-        bool ok = useCase.execute(wholeDiskPath.toStdString(), filesystemFromString(filesystem),
+        bool ok = useCase.execute(wholeDiskPath.toStdString(), chosen, filesystemFromString(filesystem),
                                    volumeLabel.toStdString(), errorMessage, *reporter);
         if (!ok) {
             result.errorMessage = QString::fromStdString(errorMessage);
@@ -149,7 +149,14 @@ void FormatUsbController::refresh()
     // MediaController's own sticks refresh.
     auto locator = infrastructure::media::createRemovableMediaLocator();
     QVariantList disks;
+    // Kept beside the list the page shows, not derived from it: format()
+    // hands the use case who this drive was when it was listed, and the
+    // use case refuses if someone else is in that port by then. A
+    // QVariantMap of identity fields would be the same thing spelled so
+    // that QML could edit it.
+    m_identities.clear();
     for (const auto &disk : locator->detect()) {
+        m_identities[QString::fromStdString(disk.wholeDiskPath)] = disk.identity;
         disks.push_back(diskToVariant(disk));
     }
     setDisks(std::move(disks));
@@ -192,8 +199,13 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
     auto reporter = std::make_shared<QtProgressReporter>();
     // Awake for the whole format: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Formatting a USB stick"));
-    m_watcher.setFuture(QtConcurrent::run([keepAwake, wholeDiskPath, filesystem, volumeLabel, reporter]() {
-        return runFormatTask(wholeDiskPath, filesystem, volumeLabel, reporter);
+    // Whoever was at this path in the list the person was looking at.
+    // Absent (a path QML asked for that no refresh ever listed) stays
+    // absent: the use case compares an empty identity against what it
+    // finds and refuses anything that is not equally anonymous.
+    const application::StickIdentity chosen = m_identities.value(wholeDiskPath);
+    m_watcher.setFuture(QtConcurrent::run([keepAwake, wholeDiskPath, chosen, filesystem, volumeLabel, reporter]() {
+        return runFormatTask(wholeDiskPath, chosen, filesystem, volumeLabel, reporter);
     }));
 }
 
