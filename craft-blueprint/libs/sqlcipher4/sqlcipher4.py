@@ -179,10 +179,17 @@ class PackageMSVC(MSBuildPackageBase):
             # (which it adds) is repeated here.
             f"LTLIBPATHS=/LIBPATH:{craftRoot / 'lib'}",
             "LTLIBS=rpcrt4.lib libcrypto.lib",
-            # Makefile.msc line 1245 sets, unconditionally and without
-            # consulting USE_CRT_DLL:
+            # Makefile.msc sets this itself, in BOTH branches, without
+            # ever consulting USE_CRT_DLL:
             #
-            #     LDFLAGS = /NODEFAULTLIB:msvcrt /DEBUG $(LDOPTS)
+            #     !IF $(DEBUG)>1 || $(SYMBOLS)!=0
+            #     LDFLAGS = /NODEFAULTLIB:msvcrt /DEBUG $(LDOPTS)   # 1245
+            #     !ELSE
+            #     LDFLAGS = /NODEFAULTLIB:msvcrt $(LDOPTS)          # 1247
+            #     !ENDIF
+            #
+            # Both branches, so this is not a debug-build accident: every
+            # configuration of that makefile excludes msvcrt.
             #
             # That is correct for its own default, the STATIC CRT, where
             # objects carry /DEFAULTLIB:libcmt and msvcrt must be kept
@@ -204,57 +211,30 @@ class PackageMSVC(MSBuildPackageBase):
             # lines in that makefile, the DLL target among them, so the
             # same contradiction applies to everything built here.
             #
+            # The makefile is not simply careless about the CRT -- it
+            # handles selection deliberately at lines 1233-1239
+            # (/NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib). But that
+            # block is guarded on FOR_WIN10 and adjusts LTLINKOPTS, which
+            # the native tools never use. lemon links through $(LDFLAGS)
+            # alone, so the native-tool path is where the contradiction
+            # has nothing to hide behind, and the first thing that links
+            # is where it surfaces.
+            #
             # A command-line macro beats a makefile definition in nmake's
             # precedence, so setting it here wins. /DEBUG is kept because
-            # that is what the makefile's own SYMBOLS branch was adding;
-            # only the self-contradictory exclusion is dropped. $(LDOPTS)
-            # is empty unless someone sets it, and nothing here does.
+            # that is what the makefile's SYMBOLS branch was adding, and
+            # install() below already copies libsqlcipher.pdb when it
+            # exists -- previously that copy depended on a branch nobody
+            # was setting. Only the self-contradictory exclusion is
+            # dropped. $(LDOPTS) appears on those two lines and nowhere
+            # else in the makefile, and nothing here sets it, so
+            # replacing LDFLAGS wholesale loses nothing (grepped in the
+            # 4.19.0 source by the session that had it unpacked).
             "LDFLAGS=/DEBUG",
         ]
 
     def make(self):
         self.enterSourceDir()
-        # Print the environment nmake is about to inherit, before running
-        # it. This is a diagnostic, not a fix, and it is here rather than
-        # in .gitlab-ci.yml because this is the only place that sees what
-        # nmake actually sees: the CI job's own shell is several layers
-        # and one vcvarsall import away.
-        #
-        # Why these five. The MSVC build currently dies linking lemon.exe,
-        # SQLite's parser generator, with 43 unresolved externals
-        # including strlen and mainCRTStartup -- a linker that cannot find
-        # the C runtime at all. Two candidates survive, and each of these
-        # names decides between them:
-        #
-        #   LIB      lemon links with no explicit library path, so the CRT
-        #            comes entirely from this and from the /DEFAULTLIB
-        #            directives embedded in lemon.obj. Craft imports the
-        #            full vcvarsall environment, so this is normally
-        #            right, which is exactly why it is worth reading
-        #            rather than assuming.
-        #   LDFLAGS  nmake takes environment variables as macros, and
-        #            $(LDFLAGS) is on lemon's link line verbatim. Craft
-        #            sets it for MSVC builds. Anything Unix-shaped in
-        #            there, or any /NODEFAULTLIB, lands straight in that
-        #            link.
-        #   CL, _LINK_  the implicit-option variables cl and link read on
-        #            their own; either can inject a flag nothing in this
-        #            file or that makefile mentions.
-        #
-        # Ruled out already, so nobody re-treads them: LTLIBS (lemon does
-        # not use it -- it is $(NLTLINKOPTS)/$(NLTLIBPATHS) on that line)
-        # and the NLT* macros themselves (both empty, since
-        # USE_NATIVE_LIBPATHS defaults to 0 in Makefile.msc).
-        #
-        # print() rather than CraftCore.log: nothing else in this
-        # repository's blueprints uses Craft's logger, so its exact
-        # surface is unverified here, and an AttributeError would turn a
-        # link failure into a blueprint crash and lose the very output
-        # this exists to capture. stdout is captured by the job either
-        # way.
-        if CraftCore.compiler.isMSVC():
-            for name in ("LIB", "INCLUDE", "LDFLAGS", "CL", "_LINK_"):
-                print(f"sqlcipher4-env: {name}={os.environ.get(name, '<unset>')}", flush=True)
         return utils.system(self._nmakeArgs(), cwd=self.sourceDir())
 
     def install(self):
