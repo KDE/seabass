@@ -145,61 +145,44 @@ reuse:
 # --- Windows Craft build: still runs and still reports, but does not
 # --- fail the pipeline while a dependency of ours is broken upstream.
 #
-# Temporary, and dated. THE REASON HAS CHANGED -- read this before
-# assuming the failure is still somebody else's.
+# allow_failure is GONE from the automatic branch, and the history is
+# worth keeping because it is a lesson about overrides rather than about
+# libvpx.
 #
-# Originally libvpx: craft-blueprints-kde broke it on 2026-09-17
-# (06a004fb, "[libvpx] Update to 1.16.0 and enable on MSVC"), whose
-# postInstall moved a .pdb that is never produced. **Upstream fixed that
-# on 2026-09-18** (f6cbf855, "[libvpx] Fix install with patch instead of
-# blueprint logic"), so that reason is spent.
+# It was added for an upstream regression: craft-blueprints-kde broke
+# libvpx on 2026-09-17 (06a004fb), so this job failed on something
+# nothing here could fix. Upstream repaired it the next day (f6cbf855).
+# The override stayed, and by 2026-09-22 the job was failing on OUR OWN
+# libs/sqlcipher4 blueprint -- lemon.exe with 43 unresolved externals,
+# because USE_CRT_DLL=1 asks for the dynamic CRT while Makefile.msc's
+# own LDFLAGS excludes it in both branches. A genuinely broken Windows
+# package sat behind a flag that said "expected failure, not our fault"
+# for days.
 #
-# As of 2026-09-22 the job fails on OUR OWN blueprint instead:
+# That is the harm an expired override does: it does not merely tolerate
+# a known failure, it silently adopts the next one. The flag also cannot
+# buy what it is usually kept for -- it gives no information about
+# flakiness, it suppresses the signal that would show it. If this job
+# turns out to be flaky, runs with the flag OFF are what will say so.
 #
-#   *** Craft all failed: libs/sqlcipher4 after 4s ***
-#   lemon.obj : error LNK2019: unresolved external symbol strlen
-#   LINK      : error LNK2001: unresolved external symbol mainCRTStartup
-#   lemon.exe : fatal error LNK1120: 43 unresolved externals
+# The blueprint is fixed (LDFLAGS=/DEBUG on the nmake command line) and
+# the job now builds a Windows package in about 4.5 minutes, green twice
+# running. So a failure here is once again information, and is treated
+# as one.
 #
-# lemon is SQLite's parser generator, built as a NATIVE host tool, and it
-# is failing to find the C runtime at link time. That is
-# craft-blueprint/libs/sqlcipher4/sqlcipher4.py's business, which lives
-# in this repository. So "not our fault" no longer applies, and
-# allow_failure is now hiding a broken Windows package rather than
-# waiting out an upstream regression.
+# The manual branch keeps allow_failure, which is a different thing: a
+# manual job nobody starts must not hold the pipeline open.
 #
-# Checked and RULED OUT: the blueprint overrides LTLIBS on the nmake
-# command line, and an nmake command-line macro replaces the makefile's
-# value rather than appending, which looks like an obvious way to lose
-# the CRT. It is not this. In sqlcipher 4.19.0's Makefile.msc lemon.exe
-# does not use $(LTLIBS) at all; it links with $(NLTLINKOPTS) and
-# $(NLTLIBPATHS), the native-tool path. Whoever picks this up should
-# start there and not re-tread LTLIBS.
-#
-# Why this only surfaced now: the job had never actually run. It sits
-# behind a build stage that never passed until 2026-09-21, so every
-# craft job was starved at `created`. Getting the Linux lane green is
-# what exposed it.
-#
-# It only began failing the pipeline when this repo gained KDE mainline
-# status: the shared template (sysadmin/craft-ci,
-# gitlab-templates/blocks/windows-base.yml) runs the job automatically
-# wherever $KDECI_SECURE_SERVICES_KEY is set, and that rule leaves
-# allow_failure at its default of false. Before the key existed the job
-# was manual and explicitly allow_failure: true, so a broken dependency
-# went unnoticed.
-#
-# The rules below are the template's own, with allow_failure added to the
-# automatic branch. Written out in full rather than setting allow_failure
-# at job level, because a matching rule supplies its own allow_failure
-# and a job-level value would not reliably win. Overriding `rules`
+# The rules below are the template's own (sysadmin/ci-utilities,
+# gitlab-templates/blocks/windows-base.yml). Written out in full rather
+# than setting keys at job level, because a matching rule supplies its
+# own and a job-level value would not reliably win. Overriding `rules`
 # replaces the template's list outright; every other key of the job --
 # image, tags, script, artifacts -- still comes from the template.
 craft_windows_qt6_x86_64:
   rules:
   - if: $KDECI_SECURE_SERVICES_KEY
     when: on_success
-    allow_failure: true
   - when: manual
     allow_failure: true
 
