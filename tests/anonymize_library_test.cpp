@@ -381,6 +381,33 @@ int main()
         std::cout << "case 3 (one catalog failing doesn't stop the other, and succeeded() reflects it) OK\n";
     }
 
+    // A file that could not be removed is a failed export, on its own.
+    //
+    // These are the ones nothing in Seabass can anonymize, which is why
+    // they are removed rather than scrubbed -- Engine's hm.db is real
+    // titles, artists and paths plus which set each was played in. #35
+    // is about that removal being able to fail while the count says it
+    // happened; it cannot now, and the manifest says so in capitals.
+    // What it did not do was fail: the export was zipped and reported
+    // successful, resting entirely on the verifier catching the file
+    // independently.
+    //
+    // Asserted on the summary rather than through a real refused
+    // removal, because a refusal cannot be arranged here without also
+    // breaking the writes that come before it. What this pins is the
+    // decision made once the removal has already reported failure,
+    // which is the half that was wrong.
+    {
+        AnonymizationSummary summary;
+        summary.engineAttempted = true;
+        summary.engineTracksAnonymized = 1;
+        assert(summary.succeeded() && "a clean engine-only run is the baseline for the next assertion");
+
+        summary.unanonymizableFilesLeftBehind.push_back("hm.db: Permission denied");
+        assert(!summary.succeeded());
+        std::cout << "case 3b (a file that could not be removed fails the export by itself) OK\n";
+    }
+
     // The output directory is created and, at the end, removed. One that
     // already exists with content is therefore refused before anything
     // is written: a user naming their music folder as the "zip path"

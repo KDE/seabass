@@ -158,6 +158,24 @@ int main(int argc, char **argv)
         std::cout << "case 3 (an unexpected entry in the rekordbox tree is refused) OK\n";
     }
 
+    // The same rule one level deeper, and the one that matters most of
+    // the three. hm.db is Engine's play history: real titles, artists,
+    // albums and paths, plus which set each track was played in, and
+    // nothing in this project anonymizes it. The anonymizer removes it,
+    // and #35 is about that removal being able to fail silently. It no
+    // longer can -- but the check that catches a removal which failed
+    // anyway had never been seen to fire, and the check inside
+    // Database2 is newer than the two above.
+    {
+        const fs::path stray = copy / "engine" / "Database2" / "hm.db";
+        std::ofstream(stray) << "play history: every real title this DJ played, and when";
+        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        assert(!v.problems.empty());
+        assert(mentions(v.problems, "hm.db"));
+        fs::remove(stray);
+        std::cout << "case 3b (a file with no anonymizer inside Database2 is refused) OK\n";
+    }
+
     // Content: a real title and a real filename on a track the verifier
     // samples. Written through the app's own writer so the row is a real
     // row, not a hand-built one.

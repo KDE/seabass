@@ -246,8 +246,25 @@ bool AnonymizationSummary::succeeded() const
 {
     bool anyAttempted = rekordboxAttempted || engineAttempted;
     bool anyFailed = (rekordboxAttempted && !rekordboxError.empty()) || (engineAttempted && !engineError.empty());
+    // A file this export could not remove is a failed export, not a
+    // warning in the manifest.
+    //
+    // These are the files nothing in Seabass can anonymize, which is why
+    // they are removed rather than scrubbed: Engine's hm.db is real
+    // titles, artists and paths plus which set each was played in, and a
+    // slim-mode orphan analysis file still carries the real path of a
+    // track deleted from the library. The removal can be refused (see
+    // #35), the manifest already says so in capitals, and until now the
+    // export still reported success and got zipped -- resting entirely
+    // on the verifier noticing independently. It does notice the two
+    // that sit in the layout, and it cannot notice an orphan analysis
+    // file, which looks exactly like every other .DAT beside it.
+    //
+    // Reported in its own right, so the answer does not depend on which
+    // of two checks happens to catch it.
     // A failed verification is a failed export: no zip was written.
-    return anyAttempted && !anyFailed && !verificationFailed && outputError.empty();
+    return anyAttempted && !anyFailed && !verificationFailed && outputError.empty()
+        && unanonymizableFilesLeftBehind.empty();
 }
 
 AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> &rekordboxRoot,
@@ -382,6 +399,18 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     // describing the problem afterwards would leave a leaking export on
     // disk with a manifest inside it saying otherwise, which is exactly
     // the thing to avoid.
+    // A file the anonymizer meant to remove and could not is the same
+    // situation as a failed verification, and is refused the same way:
+    // the tree goes, and no zip is written. The verifier below catches
+    // the two that sit in the layout anyway, but not a slim-mode orphan
+    // analysis file, which looks exactly like every other .DAT beside
+    // it while still carrying the real path of a deleted track. See #35
+    // for why that removal can fail at all.
+    if (!summary.unanonymizableFilesLeftBehind.empty()) {
+        infrastructure::removeTreeDeepestFirst(outputDir);
+        return summary;
+    }
+
     auto verification = infrastructure::verifyAnonymizedExport(outputDir);
     if (!verification.ok) {
         summary.verificationFailed = true;
