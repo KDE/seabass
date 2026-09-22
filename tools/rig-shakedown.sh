@@ -262,6 +262,25 @@ check() {
     return $rc
 }
 
+# What the catalogs SAY, as opposed to the bytes catalogs() hashes.
+#
+# A byte comparison cannot tell a SQLite checkpoint from a real change --
+# folding the write-ahead log in rewrites the database, so both look the
+# same -- and exportLibrary.db is SQLCipher-encrypted, so nothing outside
+# Seabass can read it to find out. seabass-cli digest reads each catalog
+# with the reader the app itself uses and prints "<name>\t<sha256>" over
+# the tracks, their authored metadata and their cues.
+#
+# Never fails the round on its own: a round must not go red because this
+# could not run. It is the second opinion asked for when the bytes
+# disagree, and unchanged_catalogs says so plainly when there is none.
+catalog_digests() {  # stick -> "<name>\t<sha256>" lines, or nothing
+    [ -x "$build/seabass-cli" ] || return 0
+    "$build/seabass-cli" digest --rekordbox "$1/PIONEER" 2>/dev/null
+    [ -d "$1/Engine Library/Database2" ] && "$build/seabass-cli" digest --engine "$1/Engine Library" 2>/dev/null
+    return 0
+}
+
 catalogs() {  # stick -> sha256sum lines of its catalog files
     find "$1/PIONEER/rekordbox" "$1/Engine Library/Database2" -maxdepth 1 -type f \
         \( -name '*.pdb' -o -name '*.db' -o -name '*.db-wal' \) 2>/dev/null | sort | xargs -r -d '\n' sha256sum
@@ -339,11 +358,40 @@ unchanged_catalogs() {  # stick -- against the baseline taken after the restores
             # and is not on the stick now. A -wal that is still there has
             # not been folded into anything, so a database differing
             # beside one is not this case and keeps the bare message.
-            echo "$file: DIFFERS, and its write-ahead log was checkpointed into it."
-            echo "    A checkpoint rewrites the database, so differing bytes are expected here;"
-            echo "    this check compares bytes and cannot tell that from a real change."
-            echo "    Read the undo's own lines in the stick log above before calling it data loss."
-            bad=1
+            # The bytes cannot answer this one, so ask the catalogs.
+            # A checkpoint rewrites the database, so differing bytes are
+            # expected here and say nothing either way; what decides it
+            # is whether the library still says the same thing, which
+            # only Seabass can read out of a SQLCipher database.
+            local digests_now; digests_now=$(catalog_digests "$1")
+            local matched=0 compared=0
+            while IFS=$'\t' read -r name digest; do
+                [ -n "$name" ] || continue
+                local was; was=$(awk -F'\t' -v n="$name" '$1 == n {print $2}' \
+                    "$out/catalog-digest-baseline.txt" 2>/dev/null)
+                [ -n "$was" ] || continue
+                compared=$((compared + 1))
+                [ "$was" = "$digest" ] && matched=$((matched + 1))
+            done <<< "$digests_now"
+
+            if [ "$compared" -gt 0 ] && [ "$matched" -eq "$compared" ]; then
+                # Not a failure. The file moved and the library did not,
+                # which is exactly what a checkpoint is.
+                echo "$file: bytes differ, but its write-ahead log was checkpointed into it and all"
+                echo "    $compared catalog(s) read back identical to the baseline. A checkpoint rewrites"
+                echo "    the database without changing what it says, so this is the file moving, not the"
+                echo "    library. Compared by content because bytes cannot tell the two apart."
+            elif [ "$compared" -gt 0 ]; then
+                echo "$file: DIFFERS, and so does what the catalog SAYS: $matched of $compared read back"
+                echo "    identical to the baseline. This is not a checkpoint -- the library changed."
+                bad=1
+            else
+                echo "$file: DIFFERS, and its write-ahead log was checkpointed into it."
+                echo "    A checkpoint rewrites the database, so differing bytes are expected here, and"
+                echo "    no content digest was available to tell that from a real change (is seabass-cli"
+                echo "    built in $build?). Read the undo's own lines in the stick log above."
+                bad=1
+            fi
         else
             echo "$file: DIFFERS"
             bad=1
@@ -1152,6 +1200,10 @@ fi
 check B1-restore-A "$build/rig_restore" "$refA" "$A" --execute || { echo "stick A is not at its reference; stopping"; exit 1; }
 check B3-restore-B "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not at its reference; stopping"; exit 1; }
 { catalogs "$A"; catalogs "$B"; } > "$out/catalog-baseline.txt"
+# Taken at the same moment as the byte baseline, or the two describe
+# different states and comparing them answers nothing.
+{ catalog_digests "$A"; catalog_digests "$B"; } > "$out/catalog-digest-baseline.txt" 2>/dev/null || true
+echo "catalog digests recorded: $(grep -c . "$out/catalog-digest-baseline.txt" 2>/dev/null || echo 0) catalog(s)"
 
 # ---- reads -----------------------------------------------------------
 check R1-R3-read-A env RIG_PART_SUFFIX=-A "$build/rig_read" "$A" "$refA"

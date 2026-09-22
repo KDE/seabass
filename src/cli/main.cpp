@@ -46,6 +46,7 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "application/catalog_digest.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
@@ -699,6 +700,69 @@ ResolvedScanTargets resolveScanTargets(bool wantRekordbox, bool wantEngine,
 
     return result;
 }
+
+// "digest": what each catalog SAYS, as a sha256 over its content rather
+// than its bytes.
+//
+// For the shakedown rig, which compares catalogs between checks and
+// cannot otherwise tell a SQLite checkpoint from a real change: a
+// checkpoint rewrites the database file, so the bytes differ and the
+// library does not. exportLibrary.db is SQLCipher-encrypted, so nothing
+// outside Seabass can read it to find out. See application/catalog_digest.
+//
+// One line per catalog, "<name>\t<sha256>", and nothing else on stdout,
+// so a script can read it without parsing prose. --verbose adds the
+// lines the digest was taken over, which is what turns "these differ"
+// into "this track differs".
+int runDigestCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPathArg,
+                     const std::optional<std::string> &enginePathArg)
+{
+    bool ok = true;
+    auto targets = resolveScanTargets(wantRekordbox, wantEngine, rekordboxPathArg, enginePathArg, ok);
+    if (!ok) {
+        return 1;
+    }
+
+    // Counted, because a run that resolved nothing and printed nothing
+    // would exit 0 and read to a script exactly like a stick whose
+    // catalogs all matched.
+    int printed = 0;
+    auto emitDigest = [&printed](const std::string &name, const std::vector<seabass::domain::Track> &tracks) {
+        Console::info(name + "\t" + seabass::application::catalogDigest(tracks));
+        for (const std::string &line : seabass::application::catalogDigestLines(tracks)) {
+            Console::verbose("  " + line);
+        }
+        ++printed;
+    };
+
+    try {
+        for (const auto &target : targets.rekordboxTargets) {
+            emitDigest("rekordbox:" + target.path,
+                 seabass::infrastructure::rekordbox::KaitaiRekordboxReader(target.path).readAll());
+            // The other half of the same library, when this stick has
+            // one. Named separately because it is a different file and
+            // the whole point is to say WHICH catalog moved.
+            if (seabass::infrastructure::onelibrary::OneLibraryCueWriter::existsFor(target.path)) {
+                emitDigest("onelibrary:" + target.path,
+                     seabass::infrastructure::onelibrary::OneLibraryReader(target.path).readAll());
+            }
+        }
+        for (const auto &target : targets.engineTargets) {
+            emitDigest("engine:" + target.path,
+                 seabass::infrastructure::engine::LibdjinteropEngineReader(target.path).readAll());
+        }
+    } catch (const std::exception &e) {
+        Console::error(std::string("could not read a catalog: ") + e.what());
+        return 1;
+    }
+
+    if (printed == 0) {
+        Console::error("no catalog was read, so nothing was digested");
+        return 1;
+    }
+    return 0;
+}
+
 
 std::string humanSize(std::uint64_t bytes)
 {
@@ -1595,7 +1659,7 @@ int main(int argc, char **argv)
     }
     if (commands.size() != 1 ||
         (commands[0] != "scan" && commands[0] != "backups" && commands[0] != "sync" && commands[0] != "anonymize" &&
-         commands[0] != "export-xml")) {
+         commands[0] != "export-xml" && commands[0] != "digest")) {
         Console::error("unknown command: " + commands[0]);
         printUsage();
         return 1;
@@ -1612,6 +1676,10 @@ int main(int argc, char **argv)
     if (commands[0] == "export-xml") {
         return runExportXmlCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, outDir, excludeExtensions,
                                     pathPrefixMap, preferEngine, keepJunkCues);
+    }
+
+    if (commands[0] == "digest") {
+        return runDigestCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath);
     }
 
     if (commands[0] == "anonymize") {

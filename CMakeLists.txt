@@ -345,6 +345,7 @@ add_library(seabass_core STATIC
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
     src/domain/library_fingerprint.cpp
+    src/application/catalog_digest.cpp
     src/application/use_cases/advise_stick_backup.cpp
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/filesystem_compatibility.cpp
@@ -2028,6 +2029,16 @@ if(TARGET Qt6::Core)
         target_link_libraries(mirror_failure_fails_the_change_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME mirror_failure_fails_the_change_test COMMAND mirror_failure_fails_the_change_test)
+
+    add_executable(catalog_digest_test tests/catalog_digest_test.cpp)
+    target_include_directories(catalog_digest_test PRIVATE src)
+    target_compile_definitions(catalog_digest_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(catalog_digest_test PRIVATE seabass_core Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(catalog_digest_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME catalog_digest_test COMMAND catalog_digest_test)
 
     add_executable(onelibrary_wal_checkpoint_test tests/onelibrary_wal_checkpoint_test.cpp)
     target_include_directories(onelibrary_wal_checkpoint_test PRIVATE src)
