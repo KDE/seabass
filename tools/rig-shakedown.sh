@@ -634,7 +634,7 @@ filler_shrink() {  # <KB>
 }
 
 fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep the filler for the next pass: 0|1>
-    local leave_kb="$1" test="$2" records_may_appear="$3" keep_filler="$4"
+    local leave_kb="$1" test="$2" records_may_appear="$3" keep_filler="$4" mode="${5:-fixed}"
     # Stick A, deliberately: exFAT has no fallocate, so the filler is
     # written for real, and A's spare gigabytes cost minutes where B's cost
     # the better part of an hour for exactly the same proof.
@@ -705,6 +705,41 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # directories; the save's .write.lock beside them is a file and stays.
     local records_before; records_before=$(find "$A/Seabass/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     SEABASS_RIG_FULL_STICK=1 live_test "$A" "$test" || rc=1
+    if [ "$mode" = search ]; then
+        # Hand a cluster back at a time until the save gets PAST its
+        # backup, which is the refusal this check is named for. See
+        # full_stick_after_its_backup for why no fixed margin works.
+        #
+        # Bounded, and every way out says which it was: there is no
+        # silent give-up here, because a check that quietly stops
+        # searching is a check that passes without having run.
+        local step_kb=32 tries=0 max_tries=24 gave_up=0
+        while grep -q "could not back up before saving" "$out"/live-*FullStick*.txt 2>/dev/null; do
+            tries=$((tries + 1))
+            if [ "$tries" -gt "$max_tries" ]; then
+                echo "gave up after $max_tries steps of ${step_kb} KB: the save was still refused for its backup"
+                echo "  at $(free_kb_of "$A") KB free. The backup on this stick is larger than the search"
+                echo "  reaches; raise max_tries or start the fill higher."
+                rc=1
+                gave_up=1
+                break
+            fi
+            filler_shrink "$step_kb"
+            sync
+            echo "  step $tries: the backup did not fit; $(free_kb_of "$A") KB free now, trying again"
+            rc=0
+            SEABASS_RIG_FULL_STICK=1 live_test "$A" "$test" || rc=1
+        done
+        if grep -q "the save FITTED" "$out"/live-*FullStick*.txt 2>/dev/null; then
+            echo "the search stepped past the window: at $(free_kb_of "$A") KB free the whole save fits."
+            echo "  The gap between \"the backup does not fit\" and \"everything fits\" is under ${step_kb} KB"
+            echo "  on this stick, so this check cannot be made to land on it in ${step_kb} KB steps."
+            rc=1
+        elif [ "$gave_up" -eq 0 ] && [ "$tries" -gt 0 ]; then
+            echo "found it after $tries step(s): $(free_kb_of "$A") KB free is enough for the backup and not"
+            echo "  for the writes after it, so the save is refused where discardBackupsTakenThisSave() runs."
+        fi
+    fi
     # WHICH refusal this was, because only one of the two can see the bug
     # this check is named after.
     #
@@ -829,21 +864,29 @@ full_stick() {
 # seabass#F4. Neither was wrong about what it measured; the check simply
 # could not fail.
 #
-# The number is measured on this rig, and it is narrow. Round 8 walked it:
-# at 256 KB the backup does not fit (path one), at 768 KB everything fits
-# and the save succeeds, which the test reports as "the save FITTED" and
-# the rig counts as a failure. So the window is between them, and 512 KB
-# sits above the backup's ~460 KB and below what the ANLZ pair and the
-# database need after it.
+# No fixed number, because there is no number that is right on two
+# sticks. Round 8 spent four fills learning that: 768 KB and then 512 KB
+# both let the whole save through, on Linux and on Windows alike, while
+# 256 KB is below the backup on both. The window is real but narrow, and
+# it moves with the catalog and the cluster size.
 #
-# It is a margin, not a constant, and it depends on the catalog and the
-# filesystem's cluster size. That is survivable only because BOTH ways of
-# missing it are loud: a save that fits says so and fails, and a save
-# refused before its backup gets the NOTE above saying the discard path
-# was never reached. Neither can pass quietly, which is the whole reason
-# this check exists.
+# Why it is narrow is the part worth knowing. Writing a cue OVERWRITES
+# files that are already on the stick, so the save needs almost no new
+# space of its own -- only what writeFileDurablyAtomic's temporary copy
+# of the largest single file costs. The backup archive is the big
+# allocation, and once it fits, the writes after it usually fit too. So
+# the gap between "the backup does not fit" and "everything fits" can be
+# tens of kilobytes.
+#
+# So the check searches instead of guessing: fill to 256 KB, and while
+# the save is refused for its BACKUP, hand back one cluster at a time and
+# try again. Widening is cheap -- filler_shrink truncates the newest
+# piece, no refill -- so this costs seconds per step against the
+# half-hour the fill itself took. It stops at the first run that gets
+# past the backup, which is the one this check is named for, and gives up
+# loudly if the save starts fitting instead.
 full_stick_after_its_backup() {
-    fill_and_run 512 LiveFullStick::test_saveOnAFullStickFailsCleanly 0 0
+    fill_and_run 256 LiveFullStick::test_saveOnAFullStickFailsCleanly 0 0 search
 }
 
 full_stick_undo() {
