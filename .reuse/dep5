@@ -24,13 +24,6 @@ Files: third_party/zlib/*
 Copyright: 1995-2026 Jean-loup Gailly and Mark Adler
 License: Zlib
 
-# --- Patch against libdjinterop ------------------------------------------
-# A diff, so it carries lines of the file it patches; it takes that file's
-# licence rather than this project's.
-Files: third_party/patches/*
-Copyright: 2026 Sebastian Kügler <sebas@kde.org>
-License: LGPL-3.0-or-later
-
 # --- Kaitai Struct specs, and the parser generated from them -------------
 # Vendored unmodified from Deep-Symmetry/crate-digger, so no headers: the
 # files must stay comparable to upstream.

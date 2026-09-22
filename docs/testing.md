@@ -28,12 +28,14 @@ rather than quietly subtracting a target or turning a test into a skip:
 | Qt6 | configure fails; `-DSEABASS_GUI=OFF` to build CLI + C++ tests only |
 | Qt6 Test/QuickTest | configure fails; `-DSEABASS_TESTS=OFF` to build without any tests |
 | python3 / unzip / 7z | configure fails; they are what `backup_archive_crossvalidation_test` checks our ZIP writer against |
-| Boost.Filesystem | configure fails; libdjinterop's own suite needs it. `-DSEABASS_LIBDJINTEROP_TESTS=OFF` to build without those twelve |
+| Boost.Filesystem | configure fails; libdjinterop's own suite needs it. `-DSEABASS_LIBDJINTEROP_TESTS=OFF` to build without those fourteen |
 
 libdjinterop is built from a pinned checkout under `third_party/`, not
 linked as a system package, and every Engine write goes through it -- so
-its twelve tests are coverage of code we ship and run alongside ours. A
-bare `ctest` is 100 tests: our 88 plus those twelve.
+its fourteen tests are coverage of code we ship and run alongside ours: a
+bare `ctest` runs them with ours, so subtract fourteen for the count of
+this project's own. The fourteen only changes when the pinned checkout
+does.
 
 
 `-DSEABASS_TESTS=OFF` is the only way to build without the suite, and it

@@ -530,32 +530,32 @@ int markTracksForDeviceAnalysis(const std::filesystem::path &databaseDirectory)
     return marked;
 }
 
-// Puts the Information row back at id 1, where Engine keeps it.
+// Refuses to go any further if the Information row is not where Engine
+// keeps it: exactly one row, at id 1.
 //
-// The Information table is the first thing anything reading an Engine
-// library looks at -- it is where the schema version lives, and
-// libdjinterop's own detect_schema() reads it. Every library Engine
-// itself writes holds exactly one row there, at id 1: confirmed against
-// a Denon-written stick and against the database a Prime 4 creates for
-// itself.
+// That table is the first thing anything reading an Engine library looks
+// at -- it is where the schema version lives, and libdjinterop's own
+// detect_schema() reads it. Every library Engine itself writes holds one
+// row there, at id 1: confirmed against a Denon-written stick and
+// against the database a Prime 4 creates for itself. A Prime 4 given a
+// library whose row sat at id 2 called the stick corrupt and replaced
+// m.db with an empty database of its own, discarding every track.
 //
-// libdjinterop's 3.0.2 creator does not. schema_3_0_2::create() seeds
-// the AUTOINCREMENT counter for the table ("INSERT INTO sqlite_sequence
-// VALUES('Information',1)") *before* inserting the row, so the row lands
-// at id 2 and the counter reads 2. No other schema version in that file
-// does this, and 3.0.2 is exactly the schema current Denon hardware
-// uses. A Prime 4 rejected a library created this way as corrupt, and
-// stopped rejecting it once the row was renumbered -- which is why this
-// is corrected here rather than left to the caller to notice.
+// This used to correct the row as well, because libdjinterop's 3.0.2
+// creator seeded the table's AUTOINCREMENT counter before inserting into
+// it and landed the row at id 2. That is fixed upstream (xsco/libdjinterop
+// 17ea4f70, "Create the Engine 3.0.2 Information row at id 1") and the
+// vendored checkout carries the fix, so the correction is gone. The check
+// stays: it costs one query, and it is the last thing standing between a
+// library the player would refuse and a stick.
 //
-// Done with plain SQL because libdjinterop exposes no way to reach the
-// row: the id is not part of any public API. Runs against the scratch
-// copy, before a single byte is written to the destination.
+// Done with plain SQL because the id is not part of any public API. Runs
+// against the scratch copy, before a single byte is written to the
+// destination.
 //
 // Returns an error message, or an empty string when the row is where it
-// belongs (including when it already was, so a fixed or newly vendored
-// libdjinterop makes this a no-op rather than a second bug).
-std::string putInformationRowAtIdOne(const std::filesystem::path &databaseDirectory)
+// belongs.
+std::string verifyInformationRowAtIdOne(const std::filesystem::path &databaseDirectory)
 {
     const std::filesystem::path databaseFile = engineDatabaseFile(databaseDirectory);
     if (databaseFile.empty()) {
@@ -563,53 +563,39 @@ std::string putInformationRowAtIdOne(const std::filesystem::path &databaseDirect
     }
     const std::string dbPath = databaseFile.string();
     sqlite3 *db = nullptr;
-    // READWRITE without CREATE: a wrong path must fail here, not leave a
-    // stray empty database behind for the copy to carry onto the stick.
-    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+    // READONLY: nothing here writes, and a wrong path must fail rather
+    // than leave a stray empty database behind for the copy to carry onto
+    // the stick.
+    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         const std::string message = db ? sqlite3_errmsg(db) : "could not open the new database";
         sqlite3_close(db);
         return "could not open the new Engine database to check its Information row: " + message;
     }
-    const auto run = [db](const char *sql) -> std::string {
-        char *error = nullptr;
-        if (sqlite3_exec(db, sql, nullptr, nullptr, &error) == SQLITE_OK) {
-            return {};
-        }
-        const std::string message = error ? error : "unknown error";
-        sqlite3_free(error);
-        return message;
-    };
-    // One statement each, so a database that already has it right is
-    // left completely untouched.
-    std::string failure = run("UPDATE Information SET id = 1 WHERE id <> 1 "
-                              "AND (SELECT count(*) FROM Information) = 1;");
-    if (failure.empty()) {
-        failure = run("UPDATE sqlite_sequence SET seq = 1 WHERE name = 'Information' AND seq <> 1;");
-    }
 
-    // Verify rather than assume: this exists precisely because a library
-    // that looks fine to us can still be refused by the hardware, so the
-    // one thing it fixes is checked before the copy proceeds.
+    // Prepared by hand rather than through local::Statement, which throws
+    // when a statement will not prepare: an exception leaving here would
+    // close nothing.
     std::string verified;
-    if (failure.empty()) {
-        local::Statement check(db, "SELECT count(*), coalesce(min(id), 0) FROM Information;",
-                                "Engine library creator");
-        if (check.step()) {
-            const int rows = check.columnInt(0);
-            const int firstId = check.columnInt(1);
-            if (rows != 1 || firstId != 1) {
-                verified = "the new Engine database has " + std::to_string(rows) +
-                            " Information row(s), the first at id " + std::to_string(firstId) +
-                            " -- Engine expects exactly one, at id 1.";
-            }
-        } else {
-            verified = "could not read back the new Engine database's Information row.";
-        }
+    sqlite3_stmt *check = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT count(*), coalesce(min(id), 0) FROM Information;", -1, &check, nullptr)
+            != SQLITE_OK
+        || sqlite3_step(check) != SQLITE_ROW) {
+        // Carry SQLite's own words: a missing Information table is exactly
+        // the corruption this guard exists to catch, and "no such table:
+        // Information" is the whole diagnosis.
+        verified = "could not read back the new Engine database's Information row: " +
+                   std::string(sqlite3_errmsg(db));
+    } else {
+        const int rows = sqlite3_column_int(check, 0);
+        const int firstId = sqlite3_column_int(check, 1);
+        verified = (rows == 1 && firstId == 1)
+                       ? std::string()
+                       : "the new Engine database has " + std::to_string(rows) +
+                             " Information row(s), the first at id " + std::to_string(firstId) +
+                             " -- Engine expects exactly one, at id 1.";
     }
+    sqlite3_finalize(check);
     sqlite3_close(db);
-    if (!failure.empty()) {
-        return "could not correct the new Engine database's Information row: " + failure;
-    }
     return verified;
 }
 
@@ -786,11 +772,11 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
         }
 
         // Still on the scratch copy, with the connection closed: the one
-        // correction that decides whether real hardware will accept this
+        // check that decides whether real hardware will accept this
         // library at all. A failure here stops before the copy, so the
         // destination keeps whatever it had (nothing) rather than
         // receiving a library the player would refuse.
-        if (std::string informationRow = putInformationRowAtIdOne(scratchDir); !informationRow.empty()) {
+        if (std::string informationRow = verifyInformationRowAtIdOne(scratchDir); !informationRow.empty()) {
             result.errorMessage = informationRow;
             return result;
         }

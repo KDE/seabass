@@ -141,10 +141,12 @@ int main()
     // Not a detail. That table is where the schema version lives, so it is
     // the first thing anything reading the library looks at, and a Prime 4
     // rejected a real stick as corrupt over it. libdjinterop's 3.0.2
-    // creator seeds the table's AUTOINCREMENT counter before inserting the
-    // row, landing it at id 2; the creator corrects that afterwards. This
-    // is the regression guard for both halves: the correction, and the
-    // fact that the other generations never needed it.
+    // creator used to seed the table's AUTOINCREMENT counter before
+    // inserting the row, landing it at id 2, and this project corrected it
+    // afterwards; the fix is upstream now (17ea4f70) and the correction is
+    // gone. What is left guards the vendored checkout itself: if a bump
+    // ever brings the bug back, or a new schema generation grows its own
+    // version of it, this fails before any hardware sees it.
     {
         const EngineSchemaGeneration generations[] = {EngineSchemaGeneration::V1, EngineSchemaGeneration::V2,
                                                        EngineSchemaGeneration::V3};
@@ -153,6 +155,12 @@ int main()
             fs::path path = root / ("Engine Library gen" + std::to_string(++which));
             std::vector<Track> tracks = {makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string())};
             auto result = EngineLibraryCreator::create(path.string(), tracks, generation);
+            if (!result.errorMessage.empty()) {
+                // Say which generation and why: an assertion that hides the
+                // reason costs an hour every time this fires. On cerr, because
+                // abort() throws away whatever is still sitting in cout.
+                std::cerr << "generation " << which << " failed: " << result.errorMessage << "\n";
+            }
             assert(result.errorMessage.empty());
             assert(result.tracksCreated == 1);
 

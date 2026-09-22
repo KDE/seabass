@@ -110,7 +110,7 @@ set(BUILD_DOC OFF CACHE BOOL "" FORCE)
 # pinned checkout of its source (third_party/libdjinterop, a submodule)
 # rather than linking a system package, and every Engine write in Seabass
 # goes through it -- so its suite is coverage of code we ship, and it runs
-# with ours. Measured at the pinned 85f0622: 12/12.
+# with ours. Measured at the pinned 17ea4f70: 14/14.
 #
 # That is what used to happen, and it was the worst of both: upstream
 # gates the test targets on Boost_FOUND alone, never on BUILD_TESTING, so
