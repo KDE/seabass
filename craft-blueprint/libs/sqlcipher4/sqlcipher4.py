@@ -183,6 +183,47 @@ class PackageMSVC(MSBuildPackageBase):
 
     def make(self):
         self.enterSourceDir()
+        # Print the environment nmake is about to inherit, before running
+        # it. This is a diagnostic, not a fix, and it is here rather than
+        # in .gitlab-ci.yml because this is the only place that sees what
+        # nmake actually sees: the CI job's own shell is several layers
+        # and one vcvarsall import away.
+        #
+        # Why these five. The MSVC build currently dies linking lemon.exe,
+        # SQLite's parser generator, with 43 unresolved externals
+        # including strlen and mainCRTStartup -- a linker that cannot find
+        # the C runtime at all. Two candidates survive, and each of these
+        # names decides between them:
+        #
+        #   LIB      lemon links with no explicit library path, so the CRT
+        #            comes entirely from this and from the /DEFAULTLIB
+        #            directives embedded in lemon.obj. Craft imports the
+        #            full vcvarsall environment, so this is normally
+        #            right, which is exactly why it is worth reading
+        #            rather than assuming.
+        #   LDFLAGS  nmake takes environment variables as macros, and
+        #            $(LDFLAGS) is on lemon's link line verbatim. Craft
+        #            sets it for MSVC builds. Anything Unix-shaped in
+        #            there, or any /NODEFAULTLIB, lands straight in that
+        #            link.
+        #   CL, _LINK_  the implicit-option variables cl and link read on
+        #            their own; either can inject a flag nothing in this
+        #            file or that makefile mentions.
+        #
+        # Ruled out already, so nobody re-treads them: LTLIBS (lemon does
+        # not use it -- it is $(NLTLINKOPTS)/$(NLTLIBPATHS) on that line)
+        # and the NLT* macros themselves (both empty, since
+        # USE_NATIVE_LIBPATHS defaults to 0 in Makefile.msc).
+        #
+        # print() rather than CraftCore.log: nothing else in this
+        # repository's blueprints uses Craft's logger, so its exact
+        # surface is unverified here, and an AttributeError would turn a
+        # link failure into a blueprint crash and lose the very output
+        # this exists to capture. stdout is captured by the job either
+        # way.
+        if CraftCore.compiler.isMSVC():
+            for name in ("LIB", "INCLUDE", "LDFLAGS", "CL", "_LINK_"):
+                print(f"sqlcipher4-env: {name}={os.environ.get(name, '<unset>')}", flush=True)
         return utils.system(self._nmakeArgs(), cwd=self.sourceDir())
 
     def install(self):
