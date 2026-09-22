@@ -148,14 +148,45 @@ int main(int argc, char **argv)
         std::cout << "case 2 (an unexpected file at the top level is refused) OK\n";
     }
 
+    // exportExt.pdb is on the allowlist now that its My Tag names can be
+    // scrubbed (issue #1), so the NAME no longer refuses it -- and a
+    // check that stopped at the name would let an unscrubbed one through
+    // on the strength of being called the right thing. What refuses it is
+    // its contents. Planted with real tag text in it, exactly as it
+    // would arrive if the scrub had been skipped.
     {
-        const fs::path stray = copy / "rekordbox" / "exportExt.pdb";
-        std::ofstream(stray) << "My Tag vocabulary, never anonymized";
+        const fs::path stray = copy / "rekordbox" / "rekordbox" / "exportExt.pdb";
+        std::ofstream(stray) << "Deep House\nPeak Time\nSecond Floor\nBuild up";
         auto v = infrastructure::verifyAnonymizedExport(copy.string());
         assert(!v.problems.empty());
-        assert(mentions(v.problems, "exportExt.pdb"));
+        // Refused for its CONTENTS, not merely for existing -- so one
+        // single problem has to name both the file and the leak. Two
+        // separate mentions() calls would both pass on the known-dirty
+        // baseline, which already reports readable text in two other
+        // files whatever this case plants.
+        assert(std::any_of(v.problems.begin(), v.problems.end(), [](const std::string &p) {
+            return p.find("exportExt.pdb") != std::string::npos
+                && p.find("readable text") != std::string::npos;
+        }));
         fs::remove(stray);
-        std::cout << "case 3 (an unexpected entry in the rekordbox tree is refused) OK\n";
+        std::cout << "case 3 (an unscrubbed exportExt.pdb is refused for its contents) OK\n";
+    }
+
+    // The other half of the same rule: a SCRUBBED one is accepted. Without
+    // this, tightening the check back to a bare name refusal would leave
+    // case 3 green and silently undo the issue -- no fixture would carry
+    // My Tags again.
+    {
+        // Beside the fixture library this test was pointed at, so it
+        // follows argv[1] rather than guessing at a build layout.
+        const fs::path scrubbed = fixture.parent_path() / "exportExt.pdb";
+        assert(fs::is_regular_file(scrubbed) && "the anonymized exportExt.pdb fixture is missing");
+        const fs::path kept = copy / "rekordbox" / "rekordbox" / "exportExt.pdb";
+        fs::copy_file(scrubbed, kept, fs::copy_options::overwrite_existing);
+        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        assert(!mentions(v.problems, "exportExt.pdb"));
+        fs::remove(kept);
+        std::cout << "case 3b (a scrubbed exportExt.pdb is kept) OK\n";
     }
 
     // The same rule one level deeper, and the one that matters most of

@@ -216,10 +216,11 @@ OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbP
 
         // --- My Tags: free text the DJ typed ---
         //
-        // This is the same vocabulary that gets exportExt.pdb deleted
-        // from an export entirely ("free text a DJ typed and still has
-        // no anonymizer, so it goes"). It also lives here, in a table
-        // that was neither deleted nor scrubbed, so tag names like
+        // This is the same vocabulary as exportExt.pdb's, which used to
+        // be deleted from an export entirely for want of an anonymizer
+        // and is now scrubbed and kept (issue #1). It also lives here,
+        // in a table that was neither deleted nor scrubbed, so tag names
+        // like
         // "Second Floor" or "Build up" shipped intact. The built-in
         // category names go through the same renaming: telling a DJ's
         // own tag from rekordbox's stock vocabulary is guesswork, and

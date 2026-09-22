@@ -259,9 +259,12 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                 if (name == "exportLibrary.db-shm" || name == "exportLibrary.db-wal") {
                     continue;
                 }
-                // exportExt.pdb is the My Tag vocabulary and still has no
-                // anonymizer; the -shm and -wal side files are unscrubbed
-                // by definition.
+                // The -shm and -wal side files are unscrubbed by
+                // definition. exportExt.pdb is no longer among these: it
+                // is scrubbed and kept now, and the raw-byte sweep below
+                // -- which reads every file in the export, this one
+                // included -- is what says whether the scrub landed.
+                // Nothing here trusts the name alone.
                 fail("file that has no anonymizer is present: rekordbox/rekordbox/" + name);
             }
         }

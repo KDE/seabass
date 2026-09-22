@@ -1,0 +1,70 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+// Replaces every My Tag and tag category name in an exportExt.pdb with a
+// placeholder, in place.
+//
+//   anonymize_export_ext <exportExt.pdb>
+//
+// Issue #1: the library anonymizer DELETED exportExt.pdb, because My Tag
+// names are free text a DJ typed and nothing could anonymize them. No
+// committed fixture carried one, so nothing Seabass does with My Tags
+// was ever exercised against real-shaped data. This is the missing
+// piece, kept as a tool rather than buried in the anonymizer so a
+// fixture can be regenerated from a real stick without running a whole
+// export.
+//
+// The rewrite preserves each name's byte length, so a placeholder longer
+// than the name it replaces is truncated: "Tag 12" over "Beat" becomes
+// "Tag ". Several short tags therefore collapse onto the same
+// placeholder, and each name's LENGTH survives. That is the same trade
+// every other placeholder in the anonymizer makes, and it is the reason
+// this cannot be used to hide anything whose length is itself the
+// secret.
+//
+// Prints what it did and leaves the file untouched if it could not
+// commit, so a failure cannot half-anonymize a file somebody then ships.
+
+#include <filesystem>
+#include <iostream>
+#include <string>
+
+#include "infrastructure/rekordbox/pdb_row_writer.hpp"
+
+namespace fs = std::filesystem;
+using seabass::infrastructure::rekordbox::PdbRowWriter;
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        std::cout << "usage: anonymize_export_ext <exportExt.pdb>\n";
+        return 2;
+    }
+    const fs::path path = argv[1];
+    if (!fs::is_regular_file(path)) {
+        std::cout << "not a file: " << path.string() << "\n";
+        return 2;
+    }
+    try {
+        PdbRowWriter writer(path.string(), PdbRowWriter::Format::ExportExt);
+        const int rewritten = writer.overwriteAllTagNames([](size_t i) { return "Tag " + std::to_string(i + 1); });
+        if (rewritten == 0) {
+            // Not silently fine: either the file holds no tags, or it was
+            // opened as the wrong format, and those look identical from
+            // here. Saying so beats writing nothing and reporting success.
+            std::cout << "no tag rows found in " << path.string()
+                      << " -- either it carries none, or it is not an exportExt.pdb\n";
+            return 1;
+        }
+        if (!writer.commit()) {
+            std::cout << "refused to write: the file was left exactly as it was\n";
+            return 1;
+        }
+        std::cout << "rewrote " << rewritten << " tag name(s) in " << path.filename().string() << "\n";
+        return 0;
+    } catch (const std::exception &e) {
+        std::cout << "error: " << e.what() << "\n";
+        return 1;
+    }
+}

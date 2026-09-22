@@ -2496,6 +2496,14 @@ target_include_directories(find_stick_archive_test PRIVATE src)
 target_link_libraries(find_stick_archive_test PRIVATE seabass_core)
 add_test(NAME find_stick_archive_test COMMAND find_stick_archive_test)
 
+# Issue #1: My Tag names in an exportExt.pdb. Needs the source dir for
+# the fixture the anonymizer now produces instead of deleting.
+add_executable(pdb_tag_names_test tests/pdb_tag_names_test.cpp)
+target_include_directories(pdb_tag_names_test PRIVATE src)
+target_link_libraries(pdb_tag_names_test PRIVATE seabass_core)
+target_compile_definitions(pdb_tag_names_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME pdb_tag_names_test COMMAND pdb_tag_names_test)
+
 # Reads the committed fixture's real catalogs, so it needs the source dir
 # and the two catalog readers -- a fingerprint over filler bytes would
 # agree with itself whatever the code did.
@@ -2681,6 +2689,13 @@ target_link_libraries(rig_read PRIVATE seabass_core)
 add_executable(rig_file_failure tools/rig_file_failure.cpp)
 target_include_directories(rig_file_failure PRIVATE src)
 target_link_libraries(rig_file_failure PRIVATE seabass_core)
+
+# Issue #1: rewrites the My Tag names in an exportExt.pdb in place, so a
+# real one can be kept as a fixture instead of deleted. Separate from the
+# anonymizer so a fixture can be regenerated from a stick on its own.
+add_executable(anonymize_export_ext tools/anonymize_export_ext.cpp)
+target_include_directories(anonymize_export_ext PRIVATE src)
+target_link_libraries(anonymize_export_ext PRIVATE seabass_core)
 
 # Create Engine Library, headless: build a candidate library from a stick's
 # rekordbox export into a folder, at a chosen schema generation, and read it

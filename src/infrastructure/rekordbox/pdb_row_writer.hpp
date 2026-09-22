@@ -52,7 +52,18 @@ namespace seabass::infrastructure::rekordbox
 class PdbRowWriter
 {
 public:
-    explicit PdbRowWriter(std::string pdbPath);
+    // exportExt.pdb is the same container with a different table-type
+    // enum and its rows parsed through body_ext() rather than body().
+    // The kaitai parser takes that as a construction flag, so every
+    // parse this class makes has to agree with the file it opened;
+    // getting it wrong does not fail loudly, it simply finds no rows.
+    enum class Format
+    {
+        Export,     // export.pdb
+        ExportExt,  // exportExt.pdb: My Tags and their categories
+    };
+
+    explicit PdbRowWriter(std::string pdbPath, Format format = Format::Export);
 
     // True if a present track row with this id exists.
     bool trackExists(uint32_t trackId) const;
@@ -190,6 +201,18 @@ public:
         Playlists,
     };
 
+    // Every My Tag and tag category name in an exportExt.pdb, replaced
+    // with placeholder(index), byte length preserved like the rest.
+    // Returns how many rows were rewritten; refuses (returns 0) on a
+    // writer opened as Format::Export, since the rows it would look for
+    // cannot be there.
+    //
+    // Categories and tags are rewritten alike and the caller cannot tell
+    // them apart from the index. That is deliberate: which of the two a
+    // row is says nothing a fixture needs, and a placeholder that
+    // announced "CATEGORY" would leak the structure it was hiding.
+    int overwriteAllTagNames(const std::function<std::string(size_t index)> &placeholder);
+
     // Replaces the name in every present row of `table` with
     // placeholder(index), and returns how many rows were rewritten.
     // Like the overwrites above this preserves each field's on-disk byte
@@ -219,6 +242,7 @@ public:
     bool commit();
 
 private:
+    Format m_format = Format::Export;
     std::string m_pdbPath;
     std::string m_buffer;
     std::set<uint32_t> m_editedPageIndices;

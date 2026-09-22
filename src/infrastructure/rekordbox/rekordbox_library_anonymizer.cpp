@@ -567,6 +567,52 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             return result;
         }
 
+        // exportExt.pdb: the My Tag vocabulary (issue #1). Kept now that
+        // its names can be overwritten, so a donated set can exercise My
+        // Tags at all -- but kept ONLY if the overwrite actually lands.
+        //
+        // The failure path is the whole point. Every other file here is
+        // either scrubbed or dropped by the allowlist above; this one is
+        // on the allowlist and scrubbed afterwards, so a scrub that threw
+        // or would not commit would leave a file sitting in the export
+        // with every real tag name in it, past a verifier that had been
+        // told the name was fine. So anything short of a committed
+        // rewrite deletes the file and reports it as dropped, which is
+        // exactly the behaviour it had before it had an anonymizer.
+        //
+        // An absent file is not a failure: rekordbox only writes one when
+        // the library has My Tags.
+        {
+            const fs::path extPdb = fs::path(destinationRoot) / "rekordbox" / "exportExt.pdb";
+            std::error_code extEc;
+            if (fs::exists(extPdb, extEc)) {
+                bool scrubbed = false;
+                try {
+                    PdbRowWriter extWriter(extPdb.string(), PdbRowWriter::Format::ExportExt);
+                    const int renamed =
+                        extWriter.overwriteAllTagNames([](size_t i) { return placeholder("Tag", i); });
+                    // No rows means nothing was rewritten, and an empty
+                    // vocabulary and a file this code could not read look
+                    // identical from here. Treated as a failure, because
+                    // guessing "it was empty" is how a real one ships.
+                    scrubbed = renamed > 0 && extWriter.commit();
+                    if (scrubbed) {
+                        result.tagsRenamed = renamed;
+                    }
+                } catch (const std::exception &) {
+                    scrubbed = false;
+                }
+                if (!scrubbed) {
+                    std::string failure;
+                    if (infrastructure::removeEntry(extPdb, failure)) {
+                        result.removedUnanonymizableFiles.push_back("exportExt.pdb");
+                    } else {
+                        result.unremovedUnanonymizableFiles.push_back("exportExt.pdb: " + failure);
+                    }
+                }
+            }
+        }
+
         size_t nextCueCommentIndex = 0;
         for (const auto &t : tracks) {
             if (t.analyzePath.empty()) {

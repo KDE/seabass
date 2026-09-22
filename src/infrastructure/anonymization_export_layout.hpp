@@ -28,9 +28,17 @@ namespace seabass::infrastructure
 //
 // export.pdb        the catalog, scrubbed in place
 // exportLibrary.db  the Device Library Plus mirror, scrubbed in place
+// exportExt.pdb     the My Tag vocabulary, scrubbed in place (issue #1)
+//
+// exportExt.pdb was deliberately absent until it had an anonymizer: My
+// Tag names are free text a DJ typed, so the file was deleted and no
+// donated set ever carried one. Nothing Seabass does with My Tags could
+// then be exercised against real-shaped data. It is kept now only
+// because every name in it is overwritten -- and the anonymizer removes
+// it again if that overwrite does not commit, so a file that is present
+// here is one that was scrubbed.
 //
 // Deliberately absent, and each for a reason:
-// exportExt.pdb     the My Tag vocabulary -- free text, no anonymizer
 // *.sync            rekordbox's playlist sync state -- carries playlist
 //                   names, no anonymizer
 // RBFLTR.DAT        the saved browse filters -- carries My Tag and
@@ -38,7 +46,7 @@ namespace seabass::infrastructure
 // *-shm, *-wal      SQLite side files, unscrubbed by definition
 inline bool isKeptRekordboxCatalogFile(std::string_view name)
 {
-    return name == "export.pdb" || name == "exportLibrary.db";
+    return name == "export.pdb" || name == "exportLibrary.db" || name == "exportExt.pdb";
 }
 
 // Files kept inside <export>/engine/Database2/. Everything else in that

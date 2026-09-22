@@ -26,6 +26,10 @@ struct RekordboxAnonymizationResult
     // has.
     int freeBytesZeroed = 0;
     int playlistsRenamed = 0;
+    // My Tag and tag category names rewritten in exportExt.pdb. Zero for
+    // a library that has none, and for one exported by a rekordbox old
+    // enough not to write the file at all -- neither is an error.
+    int tagsRenamed = 0;
     // Analysis files removed because no track pointed at them, when
     // slimForTesting was asked for.
     int orphanedAnalysisFilesRemoved = 0;

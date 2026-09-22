@@ -296,12 +296,39 @@ void validateLooksLikeRealPdb(const std::string &buffer)
 // unconditionally would trip on any row whose *other*, untouched string
 // fields simply happen not to be pointing at another real
 // device_sql_string (as in this file's own synthetic test fixture).
-bool reparsesCleanly(const std::string &buffer)
+bool reparsesCleanly(const std::string &buffer, bool isExt)
 {
     try {
         std::istringstream iss(buffer);
         kaitai::kstream ks(&iss);
-        Pdb pdb(false, &ks);
+        Pdb pdb(isExt, &ks);
+        if (isExt) {
+            // An ext file has none of the table types checked below, so
+            // the loop would skip every table and return true having
+            // parsed nothing -- a verification that cannot fail, which
+            // is worse than none because commit() trusts it. The rows
+            // are reached through body_ext(), not body().
+            bool sawARow = false;
+            for (const auto &table : *pdb.tables()) {
+                if (table->type_ext() != Pdb::PAGE_TYPE_EXT_TAGS) {
+                    continue;
+                }
+                forEachDataPage(*table, [&](Pdb::page_t *page) {
+                    for (const auto &group : *page->row_groups()) {
+                        for (const auto &row : *group->rows()) {
+                            if (row->present()) {
+                                (void)row->body_ext();  // force the row to actually parse
+                                sawARow = true;
+                            }
+                        }
+                    }
+                });
+            }
+            // A tags table that parsed to nothing is how a bad edit
+            // would present itself, so it is a failure rather than a
+            // quiet pass.
+            return sawARow;
+        }
         for (const auto &table : *pdb.tables()) {
             if (table->type() != Pdb::PAGE_TYPE_TRACKS && table->type() != Pdb::PAGE_TYPE_PLAYLIST_ENTRIES &&
                 table->type() != Pdb::PAGE_TYPE_ARTISTS && table->type() != Pdb::PAGE_TYPE_PLAYLIST_TREE) {
@@ -346,7 +373,7 @@ std::optional<FoundRow> findRow(const std::string &buffer, Pdb::page_type_t want
     std::optional<FoundRow> found;
     std::istringstream iss(buffer);
     kaitai::kstream ks(&iss);
-    Pdb pdb(false, &ks);
+    Pdb pdb(false, &ks);  // both callers are export.pdb concepts
 
     for (const auto &table : *pdb.tables()) {
         if (found || table->type() != wantedType) {
@@ -394,7 +421,7 @@ std::vector<PlaylistEntryMatch> findAllPlaylistEntriesForTrack(const std::string
     std::vector<PlaylistEntryMatch> matches;
     std::istringstream iss(buffer);
     kaitai::kstream ks(&iss);
-    Pdb pdb(false, &ks);
+    Pdb pdb(false, &ks);  // both callers are export.pdb concepts
 
     for (const auto &table : *pdb.tables()) {
         if (table->type() != Pdb::PAGE_TYPE_PLAYLIST_ENTRIES) {
@@ -524,7 +551,8 @@ std::vector<std::pair<size_t, size_t>> rowKeepRanges(const std::string &buffer, 
 
 }  // namespace
 
-PdbRowWriter::PdbRowWriter(std::string pdbPath) : m_pdbPath(std::move(pdbPath)), m_buffer(readWholeFile(m_pdbPath))
+PdbRowWriter::PdbRowWriter(std::string pdbPath, Format format)
+    : m_format(format), m_pdbPath(std::move(pdbPath)), m_buffer(readWholeFile(m_pdbPath))
 {
     validateLooksLikeRealPdb(m_buffer);
     m_originalFileSize = fs::file_size(m_pdbPath);
@@ -729,8 +757,79 @@ bool PdbRowWriter::overwritePlaylistName(uint32_t playlistId, const std::string 
     return true;
 }
 
+// tag_row's own layout, from specs/rekordbox_pdb.ksy, relative to
+// row_base. Named here rather than inlined because the name is reached
+// through one of two offsets depending on a flag in the first field, and
+// that indirection is the whole trick of the row.
+constexpr size_t TagRowSubtypeOffset = 0;       // u2
+constexpr size_t TagRowOfsNameNearOffset = 29;  // u1
+constexpr size_t TagRowOfsNameFarOffset = 30;   // u2, read when subtype & 0x04
+constexpr uint16_t TagRowFarNameFlag = 0x04;
+
+int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> &placeholder)
+{
+    if (m_format != Format::ExportExt) {
+        return 0;
+    }
+    std::vector<size_t> rowBodyOffsets;
+    {
+        std::istringstream iss(m_buffer);
+        kaitai::kstream ks(&iss);
+        Pdb pdb(true, &ks);
+        for (const auto &t : *pdb.tables()) {
+            if (t->type_ext() != Pdb::PAGE_TYPE_EXT_TAGS) {
+                continue;
+            }
+            forEachDataPage(*t, [&](Pdb::page_t *page) {
+                for (const auto &group : *page->row_groups()) {
+                    for (const auto &row : *group->rows()) {
+                        if (!row->present()) {
+                            continue;
+                        }
+                        rowBodyOffsets.push_back(static_cast<size_t>(pdb.len_page()) * page->page_index()
+                                                 + static_cast<size_t>(row->row_base()));
+                        // commit() bumps the sequence of every page
+                        // recorded here and refuses outright when the
+                        // set is empty. Leaving it out made the whole
+                        // rewrite land in memory and then be thrown
+                        // away, with commit() returning false and
+                        // nothing saying why.
+                        m_editedPageIndices.insert(page->page_index());
+                    }
+                }
+            });
+        }
+    }
+
+    int replaced = 0;
+    for (size_t i = 0; i < rowBodyOffsets.size(); ++i) {
+        const size_t base = rowBodyOffsets[i];
+        if (base + TagRowOfsNameFarOffset + 2 > m_buffer.size()) {
+            continue;
+        }
+        const uint16_t subtype = readU16LE(m_buffer, base + TagRowSubtypeOffset);
+        const size_t nameOffset = (subtype & TagRowFarNameFlag) != 0
+            ? readU16LE(m_buffer, base + TagRowOfsNameFarOffset)
+            : static_cast<size_t>(static_cast<unsigned char>(m_buffer[base + TagRowOfsNameNearOffset]));
+        overwriteDeviceSqlStringInPlace(m_buffer, base + nameOffset, placeholder(i));
+        ++replaced;
+    }
+    return replaced;
+}
+
 int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::string(size_t)> &placeholder)
 {
+    // None of these tables exist in an exportExt.pdb, and the check that
+    // would rule them out cannot be trusted there: `type` and `type_ext`
+    // are the same u4 declared twice under opposite `if:` guards, so on
+    // an ext parse `type()` is an absent field reading back as its
+    // default rather than as anything this file says. Comparing against
+    // it would be comparing against nothing. Refused at the door, the
+    // way overwriteAllTagNames() refuses a Format::Export writer.
+    if (m_format == Format::ExportExt) {
+        return 0;
+    }
+
     Pdb::page_type_t pageType = Pdb::PAGE_TYPE_GENRES;
     switch (table) {
     case NameTable::Genres:
@@ -758,7 +857,7 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
     {
         std::istringstream iss(m_buffer);
         kaitai::kstream ks(&iss);
-        Pdb pdb(false, &ks);
+        Pdb pdb(m_format == Format::ExportExt, &ks);
         for (const auto &t : *pdb.tables()) {
             if (t->type() != pageType) {
                 continue;
@@ -817,7 +916,7 @@ int PdbRowWriter::zeroUnusedSpace()
     {
         std::istringstream iss(m_buffer);
         kaitai::kstream ks(&iss);
-        Pdb pdb(false, &ks);
+        Pdb pdb(m_format == Format::ExportExt, &ks);
         const size_t lenPage = pdb.len_page();
         for (const auto &table : *pdb.tables()) {
             forEachDataPage(*table, [&](Pdb::page_t *page) {
@@ -1053,7 +1152,7 @@ bool PdbRowWriter::commit()
     // A bug in this class producing a broken file must never reach
     // disk -- confirm the edited result is still structurally readable
     // before writing it anywhere.
-    if (!reparsesCleanly(m_buffer)) {
+    if (!reparsesCleanly(m_buffer, m_format == Format::ExportExt)) {
         return false;
     }
 
