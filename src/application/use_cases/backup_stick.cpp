@@ -571,6 +571,16 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     } catch (const infrastructure::backup::StickBusyError &e) {
         outcome.message = e.what();
         return outcome;
+    } catch (const std::exception &e) {
+        // Not "somebody else holds it" but "it could not be created":
+        // a destination folder nothing can write to, a lock file
+        // another account owns. Unlike a restore, which may read from a
+        // folder it cannot write and so runs unlocked there, a backup
+        // has to write the archive -- so this is the end of it, and it
+        // has to be a sentence rather than an exception thrown out of
+        // the QtConcurrent task the GUI runs this in.
+        outcome.message = std::string("could not lock the backup: ") + e.what();
+        return outcome;
     }
     OpenedArchive &opened = impl->opened;
     if (!opened.open(options, true)) {

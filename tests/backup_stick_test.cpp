@@ -2,6 +2,10 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 #include <sqlite3.h>
 
 #include <cassert>
@@ -470,6 +474,43 @@ int main()
         assert(f.verifies());
         std::cout << "case 13 (an archive logs every generation, oldest first) OK\n";
     }
+
+    // A destination folder nothing can write to. The very first thing
+    // execute() does is take the archive's write lock, which creates
+    // the lock file next to the archive -- and creating it is what
+    // fails here, not "somebody else holds it". Only StickBusyError was
+    // caught, so this came out of the use case as an exception; from
+    // the GUI it is thrown inside a QtConcurrent task, where nothing
+    // catches it either.
+    //
+    // RestoreStickBackup already does the right thing for the same
+    // situation and says why in its own comment. A backup that cannot
+    // be started has to be a sentence on screen, not a crash: the whole
+    // point of it is the user being careful with their data.
+    //
+    // POSIX only, and not as root: neither Windows nor root refuses the
+    // write this arranges, so it would report green while proving
+    // nothing.
+#if !defined(_WIN32)
+    if (::geteuid() != 0) {
+        Fixture f("unwritable-destination");
+        const fs::path readOnly = f.root / "locked-away";
+        fs::create_directories(readOnly);
+        const fs::perms originalPerms = fs::status(readOnly).permissions();
+        fs::permissions(readOnly, fs::perms::owner_read | fs::perms::owner_exec);
+
+        BackupStickOptions options = f.options;
+        options.archivePath = (readOnly / "STICK.zip").string();
+
+        BackupStickOutcome outcome = BackupStick::execute(options);
+        fs::permissions(readOnly, originalPerms);
+
+        assert(outcome.status == BackupOutcomeStatus::Failed);
+        assert(!outcome.message.empty());
+        assert(!fs::exists(readOnly / "STICK.zip"));
+        std::cout << "case 14 (a destination that cannot be written is a refusal, not an exception) OK\n";
+    }
+#endif
 
     std::cout << "all cases passed\n";
     return 0;

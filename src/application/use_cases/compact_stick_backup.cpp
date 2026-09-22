@@ -171,6 +171,12 @@ CompactionOutcome CompactStickBackup::execute(const CompactStickBackupOptions &o
     } catch (const infrastructure::backup::StickBusyError &e) {
         outcome.message = e.what();
         return outcome;
+    } catch (const std::exception &e) {
+        // A lock that could not be created rather than one somebody
+        // else holds. Compaction rewrites the archive, so a folder it
+        // cannot write to ends this here -- reported, not thrown.
+        outcome.message = std::string("could not lock the backup: ") + e.what();
+        return outcome;
     }
     const fs::path tempPath = temporaryPathFor(options.archivePath);
     std::error_code ec;
