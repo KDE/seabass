@@ -179,6 +179,44 @@ reuse:
     entrypoint: [""]
   script:
   - reuse lint
+# ---- Craft packaging lane: nightly and release tags, not every push ----
+#
+# Measured over 25 master pipelines: craft_macos_qt6_x86_64 155 min,
+# craft_macos_qt6_arm64 144 min, craft_windows_qt6_x86_64 43 min -- 342
+# minutes out of 832, about 41% of all runner time, spent repackaging on
+# every push an application whose packaging changes rarely. The Linux
+# lane tests every push; these three prove the packaging still works,
+# and that is a nightly question rather than a per-commit one.
+#
+# THIS DEPENDS ON A NIGHTLY SCHEDULE EXISTING. GitLab has no in-file
+# cron: schedules live under CI/CD -> Schedules, which needs only the
+# Developer role (unlike Settings -> CI/CD, which needs Maintainer).
+# Without a schedule these jobs run on release TAGS ONLY, and a Windows
+# or macOS regression would go unseen until a release -- worse than
+# paying for them per push. If you are reading this because packaging
+# broke and nobody noticed, check CI/CD -> Schedules first.
+#
+# The manual branch is the escape hatch: on an ordinary push these
+# appear as buttons, so a commit touching craft-blueprint/ or the build
+# can be packaged on demand without waiting for the night. It carries
+# allow_failure so a button nobody presses never holds a pipeline open.
+# That is not the same allow_failure that was removed from the
+# automatic branch: an unstarted manual job is not a failure.
+.craft_lane_rules: &craft_lane_rules
+  - if: '$CI_PIPELINE_SOURCE == "schedule" && $KDECI_SECURE_SERVICES_KEY'
+  - if: '$CI_COMMIT_TAG && $KDECI_SECURE_SERVICES_KEY'
+  - when: manual
+    allow_failure: true
+
+# macOS, both architectures. Neither had a local override before, so
+# both ran on every push from the Craft template's own default.
+craft_macos_qt6_arm64:
+  rules: *craft_lane_rules
+
+craft_macos_qt6_x86_64:
+  rules: *craft_lane_rules
+
+
 
 # --- Windows Craft build: still runs and still reports, but does not
 # --- fail the pipeline while a dependency of ours is broken upstream.
@@ -218,11 +256,7 @@ reuse:
 # replaces the template's list outright; every other key of the job --
 # image, tags, script, artifacts -- still comes from the template.
 craft_windows_qt6_x86_64:
-  rules:
-  - if: $KDECI_SECURE_SERVICES_KEY
-    when: on_success
-  - when: manual
-    allow_failure: true
+  rules: *craft_lane_rules
 
 # ---- shared rule fragments ----
 # "Full lane": nightly (a GitLab pipeline schedule -- see docs/ci.md for
