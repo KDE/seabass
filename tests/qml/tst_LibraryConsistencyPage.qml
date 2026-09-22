@@ -76,6 +76,37 @@ TestCase {
         }
     }
 
+    function findLabelContaining(item, needle) {
+        if (item.text !== undefined && typeof item.text === "string" && item.text.indexOf(needle) >= 0) {
+            return item;
+        }
+        for (const child of item.children) {
+            const found = findLabelContaining(child, needle);
+            if (found !== null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    function collectHighlights(item, out) {
+        if (item.highlightCuePositionMs !== undefined) {
+            out.push(item.highlightCuePositionMs);
+        }
+        for (const child of item.children) {
+            collectHighlights(child, out);
+        }
+    }
+
+    function collectReasons(item, out) {
+        if (item.objectName === "junkCueReason" && item.text.length > 0) {
+            out.push(item.text);
+        }
+        for (const child of item.children) {
+            collectReasons(child, out);
+        }
+    }
+
     function test_eachChecksStagedWorkIsCountedBesideItsOwnButtons() {
         var controller = createTemporaryObject(controllerComponent, testCase);
         var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
@@ -115,7 +146,8 @@ TestCase {
         // care what is in them.
         var row = {track: {title: "A track", artist: "An artist", filePath: "/nowhere/a.mp3",
                            durationMs: 0, cues: [], side: "engine", sourceId: "1", artworkPath: ""},
-                   staged: false, format: "engine", positionMs: 0};
+                   staged: false, format: "engine", positionMs: 0,
+                   reason: "at the very start of the track"};
         controller.junkCues.append(row);
         controller.junkCues.append(row);
         controller.repairableCount = 3;
@@ -211,6 +243,60 @@ TestCase {
         const twoCopies = [{playlists: [{name: "Warmup", position: 2}]},
                            {playlists: [{name: "Warmup", position: 9}]}];
         compare(page.playlistsLeftShort("missing", twoCopies, null).length, 1);
+
+        page.destroy();
+        wait(0);
+    }
+
+    // Two checks feed the accidental-cue list now: a cue at the very
+    // start of a track, and one of a crowd of hot cues inside its first
+    // two seconds (#41). Every row is an offer to delete somebody's
+    // cue, so each says why it is there, and the waveform highlights
+    // the cue that Remove would actually take.
+    //
+    // Highlighting 0:00 while removing a cue at 1.188 s is the exact
+    // opposite of the "unambiguous which one Remove kills" the row was
+    // built for, and it is what this section did the moment a second
+    // check started feeding it.
+    function test_eachAccidentalCueRowSaysWhyAndPointsAtItself() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const track = {title: "Too Little Too Late", artist: "Joris Voorn", filePath: "/nowhere/a.mp3",
+                       durationMs: 300000, cues: [], side: "rekordbox", sourceId: "1", artworkPath: ""};
+        controller.junkCues.append({track: track, staged: false, format: "rekordbox", positionMs: 0,
+                                    reason: "at the very start of the track"});
+        controller.junkCues.append({track: track, staged: false, format: "rekordbox", positionMs: 1188,
+                                    reason: "one of 3 hot cues in the first two seconds, which is not a "
+                                            + "pattern anyone plays"});
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null, "the page must instantiate");
+
+        // The section headline can no longer claim every row is at 0:00.
+        const headline = findLabelContaining(page, "look accidental");
+        verify(headline !== null, "the section says what it found without naming only one of the two checks");
+        verify(headline.text.indexOf("0:00") < 0, "and does not describe a cue at 1.188 s as being at 0:00");
+
+        // Both rows carry their own reason, and the two differ.
+        const reasons = [];
+        collectReasons(page, reasons);
+        compare(reasons.length, 2, "one reason per row");
+        verify(reasons[0] !== reasons[1], "the two checks do not describe their rows the same way");
+        verify(reasons[1].indexOf("first two seconds") >= 0, reasons[1]);
+
+        // And each row's waveform points at its own cue. The second row
+        // removes a cue at 1.188 s; a highlight left at 0 would mark a
+        // different cue than the button takes.
+        // Counted by value rather than by position: the card passes the
+        // property down to the waveform inside it, so each row
+        // contributes it more than once and the exact depth is not what
+        // this is about.
+        const highlights = [];
+        collectHighlights(page, highlights);
+        verify(highlights.indexOf(1188) >= 0,
+               "the clustered row points at its own cue, not at 0:00: " + JSON.stringify(highlights));
+        verify(highlights.indexOf(0) >= 0, "and the row that really is at the start still points at 0");
+        for (const value of highlights) {
+            verify(value === 0 || value === 1188, "no row highlights a cue no row is about: " + value);
+        }
 
         page.destroy();
         wait(0);

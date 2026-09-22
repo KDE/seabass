@@ -349,6 +349,7 @@ add_library(seabass_core STATIC
     src/domain/duplicate_cue_consolidation.cpp
     src/domain/filesystem_compatibility.cpp
     src/domain/fuzzy_matcher.cpp
+    src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/matching_policy.cpp
     src/domain/rekordbox_xml.cpp
@@ -507,6 +508,7 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/compact_stick_backup.cpp
     src/application/use_cases/restore_stick_backup.cpp
     src/domain/duplicate_cue_consolidation.cpp
+    src/domain/clustered_cue.cpp
     src/domain/junk_cue.cpp
     src/domain/local_restore.cpp
     src/domain/matching_policy.cpp
@@ -1471,6 +1473,12 @@ add_executable(junk_cue_test
 target_link_libraries(junk_cue_test PRIVATE seabass_core_testing)
 target_include_directories(junk_cue_test PRIVATE src)
 add_test(NAME junk_cue_test COMMAND junk_cue_test)
+
+add_executable(clustered_cue_test tests/clustered_cue_test.cpp)
+target_link_libraries(clustered_cue_test PRIVATE seabass_core)
+target_include_directories(clustered_cue_test PRIVATE src)
+target_compile_definitions(clustered_cue_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME clustered_cue_test COMMAND clustered_cue_test)
 
 add_executable(matching_policy_test
     tests/matching_policy_test.cpp

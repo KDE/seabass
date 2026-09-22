@@ -15,6 +15,7 @@
 #include <set>
 
 #include "application/track_file_presence.hpp"
+#include "domain/clustered_cue.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/track_scope.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -263,6 +264,10 @@ QVariant JunkCueIssueListModel::data(const QModelIndex &index, int role) const
         return brokenTrackToMap(issue.track);
     case StagedRole:
         return static_cast<size_t>(index.row()) < m_staged.size() && m_staged[static_cast<size_t>(index.row())];
+    case ReasonRole:
+        return QString::fromStdString(issue.reason);
+    case PositionMsRole:
+        return issue.cue.positionMs;
     default:
         return {};
     }
@@ -276,6 +281,8 @@ QHash<int, QByteArray> JunkCueIssueListModel::roleNames() const
         {ArtistRole, "artist"},
         {TrackRole, "track"},
         {StagedRole, "staged"},
+        {ReasonRole, "reason"},
+        {PositionMsRole, "positionMs"},
     };
 }
 
@@ -441,6 +448,27 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
         for (auto &issue : domain::JunkCueFinder::find(tracks)) {
             if (issue.track.streamingSource.empty()) {
                 result.junkCues.push_back(std::move(issue));
+            }
+        }
+        // The other shape of cue nobody set: three or more hot cues
+        // crowded into the first two seconds, which is what an earlier
+        // write path left behind when it touched one cue list and not
+        // the other (#33, #41). They join the same list, because what a
+        // user does about one is what they do about the other: look at
+        // it, and stage its removal or leave it. Each row carries its own
+        // reason, so the page does not have to describe a cue at 1.2 s
+        // as being at the start of the track.
+        //
+        // removableClusterCues() leaves out any the rule above already
+        // offered, so the same cue cannot be staged from two rows.
+        for (const auto &cluster : domain::ClusteredCueFinder::find(tracks)) {
+            if (!cluster.track.streamingSource.empty()) {
+                continue;
+            }
+            const std::string reason = "one of " + std::to_string(cluster.cluster.size())
+                + " hot cues in the first two seconds, which is not a pattern anyone plays";
+            for (const auto &cue : domain::removableClusterCues(cluster)) {
+                result.junkCues.push_back(domain::JunkCueIssue{cluster.track, cue, reason});
             }
         }
 

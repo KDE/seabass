@@ -132,6 +132,8 @@ public:
         // instead of a bare title/artist line.
         TrackRole,
         StagedRole,  // this cue's removal is staged in the edit session
+        ReasonRole,      // why this cue is in the list, in the row's own words
+        PositionMsRole,  // where the cue this row is about actually sits
     };
 
     explicit JunkCueIssueListModel(QObject *parent = nullptr);

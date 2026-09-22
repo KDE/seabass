@@ -40,7 +40,7 @@ std::vector<JunkCueIssue> JunkCueFinder::find(const std::vector<Track> &tracks)
     for (const auto &track : tracks) {
         for (const auto &cue : track.cues) {
             if (isJunkCue(cue)) {
-                issues.push_back(JunkCueIssue{track, cue});
+                issues.push_back(JunkCueIssue{track, cue, "at the very start of the track"});
             }
         }
     }

@@ -254,7 +254,7 @@ Page {
         // ListView footer, whose ids are scoped to the footer
         // component, so from out here it is a ReferenceError and this
         // title never binds. The model is the shared thing both can see.
-        title: "Stage removing all " + consistencyController.junkCues.count + " cue(s) at 0:00?"
+        title: "Stage removing all " + consistencyController.junkCues.count + " cue(s) that look accidental?"
         headline: "This stages removing every cue at 0:00 currently listed, across every catalog on "
             + "this stick. Once you press Save that is a real write, not just dismissing them from view."
         detailText: "Everything is backed up first, but make sure this is really what you want."
@@ -574,9 +574,14 @@ Page {
             Layout.fillWidth: true
             spacing: 12
             Label {
+                // Two checks feed this list now: a cue at the very
+                // start of a track, and one of a crowd of hot cues in
+                // its first two seconds (#41). Naming only the first
+                // would describe a row at 1.2 s as being at 0:00.
                 text: consistencyController.junkCues.count === 0
-                    ? "No cues are sitting at 0:00."
-                    : "I found " + consistencyController.junkCues.count + " cue(s) sitting at 0:00, likely accidental"
+                    ? "No cues look accidental."
+                    : "I found " + consistencyController.junkCues.count
+                      + " cue(s) that look accidental rather than placed"
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -983,6 +988,23 @@ Page {
                         required property int index
                         required property var track
                         required property bool staged
+                        required property string reason
+                        required property real positionMs
+
+                        // Why this row is here, in its own words. One
+                        // sentence for the whole section cannot cover
+                        // both a cue at 0:00 and one of three pads
+                        // inside two seconds, and every row here is an
+                        // offer to delete somebody's cue.
+                        Label {
+                            objectName: "junkCueReason"
+                            visible: junkDelegate.reason.length > 0
+                            text: junkDelegate.reason
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                            font.pointSize: Theme.fontSmall
+                            color: Theme.textMuted
+                        }
 
                         TrackWaveformCard {
                             Layout.fillWidth: true
@@ -994,7 +1016,12 @@ Page {
                             // unambiguous which one Remove kills. See
                             // WaveformView's own doc comment on this
                             // property.
-                            highlightCuePositionMs: 0
+                            // The cue this row is about, which is not
+                            // always 0. A clustered hot cue sits a
+                            // second or so in, and highlighting 0:00
+                            // while Remove takes away a cue at 1.188 s
+                            // is the opposite of unambiguous.
+                            highlightCuePositionMs: junkDelegate.positionMs
                             actionButtonText: junkDelegate.staged ? "Unstage" : "Remove"
                             actionButtonTooltip: junkDelegate.staged
                                 ? "Staged for removal, not on the stick yet: press Save. Click to take it back out."

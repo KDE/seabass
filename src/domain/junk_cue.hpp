@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "domain/track.hpp"
@@ -44,6 +45,12 @@ struct JunkCueIssue
 {
     Track track;    // the track carrying the cue
     CuePoint cue;   // the specific cue at the start
+    // Why this cue is here, for the row that offers to delete it. Two
+    // checks feed this list now -- the first-second rule below and the
+    // clustered-hot-cue rule in clustered_cue.hpp -- and a user being
+    // asked to delete somebody's cue is owed the reason rather than one
+    // wording that covers both badly.
+    std::string reason;
 };
 
 // Pure, no filesystem/database access -- callers already have a fresh

@@ -321,13 +321,37 @@ Page {
                 required property string title
                 required property string artist
                 required property bool staged
+                // Required, like the roles above it: a plain property
+                // of the same name is NOT filled in from the model when
+                // a delegate declares required ones, so it would sit
+                // empty and the line would never appear.
+                required property string reason
 
                 contentItem: RowLayout {
                     spacing: 8
-                    Label {
-                        text: junkDelegate.title + " - " + junkDelegate.artist
-                        elide: Text.ElideRight
+                    // Title on top, and under it why this row is here.
+                    // Two checks feed this list: a cue at the very start
+                    // of the track, and one of a crowd of hot cues in
+                    // its first two seconds. Describing the second as
+                    // the first would be wrong, and every row here is an
+                    // offer to delete somebody's cue.
+                    ColumnLayout {
+                        spacing: 0
                         Layout.fillWidth: true
+                        Label {
+                            text: junkDelegate.title + " - " + junkDelegate.artist
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        Label {
+                            objectName: "junkCueReason"
+                            visible: junkDelegate.reason.length > 0
+                            text: junkDelegate.reason
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                            font.pointSize: Theme.fontSmall
+                            color: Theme.textMuted
+                        }
                     }
                     Rectangle {
                         radius: 3
