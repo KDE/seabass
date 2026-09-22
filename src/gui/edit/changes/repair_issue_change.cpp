@@ -159,13 +159,19 @@ ChangeOutcome RepairIssueChange::apply(SaveContext &ctx)
             }
             w.rekordboxCues->writeHotCues(survivor.sourceId, m_issue.survivorCues);
             ctx.log().record("consistency: merged cues onto survivor id=" + survivor.sourceId);
-            // Best-effort mirror, same convention as Clean Up's own
-            // survivor-cue mirror block.
+            // The other half of the same library -- see
+            // mirrorCuesOrExplain(). This was best-effort, "same
+            // convention as Clean Up's own survivor-cue mirror block",
+            // and the convention was wrong: a repair that merges cues
+            // onto the survivor in one format and not the other leaves
+            // the two disagreeing, which is the exact state this whole
+            // feature exists to remove.
             if (w.hasOneLibrary && !survivor.filePath.empty()) {
-                try {
-                    sharedOneLibraryWriter(ctx, root).writeCuesForPath(survivor.filePath, m_issue.survivorCues);
-                } catch (const std::exception &e) {
-                    ctx.log().record(std::string("consistency: OneLibrary cue mirror failed: ") + e.what());
+                const QString failed =
+                    mirrorCuesOrExplain(sharedOneLibraryWriter(ctx, root), survivor.filePath, m_issue.survivorCues,
+                                        ctx, "consistency", QStringLiteral("merge the cues onto the survivor"));
+                if (!failed.isEmpty()) {
+                    return ChangeOutcome::failure(failed);
                 }
             }
         }
@@ -182,7 +188,18 @@ ChangeOutcome RepairIssueChange::apply(SaveContext &ctx)
                     sharedOneLibraryWriter(ctx, root).removeTrackByPathReplacingWith(broken.filePath,
                                                                                      survivor.filePath);
                 } catch (const std::exception &e) {
+                    // Was logged and carried on, which left the broken row
+                    // gone from DeviceLibrary and still listed in Device
+                    // Library Plus -- a player reading that half still
+                    // offers the file the repair just removed, and the
+                    // next consistency scan finds the issue it was told
+                    // was fixed.
                     ctx.log().record(std::string("consistency: OneLibrary row removal failed: ") + e.what());
+                    return ChangeOutcome::failure(
+                        QStringLiteral("Could not remove the broken row from Device Library Plus: %1. The save "
+                                       "stops here and puts back what this change wrote, so DeviceLibrary and "
+                                       "Device Library Plus stay in agreement.")
+                            .arg(QString::fromUtf8(e.what())));
                 }
             }
         }

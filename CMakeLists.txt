@@ -1985,6 +1985,16 @@ if(TARGET Qt6::Core)
     endif()
     add_test(NAME junk_cue_mirror_failure_test COMMAND junk_cue_mirror_failure_test)
 
+    add_executable(mirror_failure_fails_the_change_test tests/mirror_failure_fails_the_change_test.cpp)
+    target_include_directories(mirror_failure_fails_the_change_test PRIVATE src)
+    target_compile_definitions(mirror_failure_fails_the_change_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(mirror_failure_fails_the_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(mirror_failure_fails_the_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME mirror_failure_fails_the_change_test COMMAND mirror_failure_fails_the_change_test)
+
     add_executable(onelibrary_wal_checkpoint_test tests/onelibrary_wal_checkpoint_test.cpp)
     target_include_directories(onelibrary_wal_checkpoint_test PRIVATE src)
     target_compile_definitions(onelibrary_wal_checkpoint_test PRIVATE

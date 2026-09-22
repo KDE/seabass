@@ -72,9 +72,15 @@ struct RestoreWriterContext
                 realRoot, sharedAnlzPathIndex(ctx, path));
             // The two rekordbox formats are one library, so a cue
             // written to one and not the other leaves them disagreeing.
-            // Best-effort: see OneLibraryCueWriter's class comment.
+            // A database that is THERE and will not open is allowed to
+            // throw: the save loop turns it into a failed change and
+            // puts back what it had written. It used to be logged and
+            // left as a null mirror, so every mirror write below was
+            // skipped and the change reported success having written
+            // only half the library. Absent is still absent -- that is
+            // what existsFor() decides.
             if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(realRoot)) {
-                try {
+                {
                     // The real PIONEER root, like every other mirror
                     // call site, and NOT this database's write session --
                     // which was tried, and loses the write.
@@ -95,8 +101,6 @@ struct RestoreWriterContext
                     // goes. See docs/metadata-backup-plan.md.
                     mirror = &sharedOneLibraryWriter(ctx, realRoot,
                                                       fs::path(realRoot).parent_path().string());
-                } catch (const std::exception &e) {
-                    ctx.log().record(std::string(LogTag) + ": could not open OneLibrary: " + e.what());
                 }
             }
         } else if (format == "engine") {
@@ -148,6 +152,10 @@ struct AnnotationOutcome
 {
     bool ok = true;
     bool wroteToWriteRoot = false;
+    // Which half could not take it. The caller used to say "could not be
+    // written into export.pdb" whatever had failed, which was the wrong
+    // room as soon as the mirror could fail the change too.
+    QString error;
 };
 
 AnnotationOutcome applyAnnotation(SaveContext &ctx, RestoreWriterContext &writer, const QString &format, const QString &path,
@@ -245,12 +253,30 @@ AnnotationOutcome applyAnnotation(SaveContext &ctx, RestoreWriterContext &writer
         bool mirrorTookIt = false;
         if (writer.mirror && !proposal.stickTrack.filePath.empty()) {
             try {
-                writer.mirror->writeAnnotationForPath(proposal.stickTrack.filePath, stars, comment);
-                mirrorTookIt = true;
-                // Deliberately NOT counted: this is exportLibrary.db,
-                // a different database from the one this session holds.
+                if (!writer.mirror->hasTrackAtPath(proposal.stickTrack.filePath)) {
+                    // Not listed there at all, so there is no second copy
+                    // of this track to disagree with. Asked rather than
+                    // inferred from the exception.
+                    ctx.log().record(std::string(LogTag) + ": OneLibrary does not list this file; nothing to mirror");
+                } else {
+                    writer.mirror->writeAnnotationForPath(proposal.stickTrack.filePath, stars, comment);
+                    mirrorTookIt = true;
+                    // Deliberately NOT counted: this is exportLibrary.db,
+                    // a different database from the one this session holds.
+                }
             } catch (const std::exception &e) {
+                // Was logged and carried on, so a rating that reached
+                // export.pdb and not Device Library Plus left the two
+                // halves disagreeing while the page said the restore had
+                // landed.
                 ctx.log().record(std::string(LogTag) + ": OneLibrary annotation write failed: " + e.what());
+                outcome.ok = false;
+                outcome.error = QStringLiteral("Could not write the restored rating into Device Library Plus "
+                                               "for \"%1\": %2. The save stops here and puts back what this "
+                                               "change wrote, so DeviceLibrary and Device Library Plus stay "
+                                               "in agreement.")
+                                    .arg(QString::fromStdString(proposal.stickTrack.title),
+                                         QString::fromUtf8(e.what()));
             }
         }
         if (comment && !mirrorTookIt) {
@@ -424,12 +450,10 @@ ChangeOutcome RestoreMetadataChange::apply(SaveContext &ctx)
                          track.title + "\")");
 
         if (writer.mirror && !track.filePath.empty()) {
-            try {
-                writer.mirror->writeCuesForPath(track.filePath, m_proposal.cues);
-                ctx.log().record(std::string(LogTag) + ": also wrote them into OneLibrary (id=" + sourceId + ")");
-            } catch (const std::exception &e) {
-                ctx.log().record(std::string(LogTag) + ": OneLibrary cue write failed for \"" + track.title +
-                                 "\": " + e.what());
+            const QString failed = mirrorCuesOrExplain(*writer.mirror, track.filePath, m_proposal.cues, ctx, LogTag,
+                                                       QStringLiteral("restore the cues"));
+            if (!failed.isEmpty()) {
+                return ChangeOutcome::failure(failed);
             }
         }
     }
@@ -456,6 +480,9 @@ ChangeOutcome RestoreMetadataChange::apply(SaveContext &ctx)
     }
 
     if (!annotation.ok) {
+        if (!annotation.error.isEmpty()) {
+            return ChangeOutcome::failure(annotation.error);
+        }
         return ChangeOutcome::failure("The restored rating could not be written into export.pdb for \"" +
                                       QString::fromStdString(track.title) + "\".");
     }

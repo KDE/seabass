@@ -44,6 +44,32 @@ QString issueKeyFor(const domain::LibraryConsistencyIssue &issue);
 // Identifies one track's stray-cue issue: format plus row id.
 QString junkKeyFor(const domain::Track &track);
 
+// The Device Library Plus half of a rekordbox cue write, and the one
+// place that decides what a failed mirror means.
+//
+// export.pdb and exportLibrary.db are ONE library in two formats, so a
+// cue written into one and not the other is a library that disagrees
+// with itself -- and a player reading Device Library Plus shows the DJ
+// something the page told them was already changed. AddCueChange was
+// fixed for that and states the rule; this is that rule, factored out,
+// because four other changes wrote the same mirror and reported success
+// when it failed.
+//
+// Returns an empty string when the caller should carry on, which covers
+// two cases that are NOT the same and are both fine:
+//   - the write went through;
+//   - OneLibrary does not list this file at all, so there is no Device
+//     Library Plus copy to keep in step and nothing disagrees. Asked
+//     before the write rather than inferred from an exception, because
+//     635 of 1118 tracks on a real stick are in that position and none
+//     of them is a failure.
+// Otherwise the message the change must fail with. Failing also puts the
+// DeviceLibrary half back: the save loop restores every file the change
+// declared.
+QString mirrorCuesOrExplain(infrastructure::onelibrary::OneLibraryCueWriter &mirror,
+                            const std::string &filePath, const std::vector<domain::CuePoint> &cues,
+                            SaveContext &ctx, const std::string &logTag, const QString &what);
+
 // "3 hot, 1 memory (...)" -- the human summary of a cue set. Mirrors the
 // command line's own wording so both report a sync identically.
 QString describeCues(const std::vector<domain::CuePoint> &cues);

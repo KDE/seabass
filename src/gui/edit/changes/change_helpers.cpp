@@ -113,6 +113,27 @@ QString issueKeyFor(const domain::LibraryConsistencyIssue &issue)
     return issueFormat(issue) + ":" + ids.join('+');
 }
 
+QString mirrorCuesOrExplain(infrastructure::onelibrary::OneLibraryCueWriter &mirror,
+                            const std::string &filePath, const std::vector<domain::CuePoint> &cues,
+                            SaveContext &ctx, const std::string &logTag, const QString &what)
+{
+    try {
+        if (!mirror.hasTrackAtPath(filePath)) {
+            ctx.log().record(logTag + ": OneLibrary does not list this file; nothing to mirror");
+            return {};
+        }
+        mirror.writeCuesForPath(filePath, cues);
+        ctx.log().record(logTag + ": also wrote into OneLibrary");
+        return {};
+    } catch (const std::exception &e) {
+        ctx.log().record(logTag + ": OneLibrary write failed: " + e.what());
+        return QStringLiteral("Could not %1 in Device Library Plus: %2. The save stops here and puts back "
+                              "what this change wrote, so DeviceLibrary and Device Library Plus stay in "
+                              "agreement.")
+            .arg(what, QString::fromUtf8(e.what()));
+    }
+}
+
 QString junkKeyFor(const domain::Track &track)
 {
     return QString::fromStdString(track.format) + ":" + QString::fromStdString(track.sourceId);

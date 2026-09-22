@@ -42,19 +42,23 @@ struct LocalCueWriterContext
         if (format == "rekordbox") {
             writer = std::make_unique<infrastructure::rekordbox::RekordboxCueWriter>(
                 root, sharedAnlzPathIndex(ctx, path));
-            // Best-effort secondary write target alongside the primary
-            // rekordbox write -- see OneLibraryCueWriter's class comment
-            // and docs/onelibrary-format.md.
+            // The other half of the same library, not an optional extra
+            // -- see mirrorCuesOrExplain() in change_helpers.
+            //
+            // A database that is THERE and will not open used to be
+            // logged here and left as a null mirror, so the write below
+            // was skipped and the change reported success having written
+            // only half the library. It is allowed to throw now: the save
+            // loop turns that into a failed change and puts back what it
+            // had written. Absent is still absent -- existsFor() decides
+            // that, and a stick with no Device Library Plus has nothing
+            // to disagree with.
             if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root)) {
                 ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(root), "local-restore");
-                try {
-                    // The save's shared writer: see sharedOneLibraryWriter.
-                    // A second instance against one database trips the
-                    // staleness guard and never gets checkpointed.
-                    mirror = &sharedOneLibraryWriter(ctx, root);
-                } catch (const std::exception &e) {
-                    ctx.log().record(std::string("local-restore: could not open OneLibrary: ") + e.what());
-                }
+                // The save's shared writer: see sharedOneLibraryWriter.
+                // A second instance against one database trips the
+                // staleness guard and never gets checkpointed.
+                mirror = &sharedOneLibraryWriter(ctx, root);
             }
         } else if (format == "engine") {
             // Through the save's shared session for this database, never
@@ -172,11 +176,10 @@ ChangeOutcome MergeCuesChange::apply(SaveContext &ctx)
                      + " (\"" + track.title + "\") from local backup");
 
     if (writer.mirror && !track.filePath.empty()) {
-        try {
-            writer.mirror->writeCuesForPath(track.filePath, m_candidate.mergedCues);
-            ctx.log().record("local-restore: also wrote merged cues into OneLibrary (id=" + track.sourceId + ")");
-        } catch (const std::exception &e) {
-            ctx.log().record("local-restore: OneLibrary cue write failed for \"" + track.title + "\": " + e.what());
+        const QString failed = mirrorCuesOrExplain(*writer.mirror, track.filePath, m_candidate.mergedCues, ctx,
+                                                   "local-restore", QStringLiteral("merge the cues"));
+        if (!failed.isEmpty()) {
+            return ChangeOutcome::failure(failed);
         }
     }
     return ChangeOutcome::success();
