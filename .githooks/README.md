@@ -6,10 +6,11 @@ SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted
 
 # Commit hooks
 
-Two house rules, enforced where they can still be fixed.
+Three house rules, enforced where they can still be fixed.
 
 | Hook | What it does |
 |---|---|
+| `pre-commit` | Refuses a commit that adds a file with no SPDX licence header. KDE CI runs `reuse lint`, and a missing header reds the whole pipeline -- minutes later, publicly, and on whoever is watching. `.reuse/dep5`'s patterns are read rather than repeated, so exemptions cannot drift. `--all` checks every tracked file. |
 | `commit-msg` | Rewrites the message: drops `Co-Authored-By: Claude` / `Claude-Session:` trailers, replaces em-dashes with `--` |
 | `pre-push` | Refuses to push any commit, not already on the remote, whose message still carries either |
 

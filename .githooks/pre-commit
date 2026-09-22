@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+#
+# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+# Refuses a commit that adds a file with no SPDX licence header.
+#
+# KDE's CI runs `reuse lint` and the whole pipeline goes red for a missing
+# header, which is a slow and public way to find out: the job that reports
+# it sits behind a build stage, so the answer arrives many minutes after
+# the mistake and on someone else's screen. This asks the same question at
+# the moment the file is written, where it costs one line to fix.
+#
+# It is a house check and not a reimplementation of `reuse`: it asks only
+# whether a header is present, never whether the licence is one the project
+# accepts. `reuse lint` in CI stays the authority.
+#
+# Files listed in .reuse/dep5 are exempt, which is how the fixtures, the
+# vendored sources and the binary assets are covered -- their patterns are
+# read from that file rather than repeated here, so the two cannot drift.
+#
+#   .githooks/pre-commit --all   checks every tracked file instead of the
+#                                staged ones, which is how to find what is
+#                                already wrong before CI does.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+dep5="$root/.reuse/dep5"
+
+# The Files: patterns from dep5, one per line. Continuation lines (a
+# pattern indented under a previous Files:) count too.
+exempt_patterns() {
+    [ -f "$dep5" ] || return 0
+    awk '
+        /^Files:/ { sub(/^Files:[ \t]*/, ""); inFiles = 1 }
+        inFiles && /^[ \t]+[^ \t]/ && !/^[ \t]*(Copyright|License):/ { sub(/^[ \t]+/, "") }
+        /^(Copyright|License):/ { inFiles = 0; next }
+        inFiles && NF { for (i = 1; i <= NF; i++) print $i }
+    ' "$dep5"
+}
+
+is_exempt() {
+    local file="$1" pattern
+    while IFS= read -r pattern; do
+        [ -n "$pattern" ] || continue
+        # shellcheck disable=SC2053 -- the pattern is meant to glob
+        [[ "$file" == $pattern ]] && return 0
+    done <<< "$EXEMPT"
+    return 1
+}
+
+EXEMPT="$(exempt_patterns)"
+
+# Newline-separated rather than arrays: macOS ships bash 3.2, which has no
+# mapfile and trips over an empty array under set -u.
+if [ "${1:-}" = "--all" ]; then
+    files="$(git ls-files)"
+else
+    files="$(git diff --cached --name-only --diff-filter=AM)"
+fi
+
+missing=""
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    [ -f "$root/$file" ] || continue
+    # REUSE's own conventions: LICENSES/ holds the licence texts, and
+    # .reuse/ holds dep5 itself. `reuse lint` asks neither for a header.
+    case "$file" in
+        LICENSES/*|.reuse/*) continue ;;
+    esac
+    is_exempt "$file" && continue
+    # Binary files cannot carry a header; dep5 is where they belong, and
+    # saying so is more useful than silently passing them.
+    if ! grep -Iq . "$root/$file" 2>/dev/null; then
+        missing="$missing  $file (binary -- add it to .reuse/dep5)
+"
+        continue
+    fi
+    grep -q "SPDX-License-Identifier" "$root/$file" || missing="$missing  $file
+"
+done <<< "$files"
+
+if [ -n "$missing" ]; then
+    echo "No SPDX licence header in:" >&2
+    printf '%s' "$missing" >&2
+    cat >&2 <<'MSG'
+
+KDE CI's `reuse lint` fails the pipeline for this. Add, near the top:
+
+  # SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+  #
+  # SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+with the comment syntax of the file's language, or list the file in
+.reuse/dep5 if it cannot carry one. `git commit --no-verify` skips this.
+MSG
+    exit 1
+fi
