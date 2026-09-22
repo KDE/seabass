@@ -22,6 +22,7 @@
 #include "domain/library_consistency.hpp"
 #include <set>
 
+#include "infrastructure/engine/engine_analysis_state.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/engine_sample_rates.hpp"
@@ -190,6 +191,9 @@ struct LibraryConsistencyScanResult
     // Engine only: rows that do not say their sample rate, and what
     // their files said when asked during the same pass.
     infrastructure::engine::SampleRateAudit sampleRates;
+    // Engine only: how many tracks the player will analyse on first load
+    // (#38). One count query, no file reads.
+    infrastructure::engine::AnalysisStateAudit analysisState;
     // rekordbox only: the art this catalog holds per audio file, which
     // the Engine pass after it uses to rebuild an Engine copy that is
     // gone or empty. Every scan starts with rekordbox, so it is there by
@@ -285,6 +289,13 @@ class LibraryConsistencyController : public QObject
     // how many of those the files themselves can answer for. Engine turns
     // every cue position into a time with this number, so a missing one
     // is every cue on that track being placed by a guess.
+    // #38: what the player will have to analyse. Advice only, so there
+    // is no staged/fixable counterpart -- see the header of
+    // engine_analysis_state.hpp for why Seabass does not offer to do it.
+    Q_PROPERTY(int analysisNotAnalyzedCount READ analysisNotAnalyzedCount NOTIFY analysisStateChanged)
+    Q_PROPERTY(int analysisTracksChecked READ analysisTracksChecked NOTIFY analysisStateChanged)
+    Q_PROPERTY(bool analysisKnown READ analysisKnown NOTIFY analysisStateChanged)
+    Q_PROPERTY(QString analysisError READ analysisError NOTIFY analysisStateChanged)
     Q_PROPERTY(int sampleRateMissingCount READ sampleRateMissingCount NOTIFY sampleRatesChanged)
     Q_PROPERTY(int sampleRateFixableCount READ sampleRateFixableCount NOTIFY sampleRatesChanged)
     Q_PROPERTY(bool sampleRateFillStaged READ sampleRateFillStaged NOTIFY sampleRatesChanged)
@@ -375,6 +386,13 @@ public:
     // Staged as one change per track (the unit the save summary counts),
     // so "staged" is "any of them is".
     bool artworkRepairStaged() const { return !m_stagedArtwork.empty(); }
+    // #38. analysisKnown is false for an Engine 1.x library, which has
+    // no such column, and for one that could not be read -- neither is
+    // "nothing to analyse", and the page must not say so.
+    int analysisNotAnalyzedCount() const { return m_analysisState.notAnalyzed; }
+    int analysisTracksChecked() const { return m_analysisState.tracksChecked; }
+    bool analysisKnown() const { return m_analysisState.error.empty() && m_analysisState.hasColumn; }
+    QString analysisError() const { return QString::fromStdString(m_analysisState.error); }
     int sampleRateMissingCount() const { return static_cast<int>(m_sampleRates.missing.size()); }
     int sampleRateFixableCount() const { return m_sampleRates.fixable(); }
     bool sampleRateFillStaged() const { return m_sampleRateFillStaged; }
@@ -452,6 +470,7 @@ signals:
     void statusMessageChanged();
     void issuesChanged();
     void artworkChanged();
+    void analysisStateChanged();
     void sampleRatesChanged();
     void importStateChanged();
     void stickHealthChanged();
@@ -515,6 +534,7 @@ private:
     // The cover-art changes this page has staged, by change id.
     std::set<QString> m_stagedArtwork;
     infrastructure::engine::SampleRateAudit m_sampleRates;
+    infrastructure::engine::AnalysisStateAudit m_analysisState;
     std::set<QString> m_stagedSampleRates;
     bool m_sampleRateFillStaged = false;
     infrastructure::engine::RekordboxImportState m_importState;

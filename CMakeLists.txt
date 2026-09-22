@@ -400,6 +400,7 @@ add_library(seabass_core STATIC
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
     src/infrastructure/engine/engine_artwork.cpp
     src/infrastructure/engine/engine_sample_rates.cpp
+    src/infrastructure/engine/engine_analysis_state.cpp
     src/infrastructure/engine/engine_import_state.cpp
     src/infrastructure/engine/rekordbox_key_parser.cpp
     src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
@@ -1439,6 +1440,7 @@ add_test(NAME filesystem_health_test COMMAND filesystem_health_test)
 # Engine rows that do not say their sample rate, and the files that do.
 # The import prompt a Denon player raises, and the counter behind it.
 add_executable(engine_import_state_test
+    src/infrastructure/engine/engine_analysis_state.cpp
     src/infrastructure/engine/engine_import_state.cpp
     tests/engine_import_state_test.cpp
 )
@@ -1456,6 +1458,18 @@ target_include_directories(waveform_readers_test PRIVATE src tests)
 target_link_libraries(waveform_readers_test PRIVATE seabass_core DjInterop)
 target_compile_definitions(waveform_readers_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME waveform_readers_test COMMAND waveform_readers_test)
+
+# Issue #38: how many tracks an Engine player will have to analyse. Takes
+# the fixture path, because its real distribution (1214 of 1564) is what
+# makes the count mean anything.
+add_executable(engine_analysis_state_test
+    src/infrastructure/engine/engine_analysis_state.cpp
+    tests/engine_analysis_state_test.cpp
+)
+target_include_directories(engine_analysis_state_test PRIVATE src tests)
+target_link_libraries(engine_analysis_state_test PRIVATE SQLite::SQLite3)
+add_test(NAME engine_analysis_state_test COMMAND engine_analysis_state_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 
 add_executable(engine_sample_rates_test
     src/infrastructure/engine/engine_sample_rates.cpp

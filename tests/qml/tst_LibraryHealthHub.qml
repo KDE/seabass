@@ -84,6 +84,37 @@ TestCase {
         compare(findByObjectName(card, "checkAction").parent.visible, false);
     }
 
+    // #38. A finding with no action and no tally is a shape nothing else
+    // on this page has, and both halves of it are easy to undo by
+    // accident: someone adds a fixableCount "for consistency" and the
+    // card starts claiming Seabass can fix none of them, or someone adds
+    // an actionLabel and it offers a button for work it must not do.
+    function test_aReportOnlyFindingOffersNoActionAndNoTally() {
+        var card = createTemporaryObject(cardComponent, testCase, {
+            title: "Track analysis",
+            summary: "1214 of 1564 tracks have not been analysed for Engine players. Seabass does not do this "
+                   + "itself: the analysis is the player's own beatgrid, waveform and key detection.",
+            ok: false
+        });
+        verify(findByObjectName(card, "checkSummary").text.indexOf("1214 of 1564") >= 0);
+        // The number is in the sentence, not drawn as "fixable / found".
+        compare(card.hasTally, false);
+        // And nothing offers to do the work.
+        compare(card.actionLabel, "");
+        compare(findByObjectName(card, "checkAction").parent.visible, false);
+    }
+
+    // The other half: the page must not say "every track is analysed"
+    // about a library that simply cannot say. An Engine 1.x library and a
+    // fully analysed one both report zero, and they are not the same.
+    function test_aLibraryThatCannotSayIsNotReportedAsClean() {
+        var page = createTemporaryObject(pageComponent, testCase);
+        tryCompare(page.consistencyController, "busy", false);
+        // No stick, so nothing was read and nothing is known.
+        compare(page.consistencyController.analysisKnown, false);
+        verify(page.analysisSummary.indexOf("Every Engine track has been analysed") < 0);
+    }
+
     function test_aFindingOffersItsOneAction() {
         var card = createTemporaryObject(cardComponent, testCase, {
             title: "Memory cues at 0:00",
@@ -142,6 +173,18 @@ TestCase {
             {name: "health-card-tally-all", props: {title: "Memory cues at 0:00",
                 summary: "27 cues sit at 0:00, and every one of them can be taken out.",
                 ok: false, fixableCount: 27, foundCount: 27, actionLabel: "Review these cues"}},
+            // #38: a finding that reports and offers nothing. Worth a
+            // frame of its own because it is the only card with neither
+            // a tally nor an action, and "looks unfinished" is a real
+            // risk for that shape.
+            {name: "health-card-report-only", props: {title: "Track analysis",
+                summary: "1214 of 1564 tracks have not been analysed for Engine players. The player analyses each "
+                       + "one the first time it is loaded, which takes a moment, happens once, and is written back "
+                       + "to the stick -- but that moment is spent on the deck. Load them once before the gig, or "
+                       + "let Engine DJ analyse the library, and the first load at the gig is instant. Seabass does "
+                       + "not do this itself: the analysis is the player's own beatgrid, waveform and key "
+                       + "detection.",
+                ok: false}},
             {name: "health-card-running", props: {title: "Tracks and their files",
                 summary: "Checking every row in every catalog against the files on the stick (rekordbox)...",
                 running: true}}

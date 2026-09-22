@@ -423,6 +423,9 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // 0.07 ms (see TagLibMetadataProbe), so a library where
             // nothing is missing costs nothing and one where everything
             // is costs a second.
+            // #38: one count query against Track, no file reads, so it
+            // costs nothing next to the two audits around it.
+            result.analysisState = infrastructure::engine::auditAnalysisState(path.toStdString());
             result.sampleRates = infrastructure::engine::auditSampleRates(
                 path.toStdString(), [](const std::string &audioFile) -> double {
 #ifdef SEABASS_HAVE_TAGLIB
@@ -584,6 +587,7 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     // counts on screen for as long as the page lived.
     m_artwork = {};
     m_sampleRates = {};
+    m_analysisState = {};
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button.
     m_importState = infrastructure::engine::readRekordboxImportState(m_enginePath.toStdString(),
@@ -595,6 +599,7 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     // in the session left a fix that could not be taken back and would
     // still be written by Save.
     emit sampleRatesChanged();
+    emit analysisStateChanged();
     m_artSources.clear();
     emit artworkChanged();
     const QString stickRoot = QString::fromStdString(
@@ -705,6 +710,15 @@ void LibraryConsistencyController::onScanFinished()
         if (result.sampleRates.tracksChecked > 0 || !result.sampleRates.error.empty()) {
             m_sampleRates = std::move(result.sampleRates);
             emit sampleRatesChanged();
+        }
+        // Same rule as the two above: a leg that read nothing must not
+        // wipe what a leg that did read left behind. hasColumn is part
+        // of the test because an Engine 1.x library legitimately reports
+        // zero tracks checked and is still a real answer.
+        if (result.analysisState.tracksChecked > 0 || result.analysisState.hasColumn
+            || !result.analysisState.error.empty()) {
+            m_analysisState = std::move(result.analysisState);
+            emit analysisStateChanged();
         }
         // Rows staged before this rescan keep their mark if they are
         // still listed (the change itself lives in the session).

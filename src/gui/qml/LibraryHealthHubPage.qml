@@ -284,6 +284,37 @@ Page {
         return text;
     }
 
+    // #38. Deliberately has no action: see engine_analysis_state.hpp, and
+    // the wording says so outright rather than leaving people waiting for
+    // a button that is never coming.
+    readonly property string analysisSummary: {
+        if (root.scanning) {
+            return "Counting the tracks an Engine player will have to analyse...";
+        }
+        if (!root.scanned) {
+            return "Not checked yet.";
+        }
+        if (healthController.analysisError.length > 0) {
+            return healthController.analysisError;
+        }
+        if (!healthController.analysisKnown) {
+            return "This Engine library does not record whether its tracks have been analysed, so there is "
+                 + "nothing to report. Engine 1.x libraries predate that.";
+        }
+        if (healthController.analysisNotAnalyzedCount === 0) {
+            return "Every Engine track has been analysed, so each one loads instantly with its waveform already "
+                 + "drawn.";
+        }
+        return healthController.analysisNotAnalyzedCount + " of " + healthController.analysisTracksChecked
+             + " tracks have not been analysed for Engine players. The player analyses each one the first time "
+             + "it is loaded, which takes a moment, happens once, and is written back to the stick -- but that "
+             + "moment is spent on the deck, and the waveform only appears when it finishes. Load them once "
+             + "before the gig, or let Engine DJ analyse the library, and the first load at the gig is instant. "
+             + "Seabass does not do this itself: the analysis is the player's own beatgrid, waveform and key "
+             + "detection, and anything written here instead would be a worse guess that also stopped the "
+             + "player ever doing it properly.";
+    }
+
     readonly property string junkCueSummary: {
         if (root.scanning) {
             return "Looking for cues sitting at the very start of a track...";
@@ -429,6 +460,27 @@ Page {
                 failed: healthController.sampleRateError.length > 0
                 actionLabel: root.sampleRateMissingCount > 0 ? "Review sample rates" : ""
                 onActionRequested: root.detailRequested("samplerates")
+            }
+
+            HealthCheckCard {
+                objectName: "analysisStateCard"
+                // No actionLabel, ever: the card hides its whole action
+                // row when that is empty, which is what a check that only
+                // reports should look like.
+                //
+                // And no tally either, deliberately. The tally reads
+                // "<fixable> / <found>", so giving this one a count would
+                // draw "0 / 1214" in red -- "Seabass can fix none of
+                // these" -- when the truth is that fixing them is the
+                // player's job and doing it here would be worse. The
+                // number belongs in the sentence, where it comes with
+                // that explanation attached.
+                title: "Track analysis"
+                summary: root.analysisSummary
+                running: root.scanning
+                ok: healthController.analysisError.length === 0
+                    && (!healthController.analysisKnown || healthController.analysisNotAnalyzedCount === 0)
+                failed: healthController.analysisError.length > 0
             }
 
             HealthCheckCard {
