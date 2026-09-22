@@ -1242,6 +1242,16 @@ target_include_directories(duration_cache_test PRIVATE src)
 target_link_libraries(duration_cache_test PRIVATE seabass_core)
 add_test(NAME duration_cache_test COMMAND duration_cache_test)
 
+add_executable(fill_missing_durations_test tests/fill_missing_durations_test.cpp)
+target_include_directories(fill_missing_durations_test PRIVATE src)
+target_link_libraries(fill_missing_durations_test PRIVATE seabass_core)
+add_test(NAME fill_missing_durations_test COMMAND fill_missing_durations_test)
+
+add_executable(file_operation_log_test tests/file_operation_log_test.cpp)
+target_include_directories(file_operation_log_test PRIVATE src tests)
+target_link_libraries(file_operation_log_test PRIVATE seabass_core)
+add_test(NAME file_operation_log_test COMMAND file_operation_log_test)
+
 add_executable(silence_cache_test tests/silence_cache_test.cpp)
 target_include_directories(silence_cache_test PRIVATE src)
 target_link_libraries(silence_cache_test PRIVATE seabass_core)
@@ -1424,6 +1434,11 @@ add_executable(engine_import_state_test
 target_include_directories(engine_import_state_test PRIVATE src tests)
 target_link_libraries(engine_import_state_test PRIVATE DjInterop SQLite::SQLite3)
 add_test(NAME engine_import_state_test COMMAND engine_import_state_test)
+
+add_executable(engine_restore_check_test tests/engine_restore_check_test.cpp)
+target_include_directories(engine_restore_check_test PRIVATE src tests)
+target_link_libraries(engine_restore_check_test PRIVATE seabass_core SQLite::SQLite3)
+add_test(NAME engine_restore_check_test COMMAND engine_restore_check_test)
 
 add_executable(engine_sample_rates_test
     src/infrastructure/engine/engine_sample_rates.cpp
@@ -1768,6 +1783,11 @@ add_test(NAME stick_identity_test COMMAND stick_identity_test)
 add_executable(stick_path_match_test tests/stick_path_match_test.cpp)
 target_include_directories(stick_path_match_test PRIVATE src)
 add_test(NAME stick_path_match_test COMMAND stick_path_match_test)
+
+add_executable(stick_containment_test tests/stick_containment_test.cpp)
+target_include_directories(stick_containment_test PRIVATE src)
+target_link_libraries(stick_containment_test PRIVATE seabass_core_testing)
+add_test(NAME stick_containment_test COMMAND stick_containment_test)
 
 add_executable(stick_presence_diff_test tests/stick_presence_diff_test.cpp)
 target_include_directories(stick_presence_diff_test PRIVATE src)
