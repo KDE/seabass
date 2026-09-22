@@ -13,6 +13,20 @@ using namespace seabass::infrastructure::rekordbox;
 namespace
 {
 
+// Big-endian appenders, the same order the format uses everywhere.
+void appendU32(std::string &out, uint32_t value)
+{
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        out.push_back(static_cast<char>((value >> shift) & 0xFF));
+    }
+}
+
+void appendU16(std::string &out, uint16_t value)
+{
+    out.push_back(static_cast<char>((value >> 8) & 0xFF));
+    out.push_back(static_cast<char>(value & 0xFF));
+}
+
 std::string fromHex(const std::string &hex)
 {
     std::string out;
@@ -174,6 +188,196 @@ int main()
         }
         assert(refused);
         std::cout << "case 7 (an unchanged entry is written back byte for byte) OK\n";
+    }
+
+    // ---- The edges (#7, Tier 2) ---------------------------------------
+    //
+    // This codec was validated against real rekordbox files, which is the
+    // right way to build it and leaves one gap: real files from one DJ's
+    // library do not carry the edges. Everything below is a shape that
+    // did not happen to be in those seven entries.
+
+    // An empty list, encoded rather than decoded. Case 4 decodes a real
+    // empty memory-cues section; nothing had ever produced one. It
+    // happens for real the moment somebody removes their last cue from
+    // a track, which is what Clean Up Stray Cues does.
+    {
+        const std::string encoded = AnlzCueCodec::encodeHotCues({}, CueListTypeMemory);
+        assert(AnlzCueCodec::decodeHotCues(encoded, CueListTypeMemory).empty());
+        // And it is the same twenty bytes rekordbox itself writes, which
+        // is the one empty section that has been captured.
+        assert(encoded == fromHex("50434f3200000014000000140000000000000000"));
+        const std::string emptyHot = AnlzCueCodec::encodeHotCues({}, CueListTypeHot);
+        assert(AnlzCueCodec::decodeHotCues(emptyHot, CueListTypeHot).empty());
+        std::cout << "case 8 (an emptied list encodes to the same bytes rekordbox writes) OK\n";
+    }
+
+    // Black. A cue coloured (0,0,0) must not come back as a cue with no
+    // colour: presence is carried by the entry's length, not by the
+    // bytes being nonzero, and a codec that confused the two would
+    // silently drop the colour off every black pad.
+    {
+        std::vector<RawHotCueEntry> cues(3);
+        cues[0].hotCueNumber = 1;
+        cues[0].timeMs = 1000;
+        cues[0].color = std::make_tuple<uint8_t, uint8_t, uint8_t>(0, 0, 0);
+        cues[1].hotCueNumber = 2;
+        cues[1].timeMs = 2000;
+        cues[1].color = std::make_tuple<uint8_t, uint8_t, uint8_t>(255, 255, 255);
+        cues[2].hotCueNumber = 3;
+        cues[2].timeMs = 3000;  // no colour at all
+
+        const auto decoded = AnlzCueCodec::decodeHotCues(AnlzCueCodec::encodeHotCues(cues));
+        assert(decoded.size() == 3);
+        assert(decoded[0].color.has_value() && "black is a colour, not the absence of one");
+        assert((decoded[0].color == std::make_tuple<uint8_t, uint8_t, uint8_t>(0, 0, 0)));
+        assert((decoded[1].color == std::make_tuple<uint8_t, uint8_t, uint8_t>(255, 255, 255)));
+        assert(!decoded[2].color.has_value() && "and no colour is still no colour");
+        std::cout << "case 9 (black and white round trip, and neither is 'no colour') OK\n";
+    }
+
+    // The ends of the ranges the fields hold: the last hot cue slot, and
+    // a time far enough in to exercise the full 32 bits. 0xFFFFFFFF is
+    // the codec's own "not a loop" sentinel, so a cue AT that time is
+    // the one value where a time and a sentinel could be confused.
+    {
+        std::vector<RawHotCueEntry> cues(3);
+        cues[0].hotCueNumber = 8;  // the last pad
+        cues[0].timeMs = 0;        // and the first instant
+        cues[1].hotCueNumber = 1;
+        cues[1].timeMs = 0xFFFFFFFEu;
+        cues[2].hotCueNumber = 2;
+        cues[2].timeMs = 0xFFFFFFFFu;  // the sentinel's own value, as a time
+
+        const auto decoded = AnlzCueCodec::decodeHotCues(AnlzCueCodec::encodeHotCues(cues));
+        assert(decoded.size() == 3);
+        assert(decoded[0].hotCueNumber == 8 && decoded[0].timeMs == 0);
+        assert(!decoded[0].isLoop && "a cue at 0:00 is not a loop");
+        assert(decoded[1].timeMs == 0xFFFFFFFEu);
+        assert(decoded[2].timeMs == 0xFFFFFFFFu && !decoded[2].isLoop);
+        std::cout << "case 10 (the last pad, the first instant, and a time equal to the loop sentinel) OK\n";
+    }
+
+    // Loops at the edges: one that ends where it starts, and one that
+    // starts at zero. A zero-length loop is not something a DJ sets on
+    // purpose, which is exactly why it must survive a rewrite rather
+    // than being quietly turned into a plain cue.
+    {
+        std::vector<RawHotCueEntry> cues(2);
+        cues[0].hotCueNumber = 1;
+        cues[0].timeMs = 4000;
+        cues[0].isLoop = true;
+        cues[0].loopEndMs = 4000;  // zero length
+        cues[1].hotCueNumber = 2;
+        cues[1].timeMs = 0;
+        cues[1].isLoop = true;
+        cues[1].loopEndMs = 8000;
+
+        const auto decoded = AnlzCueCodec::decodeHotCues(AnlzCueCodec::encodeHotCues(cues));
+        assert(decoded.size() == 2);
+        assert(decoded[0].isLoop && decoded[0].timeMs == 4000 && decoded[0].loopEndMs == 4000);
+        assert(decoded[1].isLoop && decoded[1].timeMs == 0 && decoded[1].loopEndMs == 8000);
+        std::cout << "case 11 (a zero-length loop and a loop from 0:00 both survive) OK\n";
+    }
+
+    // The shape a real save has: some entries carried over untouched
+    // (rawBytes, with their comments and legacy colour ids) and one new
+    // one beside them. Both the entry sizes and the section header have
+    // to come out right when the two kinds are mixed, and every earlier
+    // round-trip case used one kind or the other.
+    {
+        // The same real section case 1 decodes: one hot cue, no colour,
+        // time 9875 ms, off "Another Brick In The Wall".
+        const auto real =
+            fromHex("50434f320000001400000040000000010001000050435032000000100000002c00000001010003e"
+                    "8000026930000000000030132000000000000000000000000");
+        auto carried = AnlzCueCodec::decodeHotCues(real);
+        assert(!carried.empty() && "the real section must decode, or this case proves nothing");
+        for (const auto &entry : carried) {
+            assert(!entry.rawBytes.empty() && "a decoded entry keeps its bytes");
+        }
+        const std::size_t carriedCount = carried.size();
+
+        RawHotCueEntry added;
+        added.hotCueNumber = 7;
+        added.timeMs = 99'000;
+        added.color = std::make_tuple<uint8_t, uint8_t, uint8_t>(9, 8, 7);
+        carried.push_back(added);
+
+        const std::string mixed = AnlzCueCodec::encodeHotCues(carried);
+        const auto decoded = AnlzCueCodec::decodeHotCues(mixed);
+        assert(decoded.size() == carriedCount + 1);
+        for (std::size_t i = 0; i < carriedCount; ++i) {
+            assert(decoded[i].rawBytes == carried[i].rawBytes && "a carried entry comes back byte for byte");
+        }
+        assert(decoded[carriedCount].hotCueNumber == 7);
+        assert(decoded[carriedCount].timeMs == 99'000);
+        assert((decoded[carriedCount].color == std::make_tuple<uint8_t, uint8_t, uint8_t>(9, 8, 7)));
+        std::cout << "case 12 (a new cue added beside real carried ones: sizes and header still agree) OK\n";
+    }
+
+    // A cue with a comment on it, and the comment is not ASCII.
+    //
+    // This codec writes no comments of its own (len_comment is 0 on
+    // every fresh entry), so the only way one survives a save is the
+    // rawBytes path: a rewrite that replaces the whole list must put
+    // back, untouched, the comment on a cue it did not touch. Nothing
+    // had tested that with a comment actually present -- the seven real
+    // entries this was built against have none -- and a comment is
+    // where a DJ's own words live, in UTF-16, which is where non-ASCII
+    // turns up first.
+    //
+    // Built by hand rather than captured, because no real entry with a
+    // comment has been captured yet. It is the documented layout: the
+    // 44-byte fixed part, then len_comment bytes of UTF-16, and the
+    // decoder's colour test reads (len_entry - len_comment) > 44, so a
+    // comment long enough to push the entry past 44 bytes would be read
+    // as a colour if that subtraction were ever dropped.
+    {
+        // "Cafe" with an acute on the e: 00 43 00 61 00 66 00 E9.
+        const std::string comment = fromHex("00430061006600e9");
+        std::string entry;
+        entry += "PCP2";
+        appendU32(entry, 16);                                        // len_header
+        appendU32(entry, static_cast<uint32_t>(44 + comment.size()));  // len_entry
+        appendU32(entry, 4);                                         // hot_cue: pad 4
+        entry.push_back(1);                                          // cue point, not a loop
+        entry += fromHex("0003e8");                                  // pad3, as in every real entry
+        appendU32(entry, 61'000);                                    // time
+        appendU32(entry, 0xFFFFFFFFu);                               // not a loop
+        entry.push_back(0);                                          // color_id
+        entry += fromHex("01002a");                                  // pad7: 0x01 then a counter
+        entry += std::string(4, '\0');
+        appendU32(entry, 0);                                         // loop numerator + denominator
+        appendU32(entry, static_cast<uint32_t>(comment.size()));     // len_comment
+        entry += comment;
+        assert(entry.size() == 44 + comment.size());
+
+        std::string section;
+        section += "PCO2";
+        appendU32(section, 20);
+        appendU32(section, static_cast<uint32_t>(12 + entry.size()));
+        appendU32(section, CueListTypeHot);
+        appendU16(section, 1);  // num_cues
+        appendU16(section, 0);  // padding
+        section += entry;
+
+        const auto decoded = AnlzCueCodec::decodeHotCues(section);
+        assert(decoded.size() == 1);
+        assert(decoded[0].hotCueNumber == 4);
+        assert(decoded[0].timeMs == 61'000);
+        assert(!decoded[0].color.has_value() && "the comment's bytes are not a colour");
+        assert(decoded[0].rawBytes == entry && "the comment is kept, byte for byte");
+
+        // And it comes back out the same way, which is the promise the
+        // header makes: a save that rewrites the list does not flatten
+        // the comment of a cue it never touched.
+        const std::string rewritten = AnlzCueCodec::encodeHotCues(decoded);
+        const auto again = AnlzCueCodec::decodeHotCues(rewritten);
+        assert(again.size() == 1);
+        assert(again[0].rawBytes == entry);
+        assert(rewritten.find(comment) != std::string::npos && "the DJ's own words are still in the file");
+        std::cout << "case 13 (a cue comment with non-ASCII in it survives a rewrite) OK\n";
     }
 
     std::cout << "all cases passed\n";
