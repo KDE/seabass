@@ -172,6 +172,24 @@ int main(int argc, char **argv)
         std::cout << "case 3 (an unscrubbed exportExt.pdb is refused for its contents) OK\n";
     }
 
+    // The outer level, which the case above used to cover and stopped
+    // covering when exportExt.pdb moved onto the allowlist: anything
+    // directly inside the rekordbox tree that is not a known directory
+    // or a player settings file is refused by NAME, because nothing
+    // anonymizes a file nothing knows about. Kept with a file that was
+    // never on any allowlist, so it cannot be un-covered the same way
+    // twice.
+    {
+        const fs::path stray = copy / "rekordbox" / "playlists3.sync";
+        std::ofstream(stray) << "playlist names rekordbox keeps in sync state";
+        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        assert(!v.problems.empty());
+        assert(mentions(v.problems, "unexpected entry in the rekordbox tree"));
+        assert(mentions(v.problems, "playlists3.sync"));
+        fs::remove(stray);
+        std::cout << "case 3b (an unexpected entry in the rekordbox tree is refused by name) OK\n";
+    }
+
     // The other half of the same rule: a SCRUBBED one is accepted. Without
     // this, tightening the check back to a bare name refusal would leave
     // case 3 green and silently undo the issue -- no fixture would carry
@@ -186,7 +204,7 @@ int main(int argc, char **argv)
         auto v = infrastructure::verifyAnonymizedExport(copy.string());
         assert(!mentions(v.problems, "exportExt.pdb"));
         fs::remove(kept);
-        std::cout << "case 3b (a scrubbed exportExt.pdb is kept) OK\n";
+        std::cout << "case 3c (a scrubbed exportExt.pdb is kept) OK\n";
     }
 
     // The same rule one level deeper, and the one that matters most of
@@ -204,7 +222,7 @@ int main(int argc, char **argv)
         assert(!v.problems.empty());
         assert(mentions(v.problems, "hm.db"));
         fs::remove(stray);
-        std::cout << "case 3b (a file with no anonymizer inside Database2 is refused) OK\n";
+        std::cout << "case 3d (a file with no anonymizer inside Database2 is refused) OK\n";
     }
 
     // Content: a real title and a real filename on a track the verifier

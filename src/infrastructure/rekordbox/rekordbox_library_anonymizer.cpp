@@ -348,9 +348,12 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // That copy takes the whole rekordbox/ directory, which on a real
         // stick holds more than export.pdb.
         //
-        // Everything in there that is not on the allowlist goes,
-        // including exportExt.pdb (the My Tag vocabulary: free text a DJ
-        // typed, no anonymizer), the .sync playlist state and RBFLTR.DAT.
+        // Everything in there that is not on the allowlist goes: the
+        // .sync playlist state, RBFLTR.DAT and anything a newer
+        // rekordbox invents. exportExt.pdb used to be in that list and
+        // is not any more -- it is on the allowlist now and scrubbed a
+        // few lines below, and removed again if that scrub does not
+        // land.
         //
         // A list of files to REMOVE was what this used to be, and a real
         // stick turned up carrying three it had never heard of -- which
@@ -591,6 +594,14 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                     PdbRowWriter extWriter(extPdb.string(), PdbRowWriter::Format::ExportExt);
                     const int renamed =
                         extWriter.overwriteAllTagNames([](size_t i) { return placeholder("Tag", i); });
+                    // The same pass export.pdb gets, and for the same
+                    // reason: overwriteAllTagNames() rewrites the LIVE
+                    // rows, and rekordbox leaves the old bytes behind in
+                    // page slack when a tag is renamed or deleted. Without
+                    // this, a DJ who renamed a My Tag ships the old name.
+                    // The committed fixture has no dead tag rows, which is
+                    // why its absence went unnoticed.
+                    extWriter.zeroUnusedSpace();
                     // No rows means nothing was rewritten, and an empty
                     // vocabulary and a file this code could not read look
                     // identical from here. Treated as a failure, because

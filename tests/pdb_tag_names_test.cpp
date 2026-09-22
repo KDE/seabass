@@ -110,11 +110,13 @@ int main()
     // nothing looks identical to one that works.
     assert(before.size() > 1 && "the fixture must carry My Tags for this to mean anything");
 
-    // NOT "Tag N", which is what the anonymizer writes and therefore
-    // what the committed fixture already holds: rewriting those to
-    // themselves is an identity edit, and every assertion below would
-    // pass over a writer that did nothing at all. The placeholder has to
-    // be something the fixture cannot already contain.
+    // NOT "Tag NNN", which is what both writers of this file produce --
+    // the anonymizer's placeholder() and tools/anonymize_export_ext,
+    // which now agree on the zero-padded form after a review found them
+    // disagreeing. The committed fixture therefore already holds those,
+    // and rewriting them to themselves is an identity edit that every
+    // assertion below survives. The placeholder has to be something the
+    // fixture cannot already contain.
     int rewritten = 0;
     {
         PdbRowWriter writer(working.string(), PdbRowWriter::Format::ExportExt);
@@ -159,6 +161,64 @@ int main()
     }
     std::cout << "after: " << distinct.size() << " distinct placeholder(s) over " << after.size()
               << " rows, e.g. \"" << after.front() << "\"\n";
+
+    // Clearing free space must not eat a LIVE row byte.
+    //
+    // zeroUnusedSpace() keeps what it can account for and zeroes the
+    // rest, so a keep-range that misses a field destroys it silently.
+    // The first version of the tag branch did exactly that: a tag_row's
+    // fixed header is 31 bytes, through ofs_unknown_near at offset 30,
+    // and it stopped at 30 -- losing that byte and the 0x03 empty string
+    // it points at. Two bytes per row, 56 across this fixture.
+    //
+    // Nothing above could see it. The names still read back, this test
+    // passed, and the file still reparsed. Nor would comparing the
+    // fields the parser exposes: the vendored rekordbox_pdb.h predates
+    // ofs_unknown_near and has no accessor for it, so the one field that
+    // was being destroyed is invisible to the generated parser. It has
+    // to be checked at the byte level.
+    //
+    // The invariant: after the names are rewritten, every remaining
+    // non-zero byte in this file is live. The fixture is produced by
+    // tools/anonymize_export_ext from a stick whose tag pages carry no
+    // slack residue, so clearing free space must not turn a single
+    // non-zero byte into a zero. If this ever fires on a regenerated
+    // fixture, check whether the new stick genuinely has residue before
+    // assuming the keep-ranges are wrong again.
+    {
+        const fs::path slack = scratch / "slack.pdb";
+        fs::copy_file(source, slack, fs::copy_options::overwrite_existing);
+
+        auto bytesOf = [](const fs::path &p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        };
+        const std::string before = bytesOf(slack);
+        const size_t namesBefore = tagNamesIn(slack).size();
+
+        int cleared = 0;
+        {
+            PdbRowWriter writer(slack.string(), PdbRowWriter::Format::ExportExt);
+            cleared = writer.zeroUnusedSpace();
+            assert(writer.commit());
+        }
+
+        const std::string after = bytesOf(slack);
+        assert(before.size() == after.size() && "clearing free space must not resize the file");
+        size_t liveBytesLost = 0;
+        for (size_t i = 0; i < before.size(); ++i) {
+            if (before[i] != '\0' && after[i] == '\0') {
+                ++liveBytesLost;
+            }
+        }
+        std::cout << "free space: " << cleared << " byte(s) cleared, " << liveBytesLost << " live byte(s) lost\n";
+        assert(liveBytesLost == 0 && "clearing free space zeroed a byte that was in use");
+
+        // And it did not pass by doing nothing: the rows are all still
+        // there and still readable afterwards.
+        assert(tagNamesIn(slack).size() == namesBefore);
+        assert(namesBefore > 1);
+    }
 
     // Opened as the wrong format, the same file yields nothing. Asserted
     // because it is the failure mode of this whole area: a mismatched

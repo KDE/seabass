@@ -421,8 +421,10 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
 
     // When the plan carries a OneLibrary row of its own, the loop at the
     // end of this function writes that catalog properly -- by row id,
-    // with its own backup and session. The best-effort mirrors below
-    // would then write it a SECOND time, by path, outside that session.
+    // with its own backup and session. The mirrors below would then
+    // write it a SECOND time, by path, outside that session. ("Mirrors",
+    // not "best-effort mirrors": the merged-cue one fails the change
+    // now, the others still do not.)
     // They exist for the uncollapsed case, where nothing else touches
     // OneLibrary at all and leaving its row behind orphans it. Once it is
     // a catalog in its own right, mirroring it is not a safety net, it is

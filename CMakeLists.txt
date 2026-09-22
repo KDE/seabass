@@ -2195,6 +2195,10 @@ add_test(NAME pdb_row_writer_string_test COMMAND pdb_row_writer_string_test)
 
 add_executable(rekordbox_library_anonymizer_test tests/rekordbox_library_anonymizer_test.cpp)
 target_include_directories(rekordbox_library_anonymizer_test PRIVATE src)
+# Reads tests/fixtures/exportExt.pdb: the exportExt cases need a real one,
+# because a synthetic pdb cannot show a scrub that works.
+target_compile_definitions(rekordbox_library_anonymizer_test PRIVATE
+    SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(rekordbox_library_anonymizer_test PRIVATE seabass_core)
 add_test(NAME rekordbox_library_anonymizer_test COMMAND rekordbox_library_anonymizer_test)
 
@@ -2510,7 +2514,8 @@ target_link_libraries(find_stick_archive_test PRIVATE seabass_core)
 add_test(NAME find_stick_archive_test COMMAND find_stick_archive_test)
 
 # Issue #1: My Tag names in an exportExt.pdb. Needs the source dir for
-# the fixture the anonymizer now produces instead of deleting.
+# tests/fixtures/exportExt.pdb, which tools/anonymize_export_ext produces
+# from a real stick and the anonymizer now keeps instead of deleting.
 add_executable(pdb_tag_names_test tests/pdb_tag_names_test.cpp)
 target_include_directories(pdb_tag_names_test PRIVATE src)
 target_link_libraries(pdb_tag_names_test PRIVATE seabass_core)

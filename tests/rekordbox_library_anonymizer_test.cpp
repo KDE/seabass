@@ -546,6 +546,58 @@ int main()
         std::cout << "case 9 (a pdb with only artist names is still written) OK\n";
     }
 
+    // exportExt.pdb: kept when the scrub lands, removed when it does not.
+    //
+    // The anonymizer's own block had no test at all. Its comment calls
+    // the failure path "the whole point" -- a file present in an export
+    // is one that was scrubbed -- and that path had never run, so a
+    // change making the scrub silently no-op would have shipped a real
+    // My Tag vocabulary with nothing complaining.
+    //
+    // Two libraries, because one of them proves nothing on its own: a
+    // scrub that never works keeps the file out of both, and a scrub
+    // that never fails keeps it in both.
+    {
+        const fs::path realExt = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "exportExt.pdb";
+        assert(fs::is_regular_file(realExt) && "the anonymized exportExt.pdb fixture is missing");
+
+        // A real one: kept, and every name in it a placeholder.
+        const fs::path src = root / "ext-source";
+        const fs::path dst = root / "ext-dest";
+        writeFile(src / "rekordbox" / "export.pdb", buildSyntheticPdb());
+        fs::create_directories(src / "rekordbox");
+        fs::copy_file(realExt, src / "rekordbox" / "exportExt.pdb");
+
+        auto kept = anonymizeRekordboxLibrary(src.string(), dst.string());
+        assert(kept.errorMessage.empty());
+        const fs::path keptExt = dst / "rekordbox" / "exportExt.pdb";
+        assert(fs::is_regular_file(keptExt) && "a scrubbable exportExt.pdb must survive the export");
+        assert(kept.tagsRenamed > 1 && "and its tag names must have been rewritten");
+        assert(std::find(kept.removedUnanonymizableFiles.begin(), kept.removedUnanonymizableFiles.end(),
+                         std::string("exportExt.pdb")) == kept.removedUnanonymizableFiles.end());
+        std::cout << "case 10 (a real exportExt.pdb is scrubbed and kept: " << kept.tagsRenamed
+                  << " tag name(s)) OK\n";
+
+        // One the writer cannot read: removed, reported as removed, and
+        // NOT left sitting in the export for the verifier to find.
+        const fs::path badSrc = root / "ext-bad-source";
+        const fs::path badDst = root / "ext-bad-dest";
+        writeFile(badSrc / "rekordbox" / "export.pdb", buildSyntheticPdb());
+        // Same size as a real one so nothing rejects it on length alone,
+        // but not a pdb: PdbRowWriter's construction throws on it.
+        writeFile(badSrc / "rekordbox" / "exportExt.pdb", std::string(73728, '\x7f'));
+
+        auto dropped = anonymizeRekordboxLibrary(badSrc.string(), badDst.string());
+        assert(dropped.errorMessage.empty() && "an unscrubbable exportExt.pdb must not fail the whole export");
+        assert(!fs::exists(badDst / "rekordbox" / "exportExt.pdb")
+               && "an exportExt.pdb that could not be scrubbed must not be in the export");
+        assert(dropped.tagsRenamed == 0);
+        assert(std::find(dropped.removedUnanonymizableFiles.begin(), dropped.removedUnanonymizableFiles.end(),
+                         std::string("exportExt.pdb")) != dropped.removedUnanonymizableFiles.end()
+               && "and the manifest has to say it was removed");
+        std::cout << "case 11 (an exportExt.pdb that cannot be scrubbed is removed and reported) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

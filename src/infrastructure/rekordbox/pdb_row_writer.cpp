@@ -103,6 +103,16 @@ constexpr int TrackStringIndexFilePath = 20;
 // ofs_name_near(u1) = name's near offset lives at byte 9; ofs_name_far
 // (u2), used instead when subtype's 0x04 bit is set, lives at byte 10
 // -- see specs/rekordbox_pdb.ksy's artist_row.
+// tag_row's own layout, from specs/rekordbox_pdb.ksy, relative to
+// row_base. Named here rather than inlined because the name is reached
+// through one of two offsets depending on a flag in the first field, and
+// that indirection is the whole trick of the row.
+constexpr size_t TagRowSubtypeOffset = 0;       // u2
+constexpr size_t TagRowOfsNameNearOffset = 29;     // u1
+constexpr size_t TagRowOfsUnknownNearOffset = 30;  // u1, a second string, normally empty
+constexpr size_t TagRowOfsNameFarOffset = 30;      // u2 at 0x1e, read when subtype & 0x04
+constexpr uint16_t TagRowFarNameFlag = 0x04;
+
 constexpr size_t ArtistSubtypeOffset = 0;
 constexpr size_t ArtistNameOffsetNear = 9;
 constexpr size_t ArtistNameOffsetFar = 10;
@@ -468,6 +478,65 @@ std::vector<PlaylistEntryMatch> findAllPlaylistEntriesForTrack(const std::string
 // needs: reading key_row's name at genre_row's offset once left the
 // catalog unparseable. Erring towards keeping is the only safe
 // direction, and the caller's own reparse check is the backstop.
+// The live bytes of a tag_row: its fixed header, the device_sql_string
+// its name lives in, and the second string ofs_unknown_near points at.
+//
+// The fixed header is 31 bytes, through ofs_unknown_near at offset 30 --
+// NOT 30, which was the first attempt and cost two live bytes per row:
+// the ofs_unknown_near byte itself, and the 0x03 empty string it points
+// to. 28 rows, 56 bytes, and the names still read back correctly
+// afterwards, so no name-level check could have seen it. Found by
+// diffing the bytes the pass cleared against the raw file.
+//
+// When subtype has 0x04 the name offset is a u2 at 0x1e, which occupies
+// bytes 30 and 31 and so subsumes ofs_unknown_near; the header is 32
+// bytes then and there is no separate unknown string to keep.
+std::vector<std::pair<size_t, size_t>> tagRowKeepRanges(const std::string &buffer, size_t rowBase, size_t bound)
+{
+    const std::vector<std::pair<size_t, size_t>> wholeExtent{{rowBase, bound}};
+    if (rowBase + TagRowOfsNameFarOffset + 2 > bound) {
+        return wholeExtent;
+    }
+    const uint16_t subtype = readU16LE(buffer, rowBase + TagRowSubtypeOffset);
+    const bool far = (subtype & TagRowFarNameFlag) != 0;
+    const size_t header = rowBase + (far ? TagRowOfsNameFarOffset + 2 : TagRowOfsUnknownNearOffset + 1);
+    if (header > bound) {
+        return wholeExtent;
+    }
+
+    std::vector<std::pair<size_t, size_t>> keep{{rowBase, header}};
+    // Every string this row owns. A string the row points at but this
+    // function forgets is a live byte that gets cleared, so a miss here
+    // is silent corruption rather than a missed scrub.
+    auto keepStringAt = [&](size_t absOffset) {
+        if (absOffset < header || absOffset >= bound) {
+            return false;
+        }
+        const DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, absOffset);
+        if (span.totalBytes == 0 || absOffset + span.totalBytes > bound) {
+            return false;
+        }
+        keep.emplace_back(absOffset, absOffset + span.totalBytes);
+        return true;
+    };
+
+    const size_t nameOffset = far ? readU16LE(buffer, rowBase + TagRowOfsNameFarOffset)
+                                  : static_cast<size_t>(static_cast<unsigned char>(buffer[rowBase + TagRowOfsNameNearOffset]));
+    if (!keepStringAt(rowBase + nameOffset)) {
+        return wholeExtent;
+    }
+    if (!far) {
+        const size_t unknownOffset =
+            static_cast<size_t>(static_cast<unsigned char>(buffer[rowBase + TagRowOfsUnknownNearOffset]));
+        // Absent or unreadable is not a failure: keep the whole row
+        // rather than clear a byte this cannot account for.
+        if (!keepStringAt(rowBase + unknownOffset)) {
+            return wholeExtent;
+        }
+    }
+    return keep;
+}
+
 std::vector<std::pair<size_t, size_t>> rowKeepRanges(const std::string &buffer, Pdb::page_type_t pageType,
                                                       size_t rowBase, size_t bound)
 {
@@ -757,25 +826,18 @@ bool PdbRowWriter::overwritePlaylistName(uint32_t playlistId, const std::string 
     return true;
 }
 
-// tag_row's own layout, from specs/rekordbox_pdb.ksy, relative to
-// row_base. Named here rather than inlined because the name is reached
-// through one of two offsets depending on a flag in the first field, and
-// that indirection is the whole trick of the row.
-constexpr size_t TagRowSubtypeOffset = 0;       // u2
-constexpr size_t TagRowOfsNameNearOffset = 29;  // u1
-constexpr size_t TagRowOfsNameFarOffset = 30;   // u2, read when subtype & 0x04
-constexpr uint16_t TagRowFarNameFlag = 0x04;
-
 int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> &placeholder)
 {
     if (m_format != Format::ExportExt) {
         return 0;
     }
     std::vector<size_t> rowBodyOffsets;
+    size_t lenPage = 0;
     {
         std::istringstream iss(m_buffer);
         kaitai::kstream ks(&iss);
         Pdb pdb(true, &ks);
+        lenPage = pdb.len_page();
         for (const auto &t : *pdb.tables()) {
             if (t->type_ext() != Pdb::PAGE_TYPE_EXT_TAGS) {
                 continue;
@@ -811,7 +873,30 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         const size_t nameOffset = (subtype & TagRowFarNameFlag) != 0
             ? readU16LE(m_buffer, base + TagRowOfsNameFarOffset)
             : static_cast<size_t>(static_cast<unsigned char>(m_buffer[base + TagRowOfsNameNearOffset]));
-        overwriteDeviceSqlStringInPlace(m_buffer, base + nameOffset, placeholder(i));
+        // Bounded to the row's own page. nameOffset is a u2 read out of
+        // the file, so it reaches 65535 while a page is 4096 bytes: an
+        // offset that is wrong, or a file that is hostile, otherwise
+        // writes up to sixteen pages away into an unrelated table.
+        // buffer.at() only catches that once it leaves the file
+        // entirely, and reparsesCleanly() walks only the tags tables, so
+        // damage to a neighbouring tag_tracks page would be committed
+        // without anything noticing.
+        const size_t pageOfRow = lenPage == 0 ? 0 : base / lenPage;
+        const size_t pageEnd = (pageOfRow + 1) * lenPage;
+        const size_t nameAt = base + nameOffset;
+        if (lenPage == 0 || nameAt < base || nameAt >= pageEnd) {
+            continue;
+        }
+        // Counted only when there was somewhere to write. A
+        // device_sql_string with no text capacity takes the overwrite
+        // and keeps its bytes, so counting the visit rather than the
+        // change would let the anonymizer's `renamed > 0` guard pass,
+        // and tools/anonymize_export_ext report "rewrote N tag name(s)",
+        // with every real name still in the file.
+        if (readDeviceSqlStringSpan(m_buffer, nameAt).textCapacityBytes == 0) {
+            continue;
+        }
+        overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i));
         ++replaced;
     }
     return replaced;
@@ -901,7 +986,21 @@ int PdbRowWriter::zeroUnusedSpace()
     struct PageWork
     {
         uint32_t pageIndex = 0;
-        Pdb::page_type_t pageType = Pdb::PAGE_TYPE_TRACKS;
+        // What shape the rows on this page are, decided where the parse
+        // flag is still in hand. NOT page->type(): the generated parser
+        // assigns m_type only under `if (!is_ext)` and _init() does not
+        // initialise it, so reading type() on an ext parse is reading an
+        // indeterminate value. PAGE_TYPE_TRACKS is 0, so the likeliest
+        // garbage dispatches a tag_row down the track_row branch and
+        // computes keep-ranges from 21 offsets that are not there.
+        enum class Shape
+        {
+            Regular,  // an export.pdb page; pageType says which kind
+            ExtTags,  // an exportExt.pdb tags page: tag_row
+            ExtOther, // any other exportExt.pdb page: shape unknown here
+        };
+        Shape shape = Shape::Regular;
+        Pdb::page_type_t pageType = Pdb::PAGE_TYPE_TRACKS;  // Shape::Regular only
         size_t numRows = 0;
         size_t rowOffsets = 0;  // num_row_offsets: slots ever allocated, valid or not
         size_t groups = 0;
@@ -916,13 +1015,20 @@ int PdbRowWriter::zeroUnusedSpace()
     {
         std::istringstream iss(m_buffer);
         kaitai::kstream ks(&iss);
-        Pdb pdb(m_format == Format::ExportExt, &ks);
+        const bool ext = m_format == Format::ExportExt;
+        Pdb pdb(ext, &ks);
         const size_t lenPage = pdb.len_page();
         for (const auto &table : *pdb.tables()) {
             forEachDataPage(*table, [&](Pdb::page_t *page) {
                 PageWork w;
                 w.pageIndex = page->page_index();
-                w.pageType = page->type();
+                if (ext) {
+                    w.shape = table->type_ext() == Pdb::PAGE_TYPE_EXT_TAGS ? PageWork::Shape::ExtTags
+                                                                          : PageWork::Shape::ExtOther;
+                } else {
+                    w.shape = PageWork::Shape::Regular;
+                    w.pageType = page->type();
+                }
                 const size_t pageStart = lenPage * static_cast<size_t>(w.pageIndex);
                 w.heapStart = pageStart + static_cast<size_t>(page->heap_pos());
                 const size_t groups = static_cast<size_t>(page->num_row_groups());
@@ -976,7 +1082,15 @@ int PdbRowWriter::zeroUnusedSpace()
             }
             auto next = std::upper_bound(starts.begin(), starts.end(), row.first);
             const size_t bound = next == starts.end() ? page.indexEnd : *next;
-            for (const auto &span : rowKeepRanges(m_buffer, page.pageType, row.first, bound)) {
+            // An ext page whose row shape this function does not know
+            // keeps its whole extent: the free space BETWEEN rows is
+            // still cleared, and nothing guesses at bytes inside a row
+            // it cannot parse.
+            const std::vector<std::pair<size_t, size_t>> spans =
+                page.shape == PageWork::Shape::ExtTags  ? tagRowKeepRanges(m_buffer, row.first, bound)
+                : page.shape == PageWork::Shape::ExtOther ? std::vector<std::pair<size_t, size_t>>{{row.first, bound}}
+                                                          : rowKeepRanges(m_buffer, page.pageType, row.first, bound);
+            for (const auto &span : spans) {
                 if (span.second > span.first) {
                     keep.emplace_back(span.first, std::min(span.second, bound));
                 }
