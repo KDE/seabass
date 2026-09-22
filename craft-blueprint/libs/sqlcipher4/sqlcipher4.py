@@ -179,6 +179,37 @@ class PackageMSVC(MSBuildPackageBase):
             # (which it adds) is repeated here.
             f"LTLIBPATHS=/LIBPATH:{craftRoot / 'lib'}",
             "LTLIBS=rpcrt4.lib libcrypto.lib",
+            # Makefile.msc line 1245 sets, unconditionally and without
+            # consulting USE_CRT_DLL:
+            #
+            #     LDFLAGS = /NODEFAULTLIB:msvcrt /DEBUG $(LDOPTS)
+            #
+            # That is correct for its own default, the STATIC CRT, where
+            # objects carry /DEFAULTLIB:libcmt and msvcrt must be kept
+            # out so the two are not mixed. We ask for USE_CRT_DLL=1
+            # above, which makes the makefile compile everything -MD, so
+            # every object carries /DEFAULTLIB:msvcrt -- and then this
+            # excludes exactly the library they asked for. The two
+            # settings contradict each other and the makefile has no
+            # guard against it.
+            #
+            # It shows up first on lemon.exe, SQLite's parser generator,
+            # because that links early and with $(LDFLAGS) directly:
+            #
+            #     lemon.obj : error LNK2019: unresolved external symbol
+            #                 strlen ... mainCRTStartup ... __imp_fclose
+            #     lemon.exe : fatal error LNK1120: 43 unresolved externals
+            #
+            # It is not lemon-specific: $(LDFLAGS) appears on 45 link
+            # lines in that makefile, the DLL target among them, so the
+            # same contradiction applies to everything built here.
+            #
+            # A command-line macro beats a makefile definition in nmake's
+            # precedence, so setting it here wins. /DEBUG is kept because
+            # that is what the makefile's own SYMBOLS branch was adding;
+            # only the self-contradictory exclusion is dropped. $(LDOPTS)
+            # is empty unless someone sets it, and nothing here does.
+            "LDFLAGS=/DEBUG",
         ]
 
     def make(self):
