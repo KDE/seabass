@@ -676,6 +676,15 @@ SaveContext::FinishOutcome SaveContext::runFinishHooks(bool ok)
     for (auto &hook : m_finishHooks) {
         try {
             hook(ok);
+        } catch (const SaveTidyUpFailed &e) {
+            // Same shape as the fold below: what the save wrote is on the
+            // stick, and something beside it is not. The hook has already
+            // put the detail in the operation log; this is the half the
+            // person sees.
+            log().record(std::string("save: ") + e.what());
+            if (!outcome.warning) {
+                outcome.warning = QString::fromUtf8(e.what());
+            }
         } catch (const seabass::infrastructure::onelibrary::OneLibraryLogNotFolded &e) {
             // The rows are committed; only the fold is missing. Nothing of
             // ours will fold it later -- finishWriting() has already closed

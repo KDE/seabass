@@ -23,6 +23,18 @@ namespace seabass::infrastructure
 // completely untouched, if the write, fsync, or rename failed.
 bool writeFileDurablyAtomic(const std::string &path, const std::string &data);
 
+// Appends `data` to the file at `path`, creating it if needed, and
+// makes it durable before returning: the write goes through O_APPEND
+// (so a second process appending to the same file cannot overwrite this
+// line) and is fsync'd, and a file this call created also gets its
+// directory entry flushed. Returns false if any of that failed.
+//
+// For the append-only records this project keeps ON a stick, where the
+// medium can be pulled between the write and the page cache reaching
+// it: a line saying an audio file has been orphaned is worth nothing if
+// the catalog edit is durable and the line is not.
+bool appendToFileDurably(const std::string &path, const std::string &data);
+
 // Same guarantee as writeFileDurablyAtomic(), but the new content comes
 // from an existing file (sourcePath) instead of an in-memory buffer --
 // for replacing a database file with a modified scratch copy of itself,

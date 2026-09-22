@@ -70,7 +70,7 @@ public:
     // replaced file on a stick. Callers have already deleted the files
     // by the time this runs, so this is something to report, not to
     // treat as "nothing happened".
-    bool removeProcessed(const std::set<std::string> &processedFilePaths);
+    [[nodiscard]] bool removeProcessed(const std::set<std::string> &processedFilePaths);
 
     // Rewrites the manifest, dropping every entry the save behind one of
     // `backupIds` recorded -- for Undo Last Save, which puts those catalog
@@ -80,9 +80,14 @@ public:
     //
     // Returns false, with the previous manifest intact, if the file
     // could not be rewritten -- see removeProcessed().
-    bool removeForBackups(const std::set<std::string> &backupIds);
+    [[nodiscard]] bool removeForBackups(const std::set<std::string> &backupIds);
 
 private:
+    // Every entry the file holds. False means it is there and could not
+    // be read, which an empty list cannot say and which neither rewrite
+    // may take for "nothing to remove".
+    bool readAll(std::vector<PendingDeletion> &entries) const;
+
     // Replaces the whole file, durably and atomically. False means the
     // old contents are still there, untouched.
     bool rewrite(const std::string &contents) const;

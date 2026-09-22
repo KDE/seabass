@@ -593,10 +593,18 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         }
         result.statusMessage = parts.join("; ");
         if (!manifestNotUpdated.empty()) {
-            result.errorMessage = QString("Deleted %1 file(s), but the list of files waiting to be deleted could "
-                                          "not be updated. They may be offered again on the next pass; nothing "
-                                          "else was lost.")
-                                      .arg(deleted);
+            // The counts go in front, not instead: the page shows the
+            // error message OR the status message, never both, and
+            // "still referenced, left alone" and "failed to delete" are
+            // exactly what a person needs after a run that went partly
+            // wrong.
+            QString summary = result.statusMessage;
+            if (!summary.isEmpty()) {
+                summary[0] = summary[0].toUpper();
+            }
+            result.errorMessage = QString("%1. The list of files waiting to be deleted could not be updated, so "
+                                          "they may be offered again on the next pass; nothing else was lost.")
+                                      .arg(summary);
         }
     } catch (const std::exception &e) {
         result.errorMessage = QString::fromStdString(e.what());

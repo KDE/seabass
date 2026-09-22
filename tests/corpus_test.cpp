@@ -2907,8 +2907,12 @@ void caseCleanUpDuplicates(const DataSet &set, const fs::path &scratch, const Ca
         check(named, "the removed copy's file is named in the pending-deletion manifest");
     }
     expected.expect("matrix.cleanup.pdbParses", counts.trackDatabaseParses, "cleanup pdb parses unchanged");
+    // 5 before the pending-deletion manifest's own line became durable:
+    // a clean-up now fsyncs one append per copy it removes, because the
+    // catalog edit saying the file is orphaned is durable and the record
+    // naming it was not (see PendingDeletionManifest::append).
     expected.expect("matrix.cleanup.durableWritesPerSave", counts.durableFileWrites,
-                    "cleanup durable whole-file writes for the whole save unchanged");
+                    "cleanup durable writes for the whole save unchanged");
     std::cout << "    clean up duplicates: " << counts.describe() << "\n";
     fs::remove_all(root);
     fs::remove(manifestPath);

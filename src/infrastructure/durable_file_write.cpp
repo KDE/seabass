@@ -45,6 +45,24 @@ bool writeFileDurably(const std::string &path, const std::string &data)
     return ok != 0;
 }
 
+bool appendDurably(const std::string &path, const std::string &data)
+{
+    HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    DWORD written = 0;
+    BOOL ok = WriteFile(h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
+    if (ok && written == data.size()) {
+        ok = FlushFileBuffers(h) != 0;
+    } else {
+        ok = FALSE;
+    }
+    CloseHandle(h);
+    return ok != 0;
+}
+
 #else
 
 bool writeFileDurably(const std::string &path, const std::string &data)
@@ -70,6 +88,39 @@ bool writeFileDurably(const std::string &path, const std::string &data)
         // fsync() on macOS does not flush the drive's write cache;
         // F_FULLFSYNC does. Fall back to fsync where a filesystem
         // rejects it.
+        ok = ::fcntl(fd, F_FULLFSYNC) == 0 || ::fsync(fd) == 0;
+#else
+        ok = ::fsync(fd) == 0;
+#endif
+    }
+    ::close(fd);
+    return ok;
+}
+
+bool appendDurably(const std::string &path, const std::string &data)
+{
+    // O_APPEND, so every write goes to the current end of the file even
+    // with another process appending to the same manifest -- the
+    // property the plain ofstream had and the reason this is an append
+    // rather than a rewrite.
+    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        return false;
+    }
+    const char *p = data.data();
+    size_t remaining = data.size();
+    bool ok = true;
+    while (remaining > 0) {
+        ssize_t n = ::write(fd, p, remaining);
+        if (n <= 0) {
+            ok = false;
+            break;
+        }
+        p += n;
+        remaining -= static_cast<size_t>(n);
+    }
+    if (ok) {
+#if defined(__APPLE__)
         ok = ::fcntl(fd, F_FULLFSYNC) == 0 || ::fsync(fd) == 0;
 #else
         ok = ::fsync(fd) == 0;
@@ -113,6 +164,23 @@ void fsyncDirectoryContaining(const std::string &filePath)
 }
 
 #endif
+
+bool appendToFileDurably(const std::string &path, const std::string &data)
+{
+    WorkCounters::instance().noteDurableFileWrite();
+    const bool existed = fs::exists(path);
+    if (!appendDurably(path, data)) {
+        return false;
+    }
+    if (!existed) {
+        // A file this call created is a new directory entry, and that
+        // entry needs the same flush a rename does -- otherwise the very
+        // first line written to a fresh manifest is the one a pulled
+        // stick loses.
+        fsyncDirectoryContaining(path);
+    }
+    return true;
+}
 
 bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
 {

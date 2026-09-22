@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <set>
 
 #include "infrastructure/scratch_dir_guard.hpp"
@@ -38,6 +39,18 @@ class FilesystemBackupStore;
 
 namespace seabass::gui
 {
+
+// Thrown by a finish hook when everything the save wrote landed and only
+// a tidy-up beside it did not: reported to the user, never as a failed
+// save (see FinishOutcome::warning, and OneLibraryLogNotFolded, which
+// runFinishHooks() treats the same way). Telling someone a save failed
+// when it did not has them do it again, which for a removal means doing
+// it twice.
+class SaveTidyUpFailed : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
 
 // Everything one Save shares across the changes it applies. Lives on the
 // worker thread for exactly one save loop; never touched by the GUI.

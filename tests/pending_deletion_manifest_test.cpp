@@ -233,6 +233,33 @@ int main()
             assert(manifest.list().size() == 1);
         }
         std::cout << "case 6 (a write that cannot land is reported, and loses nothing) OK\n";
+
+        // ---- a manifest that is there and cannot be READ -------------
+        // list() answers "no entries" for that, same as for a stick that
+        // never had one, so a rewrite found nothing to remove and said
+        // it had brought the file in line. The files were already
+        // deleted by then and every entry stayed on disk.
+        const fs::path unreadableDir = root / "unreadable";
+        fs::create_directories(unreadableDir);
+        const fs::path unreadableManifest = unreadableDir / "pending.jsonl";
+        {
+            PendingDeletionManifest manifest(unreadableManifest.string());
+            PendingDeletion a;
+            a.filePath = "/Volumes/STICK/Contents/gone.mp3";
+            manifest.append(a);
+        }
+        fs::permissions(unreadableManifest, fs::perms::none, fs::perm_options::replace);
+        PendingDeletionManifest unreadable(unreadableManifest.string());
+        const bool claimed = unreadable.removeProcessed({"/Volumes/STICK/Contents/gone.mp3"});
+        fs::permissions(unreadableManifest, fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace);
+        if (permissionsBind) {
+            assert(!claimed && "a manifest that could not be read is not a manifest with nothing to remove");
+            assert(unreadable.list().size() == 1 && "and it still holds what it held");
+        } else {
+            assert(claimed);
+        }
+        std::cout << "case 7 (a manifest that cannot be read is not an empty one) OK\n";
     }
 #endif
 

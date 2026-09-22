@@ -20,6 +20,10 @@
 #include <system_error>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "gui/edit/changes/restore_backups_change.hpp"
@@ -170,6 +174,46 @@ int main()
         assert(left.front().filePath == ofAnotherSave.filePath);
         std::cout << "case 3 (undo takes its save's files back off Delete Orphaned Files) OK\n";
     }
+
+    // 4. The list cannot be rewritten: the undo still stands, and says so.
+    //    Refusing here would have the save loop roll the restore back out
+    //    -- the library taken away again over a bookkeeping file, on the
+    //    full or failing stick where getting it back mattered most.
+#if !defined(_WIN32)
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_restore_backups_locked_list");
+        const SavedStick saved(scratch.path);
+        using seabass::infrastructure::cleanup::PendingDeletion;
+        using seabass::infrastructure::cleanup::PendingDeletionManifest;
+        const fs::path manifestPath = seabass::infrastructure::paths::stickPendingDeletions(scratch.path);
+        PendingDeletionManifest manifest(manifestPath.string());
+        PendingDeletion ofThisSave;
+        ofThisSave.format = "rekordbox";
+        ofThisSave.filePath = (scratch.path / "Contents" / "copy.mp3").string();
+        ofThisSave.backupId = saved.pdbRecord;
+        manifest.append(ofThisSave);
+
+        // The file and the folder, so neither a truncating write nor a
+        // temp-and-rename can get through. See the manifest's own test.
+        fs::permissions(manifestPath, fs::perms::owner_read, fs::perm_options::replace);
+        fs::permissions(manifestPath.parent_path(), fs::perms::owner_read | fs::perms::owner_exec,
+                        fs::perm_options::replace);
+        const SaveLoopResult result = runUndo(saved);
+        fs::permissions(manifestPath.parent_path(), fs::perms::owner_all, fs::perm_options::replace);
+        fs::permissions(manifestPath, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+
+        if (::geteuid() != 0) {
+            assert(result.error.isEmpty() && "a list that could not be rewritten must not undo the undo");
+            assert(result.appliedIds == QStringList{"undo:last-save"});
+            assert(read(saved.pdb) == "pdb-before" && "the library is back");
+            assert(read(saved.anlz) == "anlz-before");
+            assert(!result.warning.isEmpty() && "and the person is told what did not happen");
+            assert(result.warning.contains(QStringLiteral("waiting to be deleted")));
+            assert(manifest.list().size() == 1 && "the entry is still there, to be dropped by a later pass");
+        }
+        std::cout << "case 4 (a list that cannot be rewritten warns, and keeps the restore) OK\n";
+    }
+#endif
 
     std::cout << "restore_backups_change_test: all cases passed\n";
     return 0;

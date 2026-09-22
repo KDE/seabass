@@ -100,15 +100,27 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
         ctx.protectForThisChange(pendingPath);
         // An undo that cannot drop these lines leaves the stick saying
         // two different things: the rows are back, and the files they
-        // name are still listed as waiting to be deleted. Delete
-        // Orphaned Files re-checks every entry against the catalogs
-        // before it removes anything, so nothing would be destroyed on
-        // that list alone, but reporting the undo as done while half of
-        // it did not happen is what fails here.
+        // name are still listed as waiting to be deleted.
+        //
+        // Said out loud, not refused. By the time this runs the catalogs
+        // are already restored, and failing here would have the save
+        // loop roll that restore back out: the undo undone over a
+        // bookkeeping file, on exactly the stick that is full or failing
+        // and where getting the library back mattered most. Nothing is
+        // destroyed by the stale lines either -- Delete Orphaned Files
+        // re-checks every entry against the catalogs first and leaves a
+        // file that a row still names alone.
         if (!infrastructure::cleanup::PendingDeletionManifest(pendingPath).removeForBackups(ids)) {
-            return ChangeOutcome::failure(
-                QStringLiteral("Could not update the list of files waiting to be deleted on this stick. The save "
-                               "stops here and puts back what it wrote."));
+            ctx.log().record("undo: the list of files waiting to be deleted could not be updated; it still names "
+                             "files this undo put back, which a later pass will leave alone");
+            ctx.onFinish([](bool ok) {
+                if (ok) {
+                    throw SaveTidyUpFailed(
+                        "Your library is back. The stick's list of files waiting to be deleted could not be "
+                        "updated, so it still names files the undo restored; nothing is deleted on that list "
+                        "alone, and the next check will drop them.");
+                }
+            });
         }
     }
     return ChangeOutcome::success();

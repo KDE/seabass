@@ -134,20 +134,22 @@ void PendingDeletionManifest::append(PendingDeletion entry)
     // to be deleted, which is the one thing this file exists to keep.
     std::error_code dirEc;
     std::filesystem::create_directories(std::filesystem::path(m_manifestPath).parent_path(), dirEc);
-    std::ofstream ofs(m_manifestPath, std::ofstream::app);
-    ofs << serializeLine(entry);
-    // The comment above says what a lost line costs and then this said
-    // nothing about whether the line arrived. A stick with no room left,
-    // a folder that could not be created, a read-only mount: the stream
-    // fails, append() returns, and the change that called it goes on to
-    // remove the track's catalog rows and report success. The file is
-    // then orphaned on the stick with nothing recording that it should
-    // go -- invisible to Delete Orphaned Files, which reads this file
-    // and nothing else. Closed explicitly rather than left to the
-    // destructor, because that is where a buffered write actually
-    // reaches the filesystem and it has nowhere to report a failure.
-    ofs.close();
-    if (!ofs) {
+    // Was a buffered ofstream whose result nobody read, which failed in
+    // two ways at once. It said nothing when the line did not arrive: on
+    // a full stick, a read-only mount, or with a folder that could not
+    // be created, the change that called this went on to remove the
+    // track's catalog rows and report success, leaving the file orphaned
+    // with nothing recording it, invisible to Delete Orphaned Files,
+    // which reads this manifest and nothing else. And even when it did
+    // arrive, it arrived in the page cache: the catalog edit beside it
+    // goes to the medium through writeFileDurablyAtomic(), so a stick
+    // pulled after the save kept the removal and lost the record of it.
+    //
+    // appendToFileDurably() is still an append, deliberately: two
+    // Seabass processes writing to one stick must not overwrite each
+    // other's lines, which is what the "open, append, close" pattern
+    // above was for.
+    if (!infrastructure::appendToFileDurably(m_manifestPath, serializeLine(entry))) {
         throw std::runtime_error("could not record the orphaned file in " + m_manifestPath
                                  + ": the stick may be full or write-protected");
     }
@@ -158,7 +160,10 @@ bool PendingDeletionManifest::removeProcessed(const std::set<std::string> &proce
     if (processedFilePaths.empty()) {
         return true;
     }
-    auto entries = list();
+    std::vector<PendingDeletion> entries;
+    if (!readAll(entries)) {
+        return false;
+    }
     std::ostringstream rewritten;
     bool anyRemoved = false;
     for (const auto &entry : entries) {
@@ -179,9 +184,13 @@ bool PendingDeletionManifest::removeForBackups(const std::set<std::string> &back
     if (backupIds.empty()) {
         return true;
     }
+    std::vector<PendingDeletion> entries;
+    if (!readAll(entries)) {
+        return false;
+    }
     std::ostringstream rewritten;
     bool anyRemoved = false;
-    for (const auto &entry : list()) {
+    for (const auto &entry : entries) {
         if (!entry.backupId.empty() && backupIds.contains(entry.backupId)) {
             anyRemoved = true;
             continue;
@@ -217,9 +226,21 @@ bool PendingDeletionManifest::rewrite(const std::string &contents) const
 std::vector<PendingDeletion> PendingDeletionManifest::list() const
 {
     std::vector<PendingDeletion> result;
+    readAll(result);
+    return result;
+}
+
+// False means the file is there and could not be read, which "no
+// entries" cannot say and a rewrite must not treat as "nothing to
+// remove": on a dying stick or after a permission change, that answer
+// had the removers report the manifest brought in line while every
+// entry stayed on disk. An absent file IS empty, and is true.
+bool PendingDeletionManifest::readAll(std::vector<PendingDeletion> &result) const
+{
     std::ifstream ifs(m_manifestPath);
     if (!ifs.is_open()) {
-        return result;
+        std::error_code ec;
+        return !std::filesystem::exists(m_manifestPath, ec);
     }
     std::string line;
     while (std::getline(ifs, line)) {
@@ -247,7 +268,7 @@ std::vector<PendingDeletion> PendingDeletionManifest::list() const
         entry.backupId = extractField(line, "backupId").value_or("");
         result.push_back(std::move(entry));
     }
-    return result;
+    return true;
 }
 
 }  // namespace seabass::infrastructure::cleanup

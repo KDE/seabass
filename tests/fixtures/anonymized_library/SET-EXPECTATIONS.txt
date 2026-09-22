@@ -22,7 +22,7 @@ engine.tracksWithCues 125
 engine.writeRefusals 0
 matrix.addCue.durableWritesPerSave 4
 matrix.addCue.pdbParses 1
-matrix.cleanup.durableWritesPerSave 5
+matrix.cleanup.durableWritesPerSave 6
 matrix.cleanup.pdbParses 2
 matrix.copyCues.durableWritesPerSave 4
 matrix.deleteOrphan.durableWritesPerSave 2
