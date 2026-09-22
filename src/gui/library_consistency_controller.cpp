@@ -101,6 +101,23 @@ QVariantMap brokenTrackToMap(const domain::Track &track)
         cues << cueMap;
     }
     m["cues"] = cues;
+    // Which playlists this track is in, so the detail view can say where
+    // the hole is. "Track X is gone" is not the question a DJ has; "which
+    // set am I about to play with a gap in it" is, and the answer was
+    // being read off the same track list already (tallyPlaylists() builds
+    // the picker from it) and then dropped at this boundary.
+    //
+    // Best-effort by contract: Track::playlists is populated where the
+    // reader supports it, so an empty list means "not known", never "in
+    // no playlist", and the UI has to keep those apart.
+    QVariantList playlists;
+    for (const auto &membership : track.playlists) {
+        QVariantMap entry;
+        entry["name"] = QString::fromStdString(membership.name);
+        entry["position"] = membership.position;
+        playlists << entry;
+    }
+    m["playlists"] = playlists;
     return m;
 }
 

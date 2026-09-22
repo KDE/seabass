@@ -81,6 +81,69 @@ Page {
         return parts.length > 0 ? parts.join(", ") : "no cues";
     }
 
+    // Which playlists actually end up short a track, which is not the
+    // same question as which playlists the broken row was in.
+    //
+    // For a missing row, every playlist it was in loses it. For a
+    // repairable or conflicting one the kept copy absorbs the row, so a
+    // playlist only loses anything where the kept copy is not itself a
+    // member. Returns the names, de-duplicated, in the order first seen.
+    //
+    // Track.playlists is best effort: a reader that does not report
+    // memberships gives an empty list, which means "not known" and never
+    // "in no playlist". The caller hides the line rather than claiming
+    // the second.
+    function playlistsLeftShort(kind, brokenTracks, survivor) {
+        const survivorNames = {};
+        if (kind !== "missing" && survivor && survivor.playlists) {
+            for (const membership of survivor.playlists) {
+                survivorNames[membership.name] = true;
+            }
+        }
+        const names = [];
+        const seen = {};
+        for (const track of (brokenTracks || [])) {
+            for (const membership of (track.playlists || [])) {
+                if (seen[membership.name] || survivorNames[membership.name]) {
+                    continue;
+                }
+                seen[membership.name] = true;
+                names.push(membership.name);
+            }
+        }
+        return names;
+    }
+
+    // Whether anything at all is known about this issue's memberships,
+    // so "no playlist loses a track" can be told apart from "this reader
+    // does not report playlists".
+    function playlistsKnown(brokenTracks, survivor) {
+        if (survivor && survivor.playlists && survivor.playlists.length > 0) {
+            return true;
+        }
+        for (const track of (brokenTracks || [])) {
+            if ((track.playlists || []).length > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function playlistSentence(kind, brokenTracks, survivor) {
+        const names = root.playlistsLeftShort(kind, brokenTracks, survivor);
+        if (names.length === 0) {
+            return kind === "missing"
+                ? ""
+                : "Every playlist this row was in also holds the copy being kept, so no set loses a track.";
+        }
+        const listed = names.slice(0, 4).join(", ")
+            + (names.length > 4 ? " and " + (names.length - 4) + " more" : "");
+        const plural = names.length === 1 ? "playlist" : "playlists";
+        return kind === "missing"
+            ? "Leaves a gap in " + names.length + " " + plural + ": " + listed
+            : "The copy being kept is not in " + names.length + " " + plural + " this row was in: " + listed;
+    }
+
     function rescan() {
         consistencyController.scan(root.rekordboxPath, root.enginePath);
     }
@@ -783,6 +846,31 @@ Page {
                         anchors.fill: parent
                         anchors.margins: 8
                         spacing: 8
+
+                        // Where the hole is. "This track's file is gone"
+                        // is not the question a DJ has in front of a
+                        // deck; "which set am I about to play with a gap
+                        // in it" is, and the memberships were already
+                        // being read off this very track list to build
+                        // the playlist picker.
+                        //
+                        // Hidden entirely when nothing is known, which is
+                        // an ordinary answer: Track::playlists is
+                        // populated where the reader supports it, and an
+                        // empty list must never be shown as "in no
+                        // playlist".
+                        Label {
+                            objectName: "playlistImpactLabel"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: root.playlistsKnown(issueDelegate.brokenTracks, issueDelegate.survivor)
+                                ? root.playlistSentence(issueDelegate.kind, issueDelegate.brokenTracks,
+                                                        issueDelegate.survivor)
+                                : ""
+                            wrapMode: Text.WordWrap
+                            font.pointSize: Theme.fontSmall
+                            color: issueDelegate.kind === "missing" ? Theme.warnText : Theme.textMuted
+                        }
 
                         Repeater {
                             model: issueDelegate.detailTracks

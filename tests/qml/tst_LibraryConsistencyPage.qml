@@ -161,6 +161,61 @@ TestCase {
     // Sample rates: a row without one means every cue on that track is
     // placed by a guess, and the file itself can say what it really is.
     // The button stages, like every other fix on this page.
+    // Which playlists end up short a track. The data was already in
+    // hand -- the same track list the playlist picker is built from --
+    // and was being dropped at the GUI boundary, so a missing file told
+    // you a track was gone and never which set now has a gap in it.
+    //
+    // The three answers are different things, and the third is the one
+    // worth being careful about: a reader that does not report
+    // memberships gives an empty list, which means "not known" and must
+    // never be shown as "in no playlist".
+    function test_thePlaylistLineSaysWhichSetsLoseATrack() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null, "the page must instantiate");
+
+        const broken = [{playlists: [{name: "Techno/Peak Time", position: 7},
+                                     {name: "Warmup", position: 2}]}];
+
+        // Missing: every playlist it was in loses it.
+        const missing = page.playlistSentence("missing", broken, null);
+        verify(missing.indexOf("2 playlists") >= 0, "both are named as lost: " + missing);
+        verify(missing.indexOf("Techno/Peak Time") >= 0);
+        verify(missing.indexOf("Warmup") >= 0);
+
+        // Repairable: the kept copy absorbs the row, so only a playlist
+        // the kept copy is NOT in actually loses anything.
+        const survivorInOne = {playlists: [{name: "Warmup", position: 5}]};
+        const partly = page.playlistSentence("repairable", broken, survivorInOne);
+        verify(partly.indexOf("1 playlist") >= 0, "only the one the survivor is missing from: " + partly);
+        verify(partly.indexOf("Techno/Peak Time") >= 0);
+        verify(partly.indexOf("Warmup") < 0, "the survivor covers Warmup, so it is not short a track");
+
+        // And when the kept copy covers all of them, that is worth
+        // saying too rather than leaving the row silent.
+        const survivorInBoth = {playlists: [{name: "Warmup", position: 5},
+                                            {name: "Techno/Peak Time", position: 1}]};
+        const none = page.playlistSentence("repairable", broken, survivorInBoth);
+        verify(none.indexOf("no set loses a track") >= 0, none);
+
+        // Nothing known: the line is empty, so the row says nothing at
+        // all rather than "in no playlist".
+        compare(page.playlistsKnown([{playlists: []}], null), false);
+        compare(page.playlistSentence("missing", [{playlists: []}], null), "",
+                "a missing row with no memberships known says nothing");
+        compare(page.playlistsKnown(broken, null), true);
+
+        // Two broken copies of one song in one issue must not name the
+        // same playlist twice.
+        const twoCopies = [{playlists: [{name: "Warmup", position: 2}]},
+                           {playlists: [{name: "Warmup", position: 9}]}];
+        compare(page.playlistsLeftShort("missing", twoCopies, null).length, 1);
+
+        page.destroy();
+        wait(0);
+    }
+
     function test_theSampleRateFixStagesAndSaysSo() {
         var controller = createTemporaryObject(controllerComponent, testCase);
         controller.sampleRateMissingCount = 43;
