@@ -47,9 +47,16 @@ struct PendingDeletionOutcome
 // stickRoot: the mount point of the stick being processed; an entry
 // outside it fails ("not on this stick") and stays in the manifest,
 // whatever list it arrived in.
+// manifestNotUpdated (optional): set to why the manifest could not be
+// rewritten after the deletions, and left alone when it was. The files
+// are gone by then, so this cannot be reported by failing; it is the
+// one outcome of this function that the returned list cannot express.
+// The entries stay in the manifest in that case, which a later pass
+// reads as "already absent" and clears, so nothing is lost as long as
+// somebody is told to look again.
 std::vector<PendingDeletionOutcome> applyPendingDeletions(
     const std::vector<PendingDeletion> &safeToDelete, const std::string &stickRoot, PendingDeletionManifest &manifest,
     const application::CancellationToken &cancel = application::CancellationToken::none(),
-    const std::function<void(size_t done)> &onFileProcessed = {});
+    const std::function<void(size_t done)> &onFileProcessed = {}, std::string *manifestNotUpdated = nullptr);
 
 }  // namespace seabass::infrastructure::cleanup

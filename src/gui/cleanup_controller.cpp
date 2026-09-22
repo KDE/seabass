@@ -537,8 +537,10 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         // infrastructure/cleanup/pending_deletion_applier.cpp, Qt-free
         // and unit-tested there -- this just logs/formats its result.
         reporter->start("Deleting files", resolution.safeToDelete.size());
+        std::string manifestNotUpdated;
         auto outcomes = infrastructure::cleanup::applyPendingDeletions(
-            resolution.safeToDelete, deletionRoot, manifest, cancel, [&reporter](size_t done) { reporter->tick(done); });
+            resolution.safeToDelete, deletionRoot, manifest, cancel, [&reporter](size_t done) { reporter->tick(done); },
+            &manifestNotUpdated);
         reporter->finish();
         result.cancelled = cancel.cancelled() && outcomes.size() < resolution.safeToDelete.size();
 
@@ -573,6 +575,13 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         }
 
         result.deleted = deleted;
+        // Said out loud rather than folded into the count: the files are
+        // gone and the list of what was waiting still names them, so the
+        // next pass will offer them again and find nothing there. Silence
+        // here would read as a clean run.
+        if (!manifestNotUpdated.empty()) {
+            log.record("cleanup: files were deleted but " + manifestNotUpdated);
+        }
         QStringList parts;
         parts << QString("deleted %1 file(s) from disk").arg(deleted);
         if (!resolution.stillReferenced.empty()) {
@@ -583,6 +592,12 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
             parts << QString("%1 failed to delete").arg(failed);
         }
         result.statusMessage = parts.join("; ");
+        if (!manifestNotUpdated.empty()) {
+            result.errorMessage = QString("Deleted %1 file(s), but the list of files waiting to be deleted could "
+                                          "not be updated. They may be offered again on the next pass; nothing "
+                                          "else was lost.")
+                                      .arg(deleted);
+        }
     } catch (const std::exception &e) {
         result.errorMessage = QString::fromStdString(e.what());
     }

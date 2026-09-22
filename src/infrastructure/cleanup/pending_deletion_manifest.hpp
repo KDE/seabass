@@ -44,6 +44,13 @@ public:
     explicit PendingDeletionManifest(std::string manifestPath);
 
     // Sets entry.timestampUtc to now and appends it as one line.
+    //
+    // Throws std::runtime_error if the line did not reach the file (a
+    // full or write-protected stick, a folder that could not be made).
+    // A change that cannot record what it orphaned must not report
+    // success: the catalog rows would be gone and the file left behind
+    // with nothing naming it, which Delete Orphaned Files reads this
+    // file and only this file to find.
     void append(PendingDeletion entry);
 
     std::vector<PendingDeletion> list() const;
@@ -56,16 +63,30 @@ public:
     // describes when the file was actually orphaned, not when this
     // rewrite happened to run. A no-op (file untouched) if none of
     // processedFilePaths actually match an existing entry.
-    void removeProcessed(const std::set<std::string> &processedFilePaths);
+    //
+    // Returns false if the file could not be rewritten, in which case
+    // the previous manifest is still there in full: the rewrite goes
+    // through the same durable temp-file-and-rename as every other
+    // replaced file on a stick. Callers have already deleted the files
+    // by the time this runs, so this is something to report, not to
+    // treat as "nothing happened".
+    bool removeProcessed(const std::set<std::string> &processedFilePaths);
 
     // Rewrites the manifest, dropping every entry the save behind one of
     // `backupIds` recorded -- for Undo Last Save, which puts those catalog
     // rows back, so their files are no longer orphaned and must not wait
     // in Delete Orphaned Files. Entries without a backup id (a stray file
     // no catalog ever named) are kept. A no-op when nothing matches.
-    void removeForBackups(const std::set<std::string> &backupIds);
+    //
+    // Returns false, with the previous manifest intact, if the file
+    // could not be rewritten -- see removeProcessed().
+    bool removeForBackups(const std::set<std::string> &backupIds);
 
 private:
+    // Replaces the whole file, durably and atomically. False means the
+    // old contents are still there, untouched.
+    bool rewrite(const std::string &contents) const;
+
     std::string m_manifestPath;
 };
 

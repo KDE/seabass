@@ -20,7 +20,8 @@ std::vector<PendingDeletionOutcome> applyPendingDeletions(const std::vector<Pend
                                                             const std::string &stickRoot,
                                                             PendingDeletionManifest &manifest,
                                                             const application::CancellationToken &cancel,
-                                                            const std::function<void(size_t)> &onFileProcessed)
+                                                            const std::function<void(size_t)> &onFileProcessed,
+                                                            std::string *manifestNotUpdated)
 {
     std::vector<PendingDeletionOutcome> outcomes;
     std::set<std::string> processed;
@@ -92,7 +93,9 @@ std::vector<PendingDeletionOutcome> applyPendingDeletions(const std::vector<Pend
         }
     }
 
-    manifest.removeProcessed(processed);
+    if (!manifest.removeProcessed(processed) && manifestNotUpdated != nullptr) {
+        *manifestNotUpdated = "the list of files waiting to be deleted could not be rewritten";
+    }
     return outcomes;
 }
 

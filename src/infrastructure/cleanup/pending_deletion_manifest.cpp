@@ -4,7 +4,10 @@
 
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 
+#include "infrastructure/durable_file_write.hpp"
+
 #include <ctime>
+#include <stdexcept>
 #include <fstream>
 #include <system_error>
 #include <filesystem>
@@ -133,12 +136,27 @@ void PendingDeletionManifest::append(PendingDeletion entry)
     std::filesystem::create_directories(std::filesystem::path(m_manifestPath).parent_path(), dirEc);
     std::ofstream ofs(m_manifestPath, std::ofstream::app);
     ofs << serializeLine(entry);
+    // The comment above says what a lost line costs and then this said
+    // nothing about whether the line arrived. A stick with no room left,
+    // a folder that could not be created, a read-only mount: the stream
+    // fails, append() returns, and the change that called it goes on to
+    // remove the track's catalog rows and report success. The file is
+    // then orphaned on the stick with nothing recording that it should
+    // go -- invisible to Delete Orphaned Files, which reads this file
+    // and nothing else. Closed explicitly rather than left to the
+    // destructor, because that is where a buffered write actually
+    // reaches the filesystem and it has nowhere to report a failure.
+    ofs.close();
+    if (!ofs) {
+        throw std::runtime_error("could not record the orphaned file in " + m_manifestPath
+                                 + ": the stick may be full or write-protected");
+    }
 }
 
-void PendingDeletionManifest::removeProcessed(const std::set<std::string> &processedFilePaths)
+bool PendingDeletionManifest::removeProcessed(const std::set<std::string> &processedFilePaths)
 {
     if (processedFilePaths.empty()) {
-        return;
+        return true;
     }
     auto entries = list();
     std::ostringstream rewritten;
@@ -151,21 +169,15 @@ void PendingDeletionManifest::removeProcessed(const std::set<std::string> &proce
         rewritten << serializeLine(entry);
     }
     if (!anyRemoved) {
-        return;
+        return true;
     }
-    // <stick>/Seabass/orphaned may not exist yet, and ofstream will not
-    // create it -- an unopened stream drops the record of what is waiting
-    // to be deleted, which is the one thing this file exists to keep.
-    std::error_code dirEc;
-    std::filesystem::create_directories(std::filesystem::path(m_manifestPath).parent_path(), dirEc);
-    std::ofstream ofs(m_manifestPath, std::ofstream::trunc);
-    ofs << rewritten.str();
+    return rewrite(rewritten.str());
 }
 
-void PendingDeletionManifest::removeForBackups(const std::set<std::string> &backupIds)
+bool PendingDeletionManifest::removeForBackups(const std::set<std::string> &backupIds)
 {
     if (backupIds.empty()) {
-        return;
+        return true;
     }
     std::ostringstream rewritten;
     bool anyRemoved = false;
@@ -177,10 +189,29 @@ void PendingDeletionManifest::removeForBackups(const std::set<std::string> &back
         rewritten << serializeLine(entry);
     }
     if (!anyRemoved) {
-        return;
+        return true;
     }
-    std::ofstream ofs(m_manifestPath, std::ofstream::trunc);
-    ofs << rewritten.str();
+    return rewrite(rewritten.str());
+}
+
+// Both removals rebuild the whole file, so both went through an
+// ofstream opened with trunc: the old list was destroyed first and the
+// new one written into what was left. A stick that filled up, or was
+// pulled, between those two steps left a manifest holding some prefix
+// of the entries that were being KEPT -- the files still orphaned, the
+// ones a later pass exists to offer. Nothing read the stream afterwards
+// either, so a rewrite that wrote nothing at all reported the same as
+// one that worked.
+//
+// writeFileDurablyAtomic() is the primitive this project already uses
+// wherever a stick file is replaced (pdb rows, ANLZ files, the backup
+// manifest, the edit lock): same-directory temp file, fsync, rename,
+// and on any failure the previous file is left exactly as it was.
+bool PendingDeletionManifest::rewrite(const std::string &contents) const
+{
+    std::error_code dirEc;
+    std::filesystem::create_directories(std::filesystem::path(m_manifestPath).parent_path(), dirEc);
+    return infrastructure::writeFileDurablyAtomic(m_manifestPath, contents);
 }
 
 std::vector<PendingDeletion> PendingDeletionManifest::list() const

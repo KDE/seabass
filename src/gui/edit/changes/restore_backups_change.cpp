@@ -98,7 +98,18 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
         // Rewritten inside this change, so a rollback of it puts the list
         // back along with the catalogs.
         ctx.protectForThisChange(pendingPath);
-        infrastructure::cleanup::PendingDeletionManifest(pendingPath).removeForBackups(ids);
+        // An undo that cannot drop these lines leaves the stick saying
+        // two different things: the rows are back, and the files they
+        // name are still listed as waiting to be deleted. Delete
+        // Orphaned Files re-checks every entry against the catalogs
+        // before it removes anything, so nothing would be destroyed on
+        // that list alone, but reporting the undo as done while half of
+        // it did not happen is what fails here.
+        if (!infrastructure::cleanup::PendingDeletionManifest(pendingPath).removeForBackups(ids)) {
+            return ChangeOutcome::failure(
+                QStringLiteral("Could not update the list of files waiting to be deleted on this stick. The save "
+                               "stops here and puts back what it wrote."));
+        }
     }
     return ChangeOutcome::success();
 }
