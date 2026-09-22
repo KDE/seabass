@@ -524,9 +524,29 @@ live_test() {  # <stick> <full test name>...
             echo "   SKIPPED, which counts as a failure here"
             failed=1
         fi
-        if [ -f "$stick_log" ] && [ "$(wc -l < "$stick_log")" -gt "$before" ]; then
-            echo "--- $stick_log, what this test added:"
+        local after_lines=0
+        [ -f "$stick_log" ] && after_lines=$(wc -l < "$stick_log")
+        if [ -f "$stick_log" ] && [ "$after_lines" -gt "$before" ]; then
+            # The counts, not just the lines. F4's first passing run
+            # collected ONE line where the save should have written four,
+            # and without the numbers there was no way to tell a short log
+            # from a short excerpt. The likeliest reason is worth saying
+            # out loud too: on a stick filled to a couple of hundred
+            # kilobytes, appending to the log needs a cluster it does not
+            # have, so the save's own account of itself is the next thing
+            # to fail. Which makes it evidence about the stick as much as
+            # about the save.
+            echo "--- $stick_log, $((after_lines - before)) new line(s) (was $before, now $after_lines):"
             tail -n +$((before + 1)) "$stick_log" | sed 's/^/    /'
+            if [ "$(free_kb_of "$stick")" -lt 1024 ]; then
+                echo "    (under a megabyte free: the log itself may not have been able to grow,"
+                echo "     so absent lines here are not evidence that the save skipped that step)"
+            fi
+        elif [ -f "$stick_log" ]; then
+            echo "--- $stick_log did not grow ($before line(s) before and after)"
+            if [ "$(free_kb_of "$stick")" -lt 1024 ]; then
+                echo "    (under a megabyte free, so it may not have been able to)"
+            fi
         elif [ ! -f "$stick_log" ]; then
             # Not a failure on its own: a read-only check writes nothing.
             # Said out loud so "no log" is never mistaken for "no lines".
