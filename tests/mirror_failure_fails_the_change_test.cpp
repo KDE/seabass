@@ -12,7 +12,10 @@
 // behaviour it was fixed FROM, under a stated convention -- "best-effort
 // mirror, same convention as Clean Up's own survivor-cue mirror block".
 // RemoveJunkCueChange was brought into line first (see
-// junk_cue_mirror_failure_test); this covers the remaining three.
+// junk_cue_mirror_failure_test); this covers the other three, and then
+// the two sites in CleanupGroupChange -- including the survivor-cue
+// mirror block the convention was named after, which went on writing
+// half the library for as long as the changes quoting it did.
 //
 // Each runs twice over its own copy of the fixture: once with a writable
 // mirror, which must SUCCEED and change the stick, and once with the
@@ -43,6 +46,8 @@
 #include "domain/local_restore.hpp"
 #include "domain/metadata_restore.hpp"
 #include "domain/track.hpp"
+#include "domain/duplicate_cleanup.hpp"
+#include "gui/edit/changes/cleanup_group_change.hpp"
 #include "gui/edit/changes/merge_cues_change.hpp"
 #include "gui/edit/changes/repair_issue_change.hpp"
 #include "gui/edit/changes/restore_metadata_change.hpp"
@@ -74,26 +79,63 @@ fs::path freshCopy(const std::string &name)
     return pioneerRoot;
 }
 
-// A track Device Library Plus actually lists. A track it does not list is
+// Tracks Device Library Plus actually lists. A track it does not list is
 // deliberately NOT a failure, so picking one would test the opposite of
 // what this is for.
-std::optional<Track> mirroredTrack(const fs::path &pioneerRoot, bool needsACue)
+//
+// A clean-up needs two: the copy it keeps and the copy it removes. Only
+// the first is asked for a cue, because only the change acting on the
+// kept copy writes one; a doomed copy is removed whether it has cues or
+// not. Returns nothing at all unless it found the full number asked
+// for, so a case can never quietly run on half its fixture.
+std::vector<Track> mirroredTracks(const fs::path &pioneerRoot, std::size_t wanted, bool firstNeedsACue)
 {
+    std::vector<Track> picked;
     const std::string root = pioneerRoot.string();
     if (!seabass::infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root)) {
-        return std::nullopt;
+        return picked;
     }
     seabass::infrastructure::onelibrary::OneLibraryCueWriter mirror(root);
     seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(root);
     for (const Track &track : reader.readAll()) {
-        if (track.filePath.empty() || (needsACue && track.cues.empty())) {
+        if (track.filePath.empty()) {
             continue;
         }
-        if (mirror.hasTrackAtPath(track.filePath)) {
-            return track;
+        if (picked.empty() && firstNeedsACue && track.cues.empty()) {
+            continue;
+        }
+        if (!mirror.hasTrackAtPath(track.filePath)) {
+            continue;
+        }
+        picked.push_back(track);
+        if (picked.size() == wanted) {
+            return picked;
         }
     }
-    return std::nullopt;
+    picked.clear();
+    return picked;
+}
+
+// One group to clean up, built by hand rather than through the planner:
+// which two copies the fixture happens to offer is not the point here,
+// only that both halves of the library list them. withAnExtraCue picks
+// which of the two mirror sites the case exercises -- a merged set
+// bigger than the survivor's own runs the cue mirror, an unchanged one
+// leaves the row removal as the only mirror write in the change.
+DuplicateCleanupPlan cleanupPlan(const Track &survivor, const Track &doomed, bool withAnExtraCue)
+{
+    DuplicateCleanupPlan plan;
+    plan.group.tracks = {survivor, doomed};
+    plan.survivor = survivor;
+    plan.toRemove = {doomed};
+    plan.mergedCuesForSurvivor = survivor.cues;
+    if (withAnExtraCue) {
+        CuePoint extra;
+        extra.kind = CuePoint::Kind::Memory;
+        extra.positionMs = 13579.0;
+        plan.mergedCuesForSurvivor.push_back(extra);
+    }
+    return plan;
 }
 
 std::map<std::string, std::string> snapshot(const fs::path &root)
@@ -149,21 +191,24 @@ SaveLoopResult runOne(const fs::path &pioneerRoot, const std::shared_ptr<Pending
     return runSaveLoop(changes, ctx);
 }
 
-using MakeChange = std::function<std::shared_ptr<PendingChange>(const fs::path &, const Track &)>;
+// tracks[0] is the track the change acts on; a clean-up also gets
+// tracks[1], the copy it removes.
+using MakeChange = std::function<std::shared_ptr<PendingChange>(const fs::path &, const std::vector<Track> &)>;
 
-void bothWays(const std::string &what, bool needsACue, const MakeChange &make)
+void bothWays(const std::string &what, std::size_t tracksNeeded, bool firstNeedsACue, const MakeChange &make)
 {
     // ---- writable mirror: must go through AND change the stick --------
     {
         const fs::path root = freshCopy("seabass_mirror_ok_" + what);
-        const auto track = mirroredTrack(root, needsACue);
-        if (!track) {
-            std::cerr << what << ": the fixture offers no rekordbox track that Device Library Plus lists"
-                      << (needsACue ? " and that carries a cue" : "") << "\n";
+        const std::vector<Track> tracks = mirroredTracks(root, tracksNeeded, firstNeedsACue);
+        if (tracks.empty()) {
+            std::cerr << what << ": the fixture offers no " << tracksNeeded
+                      << " rekordbox track(s) that Device Library Plus lists"
+                      << (firstNeedsACue ? ", the first carrying a cue" : "") << "\n";
             std::exit(1);
         }
         const auto before = snapshot(root);
-        const SaveLoopResult result = runOne(root, make(root, *track));
+        const SaveLoopResult result = runOne(root, make(root, tracks));
         if (!result.error.isEmpty()) {
             std::cerr << what << " baseline failed: " << result.error.toStdString() << "\n";
         }
@@ -177,12 +222,12 @@ void bothWays(const std::string &what, bool needsACue, const MakeChange &make)
     // ---- read-only mirror: must fail, and put everything back ---------
     {
         const fs::path root = freshCopy("seabass_mirror_ro_" + what);
-        const auto track = mirroredTrack(root, needsACue);
-        assert(track && "the same fixture must still offer the same track");
+        const std::vector<Track> tracks = mirroredTracks(root, tracksNeeded, firstNeedsACue);
+        assert(!tracks.empty() && "the same fixture must still offer the same tracks");
         setMirrorReadOnly(root, true);
         const auto before = snapshot(root);
 
-        const SaveLoopResult result = runOne(root, make(root, *track));
+        const SaveLoopResult result = runOne(root, make(root, tracks));
         setMirrorReadOnly(root, false);
 
         if (result.error.isEmpty()) {
@@ -222,7 +267,8 @@ void bothWays(const std::string &what, bool needsACue, const MakeChange &make)
 int main()
 {
     // MergeCuesChange -- Local Cue Backup's merge onto a stick track.
-    bothWays("merge-cues", true, [](const fs::path &root, const Track &track) {
+    bothWays("merge-cues", 1, true, [](const fs::path &root, const std::vector<Track> &tracks) {
+        const Track &track = tracks.front();
         RestoreCandidate candidate;
         candidate.stickTrack = track;
         candidate.mergedCues = track.cues;
@@ -237,7 +283,8 @@ int main()
     // RepairIssueChange -- Library Health's repair, writing the
     // survivor's merged cues. No brokenGroup, so this exercises the cue
     // mirror rather than the row removal.
-    bothWays("repair-issue", true, [](const fs::path &root, const Track &track) {
+    bothWays("repair-issue", 1, true, [](const fs::path &root, const std::vector<Track> &tracks) {
+        const Track &track = tracks.front();
         LibraryConsistencyIssue issue;
         issue.kind = LibraryConsistencyIssue::Kind::Repairable;
         issue.survivor = track;
@@ -250,7 +297,8 @@ int main()
     });
 
     // RestoreMetadataChange -- Restore Metadata's cue write.
-    bothWays("restore-metadata", false, [](const fs::path &root, const Track &track) {
+    bothWays("restore-metadata", 1, false, [](const fs::path &root, const std::vector<Track> &tracks) {
+        const Track &track = tracks.front();
         MetadataRestoreProposal proposal;
         proposal.stickTrack = track;
         proposal.cues = track.cues;
@@ -262,6 +310,30 @@ int main()
         return std::make_shared<RestoreMetadataChange>(QStringLiteral("rekordbox"),
                                                        QString::fromStdString(root.string()),
                                                        QString::fromStdString(track.sourceId), proposal, 1);
+    });
+
+    // CleanupGroupChange, site one -- the merged cues onto the copy it
+    // keeps. This is the block the retired convention named itself
+    // after, and it kept the behaviour it was quoted for: the cues the
+    // removed copies held reached DeviceLibrary while a player reading
+    // Device Library Plus went on showing the survivor without them,
+    // with the copies that had them gone.
+    bothWays("cleanup-merged-cues", 2, true, [](const fs::path &root, const std::vector<Track> &tracks) {
+        return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
+                                                    QString::fromStdString(root.string()),
+                                                    cleanupPlan(tracks[0], tracks[1], true), 1);
+    });
+
+    // CleanupGroupChange, site two -- removing the copy's row. Nothing
+    // is added to the merged set, so the cue mirror above is skipped
+    // and the removal is the only mirror write left in the change: a
+    // failure here means the copy is gone from DeviceLibrary, still
+    // offered by Device Library Plus, and pointing at a file the same
+    // save schedules for deletion.
+    bothWays("cleanup-row-removal", 2, true, [](const fs::path &root, const std::vector<Track> &tracks) {
+        return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
+                                                    QString::fromStdString(root.string()),
+                                                    cleanupPlan(tracks[0], tracks[1], false), 1);
     });
 
     std::cout << "mirror_failure_fails_the_change_test passed\n";

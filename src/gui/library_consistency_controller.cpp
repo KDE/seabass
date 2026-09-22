@@ -854,12 +854,15 @@ void LibraryConsistencyController::attachSession()
                 }
                 for (auto it = m_stagedIssues.begin(); it != m_stagedIssues.end(); ++it) {
                     if (it->second.changeId == changeId) {
-                        // A rekordbox repair mirrors its cue merge/row
-                        // removal into OneLibrary best-effort, which can
-                        // silently stale an already-listed OneLibrary
-                        // issue in ways only a fresh check across every
-                        // format could catch: re-scan once the save is
-                        // done (see saveFinished below).
+                        // A rekordbox repair also writes its cue merge
+                        // and row removal into OneLibrary -- no longer
+                        // best-effort (2137fcd4: a mirror it cannot
+                        // write fails the change), but a mirror write
+                        // that DOES land stales an already-listed
+                        // OneLibrary issue just the same, in ways only a
+                        // fresh check across every format could catch:
+                        // re-scan once the save is done (see
+                        // saveFinished below).
                         if (changeId.startsWith(QStringLiteral("repair:rekordbox:"))) {
                             m_rescanAfterSave = true;
                         }

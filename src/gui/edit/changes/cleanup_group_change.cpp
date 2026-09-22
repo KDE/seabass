@@ -459,18 +459,28 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         w.session.noteItemApplied();
         log.record("cleanup: wrote merged cues onto survivor track id=" + survivorId);
 
-        // Best-effort secondary write, alongside the primary write
-        // above, never fatal to this operation. See OneLibraryCueWriter's
-        // own class comment and docs/onelibrary-format.md.
+        // The other half of the same library, not an optional extra.
+        // This is the block the retired convention named itself after --
+        // "best-effort mirror, same convention as Clean Up's own
+        // survivor-cue mirror block" -- and it did exactly what the
+        // changes quoting it did: wrote the merged cues into
+        // DeviceLibrary, logged a failed Device Library Plus write, and
+        // reported success. The cues the doomed copies held then reached
+        // one catalog only, and a player reading the other showed the
+        // survivor without them, with the doomed copies gone. See
+        // mirrorCuesOrExplain(), which is where a failed mirror is
+        // decided for every change, and which asks hasTrackAtPath()
+        // first so a track Device Library Plus does not list stays a
+        // non-event rather than becoming a refusal.
         if (!fc.pioneerRoot.empty() && !plan.survivor.filePath.empty()
             && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(fc.pioneerRoot) && !oneLibraryWrittenAsCatalog) {
-            try {
-                sharedOneLibraryWriter(ctx, fc.pioneerRoot)
-                    .writeCuesForPath(plan.survivor.filePath, plan.mergedCuesForSurvivor);
-                log.record("cleanup: also wrote merged cues onto survivor into OneLibrary (id="
-                           + plan.survivor.sourceId + ")");
-            } catch (const std::exception &e) {
-                log.record("cleanup: OneLibrary cue write failed for \"" + plan.survivor.title + "\": " + e.what());
+            const QString failed =
+                mirrorCuesOrExplain(sharedOneLibraryWriter(ctx, fc.pioneerRoot), plan.survivor.filePath,
+                                    plan.mergedCuesForSurvivor, ctx, "cleanup",
+                                    QStringLiteral("write the merged cues onto \"%1\"")
+                                        .arg(QString::fromStdString(plan.survivor.title)));
+            if (!failed.isEmpty()) {
+                return ChangeOutcome::failure(failed);
             }
         }
     }
@@ -478,9 +488,11 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     // Fills in the survivor's missing bpm/key/artwork from whichever
     // other copy in the group has each (see domain::DuplicateCleanupPlan's
     // own comment on why this is a per-field "fill a gap", not a merge).
-    // Primary-format writes here are NOT best-effort: a failure fails
-    // this change. Only the OneLibrary *mirror* of a rekordbox write,
-    // below, is best-effort, same as the merged-cues mirror.
+    // No write here is best-effort, the Device Library Plus mirror of a
+    // rekordbox write below included: a failure fails this change. The
+    // one tolerated case is a file Device Library Plus does not list at
+    // all, which is not a disagreement (see the OneLibraryRowMissing
+    // catch below).
     // Play history goes to the page's own catalog only in a form that
     // catalog keeps: a play count in rekordbox and OneLibrary, a
     // last-played time in Engine. Entering the rekordbox branch for a
@@ -643,11 +655,14 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                        + "\"), replaced by survivor id=" + survivorId);
         }
 
-        // Best-effort OneLibrary mirror. Without this, the doomed
-        // track's own OneLibrary row is left pointing at a file this
-        // change is about to schedule for deletion, becoming an orphan
-        // (this is exactly how real orphaned rows were found on
-        // production data, see docs/onelibrary-format.md).
+        // The doomed copy's Device Library Plus row, under the same rule
+        // as the cue mirror above. Without this the row is left pointing
+        // at a file this change is about to schedule for deletion,
+        // becoming an orphan (this is exactly how real orphaned rows
+        // were found on production data, see docs/onelibrary-format.md)
+        // -- and a player reading Device Library Plus still offers a
+        // copy the page said had been removed, which is the same shape
+        // as RepairIssueChange's broken-row removal (2137fcd4).
         if (!fc.pioneerRoot.empty() && !doomed.filePath.empty() && !plan.survivor.filePath.empty()
             && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(fc.pioneerRoot) && !oneLibraryWrittenAsCatalog) {
             try {
@@ -658,10 +673,26 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                     .removeTrackByPathReplacingWith(doomed.filePath, plan.survivor.filePath);
                 log.record("cleanup: also removed OneLibrary row for id=" + doomed.sourceId);
             } catch (const infrastructure::onelibrary::OneLibraryRowMissing &e) {
+                // Not listed there at all: no second copy to remove and
+                // nothing in disagreement. The same non-event
+                // hasTrackAtPath() stands for in mirrorCuesOrExplain(),
+                // and the same one the field propagation above tolerates
+                // -- 635 of 1118 tracks on a real stick are in that
+                // position.
                 log.record("cleanup: OneLibrary does not list \"" + doomed.title + "\", nothing to remove: "
                            + e.what());
             } catch (const std::exception &e) {
                 log.record("cleanup: OneLibrary row removal failed for \"" + doomed.title + "\": " + e.what());
+                // The row is listed and could not be removed, so the copy
+                // is gone from DeviceLibrary and still offered by Device
+                // Library Plus, pointing at a file this save schedules
+                // for deletion. Failing makes the save loop put back
+                // everything this change wrote, in every catalog.
+                return ChangeOutcome::failure(
+                    QStringLiteral("Could not remove \"%1\" from Device Library Plus: %2. The save stops here and "
+                                   "puts back what this change wrote, so DeviceLibrary and Device Library Plus "
+                                   "stay in agreement.")
+                        .arg(QString::fromStdString(doomed.title), QString::fromUtf8(e.what())));
             }
         }
 
