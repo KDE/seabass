@@ -115,10 +115,15 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
                              "files this undo put back, which a later pass will leave alone");
             ctx.onFinish([](bool ok) {
                 if (ok) {
+                    // No promise that this tidies itself up: Delete
+                    // Orphaned Files keeps every entry it will not act
+                    // on, so these lines stay on the page until a later
+                    // save rewrites the list. Saying otherwise would
+                    // leave someone waiting for it.
                     throw SaveTidyUpFailed(
                         "Your library is back. The stick's list of files waiting to be deleted could not be "
-                        "updated, so it still names files the undo restored; nothing is deleted on that list "
-                        "alone, and the next check will drop them.");
+                        "updated, so it still names files the undo restored. Nothing is deleted on that list "
+                        "alone, but those tracks stay on the Delete Orphaned Files page for now.");
                 }
             });
         }

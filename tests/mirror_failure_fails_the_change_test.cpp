@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -507,6 +508,35 @@ int main()
         std::error_code ec;
         fs::remove_all(root.parent_path(), ec);
         std::cout << "  cleanup-same-row: two rows sharing one mirror row is not a refusal\n";
+    }
+
+    // The same file under a different spelling. Everything else in this
+    // project that decides whether two paths name one file goes through
+    // normalizedPathKey() -- a byte comparison here would miss a case
+    // difference on Windows, or the decomposed spelling macOS hands back
+    // from a directory read (which pending_deletion_applier.cpp
+    // documents), and put the kept track on the deletion list.
+    {
+        const fs::path root = freshCopy("seabass_cleanup_same_file_spelling");
+        const std::vector<Track> pair = mirroredTracks(root, 2, false);
+        assert(pair.size() == 2);
+        Track doomed = pair[1];
+        doomed.filePath = pair[0].filePath;
+        std::transform(doomed.filePath.begin(), doomed.filePath.end(), doomed.filePath.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        assert(doomed.filePath != pair[0].filePath && "the fixture path must have letters to re-spell");
+
+        const SaveLoopResult result = runOne(root, cleanupChange(root, pair[0], {doomed}, false));
+        assert(result.error.isEmpty());
+        assert(result.appliedIds.size() == 1);
+        const std::string pending = pendingDeletionBytes(root);
+        assert(pending.find(pair[0].filePath) == std::string::npos
+               && "the kept file is not scheduled under its own spelling");
+        assert(pending.find(doomed.filePath) == std::string::npos
+               && "nor under the other spelling of the same file");
+        std::error_code ec;
+        fs::remove_all(root.parent_path(), ec);
+        std::cout << "  cleanup-same-file-spelling: one file spelled two ways is still one file\n";
     }
 
     // The same not-listed question on Library Health's side. Its broken

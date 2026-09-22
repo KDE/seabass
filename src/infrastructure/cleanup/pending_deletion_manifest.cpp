@@ -268,7 +268,13 @@ bool PendingDeletionManifest::readAll(std::vector<PendingDeletion> &result) cons
         entry.backupId = extractField(line, "backupId").value_or("");
         result.push_back(std::move(entry));
     }
-    return true;
+    // getline stopping is how the end of the file looks AND how a read
+    // that broke looks: on the dying stick this function's own bool
+    // exists for, the loop ends early with a prefix of the entries and
+    // nothing says so. A rewrite would then write that prefix back and
+    // the rest -- the files still orphaned -- would be gone from the
+    // list for good. eof is the ordinary end; bad() is the medium.
+    return !ifs.bad();
 }
 
 }  // namespace seabass::infrastructure::cleanup

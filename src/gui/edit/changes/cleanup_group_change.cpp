@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "application/path_key.hpp"
 #include "application/ports/cue_writer.hpp"
 #include "application/ports/library_cleanup_writer.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
@@ -738,7 +739,7 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         // Nothing is destroyed by that (the same check is what stops the
         // deletion), but the page would go on offering a track the DJ is
         // using.
-        if (doomed.filePath == plan.survivor.filePath) {
+        if (application::normalizedPathKey(doomed.filePath) == application::normalizedPathKey(plan.survivor.filePath)) {
             log.record("cleanup: \"" + doomed.title + "\" is another row for the file being kept, so nothing is "
                        "scheduled for deletion");
             continue;

@@ -47,17 +47,30 @@ bool writeFileDurably(const std::string &path, const std::string &data)
 
 bool appendDurably(const std::string &path, const std::string &data)
 {
-    HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+    // GENERIC_WRITE as well as FILE_APPEND_DATA: cutting a partial write
+    // back (below) needs SetEndOfFile, which append-only access does not
+    // allow. The appending itself still goes through the append offset.
+    HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         return false;
     }
+    LARGE_INTEGER before{};
+    const BOOL haveSize = GetFileSizeEx(h, &before);
     DWORD written = 0;
     BOOL ok = WriteFile(h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
     if (ok && written == data.size()) {
         ok = FlushFileBuffers(h) != 0;
     } else {
         ok = FALSE;
+    }
+    if (!ok && haveSize) {
+        // Same reason as the POSIX side: half a line here becomes one
+        // line glued to the next record. Best effort.
+        LARGE_INTEGER move = before;
+        if (SetFilePointerEx(h, move, nullptr, FILE_BEGIN) && SetEndOfFile(h)) {
+            FlushFileBuffers(h);
+        }
     }
     CloseHandle(h);
     return ok != 0;
@@ -107,6 +120,13 @@ bool appendDurably(const std::string &path, const std::string &data)
     if (fd < 0) {
         return false;
     }
+    // Where the file ended before this call. A write that stops halfway
+    // (the full stick this is guarding against) otherwise leaves a line
+    // with no newline on it, and the NEXT append lands on the same line:
+    // one record swallowing another, with the parser taking the first
+    // filePath it finds in the merged text. Cut back to here instead, so
+    // a failed append leaves the file exactly as it was.
+    const off_t before = ::lseek(fd, 0, SEEK_END);
     const char *p = data.data();
     size_t remaining = data.size();
     bool ok = true;
@@ -118,6 +138,20 @@ bool appendDurably(const std::string &path, const std::string &data)
         }
         p += n;
         remaining -= static_cast<size_t>(n);
+    }
+    if (!ok && before >= 0) {
+        // Best effort by necessity: if this fails too there is nothing
+        // further to try, and the caller is already being told the
+        // append did not happen.
+        if (::ftruncate(fd, before) == 0) {
+#if defined(__APPLE__)
+            if (::fcntl(fd, F_FULLFSYNC) != 0) {
+                ::fsync(fd);
+            }
+#else
+            ::fsync(fd);
+#endif
+        }
     }
     if (ok) {
 #if defined(__APPLE__)
