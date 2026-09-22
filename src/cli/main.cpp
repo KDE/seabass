@@ -47,6 +47,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "application/catalog_digest.hpp"
+#include "cli/damage_filesystem.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
@@ -1527,6 +1528,8 @@ int main(int argc, char **argv)
     std::string hardware;
     std::string notes;
     std::vector<std::string> commands;
+    bool yesReallyDestroy = false;
+    std::string damageDevice;
 
     auto looksLikeFlag = [](const std::string &s) { return s.size() >= 2 && s[0] == '-' && s[1] == '-'; };
 
@@ -1534,6 +1537,10 @@ int main(int argc, char **argv)
         const std::string &arg = args[i];
         if (arg == "--help" || arg == "-h") {
             help = true;
+        } else if (arg == "--yes-really-destroy") {
+            // Spelled out in full, and never inferred: damage-filesystem
+            // refuses to look at a device without it. See issue #37.
+            yesReallyDestroy = true;
         } else if (arg == "--verbose") {
             verbose = true;
         } else if (arg == "--auto") {
@@ -1647,7 +1654,11 @@ int main(int argc, char **argv)
             printUsage();
             return 1;
         } else {
-            commands.push_back(arg);
+            if (arg.rfind("/dev/", 0) == 0) {
+                damageDevice = arg;
+            } else {
+                commands.push_back(arg);
+            }
         }
     }
 
@@ -1659,7 +1670,8 @@ int main(int argc, char **argv)
     }
     if (commands.size() != 1 ||
         (commands[0] != "scan" && commands[0] != "backups" && commands[0] != "sync" && commands[0] != "anonymize" &&
-         commands[0] != "export-xml" && commands[0] != "digest")) {
+         commands[0] != "export-xml" && commands[0] != "digest"
+         && commands[0] != "damage-filesystem")) {
         Console::error("unknown command: " + commands[0]);
         printUsage();
         return 1;
@@ -1676,6 +1688,14 @@ int main(int argc, char **argv)
     if (commands[0] == "export-xml") {
         return runExportXmlCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, outDir, excludeExtensions,
                                     pathPrefixMap, preferEngine, keepJunkCues);
+    }
+
+    if (commands[0] == "damage-filesystem") {
+        // Deliberately absent from printUsage(): this exists for the
+        // release rig and for reproducing a bug report, and a person
+        // reading --help has no business finding it. See issue #37 and
+        // cli/damage_filesystem.hpp for what it refuses to do.
+        return seabass::cli::runDamageFilesystemCommand(damageDevice, yesReallyDestroy);
     }
 
     if (commands[0] == "digest") {

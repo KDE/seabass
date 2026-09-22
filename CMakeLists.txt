@@ -663,6 +663,7 @@ add_executable(seabass-cli
     src/cli/console.cpp
     src/cli/terminal_progress_reporter.cpp
     src/cli/main.cpp
+    src/cli/damage_filesystem.cpp
 )
 target_include_directories(seabass-cli PRIVATE src)
 target_link_libraries(seabass-cli PRIVATE seabass_core)
@@ -2055,6 +2056,18 @@ if(TARGET Qt6::Core)
         target_link_libraries(pending_deletion_unreadable_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME pending_deletion_unreadable_test COMMAND pending_deletion_unreadable_test)
+
+    add_executable(damage_filesystem_test tests/damage_filesystem_test.cpp src/cli/damage_filesystem.cpp
+        src/cli/console.cpp)
+    target_include_directories(damage_filesystem_test PRIVATE src)
+    target_link_libraries(damage_filesystem_test PRIVATE seabass_core Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(damage_filesystem_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME damage_filesystem_test COMMAND damage_filesystem_test)
+    # Needs mkfs.fat to build a real FAT32 volume. Without it the cases
+    # that matter cannot run, and the test says so rather than passing.
+    set_tests_properties(damage_filesystem_test PROPERTIES SKIP_RETURN_CODE 77)
     # Taking search permission off a directory is the only portable way to
     # make exists() fail, and it does nothing as root or on a filesystem
     # that ignores the mode. The test says so and exits 77 rather than
