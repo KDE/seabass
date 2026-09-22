@@ -181,6 +181,104 @@ int main(int argc, char **argv)
     }
     check(!datSlots.empty() && !extSlots.empty(), "both files contributed hot cues to check the split against");
 
+    // ---- Encoding from scratch (#7, Tier 2) ---------------------------
+    //
+    // Everything above is a sweep over real sections, which proves the
+    // decoder and the carry-over path against 7968 of them and proves
+    // nothing about building one. A section IS built from scratch every
+    // time a cue is written to a track whose file has no PCOB yet, and
+    // that path had no test at all.
+    {
+        // An empty hot list, which is what a track has after its last
+        // legacy cue is removed. The survey says len_tag = 24 + 56 * n,
+        // and memory_count 0xFFFFFFFF for every hot list, empty or not.
+        const std::string emptyHot = AnlzLegacyCueCodec::encodeCues({}, CueListTypeHot);
+        check(emptyHot.size() == 24, "an empty section is just its 24-byte header");
+        check(AnlzLegacyCueCodec::decodeCues(emptyHot).empty(), "and decodes back to nothing");
+        check(AnlzLegacyCueCodec::memoryCountOf(emptyHot) == 0xFFFFFFFFu,
+              "a new hot list carries the value 7965 of 7968 real sections carry");
+
+        // A populated memory list, where the three real examples hold 0
+        // rather than the majority value. Built from scratch, so it
+        // takes that default rather than the majority.
+        std::vector<LegacyCueEntry> memory(1);
+        memory[0].hotCueNumber = 0;
+        memory[0].timeMs = 45'000;
+        const std::string newMemory = AnlzLegacyCueCodec::encodeCues(memory, CueListTypeMemory);
+        check(newMemory.size() == 24 + 56, "one entry is 56 bytes on top of the header");
+        check(AnlzLegacyCueCodec::memoryCountOf(newMemory) == 0,
+              "a new populated memory list takes what all three real ones hold");
+        const auto memoryBack = AnlzLegacyCueCodec::decodeCues(newMemory);
+        check(memoryBack.size() == 1 && memoryBack[0].timeMs == 45'000, "and the cue survives");
+
+        // Order is preserved exactly as handed over, and that is the
+        // load-bearing property rather than an omission: sorting here
+        // would reorder a section read from a file and written straight
+        // back, which is what the 7968 byte-identical round trips above
+        // depend on. The descending order real hot lists have is
+        // RekordboxCueWriter's job, and it does it.
+        //
+        // Asserted with ascending input on purpose. The header used to
+        // claim the ENCODER emits descending, which is not what it does
+        // and contradicted its own .cpp; this is the case that caught
+        // it.
+        std::vector<LegacyCueEntry> hot(3);
+        hot[0].hotCueNumber = 1;
+        hot[0].timeMs = 1000;
+        hot[1].hotCueNumber = 2;
+        hot[1].timeMs = 2000;
+        hot[2].hotCueNumber = 3;
+        hot[2].timeMs = 3000;
+        const auto asGiven = AnlzLegacyCueCodec::decodeCues(AnlzLegacyCueCodec::encodeCues(hot, CueListTypeHot));
+        check(asGiven.size() == 3, "all three came back");
+        check(asGiven[0].hotCueNumber == 1 && asGiven[1].hotCueNumber == 2 && asGiven[2].hotCueNumber == 3,
+              "the codec writes the order it was given, so a carried section is not reordered");
+
+        // A loop built from scratch: type 2 and its out point, and not
+        // quietly turned into a plain cue on the way through.
+        std::vector<LegacyCueEntry> loops(2);
+        loops[0].hotCueNumber = 1;
+        loops[0].timeMs = 8000;
+        loops[0].isLoop = true;
+        loops[0].loopEndMs = 16'000;
+        loops[1].hotCueNumber = 2;
+        loops[1].timeMs = 20'000;  // not a loop, beside one that is
+        const auto loopBack = AnlzLegacyCueCodec::decodeCues(AnlzLegacyCueCodec::encodeCues(loops, CueListTypeHot));
+        check(loopBack.size() == 2, "both entries survived");
+        const LegacyCueEntry &asLoop = loopBack[0].hotCueNumber == 1 ? loopBack[0] : loopBack[1];
+        const LegacyCueEntry &asCue = loopBack[0].hotCueNumber == 1 ? loopBack[1] : loopBack[0];
+        check(asLoop.isLoop && asLoop.timeMs == 8000 && asLoop.loopEndMs == 16'000, "the loop kept its out point");
+        check(!asCue.isLoop, "and the cue beside it did not become one");
+
+        // The shape a real edit has: entries carried over from the file
+        // beside one the user just made. len_tag has to count both, and
+        // the carried bytes have to come through untouched.
+        const std::string realSection = AnlzLegacyCueCodec::encodeCues(hot, CueListTypeHot);
+        auto carried = AnlzLegacyCueCodec::decodeCues(realSection);
+        check(!carried.empty() && !carried[0].rawBytes.empty(), "decoded entries carry their bytes");
+        const std::string carriedBytes = carried[0].rawBytes;
+        LegacyCueEntry fresh;
+        fresh.hotCueNumber = 8;
+        fresh.timeMs = 77'000;
+        carried.push_back(fresh);
+        const std::string mixed = AnlzLegacyCueCodec::encodeCues(carried, CueListTypeHot);
+        check(mixed.size() == 24 + 56 * carried.size(), "the section counts both kinds of entry");
+        const auto mixedBack = AnlzLegacyCueCodec::decodeCues(mixed);
+        check(mixedBack.size() == carried.size(), "and they all come back");
+        bool keptItsBytes = false;
+        bool foundTheNewOne = false;
+        for (const auto &entry : mixedBack) {
+            if (entry.rawBytes == carriedBytes) {
+                keptItsBytes = true;
+            }
+            if (entry.hotCueNumber == 8 && entry.timeMs == 77'000) {
+                foundTheNewOne = true;
+            }
+        }
+        check(keptItsBytes, "a carried entry came through byte for byte beside a new one");
+        check(foundTheNewOne, "and the new one is there");
+    }
+
     if (failures > 0) {
         std::cout << failures << " check(s) failed\n";
         return 1;

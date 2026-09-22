@@ -85,7 +85,20 @@ struct LegacyCueEntry
 //
 // Within a hot list, real sections are ordered by descending hot-cue
 // number (45 of 51; the other 6 ascend and are all of the older writer
-// generation). The encoder emits descending.
+// generation).
+//
+// That ordering is RekordboxCueWriter's, not this codec's, and the
+// difference matters. encodeCues() writes the entries in the order it
+// is handed them, deliberately: a section read from a file and written
+// straight back must come out byte for byte, and sorting here would
+// reorder the six real sections the older generation wrote ascending --
+// a change to a file nobody asked to change. So the caller rebuilding a
+// list sorts it (rekordbox_cue_writer.cpp does, for hot lists only,
+// since a memory list has no slot to sort by) and the codec preserves
+// whatever it is given.
+//
+// This paragraph used to end "The encoder emits descending", which is
+// not what the encoder does and contradicted the .cpp two files away.
 class AnlzLegacyCueCodec
 {
 public:
