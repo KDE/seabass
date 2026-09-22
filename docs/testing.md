@@ -283,6 +283,33 @@ more care; it is stating the frame out loud -- *true of what, on which
 machine, at which commit* -- because the frame is what goes missing, and
 a number never carries its own.
 
+**The sharper version, after it happened twice more.** Most of these are
+one specific shape: **an aggregate standing in for its parts.** A suite
+total was one build directory's count read as a fact about master. This
+file's own spec-vs-parser check had a floor -- "fewer than this many
+fields means the test read nothing and is not evidence" -- set on the
+total across two spec/parser pairs, so when one pair fell out of the
+extraction entirely the other pair's numbers covered for it and the run
+reported agreement having compared half of what it claimed.
+
+The fix, both times, was to stop comparing the number and start comparing
+the things the number was summarising: per-name diffs instead of a count,
+per-pair floors instead of a total.
+
+And the trigger is narrower than "a total exists", which matters because
+totals are usually fine -- that is exactly why this catches people who
+are not being careless. Both floors were correct when they were written.
+They went wrong when **the parts changed after the number was chosen**: a
+second spec pair arrived, a second platform started running the suite, a
+second build directory appeared with a different configure. So the
+question to ask of any total a check rests on is not "is this right?" but
+"what is it a total *of*, and has that set changed since?"
+
+The production-code half of the same week -- how a write path should
+behave when it meets input it was not built for -- is in
+[`docs/write-path-rules.md`](write-path-rules.md). It is a separate rule
+for a separate audience, but it comes out of the same three bugs.
+
 ## Check the artifact, not the reasoning
 
 Four times in one day, across three machines, a measurement was correct
