@@ -49,13 +49,28 @@ std::vector<PendingDeletionOutcome> applyPendingDeletions(const std::vector<Pend
             continue;
         }
 
-        std::error_code ec;
         // Prefixed: a track under a long artist/album path can sit past
         // MAX_PATH, and there the unprefixed calls answer "not there" and
         // "could not remove" about a file that is present and removable.
         const fs::path path = longPathSafe(entry.filePath);
         std::string failure;
-        if (!fs::exists(path, ec)) {
+        // exists() answers false for BOTH "it is gone" and "I could not
+        // look", and only the error code tells them apart. Untested, the
+        // second became AlreadyAbsent -- which this file's own header
+        // defines as "gone already ... still cleared from the manifest".
+        // So a file Seabass could not examine, on a stick with a failing
+        // cell or a directory it cannot search, was reported to the
+        // person as already dealt with, left on the stick taking the
+        // space they were trying to reclaim, and dropped from the
+        // manifest so no later pass would ever retry it. The same
+        // distinction removeEntry() exists to make one line below, and
+        // the same one audio_file_walk.cpp already makes with "|| ec".
+        std::error_code existsEc;
+        const bool present = fs::exists(path, existsEc);
+        if (existsEc) {
+            outcome.status = PendingDeletionOutcome::Status::Failed;
+            outcome.failureReason = "could not tell whether the file is still there: " + existsEc.message();
+        } else if (!present) {
             outcome.status = PendingDeletionOutcome::Status::AlreadyAbsent;
             processed.insert(entry.filePath);
         } else if (removeEntry(entry.filePath, failure)) {

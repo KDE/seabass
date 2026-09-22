@@ -2040,6 +2040,19 @@ if(TARGET Qt6::Core)
     endif()
     add_test(NAME catalog_digest_test COMMAND catalog_digest_test)
 
+    add_executable(pending_deletion_unreadable_test tests/pending_deletion_unreadable_test.cpp)
+    target_include_directories(pending_deletion_unreadable_test PRIVATE src)
+    target_link_libraries(pending_deletion_unreadable_test PRIVATE seabass_core Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(pending_deletion_unreadable_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME pending_deletion_unreadable_test COMMAND pending_deletion_unreadable_test)
+    # Taking search permission off a directory is the only portable way to
+    # make exists() fail, and it does nothing as root or on a filesystem
+    # that ignores the mode. The test says so and exits 77 rather than
+    # reporting a pass it did not earn.
+    set_tests_properties(pending_deletion_unreadable_test PROPERTIES SKIP_RETURN_CODE 77)
+
     add_executable(onelibrary_wal_checkpoint_test tests/onelibrary_wal_checkpoint_test.cpp)
     target_include_directories(onelibrary_wal_checkpoint_test PRIVATE src)
     target_compile_definitions(onelibrary_wal_checkpoint_test PRIVATE
