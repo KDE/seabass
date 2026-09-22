@@ -497,6 +497,13 @@ int main()
         assert(result.error.isEmpty() && "one content row standing for both copies is nothing to remove");
         assert(result.appliedIds.size() == 1);
         assert(snapshot(root) != before && "and the rekordbox side really was cleaned up");
+        // The removed row named the file the kept row names. Scheduling
+        // it would put the track the DJ kept on the Delete Orphaned
+        // Files page, where it would sit for good: the resolver will not
+        // delete a file the library still references, and never clears
+        // an entry it will not act on.
+        assert(pendingDeletionBytes(root).find(pair[0].filePath) == std::string::npos
+               && "the file being kept is not scheduled for deletion");
         std::error_code ec;
         fs::remove_all(root.parent_path(), ec);
         std::cout << "  cleanup-same-row: two rows sharing one mirror row is not a refusal\n";

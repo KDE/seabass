@@ -427,8 +427,24 @@ void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doom
                                         + survivorContentPath);
     }
 
+    // The survivor's own row is in this list when both paths are the
+    // same file, which is what two catalog rows for one file look like
+    // from here. Skipped rather than refused, because exportLibrary.db
+    // does list one file under several rows (193 files on RV2): the
+    // OTHER rows at that path are real duplicates and removing them is
+    // exactly the job. Only when there is nothing left but the
+    // survivor's own row is there nothing to do.
+    bool removedAny = false;
     for (int64_t doomedId : doomedIds) {
+        if (doomedId == survivorId) {
+            continue;
+        }
         removeTrackByIdReplacingWith(doomedId, survivorId);
+        removedAny = true;
+    }
+    if (!removedAny) {
+        throw OneLibrarySameRow("onelibrary: the copy to remove and the copy to keep are the same content row, id="
+                                + std::to_string(survivorId));
     }
 }
 
@@ -452,7 +468,12 @@ void OneLibraryCueWriter::removeTrackByIdReplacingWith(int64_t doomedContentId, 
         throw OneLibraryRowMissing("onelibrary: no content row id=" + std::to_string(doomedContentId));
     }
     if (!rowExists(db, survivorContentId)) {
-        throw OneLibraryRowMissing("onelibrary: no content row id=" + std::to_string(survivorContentId));
+        // The row to remove is there and the one to put its playlists on
+        // is not: the same question the path lookup above answers with
+        // its own type, and for the same reason. A caller reading "not
+        // listed" as a non-event must not swallow this one.
+        throw OneLibrarySurvivorMissing("onelibrary: no content row id=" + std::to_string(survivorContentId)
+                                        + " to replace with");
     }
     {
         db.exec("BEGIN IMMEDIATE;");

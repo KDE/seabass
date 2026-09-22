@@ -701,11 +701,18 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             } catch (const infrastructure::onelibrary::OneLibrarySurvivorMissing &e) {
                 log.record("cleanup: OneLibrary lists \"" + doomed.title
                            + "\" but not the copy being kept, so its row cannot be repointed: " + e.what());
+                // What this refusal does NOT claim: that something would
+                // be lost from that catalog. The copy being kept was
+                // never in it. What it does say is that this row cannot
+                // be dealt with correctly here, because its playlist
+                // entries have nowhere to go, and the file it names is
+                // about to be scheduled for deletion. Dropping the row
+                // and its Device Library Plus playlist entries instead
+                // is a judgement call for a person, not for this catch.
                 return ChangeOutcome::failure(
                     QStringLiteral("Could not remove \"%1\" from Device Library Plus: the copy being kept is not "
-                                   "listed there, so the duplicate's entry has nothing to point at and removing "
-                                   "it would take the track out of that catalog. Nothing was kept from this "
-                                   "change.")
+                                   "listed there, so this duplicate's entry cannot be moved onto it. Nothing was "
+                                   "written.")
                         .arg(QString::fromStdString(doomed.title)));
             } catch (const std::exception &e) {
                 log.record("cleanup: OneLibrary row removal failed for \"" + doomed.title + "\": " + e.what());
@@ -720,6 +727,21 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
                                    "stay in agreement.")
                         .arg(QString::fromStdString(doomed.title), QString::fromUtf8(e.what())));
             }
+        }
+
+        // Two rows naming ONE file: removing one of them frees nothing,
+        // because the copy being kept is that same file. Listing it
+        // would put the kept track on the Delete Orphaned Files page and
+        // leave it there for good -- resolvePendingDeletions() sees a
+        // file the library still references, buckets it as still
+        // referenced, and never clears an entry it will not act on.
+        // Nothing is destroyed by that (the same check is what stops the
+        // deletion), but the page would go on offering a track the DJ is
+        // using.
+        if (doomed.filePath == plan.survivor.filePath) {
+            log.record("cleanup: \"" + doomed.title + "\" is another row for the file being kept, so nothing is "
+                       "scheduled for deletion");
+            continue;
         }
 
         // On-stick state, appended per doomed copy: whatever this save
