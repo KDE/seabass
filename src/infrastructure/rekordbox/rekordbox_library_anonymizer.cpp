@@ -203,7 +203,12 @@ void obfuscateCueComments(std::string &sectionBytes, size_t &nextIndex)
     uint16_t numCues = readU16BE(sectionBytes, 16);
     size_t offset = 20;
     for (uint16_t i = 0; i < numCues; ++i) {
-        if (offset + CueEntryFixedSize + 4 > sectionBytes.size()) {
+        // By subtraction, like the checks it guards: offset accumulates a
+        // file-supplied lenEntry below, and this sum wraps where size_t
+        // is 32 bits -- which would let the reads underneath it run past
+        // the end and throw out of a function written to RETURN on a
+        // malformed section.
+        if (offset > sectionBytes.size() || sectionBytes.size() - offset < CueEntryFixedSize + 4) {
             return;  // defensive: malformed section, stop rather than read further out of bounds
         }
         uint32_t lenEntry = readU32BE(sectionBytes, offset + 8);
@@ -227,6 +232,13 @@ void obfuscateCueComments(std::string &sectionBytes, size_t &nextIndex)
             }
             sectionBytes[commentOffset + capacityUnits * 2] = 0x00;  // trailing NUL terminator, preserved
             sectionBytes[commentOffset + capacityUnits * 2 + 1] = 0x00;
+        }
+        // An entry that declares no length leaves offset where it is and
+        // the loop rewrites the same comment num_cues times; one longer
+        // than the section walks past the end on the next pass. Both are
+        // malformed, and this function's answer to malformed is to stop.
+        if (lenEntry < CueEntryFixedSize + 4) {
+            return;
         }
         offset += lenEntry;
     }

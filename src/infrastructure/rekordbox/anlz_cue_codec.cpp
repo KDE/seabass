@@ -43,10 +43,22 @@ std::vector<RawHotCueEntry> AnlzCueCodec::decodeHotCues(const std::string &pco2S
         // NoCommentEntrySize (44), not FixedEntrySize (40): lenComment is
         // read from offset+40..+43, so the bounds check must cover through
         // that field, not stop one field short of it.
-        if (offset + NoCommentEntrySize > pco2SectionBytes.size()) {
+        // By subtraction: offset accumulates a file-supplied lenEntry
+        // below, so `offset + 44` wraps where size_t is 32 bits and this
+        // guard lets the reads underneath it run past the end -- where
+        // they throw std::out_of_range from at(), not the runtime_error
+        // this parser's callers are written around.
+        if (offset > pco2SectionBytes.size() || pco2SectionBytes.size() - offset < NoCommentEntrySize) {
             throw std::runtime_error("PCO2 section truncated while decoding hot cue entries");
         }
         uint32_t lenEntry = readU32BE(pco2SectionBytes, offset + 8);
+        // Refused, as the legacy codec beside this one refuses it: an
+        // entry claiming no length at all leaves offset where it is, and
+        // the same entry comes back num_cues times -- up to 65535 copies
+        // of one hot cue -- instead of the file being called malformed.
+        if (lenEntry < NoCommentEntrySize) {
+            throw std::runtime_error("PCO2 cue entry declares a length smaller than one entry");
+        }
         uint32_t hotCue = readU32BE(pco2SectionBytes, offset + 12);
         const unsigned char entryType = static_cast<unsigned char>(pco2SectionBytes[offset + 16]);
         uint32_t time = readU32BE(pco2SectionBytes, offset + 20);

@@ -380,6 +380,48 @@ int main()
         std::cout << "case 13 (a cue comment with non-ASCII in it survives a rewrite) OK\n";
     }
 
+    // An entry that declares no length at all is refused, not repeated.
+    // Nothing advanced `offset` by it, so the same 44 bytes came back
+    // num_cues times -- up to 65535 copies of one hot cue out of a file
+    // this parser never called malformed. The legacy PCOB codec beside
+    // this one has always refused it; this one did not.
+    {
+        std::string entry;
+        entry += "PCP2";
+        appendU32(entry, 16);   // len_header
+        appendU32(entry, 0);    // len_entry: the claim that matters
+        appendU32(entry, 1);    // hot_cue: pad 1
+        entry.push_back(1);
+        entry += fromHex("0003e8");
+        appendU32(entry, 1'000);
+        appendU32(entry, 0xFFFFFFFFu);
+        entry.push_back(0);
+        entry += fromHex("01002a");
+        entry += std::string(4, '\0');
+        appendU32(entry, 0);
+        appendU32(entry, 0);  // len_comment
+        assert(entry.size() == 44);
+
+        std::string section;
+        section += "PCO2";
+        appendU32(section, 20);
+        appendU32(section, static_cast<uint32_t>(12 + entry.size()));
+        appendU32(section, CueListTypeHot);
+        appendU16(section, 500);  // num_cues: what a repeat would multiply by
+        appendU16(section, 0);
+        section += entry;
+
+        bool threw = false;
+        try {
+            const auto decoded = AnlzCueCodec::decodeHotCues(section);
+            std::cerr << "a zero-length entry decoded into " << decoded.size() << " cue(s)\n";
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        assert(threw && "an entry shorter than one entry is a malformed section, not 500 cues");
+        std::cout << "case 14 (a cue entry declaring no length is refused) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

@@ -181,7 +181,11 @@ QVariant CleanupPlanListModel::data(const QModelIndex &index, int role) const
     case WastedBytesHumanRole:
         return humanSize(wastedBytes(plan));
     case NewCueCountRole:
-        return static_cast<int>(plan.mergedCuesForSurvivor.size()) - static_cast<int>(plan.survivor.cues.size());
+        // Per catalog, like the writes: the union comparison this used to
+        // do reports 0 for a group whose cue is missing from one
+        // catalog's row and present in another's, which is the number
+        // someone reads before deciding to include it.
+        return domain::cuesPreservedBy(plan);
     case IncludedRole:
         return bool(m_included[realIndex]);
     case StagedRole:
@@ -1155,7 +1159,15 @@ int CleanupController::cleanupItemCountHint() const
         // push a two-group cleanup onto the scratch-copy path.
         count += static_cast<int>(plan.toRemove.size()) - static_cast<int>(plan.unreferencedFilesToDelete.size())
             - static_cast<int>(plan.unreferencedFilesHeldBack.size());
-        if (plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size()) {
+        // One per catalog that will be written, for the same reason the
+        // comment above gives: this number has to mean "database writes
+        // coming", and a cue write per catalog is one each.
+        for (const auto &row : plan.survivor.catalogRows) {
+            if (domain::catalogNeedsMergedCues(plan, row.format)) {
+                count++;
+            }
+        }
+        if (plan.survivor.catalogRows.empty() && plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size()) {
             count++;
         }
         if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.artworkPathForSurvivor) {

@@ -6,7 +6,6 @@
 #include "gui/edit/changes/cleanup_group_change.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -168,8 +167,12 @@ QString CleanupGroupChange::id() const
 
 QString CleanupGroupChange::description() const
 {
-    int newCues =
-        static_cast<int>(m_plan.mergedCuesForSurvivor.size()) - static_cast<int>(m_plan.survivor.cues.size());
+    // The same answer the write sites give, not the union comparison
+    // they stopped using: on a survivor whose rekordbox row has a cue its
+    // Engine row lacks, the union says nothing is preserved while the
+    // save writes one, and this line is what a person reads in the
+    // staged list and in Undo.
+    const int newCues = domain::cuesPreservedBy(m_plan);
     return QStringLiteral("Clean up \"%1\": keep %2, remove %3 cop%4%5")
         .arg(QString::fromStdString(m_plan.survivor.title), QString::fromStdString(m_plan.survivor.filename))
         .arg(m_plan.toRemove.size())
@@ -504,18 +507,32 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         w.session.noteItemApplied();
         log.record("cleanup: wrote merged cues onto survivor track id=" + survivorId);
 
-        // Inside this block on purpose, and it was moved out and back.
-        // Device Library Plus is the other half of the DEVICELIBRARY
-        // half: exportLibrary.db mirrors export.pdb, so it follows the
-        // rekordbox write and nothing else. Hoisting it out to ask its
-        // own question read well and was wrong twice over -- it made the
-        // mirror unreachable on every collapsed plan (a doomed
-        // OneLibrary row puts that format in catalogsToWrite, and this
-        // block is skipped when it is), and the case it was hoisted for
-        // is not a loss at all: if the Engine copy is what carried the
-        // cue, rekordbox did not change, and Device Library Plus
-        // differing from rekordbox is pre-existing divergence for Sync,
-        // not something this removal caused.
+        // Device Library Plus, with ITS payload, not this one's.
+        //
+        // writeCuesForPath() replaces a row's whole set, exactly like
+        // writeHotCues(), so handing it the rekordbox row's cues wipes
+        // any cue exportLibrary.db holds that export.pdb does not. That
+        // is a real difference on real sticks and it is not this
+        // change's to settle.
+        //
+        // Which leaves this block doing nothing on most collapsed plans,
+        // and that is correct rather than a gap: when a doomed copy has
+        // a OneLibrary row, that format is in catalogsToWrite and the
+        // per-catalog loop below writes it properly, by row id and in
+        // its own session (oneLibraryWrittenAsCatalog). When no doomed
+        // copy has one, nothing is leaving Device Library Plus and it
+        // needs no write. What is left for this block is the uncollapsed
+        // plan, where there are no per-catalog rows at all and
+        // mergedCuesFor() gives back the whole merged set, which is what
+        // this always wrote.
+        //
+        // The limit, said out loud: a collapsed survivor with no
+        // OneLibrary row (its catalog was not scanned) gets no mirror
+        // write, so export.pdb gains cues that exportLibrary.db does
+        // not. Nothing is lost, and the two halves were already free to
+        // disagree; reconciling them is Library Health's and Sync's job,
+        // and guessing here would mean writing a set over a row this
+        // plan never read.
         // This is the block the retired convention named itself after --
         // "best-effort mirror, same convention as Clean Up's own
         // survivor-cue mirror block" -- and it did exactly what the
@@ -528,11 +545,13 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         // decided for every change, and which asks hasTrackAtPath()
         // first so a track Device Library Plus does not list stays a
         // non-event rather than becoming a refusal.
-        if (!fc.pioneerRoot.empty() && !plan.survivor.filePath.empty()
+        const std::vector<domain::CuePoint> forTheMirror = domain::mergedCuesFor(plan, "onelibrary");
+        if (domain::catalogNeedsMergedCues(plan, "onelibrary") && !fc.pioneerRoot.empty()
+            && !plan.survivor.filePath.empty()
             && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(fc.pioneerRoot) && !oneLibraryWrittenAsCatalog) {
             const QString failed =
                 mirrorCuesOrExplain(sharedOneLibraryWriter(ctx, fc.pioneerRoot), plan.survivor.filePath,
-                                    forThisCatalog, ctx, "cleanup",
+                                    forTheMirror, ctx, "cleanup",
                                     QStringLiteral("write the merged cues onto \"%1\"")
                                         .arg(QString::fromStdString(plan.survivor.title)));
             if (!failed.isEmpty()) {
@@ -836,9 +855,10 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     // ctx.shared() is already keyed, so a per-format context sits beside
     // the primary one in the same save: one FormatWriteSession per
     // catalog, each with its own backup, exactly as SyncPlanChange does
-    // it. Reached only for a collapsed plan; until collapse is switched
-    // on in the scan, catalogsToWrite holds m_format alone and this loop
-    // does not run.
+    // it. Reached for a collapsed plan, which is every plan the Clean Up
+    // page makes: collapseForCleanupScan() runs on every scan. (This
+    // comment used to say the loop did not run yet. It does, and every
+    // collapsed-plan question in this file is live.)
     for (const auto &[secondaryFormat, secondaryPath] : catalogsToWrite) {
         if (secondaryFormat == m_format.toStdString()) {
             continue;

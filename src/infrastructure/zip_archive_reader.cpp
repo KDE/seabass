@@ -7,6 +7,7 @@
 #include <zlib.h>
 
 #include <cstdint>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -144,6 +145,15 @@ void extractZipArchive(const fs::path &zipPath, const fs::path &destDir)
         const std::uint16_t extraLength = readU16(bytes, cursor + 30);
         const std::uint16_t commentLength = readU16(bytes, cursor + 32);
         const std::uint32_t localOffset = readU32(bytes, cursor + 42);
+        // substr() clamps rather than throwing, so a damaged entry near
+        // the end of the archive that declares a long name yields a
+        // SHORT one -- and the data is then extracted and written under
+        // that truncated name, with the damage only surfacing on the
+        // next entry's signature read. Checked here instead.
+        if (bytes.size() - std::min(bytes.size(), cursor + 46) < nameLength) {
+            throw std::runtime_error("zip: central directory entry " + std::to_string(i)
+                                     + " names more bytes than the archive holds");
+        }
         const std::string name = bytes.substr(cursor + 46, nameLength);
         cursor += 46 + nameLength + extraLength + commentLength;
 

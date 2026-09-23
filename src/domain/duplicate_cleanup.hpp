@@ -235,6 +235,17 @@ bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string 
 // catalog the union moves cues that differ between catalogs on purpose.
 std::vector<CuePoint> mergedCuesFor(const DuplicateCleanupPlan &plan, const std::string &format);
 
+// How many cues this plan keeps that would otherwise leave with the
+// copies being removed, counted across every catalog it writes.
+//
+// The number a person is shown before deciding to include a group, and
+// the one the save's item-count hint adds up. Both used to compute it as
+// mergedCuesForSurvivor.size() - survivor.cues.size(), the union
+// comparison the write sites no longer use: on the shape that comparison
+// cannot see (one catalog's row missing a cue another catalog's row has)
+// it reports nothing preserved while the save writes one.
+int cuesPreservedBy(const DuplicateCleanupPlan &plan);
+
 // False when this catalog has rows to remove but no row for the survivor
 // to repoint at. Removing them anyway would drop the doomed rows'
 // playlist entries on the floor, or repoint them at an id this catalog

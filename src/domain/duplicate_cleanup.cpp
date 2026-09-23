@@ -370,6 +370,23 @@ std::vector<CuePoint> mergedCuesFor(const DuplicateCleanupPlan &plan, const std:
     return wanted;
 }
 
+int cuesPreservedBy(const DuplicateCleanupPlan &plan)
+{
+    if (plan.survivor.catalogRows.empty()) {
+        const std::size_t before = plan.survivor.cues.size();
+        const std::size_t after = plan.mergedCuesForSurvivor.size();
+        return after > before ? static_cast<int>(after - before) : 0;
+    }
+    int added = 0;
+    for (const auto &row : plan.survivor.catalogRows) {
+        const std::size_t after = mergedCuesFor(plan, row.format).size();
+        if (after > row.cues.size()) {
+            added += static_cast<int>(after - row.cues.size());
+        }
+    }
+    return added;
+}
+
 // True when the write above would add something. mergeCues() only ever
 // appends, so a longer result is a changed one.
 bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string &format)
