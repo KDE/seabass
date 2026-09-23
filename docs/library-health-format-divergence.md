@@ -6,6 +6,18 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # Library Health: repairing a divergent rekordbox / OneLibrary pair
 
+> **Corrected 2026-09-23 (issue #8).** The 290-track divergence this
+> document was written around is not "tracks added to OneLibrary". It is
+> what Seabass's own Clean Up left behind before the OneLibrary mirror
+> existed: on the real WHALESHARK2, 284 of the 290 are still in
+> `export.pdb` as deleted rows, and the stick's log shows Clean Up
+> removing 342 duplicates on 2026-08-28 and 2026-09-02 with the OneLibrary
+> row following for only 15. The measurements below were taken on an
+> anonymized copy, whose `zeroUnusedSpace()` blanks exactly the heap
+> deleted rows occupy -- which is how "zero of the 290 are deleted rows"
+> came about. See "The evidence a deleted row gives" below; the sections
+> it contradicts are marked.
+
 ## What this is for
 
 `export.pdb` and `exportLibrary.db` are one library written in two formats,
@@ -56,9 +68,12 @@ stance `DuplicateCueConsolidator` already takes. Never arbitrate by mtime:
 both files sit on the same stick and rekordbox writes both, so "newer"
 does not mean "more correct".
 
-**3. The row exists in one half only.** Two causes that look identical on
-disk -- the track was added on one side, or removed on the other -- and
-nothing on the stick distinguishes them. So this one asks.
+**3. The row exists in one half only.** Two causes -- the track was added
+on one side, or removed on the other. They are not always
+indistinguishable: when `export.pdb` still holds a *deleted* row at the
+same path, the rekordbox side removed it, and that is the answer rather
+than a question (see "The evidence a deleted row gives"). Only a row with
+no such evidence asks.
 
 ## The dialog for shape 3 (decided 2026-09-09)
 
@@ -130,7 +145,9 @@ of work is not "write a row" -- it is a small allocator over a page chain
 that ten tables share. That is the honest size of it: much larger than a
 field overwrite, and much smaller than "become an exporter".
 
-**Deleted rows are not a shortcut.** The fixture holds 546 rows whose
+**Deleted rows are not a shortcut.** *(Wrong -- measured on the
+anonymized fixture, whose deleted-row bodies the anonymizer zeroes. On the
+real stick 284 of the 290 are deleted rows. Kept for the record.)* The fixture holds 546 rows whose
 presence bit is clear, and every one of their bodies is still readable in
 the heap -- so restoring a *previously deleted* track really is a one-bit
 change. It does not help here: **zero** of the 290 divergent tracks are
@@ -144,6 +161,26 @@ real, and the invented ones parse cleanly into duplicate paths. `num_rows`
 is not the answer either -- it reads 1501 against the 1161 the presence
 bits call live, and the presence bits are what both the reader and
 `removeTrack` actually use.
+
+## The evidence a deleted row gives (2026-09-23)
+
+A clear presence bit leaves the row's body where it was, path included
+(`removeTrack` and rekordbox itself both work this way). So a OneLibrary
+row whose path matches a *deleted* `export.pdb` row, and no live one, is a
+track the rekordbox half removed. On WHALESHARK2 that is 284 of the 290,
+all of them Clean Up's own removals from before the mirror.
+
+The repair for those is to finish the removal in OneLibrary, not to add
+anything to `export.pdb`: remove the row, and move its playlist entries
+onto the track Clean Up kept. That survivor is not recorded anywhere a
+repair can read -- ids do not line up across the two formats (309 of 1161
+on WHALESHARK2), and playlist positions shift where Clean Up dropped an
+entry rather than repointing it -- so it is found the way Clean Up found
+it, by duplicate matching against the live rekordbox tracks. A leftover
+with no live duplicate is reported and not repaired.
+
+Anonymized fixtures cannot show any of this: the anonymizer zeroes the
+bodies this evidence lives in. Tests build their own deleted rows.
 
 ## Proposed sequencing
 
@@ -163,7 +200,8 @@ hidden: Seabass can remove a row from either half and cannot yet add one.
 A default that silently does nothing would be worse than an honest
 disabled option.
 
-**Step 4 -- option 1.** Row insertion, as its own piece of work. The
+**Step 4 -- option 1.** *(Parked 2026-09-23: nothing in the reference
+data needs it once the deleted-row evidence is read; see #8.)* Row insertion, as its own piece of work. The
 measurements above turn it into a page allocator over the pdb page chain
 plus foreign-key resolution across nine tables -- bounded, but its own
 project, and not something to smuggle in as a repair. Sequenced after
@@ -194,6 +232,8 @@ part of Seabass.
 ## What would make this wrong
 
 - Arbitrating by mtime.
+- Adding a row to `export.pdb` for a track a deleted row says the
+  rekordbox side removed. That undoes a Clean Up.
 - Letting the comparison run against Engine. It is not the same library,
   and the per-catalog rule exists for it.
 - Offering "add to the other half" as a working default before insertion
