@@ -2519,6 +2519,13 @@ target_link_libraries(stat_diff_test PRIVATE seabass_core_testing)
 target_include_directories(stat_diff_test PRIVATE src)
 add_test(NAME stat_diff_test COMMAND stat_diff_test)
 
+# FileEntrySource::readFailed() on every standard library: libc++ reports a
+# refused read with the flags of a clean end of file (#36 follow-up).
+add_executable(file_entry_source_test tests/file_entry_source_test.cpp)
+target_link_libraries(file_entry_source_test PRIVATE seabass_core_testing)
+target_include_directories(file_entry_source_test PRIVATE src)
+add_test(NAME file_entry_source_test COMMAND file_entry_source_test)
+
 add_executable(backup_database_capture_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
     tests/backup_database_capture_test.cpp

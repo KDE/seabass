@@ -10,6 +10,7 @@
 #include <optional>
 #include <filesystem>
 #include <span>
+#include <system_error>
 
 #include "infrastructure/stick_backup/archive_updater.hpp"
 
@@ -38,10 +39,21 @@ public:
     bool ok() const { return static_cast<bool>(m_in); }
 
     // Whether a read FAILED, as against reaching the end of the file.
-    // istream signals those two differently and the difference is the
-    // point: eofbit is an ordinary finish, badbit is the device
-    // refusing, and a stream that returns fewer bytes without badbit
-    // has simply ended.
+    //
+    // Not decided by the stream's flags, because they do not say it on
+    // every platform. libstdc++ sets badbit when read(2) fails; libc++
+    // sets failbit and eofbit, exactly what a clean end of file sets
+    // (measured 2026-09-23: A1's damaged m.db on Linux, bad=1; EISDIR on
+    // macOS, bad=0 fail=1 eof=1). A guard on badbit alone fires on the
+    // maintainer's machine and never on a user's Mac.
+    //
+    // So a read that comes back short asks the filesystem instead: a file
+    // that still claims more bytes than were read did not end, the device
+    // stopped giving them. One whose size cannot be read is treated the
+    // same, unless it is gone. One that is now no longer than what was
+    // read really ended --
+    // which includes a file something shrank mid-read, the healthy-stick
+    // writer that captureDbSet retries rather than calls a fault.
     //
     // Latched, because the caller reads in a loop and asks afterwards.
     bool readFailed() const { return m_readFailed; }
@@ -55,7 +67,7 @@ public:
             m_in.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(out.size()));
             const auto got = static_cast<std::size_t>(m_in.gcount());
             m_offset += got;
-            if (!m_in.bad()) {
+            if (got == out.size() || !(m_in.bad() || claimsMoreThan(m_offset))) {
                 return got;
             }
             if (!openCareful()) {
@@ -83,6 +95,22 @@ private:
     // never gets here.
     static constexpr std::size_t Page = 4096;
 
+    // The file on the stick still says it is longer than `offset`, or
+    // cannot say how long it is. A file that is gone has ended: a
+    // rollback journal deleted by a commit mid-read is the writer
+    // captureDbSet retries, not a device refusing (its case 4 went from
+    // reliably Unstable to half the time ReadError when this said
+    // otherwise).
+    bool claimsMoreThan(std::uint64_t offset) const
+    {
+        std::error_code ec;
+        const std::uintmax_t size = std::filesystem::file_size(m_path, ec);
+        if (ec) {
+            return ec != std::errc::no_such_file_or_directory;
+        }
+        return size > offset;
+    }
+
     bool openCareful()
     {
         m_careful.emplace();
@@ -101,12 +129,11 @@ private:
             const auto n = static_cast<std::size_t>(m_careful->gcount());
             got += n;
             m_offset += n;
-            if (m_careful->bad()) {
-                m_readFailed = true;
-                break;
-            }
             if (n < want) {
-                break;  // the end of the file
+                // The page that refused, or the end of the file: see
+                // readFailed() for how the two are told apart.
+                m_readFailed = m_careful->bad() || claimsMoreThan(m_offset);
+                break;
             }
         }
         return got;
