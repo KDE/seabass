@@ -224,15 +224,36 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
             }
         }
     } catch (...) {
+        int removedHere = 0;
+        std::vector<std::string> stayedHere;
         for (const std::string &madeId : madeHere) {
-            archiveStore().remove(madeId);
-            std::erase_if(m_recordByLabel, [&](const auto &entry) { return entry.second == madeId; });
-            std::erase_if(m_backedUp, [&](const auto &entry) { return entry.second == madeId; });
+            // Counted, not assumed. remove() answers false without
+            // throwing when the record will not go, and a record still
+            // on the stick that has been dropped from m_backups is one
+            // nothing can undo from and nothing will clean up -- under a
+            // log line saying it was removed. discardBackupsTakenThisSave()
+            // below was fixed for exactly this ("Counting calls rather
+            // than removals is how a leftover survives under a log line
+            // saying it was removed"); this path was not.
+            if (archiveStore().remove(madeId)) {
+                ++removedHere;
+                std::erase_if(m_recordByLabel, [&](const auto &entry) { return entry.second == madeId; });
+                std::erase_if(m_backedUp, [&](const auto &entry) { return entry.second == madeId; });
+            } else {
+                stayedHere.push_back(madeId);
+            }
         }
-        m_backups.resize(backupsBefore);
+        // Only the records that really went are forgotten. One that
+        // stayed keeps its place, so the save still knows it is there.
+        if (stayedHere.empty()) {
+            m_backups.resize(backupsBefore);
+        }
         if (!madeHere.empty()) {
-            log().record("backup failed: removed the " + std::to_string(madeHere.size())
-                         + " record(s) this save had already made");
+            log().record("backup failed: removed " + std::to_string(removedHere) + " of "
+                         + std::to_string(madeHere.size()) + " record(s) this save had already made");
+        }
+        for (const std::string &id : stayedHere) {
+            log().record("backup failed: record " + id + " could NOT be removed and is still on the stick");
         }
         throw;
     }
@@ -353,6 +374,16 @@ bool sameBytes(const std::string &a, const std::string &b)
     }
     std::ifstream left(a, std::ios::binary);
     std::ifstream right(b, std::ios::binary);
+    // "I could not read them" is not "they are the same". Neither
+    // stream was checked, so if either would not open -- a sharing
+    // violation on Windows, a path this filesystem will not resolve --
+    // the loop never ran and this answered true. Its one caller is
+    // rollBackChange(), which then skips the file: nothing put back,
+    // nothing in notPutBack, nothing in firstError, and the log records
+    // the rollback as complete.
+    if (!left.is_open() || !right.is_open()) {
+        return false;
+    }
     std::array<char, 65536> l{};
     std::array<char, 65536> r{};
     while (left && right) {
@@ -362,7 +393,15 @@ bool sameBytes(const std::string &a, const std::string &b)
             return false;
         }
     }
-    return true;
+    // And a read that stopped partway is not a match either. `while
+    // (left && right)` leaves on badbit as readily as on eofbit, so a
+    // stick that refused halfway through the comparison used to fall
+    // out of the loop and return true. Both streams have to have
+    // reached the end for "identical" to mean anything -- the same
+    // lesson as hashFile() and copyFileDurablyAtomic(), which is now
+    // three places in this codebase where a truncated read passed for a
+    // complete one.
+    return left.eof() && right.eof() && !left.bad() && !right.bad();
 }
 
 }  // namespace
