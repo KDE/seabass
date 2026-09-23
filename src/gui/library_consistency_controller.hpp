@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "domain/cleanup_leftovers.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
 #include <set>
@@ -203,6 +204,12 @@ struct LibraryConsistencyScanResult
     // Engine only: where covers this library has lost can be found again
     // (tags, stick backups). Shared with the repair that follows.
     std::shared_ptr<ArtworkRescueSources> rescue;
+    // OneLibrary only: rows a Clean Up removed from export.pdb and never
+    // from OneLibrary (see domain::CleanupLeftover). Needs both halves, so
+    // it runs in the OneLibrary leg, which comes after rekordbox's.
+    std::vector<domain::CleanupLeftover> cleanupLeftovers;
+    bool cleanupLeftoversChecked = false;
+    std::string cleanupLeftoversError;
     QString errorMessage;
     bool cancelled = false;  // stopped via cancelScan(); nothing else is set
 };
@@ -305,6 +312,17 @@ class LibraryConsistencyController : public QObject
     // without it, a library that would not open showed the same green
     // "every track says what it is" as a healthy one.
     Q_PROPERTY(QString sampleRateError READ sampleRateError NOTIFY sampleRatesChanged)
+    // #8: OneLibrary rows a Clean Up removed from export.pdb and never
+    // from OneLibrary, so the DJ still sees both copies on a OneLibrary
+    // player. Checked only when the stick has both halves.
+    Q_PROPERTY(bool cleanupLeftoversChecked READ cleanupLeftoversChecked NOTIFY cleanupLeftoversChanged)
+    Q_PROPERTY(int cleanupLeftoverCount READ cleanupLeftoverCount NOTIFY cleanupLeftoversChanged)
+    Q_PROPERTY(int cleanupLeftoverFixableCount READ cleanupLeftoverFixableCount NOTIFY cleanupLeftoversChanged)
+    Q_PROPERTY(bool cleanupLeftoverFixStaged READ cleanupLeftoverFixStaged NOTIFY cleanupLeftoversChanged)
+    Q_PROPERTY(QString cleanupLeftoverError READ cleanupLeftoverError NOTIFY cleanupLeftoversChanged)
+    // The ones left alone, each {title, artist, reason}: few, and each one
+    // is a decision the DJ may want to make by hand.
+    Q_PROPERTY(QVariantList cleanupLeftoversHeldBack READ cleanupLeftoversHeldBack NOTIFY cleanupLeftoversChanged)
     // Whether an Engine player will offer to import the rekordbox library
     // over the Engine side on the next insert, and whether the fix for
     // that is staged. See infrastructure/engine/engine_import_state.hpp:
@@ -400,6 +418,12 @@ public:
     int sampleRateFixableCount() const { return m_sampleRates.fixable(); }
     bool sampleRateFillStaged() const { return m_sampleRateFillStaged; }
     QString sampleRateError() const { return QString::fromStdString(m_sampleRates.error); }
+    bool cleanupLeftoversChecked() const { return m_cleanupLeftoversChecked; }
+    int cleanupLeftoverCount() const { return static_cast<int>(m_cleanupLeftovers.size()); }
+    int cleanupLeftoverFixableCount() const;
+    bool cleanupLeftoverFixStaged() const { return m_cleanupLeftoverFixStaged; }
+    QString cleanupLeftoverError() const { return m_cleanupLeftoversError; }
+    QVariantList cleanupLeftoversHeldBack() const;
     bool playerWillOfferImport() const { return m_importState.playerWillOfferImport(); }
     bool importMarkStaged() const { return m_importMarkStaged; }
 
@@ -446,6 +470,9 @@ public:
     // only, like every other fix here: Save writes it.
     Q_INVOKABLE void fillSampleRates();
     Q_INVOKABLE void unstageSampleRateFill();
+    // Stages finishing every repairable Clean Up leftover. Staging only.
+    Q_INVOKABLE void finishCleanupLeftovers();
+    Q_INVOKABLE void unstageCleanupLeftoverFix();
     // Stages telling Engine the rekordbox library is already imported.
     Q_INVOKABLE void markRekordboxImported();
     Q_INVOKABLE void unstageRekordboxImportMark();
@@ -481,6 +508,7 @@ signals:
     void artworkChanged();
     void analysisStateChanged();
     void sampleRatesChanged();
+    void cleanupLeftoversChanged();
     void importStateChanged();
     void stickHealthChanged();
     // The repair is over and this is how it went. A property the page
@@ -546,6 +574,11 @@ private:
     infrastructure::engine::AnalysisStateAudit m_analysisState;
     std::set<QString> m_stagedSampleRates;
     bool m_sampleRateFillStaged = false;
+    std::vector<domain::CleanupLeftover> m_cleanupLeftovers;
+    bool m_cleanupLeftoversChecked = false;
+    QString m_cleanupLeftoversError;
+    std::set<QString> m_stagedCleanupLeftovers;
+    bool m_cleanupLeftoverFixStaged = false;
     infrastructure::engine::RekordboxImportState m_importState;
     bool m_importMarkStaged = false;
     // A rekordbox repair's OneLibrary mirror can stale another listed

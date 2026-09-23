@@ -422,9 +422,17 @@ Page {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: Theme.textMuted
-            text: "Five checks on this stick: catalog rows whose audio file is missing, cues sitting at 0:00, "
-                + "whether a player will offer to overwrite the Engine library with the rekordbox one, Engine "
-                + "tracks that do not say what sample rate they are, and cover art a player cannot show. "
+            // The sixth check only exists on a stick with OneLibrary, so
+            // the count follows it rather than promising one it skips.
+            text: (consistencyController.cleanupLeftoversChecked
+                   || consistencyController.cleanupLeftoverError.length > 0
+                   ? "Six checks on this stick: catalog rows whose audio file is missing, cues sitting at 0:00, "
+                     + "whether a player will offer to overwrite the Engine library with the rekordbox one, Engine "
+                     + "tracks that do not say what sample rate they are, duplicates Clean Up left in OneLibrary, "
+                     + "and cover art a player cannot show. "
+                   : "Five checks on this stick: catalog rows whose audio file is missing, cues sitting at 0:00, "
+                     + "whether a player will offer to overwrite the Engine library with the rekordbox one, Engine "
+                     + "tracks that do not say what sample rate they are, and cover art a player cannot show. ")
                 + "Nothing is written until you press Save."
         }
 
@@ -562,6 +570,76 @@ Page {
                 onClicked: consistencyController.sampleRateFillStaged
                     ? consistencyController.unstageSampleRateFill()
                     : consistencyController.fillSampleRates()
+            }
+        }
+
+        // #8: shown only once the check has run (a stick with OneLibrary).
+        Subtitle {
+            objectName: "cleanupLeftoverSubtitle"
+            visible: consistencyController.cleanupLeftoversChecked
+                || consistencyController.cleanupLeftoverError.length > 0
+            Layout.topMargin: Theme.sectionSpacing
+            text: "Duplicates left in OneLibrary"
+        }
+
+        RowLayout {
+            visible: consistencyController.cleanupLeftoversChecked
+                || consistencyController.cleanupLeftoverError.length > 0
+            Layout.fillWidth: true
+            spacing: Theme.rowSpacing
+            Label {
+                objectName: "cleanupLeftoverSummary"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: consistencyController.cleanupLeftoverError.length > 0
+                    ? consistencyController.cleanupLeftoverError
+                    : consistencyController.cleanupLeftoverCount === 0
+                    ? "Every duplicate Clean Up removed from the rekordbox library is gone from OneLibrary too."
+                    : consistencyController.cleanupLeftoverCount + " duplicate(s) Clean Up removed from the "
+                      + "rekordbox library are still in OneLibrary. "
+                      + (consistencyController.cleanupLeftoverFixableCount > 0
+                          ? consistencyController.cleanupLeftoverFixableCount + " can be removed, their playlist "
+                            + "entries moved onto the copy Clean Up kept."
+                          : "None of them can be matched to the copy Clean Up kept.")
+            }
+            Label {
+                objectName: "stagedCleanupLeftoversNote"
+                visible: consistencyController.cleanupLeftoverFixStaged
+                text: "staged, not saved yet"
+                color: Theme.warnText
+            }
+            Button {
+                objectName: "finishCleanupButton"
+                visible: consistencyController.cleanupLeftoverFixableCount > 0
+                    || consistencyController.cleanupLeftoverFixStaged
+                text: consistencyController.cleanupLeftoverFixStaged ? "Unstage" : "Finish The Clean Up"
+                enabled: !consistencyController.busy && !consistencyController.writing
+                    && !consistencyController.stickReadOnly
+                ToolTip.visible: hovered
+                ToolTip.text: consistencyController.stickReadOnly
+                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
+                    : consistencyController.cleanupLeftoverFixStaged
+                    ? "Take this back out of the changes to save"
+                    : "Stage removing these from OneLibrary and moving their playlist entries onto the copy "
+                      + "Clean Up kept. Save writes it."
+                onClicked: consistencyController.cleanupLeftoverFixStaged
+                    ? consistencyController.unstageCleanupLeftoverFix()
+                    : consistencyController.finishCleanupLeftovers()
+            }
+        }
+
+        // The few left alone, each with why: a decision the DJ may want
+        // to make by hand, so it is named rather than counted.
+        Repeater {
+            objectName: "cleanupLeftoverHeldBack"
+            model: consistencyController.cleanupLeftoversHeldBack
+            delegate: Label {
+                required property var modelData
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+                text: "\u201c" + modelData.title + "\u201d" + (modelData.artist.length > 0 ? ", " + modelData.artist : "")
+                    + ": left alone. " + modelData.reason
             }
         }
 

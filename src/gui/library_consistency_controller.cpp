@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 
+#include "application/path_key.hpp"
 #include "application/track_file_presence.hpp"
 #include "domain/clustered_cue.hpp"
 #include "domain/junk_cue.hpp"
@@ -40,6 +41,7 @@
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/artwork_rescue_sources.hpp"
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
+#include "gui/edit/changes/finish_cleanup_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -392,6 +394,29 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
 
         tallyPlaylists(tracks, result);
 
+        if (format == QStringLiteral("onelibrary")) {
+            // #8: what a Clean Up removed from export.pdb and never from
+            // here. Before the playlist scope below, like the Engine
+            // audits: a leftover is a fact about the library, and one
+            // outside the chosen playlist is still listed twice on a
+            // player. The rekordbox rows come from the catalog cache the
+            // rekordbox leg just filled. No audio probe: a pair only the
+            // decoded audio would tie together is reported, not repaired.
+            try {
+                const auto rekordboxTracks = scanTracks(QStringLiteral("rekordbox"), path, reporter, cancel);
+                result.cleanupLeftovers = domain::CleanupLeftoverFinder::find(
+                    tracks, rekordboxTracks,
+                    infrastructure::rekordbox::deletedTrackFilePaths(path.toStdString()),
+                    application::normalizedPathKey);
+                result.cleanupLeftoversChecked = true;
+            } catch (const application::OperationCancelled &) {
+                throw;
+            } catch (const std::exception &e) {
+                // Its own error, so the rest of this leg still reports.
+                result.cleanupLeftoversError = e.what();
+            }
+        }
+
         if (format == QStringLiteral("rekordbox")) {
             // What this catalog holds per audio file, for the Engine pass
             // that follows: Engine keeps its own copies of the art, so
@@ -588,6 +613,12 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     m_artwork = {};
     m_sampleRates = {};
     m_analysisState = {};
+    // Not the staged fix, for the reason the sample-rate comment below
+    // gives.
+    m_cleanupLeftovers.clear();
+    m_cleanupLeftoversChecked = false;
+    m_cleanupLeftoversError.clear();
+    emit cleanupLeftoversChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
     // with the scan rather than behind its own button.
     m_importState = infrastructure::engine::readRekordboxImportState(m_enginePath.toStdString(),
@@ -710,6 +741,12 @@ void LibraryConsistencyController::onScanFinished()
         if (result.sampleRates.tracksChecked > 0 || !result.sampleRates.error.empty()) {
             m_sampleRates = std::move(result.sampleRates);
             emit sampleRatesChanged();
+        }
+        if (result.cleanupLeftoversChecked || !result.cleanupLeftoversError.empty()) {
+            m_cleanupLeftovers = std::move(result.cleanupLeftovers);
+            m_cleanupLeftoversChecked = result.cleanupLeftoversChecked;
+            m_cleanupLeftoversError = QString::fromStdString(result.cleanupLeftoversError);
+            emit cleanupLeftoversChanged();
         }
         // Same rule as the two above: a leg that read nothing must not
         // wipe what a leg that did read left behind. hasColumn is part
@@ -850,6 +887,17 @@ void LibraryConsistencyController::attachSession()
                     emit importStateChanged();
                     return;
                 }
+                if (auto staged = m_stagedCleanupLeftovers.find(changeId);
+                    staged != m_stagedCleanupLeftovers.end()) {
+                    // Re-read after the save, like the others: what is
+                    // left over is whatever OneLibrary now says.
+                    m_stagedCleanupLeftovers.erase(staged);
+                    m_cleanupLeftoverFixStaged = !m_stagedCleanupLeftovers.empty();
+                    m_rescanAfterSave = true;
+                    clearStagedStatusIfNothingStaged();
+                    emit cleanupLeftoversChanged();
+                    return;
+                }
                 if (auto staged = m_stagedSampleRates.find(changeId); staged != m_stagedSampleRates.end()) {
                     // Counted like the cover art: the numbers come from
                     // the database this just wrote, so they are re-read
@@ -925,6 +973,9 @@ void LibraryConsistencyController::attachSession()
                 m_stagedArtwork.clear();
                 m_stagedSampleRates.clear();
                 m_sampleRateFillStaged = false;
+                m_stagedCleanupLeftovers.clear();
+                m_cleanupLeftoverFixStaged = false;
+                emit cleanupLeftoversChanged();
                 m_importMarkStaged = false;
                 emit importStateChanged();
                 emit sampleRatesChanged();
@@ -1388,6 +1439,96 @@ void LibraryConsistencyController::unstageSampleRateFill()
     clearStagedStatusIfNothingStaged();
 }
 
+int LibraryConsistencyController::cleanupLeftoverFixableCount() const
+{
+    return static_cast<int>(std::count_if(m_cleanupLeftovers.begin(), m_cleanupLeftovers.end(), [](const auto &l) {
+        return l.kind == domain::CleanupLeftover::Kind::Repairable;
+    }));
+}
+
+QVariantList LibraryConsistencyController::cleanupLeftoversHeldBack() const
+{
+    QVariantList list;
+    for (const auto &leftover : m_cleanupLeftovers) {
+        QString reason;
+        switch (leftover.kind) {
+        case domain::CleanupLeftover::Kind::Repairable:
+            continue;
+        case domain::CleanupLeftover::Kind::NoSurvivor:
+            reason = QStringLiteral("No copy of it is left in the rekordbox library to keep its playlists.");
+            break;
+        case domain::CleanupLeftover::Kind::SeveralSurvivors:
+            reason = QStringLiteral("The rekordbox library has more than one copy of it, and nothing says which "
+                                    "one Clean Up kept.");
+            break;
+        case domain::CleanupLeftover::Kind::SurvivorNotInOneLibrary:
+            reason = QStringLiteral("The copy Clean Up kept is not in OneLibrary, so its playlists have nowhere "
+                                    "to go.");
+            break;
+        }
+        list.push_back(QVariantMap{{"title", QString::fromStdString(leftover.row.title)},
+                                   {"artist", QString::fromStdString(leftover.row.artist)},
+                                   {"reason", reason}});
+    }
+    return list;
+}
+
+void LibraryConsistencyController::finishCleanupLeftovers()
+{
+    if (m_busy || m_cleanupLeftoverFixStaged) {
+        return;
+    }
+    setErrorMessage({});
+    setStatusMessage({});
+    std::vector<const domain::CleanupLeftover *> repairable;
+    for (const auto &leftover : m_cleanupLeftovers) {
+        if (leftover.kind == domain::CleanupLeftover::Kind::Repairable) {
+            repairable.push_back(&leftover);
+        }
+    }
+    if (repairable.empty()) {
+        return;
+    }
+    if (!ensureSessionForStaging()) {
+        return;
+    }
+    // One change per duplicate, staged in one call, like the sample rates.
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    std::set<QString> ids;
+    changes.reserve(repairable.size());
+    for (const auto *leftover : repairable) {
+        changes.push_back(std::make_unique<FinishCleanupChange>(m_rekordboxPath, *leftover, changes.empty()));
+        ids.insert(FinishCleanupChange::idFor(leftover->row.filePath));
+    }
+    if (!m_session->stageAll(std::move(changes))) {
+        return;  // the session reported the refusal; the page shows it
+    }
+    m_stagedCleanupLeftovers = std::move(ids);
+    m_cleanupLeftoverFixStaged = true;
+    emit cleanupLeftoversChanged();
+    setStagedStatusMessage(QStringLiteral("Staged removing %1 duplicate(s) Clean Up left in OneLibrary. Press Save "
+                                          "to write it to the stick.")
+                               .arg(repairable.size()));
+}
+
+void LibraryConsistencyController::unstageCleanupLeftoverFix()
+{
+    if (!m_cleanupLeftoverFixStaged) {
+        return;
+    }
+    if (m_session) {
+        QStringList staged;
+        for (const QString &id : m_stagedCleanupLeftovers) {
+            staged << id;
+        }
+        m_session->unstageAll(staged);
+    }
+    m_stagedCleanupLeftovers.clear();
+    m_cleanupLeftoverFixStaged = false;
+    emit cleanupLeftoversChanged();
+    clearStagedStatusIfNothingStaged();
+}
+
 void LibraryConsistencyController::unstageArtworkRepair()
 {
     if (m_stagedArtwork.empty()) {
@@ -1509,7 +1650,7 @@ void LibraryConsistencyController::setStagedStatusMessage(const QString &message
 void LibraryConsistencyController::clearStagedStatusIfNothingStaged()
 {
     if (m_statusIsAboutStaging && m_stagedIssues.empty() && m_stagedJunk.empty() && m_stagedArtwork.empty()
-        && !m_sampleRateFillStaged && !m_importMarkStaged) {
+        && !m_sampleRateFillStaged && !m_cleanupLeftoverFixStaged && !m_importMarkStaged) {
         setStatusMessage({});
     }
 }

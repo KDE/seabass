@@ -284,6 +284,31 @@ Page {
         return text;
     }
 
+    // #8. Only ever shown once the check has run: a stick without
+    // OneLibrary has nothing it could report.
+    readonly property bool cleanupLeftoversShown: healthController.cleanupLeftoversChecked
+        || healthController.cleanupLeftoverError.length > 0
+    readonly property int cleanupLeftoverCount: healthController.cleanupLeftoverCount
+    readonly property int cleanupLeftoverFixableCount: healthController.cleanupLeftoverFixableCount
+
+    readonly property string cleanupLeftoverSummary: {
+        if (healthController.cleanupLeftoverError.length > 0) {
+            return healthController.cleanupLeftoverError;
+        }
+        if (root.cleanupLeftoverCount === 0) {
+            return "Every duplicate Clean Up removed from the rekordbox library is gone from OneLibrary too.";
+        }
+        let text = root.cleanupLeftoverCount + " duplicate(s) Clean Up removed from the rekordbox library are still "
+            + "in OneLibrary, from before Clean Up wrote to both. A OneLibrary player (CDJ-3000, OMNIS-DUO, XDJ-AZ) "
+            + "still lists both copies, and its playlists still point at the one that was removed.";
+        if (root.cleanupLeftoverFixableCount > 0) {
+            text += " Seabass can remove " + (root.cleanupLeftoverFixableCount === root.cleanupLeftoverCount
+                                              ? "them" : root.cleanupLeftoverFixableCount + " of them")
+                 + " and move their playlist entries onto the copy Clean Up kept.";
+        }
+        return text;
+    }
+
     // #38. Deliberately has no action: see engine_analysis_state.hpp, and
     // the wording says so outright rather than leaving people waiting for
     // a button that is never coming.
@@ -501,11 +526,27 @@ Page {
                 onActionRequested: root.detailRequested("artwork")
             }
 
-            // The rekordbox/OneLibrary comparison is specified in
-            // docs/library-health-format-divergence.md and not built yet.
-            // Deliberately not shown as a card until it can actually
-            // report something: an empty check that always says "not
-            // checked" teaches people to ignore the page.
+            // The part of the rekordbox/OneLibrary comparison that can say
+            // which half is right (#8, and
+            // docs/library-health-format-divergence.md): a deleted
+            // export.pdb row is evidence the rekordbox half removed the
+            // file. The rest of the comparison is still not built, and
+            // is still not shown as a card that always says "not checked".
+            HealthCheckCard {
+                objectName: "cleanupLeftoverCard"
+                visible: root.cleanupLeftoversShown
+                fixableCount: root.cleanupLeftoverFixableCount
+                foundCount: root.cleanupLeftoverCount
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Duplicates left in OneLibrary"
+                summary: root.cleanupLeftoverSummary
+                running: root.scanning
+                ok: root.cleanupLeftoverCount === 0 && healthController.cleanupLeftoverError.length === 0
+                failed: healthController.cleanupLeftoverError.length > 0
+                actionLabel: root.cleanupLeftoverCount > 0 ? "Review duplicates" : ""
+                onActionRequested: root.detailRequested("cleanupleftovers")
+            }
 
             // Inset to the card TEXT, not to the card edge. These three
             // sit under a column of cards, and the eye follows the text:

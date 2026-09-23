@@ -102,6 +102,18 @@ TestCase {
                "and is shown as the error, got: '" + controller.errorMessage + "'");
     }
 
+    // #8. A stick without OneLibrary has nothing this check could say,
+    // and a card that always reads "not checked" teaches people to skip
+    // the page. The stick here does not exist, so the check never runs.
+    function test_theLeftoverCardOnlyAppearsOnceItHasChecked() {
+        var page = createTemporaryObject(pageComponent, testCase);
+        tryCompare(page.consistencyController, "busy", false);
+        compare(page.consistencyController.cleanupLeftoversChecked, false);
+        var card = findByObjectName(page, "cleanupLeftoverCard");
+        verify(card !== null, "the card exists");
+        compare(card.visible, false, "and stays hidden until the check has run");
+    }
+
     function test_aCleanCheckStillGetsACard() {
         // "Nothing wrong here" is a result. A page that only lists problems
         // cannot distinguish a clean library from a check that never ran.
@@ -256,7 +268,7 @@ TestCase {
         // picture is what makes "that card is out" checkable instead of a
         // feeling.
         var names = ["stickFilesystemCard", "brokenFilesCard", "junkCuesCard", "importPromptCard",
-                     "sampleRateCard", "analysisStateCard", "coverArtCard"];
+                     "sampleRateCard", "analysisStateCard", "coverArtCard", "cleanupLeftoverCard"];
         for (var i = 0; i < names.length; ++i) {
             var card = findByObjectName(page, names[i]);
             if (card) {

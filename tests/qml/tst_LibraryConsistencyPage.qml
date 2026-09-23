@@ -42,6 +42,14 @@ TestCase {
             function unstageRekordboxImportMark() { importMarkStaged = false; }
             function fillSampleRates() { sampleRateFillStaged = true; }
             function unstageSampleRateFill() { sampleRateFillStaged = false; }
+            property bool cleanupLeftoversChecked: false
+            property int cleanupLeftoverCount: 0
+            property int cleanupLeftoverFixableCount: 0
+            property bool cleanupLeftoverFixStaged: false
+            property string cleanupLeftoverError: ""
+            property var cleanupLeftoversHeldBack: []
+            function finishCleanupLeftovers() { cleanupLeftoverFixStaged = true; }
+            function unstageCleanupLeftoverFix() { cleanupLeftoverFixStaged = false; }
             property int unstagedJunkCueCount: 0
             property int stagedCount: stagedIssueCount + stagedJunkCueCount
             property int stagedIssueCount: 0
@@ -326,6 +334,60 @@ TestCase {
         compare(button.text, "Unstage", "the same button takes it back");
         button.clicked();
         compare(controller.sampleRateFillStaged, false);
+
+        page.destroy();
+        wait(0);
+    }
+
+    // #8. Hidden on a stick the check did not run on; once it has, the
+    // numbers are said, the fix stages and unstages from one button, and
+    // every leftover it leaves alone is named with its reason.
+    function test_cleanUpLeftoversAreSaidStagedAndTheRestNamed() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null, "the page must instantiate");
+        var subtitle = findChild(page, "cleanupLeftoverSubtitle");
+        var summary = findChild(page, "cleanupLeftoverSummary");
+        var button = findChild(page, "finishCleanupButton");
+        var note = findChild(page, "stagedCleanupLeftoversNote");
+        verify(subtitle !== null && summary !== null && button !== null && note !== null);
+        compare(subtitle.visible, false, "not checked: not shown");
+
+        controller.cleanupLeftoversChecked = true;
+        controller.cleanupLeftoverCount = 284;
+        controller.cleanupLeftoverFixableCount = 281;
+        controller.cleanupLeftoversHeldBack = [
+            {title: "Reflection", artist: "Someone", reason: "The rekordbox library has more than one copy of it."}
+        ];
+        compare(subtitle.visible, true);
+        verify(summary.text.indexOf("284") >= 0 && summary.text.indexOf("281") >= 0,
+               "both numbers belong in the sentence: " + summary.text);
+        verify(summary.text.indexOf("\u2014") < 0 && summary.text.indexOf("--") < 0, "no dashes on screen");
+
+        var heldBack = findChild(page, "cleanupLeftoverHeldBack");
+        verify(heldBack !== null);
+        compare(heldBack.count, 1, "the one left alone is named");
+        verify(heldBack.itemAt(0).text.indexOf("Reflection") >= 0
+               && heldBack.itemAt(0).text.indexOf("more than one copy") >= 0, heldBack.itemAt(0).text);
+
+        // Looked at, not only asserted: saved when SEABASS_SCREENSHOT_DIR
+        // is set.
+        if (screenshotDir) {
+            page.width = 900;
+            page.height = 2200;
+            waitForRendering(page);
+            wait(100);
+            grabImage(page).save(screenshotDir + "/LibraryConsistencyPage-cleanup-leftovers.png");
+        }
+
+        compare(button.visible, true);
+        compare(note.visible, false);
+        button.clicked();
+        compare(controller.cleanupLeftoverFixStaged, true, "the button stages");
+        compare(note.visible, true, "and the page says so where the button is");
+        compare(button.text, "Unstage");
+        button.clicked();
+        compare(controller.cleanupLeftoverFixStaged, false);
 
         page.destroy();
         wait(0);
