@@ -310,7 +310,25 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             // differently.
             std::error_code sizeEc;
             const std::uintmax_t sizeNow = fs::file_size(member, sizeEc);
-            if (salvage && source.refused() && !sizeEc && entry->entry.size < sizeNow) {
+            // Zero bytes of the MAIN file is not a part of a database.
+            // A device that refuses at the very first page gives
+            // refused() and an entry of 0, the same shape as one that
+            // refuses at 128 KiB, and without this the set went into the
+            // archive as Salvaged with an EMPTY m.db, a manifest row, the
+            // live fingerprint beside it and databaseCaptured still true
+            // -- the exact bug salvage mode was written to fix, reached
+            // through the fix. It falls through to a ReadError instead,
+            // which is what it was before any of this.
+            //
+            // Only the main file. A sidecar the stick would not give a
+            // byte of is kept at 0, marked with the size it should have
+            // had: dropping the set over it would throw away the m.db
+            // bytes the stick still gave, and an empty -wal or -journal
+            // is one SQLite reads as holding nothing rather than one it
+            // chokes on. The manifest row and the salvage log say "0 of
+            // N bytes" either way.
+            const bool mainFileGaveNothing = m == 0 && entry->entry.size == 0;
+            if (salvage && source.refused() && !sizeEc && !mainFileGaveNothing && entry->entry.size < sizeNow) {
                 // Off a stick the kernel has made read-only, a refusal
                 // part-way is the device, not a writer, and what came
                 // before it is the only copy of this database anybody

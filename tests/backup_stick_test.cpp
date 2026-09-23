@@ -624,6 +624,66 @@ int main()
         std::cout << "case 15b (a salvage run keeps the part of the Engine database it could read) OK\n";
     }
 
+    // Zero bytes off the database is not a salvage. A stick that refuses
+    // at the first page reads the same way as one that refuses at 128 KiB
+    // -- refused, with a short entry -- and the salvage branch took any
+    // short entry, so an EMPTY m.db went into the archive with a manifest
+    // row, the live fingerprint beside it, and the run reporting the
+    // database captured. That is the bug of issue #36 exactly, reached
+    // through its own fix. It must refuse, as it did before salvage mode.
+    {
+        Fixture f("salvage-db-nothing");
+        const fs::path mainDb = f.stick / "Engine Library" / "Database2" / "m.db";
+        assert(readFile(mainDb).size() > 0);
+        BackupStickOptions options = f.options;
+        options.sourceReadOnly = true;
+        options.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Engine Library/Database2/m.db") {
+                return std::uint64_t{0};
+            }
+            return std::nullopt;
+        };
+        BackupStickOutcome outcome = BackupStick::execute(options);
+        assert(!outcome.databaseCaptured && "an empty read is not a captured database");
+        assert(outcome.salvaged.empty() && "nothing was salvaged: nothing was read");
+        const BackupManifest manifest = f.manifest();
+        assert(manifest.findRow("Engine Library/Database2/m.db") == nullptr
+               && "no row may describe a database the archive does not hold");
+        assert(f.verifies());
+        std::cout << "case 15c (a database that reads zero bytes is refused, not called salvaged) OK\n";
+    }
+
+    // And only the main file. A sidecar the stick will not give a byte
+    // of must not cost the m.db bytes it still gives: the set is kept,
+    // the sidecar is in it at 0 bytes with the size it should have had,
+    // and the salvage log says so.
+    {
+        Fixture f("salvage-db-nothing-sidecar");
+        const fs::path mainDb = f.stick / "Engine Library" / "Database2" / "m.db";
+        const fs::path journal = fs::path(mainDb.string() + "-journal");
+        writeFile(journal, std::string(8192, 'j'), 1'700'000'100);
+        const std::string whole = readFile(mainDb);
+        BackupStickOptions options = f.options;
+        options.sourceReadOnly = true;
+        options.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Engine Library/Database2/m.db-journal") {
+                return std::uint64_t{0};
+            }
+            return std::nullopt;
+        };
+        BackupStickOutcome outcome = BackupStick::execute(options);
+        assert(outcome.databaseCaptured && "the main database was read whole and must be kept");
+        assert(f.entryContent("Engine Library/Database2/m.db") == whole);
+        const BackupManifest manifest = f.manifest();
+        const ManifestRow *row = manifest.findRow("Engine Library/Database2/m.db-journal");
+        assert(row != nullptr && row->size == 0 && row->salvagedFromSize == 8192
+               && "the sidecar is in the archive as the nothing it is, marked with what it should have been");
+        assert(outcome.salvaged.size() == 1 && outcome.salvaged[0].bytesSalvaged == 0
+               && outcome.salvaged[0].expectedSize == 8192);
+        assert(f.verifies());
+        std::cout << "case 15d (a sidecar that gives nothing does not cost the database its bytes) OK\n";
+    }
+
     // The same short read on a HEALTHY stick is a real fault and stays
     // one: the entry is dropped and the run says so. A stick that is not
     // read-only can be written, so a file that reads short is most
