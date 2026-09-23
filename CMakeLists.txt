@@ -341,6 +341,7 @@ add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
     src/domain/beat_grid.cpp
     src/domain/camelot_key.cpp
+    src/domain/cleanup_leftovers.cpp
     src/domain/cross_source_sync_conflict.cpp
     src/domain/disk_usage.cpp
     src/domain/duplicate_cleanup.cpp
@@ -1444,6 +1445,14 @@ target_link_libraries(duplicate_cleanup_test PRIVATE seabass_core_testing)
 target_include_directories(duplicate_cleanup_test PRIVATE src)
 add_test(NAME duplicate_cleanup_test COMMAND duplicate_cleanup_test)
 
+add_executable(cleanup_leftovers_test
+    src/domain/cleanup_leftovers.cpp
+    tests/cleanup_leftovers_test.cpp
+)
+target_link_libraries(cleanup_leftovers_test PRIVATE seabass_core_testing)
+target_include_directories(cleanup_leftovers_test PRIVATE src)
+add_test(NAME cleanup_leftovers_test COMMAND cleanup_leftovers_test)
+
 add_executable(library_consistency_test
     src/domain/library_consistency.cpp
     tests/library_consistency_test.cpp
@@ -2217,6 +2226,15 @@ add_test(NAME pdb_row_writer_test COMMAND pdb_row_writer_test)
 # against a real 1.5MB export.pdb is closer to what it actually protects
 # than a hand-built two-page buffer would be. SEABASS_SOURCE_DIR is how
 # it finds that fixture, same as the corpus runner below.
+add_executable(pdb_deleted_rows_test
+    tests/pdb_deleted_rows_test.cpp
+)
+target_link_libraries(pdb_deleted_rows_test PRIVATE seabass_core rekordbox_format ZLIB::ZLIB)
+target_include_directories(pdb_deleted_rows_test PRIVATE src)
+target_compile_definitions(pdb_deleted_rows_test PRIVATE
+    SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME pdb_deleted_rows_test COMMAND pdb_deleted_rows_test)
+
 add_executable(pdb_row_writer_staleness_test
     tests/pdb_row_writer_staleness_test.cpp
 )

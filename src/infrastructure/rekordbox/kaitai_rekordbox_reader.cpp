@@ -502,11 +502,9 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         // this stays correct on whichever of the two shapes
                         // stickRoot happens to be (this project's own
                         // pattern in OneLibraryReader::readAll(), which this
-                        // now matches exactly).
-                        if (trackFilePath.front() == '/' || trackFilePath.front() == '\\') {
-                            trackFilePath.erase(0, 1);
-                        }
-                        track.filePath = (std::filesystem::path(stickRoot) / trackFilePath).make_preferred().string();
+                        // now matches exactly). The join itself lives in
+                        // trackFilePathOnStick(), which deleted rows share.
+                        track.filePath = trackFilePathOnStick(stickRoot, trackFilePath);
                         std::error_code ec;
                         auto size = std::filesystem::file_size(track.filePath, ec);
                         track.fileSizeBytes = ec ? 0 : size;
