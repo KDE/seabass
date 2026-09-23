@@ -257,7 +257,24 @@ public:
     // write/rename failed.
     bool commit();
 
+    // How many fields this writer had to cut a placeholder short to fit.
+    //
+    // Truncation is the contract, not a fault: a row cannot grow without
+    // reflowing its page, so every overwrite here preserves the byte
+    // length, and anonymizationPlaceholder() puts its hash in front of
+    // the readable word precisely because the tail is what gets eaten.
+    // What a finished export could not say, until this existed, is how
+    // many of its fields were too small to carry a whole placeholder --
+    // which is the difference between "the hash is in there" and "the
+    // hash is in there and so is half a word of the original".
+    //
+    // Counted per field, across every row this writer touched. The
+    // blank-out slots (ISRC, texter, message, mix name) are not counted:
+    // empty text never truncates.
+    std::size_t truncatedTextFields() const { return m_truncatedTextFields; }
+
 private:
+    std::size_t m_truncatedTextFields = 0;
     Format m_format = Format::Export;
     std::string m_pdbPath;
     std::string m_buffer;

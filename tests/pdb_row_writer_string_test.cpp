@@ -443,6 +443,16 @@ int main()
         text.filePath = "x";                                        // longer than the 0-byte capacity
         bool overwrote = writer.overwriteTrackText(100, text);
         assert(overwrote);
+        // Three of the four did not fit: the title, the comment, and
+        // the zero-capacity file path, which takes nothing at all. The
+        // filename fits exactly and must not be counted, or the number
+        // would be "fields written" under another name.
+        //
+        // Nothing here is wrong: preserving the byte span is the
+        // contract. The count exists so a finished export can say how
+        // many of its fields were too small to carry a whole
+        // placeholder.
+        assert(writer.truncatedTextFields() == 3);
         bool committed = writer.commit();
         assert(committed);
 
@@ -461,6 +471,22 @@ int main()
         }
         assert(after.size() == pristine.size());  // never resized/reflowed
         std::cout << "case 2 (overwriteTrackText: truncates to each field's existing byte capacity) OK\n";
+    }
+
+    // And a write that fits counts nothing, or the number above would be
+    // "fields written" with a different name on it.
+    {
+        writeFile(pdbPath, pristine);
+        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter::TrackTextOverride text;
+        text.title = "Short";      // inside the 10-byte capacity
+        text.comment = "A";        // inside the 2-code-unit capacity
+        text.filename = "ok.mp3";  // inside the 8-byte capacity
+        text.filePath = "";        // nothing into a zero-byte field is not a cut
+        assert(writer.overwriteTrackText(100, text));
+        assert(writer.truncatedTextFields() == 0);
+        assert(writer.commit());
+        std::cout << "case 2b (a write that fits is not counted as cut short) OK\n";
     }
 
     // overwriteTrackText: text shorter than capacity is space-padded,

@@ -65,6 +65,12 @@ struct AnonymizationSummary
     // of them is replaced; zero is correct for a library with no My Tags
     // and for one whose exportExt.pdb was dropped instead of scrubbed.
     int rekordboxTagsRenamed = 0;
+    // Fields whose placeholder was cut short to fit the pdb's
+    // fixed-length spans. Not a fault (see the anonymizer's own field of
+    // the same name); reported so the manifest can say it happened,
+    // because a reader comparing two rows that both end mid-word should
+    // know that is the format, not the scrub going wrong.
+    int rekordboxPlaceholdersTruncated = 0;
     std::string rekordboxError;  // empty on success
 
     bool engineAttempted = false;

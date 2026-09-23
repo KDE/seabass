@@ -30,6 +30,16 @@ struct RekordboxAnonymizationResult
     // a library that has none, and for one exported by a rekordbox old
     // enough not to write the file at all -- neither is an error.
     int tagsRenamed = 0;
+    // Fields whose placeholder had to be cut short to fit the row's
+    // existing byte span. Correct behaviour, not a fault: export.pdb
+    // keeps its strings in fixed-length fields, a row cannot grow
+    // without reflowing its page, and anonymizationPlaceholder() puts
+    // its hash in front of the readable word precisely because the tail
+    // is what gets eaten. Reported so a donated export can SAY how many
+    // of its fields were too small to carry a whole placeholder, which
+    // is the difference between "the hash is in there" and "the hash is
+    // in there and so is half a word of what was there before".
+    int placeholdersTruncated = 0;
     // Analysis files removed because no track pointed at them, when
     // slimForTesting was asked for.
     int orphanedAnalysisFilesRemoved = 0;

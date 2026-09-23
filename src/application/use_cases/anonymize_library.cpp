@@ -228,7 +228,18 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
          "    file used to be left out entirely; it is kept now only\n"
          "    because it is scrubbed, and if that scrub does not land\n"
          "    the file is removed instead of sent.\n"
-         "  REMOVED entirely: artwork images, the detailed color and\n"
+      + (summary.rekordboxPlaceholdersTruncated > 0
+             ? "  CUT SHORT: " + std::to_string(summary.rekordboxPlaceholdersTruncated)
+                 + " field(s) had no room for a whole\n"
+                   "    placeholder. export.pdb keeps its text in fixed-length\n"
+                   "    spans and a row cannot grow without reflowing its page,\n"
+                   "    so a replacement that is longer than what it replaces is\n"
+                   "    cut to fit. The hash comes first in every placeholder for\n"
+                   "    exactly this reason, so what is lost is the readable tail,\n"
+                   "    never the part that keeps one real track matching itself\n"
+                   "    across the three catalogs.\n"
+             : std::string())
+      + "  REMOVED entirely: artwork images, the detailed color and\n"
          "    scrolling waveform data rekordbox's own UI uses during\n"
          "    playback (not read by this app), and original file paths.\n\n"
          "Everything above is CHECKED, not just intended: this export was\n"
@@ -340,6 +351,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         summary.rekordboxArtistsRenamed = result.artistsRenamed;
         summary.rekordboxPlaylistsRenamed = result.playlistsRenamed;
         summary.rekordboxTagsRenamed = result.tagsRenamed;
+        summary.rekordboxPlaceholdersTruncated = result.placeholdersTruncated;
         summary.rekordboxError = result.errorMessage;
         summary.unanonymizableFilesDropped.insert(summary.unanonymizableFilesDropped.end(),
                                                   result.removedUnanonymizableFiles.begin(),

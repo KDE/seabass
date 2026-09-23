@@ -216,8 +216,11 @@ bool isPlainAscii(const std::string &text)
 // above). That used to be a comment stating a precondition nothing
 // checked, which is what docs/write-path-rules.md's corollary is about:
 // a comment saying "callers always pass X" is a note, not a guarantee.
-std::string fitAsciiToCapacity(const std::string &text, size_t capacityBytes)
+std::string fitAsciiToCapacity(const std::string &text, size_t capacityBytes, bool *truncated = nullptr)
 {
+    if (truncated != nullptr && text.size() > capacityBytes) {
+        *truncated = true;
+    }
     std::string fitted = text.substr(0, capacityBytes);
     fitted.resize(capacityBytes, ' ');
     return fitted;
@@ -229,7 +232,16 @@ std::string fitAsciiToCapacity(const std::string &text, size_t capacityBytes)
 // resizes or reflows anything.
 // Returns false, having written nothing, when `newText` is not
 // representable in the field.
-bool overwriteDeviceSqlStringInPlace(std::string &buffer, size_t absOffset, const std::string &newText)
+// truncated (optional): set to true when the text did not fit and the
+// tail was dropped. Never reset, so one flag can be handed to a run of
+// calls. Truncation is correct behaviour here -- a row cannot grow
+// without reflowing its page, so preserving the byte length is the
+// contract, and anonymizationPlaceholder() puts its hash in front of
+// the readable word precisely because the tail gets eaten. What was
+// missing is that a finished export could not say how many of its
+// fields were too small to carry a whole placeholder.
+bool overwriteDeviceSqlStringInPlace(std::string &buffer, size_t absOffset, const std::string &newText,
+                                     bool *truncated = nullptr)
 {
     if (!isPlainAscii(newText)) {
         return false;
@@ -238,14 +250,14 @@ bool overwriteDeviceSqlStringInPlace(std::string &buffer, size_t absOffset, cons
     size_t headerBytes = span.totalBytes - span.textCapacityBytes;
     if (span.isUtf16) {
         size_t capacityUnits = span.textCapacityBytes / 2;
-        std::string fitted = fitAsciiToCapacity(newText, capacityUnits);
+        std::string fitted = fitAsciiToCapacity(newText, capacityUnits, truncated);
         for (size_t i = 0; i < capacityUnits; ++i) {
             size_t textOffset = absOffset + headerBytes + i * 2;
             buffer.at(textOffset) = fitted[i];
             buffer.at(textOffset + 1) = '\0';
         }
     } else {
-        std::string fitted = fitAsciiToCapacity(newText, span.textCapacityBytes);
+        std::string fitted = fitAsciiToCapacity(newText, span.textCapacityBytes, truncated);
         for (size_t i = 0; i < fitted.size(); ++i) {
             buffer.at(absOffset + headerBytes + i) = fitted[i];
         }
@@ -791,14 +803,15 @@ namespace
 // check passes and the kept track ships with corrupted metadata. ISRC,
 // texter, message and mix name -- the slots the anonymizer blanks -- are
 // the ones most often unused.
-bool overwriteTrackStringIfUsed(std::string &buffer, size_t rowBodyOffset, auto stringIndex, const std::string &text)
+bool overwriteTrackStringIfUsed(std::string &buffer, size_t rowBodyOffset, auto stringIndex, const std::string &text,
+                                bool *truncated = nullptr)
 {
     const size_t header = rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
     const size_t absOffset = trackStringAbsOffset(buffer, rowBodyOffset, stringIndex);
     if (absOffset < header || absOffset >= buffer.size()) {
         return false;
     }
-    return overwriteDeviceSqlStringInPlace(buffer, absOffset, text);
+    return overwriteDeviceSqlStringInPlace(buffer, absOffset, text, truncated);
 }
 
 }  // namespace
@@ -820,10 +833,20 @@ bool PdbRowWriter::overwriteTrackText(uint32_t trackId, const TrackTextOverride 
         || !isPlainAscii(text.filePath)) {
         return false;
     }
-    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexTitle, text.title);
-    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexComment, text.comment);
-    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilename, text.filename);
-    overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexFilePath, text.filePath);
+    // One count per field that did not fit, so a finished export can say
+    // how many of them were too small to carry a whole placeholder.
+    // Truncation itself is the contract here (a row cannot grow without
+    // reflowing its page), not a fault.
+    for (const auto &[index, value] : {std::pair{TrackStringIndexTitle, text.title},
+                                       std::pair{TrackStringIndexComment, text.comment},
+                                       std::pair{TrackStringIndexFilename, text.filename},
+                                       std::pair{TrackStringIndexFilePath, text.filePath}}) {
+        bool truncated = false;
+        overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, index, value, &truncated);
+        if (truncated) {
+            ++m_truncatedTextFields;
+        }
+    }
     m_editedPageIndices.insert(found->pageIndex);
     return true;
 }
@@ -841,6 +864,8 @@ bool PdbRowWriter::overwriteTrackExtraText(uint32_t trackId, const TrackExtraTex
         || !isPlainAscii(text.mixName)) {
         return false;  // all four, before any of them: see overwriteTrackText()
     }
+    // Not counted: these four exist to be emptied, and empty never
+    // truncates. Counting them would mean nothing.
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexIsrc, text.isrc);
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexTexter, text.texter);
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexMessage, text.message);
@@ -858,8 +883,13 @@ bool PdbRowWriter::overwriteArtistName(uint32_t artistId, const std::string &tex
     if (!found) {
         return false;
     }
-    if (!overwriteDeviceSqlStringInPlace(m_buffer, artistNameAbsOffset(m_buffer, found->rowBodyOffset), text)) {
+    bool artistTruncated = false;
+    if (!overwriteDeviceSqlStringInPlace(m_buffer, artistNameAbsOffset(m_buffer, found->rowBodyOffset), text,
+                                         &artistTruncated)) {
         return false;  // nothing written, so this page is not marked edited
+    }
+    if (artistTruncated) {
+        ++m_truncatedTextFields;
     }
     m_editedPageIndices.insert(found->pageIndex);
     return true;
@@ -874,8 +904,13 @@ bool PdbRowWriter::overwritePlaylistName(uint32_t playlistId, const std::string 
     if (!found) {
         return false;
     }
-    if (!overwriteDeviceSqlStringInPlace(m_buffer, found->rowBodyOffset + PlaylistTreeNameOffset, text)) {
+    bool playlistTruncated = false;
+    if (!overwriteDeviceSqlStringInPlace(m_buffer, found->rowBodyOffset + PlaylistTreeNameOffset, text,
+                                         &playlistTruncated)) {
         return false;
+    }
+    if (playlistTruncated) {
+        ++m_truncatedTextFields;
     }
     m_editedPageIndices.insert(found->pageIndex);
     return true;

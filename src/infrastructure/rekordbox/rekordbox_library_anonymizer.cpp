@@ -622,6 +622,9 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                                  result.genresRenamed > 0 || result.labelsRenamed > 0 ||
                                  result.artistsRenamed > 0 || result.playlistsRenamed > 0 ||
                                  result.freeBytesZeroed > 0;
+        // Read before commit(), because commit() is the end of this
+        // writer's life and the count is about what it wrote.
+        result.placeholdersTruncated = static_cast<int>(writer.truncatedTextFields());
         if (anyEditAttempted && !writer.commit()) {
             result.errorMessage = "failed to commit anonymized export.pdb (see PdbRowWriter::commit())";
             return result;
