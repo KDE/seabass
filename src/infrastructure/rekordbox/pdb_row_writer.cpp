@@ -1064,10 +1064,12 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
     // a name whose replacement shifts nothing still invalidates the
     // kaitai objects holding offsets into it.
     std::vector<FoundRow> rows;
+    size_t lenPage = 0;
     {
         std::istringstream iss(m_buffer);
         kaitai::kstream ks(&iss);
         Pdb pdb(m_format == Format::ExportExt, &ks);
+        lenPage = pdb.len_page();
         for (const auto &t : *pdb.tables()) {
             if (t->type() != pageType) {
                 continue;
@@ -1098,6 +1100,28 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
             nameAt = artistNameAbsOffset(m_buffer, rows[i].rowBodyOffset);
         } else if (table == NameTable::Playlists) {
             nameAt = rows[i].rowBodyOffset + PlaylistTreeNameOffset;
+        }
+        // Bounded to the row's own page, before anything is written.
+        // Every one of those offsets is read out of the FILE -- a u1 or
+        // a u2 in the row -- so a wrong or hostile value points wherever
+        // it likes, and overwriteDeviceSqlStringInPlace() then writes
+        // textCapacityBytes there, itself another file-supplied u2.
+        // buffer.at() only objects once the write leaves the file
+        // entirely; landing in a neighbouring table's page is inside it.
+        //
+        // overwriteAllTagNames() was given exactly this bound when the
+        // hole was found there. This is the other half of it, one
+        // function along -- the same shape as the two copies of
+        // FileSource and the two backup-discard paths: a hardening
+        // applied to one of the two places that needed it.
+        const size_t pageOfRow = lenPage == 0 ? 0 : rows[i].rowBodyOffset / lenPage;
+        const size_t pageEnd = (pageOfRow + 1) * lenPage;
+        if (lenPage == 0 || nameAt < rows[i].rowBodyOffset || nameAt >= pageEnd) {
+            continue;
+        }
+        const DeviceSqlStringSpan nameSpan = readDeviceSqlStringSpan(m_buffer, nameAt);
+        if (nameSpan.totalBytes == 0 || nameAt + nameSpan.totalBytes > pageEnd) {
+            continue;
         }
         // A placeholder this cannot represent is not written and not
         // counted. Every placeholder today is ASCII by construction, so

@@ -460,7 +460,26 @@ void MetadataStore::openAndMigrate()
             // isLoop, so an intro loop on the first bar lives exactly
             // here. Deleting one would take a DJ's own work out of the
             // one place that may hold it after the stick is gone.
-            exec(m_db, "DELETE FROM cues WHERE position_ms < 1000 AND is_loop = 0;");
+            //
+            // Negative only, not the whole first second. The paragraph
+            // above describes Engine's -1 sentinel read back as a
+            // position a fraction of a millisecond BEFORE the track,
+            // and that is what the 958 were. `position_ms < 1000` also
+            // took every cue in the first second -- which is a
+            // judgement call the user owns, not noise. domain::isJunkCue
+            // treats a negative position as junk "whatever the user
+            // prefers" and everything in [0, 1000) only when
+            // MatchingPolicy::ignoreCuesAtStart() is on, and this ran
+            // without asking.
+            //
+            // So a DJ who keeps a "track start" pad and turned that
+            // preference off had those cues deleted out of the one place
+            // that may still hold them after the stick is gone -- by a
+            // migration, once, with no way back. The write path already
+            // applies the preference (withoutJunkCues below), so nothing
+            // new arrives that should not be here; this only ever needed
+            // to clean out what predates that filter.
+            exec(m_db, "DELETE FROM cues WHERE position_ms < 0 AND is_loop = 0;");
         }
         exec(m_db, "UPDATE schema_version SET version = 3;");
         exec(m_db, "COMMIT");

@@ -201,7 +201,18 @@ Zip64Reader Zip64Reader::open(const ArchiveFile &file)
     if (centralDirectoryOffset > centralDirectoryEnd || centralDirectorySize > centralDirectoryEnd - centralDirectoryOffset) {
         throw ArchiveFormatError("central directory out of range");
     }
-    if (centralDirectorySize < entryCount * CentralDirectoryEntrySize) {
+    // Divided, not multiplied. entryCount is a u64 read straight out of
+    // the file, so `entryCount * CentralDirectoryEntrySize` overflows
+    // for a large enough value and the comparison then passes -- after
+    // which entries.reserve(entryCount) below throws std::length_error
+    // or std::bad_alloc. tryOpen() catches ArchiveFormatError and
+    // nothing else, so that escapes, and this class's contract is that
+    // a corrupt archive reads back as nullopt rather than throwing at
+    // its caller.
+    //
+    // The division says the same thing without the overflow: no more
+    // entries than the directory has room for.
+    if (entryCount > centralDirectorySize / CentralDirectoryEntrySize) {
         throw ArchiveFormatError("central directory too small for its entry count");
     }
     layout.centralDirectoryOffset = centralDirectoryOffset;
