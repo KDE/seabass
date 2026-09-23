@@ -182,10 +182,40 @@ DeviceSqlStringSpan readDeviceSqlStringSpan(const std::string &buffer, size_t ab
     return span;
 }
 
+// Whether every byte of `text` is representable by the writers below,
+// which is exactly: plain ASCII.
+//
+// Both branches of overwriteDeviceSqlStringInPlace() write bytes. The
+// ASCII branch copies them straight in, and the UTF-16 branch writes
+// each BYTE as the low half of a code unit with a zero high byte. So a
+// UTF-8 sequence arriving there is transliterated as Latin-1: "Cé"
+// (43 c3 a9) is stored as "CÃ" (43 00 c3 00), two valid code units, in
+// a field that then reparses cleanly with every length correct. On top
+// of that, capacity is counted in code units while the input is counted
+// in bytes, so the tail is dropped as well -- the a9 in that example.
+//
+// Nothing downstream can see either. See docs/write-path-rules.md,
+// "Refuse, do not transliterate", which this is the live example for.
+//
+// Deliberately narrow. This refuses what the field cannot represent and
+// nothing else: ASCII arriving through a UTF-16 field is the ordinary
+// case and stays fine. The same document records a refusal that was
+// itself the bug, failing 635 of 1118 tracks on an everyday situation,
+// which is what over-refusing costs here.
+bool isPlainAscii(const std::string &text)
+{
+    return std::all_of(text.begin(), text.end(),
+                       [](unsigned char c) { return c < 0x80; });
+}
+
 // Fits `text` into exactly `capacityBytes`: truncated if too long,
-// right-padded with ASCII spaces if shorter. Anonymized placeholder
-// text is always plain ASCII, so byte-level truncation/padding never
-// splits a multi-byte character.
+// right-padded with ASCII spaces if shorter.
+//
+// Byte-level truncation and padding are safe here only because callers
+// have already refused anything that is not plain ASCII (isPlainAscii
+// above). That used to be a comment stating a precondition nothing
+// checked, which is what docs/write-path-rules.md's corollary is about:
+// a comment saying "callers always pass X" is a note, not a guarantee.
 std::string fitAsciiToCapacity(const std::string &text, size_t capacityBytes)
 {
     std::string fitted = text.substr(0, capacityBytes);
@@ -197,8 +227,13 @@ std::string fitAsciiToCapacity(const std::string &text, size_t capacityBytes)
 // at absOffset, filling exactly its existing text capacity (never its
 // header) -- see DeviceSqlStringSpan's own comment for why this never
 // resizes or reflows anything.
-void overwriteDeviceSqlStringInPlace(std::string &buffer, size_t absOffset, const std::string &newText)
+// Returns false, having written nothing, when `newText` is not
+// representable in the field.
+bool overwriteDeviceSqlStringInPlace(std::string &buffer, size_t absOffset, const std::string &newText)
 {
+    if (!isPlainAscii(newText)) {
+        return false;
+    }
     DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, absOffset);
     size_t headerBytes = span.totalBytes - span.textCapacityBytes;
     if (span.isUtf16) {
@@ -215,6 +250,7 @@ void overwriteDeviceSqlStringInPlace(std::string &buffer, size_t absOffset, cons
             buffer.at(absOffset + headerBytes + i) = fitted[i];
         }
     }
+    return true;
 }
 
 size_t trackStringAbsOffset(const std::string &buffer, size_t rowBodyOffset, int stringIndex)
@@ -762,8 +798,7 @@ bool overwriteTrackStringIfUsed(std::string &buffer, size_t rowBodyOffset, auto 
     if (absOffset < header || absOffset >= buffer.size()) {
         return false;
     }
-    overwriteDeviceSqlStringInPlace(buffer, absOffset, text);
-    return true;
+    return overwriteDeviceSqlStringInPlace(buffer, absOffset, text);
 }
 
 }  // namespace
@@ -775,6 +810,14 @@ bool PdbRowWriter::overwriteTrackText(uint32_t trackId, const TrackTextOverride 
         return t != nullptr && t->id() == trackId;
     });
     if (!found) {
+        return false;
+    }
+    // Every field checked before any of them is written. A row with the
+    // title replaced and the comment refused is a row this call has
+    // half-changed, and its caller would be told nothing either way,
+    // since the return says only whether the row was found.
+    if (!isPlainAscii(text.title) || !isPlainAscii(text.comment) || !isPlainAscii(text.filename)
+        || !isPlainAscii(text.filePath)) {
         return false;
     }
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexTitle, text.title);
@@ -794,6 +837,10 @@ bool PdbRowWriter::overwriteTrackExtraText(uint32_t trackId, const TrackExtraTex
     if (!found) {
         return false;
     }
+    if (!isPlainAscii(text.isrc) || !isPlainAscii(text.texter) || !isPlainAscii(text.message)
+        || !isPlainAscii(text.mixName)) {
+        return false;  // all four, before any of them: see overwriteTrackText()
+    }
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexIsrc, text.isrc);
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexTexter, text.texter);
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexMessage, text.message);
@@ -811,7 +858,9 @@ bool PdbRowWriter::overwriteArtistName(uint32_t artistId, const std::string &tex
     if (!found) {
         return false;
     }
-    overwriteDeviceSqlStringInPlace(m_buffer, artistNameAbsOffset(m_buffer, found->rowBodyOffset), text);
+    if (!overwriteDeviceSqlStringInPlace(m_buffer, artistNameAbsOffset(m_buffer, found->rowBodyOffset), text)) {
+        return false;  // nothing written, so this page is not marked edited
+    }
     m_editedPageIndices.insert(found->pageIndex);
     return true;
 }
@@ -825,7 +874,9 @@ bool PdbRowWriter::overwritePlaylistName(uint32_t playlistId, const std::string 
     if (!found) {
         return false;
     }
-    overwriteDeviceSqlStringInPlace(m_buffer, found->rowBodyOffset + PlaylistTreeNameOffset, text);
+    if (!overwriteDeviceSqlStringInPlace(m_buffer, found->rowBodyOffset + PlaylistTreeNameOffset, text)) {
+        return false;
+    }
     m_editedPageIndices.insert(found->pageIndex);
     return true;
 }
@@ -906,7 +957,13 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         if (span.textCapacityBytes == 0) {
             continue;
         }
-        overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i));
+        // A placeholder this cannot represent is not written and not
+        // counted. Every placeholder today is ASCII by construction, so
+        // this changes nothing now; what it stops is a future caller
+        // handing over a real name and being told it was rewritten.
+        if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i))) {
+            continue;
+        }
         // Recorded HERE, beside the write, not in the scan loop above.
         // commit() refuses when this set is empty and its comment relies
         // on "empty means nothing was edited"; filling it while merely
@@ -992,7 +1049,13 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
         } else if (table == NameTable::Playlists) {
             nameAt = rows[i].rowBodyOffset + PlaylistTreeNameOffset;
         }
-        overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i));
+        // A placeholder this cannot represent is not written and not
+        // counted. Every placeholder today is ASCII by construction, so
+        // this changes nothing now; what it stops is a future caller
+        // handing over a real name and being told it was rewritten.
+        if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i))) {
+            continue;
+        }
         m_editedPageIndices.insert(rows[i].pageIndex);
         ++replaced;
     }

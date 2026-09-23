@@ -565,6 +565,100 @@ int main()
         std::cout << "case 6 (overwriteTrackExtraText: a slot pointing into the header is left alone) OK\n";
     }
 
+    // ---- Non-ASCII must be refused, not transliterated ----------------
+    //
+    // RED ON PURPOSE until the guard lands. This case is written against
+    // the behaviour the writer SHOULD have; on master it fails, and the
+    // failure is the bug.
+    //
+    // fitAsciiToCapacity() says in its own comment that "anonymized
+    // placeholder text is always plain ASCII, so byte-level truncation/
+    // padding never splits a multi-byte character". That is true today
+    // and nothing enforces it. Two things go wrong the moment it stops
+    // being true, and neither fails anywhere:
+    //
+    //   - substr(0, capacityBytes) is a byte-level truncation, which is
+    //     exactly what splits a multi-byte character.
+    //   - the UTF-16 branch writes each BYTE as a code unit with a zero
+    //     high byte. So "é" (C3 A9) is written as "Ã©": two valid UTF-16
+    //     units, in a field that reparses cleanly, with every length and
+    //     checksum correct.
+    //
+    // The comment field in this fixture is device_sql_long_utf16le, so
+    // it is that branch. "Cé" is two characters and fits the two-unit
+    // capacity, so this is about the encoding rather than about
+    // truncation.
+    //
+    // Refusing is the fix, not re-encoding: the field has a fixed byte
+    // capacity, so a correct UTF-16 write still has to decide what to
+    // drop, and that decision belongs to the caller that knows what the
+    // text is. A writer that silently transliterates is how a stick ends
+    // up looking right and not being right, which this file has already
+    // produced once.
+    {
+        writeFile(pdbPath, pristine);
+        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter::TrackTextOverride text;
+        text.comment = "C\xC3\xA9";  // "Cé", two characters, three bytes
+        const bool overwrote = writer.overwriteTrackText(100, text);
+        assert(!overwrote && "non-ASCII must be refused rather than written as Latin-1");
+        assert(!writer.commit() || readTrackTexts(pdbPath, 100).comment == "Hi");
+        assert(readTrackTexts(pdbPath, 100).comment == "Hi" && "and the row is left exactly as it was");
+        std::cout << "case 7 (non-ASCII is refused, not transliterated into the UTF-16 field) OK\n";
+    }
+
+    // The other half of the rule, and the one that is easy to lose:
+    // refuse what the field cannot represent, and NOTHING else. ASCII
+    // arriving through a UTF-16 field is the ordinary case -- it is what
+    // every anonymized placeholder is -- and must stay fine.
+    //
+    // docs/write-path-rules.md records a refusal that was itself the
+    // bug, failing 635 of 1118 tracks on an everyday situation. This is
+    // the case that stops this guard becoming the next one.
+    {
+        writeFile(pdbPath, pristine);
+        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter::TrackTextOverride text;
+        text.comment = "Ok";  // ASCII, into the utf16le field
+        assert(writer.overwriteTrackText(100, text));
+        assert(writer.commit());
+        assert(readTrackTexts(pdbPath, 100).comment == "Ok");
+        std::cout << "case 8 (ASCII through a UTF-16 field is still written) OK\n";
+    }
+
+    // A refusal must leave the row exactly as it was, not half of it.
+    // overwriteTrackText() writes four fields, and its return says only
+    // whether the ROW was found -- so a call that wrote the title and
+    // then refused the comment would report the same thing as a clean
+    // one, with the row changed.
+    {
+        writeFile(pdbPath, pristine);
+        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter::TrackTextOverride text;
+        text.title = "Safe Title";          // fine on its own
+        text.comment = "C\xC3\xA9";          // and this one is not
+        assert(!writer.overwriteTrackText(100, text));
+        writer.commit();
+        const auto after = readTrackTexts(pdbPath, 100);
+        assert(after.title == "Real Title" && "the field that WOULD have been written is untouched");
+        assert(after.comment == "Hi");
+        std::cout << "case 9 (one unrepresentable field refuses the whole row, nothing half-written) OK\n";
+    }
+
+    // The same on the other tables, which have their own entry points.
+    {
+        writeFile(pdbPath, pristine);
+        PdbRowWriter writer(pdbPath.string());
+        assert(!writer.overwriteArtistName(5, "Caf\xC3\xA9"));
+        assert(!writer.overwritePlaylistName(9, "Caf\xC3\xA9"));
+        // Still accepts what it can represent, on the same writer.
+        assert(writer.overwriteArtistName(5, "Artist Z"));
+        assert(writer.commit());
+        assert(readArtistName(pdbPath, 5) == "Artist Z");
+        assert(readPlaylistName(pdbPath, 9) == "Real Playlist" && "the refused one kept its name");
+        std::cout << "case 10 (artist and playlist names refuse non-ASCII and still take ASCII) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
