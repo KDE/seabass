@@ -4,6 +4,8 @@
 
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
 
+#include "infrastructure/stick_backup/file_entry_source.hpp"
+
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -37,21 +39,21 @@ bool readPrefix(const fs::path &path, unsigned char *out, std::size_t length)
     return static_cast<std::size_t>(in.gcount()) == length;
 }
 
-class FileSource : public EntrySource
-{
-public:
-    explicit FileSource(const fs::path &path) : m_in(path, std::ios::binary) {}
-    bool ok() const { return static_cast<bool>(m_in); }
-    std::size_t read(std::span<std::byte> out) override
-    {
-        m_in.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(out.size()));
-        return static_cast<std::size_t>(m_in.gcount());
-    }
 
-private:
-    std::ifstream m_in;
-};
-
+// The file's hash, or nothing when it could not be read to the end.
+//
+// The `while (in)` loop leaves on badbit exactly as readily as on
+// eofbit, and this used to return the hash of whatever prefix it had --
+// which is how a failing stick certified its own data loss. The capture
+// below hashes each member twice, once in flight and once off the
+// stick, and calls them consistent when the two agree. On a stick that
+// refuses at 128 KiB of a 268 KiB database, BOTH passes stop at the
+// same place and hash the same prefix, so they agree, the set is
+// reported Captured, and a 0-byte m.db goes into the archive with
+// nothing marking it. A restore then writes it over a good one.
+//
+// Measured on a real damaged stick, 2026-09-23, not reasoned about:
+// A1's m.db read 131072 of 274432 bytes and the archive held 0.
 std::optional<hashing::Sha256Digest> hashFile(const fs::path &path)
 {
     std::ifstream in(path, std::ios::binary);
@@ -66,6 +68,9 @@ std::optional<hashing::Sha256Digest> hashFile(const fs::path &path)
         if (got > 0) {
             hasher.update(std::as_bytes(std::span<const char>(buffer.data(), static_cast<std::size_t>(got))));
         }
+    }
+    if (in.bad()) {
+        return std::nullopt;  // a prefix is not this file's hash
     }
     return hasher.finish();
 }
@@ -179,7 +184,7 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             const fs::path &member = members[m];
             std::string relative = relativeNameOf(member);
             fs::file_time_type mtime = fs::last_write_time(member, ec);
-            FileSource source(member);
+            FileEntrySource source(member);
             if (ec || !source.ok()) {
                 // A sidecar that vanished between listing and opening is a
                 // rollback journal being deleted by a commit -- that is the
@@ -204,6 +209,29 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             if (!entry) {
                 readError = true;
                 capture.detail = relative + ": read interrupted";
+                break;
+            }
+            // What reached the archive against what the file claims to
+            // be. The hash comparison below cannot see this on its own:
+            // a device that refuses partway makes BOTH passes stop at
+            // the same offset, so they agree about a prefix. This is
+            // the check that does not depend on the two passes failing
+            // differently.
+            std::error_code sizeEc;
+            const std::uintmax_t sizeNow = fs::file_size(member, sizeEc);
+            if (source.readFailed() || sizeEc || entry->entry.size != sizeNow) {
+                capture.detail = relative + ": read "
+                    + std::to_string(entry->entry.size) + " of "
+                    + (sizeEc ? std::string("an unreadable size") : std::to_string(sizeNow)) + " bytes";
+                // A device that refused is a read error however many
+                // times it is asked; a size that moved underneath is
+                // something writing, which is worth another pass.
+                if (source.readFailed()) {
+                    readError = true;
+                } else {
+                    torn = true;
+                }
+                ++appended;  // it IS in the archive; forgetLastEntries() must count it
                 break;
             }
             ++appended;

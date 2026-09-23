@@ -22,6 +22,7 @@
 #include "infrastructure/stick_backup/archive_recovery.hpp"
 #include "infrastructure/stick_backup/archive_stats.hpp"
 #include "infrastructure/stick_backup/archive_updater.hpp"
+#include "infrastructure/stick_backup/file_entry_source.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
 #include "infrastructure/stick_backup/stat_diff.hpp"
@@ -91,31 +92,6 @@ std::string entryNameFor(const TreeEntry &entry)
     return entry.isDirectory ? entry.relativePath + "/" : entry.relativePath;
 }
 
-class FileSource : public EntrySource
-{
-public:
-    explicit FileSource(const fs::path &path) : m_in(path, std::ios::binary) {}
-    bool ok() const { return static_cast<bool>(m_in); }
-    // Whether a read failed, as opposed to reaching the end of the file.
-    // istream signals those two differently and the difference is the
-    // whole of this feature: eofbit is an ordinary finish, badbit is the
-    // device refusing, and a stream that reports fewer bytes without
-    // badbit has simply ended. Latched, because the caller reads in a
-    // loop and only asks afterwards.
-    bool readFailed() const { return m_readFailed; }
-    std::size_t read(std::span<std::byte> out) override
-    {
-        m_in.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(out.size()));
-        if (m_in.bad()) {
-            m_readFailed = true;
-        }
-        return static_cast<std::size_t>(m_in.gcount());
-    }
-
-private:
-    std::ifstream m_in;
-    bool m_readFailed = false;
-};
 
 // Stops handing out bytes at `limit`, the way a stick with a bad
 // cluster stops. Wraps rather than replaces the real source, so
@@ -837,7 +813,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         }
         progress.currentFile = file->relativePath;
         fs::path fullPath = options.stickRoot / pathFromUtf8(file->relativePath);
-        FileSource source(fullPath);
+        infrastructure::stick_backup::FileEntrySource source(fullPath);
         // A stick that stops giving bytes part-way through a file. The
         // hook is unset in every real run, so this is the plain source.
         std::optional<std::uint64_t> limit;
