@@ -408,6 +408,27 @@ int main()
         std::cout << "case 3b (a file that could not be removed fails the export by itself) OK\n";
     }
 
+    // A row whose placeholder could not be written keeps its REAL text,
+    // and that fails the export too.
+    //
+    // This is the sharp edge of the guard added to PdbRowWriter: before
+    // it, an unrepresentable placeholder was mangled and written, which
+    // at least overwrote the real title. Refusing is the right call --
+    // a mangled placeholder is corruption -- but it means the field
+    // keeps what was already in it, and in an anonymizer that is the
+    // DJ's own text. The caller that ignores the answer is the one that
+    // ships the leak, so the caller no longer ignores it.
+    {
+        AnonymizationSummary summary;
+        summary.rekordboxAttempted = true;
+        summary.rekordboxTracksAnonymized = 1;
+        assert(summary.succeeded() && "a clean rekordbox-only run is the baseline for the next assertion");
+
+        summary.rowsNotAnonymized.push_back("track row 42 (replacement text refused)");
+        assert(!summary.succeeded());
+        std::cout << "case 3c (a row that kept its real text fails the export by itself) OK\n";
+    }
+
     // The output directory is created and, at the end, removed. One that
     // already exists with content is therefore refused before anything
     // is written: a user naming their music folder as the "zip path"

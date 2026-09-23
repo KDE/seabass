@@ -489,13 +489,30 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             text.comment = anonymizationPlaceholder("Comment", t.filename);
             text.filename = obfuscatedFilename;
             text.filePath = "/Contents/" + obfuscatedFilename;
-            writer.overwriteTrackText(t.id, text);
+            // Checked, because a refusal here leaves the row's REAL
+            // title and comment in the export. Before the writer had a
+            // guard this could only fail by not finding the row; now it
+            // can also refuse text it cannot represent, and the caller
+            // that ignores the answer is the one that ships the leak.
+            if (!writer.overwriteTrackText(t.id, text)) {
+                // Which of the two it was. Both leave the row
+                // unscrubbed, so both belong here, but they are
+                // different faults: a row that is not there means the
+                // file changed under the scan that listed it, and a
+                // refusal means a placeholder this writer cannot
+                // represent.
+                result.rowsNotAnonymized.push_back(
+                    "track row " + std::to_string(t.id)
+                    + (writer.trackExists(t.id) ? " (replacement text refused)" : " (row no longer in the file)"));
+            }
 
             // The row's other free-text slots. Emptied rather than given
             // placeholders: nothing in this project reads them, and a
             // mix name or an ISRC says what the real recording was.
             PdbRowWriter::TrackExtraTextOverride extra;
-            writer.overwriteTrackExtraText(t.id, extra);
+            if (!writer.overwriteTrackExtraText(t.id, extra)) {
+                result.rowsNotAnonymized.push_back("track row " + std::to_string(t.id) + " (ISRC, texter, message, mix name)");
+            }
             ++trackIndex;
             reporter.tick(trackIndex);
         }

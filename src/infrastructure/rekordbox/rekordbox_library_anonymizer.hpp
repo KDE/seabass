@@ -50,6 +50,20 @@ struct RekordboxAnonymizationResult
     // something", not "is it gone", and reports a name it cannot resolve
     // as a quiet false with no error -- see fs_remove.hpp.
     std::vector<std::string> unremovedUnanonymizableFiles;
+    // Rows whose replacement text the pdb writer refused, each named.
+    //
+    // A refusal there leaves the field as it was -- and in an anonymizer
+    // that is the REAL value, still in the export. So this is not a
+    // tidiness count: a nonempty list means real library text shipped
+    // where a placeholder was meant to go, which is the one outcome this
+    // whole class exists to prevent, and it fails the export.
+    //
+    // Cannot happen today: every placeholder is ASCII by construction
+    // and the writer refuses only what it cannot represent. It exists
+    // because the alternative to refusing was writing a mangled
+    // placeholder, which at least overwrote the real text; a refusal
+    // that nobody notices is quieter and worse.
+    std::vector<std::string> rowsNotAnonymized;
     // Analysis files scrubbed that no present track row pointed at:
     // leftovers from tracks deleted from the library, which the copy
     // brings along and which still carry their real path.

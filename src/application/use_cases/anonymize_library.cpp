@@ -177,6 +177,15 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
              "(hm.db) is one of them: real titles, artists and paths, plus which\n"
              "set each track was played in.\n\n";
     }
+    if (!summary.rowsNotAnonymized.empty()) {
+        m << "*** WARNING: " << summary.rowsNotAnonymized.size()
+          << " row(s) still hold their real text, because the replacement\n"
+             "    could not be written:\n";
+        for (const std::string &row : summary.rowsNotAnonymized) {
+            m << "      " << row << "\n";
+        }
+        m << "    DO NOT SHARE THIS EXPORT.\n\n";
+    }
     if (!summary.unanonymizableFilesLeftBehind.empty()) {
         m << "*** WARNING: " << summary.unanonymizableFilesLeftBehind.size()
           << " file(s) that cannot be anonymized are STILL in this export,\n"
@@ -272,7 +281,7 @@ bool AnonymizationSummary::succeeded() const
     // of two checks happens to catch it.
     // A failed verification is a failed export: no zip was written.
     return anyAttempted && !anyFailed && !verificationFailed && outputError.empty()
-        && unanonymizableFilesLeftBehind.empty();
+        && unanonymizableFilesLeftBehind.empty() && rowsNotAnonymized.empty();
 }
 
 AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> &rekordboxRoot,
@@ -338,6 +347,8 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         summary.unanonymizableFilesLeftBehind.insert(summary.unanonymizableFilesLeftBehind.end(),
                                                      result.unremovedUnanonymizableFiles.begin(),
                                                      result.unremovedUnanonymizableFiles.end());
+        summary.rowsNotAnonymized.insert(summary.rowsNotAnonymized.end(), result.rowsNotAnonymized.begin(),
+                                         result.rowsNotAnonymized.end());
     }
 
     if (engineRoot) {
@@ -415,7 +426,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     // analysis file, which looks exactly like every other .DAT beside
     // it while still carrying the real path of a deleted track. See #35
     // for why that removal can fail at all.
-    if (!summary.unanonymizableFilesLeftBehind.empty()) {
+    if (!summary.unanonymizableFilesLeftBehind.empty() || !summary.rowsNotAnonymized.empty()) {
         infrastructure::removeTreeDeepestFirst(outputDir);
         return summary;
     }

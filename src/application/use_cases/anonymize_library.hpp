@@ -88,6 +88,10 @@ struct AnonymizationSummary
     // the export holds real data and must not be shared, so it is said
     // in MANIFEST.txt as loudly as a refused track is.
     std::vector<std::string> unanonymizableFilesLeftBehind;
+    // Rows whose placeholder could not be written, so the real text is
+    // still there. A nonempty list fails the export, the same as a file
+    // that could not be removed: both mean real library data is in it.
+    std::vector<std::string> rowsNotAnonymized;
 
     // Only valid while execute() is still running -- the staging
     // directory this pointed to is removed once the zip below is
