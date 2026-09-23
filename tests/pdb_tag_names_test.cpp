@@ -19,6 +19,7 @@
 // that nothing threw.
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -26,6 +27,8 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
@@ -275,7 +278,24 @@ int main()
         assert(leftAloneWrongFormat == 0 && "a writer of the wrong format left no tag row behind, it saw none");
     }
 
-    fs::remove_all(scratch);
+    // Best-effort, and retried rather than asserted: every assertion this
+    // test exists for has already passed by this point, and a temp file
+    // Windows Defender's real-time scanner still has open for a moment
+    // -- confirmed directly, "the process cannot access the file because
+    // it is being used by another process" on a .pdb this test itself
+    // had just finished writing -- is not this test failing, it is this
+    // test's own cleanup racing an antivirus scan of the scratch
+    // directory it wrote several PDB files into. A few retries ride out
+    // that window; std::error_code means a cleanup that still cannot
+    // land after that is a leftover temp file, not a crash.
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        std::error_code ec;
+        fs::remove_all(scratch, ec);
+        if (!ec || !fs::exists(scratch)) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
     std::cout << "pdb_tag_names_test: ok\n";
     return 0;
 }
