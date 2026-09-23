@@ -127,14 +127,30 @@ std::string DbSetFingerprint::toHex() const
     return out;
 }
 
-std::vector<fs::path> dbSetMembers(const fs::path &mainDb)
+// "Not there" is an answer; anything else is not. is_regular_file()
+// reports both as plain false, and for a sidecar the first is the
+// ordinary case -- most databases have no -wal -- so refusing on any
+// error at all would refuse nearly every capture.
+bool absenceIsCertain(const std::error_code &ec)
 {
+    return !ec || ec == std::errc::no_such_file_or_directory;
+}
+
+std::vector<fs::path> dbSetMembers(const fs::path &mainDb, bool *presenceKnown)
+{
+    if (presenceKnown != nullptr) {
+        *presenceKnown = true;
+    }
     std::vector<fs::path> members{mainDb};
-    std::error_code ec;
     for (const char *suffix : {"-wal", "-journal"}) {
         fs::path sidecar = mainDb;
         sidecar += suffix;
-        if (fs::is_regular_file(sidecar, ec)) {
+        std::error_code ec;
+        const bool there = fs::is_regular_file(sidecar, ec);
+        if (!absenceIsCertain(ec) && presenceKnown != nullptr) {
+            *presenceKnown = false;
+        }
+        if (there) {
             members.push_back(sidecar);
         }
     }
@@ -157,7 +173,16 @@ std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
     }
     fs::path wal = mainDb;
     wal += "-wal";
-    if (fs::is_regular_file(wal, ec)) {
+    // A fingerprint records which sidecars a set has. If their presence
+    // cannot be determined it is not a fingerprint of anything, and
+    // returning one that says hasWal=false is how the second pass comes
+    // to agree with the first about a set neither of them saw whole.
+    std::error_code sidecarEc;
+    const bool walThere = fs::is_regular_file(wal, sidecarEc);
+    if (!absenceIsCertain(sidecarEc)) {
+        return std::nullopt;
+    }
+    if (walThere) {
         fp.hasWal = true;
         fp.walSize = fs::file_size(wal, ec);
         unsigned char walHeader[32];
@@ -168,7 +193,11 @@ std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
     }
     fs::path journal = mainDb;
     journal += "-journal";
-    if (fs::is_regular_file(journal, ec)) {
+    const bool journalThere = fs::is_regular_file(journal, sidecarEc);
+    if (!absenceIsCertain(sidecarEc)) {
+        return std::nullopt;
+    }
+    if (journalThere) {
         fp.hasJournal = true;
         fp.journalSize = fs::file_size(journal, ec);
     }
@@ -188,9 +217,28 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         return relativeMainDb + member.filename().string().substr(mainDb.filename().string().size());
     };
     std::error_code ec;
-    for (const fs::path &member : dbSetMembers(mainDb)) {
-        std::uint64_t size = fs::file_size(member, ec);
-        if (!ec && size >= MaxCapturableDbBytes) {
+    bool presenceKnown = true;
+    const std::vector<fs::path> declared = dbSetMembers(mainDb, &presenceKnown);
+    if (!presenceKnown) {
+        // A set whose membership could not be established is not one to
+        // capture: the WAL may be there and unseen, and a main file
+        // taken alone restores against a WAL whose salts do not match.
+        capture.status = DbSetCapture::Status::ReadError;
+        capture.detail = relativeMainDb + ": could not tell whether its -wal or -journal is there";
+        return capture;
+    }
+    for (const fs::path &member : declared) {
+        std::error_code sizeEc;
+        const std::uint64_t size = fs::file_size(member, sizeEc);
+        if (sizeEc) {
+            // The ceiling exists because a database at or past it cannot
+            // be read safely; a stat that failed is not permission to
+            // try anyway.
+            capture.status = DbSetCapture::Status::ReadError;
+            capture.detail = relativeNameOf(member) + ": could not be measured (" + sizeEc.message() + ")";
+            return capture;
+        }
+        if (size >= MaxCapturableDbBytes) {
             capture.status = DbSetCapture::Status::TooLarge;
             capture.detail = relativeNameOf(member) + " is " + std::to_string(size) + " bytes";
             return capture;

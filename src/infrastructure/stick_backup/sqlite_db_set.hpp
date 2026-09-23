@@ -40,7 +40,18 @@ struct DbSetFingerprint
 };
 
 // The main file plus whichever of `-wal` / `-journal` currently exist.
-std::vector<std::filesystem::path> dbSetMembers(const std::filesystem::path &mainDb);
+//
+// `presenceKnown`, when given, is set false if a sidecar's presence
+// could not be determined -- a stat that failed for any reason other
+// than "not there". That is not the same as the sidecar being absent,
+// and the difference decides whether a database can be captured at all:
+// a set enumerated without its WAL is captured as a main file alone,
+// fingerprinted as hasWal=false, and agrees with itself on the second
+// pass, while the tree walk may have copied that WAL separately. What
+// comes back from such a restore is a database and a WAL whose salts do
+// not match.
+std::vector<std::filesystem::path> dbSetMembers(const std::filesystem::path &mainDb,
+                                                bool *presenceKnown = nullptr);
 
 // nullopt when `mainDb` is not a SQLite file (wrong magic) or cannot be
 // read -- callers then treat it as an ordinary file.

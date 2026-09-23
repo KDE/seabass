@@ -203,6 +203,54 @@ int main()
         std::cout << "case 4 (concurrent writer -> Unstable after retries, nothing listed; quiet -> byte-exact capture) OK\n";
     }
 
+    // ---- A sidecar whose presence cannot be determined ----------------
+    //
+    // dbSetMembers() decided a -wal was absent from is_regular_file()
+    // returning false, which it also does when the stat FAILED. A set
+    // enumerated without its WAL is captured as a main file alone,
+    // fingerprinted hasWal=false, and the second pass agrees with the
+    // first about a set neither of them saw whole -- Captured, no
+    // warning. The tree walk may have copied that WAL separately, and
+    // restoring the pair hands SQLite a WAL whose salts do not match
+    // the database.
+    //
+    // "Not there" must still be an answer, though: most databases have
+    // no -wal, and refusing on any error would refuse nearly every
+    // capture. So the case asserts both halves.
+#if !defined(_WIN32)
+    {
+        fs::path db = root / "Engine Library" / "Database2" / "unknowable-wal.db";
+        createDatabase(db, 20);
+
+        // No sidecars at all: ordinary, and must still capture.
+        {
+            Harness plain;
+            DbSetCapture ok = captureDbSet(root, "Engine Library/Database2/unknowable-wal.db", *plain.updater, 1);
+            assert(ok.status == DbSetCapture::Status::Captured && "a database with no -wal is the common case");
+        }
+
+        // A -wal that is a symlink loop: present or absent cannot be
+        // told, and the error is not "no such file".
+        fs::path wal = db;
+        wal += "-wal";
+        fs::create_symlink(wal.filename(), wal);
+        std::error_code loopEc;
+        const bool unknowable = !fs::is_regular_file(wal, loopEc) && loopEc
+                                && loopEc != std::errc::no_such_file_or_directory;
+        assert(unknowable && "the sidecar's presence must really be undecidable for this case to mean anything");
+
+        Harness h;
+        DbSetCapture capture = captureDbSet(root, "Engine Library/Database2/unknowable-wal.db", *h.updater, 1);
+        assert(capture.status != DbSetCapture::Status::Captured
+               && "a set whose membership is unknown must not be captured as whole");
+        assert(capture.status == DbSetCapture::Status::ReadError);
+        assert(capture.entries.empty());
+        assert(!capture.detail.empty());
+        fs::remove(wal);
+        std::cout << "case 4d (a sidecar whose presence cannot be determined refuses the capture) OK\n";
+    }
+#endif
+
     // ---- The same set, salvaged off a stick that has already failed ----
     //
     // Refusing an inconsistent set is right for a healthy stick: it means

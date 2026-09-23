@@ -5,6 +5,7 @@
 #include "application/use_cases/restore_stick_backup.hpp"
 
 #include "infrastructure/backup/stick_space.hpp"
+#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/fs_remove.hpp"
 
 #include <zlib.h>
@@ -448,7 +449,8 @@ using infrastructure::backup::availableBytes;
 // manifest on what was read, flushing, then renaming into place and
 // restoring the mtime. Returns an error message or empty.
 std::string writeEntry(const Zip64Reader &reader, const PlannedEntry &planned, const ManifestRow *row,
-                       const fs::path &destination, std::size_t chunkSize, const std::function<void(std::uint64_t)> &progress)
+                       const fs::path &destination, std::size_t chunkSize,
+                       const std::function<void(std::uint64_t)> &progress, std::set<std::string> *placedIn)
 {
     const CentralEntry &entry = reader.entries()[planned.index];
     if (row == nullptr) {
@@ -504,6 +506,9 @@ std::string writeEntry(const Zip64Reader &reader, const PlannedEntry &planned, c
         if (ec) {
             fs::remove(longPathSafe(temp), ec);
             return "could not place " + entry.name + ": " + ec.message();
+        }
+        if (placedIn != nullptr) {
+            placedIn->insert(destination.parent_path().string());
         }
     } catch (const std::exception &e) {
         fs::remove(longPathSafe(temp), ec);
@@ -764,6 +769,28 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                      extras.end());
     }
 
+    // Every directory a file was renamed into, fsynced once before this
+    // reports anything as complete.
+    //
+    // writeEntry() does its own rename, and fsyncDirectoryContaining() is
+    // the second half of that pattern -- its header says so and names
+    // callers that do their own rename as the reason it is exposed.
+    // Without it the directory entry can sit in write-back on POSIX, so
+    // a stick pulled straight after a restore comes back with files
+    // missing or zero length, while the cancel and drive-gone paths both
+    // tell the user the files already restored are complete.
+    //
+    // Once per directory rather than once per file: the guarantee is the
+    // same and a restore of ten thousand tracks does not pay ten
+    // thousand fsyncs.
+    std::set<std::string> placedIn;
+    auto flushDirectories = [&placedIn]() {
+        for (const std::string &dir : placedIn) {
+            infrastructure::fsyncDirectoryContaining((fs::path(dir) / "x").string());
+        }
+        placedIn.clear();
+    };
+
     progress.filesTotal = plan.files.size() - plan.unchanged;
     progress.bytesTotal = plan.bytesToWrite;
     report(RestoreProgress::Phase::Writing);
@@ -771,6 +798,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     for (const PlannedEntry &file : plan.files) {
         if (options.cancel.cancelled()) {
             reporter.finish();
+            flushDirectories();
             summary.status = RestoreSummary::Status::Cancelled;
             summary.message = "cancelled; files already restored are complete, nothing half-written was left behind";
             return summary;
@@ -812,10 +840,13 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                 continue;
             }
         }
-        std::string error = writeEntry(*opened.reader, file, row, destination, options.chunkSize, [&](std::uint64_t bytes) {
-            progress.bytesDone = bytesBefore + bytes;
-            report(RestoreProgress::Phase::Writing);
-        });
+        std::string error = writeEntry(
+            *opened.reader, file, row, destination, options.chunkSize,
+            [&](std::uint64_t bytes) {
+                progress.bytesDone = bytesBefore + bytes;
+                report(RestoreProgress::Phase::Writing);
+            },
+            &placedIn);
         if (!error.empty()) {
             summary.writeErrors.push_back(error);
             progress.bytesDone = bytesBefore;
@@ -824,6 +855,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             if (!fs::is_directory(options.targetRoot, ec)) {
                 ec.clear();
                 reporter.finish();
+                flushDirectories();
                 summary.status = RestoreSummary::Status::Failed;
                 summary.message = "the drive disappeared after " + std::to_string(summary.filesWritten)
                                   + " files were restored; the files already restored are complete. Reconnect it and "
@@ -840,6 +872,9 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         report(RestoreProgress::Phase::Writing);
     }
     reporter.finish();
+    // Before anything below can remove an extra or report a result: the
+    // renames above are not durable until their directories are.
+    flushDirectories();
 
     if (options.exact && !extras.empty() && (!summary.writeErrors.empty() || !summary.rejected.empty())) {
         // Removal is only safe once everything the backup holds has arrived.
