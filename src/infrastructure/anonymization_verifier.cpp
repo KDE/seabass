@@ -237,19 +237,31 @@ template <typename Iterator>
 std::optional<std::string> walkWith(const fs::path &dir, const fs::path &root,
                                     const std::function<void(const fs::directory_entry &)> &visit)
 {
-    auto shown = [&root](const fs::path &path) {
+    auto shown = [&root](const fs::path &path) -> std::string {
         std::error_code relEc;
         const fs::path relative = fs::relative(path, root, relEc);
-        return relEc || relative.empty() ? path.filename().generic_string() : relative.generic_string();
+        if (relEc || relative.empty()) {
+            // Never the absolute path: this text is shown to a
+            // contributor and pasted into bug threads, and a native one
+            // carries the user's own name.
+            return path.filename().generic_string();
+        }
+        // fs::relative(root, root) is ".", which reads as nothing at all
+        // in a sentence about what could not be read.
+        return relative == "." ? std::string("the export root") : relative.generic_string();
     };
 
     std::error_code ec;
     Iterator it(dir, ec);
     if (ec == std::errc::no_such_file_or_directory) {
-        // Not there at all is not the same as there and unreadable, and
-        // the callers here ask about trees that legitimately may not
-        // exist: a rekordbox-only export has no engine/Database2, and
-        // reporting that as a leak threw the whole export away.
+        // Not there at all is not the same as there and unreadable.
+        // Every caller here is already behind a "is this tree present"
+        // gate, so the one way in is a tree that is half there: engine/
+        // exists and engine/Database2 does not, which is what an Engine
+        // export that failed partway leaves behind. That is a broken
+        // export, not a leaking one, and refusing it as unreadable
+        // deleted the staging tree and told the person their export
+        // still held real data.
         return std::nullopt;
     }
     if (ec) {
@@ -309,6 +321,25 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         return result;
     }
 
+    // Every "is this tree here" gate below goes through this. is_directory()
+    // answers false for BOTH "not there" and "I could not look", and the
+    // blocks behind these gates are the layout checks and the catalog
+    // sampling -- including the engine/Database2 one that exists because
+    // hm.db, the play history, passed every export ever produced. A stat
+    // that errors (a dying stick, a symlink loop, a parent that lost its
+    // +x) would skip them in silence, which is the same shape as the
+    // walks this file just stopped doing.
+    auto present = [&](const fs::path &dir) {
+        std::error_code dirEc;
+        const bool yes = fs::is_directory(dir, dirEc);
+        if (dirEc && dirEc != std::errc::no_such_file_or_directory) {
+            std::error_code relEc;
+            fail("could not tell whether " + fs::relative(dir, root, relEc).generic_string()
+                 + " is there: " + dirEc.message());
+        }
+        return yes;
+    };
+
     // --- Layout: only what the manifest says is in here, is in here. ---
     const fs::path rekordboxRoot = root / "rekordbox";
     const fs::path engineRoot = root / "engine";
@@ -323,7 +354,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         fail(*stopped);
     }
 
-    if (fs::is_directory(rekordboxRoot, ec)) {
+    if (present(rekordboxRoot)) {
         if (auto stopped = walk(rekordboxRoot, root, [&](const fs::directory_entry &entry) {
                 const std::string name = entry.path().filename().string();
                 // The catalog itself, the analysis files, and the player
@@ -337,7 +368,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             fail(*stopped);
         }
         const fs::path catalog = rekordboxRoot / "rekordbox";
-        if (fs::is_directory(catalog, ec)) {
+        if (present(catalog)) {
             if (auto stopped = walk(catalog, root, [&](const fs::directory_entry &entry) {
                 const std::string name = entry.path().filename().string();
                 // exportLibrary.db is the Device Library Plus mirror, kept
@@ -367,7 +398,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         }
     }
 
-    if (fs::is_directory(engineRoot, ec)) {
+    if (present(engineRoot)) {
         if (auto stopped = walk(engineRoot, root, [&](const fs::directory_entry &entry) {
                 const std::string name = entry.path().filename().string();
                 if (name == "Database2") {
@@ -406,7 +437,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
 
     // --- Analysis files: every embedded path, every file, no sampling. ---
     // This is where the leak was, and it was in all 2744 of them.
-    if (fs::is_directory(rekordboxRoot / "USBANLZ", ec)) {
+    if (present(rekordboxRoot / "USBANLZ")) {
         if (auto stopped = walkTree(rekordboxRoot / "USBANLZ", root, [&](const fs::directory_entry &entry) {
             std::error_code kindEc;
             if (!entry.is_regular_file(kindEc) || kindEc) {
@@ -534,18 +565,24 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         sampled = checked;
     };
 
-    if (fs::is_directory(rekordboxRoot, ec)) {
+    // Read back, or said to be unreadable: the floor below only asks
+    // about a catalog that WAS read, because "the reader threw" is
+    // already a warning with its own wording and its own reason (a
+    // hand-built minimal fixture genuinely is unparseable).
+    bool rekordboxWasRead = false;
+    bool engineWasRead = false;
+    if (present(rekordboxRoot)) {
         try {
             rekordbox::KaitaiRekordboxReader reader(rekordboxRoot.string());
             auto tracks = application::ScanLibrary(reader).execute();
             checkTracks(tracks, "rekordbox", result.rekordboxTracksSampled);
+            rekordboxWasRead = true;
         } catch (const std::exception &e) {
             warn(std::string("could not read the rekordbox catalog back, so its fields were not sampled: ")
                  + e.what());
         }
     }
-    if (fs::is_directory(rekordboxRoot, ec)
-        && onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string())) {
+    if (present(rekordboxRoot) && onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string())) {
         try {
             onelibrary::OneLibraryReader reader(rekordboxRoot.string());
             auto tracks = reader.readAll();
@@ -555,11 +592,12 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                  + e.what());
         }
     }
-    if (fs::is_directory(engineRoot, ec)) {
+    if (present(engineRoot)) {
         try {
             engine::LibdjinteropEngineReader reader(engineRoot.string());
             auto tracks = application::ScanLibrary(reader).execute();
             checkTracks(tracks, "Engine", result.engineTracksSampled);
+            engineWasRead = true;
         } catch (const std::exception &e) {
             warn(std::string("could not read the Engine catalog back, so its fields were not sampled: ")
                  + e.what());
@@ -629,6 +667,18 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // leak" and "I read nothing" must not be the same answer here.
     if (result.filesSwept == 0) {
         fail("no file in the export was swept, so this check proved nothing");
+    }
+    // The same floor for the reader side. A catalog that parses to zero
+    // rows -- a broken page chain, a schema the reader walks to nothing
+    // -- left its counter at zero and said nothing, and the byte sweep
+    // does not cover for it: a single real word ("Prodigy") is not
+    // two-plus-word prose and is never flagged. A catalog that is there
+    // and yielded no track to check is a catalog nothing looked at.
+    if (rekordboxWasRead && result.rekordboxTracksSampled == 0) {
+        fail("the rekordbox catalog read back with no tracks in it, so its fields were never checked");
+    }
+    if (engineWasRead && result.engineTracksSampled == 0) {
+        fail("the Engine catalog read back with no tracks in it, so its fields were never checked");
     }
 
     result.ok = result.problems.empty();

@@ -349,54 +349,56 @@ std::optional<std::vector<std::string>> readableTextInRawBytes(const fs::path &f
         // Was an empty list, which every caller reads as "swept, clean".
         return std::nullopt;
     }
-    std::string bytes;
+    // Everything below is inside the try, not only the read. libstdc++'s
+    // filebuf throws out of underflow() on a read error (a dying stick
+    // gives EIO), and the scan after it makes several passes over the
+    // file's text and holds every fragment it finds, so on a large m.db
+    // in a 32-bit build the allocation that fails is more likely to be
+    // one of those than the read. Either way the exception went straight
+    // through this function and past every caller: the export's staging
+    // tree was left on disk and the next run refused because it was not
+    // empty.
     try {
+        std::string bytes;
         bytes.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        // The stream's own state bits say nothing here:
+        // istreambuf_iterator reads through rdbuf() and sets neither
+        // eofbit nor badbit, so a short read looks exactly like a
+        // complete one and the prefix would be reported as the whole
+        // file, swept and clean. The length is the only thing that can
+        // tell them apart.
+        if (bytes.size() != expectedSize) {
+            return std::nullopt;
+        }
+        if (bytes.empty()) {
+            return std::vector<std::string>{};
+        }
+
+        std::set<std::string> vocabulary = staticVocabulary();
+        if (isSqliteFile(bytes)) {
+            for (const auto &word : schemaVocabulary(file)) {
+                vocabulary.insert(word);
+            }
+        }
+
+        std::set<std::string> unaccounted;
+        for (const auto &run : printableRuns(bytes)) {
+            for (const auto &fragment : proseFragments(run)) {
+                const auto words = splitWords(fragment);
+                if (!looksLikeProse(words)) {
+                    continue;
+                }
+                if (std::all_of(words.begin(), words.end(),
+                                [&vocabulary](const std::string &w) { return isAccountableWord(w, vocabulary); })) {
+                    continue;
+                }
+                unaccounted.insert(fragment);
+            }
+        }
+        return std::vector<std::string>{unaccounted.begin(), unaccounted.end()};
     } catch (const std::exception &) {
-        // libstdc++'s filebuf throws out of underflow() on a read error
-        // (a dying stick gives EIO), straight through this function and
-        // past every caller: the export's staging tree was then left on
-        // disk and the next run refused because it was not empty. Any
-        // exception, not only ios_base::failure: this reads a whole file
-        // into one string, so a large m.db on a 32-bit build throws
-        // bad_alloc or length_error instead, out of the same line, with
-        // the same consequence.
         return std::nullopt;
     }
-    // The stream's own state bits say nothing here: istreambuf_iterator
-    // reads through rdbuf() and sets neither eofbit nor badbit, so a
-    // short read looks exactly like a complete one and the prefix would
-    // be reported as the whole file, swept and clean. The length is the
-    // only thing that can tell them apart.
-    if (bytes.size() != expectedSize) {
-        return std::nullopt;
-    }
-    if (bytes.empty()) {
-        return std::vector<std::string>{};
-    }
-
-    std::set<std::string> vocabulary = staticVocabulary();
-    if (isSqliteFile(bytes)) {
-        for (const auto &word : schemaVocabulary(file)) {
-            vocabulary.insert(word);
-        }
-    }
-
-    std::set<std::string> unaccounted;
-    for (const auto &run : printableRuns(bytes)) {
-        for (const auto &fragment : proseFragments(run)) {
-            const auto words = splitWords(fragment);
-            if (!looksLikeProse(words)) {
-                continue;
-            }
-            if (std::all_of(words.begin(), words.end(),
-                            [&vocabulary](const std::string &w) { return isAccountableWord(w, vocabulary); })) {
-                continue;
-            }
-            unaccounted.insert(fragment);
-        }
-    }
-    return std::vector<std::string>{unaccounted.begin(), unaccounted.end()};
 }
 
 }  // namespace seabass::infrastructure

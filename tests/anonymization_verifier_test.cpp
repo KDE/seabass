@@ -432,6 +432,7 @@ int main(int argc, char **argv)
         // the operator's hands: do not run the suite as root.
         std::cerr << "FAIL: cases 10 and 11 need permissions to bind, and this run is root. Run the suite as an "
                      "ordinary user.\n";
+        fs::remove_all(root, ec);  // /tmp here is RAM, and these trees are not small
         return 1;
     }
 #else
@@ -447,7 +448,11 @@ int main(int argc, char **argv)
     // nothing, which is not the same as nothing being wrong.
     {
         const fs::path empty = root / "empty-export";
-        fs::create_directories(empty);
+        // engine/ without Database2: the one shape that reaches the
+        // walk's "not there at all" branch, since every other caller is
+        // behind a "is this tree present" gate. An Engine export that
+        // failed partway leaves exactly this.
+        fs::create_directories(empty / "engine");
         auto v = infrastructure::verifyAnonymizedExport(empty.string());
         assert(!v.ok && "an export this never looked inside must not pass");
         assert(mentions(v.problems, "proved nothing"));
