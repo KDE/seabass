@@ -5,6 +5,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,10 @@ namespace seabass::infrastructure
 {
 
 // Every run of readable text in `file` that cannot be accounted for, as
-// distinct fragments in sorted order. Empty means nothing was found.
+// distinct fragments in sorted order. An empty list means the file was
+// read and nothing was found; nullopt means it could not be read at all,
+// which is a different fact and must not be reported as a clean sweep --
+// the caller is deciding whether a library goes to a stranger.
 //
 // This exists because AnonymizationVerifier's other checks read values
 // back through this project's own readers, and a reader returns live rows
@@ -31,6 +35,6 @@ namespace seabass::infrastructure
 // Lives apart from anonymization_verifier.cpp because it needs
 // <sqlite3.h>, and that cannot be included alongside sqlcipher_dyn.hpp,
 // which declares its own SQLITE_* constants.
-std::vector<std::string> readableTextInRawBytes(const std::filesystem::path &file);
+std::optional<std::vector<std::string>> readableTextInRawBytes(const std::filesystem::path &file);
 
 }  // namespace seabass::infrastructure

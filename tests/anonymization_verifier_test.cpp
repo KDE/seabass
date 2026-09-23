@@ -24,6 +24,10 @@
 // originating sticks is what removes them, and this test will say so when
 // it happens.
 #include <cassert>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 #include <cstdint>
 #include <algorithm>
 #include <filesystem>
@@ -374,12 +378,63 @@ int main(int argc, char **argv)
 
         const auto plain = infrastructure::readableTextInRawBytes(plainDir / "m.db");
         const auto hostile = infrastructure::readableTextInRawBytes(hostileDir / "m.db");
+        assert(plain && hostile && "both copies must be readable, or this compares two failures");
         if (plain != hostile) {
-            std::cerr << "sweep of the same m.db differs by folder name: " << plain.size() << " vs "
-                      << hostile.size() << " unaccounted fragments\n";
+            std::cerr << "sweep of the same m.db differs by folder name: " << plain->size() << " vs "
+                      << hostile->size() << " unaccounted fragments\n";
         }
         assert(plain == hostile);
         std::cout << "case 9 (the byte sweep reads a database's schema whatever its folder is called) OK\n";
+    }
+
+    // What this check does when it cannot look. Every walk in here used
+    // to hand an error_code to a std::filesystem iterator and never read
+    // it, and an iterator that cannot open a directory returns end(): a
+    // tree nothing could read was indistinguishable from a tree with
+    // nothing in it, and the verdict is "no problems found".
+#if !defined(_WIN32)
+    if (::geteuid() != 0) {
+        // A folder in the export that cannot be read.
+        {
+            const fs::path anlz = copy / "rekordbox" / "USBANLZ";
+            assert(fs::is_directory(anlz));
+            fs::permissions(anlz, fs::perms::none, fs::perm_options::replace);
+            auto v = infrastructure::verifyAnonymizedExport(copy.string());
+            fs::permissions(anlz, fs::perms::owner_all, fs::perm_options::replace);
+
+            const auto rest = beyondKnownBaseline(v.problems);
+            if (rest.empty()) {
+                dump("a folder that could not be read", v);
+            }
+            assert(!rest.empty() && "a tree that could not be read is not a tree that is clean");
+            assert(mentions(rest, "could not read") || mentions(rest, "stopped reading"));
+            std::cout << "case 10 (a folder the check cannot read is refused, not counted as clean) OK\n";
+        }
+
+        // A file in the export that cannot be read: the sweep returned an
+        // empty list for it, which is what a clean file returns.
+        {
+            const fs::path pdbFile = copy / "rekordbox" / "rekordbox" / "export.pdb";
+            fs::permissions(pdbFile, fs::perms::none, fs::perm_options::replace);
+            auto v = infrastructure::verifyAnonymizedExport(copy.string());
+            fs::permissions(pdbFile, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+
+            assert(mentions(v.problems, "never swept")
+                   && "a file nothing could read is not a file that was found clean");
+            std::cout << "case 11 (a file the sweep cannot read is refused) OK\n";
+        }
+    }
+#endif
+
+    // And the floor under all of it: an export with nothing in it swept
+    // nothing, which is not the same as nothing being wrong.
+    {
+        const fs::path empty = root / "empty-export";
+        fs::create_directories(empty);
+        auto v = infrastructure::verifyAnonymizedExport(empty.string());
+        assert(!v.ok && "an export this never looked inside must not pass");
+        assert(mentions(v.problems, "proved nothing"));
+        std::cout << "case 12 (an export with nothing swept is refused) OK\n";
     }
 
     fs::remove_all(root, ec);

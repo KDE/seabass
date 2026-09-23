@@ -8,6 +8,7 @@
 #include <cctype>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -335,15 +336,20 @@ std::vector<std::string> proseFragments(const std::string &run)
 
 }  // namespace
 
-std::vector<std::string> readableTextInRawBytes(const fs::path &file)
+std::optional<std::vector<std::string>> readableTextInRawBytes(const fs::path &file)
 {
     std::ifstream in(file, std::ios::binary);
     if (!in) {
-        return {};
+        // Was an empty list, which every caller reads as "swept, clean".
+        return std::nullopt;
     }
     const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (!in.eof() && in.bad()) {
+        // Stopped partway: what was read says nothing about the rest.
+        return std::nullopt;
+    }
     if (bytes.empty()) {
-        return {};
+        return std::vector<std::string>{};
     }
 
     std::set<std::string> vocabulary = staticVocabulary();
@@ -367,7 +373,7 @@ std::vector<std::string> readableTextInRawBytes(const fs::path &file)
             unaccounted.insert(fragment);
         }
     }
-    return {unaccounted.begin(), unaccounted.end()};
+    return std::vector<std::string>{unaccounted.begin(), unaccounted.end()};
 }
 
 }  // namespace seabass::infrastructure

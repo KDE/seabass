@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <optional>
 #include <set>
 #include <sstream>
 
@@ -205,6 +207,50 @@ std::string AnonymizationVerification::describe() const
     return out.str();
 }
 
+// Every directory this file reads goes through these two, and they exist
+// for one reason: a std::filesystem iterator handed an error_code returns
+// end() when it cannot open the directory, and stops where it stands when
+// it cannot step. A range-for over one of those is silent either way, so
+// a tree that could not be read looks exactly like a tree with nothing in
+// it -- and this file's verdict is "problems.empty()". The gate that
+// decides whether a DJ's library goes to a stranger would have said yes
+// having looked at nothing.
+//
+// Returns an explanation when the walk did not finish, nullopt when it
+// did. The count is in the message because "stopped after 0" and
+// "stopped after 2,700" are different accidents.
+template <typename Iterator>
+std::optional<std::string> walkWith(const fs::path &dir, const std::function<void(const fs::directory_entry &)> &visit)
+{
+    std::error_code ec;
+    Iterator it(dir, ec);
+    if (ec) {
+        return "could not read " + dir.string() + ": " + ec.message();
+    }
+    const Iterator end;
+    std::size_t seen = 0;
+    while (it != end) {
+        visit(*it);
+        ++seen;
+        it.increment(ec);
+        if (ec) {
+            return "stopped reading " + dir.string() + " after " + std::to_string(seen)
+                + " entries: " + ec.message();
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> walk(const fs::path &dir, const std::function<void(const fs::directory_entry &)> &visit)
+{
+    return walkWith<fs::directory_iterator>(dir, visit);
+}
+
+std::optional<std::string> walkTree(const fs::path &dir, const std::function<void(const fs::directory_entry &)> &visit)
+{
+    return walkWith<fs::recursive_directory_iterator>(dir, visit);
+}
+
 AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, int trackSampleSize)
 {
     AnonymizationVerification result;
@@ -221,34 +267,38 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // --- Layout: only what the manifest says is in here, is in here. ---
     const fs::path rekordboxRoot = root / "rekordbox";
     const fs::path engineRoot = root / "engine";
-    for (const auto &entry : fs::directory_iterator(root, ec)) {
-        const std::string name = entry.path().filename().string();
-        if (name == "MANIFEST.txt" || name == "files.tsv" || name == "rekordbox" || name == "engine"
-            || isHarnessFile(name)) {
-            continue;
-        }
-        fail("unexpected file at the top level of the export: " + name);
+    if (auto stopped = walk(root, [&](const fs::directory_entry &entry) {
+            const std::string name = entry.path().filename().string();
+            if (name == "MANIFEST.txt" || name == "files.tsv" || name == "rekordbox" || name == "engine"
+                || isHarnessFile(name)) {
+                return;
+            }
+            fail("unexpected file at the top level of the export: " + name);
+        })) {
+        fail(*stopped);
     }
 
     if (fs::is_directory(rekordboxRoot, ec)) {
-        for (const auto &entry : fs::directory_iterator(rekordboxRoot, ec)) {
-            const std::string name = entry.path().filename().string();
-            // The catalog itself, the analysis files, and the player
-            // preference files the Device Profile feature needs.
-            if (name == "rekordbox" || name == "USBANLZ" || name == "MYSETTING.DAT" || name == "MYSETTING2.DAT"
-                || name == "DEVSETTING.DAT" || name == "DJMMYSETTING.DAT") {
-                continue;
-            }
-            fail("unexpected entry in the rekordbox tree: " + name);
+        if (auto stopped = walk(rekordboxRoot, [&](const fs::directory_entry &entry) {
+                const std::string name = entry.path().filename().string();
+                // The catalog itself, the analysis files, and the player
+                // preference files the Device Profile feature needs.
+                if (name == "rekordbox" || name == "USBANLZ" || name == "MYSETTING.DAT" || name == "MYSETTING2.DAT"
+                    || name == "DEVSETTING.DAT" || name == "DJMMYSETTING.DAT") {
+                    return;
+                }
+                fail("unexpected entry in the rekordbox tree: " + name);
+            })) {
+            fail(*stopped);
         }
         const fs::path catalog = rekordboxRoot / "rekordbox";
         if (fs::is_directory(catalog, ec)) {
-            for (const auto &entry : fs::directory_iterator(catalog, ec)) {
+            if (auto stopped = walk(catalog, [&](const fs::directory_entry &entry) {
                 const std::string name = entry.path().filename().string();
                 // exportLibrary.db is the Device Library Plus mirror, kept
                 // now that it is scrubbed; its rows are sampled below.
                 if (isKeptRekordboxCatalogFile(name)) {
-                    continue;
+                    return;
                 }
                 // SQLite recreates these the moment anything opens the
                 // database -- including this check, which reads the
@@ -257,7 +307,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                 // export removes them after this runs, immediately before
                 // zipping.
                 if (name == "exportLibrary.db-shm" || name == "exportLibrary.db-wal") {
-                    continue;
+                    return;
                 }
                 // The -shm and -wal side files are unscrubbed by
                 // definition. exportExt.pdb is no longer among these: it
@@ -266,40 +316,62 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                 // included -- is what says whether the scrub landed.
                 // Nothing here trusts the name alone.
                 fail("file that has no anonymizer is present: rekordbox/rekordbox/" + name);
+            })) {
+                fail(*stopped);
             }
         }
     }
 
     if (fs::is_directory(engineRoot, ec)) {
-        for (const auto &entry : fs::directory_iterator(engineRoot, ec)) {
-            const std::string name = entry.path().filename().string();
-            if (name == "Database2") {
-                continue;
-            }
-            fail("unexpected entry in the Engine tree: " + name);
+        if (auto stopped = walk(engineRoot, [&](const fs::directory_entry &entry) {
+                const std::string name = entry.path().filename().string();
+                if (name == "Database2") {
+                    return;
+                }
+                fail("unexpected entry in the Engine tree: " + name);
+            })) {
+            fail(*stopped);
         }
         // Inside Database2 the check used to stop, so hm.db -- the play
         // history, carrying real titles, artists, albums and full
         // directory paths -- passed verification in every export ever
         // produced. Only m.db is scrubbed; everything else at this level
         // is content nothing has examined.
-        for (const auto &entry : fs::directory_iterator(engineRoot / "Database2", ec)) {
-            if (!entry.is_regular_file()) {
-                continue;  // OverviewData and friends: derived numbers, no text
-            }
-            const std::string name = entry.path().filename().string();
-            if (!isKeptEngineDatabaseFile(name)) {
-                fail("file that has no anonymizer is present: engine/Database2/" + name);
-            }
+        if (auto stopped = walk(engineRoot / "Database2", [&](const fs::directory_entry &entry) {
+                std::error_code kindEc;
+                if (!entry.is_regular_file(kindEc) || kindEc) {
+                    // A directory here is OverviewData and friends:
+                    // derived numbers, no text. An entry that could not
+                    // be asked which it is gets said out loud rather than
+                    // skipped with them.
+                    if (kindEc) {
+                        fail("could not tell what engine/Database2/" + entry.path().filename().string()
+                             + " is: " + kindEc.message());
+                    }
+                    return;
+                }
+                const std::string name = entry.path().filename().string();
+                if (!isKeptEngineDatabaseFile(name)) {
+                    fail("file that has no anonymizer is present: engine/Database2/" + name);
+                }
+            })) {
+            fail(*stopped);
         }
     }
 
     // --- Analysis files: every embedded path, every file, no sampling. ---
     // This is where the leak was, and it was in all 2744 of them.
     if (fs::is_directory(rekordboxRoot / "USBANLZ", ec)) {
-        for (const auto &entry : fs::recursive_directory_iterator(rekordboxRoot / "USBANLZ", ec)) {
-            if (!entry.is_regular_file() || !isAnalysisFile(entry.path())) {
-                continue;
+        if (auto stopped = walkTree(rekordboxRoot / "USBANLZ", [&](const fs::directory_entry &entry) {
+            std::error_code kindEc;
+            if (!entry.is_regular_file(kindEc) || kindEc) {
+                if (kindEc) {
+                    fail("could not tell what " + entry.path().string() + " is: " + kindEc.message());
+                }
+                return;
+            }
+            if (!isAnalysisFile(entry.path())) {
+                return;
             }
             ++result.analysisFilesChecked;
             try {
@@ -326,6 +398,8 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             } catch (const std::exception &e) {
                 fail("could not read " + fs::relative(entry.path(), root, ec).string() + ": " + e.what());
             }
+            })) {
+            fail(*stopped);
         }
     }
 
@@ -428,9 +502,13 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     }
 
     // --- Raw bytes: everything the readers above structurally cannot see. ---
-    for (const auto &entry : fs::recursive_directory_iterator(root, ec)) {
-        if (!entry.is_regular_file(ec)) {
-            continue;
+    if (auto stopped = walkTree(root, [&](const fs::directory_entry &entry) {
+        std::error_code kindEc;
+        if (!entry.is_regular_file(kindEc) || kindEc) {
+            if (kindEc) {
+                fail("could not tell what " + entry.path().string() + " is: " + kindEc.message());
+            }
+            return;
         }
         // generic_string(), not string(): this path becomes part of a
         // problem message compared against a hardcoded, forward-slash
@@ -446,26 +524,44 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         // any hardware and notes they chose to type in themselves. Sweeping
         // it reports the explanation as the leak.
         if (isHarnessFile(name) || name == "MANIFEST.txt") {
-            continue;
+            return;
         }
         const auto unaccounted = readableTextInRawBytes(entry.path());
+        if (!unaccounted) {
+            // Counted as swept and clean until now. A file in the export
+            // that nothing could read is the one case where this check
+            // knows least and the export is about to be sent anyway.
+            fail(relative + " could not be read, so its bytes were never swept");
+            return;
+        }
         ++result.filesSwept;
-        if (!unaccounted.empty()) {
+        if (!unaccounted->empty()) {
             // A leak is never one string, and a failure listing 1,584 of
             // them helps nobody; enough to recognise it, and the count.
             constexpr size_t MaxReported = 5;
             std::ostringstream message;
             message << relative
                     << " still has readable text in its raw bytes, which the catalog readers cannot see -- "
-                    << unaccounted.size() << " distinct: ";
-            for (size_t i = 0; i < unaccounted.size() && i < MaxReported; ++i) {
-                message << (i > 0 ? ", " : "") << '"' << unaccounted[i] << '"';
+                    << unaccounted->size() << " distinct: ";
+            for (size_t i = 0; i < unaccounted->size() && i < MaxReported; ++i) {
+                message << (i > 0 ? ", " : "") << '"' << (*unaccounted)[i] << '"';
             }
-            if (unaccounted.size() > MaxReported) {
+            if (unaccounted->size() > MaxReported) {
                 message << ", ...";
             }
             fail(message.str());
         }
+        })) {
+        fail(*stopped);
+    }
+
+    // The floor under all of it. Every check above reports what it found,
+    // and none of them says anything when it was handed nothing to look
+    // at: an export directory this could not walk, or one holding no
+    // files at all, came back ok with every counter at zero. "I found no
+    // leak" and "I read nothing" must not be the same answer here.
+    if (result.filesSwept == 0) {
+        fail("no file in the export was swept, so this check proved nothing");
     }
 
     result.ok = result.problems.empty();
