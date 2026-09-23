@@ -324,6 +324,19 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // that errors (a dying stick, a symlink loop, a parent that lost its
     // +x) would skip them in silence, which is the same shape as the
     // walks this file just stopped doing.
+    // Every path this function puts in front of a person goes through
+    // here: relative to the export root, and the file name when even
+    // that fails. The report is pasted into bug threads, and a native
+    // absolute path carries the user's own name in it.
+    auto shownPath = [&root](const fs::path &path) -> std::string {
+        std::error_code relEc;
+        const fs::path relative = fs::relative(path, root, relEc);
+        if (relEc || relative.empty()) {
+            return path.filename().generic_string();
+        }
+        return relative == "." ? std::string("the export root") : relative.generic_string();
+    };
+
     std::set<std::string> gatesReported;
     auto present = [&](const fs::path &dir) {
         std::error_code dirEc;
@@ -334,11 +347,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             // would otherwise fill the contributor's report with the
             // same line.
             if (gatesReported.insert(dir.generic_string()).second) {
-                std::error_code relEc;
-                const fs::path relative = fs::relative(dir, root, relEc);
-                const std::string shownDir =
-                    relEc || relative.empty() ? dir.filename().generic_string() : relative.generic_string();
-                fail("could not tell whether " + shownDir + " is there: " + dirEc.message());
+                fail("could not tell whether " + shownPath(dir) + " is there: " + dirEc.message());
             }
         }
         return yes;
@@ -449,14 +458,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             std::error_code kindEc;
             if (!entry.is_regular_file(kindEc) || kindEc) {
                 if (kindEc && kindEc != std::errc::no_such_file_or_directory) {
-                    // Relative, like every other message here: this
-                    // report is shown to a contributor and pasted into
-                    // bug threads, and a native absolute path carries the
-                    // user's own name in it -- in the one feature whose
-                    // whole job is taking paths out.
-                    std::error_code relEc;
-                    fail("could not tell what " + fs::relative(entry.path(), root, relEc).generic_string()
-                         + " is: " + kindEc.message());
+                    fail("could not tell what " + shownPath(entry.path()) + " is: " + kindEc.message());
                 }
                 return;
             }
@@ -618,9 +620,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         std::error_code kindEc;
         if (!entry.is_regular_file(kindEc) || kindEc) {
             if (kindEc && kindEc != std::errc::no_such_file_or_directory) {
-                std::error_code relEc;
-                fail("could not tell what " + fs::relative(entry.path(), root, relEc).generic_string()
-                     + " is: " + kindEc.message());
+                fail("could not tell what " + shownPath(entry.path()) + " is: " + kindEc.message());
             }
             return;
         }
@@ -646,14 +646,18 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             // that nothing could read is the one case where this check
             // knows least and the export is about to be sent anyway.
             //
-            // Unless it is simply not there any more: this walk opens
-            // SQLite databases while iterating the directory holding
-            // them, and SQLite makes and removes -shm and -wal as it
-            // goes (the comment on the catalog layout above says so).
-            // Failing on that would delete a clean export for a file
-            // this check created itself.
+            // A file that is simply not there any more is not a file
+            // that could not be read, and refusing on it would delete a
+            // clean export over an entry something else removed between
+            // the listing and the stat. It is still a file this check
+            // did not sweep, though, so it is said out loud rather than
+            // dropped: silence here is the thing this whole branch is
+            // about. A warning, because the export is not shown to hold
+            // anything -- and because failing would destroy it.
             std::error_code goneEc;
             if (!fs::exists(entry.path(), goneEc) && !goneEc) {
+                warn(relative + " was there when the folder was listed and gone when it was read, so its bytes "
+                                "were never swept");
                 return;
             }
             fail(relative + " could not be read, so its bytes were never swept");
@@ -694,17 +698,33 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // does not cover for it: a single real word ("Prodigy") is not
     // two-plus-word prose and is never flagged. A catalog that is there
     // and yielded no track to check is a catalog nothing looked at.
+    // The ANLZ pass is where the leak was, in all 2744 of them, and its
+    // counter was the one left without a floor: USBANLZ present with
+    // nothing in it that isAnalysisFile() recognises checked nothing and
+    // said nothing.
+    if (present(rekordboxRoot / "USBANLZ") && result.analysisFilesChecked == 0) {
+        fail("rekordbox/USBANLZ is there and not one analysis file was checked, so the paths inside them were "
+             "never looked at");
+    }
+    // Warnings, not problems: a catalog that reads back empty is either
+    // a library with nothing in it (rekordbox makes an exportLibrary.db
+    // the moment it writes a stick, populated or not) or a reader that
+    // walked it to nothing, and only the second is a hole. Nothing
+    // distinguishes them from here, and a problem deletes the staging
+    // tree -- AnonymizeLibrary treats any failure as fatal -- so this
+    // says what it did not check and leaves the export alone. The
+    // silence is what was wrong, not the verdict.
     if (rekordboxWasRead && result.rekordboxTracksSampled == 0) {
-        fail("the rekordbox catalog read back with no tracks in it, so its fields were never checked");
+        warn("the rekordbox catalog read back with no tracks in it, so its fields were never checked");
     }
     if (engineWasRead && result.engineTracksSampled == 0) {
-        fail("the Engine catalog read back with no tracks in it, so its fields were never checked");
+        warn("the Engine catalog read back with no tracks in it, so its fields were never checked");
     }
     // The mirror carries the same titles, artists and paths as the
     // catalog beside it, and is read the same way, so it gets the same
     // floor. It was left out of the first pair for no reason at all.
     if (oneLibraryWasRead && result.oneLibraryTracksSampled == 0) {
-        fail("the Device Library Plus mirror read back with no tracks in it, so its fields were never checked");
+        warn("the Device Library Plus mirror read back with no tracks in it, so its fields were never checked");
     }
 
     result.ok = result.problems.empty();
