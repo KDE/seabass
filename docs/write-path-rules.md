@@ -141,6 +141,48 @@ placeholders the anonymizer writes are ASCII by construction, so the
 precondition still holds and the bug stays latent. It stays latent
 exactly until one code path writes a real name instead of a placeholder.
 
+### Safety-critical answers must not be optional to receive
+
+The corollary above says a comment stating a precondition is a note, not
+a guarantee. This is the same failure one step later: the information
+exists, the call produces it, and **ignoring it is free**.
+
+Two of these landed in the same week, one of them inside the commit that
+quotes the corollary:
+
+- `overwriteTrackText()` returns whether it wrote the row. The
+  anonymiser ignored the return -- so once the writer gained a guard, a
+  refused row kept the DJ's real title and the export shipped it.
+- `overwriteAllTagNames()` gained an `int *rowsLeftAlone` out-parameter
+  with a header comment reading "Callers must look at it", **and a
+  default of `nullptr`**. One of the two callers took the default:
+  `tools/anonymize_export_ext`, which regenerates the fixture committed
+  to this repository. A partial scrub would have put a real My Tag name
+  into a file that ships here.
+
+- `hashFile()` looped `while (in)`, which leaves on badbit as readily as
+  on eofbit, and returned the hash of whatever prefix it had. The
+  capture hashes each member twice and calls them consistent when the
+  two agree -- so on a stick that refused at the same offset both times,
+  **the integrity check certified the data loss**, and a restore wrote
+  the 0-byte database over a good one. The stream had set badbit. Asking
+  was optional. (22cd3dbc, found on a deliberately damaged stick.)
+
+That last one carries a second lesson worth keeping next to this one:
+there were **two identical copies of `FileSource`**, born in the same
+commit, and the hardening that would have caught this had been added to
+one of them. The copy that could not tell a refusal from an ending was
+the one reading databases. *A hardening applied to one of two identical
+classes is a hardening you do not have.*
+
+The rule: **when ignoring an answer means a leak or a corruption, do not
+let the caller ignore it.** No default argument, no discardable return
+that matters. Make the compiler ask the question at every call site,
+including the ones written later by someone who never read the header.
+
+A default argument is not a convenience here. It is the door the comment
+was holding shut.
+
 ### Applying it
 
 - A write path that cannot represent its input **returns a failure**; it
@@ -150,3 +192,6 @@ exactly until one code path writes a real name instead of a placeholder.
   comment, however reliably the callers currently honour them.
 - A guard is worth having even when no caller can trip it today. State
   that in the guard, so the next person does not remove it as dead code.
+- An out-parameter or return value that carries a safety answer is
+  **required**, never defaulted. If a caller may legitimately not care,
+  that is a different function.
