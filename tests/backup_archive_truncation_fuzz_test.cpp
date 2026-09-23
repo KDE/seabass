@@ -328,6 +328,48 @@ int main()
                   << caughtByVerify << " caught by verification, 0 silent) OK\n";
     }
 
+    // ---- An entry count that overflows is refused, not thrown ----
+    //
+    // The count is a u64 straight out of the file. The size check used to
+    // multiply it by the central-directory entry size, which for 2^63
+    // wraps to 0 and passes; entries.reserve(2^63) then threw
+    // std::length_error, which tryOpen() does not catch -- so a damaged
+    // archive, instead of reading back as nullopt, threw at its caller.
+    //
+    // The 16-bit EOCD copy has to be saturated as well. Left agreeing
+    // with the real count, it contradicts the zip64 record, and THAT
+    // check refuses the archive first: a case that passes without ever
+    // reaching the check it is for.
+    {
+        Scenario s = buildScenario(4, 16);
+        std::vector<std::byte> image = s.newImage;
+        auto put = [&](std::uint64_t at, std::uint64_t value, int bytes) {
+            for (int i = 0; i < bytes; ++i) {
+                image[static_cast<std::size_t>(at) + i] = static_cast<std::byte>((value >> (8 * i)) & 0xFF);
+            }
+        };
+        const std::uint64_t huge = std::uint64_t{1} << 63;  // * 46 wraps to exactly 0
+        put(s.boundaries.zip64EndOfCentralDirectoryOffset + 24, huge, 8);  // entries on this disk
+        put(s.boundaries.zip64EndOfCentralDirectoryOffset + 32, huge, 8);  // entries in total
+        put(s.boundaries.endOfCentralDirectoryOffset + 8, 0xFFFF, 2);      // 16-bit copies: saturated,
+        put(s.boundaries.endOfCentralDirectoryOffset + 10, 0xFFFF, 2);     // which means "see zip64"
+        InMemoryArchiveFile archive(image);
+        std::string error;
+        bool threw = false;
+        bool opened = true;
+        try {
+            opened = Zip64Reader::tryOpen(archive, &error).has_value();
+        } catch (const std::exception &e) {
+            threw = true;
+            std::cerr << "tryOpen threw: " << e.what() << "\n";
+        }
+        assert(!threw && "a corrupt archive reads back as nullopt, it does not throw at its caller");
+        assert(!opened);
+        assert(error.find("too small for its entry count") != std::string::npos
+               && "refused by the entry-count check, not by one that happens to run first");
+        std::cout << "case 5 (an entry count that overflows the size check is refused, not thrown) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

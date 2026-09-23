@@ -32,6 +32,28 @@ private:
     seabass::application::CancellationToken m_token;
 };
 
+// Presses Cancel as the playlist pass starts: every track is already in
+// the scratch library, and nothing has reached the target yet.
+class CancelAtPlaylists : public seabass::application::ProgressReporter
+{
+public:
+    explicit CancelAtPlaylists(seabass::application::CancellationToken token) : m_token(std::move(token)) {}
+    void start(const std::string &label, size_t) override
+    {
+        if (label.find("playlist") != std::string::npos) {
+            m_token.cancel();
+            sawPlaylistPass = true;
+        }
+    }
+    void tick(size_t) override {}
+    void finish() override {}
+    void warn(const std::string &) override {}
+    bool sawPlaylistPass = false;
+
+private:
+    seabass::application::CancellationToken m_token;
+};
+
 }  // namespace
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 
@@ -434,6 +456,28 @@ int main()
         assert(result.tracksCreated == 1);
         assert(!fs::exists(cancelledPath));
         std::cout << "case (cancelled build: nothing created on the target) OK\n";
+    }
+
+    // Cancel during the PLAYLIST pass, one step later. createPlaylists()
+    // stopped on the flag, but nothing after it looked: the scratch
+    // library -- every track, however many playlists existed at that
+    // moment -- was copied onto the target and reported as created.
+    {
+        fs::path cancelledPath = root / "cancelled-at-playlists" / "Engine Library";
+        fs::create_directories(cancelledPath.parent_path());
+        Track first = makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string());
+        Track second = makeTrack("r2", "Song Two", "Artist Two", (root / "song2.mp3").string(), 140.0, "Gbm", 200.0);
+        first.playlists = {{"Set/Opening", 0}};
+        second.playlists = {{"Set/Opening", 1}};
+        seabass::application::CancellationToken cancel;
+        CancelAtPlaylists reporter(cancel);
+        auto result = EngineLibraryCreator::create(cancelledPath.string(), {first, second}, EngineSchemaGeneration::V2,
+                                                   reporter, cancel);
+        assert(reporter.sawPlaylistPass && "the cancel really landed in the playlist pass");
+        assert(result.tracksCreated == 2 && "every track was built before it");
+        assert(result.cancelled && "a cancel during the playlists is still a cancel");
+        assert(!fs::exists(cancelledPath) && "and nothing reaches the target");
+        std::cout << "case (cancelled during the playlists: nothing created on the target) OK\n";
     }
 
     // A hot LOOP stays a loop.

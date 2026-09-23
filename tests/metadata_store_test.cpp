@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <ctime>
@@ -1011,6 +1012,48 @@ int main()
         const auto cues = reopened.cuesFor(rows[0].id);
         assert(cues.size() == 1 && cues[0].kind == CuePoint::Kind::Hot && "and from the cue list");
         std::cout << "case 22 (opening an older store deletes the phantom cues it took in) OK\n";
+    }
+
+    // ---- case 22b: ...and only the phantoms --------------------------
+    //
+    // The migration used to delete every non-loop cue in the first
+    // second, which is not what the phantoms are: they sit a fraction of
+    // a millisecond BEFORE the track. A cue at 0.5 s is a "track start"
+    // pad a DJ set on purpose, and whether it counts as noise is the
+    // "Ignore cues at 0:00" preference -- which the migration ran without
+    // asking, once, on the one copy that may outlive the stick.
+    {
+        const fs::path oldDb = root / "noisy-but-kept" / "metadata.db";
+        {
+            MetadataStore metadata(oldDb);
+            Track track = sampleTrack(stick, "Contents/Kalte Nacht/Fuenfte.mp3", "Fuenfte");
+            track.cues = {hotCue(1, 64'000.0)};
+            store(metadata, {track}, sourceFor(stick));
+        }
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            const char *phantom = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
+                                  "is_loop, loop_end_ms) SELECT id, 'memory', 0, -0.0226757, '', '', 0, 0 FROM tracks";
+            const char *startPad = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
+                                   "is_loop, loop_end_ms) SELECT id, 'memory', 0, 500.0, '', '', 0, 0 FROM tracks";
+            assert(sqlite3_exec(raw, phantom, nullptr, nullptr, nullptr) == SQLITE_OK);
+            assert(sqlite3_exec(raw, startPad, nullptr, nullptr, nullptr) == SQLITE_OK);
+            assert(sqlite3_exec(raw, "UPDATE schema_version SET version = 2", nullptr, nullptr, nullptr) == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+
+        MetadataStore reopened(oldDb);
+        const auto rows = reopened.browse("Fuenfte", 10, 0);
+        assert(rows.size() == 1);
+        const auto cues = reopened.cuesFor(rows[0].id);
+        const bool padKept = std::any_of(cues.begin(), cues.end(), [](const CuePoint &c) {
+            return c.kind == CuePoint::Kind::Memory && c.positionMs == 500.0;
+        });
+        const bool phantomGone = std::none_of(cues.begin(), cues.end(), [](const CuePoint &c) { return c.positionMs < 0; });
+        assert(phantomGone && "the phantom still goes");
+        assert(padKept && "a memory cue half a second in is the DJ's, not the migration's to delete");
+        std::cout << "case 22b (the migration takes the phantoms and leaves a cue in the first second) OK\n";
     }
 
     // ---- case 23: the migration's own safety net ---------------------
