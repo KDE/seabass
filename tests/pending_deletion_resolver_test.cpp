@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <set>
 #include <iostream>
 #include <vector>
 
@@ -42,6 +43,45 @@ CatalogTracks rekordboxOnly(std::vector<Track> tracks)
     return catalogs;
 }
 
+// Every entry that went in comes back exactly once, in exactly one
+// bucket. Checked on every call rather than per case, because this is
+// the property the whole function is: an entry that fell out of all
+// three buckets is a file nobody will ever offer to delete again, and
+// one counted twice is an entry acted on twice. A case that asserts
+// "safeToDelete.size() == 1" says nothing about either.
+//
+// Titles are the key here: this test gives each entry its own, and a
+// path may legitimately repeat.
+void everyEntryIsAccountedFor(const std::vector<PendingDeletion> &pending, const PendingDeletionResolution &result)
+{
+    std::multiset<std::string> before;
+    for (const auto &entry : pending) {
+        before.insert(entry.title + "|" + entry.filePath);
+    }
+    std::multiset<std::string> after;
+    for (const auto *bucket : {&result.safeToDelete, &result.stillReferenced, &result.notOnThisStick}) {
+        for (const auto &entry : *bucket) {
+            after.insert(entry.title + "|" + entry.filePath);
+        }
+    }
+    if (before != after) {
+        std::cerr << "the buckets do not add up: " << pending.size() << " in, " << after.size() << " out ("
+                  << result.safeToDelete.size() << " to delete, " << result.stillReferenced.size()
+                  << " still referenced, " << result.notOnThisStick.size() << " elsewhere)\n";
+    }
+    assert(before == after && "every pending entry lands in exactly one bucket");
+}
+
+// resolvePendingDeletions() with the invariant checked around it, so no
+// case can forget.
+PendingDeletionResolution resolve(const std::vector<PendingDeletion> &pending, const CatalogTracks &catalogs,
+                                  const std::string &stickRoot)
+{
+    PendingDeletionResolution result = resolvePendingDeletions(pending, catalogs, stickRoot);
+    everyEntryIsAccountedFor(pending, result);
+    return result;
+}
+
 }  // namespace
 
 int main()
@@ -53,7 +93,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/dup.mp3", "Duplicate Track")};
         std::vector<Track> current = {makeTrack("/stick/Contents/survivor.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
+        auto result = resolve(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.size() == 1);
         assert(result.safeToDelete[0].filePath == "/stick/Contents/dup.mp3");
         assert(result.stillReferenced.empty());
@@ -67,7 +107,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/still-used.mp3", "Still Used")};
         std::vector<Track> current = {makeTrack("/stick/Contents/still-used.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
+        auto result = resolve(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         assert(result.stillReferenced[0].filePath == "/stick/Contents/still-used.mp3");
@@ -82,7 +122,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("C:\\Stick\\Contents\\dup.mp3", "Dup")};
         std::vector<Track> current = {makeTrack("C:/Stick/Contents/dup.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "C:/Stick");
+        auto result = resolve(pending, rekordboxOnly(current), "C:/Stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 3 (path-separator-insensitive matching) OK\n";
@@ -94,7 +134,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("", "No Path")};
         std::vector<Track> current;
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
+        auto result = resolve(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 4 (empty filePath -> left alone, never guessed at) OK\n";
@@ -109,7 +149,7 @@ int main()
         };
         std::vector<Track> current = {makeTrack("/stick/Contents/used.mp3")};
 
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
+        auto result = resolve(pending, rekordboxOnly(current), "/stick");
         assert(result.safeToDelete.size() == 2);
         assert(result.stillReferenced.size() == 1);
         assert(result.stillReferenced[0].filePath == "/stick/Contents/used.mp3");
@@ -124,7 +164,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/shared.mp3", "Shared Track")};
 
         // Only rekordbox consulted -- and rekordbox has indeed forgotten it.
-        auto oneCatalog = resolvePendingDeletions(pending, rekordboxOnly({makeTrack("/stick/Contents/other.mp3")}), "/stick");
+        auto oneCatalog = resolve(pending, rekordboxOnly({makeTrack("/stick/Contents/other.mp3")}), "/stick");
         assert(oneCatalog.safeToDelete.size() == 1);  // this is what used to happen
 
         // Every catalog consulted: Engine still plays it, OneLibrary too.
@@ -133,7 +173,7 @@ int main()
         all.engine = {makeTrack("/stick/Contents/shared.mp3")};
         all.oneLibrary = {makeTrack("/stick/Contents/shared.mp3")};
 
-        auto result = resolvePendingDeletions(pending, all, "/stick");
+        auto result = resolve(pending, all, "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 6 (a file another catalog still references is never deleted) OK\n";
@@ -151,7 +191,7 @@ int main()
         catalogs.engine = std::vector<Track>{};
         catalogs.oneLibrary = {makeTrack("/stick/Contents/kept.mp3")};
 
-        auto result = resolvePendingDeletions(pending, catalogs, "/stick");
+        auto result = resolve(pending, catalogs, "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 1);
         std::cout << "case 7 (OneLibrary alone protects a file) OK\n";
@@ -162,7 +202,7 @@ int main()
     {
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/a.mp3", "A"),
                                                  makePending("/stick/Contents/b.mp3", "B")};
-        auto result = resolvePendingDeletions(pending, CatalogTracks{}, "/stick");
+        auto result = resolve(pending, CatalogTracks{}, "/stick");
         assert(result.safeToDelete.empty());
         assert(result.stillReferenced.size() == 2);
         std::cout << "case 8 (no catalogs -> nothing is safe to delete) OK\n";
@@ -172,7 +212,7 @@ int main()
     // file, so a case-different spelling in the catalog still protects it.
     {
         std::vector<PendingDeletion> pending = {makePending("/stick/Contents/Artist/Track.mp3", "T")};
-        auto result = resolvePendingDeletions(pending, rekordboxOnly({makeTrack("/stick/contents/artist/TRACK.MP3")}), "/stick");
+        auto result = resolve(pending, rekordboxOnly({makeTrack("/stick/contents/artist/TRACK.MP3")}), "/stick");
         assert(result.safeToDelete.empty());
         std::cout << "case 9 (case-different spelling still protects) OK\n";
     }
@@ -184,7 +224,7 @@ int main()
         std::vector<PendingDeletion> pending = {makePending("/media/other/Contents/x.mp3", "Elsewhere"),
                                                makePending("/stick/Contents/dup.mp3", "Here")};
         std::vector<Track> current = {makeTrack("/stick/Contents/survivor.mp3")};
-        auto result = resolvePendingDeletions(pending, rekordboxOnly(current), "/stick");
+        auto result = resolve(pending, rekordboxOnly(current), "/stick");
         assert(result.notOnThisStick.size() == 1);
         assert(result.notOnThisStick[0].filePath == "/media/other/Contents/x.mp3");
         assert(result.safeToDelete.size() == 1 && result.safeToDelete[0].filePath == "/stick/Contents/dup.mp3");

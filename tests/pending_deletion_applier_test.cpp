@@ -10,6 +10,7 @@
 #endif
 
 #include <cassert>
+#include <set>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -109,6 +110,37 @@ PendingDeletion makeEntry(const std::string &filePath, const std::string &backup
     return e;
 }
 
+// Counts over a collection, checked as a property rather than one
+// number at a time: #7's own lens, and the one that found
+// fillMissingDurations(). Every outcome names an entry that went in,
+// no entry is acted on twice, and a run that was not cancelled reports
+// on all of them. A single count says nothing about any of that -- an
+// entry silently skipped and an entry counted twice both leave it
+// looking right.
+void everyEntryReportedOnce(const std::vector<PendingDeletion> &given,
+                            const std::vector<PendingDeletionOutcome> &outcomes, bool cancelled)
+{
+    std::multiset<std::string> in;
+    for (const auto &entry : given) {
+        in.insert(entry.filePath);
+    }
+    std::multiset<std::string> out;
+    for (const auto &outcome : outcomes) {
+        out.insert(outcome.entry.filePath);
+    }
+    for (const auto &path : out) {
+        assert(in.count(path) >= out.count(path) && "an outcome names a file that was never handed in");
+    }
+    if (cancelled) {
+        assert(outcomes.size() <= given.size() && "a cancelled run reports on the files it reached, never more");
+        return;
+    }
+    if (outcomes.size() != given.size()) {
+        std::cerr << "outcomes do not add up: " << given.size() << " in, " << outcomes.size() << " out\n";
+    }
+    assert(in == out && "every entry handed in comes back with exactly one outcome");
+}
+
 }  // namespace
 
 int main()
@@ -133,7 +165,9 @@ int main()
         PendingDeletionManifest manifest(manifestPath.string());
         manifest.append(makeEntry(filePath.string()));
 
-        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
+        const auto given = manifest.list();
+        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Deleted);
@@ -153,7 +187,9 @@ int main()
         manifest.append(makeEntry(filePath.string()));
         assert(!fs::exists(filePath));  // never created
 
-        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
+        const auto given = manifest.list();
+        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::AlreadyAbsent);
@@ -177,7 +213,9 @@ int main()
         std::vector<PendingDeletionOutcome> outcomes;
         {
             UndeletableFile blocked(filePath);
-            outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
+            const auto given = manifest.list();
+            outcomes = applyPendingDeletions(given, root.string(), manifest);
+            everyEntryReportedOnce(given, outcomes, false);
             assert(fs::exists(filePath));  // genuinely untouched, while still blocked
         }
 
@@ -222,7 +260,9 @@ int main()
         PendingDeletionManifest manifest(manifestPath.string());
         manifest.append(makeEntry(filePath.string()));
 
-        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
+        const auto given = manifest.list();
+        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Deleted);
@@ -248,6 +288,7 @@ int main()
 
         std::vector<PendingDeletion> toDelete = {makeEntry(deletableFile.string())};
         auto outcomes = applyPendingDeletions(toDelete, root.string(), manifest);
+        everyEntryReportedOnce(toDelete, outcomes, false);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Deleted);
@@ -276,10 +317,12 @@ int main()
 
         seabass::application::CancellationToken cancel;
         size_t reported = 0;
-        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest, cancel, [&](size_t done) {
+        const auto given = manifest.list();
+        auto outcomes = applyPendingDeletions(given, root.string(), manifest, cancel, [&](size_t done) {
             reported = done;
             cancel.cancel();  // the user pressed Cancel while the first file was being deleted
         });
+        everyEntryReportedOnce(given, outcomes, true);
 
         assert(outcomes.size() == 1);
         assert(reported == 1);
@@ -307,7 +350,9 @@ int main()
         manifest.append(makeEntry(elsewhere.string()));
         manifest.append(makeEntry(own.string()));
 
-        auto outcomes = applyPendingDeletions(manifest.list(), root.string(), manifest);
+        const auto given = manifest.list();
+        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 2);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Failed);
