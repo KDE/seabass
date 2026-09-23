@@ -2764,6 +2764,12 @@ add_executable(rig_backup tools/rig_backup.cpp)
 target_include_directories(rig_backup PRIVATE src)
 target_link_libraries(rig_backup PRIVATE seabass_core)
 
+# Release rig: the emergency copy of a damaged, read-only stick and its restore
+# (issue #36). Needs a stick that is really damaged; see the tool's header.
+add_executable(rig_salvage tools/rig_salvage.cpp)
+target_include_directories(rig_salvage PRIVATE src)
+target_link_libraries(rig_salvage PRIVATE seabass_core)
+
 # Release rig: compact a full stick backup; it must shrink by exactly the dead
 # space it reported and still verify with the same entries.
 # Release rig: the filesystem repair, end to end, on a FAT32 loopback image
