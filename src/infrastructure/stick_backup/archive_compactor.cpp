@@ -104,7 +104,19 @@ CompactionResult compactArchive(const Zip64Reader &source, const BackupManifest 
         if (isArchiveMetadataEntry(entry.name)) {
             Zip64Writer::EntrySink copy = writer.beginFile(entry.name, entry.mtimeUnix);
             source.readEntry(i, [&](std::span<const std::byte> piece) { copy.write(piece); });
-            copy.finish();
+            // Checked against the source's own central directory record,
+            // like every other entry below. The manifest hash cannot
+            // apply here -- a metadata entry has no manifest row, which
+            // is the whole reason for this branch -- but size and CRC
+            // are the archive's own bookkeeping and are available for
+            // any entry. Without them this was the one thing copied
+            // through a compaction unverified, and it is the salvage
+            // log: the record of which files came off a failing stick
+            // short.
+            const CentralEntry copied_ = copy.finish();
+            if (copied_.size != entry.size || copied_.crc32 != entry.crc32) {
+                throw ArchiveFormatError("entry does not match its central directory record: " + entry.name);
+            }
             ++result.entries;
             continue;
         }

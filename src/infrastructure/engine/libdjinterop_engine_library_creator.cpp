@@ -783,6 +783,21 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
             reporter.finish();
 
             result.playlistsCreated = createPlaylists(db, playlistMembers, reporter, cancel);
+            // Cancelling during the playlist pass is still cancelling.
+            // createPlaylists() stops on the flag and returns what it
+            // managed, but nothing here looked -- so the library went on
+            // to be copied to the stick and reported as created, with
+            // however many playlists happened to exist when the user
+            // pressed the button. The track loop above returns
+            // result.cancelled for exactly this reason and the stick is
+            // untouched at that point; this is the same moment, one pass
+            // later, and the scratch copy dies with scratchGuard the
+            // same way.
+            if (cancel.cancelled()) {
+                result.cancelled = true;
+                reporter.finish();
+                return result;
+            }
             // db goes out of scope here, closing its SQLite connection (and
             // with it, any pending journal) before the raw files underneath
             // are copied below -- copying while the connection is still open

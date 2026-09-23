@@ -699,6 +699,36 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         }
     }
 
+    // Scheduling a doomed copy's FILE for deletion, which has to happen
+    // whether or not that copy had a row in this page's catalog. It is a
+    // lambda because two paths below need it and they used to have only
+    // one between them.
+    auto scheduleFileForDeletion = [&](const domain::Track &doomed) {
+        // Two rows naming ONE file: removing one of them frees nothing,
+        // because the copy being kept is that same file. Listing it
+        // would put the kept track on the Delete Orphaned Files page and
+        // leave it there for good -- resolvePendingDeletions() sees a
+        // file the library still references, buckets it as still
+        // referenced, and never clears an entry it will not act on.
+        // Nothing is destroyed by that (the same check is what stops the
+        // deletion), but the page would go on offering a track the DJ is
+        // using.
+        if (application::normalizedPathKey(doomed.filePath) == application::normalizedPathKey(plan.survivor.filePath)) {
+            log.record("cleanup: \"" + doomed.title + "\" is another row for the file being kept, so nothing is "
+                       "scheduled for deletion");
+            return;
+        }
+        // On-stick state, appended per doomed copy: whatever this save
+        // gets through has its manifest line, cancelled or not.
+        infrastructure::cleanup::PendingDeletion pending;
+        pending.format = format.toStdString();
+        pending.filePath = doomed.filePath;
+        pending.title = doomed.title;
+        pending.artist = doomed.artist;
+        pending.backupId = w.dbBackupId;
+        w.manifest.append(pending);
+    };
+
     for (const auto &doomed : plan.toRemove) {
         if (doomed.isUnreferenced) {
             // No catalog row to remove and no sourceId a writer would
@@ -713,6 +743,14 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             // This copy has no row in the page's catalog (it was read from
             // another one); its own catalog's removal happens in the
             // per-catalog loop below.
+            //
+            // Its FILE still has to be scheduled here. This used to
+            // `continue` straight past the append at the end of the
+            // loop, so a copy catalogued only in another format had its
+            // row removed by that loop and its file left on the stick,
+            // referenced by nothing and listed for deletion by nothing
+            // -- the exact clutter this change was asked to clear.
+            scheduleFileForDeletion(doomed);
             continue;
         }
         for (const std::string &doomedId : doomedIds) {
@@ -796,30 +834,7 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             }
         }
 
-        // Two rows naming ONE file: removing one of them frees nothing,
-        // because the copy being kept is that same file. Listing it
-        // would put the kept track on the Delete Orphaned Files page and
-        // leave it there for good -- resolvePendingDeletions() sees a
-        // file the library still references, buckets it as still
-        // referenced, and never clears an entry it will not act on.
-        // Nothing is destroyed by that (the same check is what stops the
-        // deletion), but the page would go on offering a track the DJ is
-        // using.
-        if (application::normalizedPathKey(doomed.filePath) == application::normalizedPathKey(plan.survivor.filePath)) {
-            log.record("cleanup: \"" + doomed.title + "\" is another row for the file being kept, so nothing is "
-                       "scheduled for deletion");
-            continue;
-        }
-
-        // On-stick state, appended per doomed copy: whatever this save
-        // gets through has its manifest line, cancelled or not.
-        infrastructure::cleanup::PendingDeletion pending;
-        pending.format = format.toStdString();
-        pending.filePath = doomed.filePath;
-        pending.title = doomed.title;
-        pending.artist = doomed.artist;
-        pending.backupId = w.dbBackupId;
-        w.manifest.append(pending);
+        scheduleFileForDeletion(doomed);
     }
 
     // Every OTHER catalog listing this file. Cue merge FIRST, then
