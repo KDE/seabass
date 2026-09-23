@@ -207,6 +207,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         }
         ctx.endChange();
         result.appliedIds << change->id();
+        if (outcome.skipped) {
+            result.skippedIds << change->id();
+        }
         ctx.progress().tick(++done);
     }
 
@@ -244,6 +247,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         // Whatever the hooks were committing did not land: report every
         // change as still pending rather than guess which did.
         result.appliedIds.clear();
+        result.skippedIds.clear();
         if (result.error.isEmpty()) {
             result.error = *finish.error;
         }

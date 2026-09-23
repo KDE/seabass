@@ -419,15 +419,27 @@ void LibraryEditSession::onSaveFinished()
     }
 
     std::set<QString> applied(result.appliedIds.begin(), result.appliedIds.end());
+    const std::set<QString> skipped(result.skippedIds.begin(), result.skippedIds.end());
     std::set<QString> formats;
     // Counted here, while the changes still exist: the erase below takes
     // the applied ones with it. In units, not in changes -- see
-    // PendingChange::unitsWritten().
+    // PendingChange::unitsWritten(). A skip leaves the pending list with
+    // the rest of the applied ones but is not counted as written: it did
+    // not do what it was staged for, and the summary is the only place
+    // the user would learn that.
     int writtenUnits = 0;
+    int skippedUnits = 0;
     int stillPendingUnits = 0;
     for (const auto &change : m_changes) {
         if (applied.count(change->id())) {
-            writtenUnits += change->unitsWritten();
+            if (skipped.count(change->id())) {
+                skippedUnits += change->unitsWritten();
+            } else {
+                writtenUnits += change->unitsWritten();
+            }
+            // A skip still invalidates: it counts no repair, but a track
+            // deleted since the scan has had its image copied in and an
+            // AlbumArt row written before the missing row was noticed.
             for (const QString &format : change->formatsTouched()) {
                 formats.insert(format);
             }
@@ -453,7 +465,8 @@ void LibraryEditSession::onSaveFinished()
 
     m_lastSummary = {
         {"written", writtenUnits},
-        {"total", writtenUnits + stillPendingUnits},
+        {"total", writtenUnits + skippedUnits + stillPendingUnits},
+        {"skipped", skippedUnits},
         {"unit", m_savingUnit},
         {"verb", m_savingVerb},
         {"cancelled", result.cancelled},

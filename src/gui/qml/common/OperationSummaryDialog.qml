@@ -14,8 +14,9 @@ import SeabassGui
 // to where the user came from).
 //
 // summary: {written, total, unit, cancelled, error} plus an optional
-// verb ("written" by default; "deleted" for a prune) and an optional
-// detail line that replaces the default cancel explanation.
+// verb ("written" by default; "deleted" for a prune), an optional
+// detail line that replaces the default cancel explanation, and an
+// optional skipped count (part of total, not of written).
 SeabassDialog {
     id: dialog
     property var summary: ({})
@@ -32,6 +33,21 @@ SeabassDialog {
     // warning nobody renders is worse than the error it replaced.
     readonly property string warning: dialog.summary.warning !== undefined ? dialog.summary.warning : ""
     readonly property string detail: dialog.summary.detail !== undefined ? dialog.summary.detail : ""
+    // Reached by the save and gone by then: a track deleted, or an image
+    // that stopped reading, since the page scanned. Counted in total and
+    // not in written, so the count sentence already shows a shortfall;
+    // this says where it went, which the count alone cannot.
+    readonly property int skipped: dialog.summary.skipped !== undefined ? dialog.summary.skipped : 0
+    readonly property string skippedSentence: {
+        if (dialog.skipped <= 0) {
+            return "";
+        }
+        const noun = dialog.skipped === 1 ? dialog.singularUnit : dialog.unit;
+        return dialog.skipped + " " + noun + " skipped, because "
+            + (dialog.skipped === 1 ? "it" : "they")
+            + " changed on the stick after the scan. The stick's log names "
+            + (dialog.skipped === 1 ? "it." : "each one.");
+    }
 
     // "27 cues removed." when everything staged went through, and
     // "5 of 31 cues removed." only when it did not.
@@ -74,13 +90,14 @@ SeabassDialog {
     }
 
     severity: dialog.error.length > 0 ? SeabassDialog.Error
-        : (dialog.warning.length > 0 && !dialog.cancelled) ? SeabassDialog.Warning
+        : ((dialog.warning.length > 0 || dialog.skipped > 0) && !dialog.cancelled) ? SeabassDialog.Warning
         : dialog.cancelled ? SeabassDialog.Warning
         : SeabassDialog.Info
     closePolicy: Popup.NoAutoClose
     title: dialog.error.length > 0 ? "Stopped with an error"
         : (dialog.warning.length > 0 && !dialog.cancelled) ? "Done, with something left over"
         : dialog.cancelled ? "Cancelled"
+        : dialog.skipped > 0 ? "Done, with some skipped"
         : "Done"
 
     footer: DialogButtonBox {
@@ -115,13 +132,14 @@ SeabassDialog {
             objectName: "detailLabel"
             visible: text.length > 0
             color: dialog.error.length > 0 ? Theme.danger : Theme.textMuted
-            text: dialog.error.length > 0 ? "Then: " + dialog.error
-                : (dialog.warning.length > 0 && dialog.cancelled)
-                    ? "Stopped at your request. " + dialog.warning
-                : dialog.warning.length > 0 ? dialog.warning
-                : dialog.detail.length > 0 ? dialog.detail
-                : dialog.cancelled ? "Stopped at your request. Everything up to here is complete; the rest was not touched."
-                : ""
+            text: [dialog.skippedSentence,
+                   dialog.error.length > 0 ? "Then: " + dialog.error
+                   : (dialog.warning.length > 0 && dialog.cancelled)
+                       ? "Stopped at your request. " + dialog.warning
+                   : dialog.warning.length > 0 ? dialog.warning
+                   : dialog.detail.length > 0 ? dialog.detail
+                   : dialog.cancelled ? "Stopped at your request. Everything up to here is complete; the rest was not touched."
+                   : ""].filter(part => part.length > 0).join(" ")
         }
     }
 }

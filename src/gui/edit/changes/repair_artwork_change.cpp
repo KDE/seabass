@@ -124,7 +124,8 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
     }
     if (repair.repaired == 0) {
         // This one track could not be given art. That is a skip, not a
-        // failure: a failed change stops the whole save (save_loop.cpp
+        // failure -- and not a success, which the summary would count as a
+        // repair: a failed change stops the whole save (save_loop.cpp
         // breaks on the first one), so failing here would mean one
         // unreadable cover among a thousand abandoned the other nine
         // hundred and ninety-nine -- while repairArtwork's own comment
@@ -147,7 +148,7 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
             why = m_entry.imageOnStick + " could not be read";
         }
         ctx.log().record("artwork: skipped track " + std::to_string(m_entry.trackId) + ": " + why);
-        return ChangeOutcome::success();
+        return ChangeOutcome::skip();
     }
     session.noteItemApplied();
     ctx.log().record("artwork: gave track " + std::to_string(m_entry.trackId)

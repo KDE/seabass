@@ -100,7 +100,7 @@ ChangeOutcome FillSampleRateChange::apply(SaveContext &ctx)
         // abandoning the rest of the save for.
         ctx.log().record("sample rates: skipped track " + std::to_string(m_entry.trackId)
                          + ": nothing left to write");
-        return ChangeOutcome::success();
+        return ChangeOutcome::skip();
     }
     session.noteItemApplied();
     ctx.log().record("sample rates: gave track " + std::to_string(m_entry.trackId) + " its own rate, "

@@ -20,7 +20,16 @@ namespace seabass::gui
 
 struct SaveLoopResult
 {
-    QStringList appliedIds;  // in order; a change here is fully on the stick
+    // In order; a change here is settled: fully on the stick, or skipped.
+    // Either way it leaves the pending list, since there is nothing left of
+    // it to retry.
+    QStringList appliedIds;
+    // The part of appliedIds that did not do what it was staged for
+    // (ChangeOutcome::skip); it may still have left a file behind. Kept
+    // apart so the summary does not count it as done: a skip reported as a
+    // repair let "1174 of 1174 tracks repaired" stand over a save whose
+    // images had all become unreadable since the scan.
+    QStringList skippedIds;
     QString failedId;        // the change that failed, if any (it and everything after it stay pending)
     QString error;           // empty unless a change or a finish hook failed
     // Everything landed, but a tidy-up after it did not -- a write-ahead

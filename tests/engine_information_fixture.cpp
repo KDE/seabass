@@ -47,4 +47,43 @@ std::int64_t readEngineImportCounter(const std::filesystem::path &databaseFile)
     return value;
 }
 
+void createEngineArtworkTables(const std::filesystem::path &databaseFile, const std::vector<std::int64_t> &trackIds)
+{
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(databaseFile.string().c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("cannot create " + databaseFile.string());
+    }
+    std::string sql = "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT, albumArt BLOB);"
+                      "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER);";
+    for (const std::int64_t id : trackIds) {
+        sql += "INSERT INTO Track (id, title, artist, albumArtId) VALUES (" + std::to_string(id) + ", 't', 'a', NULL);";
+    }
+    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+    sqlite3_close(db);
+    if (rc != SQLITE_OK) {
+        throw std::runtime_error("cannot write the artwork tables in " + databaseFile.string());
+    }
+}
+
+std::string engineTrackArtworkHash(const std::filesystem::path &databaseFile, std::int64_t trackId)
+{
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(databaseFile.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return {};
+    }
+    sqlite3_stmt *stmt = nullptr;
+    std::string hash;
+    if (sqlite3_prepare_v2(db, "SELECT AlbumArt.hash FROM Track JOIN AlbumArt ON AlbumArt.id = Track.albumArtId "
+                               "WHERE Track.id = ?", -1, &stmt, nullptr)
+            == SQLITE_OK
+        && sqlite3_bind_int64(stmt, 1, trackId) == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW
+        && sqlite3_column_text(stmt, 0) != nullptr) {
+        hash = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return hash;
+}
+
 }  // namespace seabass::testing

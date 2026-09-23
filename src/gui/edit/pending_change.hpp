@@ -28,9 +28,16 @@ struct ChangeOutcome
 {
     bool ok = false;
     QString error;
+    // ok, and not done: what the change was for had gone by the time the
+    // save reached it (a track deleted, an image that stopped
+    // reading since the scan). Not a failure, which stops the whole save
+    // for one track; and not a success either, which the summary would
+    // count as done. See SaveLoopResult::skippedIds.
+    bool skipped = false;
 
-    static ChangeOutcome success() { return {true, {}}; }
-    static ChangeOutcome failure(QString error) { return {false, std::move(error)}; }
+    static ChangeOutcome success() { return {true, {}, false}; }
+    static ChangeOutcome skip() { return {true, {}, true}; }
+    static ChangeOutcome failure(QString error) { return {false, std::move(error), false}; }
 };
 
 // One staged edit to a library: exactly what one Save step writes. The

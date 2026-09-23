@@ -193,6 +193,44 @@ TestCase {
         dialog.close();
     }
 
+    // A skip is counted in total and not in written: the track had gone,
+    // or its image stopped reading, between the scan and the save. The
+    // count already shows the shortfall; the detail line says where it
+    // went, and the dialog does not call it plain "Done". Before, a skip
+    // was a success, and "3 tracks repaired." stood over one repair.
+    function test_summaryDialogNamesSkippedChanges() {
+        const dialog = createTemporaryObject(summaryComponent, testCase);
+        dialog.show({written: 1, total: 3, skipped: 2, unit: "tracks", verb: "repaired",
+                     cancelled: false, error: ""});
+        tryCompare(dialog, "opened", true);
+        compare(findByObjectName(dialog, "countLabel").text, "1 of 3 tracks repaired.");
+        compare(findByObjectName(dialog, "detailLabel").text,
+                "2 tracks skipped, because they changed on the stick after the scan. "
+                + "The stick's log names each one.");
+        compare(findByObjectName(dialog, "detailLabel").visible, true);
+        compare(dialog.title, "Done, with some skipped");
+        compare(dialog.severity, SeabassDialog.Warning);
+        dialog.close();
+
+        // One, and beside an error: both are said, the skip first.
+        dialog.show({written: 0, total: 5, skipped: 1, unit: "tracks", verb: "repaired",
+                     cancelled: false, error: "disk gone"});
+        tryCompare(dialog, "opened", true);
+        compare(findByObjectName(dialog, "detailLabel").text,
+                "1 track skipped, because it changed on the stick after the scan. "
+                + "The stick's log names it. Then: disk gone");
+        compare(dialog.title, "Stopped with an error");
+        dialog.close();
+
+        // None: nothing new appears, and a clean save is still just Done.
+        dialog.show({written: 3, total: 3, skipped: 0, unit: "tracks", verb: "repaired",
+                     cancelled: false, error: ""});
+        tryCompare(dialog, "opened", true);
+        compare(findByObjectName(dialog, "detailLabel").text, "");
+        compare(dialog.title, "Done");
+        dialog.close();
+    }
+
     function test_lockedLibraryDialogDefaultsToStayingSafe() {
         var dialog = createTemporaryObject(lockedComponent, testCase);
         var spy = createTemporaryObject(spyComponent, testCase, {target: dialog, signalName: "removeLockRequested"});

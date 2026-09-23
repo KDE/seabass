@@ -22,6 +22,7 @@
 #include "application/ports/progress_reporter.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
+#include "gui/edit/changes/repair_artwork_change.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/pending_change.hpp"
 #include "gui/edit/save_context.hpp"
@@ -38,7 +39,7 @@ namespace fs = std::filesystem;
 namespace
 {
 
-enum class Behavior { Ok, Fail, Throw, CancelDuringApply };
+enum class Behavior { Ok, Skip, Fail, Throw, CancelDuringApply };
 
 struct Log
 {
@@ -72,6 +73,8 @@ public:
         case Behavior::CancelDuringApply:
             const_cast<CancellationToken &>(ctx.cancel()).cancel();
             break;
+        case Behavior::Skip:
+            return ChangeOutcome::skip();
         case Behavior::Ok:
             break;
         }
@@ -530,6 +533,70 @@ int main()
         assert(result.error.isEmpty());
         assert(engineCounter(stick.engine) == 501 && "marked imported means imported as the save left it");
         std::cout << "case 16 (a mark staged with a pdb rewrite ends level) OK\n";
+    }
+
+    // 17. A skip settles the change without counting it as done. It leaves
+    //     the pending list with the applied ones (appliedIds: nothing of it
+    //     is left to retry) and is named again in skippedIds, which the
+    //     summary subtracts -- before, a skip was a success, and a save in
+    //     which every image had become unreadable since the scan reported
+    //     every track repaired. A finish-hook failure takes skippedIds down
+    //     with appliedIds: "report every change as still pending".
+    {
+        Log log;
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, nullptr, rb, {});
+        auto result = runSaveLoop({std::make_shared<FakeChange>("a", Behavior::Ok, log),
+                                   std::make_shared<FakeChange>("b", Behavior::Skip, log),
+                                   std::make_shared<FakeChange>("c", Behavior::Ok, log)},
+                                  ctx);
+        assert(result.error.isEmpty());
+        assert(result.appliedIds == (QStringList{"a", "b", "c"}));
+        assert(result.skippedIds == QStringList{"b"});
+
+        SaveContext failing(token, noProgress, nullptr, rb, {});
+        failing.onFinish([](bool) { throw std::runtime_error("commit failed"); });
+        auto lost = runSaveLoop({std::make_shared<FakeChange>("s", Behavior::Skip, log)}, failing);
+        assert(lost.appliedIds.isEmpty() && lost.skippedIds.isEmpty());
+        std::cout << "case 17 (a skip is settled, and counted apart) OK\n";
+    }
+
+    // 18. The real artwork change: one track repaired, one deleted since
+    //     the scan, one whose image stopped reading. Only the first is a
+    //     repair. Before, all three came back success() and the summary
+    //     said "3 tracks repaired".
+    {
+        const fs::path stickRoot = root / "artwork-skip";
+        const fs::path library = stickRoot / "Engine Library";
+        fs::create_directories(library / "Database2");
+        fs::create_directories(library / "Artwork");
+        seabass::testing::createEngineArtworkTables(library / "Database2" / "m.db", {1, 3});
+        const fs::path image = stickRoot / "PIONEER" / "Artwork" / "00001" / "a1.jpg";
+        fs::create_directories(image.parent_path());
+        std::ofstream(image, std::ios::binary) << std::string("\xFF\xD8\xFF", 3) << "COVER";
+
+        auto entry = [&](std::int64_t trackId, const fs::path &imageOnStick) {
+            seabass::infrastructure::engine::ArtworkEntry e;
+            e.trackId = trackId;
+            e.imageOnStick = imageOnStick.string();
+            return e;
+        };
+        const QString enginePath = QString::fromStdString(library.string());
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, nullptr, {}, enginePath);
+        auto result = runSaveLoop(
+            {std::make_shared<RepairArtworkChange>(enginePath, entry(1, image), 3, true, nullptr),
+             std::make_shared<RepairArtworkChange>(enginePath, entry(2, image), 3, false, nullptr),
+             std::make_shared<RepairArtworkChange>(enginePath, entry(3, stickRoot / "gone.jpg"), 3, false, nullptr)},
+            ctx);
+        assert(result.error.isEmpty());
+        assert(result.appliedIds.size() == 3);
+        assert(result.skippedIds
+               == (QStringList{RepairArtworkChange::idFor(2), RepairArtworkChange::idFor(3)}));
+        assert(!seabass::testing::engineTrackArtworkHash(library / "Database2" / "m.db", 1).empty()
+               && "the one repair did land");
+        assert(seabass::testing::engineTrackArtworkHash(library / "Database2" / "m.db", 3).empty());
+        std::cout << "case 18 (a cover that could not be given is not counted as given) OK\n";
     }
 
     fs::remove_all(root);
