@@ -193,6 +193,10 @@ struct OpenedArchive
     bool open(const BackupStickOptions &options, bool recover)
     {
         std::error_code ec;
+        // A first guess only, and one that cannot be trusted: both calls
+        // take an error_code and neither answer distinguishes "not there"
+        // from "I could not look". It decides whether to open at all; the
+        // authoritative answer is taken from the opened file below.
         existedBefore = fs::exists(options.archivePath, ec) && fs::file_size(options.archivePath, ec) > 0;
         if (!recover && !existedBefore) {
             // Nothing to read yet (a first backup's preview, or verify of
@@ -218,8 +222,15 @@ struct OpenedArchive
             error = std::string("could not open the backup archive: ") + e.what();
             return false;
         }
-        if (archive->size() == 0) {
-            existedBefore = false;
+        // Set from the open file, not merely cleared by it. This line
+        // only ever cleared the flag, so a transient failure of the
+        // exists() above left existedBefore false for an archive that is
+        // plainly there -- and firstBackup is !existedBefore, and
+        // discard() on a first backup fs::remove()s the archive. That is
+        // a pre-existing, possibly multi-gigabyte backup deleted by a
+        // run that only meant to roll itself back.
+        existedBefore = archive->size() > 0;
+        if (!existedBefore) {
             return true;
         }
         // All three of these refusals leave the person stuck unless the
@@ -847,7 +858,23 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
         std::error_code ec;
         std::uint64_t sizeNow = fs::file_size(fullPath, ec);
         std::int64_t mtimeNow = ec ? 0 : toUnixSeconds(fs::last_write_time(fullPath, ec));
-        const bool changedUnderneath = ec || sizeNow != file->size || mtimeNow != file->mtimeUnix;
+        // A stat that FAILED and a stat that came back different are
+        // different findings, and lumping them together threw away the
+        // bytes salvage exists to keep.
+        //
+        // On a read-only stick the file cannot have changed -- the
+        // kernel has already refused writes to it, which is the same
+        // argument the salvage branch below makes -- so a failing
+        // file_size() there is the device being unwell, not the file
+        // moving. And a failing stat is exactly what a damaged stick
+        // hands back for the file whose read just stopped. Treating it
+        // as "changed underneath" dropped the readable bytes, wrote no
+        // salvagedFromSize row, put nothing in the salvage log, and told
+        // the user it was "left for the next run" on a stick where there
+        // is no next run.
+        const bool statFailed = static_cast<bool>(ec);
+        const bool valuesDiffer = !statFailed && (sizeNow != file->size || mtimeNow != file->mtimeUnix);
+        const bool changedUnderneath = valuesDiffer || (statFailed && !options.sourceReadOnly);
         const bool shortRead = appended->entry.size != file->size;
         if (changedUnderneath) {
             updater.forgetLastEntries(1);

@@ -669,6 +669,60 @@ int main()
         std::cout << "case 17 (a backup that lost nothing carries no salvage log) OK\n";
     }
 
+    // A salvage run whose re-stat fails keeps what it read.
+    //
+    // On a damaged stick the file whose read just stopped is often the
+    // one whose file_size() then fails too, and both findings used to go
+    // down the same branch: dropped, no salvagedFromSize row, nothing in
+    // the salvage log, and "changed while it was being read, left for
+    // the next run" -- on a read-only stick, where there is no next run.
+    //
+    // The re-stat is made to fail by deleting the file from inside the
+    // read-limit hook. The source is already open by then, so POSIX
+    // keeps serving its bytes from the open descriptor while the later
+    // fs::file_size() on the path fails with ENOENT. That is the real
+    // shape: the read worked, the stat did not.
+#if !defined(_WIN32)
+    {
+        Fixture f("salvage-restat-fails");
+        const fs::path vanishing = f.stick / "Contents" / "a.mp3";
+        const std::string whole = readFile(vanishing);
+
+        BackupStickOptions options = f.options;
+        options.sourceReadOnly = true;
+        options.readLimitForTesting = [&](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Contents/a.mp3") {
+                std::error_code ec;
+                fs::remove(vanishing, ec);  // the source is already open
+                return std::uint64_t{40'000};
+            }
+            return std::nullopt;
+        };
+
+        BackupStickOutcome outcome = BackupStick::execute(options);
+        assert(outcome.status != BackupOutcomeStatus::Failed);
+        assert(outcome.salvaged.size() == 1 && "the readable bytes are kept, not dropped");
+        assert(outcome.salvaged[0].path == "Contents/a.mp3");
+        assert(outcome.salvaged[0].bytesSalvaged == 40'000);
+        assert(f.archiveNames().count("Contents/a.mp3"));
+        assert(f.entryContent("Contents/a.mp3") == whole.substr(0, 40'000));
+
+        const ManifestRow *row = f.manifest().findRow("Contents/a.mp3");
+        assert(row != nullptr && row->salvagedFromSize == 100'000
+               && "and the row says how much is missing, so a restore can too");
+
+        bool blamedAChange = false;
+        for (const std::string &warning : outcome.warnings) {
+            if (warning.find("Contents/a.mp3") != std::string::npos
+                && warning.find("changed while it was being read") != std::string::npos) {
+                blamedAChange = true;
+            }
+        }
+        assert(!blamedAChange && "a file on a read-only stick cannot have changed");
+        std::cout << "case 18 (a salvage run whose re-stat fails still keeps what it read) OK\n";
+    }
+#endif
+
     std::cout << "all cases passed\n";
     return 0;
 }
