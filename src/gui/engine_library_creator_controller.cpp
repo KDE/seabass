@@ -72,6 +72,7 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
         result.cuesCopied = creation.cuesCopied;
         result.tracksTotal = creation.tracksTotal;
         result.cancelled = creation.cancelled;
+        result.importNotRecorded = rekordbox.hasRekordboxLibrary && !creation.rekordboxImportRecorded;
         if (!creation.errorMessage.empty()) {
             result.errorMessage = QString::fromStdString(creation.errorMessage);
         }
@@ -176,10 +177,18 @@ void EngineLibraryCreatorController::onCreateFinished()
     } else if (result.cancelled) {
         setStatusMessage(QStringLiteral("Cancelled, nothing was created."));
     } else {
-        setStatusMessage(QString("Created %1 track(s) (%2 skipped, no local file), copied %3 cue(s).")
-                             .arg(result.tracksCreated)
-                             .arg(result.tracksSkipped)
-                             .arg(result.cuesCopied));
+        QString said = QString("Created %1 track(s) (%2 skipped, no local file), copied %3 cue(s).")
+                           .arg(result.tracksCreated)
+                           .arg(result.tracksSkipped)
+                           .arg(result.cuesCopied);
+        if (result.importNotRecorded) {
+            // Said here rather than nowhere: the first sign of it would
+            // otherwise be a player offering to overwrite this library.
+            said += QStringLiteral(" The new library could not record that it came from this rekordbox export, so a "
+                                   "Denon player may offer to import the rekordbox library over it. Library Health "
+                                   "can mark it imported.");
+        }
+        setStatusMessage(said);
     }
     emit writeFinished(QVariantMap{
         {"written", result.cancelled ? 0 : result.tracksCreated},

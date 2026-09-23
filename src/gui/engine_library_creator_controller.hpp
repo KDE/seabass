@@ -27,6 +27,9 @@ struct EngineLibraryCreationTaskResult
     int tracksTotal = 0;
     bool cancelled = false;  // nothing was created on the stick
     QString errorMessage;  // empty on success
+    // The library was made from a rekordbox export but could not be told
+    // so (issue #42): a player may offer to import over it on first insert.
+    bool importNotRecorded = false;
 };
 
 // Wraps infrastructure::engine::EngineLibraryCreator for QML. See that

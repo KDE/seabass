@@ -87,6 +87,36 @@ QString keepImportLevel(SaveContext &ctx, bool levelBefore)
     return {};
 }
 
+// After the finish hooks: the stick itself, not the scratch copies. The
+// counter above is written before the hooks commit the rekordbox scratch
+// copy, and runFinishHooks() carries on past a hook that fails -- so a
+// commit of export.pdb that did not land (stick full, I/O error) would
+// leave Engine at the new sequence and the pdb at the old one, which is
+// Seabass arming the very prompt this exists to keep quiet. So whenever
+// this save meant the two to end level, check what the stick now says
+// and, if they are apart, put Engine at the sequence the pdb really has.
+// Engine's database was backed up by the step above; this is a single
+// row of it.
+QString settleImportLevel(SaveContext &ctx)
+{
+    const auto now = infrastructure::engine::readRekordboxImportState(ctx.enginePath().toStdString(),
+                                                                       ctx.rekordboxPath().toStdString());
+    if (!now.hasEngineLibrary || !now.hasRekordboxLibrary || !now.error.empty() || importLevel(now)) {
+        return {};
+    }
+    std::string error;
+    if (infrastructure::engine::markRekordboxLibraryImported(ctx.enginePath().toStdString(), now.librarySequence,
+                                                            &error)) {
+        ctx.log().record("engine import counter: put back to " + std::to_string(now.librarySequence)
+                         + " to match export.pdb as it landed");
+        return {};
+    }
+    return QStringLiteral("Engine's record of the rekordbox import does not match export.pdb after this save, so "
+                          "a Denon player may offer to import the rekordbox library over the Engine one. Library "
+                          "Health can mark it imported (%1)")
+        .arg(QString::fromStdString(error));
+}
+
 }  // namespace
 
 SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &changes, SaveContext &ctx)
@@ -183,7 +213,13 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // After a cancel or a failure too: the changes that did land are
     // committed by the finish hooks below, and any of them may have moved
     // the sequence.
-    QString importWarning = keepImportLevel(ctx, importLevelBefore);
+    // A save that applied "mark as imported" wants the two level whatever
+    // they were before it: that change carries the sequence as it was
+    // when it was staged, and a repair later in the same save moves the
+    // pdb past it.
+    const bool importLevelWanted =
+        importLevelBefore || result.appliedIds.contains(MarkRekordboxImportedChange::idFor());
+    QString importWarning = keepImportLevel(ctx, importLevelWanted);
 
     ctx.status(QStringLiteral("Finishing"));
     // ok means "the whole batch went through"; a cancel or a failure hands
@@ -198,6 +234,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         // the same removals twice.
         result.warning = *finish.warning;
     }
+    if (importLevelWanted && importWarning.isEmpty()) {
+        importWarning = settleImportLevel(ctx);
+    }
     if (!importWarning.isEmpty() && !finish.error && result.error.isEmpty()) {
         result.warning = result.warning.isEmpty() ? importWarning : result.warning + QStringLiteral("; ") + importWarning;
     }
@@ -208,6 +247,11 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         if (result.error.isEmpty()) {
             result.error = *finish.error;
         }
+    }
+    // Beside an error it is part of the error: a warning next to one is
+    // dropped above, and this one is worth reading.
+    if (!importWarning.isEmpty() && !result.error.isEmpty()) {
+        result.error += QStringLiteral("; ") + importWarning;
     }
     // Only after the whole batch went through, and only if the stick is
     // actually tight. On a failure or a cancel the backups are the thing

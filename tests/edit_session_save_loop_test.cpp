@@ -21,6 +21,7 @@
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/pending_change.hpp"
 #include "gui/edit/save_context.hpp"
@@ -145,8 +146,10 @@ std::int64_t engineCounter(const fs::path &engine)
 class MovesPdbSequence : public PendingChange
 {
 public:
-    MovesPdbSequence(fs::path pioneer, std::uint32_t to, int itemCountHint, bool *usedScratch = nullptr)
-        : m_pioneer(std::move(pioneer)), m_to(to), m_hint(itemCountHint), m_usedScratch(usedScratch)
+    MovesPdbSequence(fs::path pioneer, std::uint32_t to, int itemCountHint, bool *usedScratch = nullptr,
+                     std::function<void()> afterWrite = {})
+        : m_pioneer(std::move(pioneer)), m_to(to), m_hint(itemCountHint), m_usedScratch(usedScratch),
+          m_afterWrite(std::move(afterWrite))
     {
     }
     QString id() const override { return QStringLiteral("cleanup:moves"); }
@@ -165,6 +168,9 @@ public:
         out.write(reinterpret_cast<const char *>(&m_to), sizeof m_to);
         out.close();
         session.noteItemApplied();
+        if (m_afterWrite) {
+            m_afterWrite();
+        }
         return ChangeOutcome::success();
     }
 
@@ -173,6 +179,7 @@ private:
     std::uint32_t m_to;
     int m_hint;
     bool *m_usedScratch;
+    std::function<void()> m_afterWrite;
 };
 
 }  // namespace
@@ -480,6 +487,49 @@ int main()
         assert(result.cancelled);
         assert(pdbSequence(stick.pioneer) == 501 && engineCounter(stick.engine) == 501);
         std::cout << "case 14 (a cancelled save still carries the sequence it moved) OK\n";
+    }
+
+    // The rekordbox scratch copy does not make it back onto the stick.
+    // The counter was written before the finish hooks ran; left there, it
+    // would be ahead of the pdb that is really on the stick, and Seabass
+    // itself would have armed the prompt. It is put back to match.
+#if !defined(_WIN32)
+    {
+        const TwoCatalogs stick = makeTwoCatalogStick(root / "import-commit-fails", 500, 500);
+        const fs::path rekordboxDir = stick.pioneer / "rekordbox";
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
+                        QString::fromStdString(stick.engine.string()));
+        bool usedScratch = false;
+        auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(
+                                      stick.pioneer, 501, 100000, &usedScratch,
+                                      [&] { fs::permissions(rekordboxDir, fs::perms::owner_read | fs::perms::owner_exec); })},
+                                  ctx);
+        fs::permissions(rekordboxDir, fs::perms::owner_all);
+        assert(usedScratch && "the pdb went through a scratch copy, whose commit is what fails here");
+        assert(!result.error.isEmpty() && "the failed commit is reported");
+        assert(pdbSequence(stick.pioneer) == 500 && "the new pdb never reached the stick");
+        assert(engineCounter(stick.engine) == 500 && "and Engine is not left ahead of it");
+        std::cout << "case 15 (a pdb commit that fails does not leave Engine ahead of it) OK\n";
+    }
+#endif
+
+    // "Mark as imported" staged together with a repair that rewrites the
+    // pdb: the mark carries the sequence from when it was staged, the
+    // repair moves past it. The two were apart before the save, but the
+    // user asked in this very save for them to be level.
+    {
+        const TwoCatalogs stick = makeTwoCatalogStick(root / "import-mark-and-move", 500, 400);
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
+                        QString::fromStdString(stick.engine.string()));
+        auto result = runSaveLoop(
+            {std::make_shared<MarkRekordboxImportedChange>(QString::fromStdString(stick.engine.string()), 500),
+             std::make_shared<MovesPdbSequence>(stick.pioneer, 501, 1)},
+            ctx);
+        assert(result.error.isEmpty());
+        assert(engineCounter(stick.engine) == 501 && "marked imported means imported as the save left it");
+        std::cout << "case 16 (a mark staged with a pdb rewrite ends level) OK\n";
     }
 
     fs::remove_all(root);
