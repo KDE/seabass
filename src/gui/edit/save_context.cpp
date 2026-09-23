@@ -243,11 +243,22 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
                 stayedHere.push_back(madeId);
             }
         }
-        // Only the records that really went are forgotten. One that
-        // stayed keeps its place, so the save still knows it is there.
-        if (stayedHere.empty()) {
-            m_backups.resize(backupsBefore);
-        }
+        // Only the records that really went are forgotten -- by id, not
+        // by count. The first version of this resized the list back only
+        // when EVERY removal succeeded, which is the opposite of what
+        // this comment said: one record that would not go kept every
+        // successfully DELETED record in m_backups, and takeBackups()
+        // then handed the save loop an Undo pointing at an archive that
+        // is no longer on the stick.
+        //
+        // A record that stayed keeps its place, so the save still knows
+        // it is there; a record that went leaves, whatever happened to
+        // the others.
+        std::erase_if(m_backups, [&](const UndoableBackup &backup) {
+            const std::string id = backup.id.toStdString();
+            return std::find(madeHere.begin(), madeHere.end(), id) != madeHere.end()
+                && std::find(stayedHere.begin(), stayedHere.end(), id) == stayedHere.end();
+        });
         if (!madeHere.empty()) {
             log().record("backup failed: removed " + std::to_string(removedHere) + " of "
                          + std::to_string(madeHere.size()) + " record(s) this save had already made");
