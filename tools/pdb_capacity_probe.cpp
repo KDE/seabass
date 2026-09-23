@@ -176,6 +176,7 @@ int main(int argc, char **argv)
 
     // The whole point: are the tracks OneLibrary has and export.pdb does
     // not sitting in the pdb as deleted rows?
+    std::set<std::string> onlyInOlPaths;
     if (argc > 2) {
         seabass::infrastructure::onelibrary::OneLibraryReader ol(argv[2]);
         const auto tracks = ol.readAll();
@@ -194,6 +195,7 @@ int main(int argc, char **argv)
                 continue;
             }
             ++onlyInOl;
+            onlyInOlPaths.insert(p);
             if (deletedPaths.count(p)) {
                 ++coveredByDeleted;
             }
@@ -206,12 +208,26 @@ int main(int argc, char **argv)
 
     // The paths themselves are library content, so they are only written
     // out when a destination is named -- never to a default location.
+    //
+    // The other two lists are for issue #8's first question: what the rows
+    // OneLibrary has and export.pdb lacks have in common. Joined against
+    // every column of OneLibrary's `content` elsewhere (a plain copy made
+    // by tools/onelibrary_plain_copy.cpp), which is easier to ask several
+    // ways in a script than in this tool.
     if (argc > 3) {
         std::ofstream dump(std::string(argv[3]) + "/pdb-deleted-paths.txt");
         for (const auto &p : deletedPaths) {
             if (!livePaths.count(p)) {
                 dump << p << "\n";
             }
+        }
+        std::ofstream liveDump(std::string(argv[3]) + "/pdb-live-paths.txt");
+        for (const auto &p : livePaths) {
+            liveDump << p << "\n";
+        }
+        std::ofstream missingDump(std::string(argv[3]) + "/onelibrary-only-paths.txt");
+        for (const auto &p : onlyInOlPaths) {
+            missingDump << p << "\n";
         }
     }
     return 0;
