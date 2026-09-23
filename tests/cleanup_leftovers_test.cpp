@@ -157,6 +157,24 @@ int main()
         std::cout << "case 5 (paths compared through the key) OK\n";
     }
 
+    // 6. Two live rekordbox rows for the SAME file (two installations
+    //    exported it) are one survivor, not two: the leftover is
+    //    repairable, not held back as "more than one copy".
+    {
+        const std::vector<Track> rekordbox = {
+            rb("1", "/s/kept.mp3", "K", "Q", 200),
+            rb("2", "/s/kept.mp3", "K", "Q", 200),
+        };
+        const std::vector<Track> oneLibrary = {
+            ol("1", "/s/kept.mp3", "K", "Q", 200),
+            ol("2", "/s/dup.mp3", "K", "Q", 200),
+        };
+        const auto found = CleanupLeftoverFinder::find(oneLibrary, rekordbox, {"/s/dup.mp3"}, asIs);
+        assert(found.size() == 1 && found[0].kind == CleanupLeftover::Kind::Repairable);
+        assert(found[0].survivor && found[0].survivor->filePath == "/s/kept.mp3");
+        std::cout << "case 6 (two rows for one kept file are one survivor) OK\n";
+    }
+
     std::cout << "cleanup_leftovers_test: all cases passed\n";
     return 0;
 }

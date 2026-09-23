@@ -67,14 +67,16 @@ std::vector<CleanupLeftover> CleanupLeftoverFinder::find(const std::vector<Track
         }
     }
     for (const DuplicateGroup &group : DuplicateTrackFinder::find(pool, probe)) {
-        std::vector<const Track *> survivors;
+        // Keyed by file: two live rows for one file (two installations
+        // exported it) are one copy Clean Up kept, not a choice between two.
+        std::map<std::string, const Track *> survivors;
         std::vector<std::string> members;
         for (const Track &track : group.tracks) {
             const std::string key = fileKey(track.filePath);
             if (track.format == "onelibrary" && leftovers.count(key)) {
                 members.push_back(key);
             } else if (track.format != "onelibrary" && live.count(key)) {
-                survivors.push_back(&track);
+                survivors.try_emplace(key, &track);
             }
         }
         for (const std::string &key : members) {
@@ -82,8 +84,9 @@ std::vector<CleanupLeftover> CleanupLeftoverFinder::find(const std::vector<Track
             if (survivors.size() > 1) {
                 leftover.kind = CleanupLeftover::Kind::SeveralSurvivors;
             } else if (survivors.size() == 1) {
-                leftover.survivor = *survivors.front();
-                leftover.kind = inOneLibrary.count(fileKey(survivors.front()->filePath))
+                const auto &[survivorKey, survivor] = *survivors.begin();
+                leftover.survivor = *survivor;
+                leftover.kind = inOneLibrary.count(survivorKey)
                     ? CleanupLeftover::Kind::Repairable
                     : CleanupLeftover::Kind::SurvivorNotInOneLibrary;
             }
