@@ -529,6 +529,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
+    src/infrastructure/engine/engine_import_state.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
     src/infrastructure/engine/libdjinterop_engine_reader.cpp
     src/infrastructure/engine/rekordbox_key_parser.cpp
@@ -1862,18 +1863,13 @@ add_test(NAME library_edit_lock_store_test COMMAND library_edit_lock_store_test)
 # The edit-session save loop and its per-format write target live in
 # src/gui/edit but are plain Qt Core code (QString, no widgets), so they
 # are testable headless.
-if(TARGET Qt6::Core)
-    add_executable(edit_session_save_loop_test
-        src/gui/edit/save_context.cpp
-        src/gui/edit/save_loop.cpp
-        src/gui/sleep_inhibitor.cpp
-        tests/edit_session_save_loop_test.cpp
-    )
+# Linked against seabass_edit rather than a list of its sources: the save
+# loop now stages a change of its own (the Engine import counter, #42),
+# and a hand-kept list is one more place to forget a file.
+if(TARGET seabass_edit)
+    add_executable(edit_session_save_loop_test tests/edit_session_save_loop_test.cpp tests/engine_information_fixture.cpp)
     target_include_directories(edit_session_save_loop_test PRIVATE src)
-    target_link_libraries(edit_session_save_loop_test PRIVATE seabass_core Qt6::Core)
-    if(UNIX AND NOT APPLE)
-        target_link_libraries(edit_session_save_loop_test PRIVATE Qt6::DBus)
-    endif()
+    target_link_libraries(edit_session_save_loop_test PRIVATE seabass_edit)
     add_test(NAME edit_session_save_loop_test COMMAND edit_session_save_loop_test)
 
     # Links media_controller.cpp directly, the way every other GUI-class

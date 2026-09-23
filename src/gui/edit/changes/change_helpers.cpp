@@ -241,13 +241,21 @@ infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveC
     });
 }
 
+namespace
+{
+std::string writeSessionKey(const std::string &format, const std::string &catalogPath)
+{
+    return "write-session:" + FormatWriteSession::databaseFileFor(format, catalogPath);
+}
+}  // namespace
+
 FormatWriteSession &sharedFormatWriteSession(SaveContext &ctx, const std::string &format,
                                               const std::string &catalogPath, int itemCountHint,
                                               const std::string &label)
 {
     // The database, not the feature -- see the header for what went
     // wrong while this was keyed the other way.
-    const std::string key = "write-session:" + FormatWriteSession::databaseFileFor(format, catalogPath);
+    const std::string key = writeSessionKey(format, catalogPath);
     // OneLibrary never gets a scratch copy, whatever it was asked for.
     //
     // exportLibrary.db is a WAL database (PRAGMA journal_mode reports
@@ -271,6 +279,12 @@ FormatWriteSession &sharedFormatWriteSession(SaveContext &ctx, const std::string
     return ctx.sharedForWholeSave<FormatWriteSession>(key, [&]() {
         return std::make_unique<FormatWriteSession>(format, catalogPath, hint, label, ctx);
     });
+}
+
+FormatWriteSession *existingFormatWriteSession(SaveContext &ctx, const std::string &format,
+                                               const std::string &catalogPath)
+{
+    return ctx.sharedForWholeSaveIfPresent<FormatWriteSession>(writeSessionKey(format, catalogPath));
 }
 
 }  // namespace seabass::gui

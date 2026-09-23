@@ -89,6 +89,7 @@
 #include "gui/edit/changes/sync_plan_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 
 #include "scratch_path.hpp"
 #endif
@@ -2785,6 +2786,14 @@ void caseCleanUpAcrossCatalogs(const DataSet &set, const fs::path &scratch)
     const std::string survivorEngineId = rowIdIn(*survivor, "engine");
     const std::string doomedRekordboxId = rowIdIn(*doomed, "rekordbox");
 
+    // Issue #42: start from a stick whose player is quiet about the
+    // rekordbox library. The committed fixture is not -- Engine holds 521,
+    // the pdb 522, an offer already pending, which the save must leave
+    // alone -- so mark it imported first, as Library Health does.
+    const auto importBefore = infrastructure::engine::readRekordboxImportState(engineLib.string(), pioneer.string());
+    check(infrastructure::engine::markRekordboxLibraryImported(engineLib.string(), importBefore.librarySequence),
+          "the copy is marked as imported before the cleanup");
+
     auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
                                                             plan, 1);
     auto result = runChanges({change}, pioneer, engineLib);
@@ -2793,6 +2802,11 @@ void caseCleanUpAcrossCatalogs(const DataSet &set, const fs::path &scratch)
         fs::remove_all(stick);
         return;
     }
+    const auto importAfter = infrastructure::engine::readRekordboxImportState(engineLib.string(), pioneer.string());
+    check(importAfter.librarySequence != importBefore.librarySequence,
+          "the cleanup rewrote export.pdb and moved its sequence (else the next check proves nothing)");
+    check(!importAfter.playerWillOfferImport() && importAfter.engineCounter == importAfter.librarySequence,
+          "and Engine's import counter followed it: the player will not offer to import over the cleanup");
 
     auto rekordboxAfter = rescanRekordbox(pioneer);
     auto engineAfter = rescanEngine(engineLib);

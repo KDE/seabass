@@ -179,4 +179,11 @@ FormatWriteSession &sharedFormatWriteSession(SaveContext &ctx, const std::string
                                               const std::string &catalogPath, int itemCountHint,
                                               const std::string &label);
 
+// The session sharedFormatWriteSession() made for this catalog in this
+// save, or nullptr when no change wrote it. Where that save's writes to
+// the catalog actually are -- a scratch copy until the save commits --
+// is its writeRoot().
+FormatWriteSession *existingFormatWriteSession(SaveContext &ctx, const std::string &format,
+                                               const std::string &catalogPath);
+
 }  // namespace seabass::gui

@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/edit/save_loop.hpp"
+#include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
+#include "gui/edit/format_write_session.hpp"
 #include "gui/sleep_inhibitor.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 
 #include <exception>
 #include <utility>
@@ -11,6 +15,79 @@
 
 namespace seabass::gui
 {
+
+namespace
+{
+
+// Whether an Engine player on this stick would stay quiet about the
+// rekordbox library right now: both libraries there, and Engine's record
+// of the last import level with the sequence export.pdb carries. See
+// infrastructure/engine/engine_import_state.hpp for the mechanism, which
+// was measured on a Prime 4 and a Prime Go+.
+bool importLevel(const infrastructure::engine::RekordboxImportState &state)
+{
+    return state.hasEngineLibrary && state.hasRekordboxLibrary && state.error.empty()
+        && state.engineCounter == state.librarySequence;
+}
+
+// Issue #42. Rewriting export.pdb moves its sequence -- Clean Up and
+// Repair do, measured against both committed fixtures -- and a player
+// that sees the sequence move offers to import the rekordbox library
+// over the Engine one on the next insert: "Existing playlist and track
+// metadata will be overwritten." Seabass's own edit is not a new
+// rekordbox export, and must not look like one.
+//
+// So when the two were level before this save and are not after it,
+// the move was this save's, and the new sequence goes into Engine's
+// Information row as one more change of the same save: backed up with
+// it, undone with it, through the same Engine write session. Read from
+// where the save's writes are, which until the finish hooks commit is a
+// scratch copy, not the stick.
+//
+// Never when they were apart to begin with. A stick with an import offer
+// already pending has a rekordbox library that really did move on before
+// Seabass touched it, and quietly swallowing that hides something the
+// DJ may want.
+//
+// Returns a warning when the step could not be made, never an error: by
+// now every change the user asked for has landed.
+QString keepImportLevel(SaveContext &ctx, bool levelBefore)
+{
+    if (!levelBefore) {
+        return {};
+    }
+    const std::string rekordboxPath = ctx.rekordboxPath().toStdString();
+    const std::string enginePath = ctx.enginePath().toStdString();
+    const FormatWriteSession *rekordbox = existingFormatWriteSession(ctx, "rekordbox", rekordboxPath);
+    const FormatWriteSession *engine = existingFormatWriteSession(ctx, "engine", enginePath);
+    const auto after = infrastructure::engine::readRekordboxImportState(engine ? engine->writeRoot() : enginePath,
+                                                                         rekordbox ? rekordbox->writeRoot()
+                                                                                   : rekordboxPath);
+    if (!after.hasEngineLibrary || !after.hasRekordboxLibrary || !after.error.empty() || importLevel(after)) {
+        return {};
+    }
+    MarkRekordboxImportedChange keep(ctx.enginePath(), after.librarySequence);
+    const QString failed = QStringLiteral(
+        "export.pdb changed, and Engine could not be told this save made the change, so a Denon player may offer "
+        "to import the rekordbox library over the Engine one. Library Health can mark it imported (%1)");
+    try {
+        const std::vector<BackupTarget> targets = keep.filesToBackup(ctx);
+        ctx.backupAllNow(targets);
+        ctx.beginChange(targets);
+        const ChangeOutcome outcome = keep.apply(ctx);
+        if (!outcome.ok) {
+            const auto undoError = ctx.rollBackChange();
+            return failed.arg(outcome.error + (undoError ? QStringLiteral("; ") + *undoError : QString()));
+        }
+        ctx.endChange();
+    } catch (const std::exception &e) {
+        const auto undoError = ctx.rollBackChange();
+        return failed.arg(QString::fromUtf8(e.what()) + (undoError ? QStringLiteral("; ") + *undoError : QString()));
+    }
+    return {};
+}
+
+}  // namespace
 
 SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &changes, SaveContext &ctx)
 {
@@ -26,6 +103,11 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // overwritten, so a crash in the middle left a save half-applied with
     // half a backup. Changes that cannot answer yet keep backing up as
     // they go, and backupOnce() skips whatever this already covered.
+    const bool importLevelBefore =
+        !ctx.rekordboxPath().isEmpty() && !ctx.enginePath().isEmpty()
+        && importLevel(infrastructure::engine::readRekordboxImportState(ctx.enginePath().toStdString(),
+                                                                        ctx.rekordboxPath().toStdString()));
+
     std::vector<BackupTarget> upfront;
     std::vector<std::vector<BackupTarget>> declaredByChange;
     for (const auto &change : changes) {
@@ -98,6 +180,11 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         ctx.progress().tick(++done);
     }
 
+    // After a cancel or a failure too: the changes that did land are
+    // committed by the finish hooks below, and any of them may have moved
+    // the sequence.
+    QString importWarning = keepImportLevel(ctx, importLevelBefore);
+
     ctx.status(QStringLiteral("Finishing"));
     // ok means "the whole batch went through"; a cancel or a failure hands
     // the hooks false so a scratch copy commits only what completed.
@@ -110,6 +197,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         // changes stay applied -- clearing them would have the user save
         // the same removals twice.
         result.warning = *finish.warning;
+    }
+    if (!importWarning.isEmpty() && !finish.error && result.error.isEmpty()) {
+        result.warning = result.warning.isEmpty() ? importWarning : result.warning + QStringLiteral("; ") + importWarning;
     }
     if (finish.error) {
         // Whatever the hooks were committing did not land: report every

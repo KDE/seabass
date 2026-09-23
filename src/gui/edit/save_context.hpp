@@ -192,6 +192,15 @@ public:
         return *static_cast<T *>(it->second.get());
     }
 
+    // The sharedForWholeSave() resource for this key if a change created
+    // one, nullptr if none did.
+    template <class T>
+    T *sharedForWholeSaveIfPresent(const std::string &key)
+    {
+        auto it = m_wholeSaveShared.find(key);
+        return it == m_wholeSaveShared.end() ? nullptr : static_cast<T *>(it->second.get());
+    }
+
     // One change at a time, driven by runSaveLoop(). beginChange() copies
     // the declared files aside; protectForThisChange() does the same for a
     // file the change is about to write that it did not declare, once per
