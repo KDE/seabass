@@ -285,6 +285,28 @@ int main()
             captureDbSet(root, "Engine Library/Database2/partial.db", *healthy.updater, 1, {}, /*salvage=*/false, stopsAt4k);
         assert(refused.status == DbSetCapture::Status::ReadError && "a healthy stick's short read is still a fault");
         assert(refused.entries.empty() && healthy.updater->newEntryCount() == 0);
+        // Two members truncated: the detail names both, not the last.
+        {
+            const fs::path journal = fs::path(db.string() + "-journal");
+            {
+                std::ofstream out(journal, std::ios::binary);
+                out << std::string(20'000, 'j');
+            }
+            const auto bothStop = [](const std::string &path) -> std::optional<std::uint64_t> {
+                if (path.rfind("Engine Library/Database2/partial.db", 0) == 0) {
+                    return std::uint64_t{4096};
+                }
+                return std::nullopt;
+            };
+            Harness two;
+            DbSetCapture both =
+                captureDbSet(root, "Engine Library/Database2/partial.db", *two.updater, 1, {}, /*salvage=*/true, bothStop);
+            assert(both.status == DbSetCapture::Status::Salvaged);
+            assert(both.detail.find("only 4096 of " + std::to_string(whole)) != std::string::npos
+                   && "the main file's truncation is still said");
+            assert(both.detail.find("partial.db-journal: only 4096 of 20000") != std::string::npos);
+            fs::remove(journal);
+        }
         std::cout << "case 4c (a salvage run keeps the part of a database the stick still gives, and marks it) OK\n";
     }
 

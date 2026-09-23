@@ -735,6 +735,35 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         }
     }
 
+    // And an exact restore must not then remove the set's other members
+    // from the target as extras. The backup may hold only the main file
+    // -- a -wal the failing stick would not open is simply not in it --
+    // and the target's own -wal or -journal is part of the copy being
+    // kept: removed, the kept database loses the commits in it, or is
+    // left mid-transaction.
+    if (!setsHeldOnTarget.empty()) {
+        std::set<std::string> heldKeys;
+        for (const std::string &main : setsHeldOnTarget) {
+            heldKeys.insert(normalizedPathKey(main));
+        }
+        extras.erase(std::remove_if(extras.begin(), extras.end(),
+                                    [&](const std::string &extra) {
+                                        // Stick-relative, forward slashes, UTF-8: split
+                                        // as a string, not through fs::path.
+                                        const std::size_t slash = extra.rfind('/');
+                                        const std::string dir =
+                                            slash == std::string::npos ? std::string() : extra.substr(0, slash + 1);
+                                        const auto main = engine::dbSetMainFile(
+                                            pathFromUtf8(extra.substr(dir.size())));
+                                        if (!main) {
+                                            return false;
+                                        }
+                                        const std::string mainPath = dir + pathToUtf8(*main);
+                                        return heldKeys.count(normalizedPathKey(mainPath)) != 0;
+                                    }),
+                     extras.end());
+    }
+
     progress.filesTotal = plan.files.size() - plan.unchanged;
     progress.bytesTotal = plan.bytesToWrite;
     report(RestoreProgress::Phase::Writing);

@@ -207,6 +207,13 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         capture.memberRelativePaths.clear();
         capture.memberMtimes.clear();
         capture.memberSalvagedFromSizes.clear();
+        capture.detail.clear();
+        // Each member that went wrong adds its line rather than replacing
+        // the one before: a truncated m.db followed by a torn sidecar
+        // must still say that m.db is truncated.
+        const auto note = [&capture](const std::string &line) {
+            capture.detail = capture.detail.empty() ? line : capture.detail + "; " + line;
+        };
         bool torn = false;
         bool refused = false;  // salvage only: a member kept although the stick stopped part-way
         bool readError = false;
@@ -266,8 +273,8 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
                 refused = true;
                 // The caller prefixes the set's main file, so a main file
                 // is not named twice.
-                capture.detail = (relative == relativeMainDb ? std::string() : relative + ": ") + "only "
-                    + std::to_string(entry->entry.size) + " of " + std::to_string(sizeNow) + " bytes could be read";
+                note((relative == relativeMainDb ? std::string() : relative + ": ") + "only "
+                     + std::to_string(entry->entry.size) + " of " + std::to_string(sizeNow) + " bytes could be read");
                 ++appended;
                 attemptBytes += entry->entry.size;
                 capture.entries.push_back(*entry);
@@ -277,9 +284,8 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
                 continue;
             }
             if (source.refused() || sizeEc || entry->entry.size != sizeNow) {
-                capture.detail = relative + ": read "
-                    + std::to_string(entry->entry.size) + " of "
-                    + (sizeEc ? std::string("an unreadable size") : std::to_string(sizeNow)) + " bytes";
+                note(relative + ": read " + std::to_string(entry->entry.size) + " of "
+                     + (sizeEc ? std::string("an unreadable size") : std::to_string(sizeNow)) + " bytes");
                 // A device that refused is a read error however many
                 // times it is asked; a size that moved underneath is
                 // something writing, which is worth another pass.

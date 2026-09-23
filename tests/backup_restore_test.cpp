@@ -635,6 +635,20 @@ int main()
             assert(readFile(targetDb) == wholeDb && "the whole database is left alone");
             assert(readFile(targetJournal) == "the target's own journal" && "and so is the rest of its set");
         }
+        // Exact mode must not then remove the kept set's own sidecar as
+        // an extra: the backup has no m.db-wal, the target's is part of
+        // the database being kept.
+        {
+            const fs::path targetWal = fs::path(targetDb.string() + "-wal");
+            writeFile(targetWal, "the target's own wal", 1'700'000'202);
+            RestoreOptions exact = f.restore;
+            exact.exact = true;
+            RestoreSummary summary = RestoreStickBackup::execute(exact);
+            assert(summary.partial.size() == 1 && !summary.partial[0].written);
+            assert(readFile(targetDb) == wholeDb);
+            assert(fs::exists(targetWal) && readFile(targetWal) == "the target's own wal"
+                   && "an exact restore leaves the kept database's -wal where it is");
+        }
         std::cout << "case salvage-restore-db (a partial database never goes over a whole one, nor do its siblings) OK\n";
     }
 
