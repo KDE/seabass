@@ -402,6 +402,59 @@ TestCase {
     // the three rows do not share a background, and a single probe can
     // land on a border, a gradient or a focus ring and turn the whole
     // row into "ink".
+    // The rows of `image`, within y0..y1, where `item`'s own background
+    // colour really is the background -- and nothing outside them.
+    //
+    // A delegate is not the same shape as the rectangle the style paints
+    // behind it. Under org.kde.desktop the rows are separated by the
+    // popup's own light background, so a band taken from the delegate's
+    // height runs off the dark row into the light gap, and every gap
+    // pixel differs from the row colour and counts as ink. That put the
+    // measured ink of the Engine OS row at rows 39..65 when its text is
+    // at 54..65, and dragged the glyph and capital centroids by
+    // different amounts, because the two bands are different widths.
+    //
+    // The result was a glyph reported 2.04 px off its name on a row that
+    // is aligned to within a third of a pixel. See seabass#45.
+    function backgroundBand(image, item, y0, y1, background) {
+        const s = testCase.grabScale;
+        const p = item.mapToItem(testCase, 0, 0);
+        const x0 = Math.floor((p.x + item.width * 0.75) * s);
+        const x1 = Math.ceil((p.x + item.width - 2) * s);
+        const isBackground = function(y) {
+            let same = 0;
+            let total = 0;
+            for (let x = x0; x < x1; ++x) {
+                const c = image.pixel(x, y);
+                ++total;
+                if (Math.abs(c.r - background.r) < 0.02 && Math.abs(c.g - background.g) < 0.02
+                        && Math.abs(c.b - background.b) < 0.02) {
+                    ++same;
+                }
+            }
+            return total > 0 && same * 2 > total;
+        };
+        // The longest run, not the first: a row can have a border line
+        // of its own at the top, which is one row of not-background
+        // before the rectangle proper.
+        let bestTop = -1;
+        let bestBottom = -1;
+        let runTop = -1;
+        for (let y = y0; y <= y1; ++y) {
+            const inside = y < y1 && isBackground(y);
+            if (inside && runTop < 0) {
+                runTop = y;
+            } else if (!inside && runTop >= 0) {
+                if (y - runTop > bestBottom - bestTop) {
+                    bestTop = runTop;
+                    bestBottom = y;
+                }
+                runTop = -1;
+            }
+        }
+        return bestTop < 0 ? [y0, y1] : [bestTop, bestBottom];
+    }
+
     function modalColour(image, item, y0, y1) {
         const s = testCase.grabScale;
         const p = item.mapToItem(testCase, 0, 0);
@@ -486,6 +539,9 @@ TestCase {
         tryVerify(function() { return toggle.popup.visible; });
         const view = toggle.popup.contentItem;
         tryVerify(function() { return view.count === 3 && view.itemAtIndex(2) !== null; });
+        tryVerify(function() {
+            return toggle.popup.opacity === 1 && (!toggle.popup.enter || !toggle.popup.enter.running);
+        }, 5000, "the popup never finished opening");
         waitForRendering(view);
         const image = grabImage(testCase);
         testCase.grabScale = PixelScale.scale(image, testCase);
@@ -526,7 +582,10 @@ TestCase {
                 const y0 = Math.floor((origin.y + 2) * testCase.grabScale);
                 const y1 = Math.ceil((origin.y + row.height - 2) * testCase.grabScale);
                 const background = modalColour(image, row, y0, y1);
-                const ink = pairInk(image, background, glyph, name, y0, y1);
+                // Measured inside the row's own painted rectangle, not
+                // across the whole delegate: see backgroundBand().
+                const band = backgroundBand(image, row, y0, y1, background);
+                const ink = pairInk(image, background, glyph, name, band[0], band[1]);
                 m.bg = Math.round(background.r * 255) + "," + Math.round(background.g * 255) + ","
                        + Math.round(background.b * 255);
                 m.glyphInk = ink.glyph.top + ".." + ink.glyph.bottom;

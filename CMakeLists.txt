@@ -1189,8 +1189,19 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 add_test(NAME seabass_qml_desktop_style_tests
                     COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
                         $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml)
+                # Its own screenshot directory, not the pinned lane's.
+                # The two lanes render the same pages under different
+                # styles and save under the same names, so sharing one
+                # would leave whichever ran last, and a screenshot whose
+                # style you cannot tell is not evidence of anything.
+                #
+                # This lane had none at all, which is the gap that left
+                # seabass#45 undecidable: the one lane where a style
+                # question can be answered was the one lane that saved
+                # no pixels.
+                file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style")
                 set_tests_properties(seabass_qml_desktop_style_tests PROPERTIES
-                    ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config"
+                    ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config;SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style"
                     RESOURCE_LOCK xvfb)
             else()
                 message(STATUS "org.kde.desktop not found: the desktop-style QML lane is not registered. "
