@@ -231,7 +231,14 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
                 } else {
                     torn = true;
                 }
-                ++appended;  // it IS in the archive; forgetLastEntries() must count it
+                // It IS in the archive, and nothing will list it: forget
+                // it now rather than count it for later. Counted, it was
+                // forgotten with the rest of a failed attempt -- but a
+                // salvage run KEEPS its last attempt, and kept that
+                // entry with it, unlisted, in the archive with no row
+                // (backup_database_capture_test case 4b, about one run
+                // in ten, when the writer thread moved the size).
+                updater.forgetLastEntries(1);
                 break;
             }
             ++appended;
