@@ -85,7 +85,9 @@ std::vector<LegacyCueEntry> AnlzLegacyCueCodec::decodeCues(const std::string &pc
             throw std::runtime_error("PCOB section truncated while decoding cue entries");
         }
         const uint32_t lenEntry = readU32BE(pcobSectionBytes, offset + 8);
-        if (lenEntry < EntryHeaderSize || offset + lenEntry > pcobSectionBytes.size()) {
+        // Widened before adding, as in the PCO2 codec beside this one.
+        if (lenEntry < EntryHeaderSize
+            || static_cast<std::uint64_t>(offset) + lenEntry > pcobSectionBytes.size()) {
             throw std::runtime_error("PCOB cue entry declares a length the section cannot hold");
         }
         LegacyCueEntry entry;

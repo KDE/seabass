@@ -4,6 +4,7 @@
 
 #include "infrastructure/rekordbox/rekordbox_library_anonymizer.hpp"
 
+#include <cstdint>
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
@@ -208,7 +209,10 @@ void obfuscateCueComments(std::string &sectionBytes, size_t &nextIndex)
         uint32_t lenEntry = readU32BE(sectionBytes, offset + 8);
         uint32_t lenComment = (lenEntry > 43) ? readU32BE(sectionBytes, offset + CueEntryFixedSize) : 0;
         size_t commentOffset = offset + CueEntryFixedSize + 4;
-        if (lenComment >= 2 && commentOffset + lenComment <= sectionBytes.size()) {
+        // Widened before adding, like obfuscatePathSection below: the
+        // offset is derived from a file-supplied length and the count is
+        // one too.
+        if (lenComment >= 2 && static_cast<std::uint64_t>(commentOffset) + lenComment <= sectionBytes.size()) {
             size_t capacityUnits = lenComment / 2 - 1;  // excludes the trailing NUL terminator
             std::string placeholder = capacityUnits > 0 ? ("Cue " + std::to_string(nextIndex++)) : "";
             std::string fitted = placeholder.substr(0, std::min(placeholder.size(), capacityUnits));

@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstdint>
 #include <stdexcept>
 #include <system_error>
 
@@ -47,7 +48,11 @@ void validateAnlzBytes(const std::string &data, const std::string &context)
             throw std::runtime_error(context + ": truncated section header at offset " + std::to_string(pos));
         }
         uint32_t lenTag = readU32BE(data, pos + 8);
-        if (lenTag < 12 || pos + lenTag > data.size()) {
+        // Widened: size_t is 32 bits on a 32-bit build, and both of
+        // these come out of the file, so the sum can wrap there and pass
+        // a check written to stop exactly that. Free here, and the same
+        // shape as the wrap found in obfuscatePathSection (768e7338).
+        if (lenTag < 12 || static_cast<std::uint64_t>(pos) + lenTag > data.size()) {
             throw std::runtime_error(context + ": invalid section length at offset " + std::to_string(pos));
         }
         pos += lenTag;

@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "infrastructure/zip_archive_reader.hpp"
 #include "infrastructure/zip_archive_writer.hpp"
 
 #include "scratch_path.hpp"
@@ -216,6 +217,67 @@ int main()
         }
         assert(threw);
         std::cout << "case 4 (non-existent source directory: refuses) OK\n";
+    }
+
+    // The reader's side: a central-directory entry whose local-header
+    // offset is damaged is refused, and nothing is written out of the
+    // bytes it points at.
+    //
+    // Which check refuses it, measured rather than assumed: readU32()
+    // bounds-checks before reading the local header's signature, so the
+    // offset never reaches the arithmetic that finds the entry's data.
+    // That arithmetic was a 32-bit sum of a uint32 offset and two uint16
+    // lengths, which wraps for an offset near the top of the range; it
+    // is widened now, and this case stays green with the narrow sum put
+    // back, because the earlier read is what fires. Both halves are
+    // worth having: the wrap is a trap for whoever reorders those three
+    // lines, and this case is what says a damaged offset is refused at
+    // all.
+    {
+        const fs::path source = root / "wrap-source";
+        touch(source / "one.txt", std::string(64, 'a'));
+        const fs::path zipPath = root / "wrap.zip";
+        writeZipArchive(source, zipPath);
+
+        std::string bytes;
+        {
+            std::ifstream in(zipPath, std::ios::binary);
+            bytes.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+        // The central directory's local-header offset, last field of the
+        // fixed part of the entry (at +42), set just under 2^32.
+        const size_t eocd = bytes.rfind("PK\x05\x06");
+        assert(eocd != std::string::npos);
+        const size_t centralAt = static_cast<unsigned char>(bytes[eocd + 16])
+            | (static_cast<unsigned char>(bytes[eocd + 17]) << 8)
+            | (static_cast<unsigned char>(bytes[eocd + 18]) << 16)
+            | (static_cast<unsigned char>(bytes[eocd + 19]) << 24);
+        for (int i = 0; i < 4; ++i) {
+            bytes[centralAt + 42 + i] = static_cast<char>(0xF0 + (i == 3 ? 0x0F : 0x0F));
+        }
+        bytes[centralAt + 42] = static_cast<char>(0xF0);
+        bytes[centralAt + 43] = static_cast<char>(0xFF);
+        bytes[centralAt + 44] = static_cast<char>(0xFF);
+        bytes[centralAt + 45] = static_cast<char>(0xFF);  // 0xFFFFFFF0
+        const fs::path damaged = root / "wrapped.zip";
+        {
+            std::ofstream out(damaged, std::ios::binary);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+
+        const fs::path dest = root / "wrap-out";
+        bool threw = false;
+        try {
+            seabass::infrastructure::extractZipArchive(damaged, dest);
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        if (!threw) {
+            std::cerr << "a local-header offset of 0xFFFFFFF0 was accepted\n";
+        }
+        assert(threw && "an offset that wraps is not an offset inside the archive");
+        assert(!fs::exists(dest / "one.txt") && "and nothing is written out of the bytes it landed on");
+        std::cout << "case 5 (a damaged local-header offset is refused, nothing written) OK\n";
     }
 
     std::cout << "all cases passed\n";

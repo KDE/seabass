@@ -146,10 +146,26 @@ void extractZipArchive(const fs::path &zipPath, const fs::path &destDir)
         }
         const std::uint16_t localNameLength = readU16(bytes, localOffset + 26);
         const std::uint16_t localExtraLength = readU16(bytes, localOffset + 28);
-        const size_t dataAt = localOffset + 30 + localNameLength + localExtraLength;
-        if (dataAt + compressedSize > bytes.size()) {
+        // Widened before adding, and latent rather than live: measured,
+        // not assumed. localOffset is a uint32 out of the file and the
+        // two lengths are uint16s, so this sum was computed in 32 bits
+        // and an offset near the top of the range wrapped to a small
+        // number -- but readU32() above has already refused that offset,
+        // because it bounds-checks before reading the local header's
+        // signature. Restoring the narrow sum leaves the test below
+        // green for that reason.
+        //
+        // Kept because the guard that makes it unreachable is three
+        // lines away and belongs to a different check: the one thing
+        // this parser must never do is unpack an entry from whatever
+        // bytes sit at a wrapped offset, and it should not depend on
+        // another read happening to fail first.
+        const std::uint64_t dataEnd = static_cast<std::uint64_t>(localOffset) + 30 + localNameLength
+            + localExtraLength + compressedSize;
+        if (dataEnd > bytes.size()) {
             throw std::runtime_error("zip: data for \"" + name + "\" runs past the end of the archive");
         }
+        const size_t dataAt = static_cast<size_t>(dataEnd - compressedSize);
         const std::string data = bytes.substr(dataAt, compressedSize);
 
         std::string content;

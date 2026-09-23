@@ -58,7 +58,11 @@ std::vector<RawHotCueEntry> AnlzCueCodec::decodeHotCues(const std::string &pco2S
         entry.timeMs = time;
         entry.isLoop = entryType == 2;  // cue_entry_type::loop, per the spec
         entry.loopEndMs = entry.isLoop ? loopTime : 0;
-        if (lenEntry >= NoCommentEntrySize && offset + lenEntry <= pco2SectionBytes.size()) {
+        // Widened before adding: both come out of the file, and size_t
+        // is 32 bits on a 32-bit build, where the sum wraps and a check
+        // written to stop that passes. Same shape as 768e7378's.
+        if (lenEntry >= NoCommentEntrySize
+            && static_cast<std::uint64_t>(offset) + lenEntry <= pco2SectionBytes.size()) {
             entry.rawBytes = pco2SectionBytes.substr(offset, lenEntry);
         }
 

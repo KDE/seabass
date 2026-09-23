@@ -2361,6 +2361,9 @@ add_test(NAME pending_deletion_applier_test COMMAND pending_deletion_applier_tes
 
 add_executable(zip_archive_writer_test
     src/infrastructure/zip_archive_writer.cpp
+    # The reader too: case 5 is about what it does with an archive whose
+    # offsets are damaged, which is the other half of this format.
+    src/infrastructure/zip_archive_reader.cpp
     tests/zip_archive_writer_test.cpp
 )
 target_include_directories(zip_archive_writer_test PRIVATE src)
