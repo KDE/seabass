@@ -57,11 +57,24 @@ public:
     {
         auto disks = m_locator.detect();
 
+        // One disk, one entry per PARTITION: every locator here reports a
+        // stick with two filesystems twice, both carrying the same
+        // wholeDiskPath and a filesystem UUID of their own. So the
+        // identity is checked against every entry for this disk rather
+        // than the first one found -- matching only the first refuses a
+        // two-partition stick (a Windows installer stick, say) for good,
+        // whichever of its partitions the caller happened to list.
         const DetectedStick *target = nullptr;
+        bool isTheDriveThatWasChosen = false;
         for (const auto &disk : disks) {
-            if (disk.wholeDiskPath == wholeDiskPath) {
+            if (disk.wholeDiskPath != wholeDiskPath) {
+                continue;
+            }
+            if (target == nullptr) {
                 target = &disk;
-                break;
+            }
+            if (sameDrive(chosen, disk.identity, disk.capacityBytes)) {
+                isTheDriveThatWasChosen = true;
             }
         }
         if (target == nullptr) {
@@ -69,7 +82,7 @@ public:
             return false;
         }
 
-        if (!sameDrive(chosen, target->identity, target->capacityBytes)) {
+        if (!isTheDriveThatWasChosen) {
             errorMessage = "The drive at that connection is not the one you chose. Refresh the list and pick it "
                            "again.";
             return false;
@@ -142,7 +155,6 @@ public:
         return true;
     }
 
-private:
     // "Still the same drive", for a decision that destroys everything on
     // it. StickIdentity::isSameStick() is the rule wherever there is
     // anything to key on; what it cannot answer is the blank unlabelled
@@ -152,6 +164,9 @@ private:
     // to key on on EITHER side, and the same size, passes. A drive that
     // had nothing and now has a label (someone else's stick in the same
     // port) does not, and neither does the reverse.
+    // Public because the page that offers the drive asks the same
+    // question when its list changes under the selection: one rule, one
+    // definition, rather than a second opinion in the GUI.
     static bool sameDrive(const StickIdentity &chosen, const StickIdentity &found, std::uint64_t foundCapacityBytes)
     {
         const bool chosenIsAnonymous = chosen.strength() == StickIdentity::Strength::None;
@@ -168,6 +183,7 @@ private:
         return chosen.isSameStick(found);
     }
 
+private:
     RemovableMediaLocator &m_locator;
     RemovableMediaMounter &m_mounter;
     UsbFormatter &m_formatter;

@@ -155,11 +155,41 @@ void FormatUsbController::refresh()
     // QVariantMap of identity fields would be the same thing spelled so
     // that QML could edit it.
     m_identities.clear();
+    bool chosenStillThere = false;
     for (const auto &disk : locator->detect()) {
-        m_identities[QString::fromStdString(disk.wholeDiskPath)] = disk.identity;
+        const QString path = QString::fromStdString(disk.wholeDiskPath);
+        // First entry wins: one disk is listed once per partition, and
+        // they share a wholeDiskPath. Which of them the identity comes
+        // from does not matter to the use case (it compares against every
+        // entry for the disk), but overwriting per partition would make
+        // this map say something different on each refresh.
+        if (!m_identities.contains(path)) {
+            m_identities[path] = disk.identity;
+        }
+        if (!m_chosenPath.isEmpty() && path == m_chosenPath
+            && application::FormatUsbStick::sameDrive(m_chosenIdentity, disk.identity, disk.capacityBytes)) {
+            chosenStillThere = true;
+        }
         disks.push_back(diskToVariant(disk));
     }
     setDisks(std::move(disks));
+
+    // A replug lands the new stick on the same device node and this
+    // refresh runs half a second later, so without this the selection
+    // quietly follows the port to whatever is in it now -- which is the
+    // whole scenario the format's identity check exists for.
+    if (!m_chosenPath.isEmpty() && !chosenStillThere) {
+        m_chosenPath.clear();
+        m_chosenIdentity = {};
+        setStatusMessage(QStringLiteral("The drive you picked is no longer there, so nothing is selected."));
+        emit chosenDriveWentAway();
+    }
+}
+
+void FormatUsbController::chooseDrive(const QString &wholeDiskPath)
+{
+    m_chosenPath = wholeDiskPath;
+    m_chosenIdentity = m_identities.value(wholeDiskPath);
 }
 
 QString FormatUsbController::recommendedFilesystem(qlonglong capacityBytes) const
@@ -199,11 +229,15 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
     auto reporter = std::make_shared<QtProgressReporter>();
     // Awake for the whole format: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Formatting a USB stick"));
-    // Whoever was at this path in the list the person was looking at.
-    // Absent (a path QML asked for that no refresh ever listed) stays
-    // absent: the use case compares an empty identity against what it
-    // finds and refuses anything that is not equally anonymous.
-    const application::StickIdentity chosen = m_identities.value(wholeDiskPath);
+    // Who the drive was when it was PICKED, not when the list was last
+    // rebuilt: see chooseDrive(). A format for a path nobody picked is
+    // refused rather than checked against a fresh reading of that port,
+    // which would be no check at all.
+    if (wholeDiskPath != m_chosenPath) {
+        setErrorMessage(QStringLiteral("Pick the drive again before formatting it."));
+        return;
+    }
+    const application::StickIdentity chosen = m_chosenIdentity;
     m_watcher.setFuture(QtConcurrent::run([keepAwake, wholeDiskPath, chosen, filesystem, volumeLabel, reporter]() {
         return runFormatTask(wholeDiskPath, chosen, filesystem, volumeLabel, reporter);
     }));
@@ -225,6 +259,13 @@ void FormatUsbController::onFormatFinished()
     }
     setStatusMessage(QStringLiteral("Drive formatted successfully."));
     emit actionFeedback(QStringLiteral("Your USB stick has been formatted. All the data that once was on it is now gone, gone, gone with the wind..."), false);
+    // The drive legitimately is not who it was a moment ago: a new label
+    // and a new filesystem UUID are what a format makes. Dropped here so
+    // the refresh below does not report it as the drive having gone away,
+    // and so the page's next format has to be picked again on purpose.
+    m_chosenPath.clear();
+    m_chosenIdentity = {};
+    emit chosenDriveWentAway();
     refresh();
 }
 

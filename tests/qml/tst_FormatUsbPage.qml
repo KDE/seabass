@@ -43,6 +43,13 @@ TestCase {
             statusMessage: "",
             fat32MaxBytes: fat32MaxBytes === undefined ? -1 : fat32MaxBytes,
             lastFormatCall: null,
+            chosenDrive: "",
+            // The page tells the controller which drive was picked, so
+            // the format can check that the same one is still in that
+            // port (FormatUsbController::chooseDrive).
+            chooseDrive: function(wholeDiskPath) {
+                this.chosenDrive = wholeDiskPath;
+            },
             recommendedFilesystem: function(capacityBytes) {
                 var threshold = 32 * 1024 * 1024 * 1024;
                 return capacityBytes <= threshold ? "fat32" : "exfat";
@@ -581,6 +588,23 @@ TestCase {
                                             hasDjLibrary: true, rootEntries: ["PIONEER/", "Contents/"]}));
         compare(page.nothingToLose, false);
         compare(findChild(page, "confirmDialogDataLossLabel").visible, true);
+    }
+
+    // Picking a drive tells the controller WHICH drive, not only where
+    // it sits. Without this call the format is checked against whatever
+    // is in that port when the button is pressed, which after a replug
+    // is a different stick under the same device node.
+    function test_pickingADriveNamesItToTheController() {
+        var first = makeDisk({wholeDiskPath: "/dev/sdx", label: "FIRST"});
+        var second = makeDisk({wholeDiskPath: "/dev/sdy", label: "SECOND"});
+        var page = createTemporaryObject(pageComponent, testCase,
+                                         {controller: makeFakeController([first, second])});
+        verify(page !== null);
+        compare(page.controller.chosenDrive, "");
+        page.applySelection(1);
+        compare(page.controller.chosenDrive, "/dev/sdy");
+        page.applySelection(0);
+        compare(page.controller.chosenDrive, "/dev/sdx");
     }
 
     // Softening the data-loss claim must not soften the identity check:

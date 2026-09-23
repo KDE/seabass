@@ -320,6 +320,53 @@ int main()
         std::cout << "case 10 (a blank unlabelled drive is still formattable) OK\n";
     }
 
+    // The direction every real drive takes: a locator always gives a
+    // drive a label (model name, drive letter, bsd name at worst), so
+    // production goes through isSameStick(), and it has to let the drive
+    // that IS the same drive through.
+    {
+        FakeLocator locator;
+        locator.disks = {makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "MY-SET", "1234ABCD")};
+        FakeMounter mounter;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        std::string error;
+        assert(useCase.execute("/dev/sdb", locator.disks.front().identity, UsbFilesystem::ExFat, "LABEL", error,
+                               NullProgressReporter::instance()));
+        assert(formatter.formatCalled);
+        std::cout << "case 11 (the stick that is still the stick is formatted) OK\n";
+    }
+
+    // One disk, two partitions: every locator reports it twice under one
+    // wholeDiskPath, with a filesystem UUID per partition. Comparing
+    // against the first entry only refuses such a stick for good, which
+    // is worse than the hole the check closes -- a Windows installer
+    // stick is exactly the drive someone wants to reformat.
+    {
+        FakeLocator locator;
+        auto esp = makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "BOOT", "AAAA1111");
+        esp.devicePath = "/dev/sdb1";
+        auto data = makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "INSTALLER", "BBBB2222");
+        data.devicePath = "/dev/sdb2";
+        locator.disks = {esp, data};
+        FakeMounter mounter;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        // The caller listed the second partition, the loop finds the
+        // first: both are the same drive and the format goes ahead.
+        std::string error;
+        const bool ok = useCase.execute("/dev/sdb", data.identity, UsbFilesystem::ExFat, "LABEL", error,
+                                        NullProgressReporter::instance());
+        if (!ok) {
+            std::cerr << "two partitions on one disk were refused: " << error << "\n";
+        }
+        assert(ok);
+        assert(formatter.formatCalled);
+        std::cout << "case 12 (a two-partition stick is still one drive) OK\n";
+    }
+
     std::cout << "All format_usb_stick tests passed.\n";
     return 0;
 }

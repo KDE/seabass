@@ -81,8 +81,13 @@ Page {
             root.selectedWholeDiskPath = "";
             return;
         }
-        var disk = root.disks[index];
+        const disk = root.disks[index];
         root.selectedWholeDiskPath = disk.wholeDiskPath;
+        // Tells the controller WHICH drive this is, not just where it
+        // sits: the format checks that the same drive is still in that
+        // port, and a replug puts a different one there under the same
+        // path (see FormatUsbController::chooseDrive).
+        controller.chooseDrive(disk.wholeDiskPath);
         root.selectedFilesystem = controller.recommendedFilesystem(disk.capacityBytes);
         volumeLabelField.text = disk.hasNoFilesystem ? "" : disk.label;
         if (disk.hasDjLibrary) {
@@ -137,6 +142,13 @@ Page {
         }
         function onActionFeedback(message, isError) {
             messagePopup.show(message, isError);
+        }
+        function onChosenDriveWentAway() {
+            // The drive that was picked is not in that port any more (or
+            // has just been formatted and is a different drive now).
+            // Dropping the selection is the point: leaving it would point
+            // the next Format at whatever took its place.
+            root.selectedWholeDiskPath = "";
         }
     }
 

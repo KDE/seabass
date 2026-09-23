@@ -69,6 +69,12 @@ public:
     // disappear from "1. Choose a drive" immediately, the same way
     // MediaController already keeps the Home page's own stick list live.
     Q_INVOKABLE void refresh();
+    // Called when a person picks a drive in the list, so the format that
+    // follows is checked against the drive they were looking at rather
+    // than against whatever is in that port by then. Without it the
+    // monitor's own refresh re-points the selection at a stick plugged in
+    // afterwards, and the staleness check has nothing stale to catch.
+    Q_INVOKABLE void chooseDrive(const QString &wholeDiskPath);
 
     // Pure heuristic, no I/O -- domain::recommendedUsbFilesystem() exposed
     // for QML. Returns "fat32" or "exfat".
@@ -88,6 +94,10 @@ signals:
     // Another instance is editing the library on that drive; nothing
     // was started.
     void lockRefused(const QVariantMap &holder, const QString &libraryId);
+    // The drive that was picked is gone, or something else is in that
+    // port now: the page drops the selection rather than leave it
+    // pointing at a drive nobody chose.
+    void chosenDriveWentAway();
 
 private:
     void onFormatFinished();
@@ -103,6 +113,9 @@ private:
     // wholeDiskPath -> who that drive was when it was listed; see
     // refresh() and format().
     QHash<QString, application::StickIdentity> m_identities;
+    // The drive a person chose, and who it was at that moment.
+    QString m_chosenPath;
+    application::StickIdentity m_chosenIdentity;
     DirectWriteHold m_writeHold;
     bool m_busy = false;
     QString m_errorMessage;
