@@ -40,6 +40,35 @@ bool readPrefix(const fs::path &path, unsigned char *out, std::size_t length)
 }
 
 
+// A member read through FileEntrySource, or -- in a test -- one that
+// stops at a given offset the way a failing stick does. "Refused" is
+// either: the device said no, or the test said it would have.
+class StopsAt : public EntrySource
+{
+public:
+    StopsAt(FileEntrySource &inner, std::optional<std::uint64_t> limit) : m_inner(inner), m_limit(limit) {}
+    bool refused() const { return m_inner.readFailed() || m_stopped; }
+    std::size_t read(std::span<std::byte> out) override
+    {
+        if (m_limit) {
+            if (m_done >= *m_limit) {
+                m_stopped = m_stopped || m_inner.read(out.first(std::min<std::size_t>(out.size(), 1))) > 0;
+                return 0;
+            }
+            out = out.first(static_cast<std::size_t>(std::min<std::uint64_t>(out.size(), *m_limit - m_done)));
+        }
+        const std::size_t got = m_inner.read(out);
+        m_done += got;
+        return got;
+    }
+
+private:
+    FileEntrySource &m_inner;
+    std::optional<std::uint64_t> m_limit;
+    std::uint64_t m_done = 0;
+    bool m_stopped = false;
+};
+
 // The file's hash, or nothing when it could not be read to the end.
 //
 // The `while (in)` loop leaves on badbit exactly as readily as on
@@ -147,7 +176,9 @@ std::optional<DbSetFingerprint> fingerprintDbSet(const fs::path &mainDb)
 }
 
 DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relativeMainDb, ArchiveUpdater &updater, int retries,
-                          const std::function<void(std::uint64_t)> &progress, bool salvage)
+                          const std::function<void(std::uint64_t)> &progress, bool salvage,
+                          const std::function<std::optional<std::uint64_t>(const std::string &relativePath)>
+                              &readLimitForTesting)
 {
     DbSetCapture capture;
     const fs::path mainDb = stickRoot / pathFromUtf8(relativeMainDb);
@@ -175,7 +206,9 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         capture.entries.clear();
         capture.memberRelativePaths.clear();
         capture.memberMtimes.clear();
+        capture.memberSalvagedFromSizes.clear();
         bool torn = false;
+        bool refused = false;  // salvage only: a member kept although the stick stopped part-way
         bool readError = false;
         std::size_t appended = 0;
         std::uint64_t attemptBytes = 0;
@@ -184,8 +217,11 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             const fs::path &member = members[m];
             std::string relative = relativeNameOf(member);
             fs::file_time_type mtime = fs::last_write_time(member, ec);
-            FileEntrySource source(member);
-            if (ec || !source.ok()) {
+            FileEntrySource file(member);
+            const std::optional<std::uint64_t> limit =
+                readLimitForTesting ? readLimitForTesting(relative) : std::optional<std::uint64_t>{};
+            StopsAt source(file, limit);
+            if (ec || !file.ok()) {
                 // A sidecar that vanished between listing and opening is a
                 // rollback journal being deleted by a commit -- that is the
                 // writer we are looking for, so retry. The main file being
@@ -219,14 +255,35 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             // differently.
             std::error_code sizeEc;
             const std::uintmax_t sizeNow = fs::file_size(member, sizeEc);
-            if (source.readFailed() || sizeEc || entry->entry.size != sizeNow) {
+            if (salvage && source.refused() && !sizeEc && entry->entry.size < sizeNow) {
+                // Off a stick the kernel has made read-only, a refusal
+                // part-way is the device, not a writer, and what came
+                // before it is the only copy of this database anybody
+                // will get. Kept, marked with the size it should have
+                // had, so the manifest, the salvage log and a restore
+                // all know it is a part. A1's m.db, 2026-09-23: 128 KiB
+                // of 268 KiB readable, and refusing the set kept none.
+                refused = true;
+                // The caller prefixes the set's main file, so a main file
+                // is not named twice.
+                capture.detail = (relative == relativeMainDb ? std::string() : relative + ": ") + "only "
+                    + std::to_string(entry->entry.size) + " of " + std::to_string(sizeNow) + " bytes could be read";
+                ++appended;
+                attemptBytes += entry->entry.size;
+                capture.entries.push_back(*entry);
+                capture.memberRelativePaths.push_back(relative);
+                capture.memberMtimes.push_back(toUnixSeconds(mtime));
+                capture.memberSalvagedFromSizes.push_back(sizeNow);
+                continue;
+            }
+            if (source.refused() || sizeEc || entry->entry.size != sizeNow) {
                 capture.detail = relative + ": read "
                     + std::to_string(entry->entry.size) + " of "
                     + (sizeEc ? std::string("an unreadable size") : std::to_string(sizeNow)) + " bytes";
                 // A device that refused is a read error however many
                 // times it is asked; a size that moved underneath is
                 // something writing, which is worth another pass.
-                if (source.readFailed()) {
+                if (source.refused()) {
                     readError = true;
                 } else {
                     torn = true;
@@ -246,10 +303,11 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             capture.entries.push_back(*entry);
             capture.memberRelativePaths.push_back(relative);
             capture.memberMtimes.push_back(toUnixSeconds(mtime));
+            capture.memberSalvagedFromSizes.push_back(0);
         }
         capture.bytesRead += attemptBytes;
 
-        if (!readError && !torn) {
+        if (!readError && !torn && !refused) {
             // Second pass: re-hash every member on the stick. Any difference
             // from what was streamed means a writer was active.
             for (std::size_t i = 0; i < members.size() && !torn; ++i) {
@@ -261,7 +319,7 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
             torn = torn || !before || !afterFp || !(*before == *afterFp) || dbSetMembers(mainDb).size() != members.size();
         }
 
-        if (!torn && !readError) {
+        if (!torn && !readError && !refused) {
             capture.status = DbSetCapture::Status::Captured;
             capture.fingerprint = before.value_or(DbSetFingerprint{});
             return capture;
@@ -281,14 +339,17 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
         if (salvage && lastAttempt && !readError && !capture.entries.empty()) {
             capture.status = DbSetCapture::Status::Salvaged;
             capture.fingerprint = before.value_or(DbSetFingerprint{});
-            capture.detail = relativeMainDb + " could not be read consistently off this stick; what is here is one "
-                                              "attempt and its parts may not agree with each other";
+            if (!refused) {
+                capture.detail = relativeMainDb + " could not be read consistently off this stick; what is here is one "
+                                                  "attempt and its parts may not agree with each other";
+            }
             return capture;
         }
         updater.forgetLastEntries(appended);
         capture.entries.clear();
         capture.memberRelativePaths.clear();
         capture.memberMtimes.clear();
+        capture.memberSalvagedFromSizes.clear();
         if (readError) {
             capture.status = DbSetCapture::Status::ReadError;
             return capture;

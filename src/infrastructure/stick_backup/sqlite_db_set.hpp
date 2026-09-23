@@ -72,12 +72,21 @@ struct DbSetCapture
         // database that is probably readable beats none at all: it is
         // the cues, the playlists and the edits, which is most of what
         // anyone wants the stick back for.
+        //
+        // Also a set with a member the stick stopped giving part-way:
+        // that member is kept in part and marked in
+        // memberSalvagedFromSizes.
         Salvaged,
     };
     Status status = Status::Captured;
     std::vector<ArchiveUpdater::AppendedEntry> entries;  // one per member, in dbSetMembers() order
     std::vector<std::string> memberRelativePaths;
     std::vector<std::int64_t> memberMtimes;
+    // Salvaged only: the size a member had on the stick when the archive
+    // holds less of it, because the device stopped part-way. Zero for a
+    // member that is here whole, which is every member of every other
+    // status. Becomes ManifestRow::salvagedFromSize.
+    std::vector<std::uint64_t> memberSalvagedFromSizes;
     DbSetFingerprint fingerprint;  // as of the successful pass
     std::uint64_t bytesRead = 0;
     std::string detail;
@@ -95,8 +104,14 @@ struct DbSetCapture
 // came rather than refused. Never pass true for a healthy stick: there,
 // an inconsistent set means something IS writing it, and half a
 // transaction is a database that will not open.
+//
+// `readLimitForTesting`: BackupStickOptions::readLimitForTesting, for the
+// members of a set -- a device that stops giving bytes at that offset,
+// which no test can arrange otherwise. Unset in every real run.
 DbSetCapture captureDbSet(const std::filesystem::path &stickRoot, const std::string &relativeMainDb, ArchiveUpdater &updater,
                           int retries = 3, const std::function<void(std::uint64_t)> &progress = {},
-                          bool salvage = false);
+                          bool salvage = false,
+                          const std::function<std::optional<std::uint64_t>(const std::string &relativePath)>
+                              &readLimitForTesting = {});
 
 }  // namespace seabass::infrastructure::stick_backup

@@ -250,6 +250,44 @@ int main()
         std::cout << "case 4b (a salvage run keeps the database set it could not read cleanly) OK\n";
     }
 
+    // ---- A member the stick stops giving part-way ----
+    //
+    // Measured on a real damaged stick (issue #36, A1, FAT chains cut):
+    // m.db read 131072 of 274432 bytes. Refusing the set there keeps
+    // none of it, and the part is the only copy of the cues anybody is
+    // going to get. A salvage run keeps it and marks it; a healthy run
+    // still refuses, because there a short read is a fault the next run
+    // can put right.
+    {
+        const fs::path db = root / "Engine Library" / "Database2" / "partial.db";
+        createDatabase(db, 1500);
+        const std::uint64_t whole = fs::file_size(db);
+        assert(whole > 8192);
+        const auto stopsAt4k = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Engine Library/Database2/partial.db") {
+                return std::uint64_t{4096};
+            }
+            return std::nullopt;
+        };
+
+        Harness h;
+        DbSetCapture capture =
+            captureDbSet(root, "Engine Library/Database2/partial.db", *h.updater, 1, {}, /*salvage=*/true, stopsAt4k);
+        assert(capture.status == DbSetCapture::Status::Salvaged && "the part is kept, not refused");
+        assert(capture.entries.size() == capture.memberSalvagedFromSizes.size());
+        assert(capture.entries[0].entry.size == 4096);
+        assert(capture.memberSalvagedFromSizes[0] == whole && "and marked with what the file was");
+        assert(h.updater->newEntryCount() == static_cast<int>(capture.entries.size()));
+        assert(capture.detail.find("4096 of " + std::to_string(whole)) != std::string::npos);
+
+        Harness healthy;
+        DbSetCapture refused =
+            captureDbSet(root, "Engine Library/Database2/partial.db", *healthy.updater, 1, {}, /*salvage=*/false, stopsAt4k);
+        assert(refused.status == DbSetCapture::Status::ReadError && "a healthy stick's short read is still a fault");
+        assert(refused.entries.empty() && healthy.updater->newEntryCount() == 0);
+        std::cout << "case 4c (a salvage run keeps the part of a database the stick still gives, and marks it) OK\n";
+    }
+
     // ---- >= 1 GiB refused without reading ----
     {
         fs::path huge = root / "Engine Library" / "Database2" / "huge.db";

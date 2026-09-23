@@ -913,7 +913,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
                         progress.bytesDone = bytesBefore + bytes;
                         report(BackupProgress::Phase::Database);
                     },
-                    options.sourceReadOnly);
+                    options.sourceReadOnly, options.readLimitForTesting);
             } catch (const std::exception &e) {
                 outcome.message = std::string("write failed: ") + e.what();
                 return outcome;
@@ -927,13 +927,20 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
             // every other status does, would throw away the one thing on
             // the stick worth most.
             if (capture.status == DbSetCapture::Status::Salvaged) {
-                // A warning, not a SalvagedFile. A salvaged database set
-                // is not a truncated file: every member that is here is
-                // here in full, and what is wrong with it is that they
-                // may not agree with one another. Reporting it as one
-                // would have printed "12 MiB of 12 MiB" and added it to
-                // the count of files read only in part, which it is not.
+                // A warning for the set, and a SalvagedFile only for a
+                // member that really is truncated. A set whose members
+                // are all here in full is not missing anything -- what
+                // is wrong with it is that they may not agree -- and
+                // listing it would have printed "12 MiB of 12 MiB" and
+                // counted it as read only in part, which it is not.
                 outcome.warnings.push_back(mainDb + ": " + capture.detail);
+                for (std::size_t i = 0; i < capture.entries.size(); ++i) {
+                    if (capture.memberSalvagedFromSizes[i] != 0) {
+                        outcome.salvaged.push_back({capture.memberRelativePaths[i], capture.entries[i].entry.size,
+                                                    capture.memberSalvagedFromSizes[i],
+                                                    "the stick refused to read past this point"});
+                    }
+                }
             }
             if (capture.status == DbSetCapture::Status::Captured
                 || capture.status == DbSetCapture::Status::Salvaged) {
@@ -945,6 +952,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
                     row.size = capture.entries[i].entry.size;
                     row.sha256 = capture.entries[i].sha256;
                     row.crc32 = capture.entries[i].entry.crc32;
+                    row.salvagedFromSize = capture.memberSalvagedFromSizes[i];
                     if (i == 0) {
                         row.extra = capture.fingerprint.toHex();
                     }

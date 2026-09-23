@@ -598,6 +598,46 @@ int main()
         std::cout << "case salvage-restore (part of a file goes back, but never over a whole copy) OK\n";
     }
 
+    // The same for a database set, which is restored whole or not at
+    // all. Over a whole copy of the main file, neither the part nor the
+    // set's other members are written: a sidecar from the backup beside
+    // the target's own main file is a database made of two moments.
+    {
+        Fixture f("salvage-db");
+        const fs::path stickDb = f.stick / "Engine Library" / "Database2" / "m.db";
+        writeFile(fs::path(stickDb.string() + "-journal"), pseudoRandom(512, 9), 1'700'000'100);
+        const std::string wholeDb = readFile(stickDb);
+        BackupStickOptions salvage = f.backup;
+        salvage.sourceReadOnly = true;
+        salvage.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Engine Library/Database2/m.db") {
+                return std::uint64_t{4096};
+            }
+            return std::nullopt;
+        };
+        const BackupStickOutcome taken = BackupStick::execute(salvage);
+        assert(taken.salvaged.size() == 1 && taken.salvaged[0].path == "Engine Library/Database2/m.db");
+
+        const fs::path targetDb = f.target / "Engine Library" / "Database2" / "m.db";
+        const fs::path targetJournal = fs::path(targetDb.string() + "-journal");
+        {
+            RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+            assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
+            assert(summary.partial.size() == 1 && summary.partial[0].written);
+            assert(readFile(targetDb) == wholeDb.substr(0, 4096));
+        }
+        {
+            writeFile(targetDb, wholeDb, 1'700'000'200);
+            writeFile(targetJournal, "the target's own journal", 1'700'000'201);
+            RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+            assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
+            assert(summary.partial.size() == 1 && !summary.partial[0].written);
+            assert(readFile(targetDb) == wholeDb && "the whole database is left alone");
+            assert(readFile(targetJournal) == "the target's own journal" && "and so is the rest of its set");
+        }
+        std::cout << "case salvage-restore-db (a partial database never goes over a whole one, nor do its siblings) OK\n";
+    }
+
     std::cout << "all cases passed\n";
 
     // ---- A write-protected backup restores ----

@@ -716,6 +716,25 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         rowsByPath.emplace(row.path, &row);
     }
 
+    // A database set is restored whole or not at all, and that includes
+    // a set the backup holds only part of. When the target already has a
+    // whole copy of a member the backup could only salvage in part, the
+    // good copy stays -- see below -- and so must its siblings: a -wal
+    // written from the backup beside the target's own main file is a
+    // database made of two different moments.
+    std::set<std::string> setsHeldOnTarget;
+    for (const PlannedEntry &file : plan.files) {
+        auto rowIt = rowsByPath.find(file.name);
+        if (!file.databaseMember || file.unchanged || rowIt == rowsByPath.end() || rowIt->second->salvagedFromSize == 0) {
+            continue;
+        }
+        std::error_code existsEc;
+        const std::uint64_t onTarget = fs::file_size(longPathSafe(options.targetRoot / file.relative), existsEc);
+        if (!existsEc && onTarget >= rowIt->second->salvagedFromSize) {
+            setsHeldOnTarget.insert(file.setMainPath);
+        }
+    }
+
     progress.filesTotal = plan.files.size() - plan.unchanged;
     progress.bytesTotal = plan.bytesToWrite;
     report(RestoreProgress::Phase::Writing);
@@ -744,6 +763,13 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         // of a nine megabyte track written silently over the nine is the
         // one outcome a salvage backup must never cause, and a restore
         // that says "Restored" afterwards is how it would happen.
+        if (file.databaseMember && setsHeldOnTarget.count(file.setMainPath) != 0) {
+            if (row != nullptr && row->salvagedFromSize != 0) {
+                summary.partial.push_back({file.name, row->size, row->salvagedFromSize, false});
+            }
+            ++summary.filesUnchanged;
+            continue;
+        }
         if (row != nullptr && row->salvagedFromSize != 0) {
             std::error_code existsEc;
             const std::uint64_t onTarget = fs::file_size(longPathSafe(destination), existsEc);

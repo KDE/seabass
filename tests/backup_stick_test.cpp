@@ -589,6 +589,41 @@ int main()
         std::cout << "case 15 (a salvage run keeps the part it could read, and says how much is missing) OK\n";
     }
 
+    // The Engine database, read short off a stick that has failed. It
+    // used to be stored as 0 bytes and called captured; then refused
+    // whole, which kept none of the part the stick still gave. It is
+    // kept, marked, counted with the other partial files and named in
+    // the salvage log.
+    {
+        Fixture f("salvage-db");
+        const fs::path mainDb = f.stick / "Engine Library" / "Database2" / "m.db";
+        const std::string whole = readFile(mainDb);
+        assert(whole.size() > 4096);
+        BackupStickOptions options = f.options;
+        options.sourceReadOnly = true;
+        options.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Engine Library/Database2/m.db") {
+                return std::uint64_t{4096};
+            }
+            return std::nullopt;
+        };
+        BackupStickOutcome outcome = BackupStick::execute(options);
+        assert(outcome.status != BackupOutcomeStatus::Failed);
+        assert(outcome.salvaged.size() == 1);
+        assert(outcome.salvaged[0].path == "Engine Library/Database2/m.db");
+        assert(outcome.salvaged[0].bytesSalvaged == 4096);
+        assert(outcome.salvaged[0].expectedSize == whole.size());
+        assert(f.entryContent("Engine Library/Database2/m.db") == whole.substr(0, 4096));
+        const BackupManifest manifest = f.manifest();
+        const ManifestRow *row = manifest.findRow("Engine Library/Database2/m.db");
+        assert(row != nullptr && row->size == 4096 && row->salvagedFromSize == whole.size());
+        assert(manifest.status == BackupStatus::PartialSkipped);
+        const std::string log = f.entryContent(std::string(SalvageLogEntryName));
+        assert(log.find("PARTIAL  Engine Library/Database2/m.db") != std::string::npos);
+        assert(f.verifies());
+        std::cout << "case 15b (a salvage run keeps the part of the Engine database it could read) OK\n";
+    }
+
     // The same short read on a HEALTHY stick is a real fault and stays
     // one: the entry is dropped and the run says so. A stick that is not
     // read-only can be written, so a file that reads short is most
