@@ -52,6 +52,11 @@ CatalogTracks rekordboxOnly(std::vector<Track> tracks)
 //
 // Titles are the key here: this test gives each entry its own, and a
 // path may legitimately repeat.
+//
+// What this does NOT say is which bucket is the right one: the answer
+// "still referenced" turning into "safe to delete" keeps every entry
+// accounted for. That is what the cases either side of each call check,
+// one situation at a time; this is the property none of them can see.
 void everyEntryIsAccountedFor(const std::vector<PendingDeletion> &pending, const PendingDeletionResolution &result)
 {
     std::multiset<std::string> before;
@@ -59,9 +64,24 @@ void everyEntryIsAccountedFor(const std::vector<PendingDeletion> &pending, const
         before.insert(entry.title + "|" + entry.filePath);
     }
     std::multiset<std::string> after;
+    std::multiset<std::string> seenInABucket;
     for (const auto *bucket : {&result.safeToDelete, &result.stillReferenced, &result.notOnThisStick}) {
+        std::multiset<std::string> thisBucket;
         for (const auto &entry : *bucket) {
-            after.insert(entry.title + "|" + entry.filePath);
+            const std::string key = entry.title + "|" + entry.filePath;
+            after.insert(key);
+            thisBucket.insert(key);
+        }
+        for (const auto &key : thisBucket) {
+            // In one bucket only. The union adding up is not enough on
+            // its own: an entry copied into two buckets and another
+            // dropped would leave the totals looking right, and "safe to
+            // delete AND still referenced" is the answer that destroys a
+            // file.
+            assert(seenInABucket.count(key) == 0 && "an entry is in more than one bucket");
+        }
+        for (const auto &key : thisBucket) {
+            seenInABucket.insert(key);
         }
     }
     if (before != after) {

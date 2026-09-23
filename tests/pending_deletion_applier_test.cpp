@@ -104,7 +104,11 @@ PendingDeletion makeEntry(const std::string &filePath, const std::string &backup
     PendingDeletion e;
     e.format = "rekordbox";
     e.filePath = filePath;
-    e.title = "Some Track";
+    // Its own title, so two entries are telling apart: an outcome
+    // carrying the WRONG entry (a stale loop variable, a mis-indexed
+    // copy) is invisible while every entry reads the same, and the page
+    // shows this title beside the file it is about to delete.
+    e.title = "Track for " + fs::path(filePath).filename().string();
     e.artist = "Some Artist";
     e.backupId = backupId;
     return e;
@@ -117,26 +121,48 @@ PendingDeletion makeEntry(const std::string &filePath, const std::string &backup
 // on all of them. A single count says nothing about any of that -- an
 // entry silently skipped and an entry counted twice both leave it
 // looking right.
+std::string keyOf(const PendingDeletion &entry)
+{
+    return entry.title + "|" + entry.filePath;
+}
+
 void everyEntryReportedOnce(const std::vector<PendingDeletion> &given,
                             const std::vector<PendingDeletionOutcome> &outcomes, bool cancelled)
 {
     std::multiset<std::string> in;
     for (const auto &entry : given) {
-        in.insert(entry.filePath);
+        in.insert(keyOf(entry));
     }
     std::multiset<std::string> out;
     for (const auto &outcome : outcomes) {
-        out.insert(outcome.entry.filePath);
+        out.insert(keyOf(outcome.entry));
     }
-    for (const auto &path : out) {
-        assert(in.count(path) >= out.count(path) && "an outcome names a file that was never handed in");
+    for (const auto &key : out) {
+        assert(in.count(key) >= out.count(key) && "an outcome names an entry that was never handed in");
     }
     if (cancelled) {
+        // Stopping early is the point of a cancel, so the count is free
+        // to be short -- but the run goes through the list in order and
+        // stops, so what came back must be the FIRST entries and nothing
+        // else. Without this, an applier that skipped the first file and
+        // deleted the second would satisfy "reported no more than it was
+        // given", which is the shape a cancel is most likely to get
+        // wrong.
         assert(outcomes.size() <= given.size() && "a cancelled run reports on the files it reached, never more");
+        for (std::size_t i = 0; i < outcomes.size(); ++i) {
+            assert(keyOf(outcomes[i].entry) == keyOf(given[i])
+                   && "a cancelled run reports on the entries it reached, in the order it was given them");
+        }
         return;
     }
-    if (outcomes.size() != given.size()) {
+    if (in != out) {
         std::cerr << "outcomes do not add up: " << given.size() << " in, " << outcomes.size() << " out\n";
+        for (const auto &key : in) {
+            if (out.count(key) != in.count(key)) {
+                std::cerr << "  " << key << ": handed in " << in.count(key) << ", reported " << out.count(key)
+                          << "\n";
+            }
+        }
     }
     assert(in == out && "every entry handed in comes back with exactly one outcome");
 }
@@ -211,13 +237,21 @@ int main()
         manifest.append(makeEntry(filePath.string()));
 
         std::vector<PendingDeletionOutcome> outcomes;
+        std::vector<PendingDeletion> given;
+        bool stillThere = false;
         {
             UndeletableFile blocked(filePath);
-            const auto given = manifest.list();
+            given = manifest.list();
             outcomes = applyPendingDeletions(given, root.string(), manifest);
-            everyEntryReportedOnce(given, outcomes, false);
-            assert(fs::exists(filePath));  // genuinely untouched, while still blocked
+            stillThere = fs::exists(filePath);  // genuinely untouched, while still blocked
         }
+        // Checked out here, not inside: an assert aborts, an abort skips
+        // ~UndeletableFile, and the 0500 directory it leaves behind
+        // outlives the run -- removeTreeDeepestFirst() reads no error
+        // code and never chmods, so the next run cleans up around it in
+        // silence.
+        everyEntryReportedOnce(given, outcomes, false);
+        assert(stillThere);
 
         assert(outcomes.size() == 1);
         assert(outcomes[0].status == PendingDeletionOutcome::Status::Failed);
