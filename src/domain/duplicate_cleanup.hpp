@@ -236,14 +236,22 @@ bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string 
 std::vector<CuePoint> mergedCuesFor(const DuplicateCleanupPlan &plan, const std::string &format);
 
 // How many cues this plan keeps that would otherwise leave with the
-// copies being removed, counted across every catalog it writes.
+// copies being removed: distinct cues, not writes. A cue coming back
+// into a track with both a rekordbox row and an Engine row is written to
+// each and counted once, because the line a person reads says
+// "cue(s) preserved" and a track does not gain two.
 //
-// The number a person is shown before deciding to include a group, and
-// the one the save's item-count hint adds up. Both used to compute it as
-// mergedCuesForSurvivor.size() - survivor.cues.size(), the union
-// comparison the write sites no longer use: on the shape that comparison
-// cannot see (one catalog's row missing a cue another catalog's row has)
-// it reports nothing preserved while the save writes one.
+// The number a person is shown before deciding to include a group. It
+// used to be mergedCuesForSurvivor.size() - survivor.cues.size(), the
+// union comparison the write sites no longer use: on the shape that
+// comparison cannot see (one catalog's row missing a cue another
+// catalog's row has) it reports nothing preserved while the save writes
+// one. Counting per catalog fixed that and overshot into counting one
+// cue once per catalog; folding the catalogs' gains together keeps the
+// first fix without the second fault.
+//
+// Not the count of writes coming. The save's item-count hint needs that
+// one and asks catalogNeedsMergedCues() per catalog for it.
 int cuesPreservedBy(const DuplicateCleanupPlan &plan);
 
 // False when this catalog has rows to remove but no row for the survivor

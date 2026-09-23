@@ -743,6 +743,42 @@ int main()
         plan.mergedCuesForSurvivor = {cueA, cueB};
         assert(catalogNeedsMergedCues(plan, "engine") && "two cues is not the same two cues");
         std::cout << "case 28 (a row with as many cues can still be losing one) OK\n";
+
+    // What that count means to a person. One cue coming back into a
+    // track with two catalog rows is written twice and is still one cue:
+    // "2 cue(s) preserved" would be telling them they keep two.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {}}, {"engine", "en-keep", {}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {cueA};
+        doomed.catalogRows = {{"rekordbox", "rb-drop", {cueA}}, {"engine", "en-drop", {cueA}}};
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {cueA};
+        assert(catalogNeedsMergedCues(plan, "rekordbox") && catalogNeedsMergedCues(plan, "engine")
+               && "both rows are written: the count of WRITES is two");
+        assert(cuesPreservedBy(plan) == 1 && "and the count of CUES is one");
+        std::cout << "case 28g (one cue written into two catalogs is one cue preserved) OK\n";
+    }
+
+    // And it must not collapse to "whatever one catalog gains". Two
+    // catalogs each missing a different cue preserve two, which is the
+    // case per-catalog counting was introduced for.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {cueB}}, {"engine", "en-keep", {cueA}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {cueA, cueB};
+        doomed.catalogRows = {{"rekordbox", "rb-drop", {cueA}}, {"engine", "en-drop", {cueB}}};
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {cueA, cueB};
+        assert(cuesPreservedBy(plan) == 2 && "rekordbox gains cue 1, Engine gains cue 2: two different cues");
+        std::cout << "case 28h (two catalogs each missing a different cue preserve two) OK\n";
+    }
     }
 
     // Two catalogs that simply disagree, with nothing being removed that

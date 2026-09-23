@@ -377,14 +377,30 @@ int cuesPreservedBy(const DuplicateCleanupPlan &plan)
         const std::size_t after = plan.mergedCuesForSurvivor.size();
         return after > before ? static_cast<int>(after - before) : 0;
     }
-    int added = 0;
+    // Each catalog's gain, folded into one set rather than summed. The
+    // sum counted a write, not a cue: one cue coming back into a track
+    // that has a rekordbox row and an Engine row is written twice and
+    // was reported as two cues preserved, on a line that reads "2 cue(s)
+    // preserved". A person reading it is deciding about their music, and
+    // a track does not gain two cues there. Folding with the same rule
+    // that did the merging keeps the case the sum was written for: two
+    // catalogs each missing a DIFFERENT cue still count two.
+    //
+    // The per-catalog count is still the right one for "how many writes
+    // are coming", and that is asked separately, through
+    // catalogNeedsMergedCues().
+    std::vector<CuePoint> distinct;
     for (const auto &row : plan.survivor.catalogRows) {
-        const std::size_t after = mergedCuesFor(plan, row.format).size();
-        if (after > row.cues.size()) {
-            added += static_cast<int>(after - row.cues.size());
+        const std::vector<CuePoint> after = mergedCuesFor(plan, row.format);
+        if (after.size() <= row.cues.size()) {
+            continue;
         }
+        // mergeCues() only ever appends, so everything past this row's
+        // own cue count is what the row gains.
+        const std::vector<CuePoint> gained(after.begin() + static_cast<std::ptrdiff_t>(row.cues.size()), after.end());
+        distinct = LocalRestorePlanner::mergeCues(distinct, gained);
     }
-    return added;
+    return static_cast<int>(distinct.size());
 }
 
 // True when the write above would add something. mergeCues() only ever
