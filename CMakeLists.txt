@@ -1879,7 +1879,11 @@ add_test(NAME library_edit_lock_store_test COMMAND library_edit_lock_store_test)
 if(TARGET seabass_edit)
     add_executable(edit_session_save_loop_test tests/edit_session_save_loop_test.cpp tests/engine_information_fixture.cpp)
     target_include_directories(edit_session_save_loop_test PRIVATE src)
-    target_link_libraries(edit_session_save_loop_test PRIVATE seabass_edit)
+    # engine_information_fixture.cpp #includes <sqlite3.h> directly, which
+    # needs the PUBLIC SQLite::SQLite3 alias on Windows -- see
+    # make_engine_library's comment above for why seabass_edit alone
+    # isn't enough there (same shape as library_backup_roundtrip_test).
+    target_link_libraries(edit_session_save_loop_test PRIVATE seabass_edit SQLite::SQLite3)
     add_test(NAME edit_session_save_loop_test COMMAND edit_session_save_loop_test)
 
     # Links media_controller.cpp directly, the way every other GUI-class

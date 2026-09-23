@@ -51,8 +51,12 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
-#include <unistd.h>
 #include <filesystem>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 #include <iostream>
 #include <string>
 #include <vector>
@@ -147,10 +151,17 @@ volatile sig_atomic_t g_planted = 0;
 // rmdir(2) and rename(2) are both async-signal-safe, which is why the
 // plant is an EMPTY directory and the file is moved aside rather than
 // copied: undoing it needs exactly those two calls and no allocation.
+// _rmdir() is the same direct CRT syscall wrapper on Windows -- no
+// allocation, no exceptions -- so it keeps that guarantee there too;
+// std::filesystem::remove() does not belong in a signal handler.
 extern "C" void restoreOnSignal(int sig)
 {
     if (g_planted) {
+#ifdef _WIN32
+        ::_rmdir(g_plantedTarget);
+#else
         ::rmdir(g_plantedTarget);
+#endif
         ::rename(g_plantedStash, g_plantedTarget);
         g_planted = 0;
     }
