@@ -443,16 +443,19 @@ int main()
         text.filePath = "x";                                        // longer than the 0-byte capacity
         bool overwrote = writer.overwriteTrackText(100, text);
         assert(overwrote);
-        // Three of the four did not fit: the title, the comment, and
-        // the zero-capacity file path, which takes nothing at all. The
-        // filename fits exactly and must not be counted, or the number
-        // would be "fields written" under another name.
+        // Two of the four: the title and the comment. The filename fits
+        // exactly and must not be counted, or the number would be
+        // "fields written" under another name. Nor the file path, whose
+        // capacity is zero: a field with no room held nothing and lost
+        // nothing, and an empty comment is the ordinary case on a real
+        // track, so counting those would report one cut per track for
+        // text that was never there.
         //
         // Nothing here is wrong: preserving the byte span is the
         // contract. The count exists so a finished export can say how
         // many of its fields were too small to carry a whole
         // placeholder.
-        assert(writer.truncatedTextFields() == 3);
+        assert(writer.truncatedTextFields() == 2);
         bool committed = writer.commit();
         assert(committed);
 

@@ -45,7 +45,10 @@ void appendDeviceSqlString(std::string &buf, const std::string &text)
 // sharing one artist), 1 playlist with entries for all 3 tracks, and 2
 // artist rows -- enough to exercise shared-artist renaming (once, not
 // once per track) and a playlist, all in one fixture.
-std::string buildSyntheticPdb()
+// narrowStrings: every text field one or two bytes wide, which is what a
+// real export's short fields look like next to a placeholder. Used by
+// the truncation case; every other case wants the ordinary widths.
+std::string buildSyntheticPdb(bool narrowStrings = false)
 {
     std::string buf(static_cast<size_t>(LenPage) * 5, '\0');
 
@@ -102,10 +105,11 @@ std::string buildSyntheticPdb()
         writeU32LE(buf, rowStart + TrackArtistIdFieldOffset, artistId);
 
         std::string titleBytes, commentBytes, filenameBytes, filePathBytes, analyzePathBytes;
-        appendDeviceSqlString(titleBytes, "Real Title " + std::to_string(id));
-        appendDeviceSqlString(commentBytes, "Real Comment " + std::to_string(id));
-        appendDeviceSqlString(filenameBytes, "real" + std::to_string(id) + ".mp3");
-        appendDeviceSqlString(filePathBytes, "/Contents/real" + std::to_string(id) + ".mp3");
+        appendDeviceSqlString(titleBytes, narrowStrings ? "T" : "Real Title " + std::to_string(id));
+        appendDeviceSqlString(commentBytes, narrowStrings ? "C" : "Real Comment " + std::to_string(id));
+        appendDeviceSqlString(filenameBytes, narrowStrings ? "r.mp3" : "real" + std::to_string(id) + ".mp3");
+        appendDeviceSqlString(filePathBytes,
+                              narrowStrings ? "/r.mp3" : "/Contents/real" + std::to_string(id) + ".mp3");
         appendDeviceSqlString(analyzePathBytes, analyzePath);
 
         size_t ofsAnalyze = TrackFixedSize;
@@ -644,6 +648,32 @@ int main()
         assert(line.find(badDst.string()) == std::string::npos
                && "and not carry the machine's own path into MANIFEST.txt");
         std::cout << "case 12 (an analysis file that cannot be scrubbed is dropped and named) OK\n";
+    }
+
+    // The count reaches the result, and the default fixture shows why
+    // that is worth a case of its own: with ordinary field widths
+    // nothing is cut and the number is a truthful zero, so a run on it
+    // cannot tell a working counter from a disconnected one. This
+    // fixture's fields are one and two bytes wide, which is what the
+    // short fields of a real export look like beside a placeholder.
+    {
+        const fs::path src = root / "trunc-source";
+        const fs::path dst = root / "trunc-dest";
+        writeFile(src / "rekordbox" / "export.pdb", buildSyntheticPdb(/*narrowStrings=*/true));
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
+
+        auto result = anonymizeRekordboxLibrary(src.string(), dst.string());
+        assert(result.errorMessage.empty());
+        if (result.placeholdersTruncated <= 0) {
+            std::cerr << "nothing was reported as cut short, on a fixture whose fields are one and two bytes "
+                         "wide\n";
+        }
+        assert(result.placeholdersTruncated > 0
+               && "the writer's count has to reach the result, or the manifest says nothing");
+        std::cout << "case 13 (placeholders cut to fit are counted and reported: "
+                  << result.placeholdersTruncated << ") OK\n";
     }
 
     std::cout << "all cases passed\n";

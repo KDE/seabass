@@ -623,8 +623,11 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                                  result.artistsRenamed > 0 || result.playlistsRenamed > 0 ||
                                  result.freeBytesZeroed > 0;
         // Read before commit(), because commit() is the end of this
-        // writer's life and the count is about what it wrote.
-        result.placeholdersTruncated = static_cast<int>(writer.truncatedTextFields());
+        // writer's life and the count is about what it wrote. Added to,
+        // never assigned, for the same reason freeBytesZeroed is: the
+        // exportExt.pdb writer below has its own, and assigning here
+        // would drop it and under-state what was cut.
+        result.placeholdersTruncated += static_cast<int>(writer.truncatedTextFields());
         if (anyEditAttempted && !writer.commit()) {
             result.errorMessage = "failed to commit anonymized export.pdb (see PdbRowWriter::commit())";
             return result;
@@ -667,6 +670,9 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                     // had been swept, on the one file whose slack this
                     // series added the sweep for.
                     result.freeBytesZeroed += extWriter.zeroUnusedSpace();
+                    // And the tag names this writer had to cut, on the
+                    // same total, for the same reason.
+                    result.placeholdersTruncated += static_cast<int>(extWriter.truncatedTextFields());
                     // No rows means nothing was rewritten, and an empty
                     // vocabulary and a file this code could not read look
                     // identical from here. Treated as a failure, because

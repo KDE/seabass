@@ -248,16 +248,22 @@ bool overwriteDeviceSqlStringInPlace(std::string &buffer, size_t absOffset, cons
     }
     DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, absOffset);
     size_t headerBytes = span.totalBytes - span.textCapacityBytes;
+    // A field with no capacity at all held nothing and takes nothing:
+    // an empty comment is the ordinary case on a real track, and
+    // counting those would report one cut per track for text that was
+    // never there. overwriteAllTagNames() skips such a field entirely
+    // for the mirror-image reason.
+    bool *report = span.textCapacityBytes > 0 ? truncated : nullptr;
     if (span.isUtf16) {
         size_t capacityUnits = span.textCapacityBytes / 2;
-        std::string fitted = fitAsciiToCapacity(newText, capacityUnits, truncated);
+        std::string fitted = fitAsciiToCapacity(newText, capacityUnits, report);
         for (size_t i = 0; i < capacityUnits; ++i) {
             size_t textOffset = absOffset + headerBytes + i * 2;
             buffer.at(textOffset) = fitted[i];
             buffer.at(textOffset + 1) = '\0';
         }
     } else {
-        std::string fitted = fitAsciiToCapacity(newText, span.textCapacityBytes, truncated);
+        std::string fitted = fitAsciiToCapacity(newText, span.textCapacityBytes, report);
         for (size_t i = 0; i < fitted.size(); ++i) {
             buffer.at(absOffset + headerBytes + i) = fitted[i];
         }
@@ -1000,7 +1006,8 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         // counted. Every placeholder today is ASCII by construction, so
         // this changes nothing now; what it stops is a future caller
         // handing over a real name and being told it was rewritten.
-        if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i))) {
+        bool truncated = false;
+        if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i), &truncated)) {
             continue;
         }
         // Recorded HERE, beside the write, not in the scan loop above.
@@ -1010,6 +1017,9 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         // skipped still presented itself as having edited pages. Both
         // callers happen to short-circuit on a zero return today, which
         // is the only reason it did not matter.
+        if (truncated) {
+            ++m_truncatedTextFields;
+        }
         m_editedPageIndices.insert(static_cast<uint32_t>(pageOfRow));
         ++replaced;
     }
@@ -1093,8 +1103,12 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
         // counted. Every placeholder today is ASCII by construction, so
         // this changes nothing now; what it stops is a future caller
         // handing over a real name and being told it was rewritten.
-        if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i))) {
+        bool truncated = false;
+        if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i), &truncated)) {
             continue;
+        }
+        if (truncated) {
+            ++m_truncatedTextFields;
         }
         m_editedPageIndices.insert(rows[i].pageIndex);
         ++replaced;
