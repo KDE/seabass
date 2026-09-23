@@ -87,6 +87,15 @@ int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<d
         return 0;
     }
     std::vector<std::optional<djinterop::hot_cue>> slots(HotCueSlotCount);
+    // Engine keeps hot LOOPS in a separate 8-slot array, and a loop
+    // written as a hot cue loses its out point and stops being a loop.
+    // This built only the hot-cue array, so every rekordbox hot loop
+    // came out of Create Engine Library as an ordinary pad -- and was
+    // counted in cuesCopied, so the summary said it had been carried
+    // over. LibdjinteropEngineCueWriter, in the file next door, has
+    // routed isLoop to set_loops() all along: the two Engine write paths
+    // disagreed, and this is the one that loses them.
+    std::vector<std::optional<djinterop::loop>> loopSlots(HotCueSlotCount);
     std::optional<double> earliestMemoryCueMs;
     int hotCuesSet = 0;
     for (const auto &cue : cues) {
@@ -101,10 +110,17 @@ int applyCuesToSnapshot(djinterop::track_snapshot &snapshot, const std::vector<d
             continue;
         }
         double sampleOffset = cue.positionMs / 1000.0 * DefaultSampleRate;
-        slots[static_cast<size_t>(slot)] = djinterop::hot_cue{cue.comment, sampleOffset, parseColor(cue.color)};
+        if (cue.isLoop) {
+            const double endOffset = cue.loopEndMs / 1000.0 * DefaultSampleRate;
+            loopSlots[static_cast<size_t>(slot)] =
+                djinterop::loop{cue.comment, sampleOffset, endOffset, parseColor(cue.color)};
+        } else {
+            slots[static_cast<size_t>(slot)] = djinterop::hot_cue{cue.comment, sampleOffset, parseColor(cue.color)};
+        }
         hotCuesSet++;
     }
     snapshot.hot_cues = std::move(slots);
+    snapshot.loops = std::move(loopSlots);
     if (earliestMemoryCueMs) {
         snapshot.main_cue = *earliestMemoryCueMs / 1000.0 * DefaultSampleRate;
     }

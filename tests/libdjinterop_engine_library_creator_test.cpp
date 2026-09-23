@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -433,6 +434,58 @@ int main()
         assert(result.tracksCreated == 1);
         assert(!fs::exists(cancelledPath));
         std::cout << "case (cancelled build: nothing created on the target) OK\n";
+    }
+
+    // A hot LOOP stays a loop.
+    //
+    // Engine keeps hot loops in their own 8-slot array. This built only
+    // the hot-cue array, so a rekordbox hot loop came through as an
+    // ordinary pad with its out point discarded -- and was counted in
+    // cuesCopied, so the run reported it carried over. The cue writer in
+    // the file next door has routed isLoop to set_loops() all along, so
+    // the two Engine write paths disagreed and this was the one that
+    // lost them.
+    {
+        fs::path loopRoot = root / "loops";
+        fs::create_directories(loopRoot);
+        fs::path loopLibrary = loopRoot / "Engine Library";
+
+        Track track = makeTrack("r1", "Looper", "An Artist", (loopRoot / "song.mp3").string());
+        track.cues = {
+            {CuePoint::Kind::Hot, 1, 4000.0, "#00FF00", "the loop"},
+            {CuePoint::Kind::Hot, 2, 9000.0, "#0000FF", "a plain pad"},
+        };
+        track.cues[0].isLoop = true;
+        track.cues[0].loopEndMs = 12000.0;
+
+        auto created = EngineLibraryCreator::create(loopLibrary.string(), {track}, EngineSchemaGeneration::V2);
+        assert(created.errorMessage.empty());
+        assert(created.tracksCreated == 1);
+
+        // Read back through the app's own reader, so this asserts what
+        // Seabass will see rather than what libdjinterop stored.
+        LibdjinteropEngineReader reader(loopLibrary.string());
+        const auto readBack = reader.readAll();
+        assert(readBack.size() == 1);
+
+        const CuePoint *loop = nullptr;
+        const CuePoint *plain = nullptr;
+        for (const auto &cue : readBack[0].cues) {
+            if (cue.hotCueNumber == 1) {
+                loop = &cue;
+            } else if (cue.hotCueNumber == 2) {
+                plain = &cue;
+            }
+        }
+        assert(loop != nullptr && plain != nullptr && "both pads came back");
+        assert(loop->isLoop && "the loop is still a loop");
+        assert(!plain->isLoop && "and the pad beside it did not become one");
+
+        // The out point survived, which is the whole difference between
+        // a loop and a cue.
+        assert(std::abs(loop->positionMs - 4000.0) < 2.0);
+        assert(std::abs(loop->loopEndMs - 12000.0) < 2.0);
+        std::cout << "case (a hot loop is written as a loop, with its out point) OK\n";
     }
 
     fs::remove_all(root);
