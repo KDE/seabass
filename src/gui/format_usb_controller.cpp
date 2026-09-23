@@ -181,7 +181,10 @@ void FormatUsbController::refresh()
     if (!m_chosenPath.isEmpty() && !chosenStillThere) {
         m_chosenPath.clear();
         m_chosenIdentity = {};
-        setStatusMessage(QStringLiteral("The drive you picked is no longer there, so nothing is selected."));
+        // Through the error channel on purpose: the page paints
+        // statusMessage in the success colour, and "something else is in
+        // that port now" is the opposite of a success.
+        setErrorMessage(QStringLiteral("The drive you picked is no longer there, so nothing is selected."));
         emit chosenDriveWentAway();
     }
 }
@@ -202,6 +205,23 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
     if (m_busy) {
         return;
     }
+    // Before the lock and before busy, because a refusal here starts no
+    // task and nothing would clear either: the page would keep its
+    // spinner, refuse to refresh, hold the library's edit lock and not
+    // even let the person leave. Reachable by way of the locked-library
+    // dialog, whose retry re-enters this with the path it captured while
+    // a hotplug refresh had already dropped the selection.
+    //
+    // Who the drive was when it was PICKED, not when the list was last
+    // rebuilt: see chooseDrive(). A format for a path nobody picked is
+    // refused rather than checked against a fresh reading of that port,
+    // which would be no check at all.
+    if (wholeDiskPath != m_chosenPath) {
+        setErrorMessage(QStringLiteral("Pick the drive again before formatting it."));
+        return;
+    }
+    const application::StickIdentity chosen = m_chosenIdentity;
+
     // Formatting is one udisks/Format-Volume call and cannot be cancelled;
     // what the edit lock adds is the refusal while another instance is
     // editing the library on this very drive.
@@ -229,15 +249,6 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
     auto reporter = std::make_shared<QtProgressReporter>();
     // Awake for the whole format: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Formatting a USB stick"));
-    // Who the drive was when it was PICKED, not when the list was last
-    // rebuilt: see chooseDrive(). A format for a path nobody picked is
-    // refused rather than checked against a fresh reading of that port,
-    // which would be no check at all.
-    if (wholeDiskPath != m_chosenPath) {
-        setErrorMessage(QStringLiteral("Pick the drive again before formatting it."));
-        return;
-    }
-    const application::StickIdentity chosen = m_chosenIdentity;
     m_watcher.setFuture(QtConcurrent::run([keepAwake, wholeDiskPath, chosen, filesystem, volumeLabel, reporter]() {
         return runFormatTask(wholeDiskPath, chosen, filesystem, volumeLabel, reporter);
     }));

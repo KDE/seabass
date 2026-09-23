@@ -79,6 +79,11 @@ Page {
     function applySelection(index) {
         if (index < 0 || index >= root.disks.length) {
             root.selectedWholeDiskPath = "";
+            // Clicking the selected drive again unselects it (see the
+            // delegate below), and the controller has to hear that too:
+            // otherwise it keeps a chosen drive nothing on screen shows
+            // as chosen, and announces its disappearance later.
+            controller.chooseDrive("");
             return;
         }
         const disk = root.disks[index];

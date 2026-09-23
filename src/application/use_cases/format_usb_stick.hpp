@@ -164,6 +164,16 @@ public:
     // to key on on EITHER side, and the same size, passes. A drive that
     // had nothing and now has a label (someone else's stick in the same
     // port) does not, and neither does the reverse.
+    // What this cannot do, said out loud: where the only evidence is a
+    // label and a capacity, and the label is one of the port-derived
+    // fallbacks a locator uses when a drive offers nothing better (the
+    // devnode name on Linux, the PhysicalDrive path on Windows), two
+    // same-size blank sticks in the same port compare equal, because
+    // nothing observable tells them apart. The check refuses what it can
+    // see to be a different drive; it cannot invent evidence, and
+    // refusing whenever evidence is thin would refuse every cheap new
+    // stick, which is the drive this feature exists to format.
+    //
     // Public because the page that offers the drive asks the same
     // question when its list changes under the selection: one rule, one
     // definition, rather than a second opinion in the GUI.

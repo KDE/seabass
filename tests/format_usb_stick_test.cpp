@@ -367,6 +367,31 @@ int main()
         std::cout << "case 12 (a two-partition stick is still one drive) OK\n";
     }
 
+    // The limit of the whole idea, written down as a case rather than
+    // left for someone to discover: two blank sticks of one size, in one
+    // port, with nothing but a port-derived label (what a locator falls
+    // back to when a drive offers no serial, no UUID and no model) are
+    // the same drive as far as anything here can tell, and the format
+    // goes ahead. Refusing that would refuse every new stick.
+    {
+        FakeLocator locator;
+        locator.disks = {makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "sdb", "")};
+        const StickIdentity chosen = locator.disks.front().identity;
+        // A different stick, indistinguishable: same size, same port, and
+        // the same fallback label derived from that port.
+        locator.disks = {makeKnownDisk("/dev/sdb", 32ULL * 1024 * 1024 * 1024, "sdb", "")};
+        FakeMounter mounter;
+        FakeFormatter formatter;
+        FormatUsbStick useCase(locator, mounter, formatter);
+
+        std::string error;
+        assert(useCase.execute("/dev/sdb", chosen, UsbFilesystem::ExFat, "LABEL", error,
+                               NullProgressReporter::instance())
+               && "with no evidence of a difference there is nothing to refuse");
+        assert(formatter.formatCalled);
+        std::cout << "case 13 (two indistinguishable blank sticks: the check cannot help, and says so) OK\n";
+    }
+
     std::cout << "All format_usb_stick tests passed.\n";
     return 0;
 }
