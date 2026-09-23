@@ -90,9 +90,16 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
-
-#include "scratch_path.hpp"
 #endif
+
+// OUTSIDE the SEABASS_CORPUS_HAS_EDIT guard, because scratchRoot() is
+// used outside it too -- unpackedSetsRoot() and scratchFor() call it
+// unconditionally. Inside the guard, a build without the edit layer
+// (-DSEABASS_GUI=OFF, which is how seabass_core and seabass-cli are
+// meant to be buildable Qt-free) failed with "'seabass::testing' has
+// not been declared" at the first use. CI builds with the GUI on, so
+// nothing caught it.
+#include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -2167,11 +2174,33 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
                     ++shared;
                 }
             }
+            // Say WHICH of the reasons it is, rather than asserting one.
+            //
+            // This line used to end "so the two catalogs cannot be
+            // matched up in this data set at all" whatever the numbers
+            // in front of it said. That conclusion is only true when
+            // `shared` is 0, which was the case on the only fixture
+            // that existed when it was written. On
+            // one_stick_two_catalogs it printed "only 100 of 100
+            // rekordbox tracks share a filename" and then concluded
+            // they could not be matched -- a diagnostic contradicting
+            // its own evidence, and the exact failure #14 is about:
+            // output that reads like a finding and is not one.
             std::cout << "    sync: OneLibrary mirror NOT exercised -- " << rekordboxTargets << " of "
-                      << withCues.size() << " plans target rekordbox, but only " << shared << " of "
-                      << catalogs.rekordbox.size()
-                      << " rekordbox tracks share a filename with any OneLibrary row, so the two catalogs "
-                         "cannot be matched up in this data set at all\n";
+                      << withCues.size() << " sampled plans target rekordbox, and " << shared << " of "
+                      << catalogs.rekordbox.size() << " rekordbox tracks share a filename with a OneLibrary row.\n";
+            if (shared == 0) {
+                std::cout << "    sync: the two catalogs cannot be matched up in this set at all -- the "
+                             "anonymizer renamed each catalog's files independently, so the same audio has a "
+                             "different placeholder name in export.pdb and exportLibrary.db\n";
+            } else if (rekordboxTargets == 0) {
+                std::cout << "    sync: the catalogs DO match up here, so this set could exercise the mirror -- "
+                             "no sampled plan targets rekordbox, because the planner emitted none the mirror is "
+                             "behind on (the two halves already agree wherever there was a cue to sync)\n";
+            } else {
+                std::cout << "    sync: plans target rekordbox and the catalogs match up, yet no cue was "
+                             "checked -- the targets had no OneLibrary row, which is worth looking at\n";
+            }
         }
     }
 
