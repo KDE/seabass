@@ -347,9 +347,19 @@ int main()
         assert(reader.findEntry(SalvageLogEntryName).has_value());
         BackupManifest manifest = *BackupManifest::parse(reader.readEntryToString(*reader.findEntry(ManifestEntryName)));
         InMemoryArchiveFile compacted;
-        CompactionResult result = compactArchive(reader, manifest, compacted, CancellationToken::none());
+        std::uint64_t lastDone = 0, lastTotal = 0;
+        CompactionResult result = compactArchive(reader, manifest, compacted, CancellationToken::none(),
+                                                 [&](std::uint64_t done, std::uint64_t total) {
+                                                     lastDone = done;
+                                                     lastTotal = total;
+                                                 });
         assert(!result.cancelled);
         assert(compacted.size() < salvageArchive.size() && "it really did reclaim something");
+        // The log's bytes are in the total, so they have to be in what
+        // was copied too: progress on a salvage backup stopped short by
+        // exactly the log's size and never reached the end.
+        assert(lastTotal == 9'500 + std::string("PARTIAL  d/a\n").size());
+        assert(lastDone == lastTotal && "a finished compaction reports all of it copied");
 
         Zip64Reader after = Zip64Reader::open(compacted);
         auto logIndex = after.findEntry(SalvageLogEntryName);
@@ -357,6 +367,39 @@ int main()
         assert(after.readEntryToString(*logIndex) == "PARTIAL  d/a\n");
         assert(after.findEntry("d/a").has_value() && "and so does the library");
         std::cout << "case 6 (a salvage archive compacts, and its log comes through) OK\n";
+    }
+
+    // ---- ...and its log is checked on the way through, like the rest ---
+    //
+    // The salvage log has no manifest row, so the hash check every other
+    // entry gets cannot apply to it -- and for that reason it used to be
+    // copied with no check at all. It is the account of which files came
+    // off a failing stick short; a flipped byte in it must stop the
+    // compaction the way one in a library file does.
+    {
+        auto clock = std::make_shared<FaultClock>();
+        InMemoryArchiveFile archive6(clock);
+        InMemoryArchiveFile journal6(clock);
+        const std::string log = "PARTIAL  d/a  4096 of 9000 bytes\n" + std::string(400, '.') + "\n";
+        generation(archive6, journal6, {{"d/", ""}, {"d/a", pseudoRandom(9'000, 13)}}, log);
+        Zip64Reader reader = Zip64Reader::open(archive6);
+        const std::size_t victim = *reader.findEntry(SalvageLogEntryName);
+        assert(reader.entries()[victim].size == log.size());
+        std::vector<std::byte> bytes = archive6.bytes();
+        bytes[static_cast<std::size_t>(reader.dataOffset(victim)) + 3] ^= std::byte{0x01};
+        InMemoryArchiveFile damaged(bytes);
+        Zip64Reader damagedReader = Zip64Reader::open(damaged);
+        BackupManifest manifest =
+            *BackupManifest::parse(damagedReader.readEntryToString(*damagedReader.findEntry(ManifestEntryName)));
+        InMemoryArchiveFile destination;
+        bool threw = false;
+        try {
+            compactArchive(damagedReader, manifest, destination);
+        } catch (const ArchiveFormatError &e) {
+            threw = std::string(e.what()).find(SalvageLogEntryName) != std::string::npos;
+        }
+        assert(threw && "a damaged salvage log stops the compaction and is named");
+        std::cout << "case 7 (a flipped byte in the salvage log stops compaction too) OK\n";
     }
 
     std::cout << "all cases passed\n";

@@ -113,9 +113,17 @@ CompactionResult compactArchive(const Zip64Reader &source, const BackupManifest 
             // through a compaction unverified, and it is the salvage
             // log: the record of which files came off a failing stick
             // short.
-            const CentralEntry copied_ = copy.finish();
-            if (copied_.size != entry.size || copied_.crc32 != entry.crc32) {
+            const CentralEntry carried = copy.finish();
+            if (carried.size != entry.size || carried.crc32 != entry.crc32) {
                 throw ArchiveFormatError("entry does not match its central directory record: " + entry.name);
+            }
+            // Counted as copied, since it is in totalBytes above. It was
+            // not, so on a salvage backup -- the one archive carrying a
+            // metadata entry -- progress stopped short of the total by
+            // the salvage log's size and never reached the end.
+            copied += carried.size;
+            if (progress) {
+                progress(copied, totalBytes);
             }
             ++result.entries;
             continue;
