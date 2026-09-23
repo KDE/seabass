@@ -881,8 +881,14 @@ bool PdbRowWriter::overwritePlaylistName(uint32_t playlistId, const std::string 
     return true;
 }
 
-int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> &placeholder)
+int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> &placeholder, int *rowsLeftAlone)
 {
+    // Counted from the row list below, so every `continue` in the write
+    // loop is accounted for without each one having to remember to say
+    // so. There are five of them and a sixth is one edit away.
+    if (rowsLeftAlone != nullptr) {
+        *rowsLeftAlone = 0;
+    }
     if (m_format != Format::ExportExt) {
         return 0;
     }
@@ -973,6 +979,9 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         // is the only reason it did not matter.
         m_editedPageIndices.insert(static_cast<uint32_t>(pageOfRow));
         ++replaced;
+    }
+    if (rowsLeftAlone != nullptr) {
+        *rowsLeftAlone = static_cast<int>(rowBodyOffsets.size()) - replaced;
     }
     return replaced;
 }

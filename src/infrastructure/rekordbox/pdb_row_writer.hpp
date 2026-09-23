@@ -211,7 +211,16 @@ public:
     // them apart from the index. That is deliberate: which of the two a
     // row is says nothing a fixture needs, and a placeholder that
     // announced "CATEGORY" would leak the structure it was hiding.
-    int overwriteAllTagNames(const std::function<std::string(size_t index)> &placeholder);
+    // `rowsLeftAlone`, when given, receives the number of present tag
+    // rows this could NOT rewrite -- an offset that leaves its page, a
+    // field with no capacity, a placeholder the field cannot represent.
+    //
+    // Callers must look at it. A row skipped here keeps the name it
+    // already had, and in an anonymiser that is a My Tag a DJ typed. The
+    // return value counts rows REWRITTEN, so 27 of 28 still reads as a
+    // positive number and the one real name goes out with the export.
+    int overwriteAllTagNames(const std::function<std::string(size_t index)> &placeholder,
+                             int *rowsLeftAlone = nullptr);
 
     // Replaces the name in every present row of `table` with
     // placeholder(index), and returns how many rows were rewritten.

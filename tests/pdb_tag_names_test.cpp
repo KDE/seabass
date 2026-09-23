@@ -230,6 +230,38 @@ int main()
         assert(namesBefore > 1);
     }
 
+    // A row the rewrite cannot touch is REPORTED, not silently left.
+    //
+    // Every `continue` in the write loop leaves that row's real My Tag
+    // name exactly where it was, and the return value counts rows
+    // rewritten -- so 27 of 28 reads as a healthy positive number while
+    // one name a DJ typed goes out inside a file the anonymiser has
+    // just called scrubbed. The caller cannot see that from the return
+    // alone, which is why there is an out-parameter for it.
+    //
+    // Provoked with a placeholder the field cannot represent: non-ASCII
+    // is refused by overwriteDeviceSqlStringInPlace(), so every row is
+    // skipped and none of the names change.
+    {
+        const fs::path refused = scratch / "refused.pdb";
+        fs::copy_file(source, refused, fs::copy_options::overwrite_existing);
+        const std::vector<std::string> namesBefore = tagNamesIn(refused);
+
+        PdbRowWriter writer(refused.string(), PdbRowWriter::Format::ExportExt);
+        int leftAlone = -1;
+        const int rewritten = writer.overwriteAllTagNames([](size_t) { return std::string("Café"); }, &leftAlone);
+        std::cout << "unrepresentable placeholder: " << rewritten << " rewritten, " << leftAlone
+                  << " left alone\n";
+        assert(rewritten == 0 && "a placeholder the field cannot represent must not be written");
+        assert(leftAlone == static_cast<int>(namesBefore.size())
+               && "and every row it could not do has to be counted, not dropped on the floor");
+
+        // The names really are untouched, read back through the parser:
+        // this is the state that would have shipped.
+        const std::vector<std::string> after = tagNamesIn(refused);
+        assert(after == namesBefore);
+    }
+
     // Opened as the wrong format, the same file yields nothing. Asserted
     // because it is the failure mode of this whole area: a mismatched
     // flag finds no rows and reports success.

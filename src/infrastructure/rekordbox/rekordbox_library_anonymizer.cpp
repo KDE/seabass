@@ -609,8 +609,9 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                 bool scrubbed = false;
                 try {
                     PdbRowWriter extWriter(extPdb.string(), PdbRowWriter::Format::ExportExt);
+                    int leftAlone = 0;
                     const int renamed =
-                        extWriter.overwriteAllTagNames([](size_t i) { return placeholder("Tag", i); });
+                        extWriter.overwriteAllTagNames([](size_t i) { return placeholder("Tag", i); }, &leftAlone);
                     // The same pass export.pdb gets, and for the same
                     // reason: overwriteAllTagNames() rewrites the LIVE
                     // rows, and rekordbox leaves the old bytes behind in
@@ -627,7 +628,26 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                     // vocabulary and a file this code could not read look
                     // identical from here. Treated as a failure, because
                     // guessing "it was empty" is how a real one ships.
-                    scrubbed = renamed > 0 && extWriter.commit();
+                    // EVERY row, not merely some. A row the rewrite
+                    // could not touch keeps the My Tag name a DJ typed,
+                    // and `renamed > 0` is true of 27 rewritten out of
+                    // 28 -- so the one real name would ship inside a
+                    // file this code had just declared scrubbed. Same
+                    // shape as a refused track row leaving its real
+                    // title: a guard that only asks whether SOMETHING
+                    // was written cannot see what was left behind.
+                    //
+                    // Not left to the verifier's byte sweep, which would
+                    // catch the name downstream. Relying on the backstop
+                    // is how the guard comes to be written this way in
+                    // the first place, and the export would fail with a
+                    // leak report rather than this saying which rows it
+                    // could not do.
+                    scrubbed = renamed > 0 && leftAlone == 0 && extWriter.commit();
+                    if (renamed > 0 && leftAlone > 0) {
+                        result.rowsNotAnonymized.push_back(std::to_string(leftAlone)
+                                                           + " My Tag row(s) kept their real names");
+                    }
                     if (scrubbed) {
                         result.tagsRenamed = renamed;
                     }
