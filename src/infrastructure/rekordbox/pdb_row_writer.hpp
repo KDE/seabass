@@ -234,7 +234,18 @@ public:
     // Like the overwrites above this preserves each field's on-disk byte
     // length, so a placeholder longer than the name it replaces is
     // truncated to fit.
-    int overwriteAllNames(NameTable table, const std::function<std::string(size_t index)> &placeholder);
+    //
+    // `rowsLeftAlone` is set to how many present rows it did NOT rewrite,
+    // for the reasons overwriteAllTagNames() gives -- a name offset that
+    // leaves its page, a field with no capacity, a placeholder the field
+    // cannot represent -- and it is required for the reason given there.
+    // Each of those rows keeps its real album, genre, label, artist or
+    // playlist name. The bound that skips the first of them was added
+    // here without it, so a row it refused went into the export real and
+    // was counted nowhere; the anonymizer's own report said nothing, and
+    // only the verifier's byte sweep, if it knew the name, could object.
+    int overwriteAllNames(NameTable table, const std::function<std::string(size_t index)> &placeholder,
+                          int *rowsLeftAlone);
 
     // For every playlist_entry row currently pointing at oldTrackId:
     // if that same playlist already has an entry for newTrackId,

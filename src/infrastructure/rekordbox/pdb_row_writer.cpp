@@ -182,6 +182,38 @@ DeviceSqlStringSpan readDeviceSqlStringSpan(const std::string &buffer, size_t ab
     return span;
 }
 
+// Whether the DeviceSQL string at `nameAt` lies wholly inside the page
+// that holds the row starting at `rowBodyOffset` -- where it begins AND
+// where it ends.
+//
+// Every in-place text write needs this, because both numbers it checks
+// come out of the file: where a name starts is a u1 or u2 offset in the
+// row, and how long it is is the string's own header, a u2 for a long
+// one. A page is 4096 bytes and those reach 65535, so a wrong or hostile
+// value writes into another table's page. buffer.at() only objects once
+// the write leaves the FILE, and landing in a neighbouring page is
+// inside it.
+//
+// One definition, because the bound was written three times and was
+// missing from two more writers that needed it: the tag names had it,
+// overwriteAllNames() gained it later (issue #46), and overwriteArtistName()
+// and the track strings -- the per-id passes the anonymizer runs before
+// either -- never did. Each was a hardening applied to one of the places
+// that needed it.
+bool stringStaysInRowPage(const std::string &buffer, size_t rowBodyOffset, size_t nameAt)
+{
+    const size_t lenPage = readU32LE(buffer, HeaderLenPageOffset);
+    if (lenPage == 0) {
+        return false;
+    }
+    const size_t pageEnd = (rowBodyOffset / lenPage + 1) * lenPage;
+    if (nameAt < rowBodyOffset || nameAt >= pageEnd || pageEnd > buffer.size()) {
+        return false;
+    }
+    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, nameAt);
+    return span.totalBytes != 0 && nameAt + span.totalBytes <= pageEnd;
+}
+
 // Whether every byte of `text` is representable by the writers below,
 // which is exactly: plain ASCII.
 //
@@ -814,10 +846,21 @@ bool overwriteTrackStringIfUsed(std::string &buffer, size_t rowBodyOffset, auto 
 {
     const size_t header = rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
     const size_t absOffset = trackStringAbsOffset(buffer, rowBodyOffset, stringIndex);
-    if (absOffset < header || absOffset >= buffer.size()) {
+    if (absOffset < header || !stringStaysInRowPage(buffer, rowBodyOffset, absOffset)) {
         return false;
     }
     return overwriteDeviceSqlStringInPlace(buffer, absOffset, text, truncated);
+}
+
+// A string slot whose offset points past the row header but whose string
+// does not stay inside the row's page: one the writer above would refuse.
+// Asked of every field before any is written, so a row is changed whole
+// or not at all.
+bool trackStringLeavesItsPage(const std::string &buffer, size_t rowBodyOffset, auto stringIndex)
+{
+    const size_t header = rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
+    const size_t absOffset = trackStringAbsOffset(buffer, rowBodyOffset, stringIndex);
+    return absOffset >= header && !stringStaysInRowPage(buffer, rowBodyOffset, absOffset);
 }
 
 }  // namespace
@@ -838,6 +881,17 @@ bool PdbRowWriter::overwriteTrackText(uint32_t trackId, const TrackTextOverride 
     if (!isPlainAscii(text.title) || !isPlainAscii(text.comment) || !isPlainAscii(text.filename)
         || !isPlainAscii(text.filePath)) {
         return false;
+    }
+    // And every field's LOCATION, for the same reason. A slot whose
+    // string leaves the page is refused by the write below, and that
+    // refusal used to be dropped on the floor: the other fields were
+    // written, this returned true, and the anonymizer reported the track
+    // scrubbed with its real title still in it.
+    for (const auto index : {TrackStringIndexTitle, TrackStringIndexComment, TrackStringIndexFilename,
+                             TrackStringIndexFilePath}) {
+        if (trackStringLeavesItsPage(m_buffer, found->rowBodyOffset, index)) {
+            return false;
+        }
     }
     // One count per field that did not fit, so a finished export can say
     // how many of them were too small to carry a whole placeholder.
@@ -870,6 +924,12 @@ bool PdbRowWriter::overwriteTrackExtraText(uint32_t trackId, const TrackExtraTex
         || !isPlainAscii(text.mixName)) {
         return false;  // all four, before any of them: see overwriteTrackText()
     }
+    for (const auto index : {TrackStringIndexIsrc, TrackStringIndexTexter, TrackStringIndexMessage,
+                             TrackStringIndexMixName}) {
+        if (trackStringLeavesItsPage(m_buffer, found->rowBodyOffset, index)) {
+            return false;  // and their locations: see overwriteTrackText()
+        }
+    }
     // Not counted: these four exist to be emptied, and empty never
     // truncates. Counting them would mean nothing.
     overwriteTrackStringIfUsed(m_buffer, found->rowBodyOffset, TrackStringIndexIsrc, text.isrc);
@@ -889,9 +949,15 @@ bool PdbRowWriter::overwriteArtistName(uint32_t artistId, const std::string &tex
     if (!found) {
         return false;
     }
+    // Bounded: the name offset is read out of the row, and this is the
+    // per-artist pass the anonymizer runs BEFORE the wholesale one that
+    // was bounded first. See stringStaysInRowPage().
+    const size_t nameAt = artistNameAbsOffset(m_buffer, found->rowBodyOffset);
+    if (!stringStaysInRowPage(m_buffer, found->rowBodyOffset, nameAt)) {
+        return false;
+    }
     bool artistTruncated = false;
-    if (!overwriteDeviceSqlStringInPlace(m_buffer, artistNameAbsOffset(m_buffer, found->rowBodyOffset), text,
-                                         &artistTruncated)) {
+    if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, text, &artistTruncated)) {
         return false;  // nothing written, so this page is not marked edited
     }
     if (artistTruncated) {
@@ -932,12 +998,10 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         return 0;
     }
     std::vector<size_t> rowBodyOffsets;
-    size_t lenPage = 0;
     {
         std::istringstream iss(m_buffer);
         kaitai::kstream ks(&iss);
         Pdb pdb(true, &ks);
-        lenPage = pdb.len_page();
         for (const auto &t : *pdb.tables()) {
             if (t->type_ext() != Pdb::PAGE_TYPE_EXT_TAGS) {
                 continue;
@@ -966,33 +1030,17 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         const size_t nameOffset = (subtype & TagRowFarNameFlag) != 0
             ? readU16LE(m_buffer, base + TagRowOfsNameFarOffset)
             : static_cast<size_t>(static_cast<unsigned char>(m_buffer[base + TagRowOfsNameNearOffset]));
-        // Bounded to the row's own page. nameOffset is a u2 read out of
-        // the file, so it reaches 65535 while a page is 4096 bytes: an
-        // offset that is wrong, or a file that is hostile, otherwise
-        // writes up to sixteen pages away into an unrelated table.
-        // buffer.at() only catches that once it leaves the file
-        // entirely, and reparsesCleanly() walks only the tags tables, so
-        // damage to a neighbouring tag_tracks page would be committed
-        // without anything noticing.
-        const size_t pageOfRow = lenPage == 0 ? 0 : base / lenPage;
-        const size_t pageEnd = (pageOfRow + 1) * lenPage;
+        // Bounded to the row's own page, start AND end: nameOffset is a
+        // u2 read out of the file and reaches 65535 while a page is 4096
+        // bytes, and the string's length is another file-supplied u2.
+        // reparsesCleanly() walks only the tags tables, so damage to a
+        // neighbouring tag_tracks page would be committed without
+        // anything noticing. See stringStaysInRowPage().
         const size_t nameAt = base + nameOffset;
-        if (lenPage == 0 || nameAt < base || nameAt >= pageEnd) {
+        if (!stringStaysInRowPage(m_buffer, base, nameAt)) {
             continue;
         }
-        // Where the write ENDS, not only where it starts. The first
-        // version of this guard checked the offset and stopped there,
-        // and the length is the other file-supplied number:
-        // overwriteDeviceSqlStringInPlace() writes textCapacityBytes,
-        // which for a long string is a u2 read straight out of the file.
-        // A name that begins inside the page and claims to be longer
-        // than the page still walks into the next one, which is the same
-        // bug the offset check was added for, one field along.
-        // tagRowKeepRanges() had this test from the start; this did not.
         const DeviceSqlStringSpan span = readDeviceSqlStringSpan(m_buffer, nameAt);
-        if (span.totalBytes == 0 || nameAt + span.totalBytes > pageEnd) {
-            continue;
-        }
         // Counted only when there was somewhere to write. A
         // device_sql_string with no text capacity takes the overwrite
         // and keeps its bytes, so counting the visit rather than the
@@ -1020,15 +1068,18 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         if (truncated) {
             ++m_truncatedTextFields;
         }
-        m_editedPageIndices.insert(static_cast<uint32_t>(pageOfRow));
+        // stringStaysInRowPage() has already refused a zero len_page.
+        m_editedPageIndices.insert(static_cast<uint32_t>(base / readU32LE(m_buffer, HeaderLenPageOffset)));
         ++replaced;
     }
     *rowsLeftAlone = static_cast<int>(rowBodyOffsets.size()) - replaced;
     return replaced;
 }
 
-int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::string(size_t)> &placeholder)
+int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::string(size_t)> &placeholder,
+                                    int *rowsLeftAlone)
 {
+    *rowsLeftAlone = 0;
     // None of these tables exist in an exportExt.pdb, and the check that
     // would rule them out cannot be trusted there: `type` and `type_ext`
     // are the same u4 declared twice under opposite `if:` guards, so on
@@ -1064,12 +1115,10 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
     // a name whose replacement shifts nothing still invalidates the
     // kaitai objects holding offsets into it.
     std::vector<FoundRow> rows;
-    size_t lenPage = 0;
     {
         std::istringstream iss(m_buffer);
         kaitai::kstream ks(&iss);
         Pdb pdb(m_format == Format::ExportExt, &ks);
-        lenPage = pdb.len_page();
         for (const auto &t : *pdb.tables()) {
             if (t->type() != pageType) {
                 continue;
@@ -1101,32 +1150,17 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
         } else if (table == NameTable::Playlists) {
             nameAt = rows[i].rowBodyOffset + PlaylistTreeNameOffset;
         }
-        // Bounded to the row's own page, before anything is written.
-        // Every one of those offsets is read out of the FILE -- a u1 or
-        // a u2 in the row -- so a wrong or hostile value points wherever
-        // it likes, and overwriteDeviceSqlStringInPlace() then writes
-        // textCapacityBytes there, itself another file-supplied u2.
-        // buffer.at() only objects once the write leaves the file
-        // entirely; landing in a neighbouring table's page is inside it.
-        //
-        // overwriteAllTagNames() was given exactly this bound when the
-        // hole was found there. This is the other half of it, one
-        // function along -- the same shape as the two copies of
-        // FileSource and the two backup-discard paths: a hardening
-        // applied to one of the two places that needed it.
-        const size_t pageOfRow = lenPage == 0 ? 0 : rows[i].rowBodyOffset / lenPage;
-        const size_t pageEnd = (pageOfRow + 1) * lenPage;
-        if (lenPage == 0 || nameAt < rows[i].rowBodyOffset || nameAt >= pageEnd) {
+        // Bounded to the row's own page, before anything is written:
+        // every one of those offsets is read out of the file. See
+        // stringStaysInRowPage().
+        if (!stringStaysInRowPage(m_buffer, rows[i].rowBodyOffset, nameAt)) {
             continue;
         }
-        const DeviceSqlStringSpan nameSpan = readDeviceSqlStringSpan(m_buffer, nameAt);
-        if (nameSpan.totalBytes == 0 || nameAt + nameSpan.totalBytes > pageEnd) {
-            continue;
-        }
-        // A placeholder this cannot represent is not written and not
-        // counted. Every placeholder today is ASCII by construction, so
-        // this changes nothing now; what it stops is a future caller
-        // handing over a real name and being told it was rewritten.
+        // A placeholder this cannot represent is not written, and is
+        // counted as left alone rather than as rewritten. Every
+        // placeholder today is ASCII by construction, so this changes
+        // nothing now; what it stops is a future caller handing over a
+        // real name and being told it was rewritten.
         bool truncated = false;
         if (!overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i), &truncated)) {
             continue;
@@ -1137,6 +1171,11 @@ int PdbRowWriter::overwriteAllNames(NameTable table, const std::function<std::st
         m_editedPageIndices.insert(rows[i].pageIndex);
         ++replaced;
     }
+    // Every present row that was not rewritten, whichever check stopped
+    // it -- derived rather than incremented at each `continue`, the way
+    // overwriteAllTagNames() does it, so a skip added later is counted
+    // without anyone remembering to.
+    *rowsLeftAlone = static_cast<int>(rows.size()) - replaced;
     return replaced;
 }
 

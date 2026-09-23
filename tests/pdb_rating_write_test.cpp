@@ -4,14 +4,17 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
@@ -275,12 +278,16 @@ int main()
         int labels = 0;
         {
             PdbRowWriter writer(pdb.string());
+            int leftAlone = -1;
             albums = writer.overwriteAllNames(PdbRowWriter::NameTable::Albums,
-                                              [](size_t i) { return "Album " + std::to_string(i); });
+                                              [](size_t i) { return "Album " + std::to_string(i); }, &leftAlone);
+            assert(leftAlone == 0);
             genres = writer.overwriteAllNames(PdbRowWriter::NameTable::Genres,
-                                              [](size_t i) { return "Genre " + std::to_string(i); });
+                                              [](size_t i) { return "Genre " + std::to_string(i); }, &leftAlone);
+            assert(leftAlone == 0);
             labels = writer.overwriteAllNames(PdbRowWriter::NameTable::Labels,
-                                              [](size_t i) { return "Label " + std::to_string(i); });
+                                              [](size_t i) { return "Label " + std::to_string(i); }, &leftAlone);
+            assert(leftAlone == 0 && "a healthy export leaves no name row behind");
             assert(writer.commit());
         }
         // The fixture really does have rows in all three tables; a silent
@@ -312,6 +319,180 @@ int main()
 
         std::cout << "case 5 (albums/genres/labels are all scrubbed: " << albums << "/" << genres << "/" << labels
                   << ", and the catalog still reads) OK\n";
+    }
+
+    // ---- Name offsets that leave their row's page ----
+    //
+    // Every text write in this writer is in place, at an offset read out
+    // of the row: a u1 or u2 for where the string starts, and the
+    // string's own u2 header for how long it is. A page is 4096 bytes and
+    // those reach 65535, so a damaged one points into another table's
+    // page -- here, at a genre or label name -- and an unbounded write
+    // overwrites THAT with "Album N" or "Artist N" or a track title.
+    // buffer.at() never objects: the target is inside the file.
+    //
+    // The bound was added to overwriteAllNames() for #46 and existed for
+    // the tag names before that, but the per-artist and per-track
+    // writers the anonymizer runs FIRST never had it.
+    {
+        auto readAll = [](const fs::path &file) {
+            std::ifstream in(file, std::ios::binary);
+            std::stringstream ss;
+            ss << in.rdbuf();
+            return ss.str();
+        };
+        auto writeAll = [](const fs::path &file, const std::string &bytes) {
+            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        };
+        // Present rows by table, found through the parser rather than
+        // through the writer under test.
+        struct Rows
+        {
+            std::size_t lenPage = 0;
+            std::vector<std::size_t> albums, artists, tracks;
+            std::vector<std::size_t> otherNames;  // genre and label name strings
+        };
+        auto rowsIn = [](const std::string &bytes) {
+            Rows r;
+            std::istringstream iss(bytes);
+            kaitai::kstream ks(&iss);
+            rekordbox_pdb_t parsed(false, &ks);
+            r.lenPage = parsed.len_page();
+            for (const auto &t : *parsed.tables()) {
+                std::vector<std::size_t> *into = nullptr;
+                std::size_t nameAt = 0;
+                switch (t->type()) {
+                case rekordbox_pdb_t::PAGE_TYPE_ALBUMS: into = &r.albums; break;
+                case rekordbox_pdb_t::PAGE_TYPE_ARTISTS: into = &r.artists; break;
+                case rekordbox_pdb_t::PAGE_TYPE_TRACKS: into = &r.tracks; break;
+                case rekordbox_pdb_t::PAGE_TYPE_GENRES:
+                case rekordbox_pdb_t::PAGE_TYPE_LABELS: into = &r.otherNames; nameAt = 4; break;
+                default: continue;
+                }
+                auto pageRef = t->first_page();
+                for (;;) {
+                    auto page = pageRef->body();
+                    if (page->is_data_page()) {
+                        for (const auto &group : *page->row_groups()) {
+                            for (const auto &row : *group->rows()) {
+                                if (row->present()) {
+                                    into->push_back(r.lenPage * page->page_index() + row->row_base() + nameAt);
+                                }
+                            }
+                        }
+                    }
+                    if (pageRef->index() == t->last_page()->index()) {
+                        break;
+                    }
+                    pageRef = page->next_page();
+                }
+            }
+            return r;
+        };
+        // A row, and another table's name on a different page less than a
+        // u2 further on: somewhere a damaged offset in that row reaches.
+        auto withinReach = [](const Rows &r, const std::vector<std::size_t> &rows, std::size_t &row,
+                              std::size_t &victim) {
+            for (const std::size_t a : rows) {
+                for (const std::size_t n : r.otherNames) {
+                    if (n > a && n - a <= 0xFFFF && n / r.lenPage != a / r.lenPage) {
+                        row = a;
+                        victim = n;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        auto putU16 = [](std::string &bytes, std::size_t at, std::size_t value) {
+            bytes[at] = static_cast<char>(value & 0xFF);
+            bytes[at + 1] = static_cast<char>((value >> 8) & 0xFF);
+        };
+
+        // 5b: the wholesale album pass. Refused, and counted.
+        {
+            const fs::path pdb = freshPioneerCopy(scratch) / "rekordbox" / "export.pdb";
+            std::string bytes = readAll(pdb);
+            const Rows r = rowsIn(bytes);
+            std::size_t row = 0, victim = 0;
+            assert(withinReach(r, r.albums, row, victim) && "an album row within reach of another table's name");
+            bytes[row] = static_cast<char>(static_cast<unsigned char>(bytes[row]) | 0x04);  // far-name form
+            putU16(bytes, row + 0x16, victim - row);
+            writeAll(pdb, bytes);
+            const std::string victimBefore = bytes.substr(victim, 32);
+
+            int leftAlone = -1;
+            int renamed = 0;
+            {
+                PdbRowWriter writer(pdb.string());
+                renamed = writer.overwriteAllNames(PdbRowWriter::NameTable::Albums,
+                                                   [](size_t i) { return "Album " + std::to_string(i); }, &leftAlone);
+                assert(writer.commit());
+            }
+            assert(readAll(pdb).substr(victim, 32) == victimBefore && "the other table's name is not overwritten");
+            assert(leftAlone == 1 && "and the album row that kept its real name is counted");
+            assert(renamed > 0 && "the rest of the table is still scrubbed");
+            std::cout << "case 5b (an album name offset pointing into another table is refused, and counted) OK\n";
+        }
+
+        // 5c: the per-artist writer, which the anonymizer runs before the
+        // wholesale pass and which had no bound at all.
+        {
+            const fs::path pdb = freshPioneerCopy(scratch) / "rekordbox" / "export.pdb";
+            std::string bytes = readAll(pdb);
+            const Rows r = rowsIn(bytes);
+            std::size_t row = 0, victim = 0;
+            assert(withinReach(r, r.artists, row, victim) && "an artist row within reach of another table's name");
+            std::uint32_t artistId = 0;
+            std::memcpy(&artistId, bytes.data() + row + 4, 4);  // little-endian host, as everywhere in this suite
+            bytes[row] = static_cast<char>(static_cast<unsigned char>(bytes[row]) | 0x04);
+            putU16(bytes, row + 10, victim - row);
+            writeAll(pdb, bytes);
+            const std::string victimBefore = bytes.substr(victim, 32);
+            {
+                PdbRowWriter writer(pdb.string());
+                assert(!writer.overwriteArtistName(artistId, "Artist 0") && "refused, not written somewhere else");
+            }
+            assert(readAll(pdb).substr(victim, 32) == victimBefore);
+            std::cout << "case 5c (an artist name offset pointing into another table is refused) OK\n";
+        }
+
+        // 5d: a track whose title offset points into another table. The
+        // whole row is refused -- nothing of it written -- so the caller
+        // is told, instead of the other three fields going in and the
+        // title's refusal being dropped.
+        {
+            const fs::path pioneer = freshPioneerCopy(scratch);
+            const fs::path pdb = pioneer / "rekordbox" / "export.pdb";
+            std::string bytes = readAll(pdb);
+            const Rows r = rowsIn(bytes);
+            std::size_t row = 0, victim = 0;
+            assert(withinReach(r, r.tracks, row, victim) && "a track row within reach of another table's name");
+            std::uint32_t trackId = 0;
+            std::memcpy(&trackId, bytes.data() + row + 72, 4);
+            constexpr std::size_t TitleSlot = 94 + 17 * 2;  // ofs_strings[17]
+            putU16(bytes, row + TitleSlot, victim - row);
+            writeAll(pdb, bytes);
+            const std::string victimBefore = bytes.substr(victim, 32);
+            const std::string rowBefore = bytes.substr(row, 512);
+
+            PdbRowWriter::TrackTextOverride text;
+            text.title = "Track 0";
+            text.comment = "Comment 0";
+            text.filename = "f0.mp3";
+            text.filePath = "/Contents/f0.mp3";
+            {
+                PdbRowWriter writer(pdb.string());
+                assert(writer.trackExists(trackId) && "the id was read from the row being damaged");
+                assert(!writer.overwriteTrackText(trackId, text) && "the row is refused, so the caller hears of it");
+                writer.commit();  // whatever it would commit, it must not include this row
+            }
+            const std::string after = readAll(pdb);
+            assert(after.substr(victim, 32) == victimBefore && "the other table's name is not overwritten");
+            assert(after.substr(row, 512) == rowBefore && "and no other field of the row was written either");
+            std::cout << "case 5d (a track whose title offset leaves its page is refused whole) OK\n";
+        }
     }
 
     fs::remove_all(scratch);

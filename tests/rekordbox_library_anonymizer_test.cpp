@@ -676,6 +676,39 @@ int main()
                   << result.placeholdersTruncated << ") OK\n";
     }
 
+    // A name row the writer refuses keeps its real name, and the export
+    // has to say so. Artist A's name offset is damaged to point off its
+    // page: both artist passes refuse it -- the per-id one and the
+    // wholesale one -- which is right, since the alternative is writing
+    // into whatever the offset reaches. But the wholesale pass counted
+    // only what it rewrote, so the refusal went nowhere, and an export
+    // with a real artist name in it reported a clean scrub.
+    {
+        const fs::path src = root / "damaged-name-source";
+        const fs::path dst = root / "damaged-name-dest";
+        std::string pdbBytes = buildSyntheticPdb();
+        const size_t artistA = LenPage * 2 + 40;  // buildSyntheticPdb(): page 2, first row at its HeapStart
+        writeU16LE(pdbBytes, artistA + 0, static_cast<uint16_t>(readU16LE(pdbBytes, artistA) | 0x04));  // far form
+        writeU16LE(pdbBytes, artistA + 10, 0xFFFF);  // and far past the page
+        writeFile(src / "rekordbox" / "export.pdb", pdbBytes);
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
+
+        auto result = anonymizeRekordboxLibrary(src.string(), dst.string());
+        const bool named = std::any_of(result.rowsNotAnonymized.begin(), result.rowsNotAnonymized.end(),
+                                       [](const std::string &r) { return r.find("artist row") != std::string::npos; });
+        if (!named) {
+            std::cerr << "rowsNotAnonymized:";
+            for (const auto &r : result.rowsNotAnonymized) {
+                std::cerr << " [" << r << "]";
+            }
+            std::cerr << " errorMessage: " << result.errorMessage << "\n";
+        }
+        assert(named && "an artist row that kept its real name is reported, which fails the export");
+        std::cout << "case 13b (a name row the writer refuses is reported, not shipped silently) OK\n";
+    }
+
     // A PPTH section whose len_header is nonsense must be left alone,
     // not indexed with it.
     //
