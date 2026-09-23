@@ -823,6 +823,19 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         if (file.databaseMember && setsHeldOnTarget.count(file.setMainPath) != 0) {
             if (row != nullptr && row->salvagedFromSize != 0) {
                 summary.partial.push_back({file.name, row->size, row->salvagedFromSize, false});
+            } else {
+                // A member the backup holds WHOLE, kept off the drive
+                // anyway because a sibling of it is only a part and the
+                // drive's own copy of that sibling is whole. Holding the
+                // set is right, staying quiet about it is not: the file
+                // is not in `partial` (nothing about it is partial), so
+                // without this the run reported the set's main database
+                // only inside filesUnchanged, and a restore that did not
+                // write the database said "Restored".
+                summary.warnings.push_back(file.name
+                                           + ": not written, because only part of this database's "
+                                             "other files could be read off the failing drive and the copy already "
+                                             "here is whole. The database on this drive was left exactly as it is.");
             }
             ++summary.filesUnchanged;
             continue;

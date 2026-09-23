@@ -4,6 +4,7 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
@@ -650,6 +651,46 @@ int main()
                    && "an exact restore leaves the kept database's -wal where it is");
         }
         std::cout << "case salvage-restore-db (a partial database never goes over a whole one, nor do its siblings) OK\n";
+    }
+
+    // The other way round: the backup holds the main database WHOLE and
+    // only part of its journal. Holding the set back is still right, a
+    // whole m.db from the backup beside the drive's own journal is two
+    // moments of one database. Saying nothing about it was not: the held
+    // main file is not partial, so it went in no list, and a restore
+    // that never wrote the database reported filesUnchanged and
+    // "Restored".
+    {
+        Fixture f("salvage-db-sidecar");
+        const fs::path stickDb = f.stick / "Engine Library" / "Database2" / "m.db";
+        const fs::path stickJournal = fs::path(stickDb.string() + "-journal");
+        const std::string wholeJournal = pseudoRandom(8192, 11);
+        writeFile(stickJournal, wholeJournal, 1'700'000'100);
+        const std::string wholeDb = readFile(stickDb);
+        BackupStickOptions salvage = f.backup;
+        salvage.sourceReadOnly = true;
+        salvage.readLimitForTesting = [](const std::string &path) -> std::optional<std::uint64_t> {
+            if (path == "Engine Library/Database2/m.db-journal") {
+                return std::uint64_t{4096};
+            }
+            return std::nullopt;
+        };
+        const BackupStickOutcome taken = BackupStick::execute(salvage);
+        assert(taken.salvaged.size() == 1 && taken.salvaged[0].path == "Engine Library/Database2/m.db-journal"
+               && "the main database was read whole; only its journal is a part");
+
+        const fs::path targetDb = f.target / "Engine Library" / "Database2" / "m.db";
+        const fs::path targetJournal = fs::path(targetDb.string() + "-journal");
+        writeFile(targetDb, std::string(wholeDb.size(), 'x'), 1'700'000'200);
+        writeFile(targetJournal, wholeJournal, 1'700'000'201);
+        RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+        assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
+        assert(readFile(targetDb) == std::string(wholeDb.size(), 'x') && "the set is held: the drive's database stays");
+        const bool named = std::any_of(summary.warnings.begin(), summary.warnings.end(), [](const std::string &w) {
+            return w.find("Engine Library/Database2/m.db:") != std::string::npos && w.find("not written") != std::string::npos;
+        });
+        assert(named && "a whole file held back must be named, not left to filesUnchanged");
+        std::cout << "case salvage-restore-db-sidecar (a whole database held back by a partial sidecar says so) OK\n";
     }
 
     std::cout << "all cases passed\n";
