@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -37,6 +39,11 @@ struct EngineLibraryCreationResult
     int artworkCopied = 0;     // tracks that ended up with a cover
     int tracksLeftForDeviceAnalysis = 0;  // tracks the player is asked to analyse itself
     int tracksTotal = 0;       // what was asked for, created or not
+    // The rekordbox sequence this library was recorded as imported from
+    // (see create()'s rekordboxLibrarySequence). False when none was
+    // given, or when the schema has no place for it -- in which case a
+    // player may offer to import the rekordbox library on first insert.
+    bool rekordboxImportRecorded = false;
     bool cancelled = false;    // stopped via the token; nothing was written to `directory`
     std::string errorMessage;  // empty on success
 };
@@ -102,13 +109,22 @@ public:
     // cancel there throws the scratch build away and returns with
     // `cancelled` set and nothing created at `directory`; the second
     // phase is one copy and runs to its end once started.
+    //
+    // rekordboxLibrarySequence: the sequence export.pdb carried when
+    // `tracks` were read from it (issue #42). A library made from that
+    // export IS an import of it, and Engine records the sequence it last
+    // imported in Information.lastRekordBoxLibraryImportReadCounter; left
+    // at libdjinterop's 0, a player offers on the very first insert to
+    // import the rekordbox library over the one just created. Measured:
+    // TESTRIG_2's export at 513, a library created from it at 0.
     static EngineLibraryCreationResult create(const std::string &directory,
                                                const std::vector<domain::Track> &tracks,
                                                EngineSchemaGeneration schemaGeneration,
                                                application::ProgressReporter &reporter =
                                                    application::NullProgressReporter::instance(),
                                                const application::CancellationToken &cancel =
-                                                   application::CancellationToken::none());
+                                                   application::CancellationToken::none(),
+                                               std::optional<std::uint64_t> rekordboxLibrarySequence = std::nullopt);
 };
 
 }  // namespace seabass::infrastructure::engine

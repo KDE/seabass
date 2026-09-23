@@ -5,6 +5,7 @@
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -607,7 +608,8 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                                                            const std::vector<domain::Track> &tracks,
                                                            EngineSchemaGeneration schemaGeneration,
                                                            application::ProgressReporter &reporter,
-                                                           const application::CancellationToken &cancel)
+                                                           const application::CancellationToken &cancel,
+                                                           std::optional<std::uint64_t> rekordboxLibrarySequence)
 {
     EngineLibraryCreationResult result;
     result.tracksTotal = static_cast<int>(tracks.size());
@@ -779,6 +781,15 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
         if (std::string informationRow = verifyInformationRowAtIdOne(scratchDir); !informationRow.empty()) {
             result.errorMessage = informationRow;
             return result;
+        }
+
+        // Also on the scratch copy: this library is an import of that
+        // export, so it says so (see the header). Not a condition of the
+        // library working -- a schema without the column simply has no
+        // prompt to suppress -- so a failure is reported as a flag.
+        if (rekordboxLibrarySequence) {
+            result.rekordboxImportRecorded = markRekordboxLibraryImported(
+                std::string(), *rekordboxLibrarySequence, nullptr, {}, engineDatabaseFile(scratchDir).string());
         }
 
         // Cover art, also on the scratch copy. Unlike the row above this

@@ -13,6 +13,7 @@
 
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
 namespace seabass::gui
@@ -58,8 +59,13 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
         // for this second phase, same idiom SyncController's own analyze
         // task uses, rather than leaving the bar looking stalled once the
         // scan's own 100% has already been reported.
-        auto creation = EngineLibraryCreator::create(engineLibraryPath, tracks, schemaFromInt(schemaGeneration),
-                                                     *reporter, cancel);
+        // The sequence of the export the tracks came from, recorded in
+        // the new library so a player does not offer to import it all
+        // over again on first insert (issue #42).
+        const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, rekordboxPath.toStdString());
+        auto creation = EngineLibraryCreator::create(
+            engineLibraryPath, tracks, schemaFromInt(schemaGeneration), *reporter, cancel,
+            rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence) : std::nullopt);
 
         result.tracksCreated = creation.tracksCreated;
         result.tracksSkipped = creation.tracksSkipped;

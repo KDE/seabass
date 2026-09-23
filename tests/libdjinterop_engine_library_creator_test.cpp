@@ -11,6 +11,7 @@
 #include <sqlite3.h>
 
 #include "application/use_cases/scan_library.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
 namespace
@@ -188,6 +189,26 @@ int main()
         }
         std::cout << "case 4 (Information row at id 1, every schema generation) OK\n";
     }
+
+    // Case 4b (issue #42): a library made from a rekordbox export records
+    // that export's sequence as imported, at every schema generation that
+    // has the column, so a player does not offer on first insert to
+    // import the rekordbox library over the one just made. Without a
+    // sequence it stays at what libdjinterop writes, which is 0.
+    for (const auto generation : {EngineSchemaGeneration::V2, EngineSchemaGeneration::V3}) {
+        const fs::path given = root / ("Engine Library seq " + std::to_string(static_cast<int>(generation)));
+        const fs::path none = root / ("Engine Library noseq " + std::to_string(static_cast<int>(generation)));
+        std::vector<Track> tracks = {makeTrack("s1", "Seq", "Artist", (root / "song1.mp3").string())};
+        auto result = EngineLibraryCreator::create(given.string(), tracks, generation,
+                                                   seabass::application::NullProgressReporter::instance(),
+                                                   seabass::application::CancellationToken::none(), 777);
+        assert(result.errorMessage.empty() && result.rekordboxImportRecorded);
+        assert(seabass::infrastructure::engine::readRekordboxImportState(given.string(), {}).engineCounter == 777);
+        auto plain = EngineLibraryCreator::create(none.string(), tracks, generation);
+        assert(plain.errorMessage.empty() && !plain.rekordboxImportRecorded);
+        assert(seabass::infrastructure::engine::readRekordboxImportState(none.string(), {}).engineCounter == 0);
+    }
+    std::cout << "case 4b (a created library records the export it was made from as imported) OK\n";
 
     // Case 5: playlists come across, with their folder structure and in
     // the order the source recorded -- a playlist is not a set, and a DJ

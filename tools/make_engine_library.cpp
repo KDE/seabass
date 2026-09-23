@@ -39,6 +39,7 @@
 #include "application/ports/progress_reporter.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "domain/track.hpp"
+#include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -327,10 +328,24 @@ int main(int argc, char **argv)
                   << ") in " << out << "\n";
         PrintingReporter reporter;
         application::CancellationToken cancel;
-        const auto result =
-            infrastructure::engine::EngineLibraryCreator::create(out.string(), tracks, generation, reporter, cancel);
+        const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, pioneer.string());
+        const auto result = infrastructure::engine::EngineLibraryCreator::create(
+            out.string(), tracks, generation, reporter, cancel,
+            rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence) : std::nullopt);
         if (!result.errorMessage.empty()) {
             std::cout << "error: " << result.errorMessage << "\n";
+            std::cout << "RESULT: FAIL\n";
+            return 1;
+        }
+        // Issue #42: made from this export, so imported from it. Read
+        // back from what was written, not taken from the flag.
+        const auto created = infrastructure::engine::readRekordboxImportState(out.string(), pioneer.string());
+        std::cout << "  rekordbox import counter " << created.engineCounter << ", export.pdb sequence "
+                  << created.librarySequence
+                  << (created.playerWillOfferImport() ? " -- a player WILL offer to import over this library"
+                                                      : " -- level, a player will not offer an import")
+                  << "\n";
+        if (created.playerWillOfferImport()) {
             std::cout << "RESULT: FAIL\n";
             return 1;
         }
