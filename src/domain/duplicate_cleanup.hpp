@@ -212,6 +212,23 @@ std::string rowIdIn(const Track &track, const std::string &format);
 // the catalog still lists it.
 std::vector<std::string> rowIdsIn(const Track &track, const std::string &format);
 
+// The question is per catalog, and the answer now is too.
+//
+// This used to approximate, because CatalogRowRef carried a format and a
+// sourceId and nothing else: it asked for the SHAPE in which a loss is
+// possible (a doomed row with cues, in a catalog the survivor also has a
+// row in) and accepted rewriting an unchanged cue set whenever that
+// shape appeared. The rows' own cue sets ride along in CatalogRowRef
+// now, so each catalog can be asked directly, and the two costs the
+// approximation traded against each other both go away: no catalog is
+// missed, and none is rewritten for nothing.
+//
+// Asked two ways by Clean Up: "any catalog" for the backup
+// declaration, "this catalog" at each write site. They must stay that
+// way round -- filesToBackup() declares on the any-catalog answer, so a
+// site may write LESS than was declared but never more.
+bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string &format);
+
 // False when this catalog has rows to remove but no row for the survivor
 // to repoint at. Removing them anyway would drop the doomed rows'
 // playlist entries on the floor, or repoint them at an id this catalog

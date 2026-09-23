@@ -6,6 +6,7 @@
 #include "gui/edit/changes/cleanup_group_change.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -253,50 +254,23 @@ void recordStrayFilesForDeletion(infrastructure::cleanup::PendingDeletionManifes
 // That is the loss the per-catalog ordering further down exists to
 // prevent; the ordering was right and the trigger was not.
 //
-// The per-catalog answer is not available here: CatalogRowRef carries a
-// format and a sourceId and no cues, so by the time a plan exists the
-// individual rows' cue sets have been folded away. Rather than plumb
-// them through the domain types, the second clause below asks for the
-// shape in which a loss is POSSIBLE, and accepts writing an unchanged
-// cue set in the cases where it is not.
+// The rule itself lives in the domain (domain::catalogNeedsMergedCues):
+// it is a question about a plan and a format, with no writer in it, and
+// keeping it here left it unreachable from any test -- which is how the
+// version before it went wrong unnoticed.
 //
-// That shape is narrow on purpose: a doomed row that carries cues AND
-// sits in a catalog the survivor also has a row in. That is the only
-// way a catalog can end up worse off -- its copy of the cue leaves with
-// the doomed row while the survivor's row in that same catalog never
-// gets it.
-//
-// Deliberately NOT "whenever there are any cues", and not "whenever the
-// survivor spans catalogs". A survivor plus one stray copy is the
-// commonest shape on a real stick and the stray carries no cues; on a
-// three-format stick nearly every survivor spans catalogs. Either of
-// those would rewrite an unchanged cue set on most plans -- backing up
-// the database and scratch-copying the file to change nothing. See
-// writesToCatalog()'s own comment on why that cost is worth avoiding.
-//
-// This predicate is shared by writesToCatalog() and both write sites on
-// purpose: filesToBackup() returns nothing when writesToCatalog() is
-// false, so a write site that decided for itself could write a file
-// this save never backed up.
+// True when any catalog needs the write: what filesToBackup() and
+// writesToCatalog() ask, since a save must back up everything any site
+// may touch.
 bool writesMergedCues(const domain::DuplicateCleanupPlan &plan)
 {
-    if (plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size()) {
-        return true;
+    if (plan.survivor.catalogRows.empty()) {
+        return domain::catalogNeedsMergedCues(plan, std::string());
     }
-    if (plan.mergedCuesForSurvivor.empty()) {
-        return false;
-    }
-    const auto survivorHasRowIn = [&plan](const std::string &format) {
-        return std::any_of(plan.survivor.catalogRows.begin(), plan.survivor.catalogRows.end(),
-                           [&format](const domain::CatalogRowRef &row) { return row.format == format; });
-    };
-    return std::any_of(plan.toRemove.begin(), plan.toRemove.end(), [&](const domain::Track &doomed) {
-        if (doomed.cues.empty()) {
-            return false;
-        }
-        return std::any_of(doomed.catalogRows.begin(), doomed.catalogRows.end(),
-                           [&](const domain::CatalogRowRef &row) { return survivorHasRowIn(row.format); });
-    });
+    return std::any_of(plan.survivor.catalogRows.begin(), plan.survivor.catalogRows.end(),
+                       [&plan](const domain::CatalogRowRef &row) {
+                           return domain::catalogNeedsMergedCues(plan, row.format);
+                       });
 }
 
 // True when applying this plan would write nothing to any catalog: no row
@@ -521,7 +495,10 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         return {};
     };
 
-    if (writesMergedCues(plan)) {
+    // This catalog's own answer: the page's format. The save declared
+    // its backups on the any-catalog one, so skipping here writes less
+    // than was declared, never more.
+    if (domain::catalogNeedsMergedCues(plan, primaryFormat)) {
         fc.cueWriter->writeHotCues(survivorId, plan.mergedCuesForSurvivor);
         w.session.noteItemApplied();
         log.record("cleanup: wrote merged cues onto survivor track id=" + survivorId);
@@ -884,7 +861,7 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             ctx.backupOnce(f, "duplicate-file-cleanup");
         }
 
-        if (writesMergedCues(plan)) {
+        if (domain::catalogNeedsMergedCues(plan, secondaryFormat)) {
             sw.context.cueWriter->writeHotCues(targets.survivorSourceId, plan.mergedCuesForSurvivor);
             sw.session.noteItemApplied();
             log.record("cleanup: wrote merged cues onto the " + secondaryFormat + " survivor row id="

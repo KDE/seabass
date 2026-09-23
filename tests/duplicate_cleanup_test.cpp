@@ -688,6 +688,91 @@ int main()
         std::cout << "case 26 (a plan that strands nothing is writable in every catalog it touches) OK\n";
     }
 
+    // ---- which catalog needs the merged cues written -----------------
+    //
+    // The gate that decides whether Clean Up writes cues at all. It used
+    // to compare the merged set against plan.survivor.cues, which is the
+    // UNION across the survivor's own catalog rows, so it answered "does
+    // the survivor have this somewhere" while each write site needs "does
+    // THIS catalog's row have it". Lost cues on a real shape, and was
+    // fixed without a test, which is how it went wrong in the first
+    // place.
+    auto cue = [](CuePoint::Kind kind, int number, double positionMs) {
+        CuePoint c;
+        c.kind = kind;
+        c.hotCueNumber = number;
+        c.positionMs = positionMs;
+        return c;
+    };
+    const CuePoint cueA = cue(CuePoint::Kind::Hot, 1, 1000.0);
+    const CuePoint cueB = cue(CuePoint::Kind::Hot, 2, 2000.0);
+
+    // The shape that lost a cue: rekordbox has both, Engine has none,
+    // and the copy being removed has one of them in Engine. The union is
+    // the same size as the merged set, so the old comparison wrote
+    // nothing and the removal then took Engine's only copy with it.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {cueA, cueB};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {cueA, cueB}}, {"engine", "en-keep", {}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {cueA};
+        doomed.catalogRows = {{"engine", "en-drop", {cueA}}};
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {cueA, cueB};
+
+        assert(catalogNeedsMergedCues(plan, "engine") && "Engine's row has neither cue and must be written");
+        assert(!catalogNeedsMergedCues(plan, "rekordbox")
+               && "rekordbox's row already has both, and rewriting it changes nothing");
+        std::cout << "case 27 (the catalog missing a cue is written, the one that has it is not) OK\n";
+    }
+
+    // Same count, different cues: a row can hold as many as the merged
+    // set and still be missing one. Counting would say no.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {cueA, cueB};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {cueA, cueB}},
+                                     {"engine", "en-keep", {cueA, cue(CuePoint::Kind::Hot, 3, 3000.0)}}};
+        plan.mergedCuesForSurvivor = {cueA, cueB};
+        assert(catalogNeedsMergedCues(plan, "engine") && "two cues is not the same two cues");
+        std::cout << "case 28 (a row with as many cues can still be missing one) OK\n";
+    }
+
+    // Nothing to write: every catalog already holds the merged set. This
+    // is the case the approximation could not see, and it is the common
+    // one -- a plan that writes nothing opens no write session, backs up
+    // no database and copies no file to scratch.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {cueA, cueB};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {cueA, cueB}}, {"engine", "en-keep", {cueB, cueA}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {cueA};
+        doomed.catalogRows = {{"engine", "en-drop", {cueA}}};
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {cueA, cueB};
+        assert(!catalogNeedsMergedCues(plan, "rekordbox"));
+        assert(!catalogNeedsMergedCues(plan, "engine") && "order is not difference");
+        std::cout << "case 29 (a catalog that already holds the merged set is left alone) OK\n";
+    }
+
+    // Uncollapsed: no catalogRows at all, so Track::cues IS this
+    // catalog's own set and the size comparison is the right question.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {cueA};
+        plan.mergedCuesForSurvivor = {cueA, cueB};
+        assert(catalogNeedsMergedCues(plan, "rekordbox"));
+        plan.mergedCuesForSurvivor = {cueA};
+        assert(!catalogNeedsMergedCues(plan, "rekordbox"));
+        std::cout << "case 30 (an uncollapsed plan is answered by its own cue set) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

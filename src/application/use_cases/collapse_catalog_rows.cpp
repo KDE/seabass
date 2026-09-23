@@ -101,11 +101,14 @@ std::vector<domain::Track> collapseCatalogRows(const std::vector<domain::Track> 
         auto [it, inserted] = byPath.emplace(key, files.size());
         if (inserted) {
             files.push_back(row);
-            files.back().catalogRows.push_back({row.format, row.sourceId});
+            files.back().catalogRows.push_back({row.format, row.sourceId, row.cues});
             continue;
         }
         domain::Track &existing = files[it->second];
-        existing.catalogRows.push_back({row.format, row.sourceId});
+        // Its own cues travel with it: Track::cues below becomes the
+        // union, and a per-catalog write needs the difference between
+        // the two.
+        existing.catalogRows.push_back({row.format, row.sourceId, row.cues});
         fillGapsFrom(existing, row);
     }
 

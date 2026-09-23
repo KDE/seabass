@@ -57,6 +57,17 @@ struct CatalogRowRef
 {
     std::string format;
     std::string sourceId;
+    // This row's own cues, as that catalog holds them.
+    //
+    // Carried because the folded Track::cues above is the UNION across
+    // every row, and a writer needs to know what THIS catalog has. Clean
+    // Up lost cues on exactly that difference: the union already held a
+    // cue, so the write was skipped, while the one catalog whose row
+    // lacked it kept a row with nothing on it (see writesMergedCues in
+    // cleanup_group_change.cpp). Filled by collapseCatalogRows(); empty
+    // on a row that genuinely has no cues, and on anything that was
+    // never collapsed, where Track::cues IS the row's own set.
+    std::vector<CuePoint> cues;
 };
 
 // A track as read from either a rekordbox USB export or an Engine Library,

@@ -309,6 +309,43 @@ std::string rowIdIn(const Track &track, const std::string &format)
     return {};
 }
 
+bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string &format)
+{
+    if (plan.mergedCuesForSurvivor.empty()) {
+        return false;
+    }
+    const auto rowFor = [&plan, &format]() -> const CatalogRowRef * {
+        for (const auto &row : plan.survivor.catalogRows) {
+            if (row.format == format) {
+                return &row;
+            }
+        }
+        return nullptr;
+    };
+    const CatalogRowRef *row = rowFor();
+    if (row == nullptr) {
+        // Not collapsed, or a catalog the survivor has no row in. For an
+        // uncollapsed plan Track::cues IS this catalog's own set, which
+        // is what the original comparison assumed and the only case it
+        // was right about.
+        return plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size();
+    }
+    // Written when this catalog's row is missing any cue the merged set
+    // holds. Compared by what a player keeps them apart by, not by
+    // count: a row with as many cues as the merged set can still be
+    // missing one of them and carrying one of its own.
+    return std::any_of(plan.mergedCuesForSurvivor.begin(), plan.mergedCuesForSurvivor.end(),
+                       [row](const CuePoint &wanted) {
+                           return std::none_of(row->cues.begin(), row->cues.end(),
+                                               [&wanted](const CuePoint &have) {
+                                                   return have.kind == wanted.kind
+                                                       && have.hotCueNumber == wanted.hotCueNumber
+                                                       && std::llround(have.positionMs)
+                                                           == std::llround(wanted.positionMs);
+                                               });
+                       });
+}
+
 std::vector<std::string> rowIdsIn(const Track &track, const std::string &format)
 {
     std::vector<std::string> ids;
