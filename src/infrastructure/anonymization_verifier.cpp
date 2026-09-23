@@ -269,7 +269,6 @@ std::optional<std::string> walkWith(const fs::path &dir, const fs::path &root,
     }
     const Iterator end;
     std::size_t seen = 0;
-    std::vector<std::string> stops;
     while (it != end) {
         // Kept before the step: an iterator whose increment failed must
         // not be dereferenced, and naming where it got to is the whole
@@ -281,17 +280,13 @@ std::optional<std::string> walkWith(const fs::path &dir, const fs::path &root,
         if (!ec) {
             continue;
         }
-        stops.push_back("after " + shown(here) + ": " + ec.message());
-        break;
+        // One stop and no more: a failed increment sets both iterators
+        // to end(), so there is nothing left to step from. A list of
+        // them would be generality the control flow forbids.
+        return "stopped reading " + shown(dir) + " after " + std::to_string(seen) + " entries, at "
+            + shown(here) + ": " + ec.message();
     }
-    if (stops.empty()) {
-        return std::nullopt;
-    }
-    std::string message = "stopped reading " + shown(dir) + " after " + std::to_string(seen) + " entries";
-    for (const auto &stop : stops) {
-        message += "; " + stop;
-    }
-    return message;
+    return std::nullopt;
 }
 
 std::optional<std::string> walk(const fs::path &dir, const fs::path &root,
@@ -329,13 +324,22 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // that errors (a dying stick, a symlink loop, a parent that lost its
     // +x) would skip them in silence, which is the same shape as the
     // walks this file just stopped doing.
+    std::set<std::string> gatesReported;
     auto present = [&](const fs::path &dir) {
         std::error_code dirEc;
         const bool yes = fs::is_directory(dir, dirEc);
         if (dirEc && dirEc != std::errc::no_such_file_or_directory) {
-            std::error_code relEc;
-            fail("could not tell whether " + fs::relative(dir, root, relEc).generic_string()
-                 + " is there: " + dirEc.message());
+            // Once per tree, not once per question: rekordbox/ is asked
+            // about three times and engine/ twice, and one stat error
+            // would otherwise fill the contributor's report with the
+            // same line.
+            if (gatesReported.insert(dir.generic_string()).second) {
+                std::error_code relEc;
+                const fs::path relative = fs::relative(dir, root, relEc);
+                const std::string shownDir =
+                    relEc || relative.empty() ? dir.filename().generic_string() : relative.generic_string();
+                fail("could not tell whether " + shownDir + " is there: " + dirEc.message());
+            }
         }
         return yes;
     };
@@ -419,8 +423,11 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                     // A directory here is OverviewData and friends:
                     // derived numbers, no text. An entry that could not
                     // be asked which it is gets said out loud rather than
-                    // skipped with them.
-                    if (kindEc) {
+                    // skipped with them -- except when the answer is that
+                    // it is gone, which is a dangling symlink or an entry
+                    // removed between the listing and the stat, and not
+                    // something to throw an export away for.
+                    if (kindEc && kindEc != std::errc::no_such_file_or_directory) {
                         fail("could not tell what engine/Database2/" + entry.path().filename().string()
                              + " is: " + kindEc.message());
                     }  // filename only: never the local absolute path, see below
@@ -441,7 +448,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         if (auto stopped = walkTree(rekordboxRoot / "USBANLZ", root, [&](const fs::directory_entry &entry) {
             std::error_code kindEc;
             if (!entry.is_regular_file(kindEc) || kindEc) {
-                if (kindEc) {
+                if (kindEc && kindEc != std::errc::no_such_file_or_directory) {
                     // Relative, like every other message here: this
                     // report is shown to a contributor and pasted into
                     // bug threads, and a native absolute path carries the
@@ -582,11 +589,13 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                  + e.what());
         }
     }
+    bool oneLibraryWasRead = false;
     if (present(rekordboxRoot) && onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string())) {
         try {
             onelibrary::OneLibraryReader reader(rekordboxRoot.string());
             auto tracks = reader.readAll();
             checkTracks(tracks, "OneLibrary", result.oneLibraryTracksSampled);
+            oneLibraryWasRead = true;
         } catch (const std::exception &e) {
             warn(std::string("could not read the OneLibrary mirror back, so its fields were not sampled: ")
                  + e.what());
@@ -608,7 +617,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     if (auto stopped = walkTree(root, root, [&](const fs::directory_entry &entry) {
         std::error_code kindEc;
         if (!entry.is_regular_file(kindEc) || kindEc) {
-            if (kindEc) {
+            if (kindEc && kindEc != std::errc::no_such_file_or_directory) {
                 std::error_code relEc;
                 fail("could not tell what " + fs::relative(entry.path(), root, relEc).generic_string()
                      + " is: " + kindEc.message());
@@ -636,6 +645,17 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             // Counted as swept and clean until now. A file in the export
             // that nothing could read is the one case where this check
             // knows least and the export is about to be sent anyway.
+            //
+            // Unless it is simply not there any more: this walk opens
+            // SQLite databases while iterating the directory holding
+            // them, and SQLite makes and removes -shm and -wal as it
+            // goes (the comment on the catalog layout above says so).
+            // Failing on that would delete a clean export for a file
+            // this check created itself.
+            std::error_code goneEc;
+            if (!fs::exists(entry.path(), goneEc) && !goneEc) {
+                return;
+            }
             fail(relative + " could not be read, so its bytes were never swept");
             return;
         }
@@ -679,6 +699,12 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     }
     if (engineWasRead && result.engineTracksSampled == 0) {
         fail("the Engine catalog read back with no tracks in it, so its fields were never checked");
+    }
+    // The mirror carries the same titles, artists and paths as the
+    // catalog beside it, and is read the same way, so it gets the same
+    // floor. It was left out of the first pair for no reason at all.
+    if (oneLibraryWasRead && result.oneLibraryTracksSampled == 0) {
+        fail("the Device Library Plus mirror read back with no tracks in it, so its fields were never checked");
     }
 
     result.ok = result.problems.empty();

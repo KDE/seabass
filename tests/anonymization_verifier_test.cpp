@@ -468,16 +468,15 @@ int main(int argc, char **argv)
     // A path whose bytes cannot be read comes back as "could not read",
     // not as a file that was read and found clean.
     //
-    // Which guard catches it, measured on this libstdc++ rather than
-    // assumed: fs::file_size() fails first ("Is a directory"). Remove
-    // that and the length comparison catches it, because the stream
-    // opens on a directory here -- bool(in) is true -- and reads zero
-    // bytes. Remove both and the read throws
-    // "basic_filebuf::underflow error reading the file", which the catch
-    // turns into the same answer. So this one case exercises all three
-    // in turn, and the one thing none of them is provoked by is the
-    // failure they were written for: a read that starts and then stops
-    // partway, which needs a medium that fails mid-file.
+    // What this case exercises, exactly: the fs::file_size() guard, which
+    // fails first on a directory here. Nothing more. The two guards
+    // behind it -- the length comparison for a short read, and the catch
+    // for a read that throws -- were each seen to catch this same input
+    // when the guards in front of them were deleted by hand, which is
+    // evidence they work and not a test that can go red. They are for a
+    // medium that fails mid-file, and nothing in this suite can arrange
+    // one; said plainly so the next reader does not count them as
+    // covered.
     {
         const auto swept = infrastructure::readableTextInRawBytes(copy / "rekordbox");
         assert(!swept && "a path whose bytes could not be read is not a clean file");
