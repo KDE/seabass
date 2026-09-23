@@ -352,11 +352,15 @@ std::optional<std::vector<std::string>> readableTextInRawBytes(const fs::path &f
     std::string bytes;
     try {
         bytes.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    } catch (const std::ios_base::failure &) {
+    } catch (const std::exception &) {
         // libstdc++'s filebuf throws out of underflow() on a read error
         // (a dying stick gives EIO), straight through this function and
         // past every caller: the export's staging tree was then left on
-        // disk and the next run refused because it was not empty.
+        // disk and the next run refused because it was not empty. Any
+        // exception, not only ios_base::failure: this reads a whole file
+        // into one string, so a large m.db on a 32-bit build throws
+        // bad_alloc or length_error instead, out of the same line, with
+        // the same consequence.
         return std::nullopt;
     }
     // The stream's own state bits say nothing here: istreambuf_iterator

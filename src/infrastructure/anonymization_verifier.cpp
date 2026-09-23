@@ -11,6 +11,8 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <type_traits>
+#include <vector>
 
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/anonymization_byte_sweep.hpp"
@@ -220,11 +222,27 @@ namespace
 // having looked at nothing.
 //
 // Returns an explanation when the walk did not finish, nullopt when it
-// did. The count is in the message because "stopped after 0" and
-// "stopped after 2,700" are different accidents.
+// did. Paths in that explanation are relative to `root`: this text goes
+// into the report a contributor is shown and asked to paste, and a
+// native absolute path carries the user's own name, in the one feature
+// whose whole job is taking paths out.
+//
+// A walk that cannot step stops there, and says where: both iterators
+// are set to end() by a failed increment, so there is nothing left to
+// ask depth() or pop() -- tried, and it segfaults. What the message can
+// do is name the entry it got to and how many it had seen, so a report
+// that also says nothing was swept is read as "it stopped here" rather
+// than "the export is empty".
 template <typename Iterator>
-std::optional<std::string> walkWith(const fs::path &dir, const std::function<void(const fs::directory_entry &)> &visit)
+std::optional<std::string> walkWith(const fs::path &dir, const fs::path &root,
+                                    const std::function<void(const fs::directory_entry &)> &visit)
 {
+    auto shown = [&root](const fs::path &path) {
+        std::error_code relEc;
+        const fs::path relative = fs::relative(path, root, relEc);
+        return relEc || relative.empty() ? path.filename().generic_string() : relative.generic_string();
+    };
+
     std::error_code ec;
     Iterator it(dir, ec);
     if (ec == std::errc::no_such_file_or_directory) {
@@ -235,30 +253,45 @@ std::optional<std::string> walkWith(const fs::path &dir, const std::function<voi
         return std::nullopt;
     }
     if (ec) {
-        return "could not read " + dir.string() + ": " + ec.message();
+        return "could not read " + shown(dir) + ": " + ec.message();
     }
     const Iterator end;
     std::size_t seen = 0;
+    std::vector<std::string> stops;
     while (it != end) {
+        // Kept before the step: an iterator whose increment failed must
+        // not be dereferenced, and naming where it got to is the whole
+        // point of the message.
+        const fs::path here = it->path();
         visit(*it);
         ++seen;
         it.increment(ec);
-        if (ec) {
-            return "stopped reading " + dir.string() + " after " + std::to_string(seen)
-                + " entries: " + ec.message();
+        if (!ec) {
+            continue;
         }
+        stops.push_back("after " + shown(here) + ": " + ec.message());
+        break;
     }
-    return std::nullopt;
+    if (stops.empty()) {
+        return std::nullopt;
+    }
+    std::string message = "stopped reading " + shown(dir) + " after " + std::to_string(seen) + " entries";
+    for (const auto &stop : stops) {
+        message += "; " + stop;
+    }
+    return message;
 }
 
-std::optional<std::string> walk(const fs::path &dir, const std::function<void(const fs::directory_entry &)> &visit)
+std::optional<std::string> walk(const fs::path &dir, const fs::path &root,
+                                const std::function<void(const fs::directory_entry &)> &visit)
 {
-    return walkWith<fs::directory_iterator>(dir, visit);
+    return walkWith<fs::directory_iterator>(dir, root, visit);
 }
 
-std::optional<std::string> walkTree(const fs::path &dir, const std::function<void(const fs::directory_entry &)> &visit)
+std::optional<std::string> walkTree(const fs::path &dir, const fs::path &root,
+                                    const std::function<void(const fs::directory_entry &)> &visit)
 {
-    return walkWith<fs::recursive_directory_iterator>(dir, visit);
+    return walkWith<fs::recursive_directory_iterator>(dir, root, visit);
 }
 
 }  // namespace
@@ -279,7 +312,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // --- Layout: only what the manifest says is in here, is in here. ---
     const fs::path rekordboxRoot = root / "rekordbox";
     const fs::path engineRoot = root / "engine";
-    if (auto stopped = walk(root, [&](const fs::directory_entry &entry) {
+    if (auto stopped = walk(root, root, [&](const fs::directory_entry &entry) {
             const std::string name = entry.path().filename().string();
             if (name == "MANIFEST.txt" || name == "files.tsv" || name == "rekordbox" || name == "engine"
                 || isHarnessFile(name)) {
@@ -291,7 +324,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     }
 
     if (fs::is_directory(rekordboxRoot, ec)) {
-        if (auto stopped = walk(rekordboxRoot, [&](const fs::directory_entry &entry) {
+        if (auto stopped = walk(rekordboxRoot, root, [&](const fs::directory_entry &entry) {
                 const std::string name = entry.path().filename().string();
                 // The catalog itself, the analysis files, and the player
                 // preference files the Device Profile feature needs.
@@ -305,7 +338,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         }
         const fs::path catalog = rekordboxRoot / "rekordbox";
         if (fs::is_directory(catalog, ec)) {
-            if (auto stopped = walk(catalog, [&](const fs::directory_entry &entry) {
+            if (auto stopped = walk(catalog, root, [&](const fs::directory_entry &entry) {
                 const std::string name = entry.path().filename().string();
                 // exportLibrary.db is the Device Library Plus mirror, kept
                 // now that it is scrubbed; its rows are sampled below.
@@ -335,7 +368,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     }
 
     if (fs::is_directory(engineRoot, ec)) {
-        if (auto stopped = walk(engineRoot, [&](const fs::directory_entry &entry) {
+        if (auto stopped = walk(engineRoot, root, [&](const fs::directory_entry &entry) {
                 const std::string name = entry.path().filename().string();
                 if (name == "Database2") {
                     return;
@@ -349,7 +382,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         // directory paths -- passed verification in every export ever
         // produced. Only m.db is scrubbed; everything else at this level
         // is content nothing has examined.
-        if (auto stopped = walk(engineRoot / "Database2", [&](const fs::directory_entry &entry) {
+        if (auto stopped = walk(engineRoot / "Database2", root, [&](const fs::directory_entry &entry) {
                 std::error_code kindEc;
                 if (!entry.is_regular_file(kindEc) || kindEc) {
                     // A directory here is OverviewData and friends:
@@ -374,7 +407,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // --- Analysis files: every embedded path, every file, no sampling. ---
     // This is where the leak was, and it was in all 2744 of them.
     if (fs::is_directory(rekordboxRoot / "USBANLZ", ec)) {
-        if (auto stopped = walkTree(rekordboxRoot / "USBANLZ", [&](const fs::directory_entry &entry) {
+        if (auto stopped = walkTree(rekordboxRoot / "USBANLZ", root, [&](const fs::directory_entry &entry) {
             std::error_code kindEc;
             if (!entry.is_regular_file(kindEc) || kindEc) {
                 if (kindEc) {
@@ -429,6 +462,13 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     // will read first.
     if (const fs::path listing = root / "files.tsv"; fs::is_regular_file(listing, ec)) {
         std::ifstream in(listing);
+        if (!in) {
+            // The last read in this function that could not tell "no
+            // entries" from "could not look": an unreadable listing left
+            // audioFilesChecked at a plausible number and every real
+            // filename in it unexamined.
+            fail("files.tsv is there and could not be read, so the names in it were never checked");
+        }
         std::string line;
         int checked = 0;
         while (std::getline(in, line)) {
@@ -443,6 +483,12 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                 break;  // one is enough; the rest would say the same thing
             }
             ++checked;
+        }
+        // getline stopping is the end of the file AND a read that broke,
+        // and only the second leaves names unexamined.
+        if (in.bad()) {
+            fail("stopped reading files.tsv after " + std::to_string(checked)
+                 + " names, so the rest were never checked");
         }
         result.audioFilesChecked = checked;
     }
@@ -521,7 +567,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     }
 
     // --- Raw bytes: everything the readers above structurally cannot see. ---
-    if (auto stopped = walkTree(root, [&](const fs::directory_entry &entry) {
+    if (auto stopped = walkTree(root, root, [&](const fs::directory_entry &entry) {
         std::error_code kindEc;
         if (!entry.is_regular_file(kindEc) || kindEc) {
             if (kindEc) {

@@ -425,14 +425,22 @@ int main(int argc, char **argv)
             std::cout << "case 11 (a file the sweep cannot read is refused) OK\n";
         }
     } else {
-        skipped += 2;
-        std::cerr << "SKIPPED cases 10 and 11 (a folder and a file that cannot be read): running as root, where "
-                     "permissions do not bind. They are the two cases that prove the walks report what they "
-                     "could not read.\n";
+        // Not "skipped": these two are the cases that prove the walks
+        // report what they could not read, and a run that cannot make
+        // them run has not checked that. Failing is what this project
+        // does with a check that did not fully run, and the fix is in
+        // the operator's hands: do not run the suite as root.
+        std::cerr << "FAIL: cases 10 and 11 need permissions to bind, and this run is root. Run the suite as an "
+                     "ordinary user.\n";
+        return 1;
     }
 #else
+    // Windows has no chmod 000, so the two cases cannot be built there
+    // at all. Counted and named rather than silently absent, so the lane
+    // that runs this says what it did not check.
     skipped += 2;
-    std::cerr << "SKIPPED cases 10 and 11 (a folder and a file that cannot be read): POSIX permissions only.\n";
+    std::cerr << "SKIPPED cases 10 and 11 (a folder and a file that cannot be read): POSIX permissions only, so "
+                 "the Linux lane is where they run.\n";
 #endif
 
     // And the floor under all of it: an export with nothing in it swept
@@ -453,17 +461,18 @@ int main(int argc, char **argv)
     }
 
     // A path whose bytes cannot be read comes back as "could not read",
-    // not as a file that was read and found clean. Measured, not
-    // assumed: this case is satisfied by the stream failing to open (a
-    // directory here), and it stays green when the length comparison and
-    // the ios_base::failure catch beside it are removed one at a time.
-    // Those two are for a read that starts and then stops -- a dying
-    // stick giving EIO partway, where libstdc++ throws out of
-    // filebuf::underflow() and another library's underflow just returns
-    // eof with the stream's state bits untouched, since
-    // istreambuf_iterator sets neither. Nothing here can provoke either,
-    // so they are argued rather than tested, and this is the half that
-    // is tested.
+    // not as a file that was read and found clean.
+    //
+    // Which guard catches it, measured on this libstdc++ rather than
+    // assumed: fs::file_size() fails first ("Is a directory"). Remove
+    // that and the length comparison catches it, because the stream
+    // opens on a directory here -- bool(in) is true -- and reads zero
+    // bytes. Remove both and the read throws
+    // "basic_filebuf::underflow error reading the file", which the catch
+    // turns into the same answer. So this one case exercises all three
+    // in turn, and the one thing none of them is provoked by is the
+    // failure they were written for: a read that starts and then stops
+    // partway, which needs a medium that fails mid-file.
     {
         const auto swept = infrastructure::readableTextInRawBytes(copy / "rekordbox");
         assert(!swept && "a path whose bytes could not be read is not a clean file");
