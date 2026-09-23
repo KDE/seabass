@@ -20,9 +20,19 @@ bool isAnalysisFile(const fs::path &path)
 {
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::toupper(c); });
-    // .DAT is the smaller, older analysis file; no write path in Seabass
-    // touches it, so counting it would overstate the worst case.
-    return ext == ".EXT";
+    // Both, and the .DAT is not optional any more.
+    //
+    // This counted only .EXT on the stated grounds that "no write path
+    // in Seabass touches it". That stopped being true on 2026-09-18
+    // (5282555e): rekordbox_cue_writer.cpp writes the .DAT's legacy PCOB
+    // list for hot cues 1-3 and the memory cues, because cues written
+    // only into PCO2 are invisible to XDJ-RX2-era players (issue #33).
+    //
+    // So the worst case was missing roughly half the analysis bytes on a
+    // stick, which is what backupGoesLocal() decides against and what
+    // EditSessionHost's "Not enough room" dialog quotes at the user.
+    // Understating there says a backup fits when it does not.
+    return ext == ".EXT" || ext == ".DAT";
 }
 
 // The catalogs a save can rewrite whole. Small next to the analysis
@@ -90,13 +100,20 @@ StickSpace measureStickSpace(const fs::path &stickRoot)
     // subtree rather than of the entire device.
     const fs::path analysisRoot = stickRoot / "PIONEER" / "USBANLZ";
     if (fs::is_directory(analysisRoot, ec)) {
+        // The walk's error_code is the walk's alone. It used to be shared
+        // with the calls in the body, so one entry whose is_regular_file
+        // or file_size failed set it, the `!ec` in the loop condition
+        // then ended the walk, and everything after that entry went
+        // uncounted -- silently, and in the direction that says a backup
+        // fits when it does not.
         for (fs::recursive_directory_iterator it(analysisRoot, fs::directory_options::skip_permission_denied, ec), end;
              it != end && !ec; it.increment(ec)) {
-            if (!it->is_regular_file(ec) || !isAnalysisFile(it->path())) {
+            std::error_code entryEc;
+            if (!it->is_regular_file(entryEc) || entryEc || !isAnalysisFile(it->path())) {
                 continue;
             }
-            const auto size = it->file_size(ec);
-            if (!ec) {
+            const auto size = it->file_size(entryEc);
+            if (!entryEc) {
                 measured.worstCaseBackupBytes += size;
             }
         }

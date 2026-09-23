@@ -98,20 +98,47 @@ int main()
 
         writeFile(root / "PIONEER" / "USBANLZ" / "P001" / "ANLZ0000.EXT", 3000);
         writeFile(root / "PIONEER" / "USBANLZ" / "P002" / "ANLZ0000.EXT", 5000);
-        // .DAT is analysis too, but no write path here touches it, so
-        // counting it would overstate the worst case.
-        writeFile(root / "PIONEER" / "USBANLZ" / "P002" / "ANLZ0000.DAT", 900000);
+        // .DAT counts too. This case used to assert it did not, on the
+        // same stale claim the production comment carried: "no write
+        // path here touches it". rekordbox_cue_writer.cpp has written
+        // the .DAT's legacy PCOB list since 5282555e (2026-09-18), for
+        // hot cues 1-3 and the memory cues, because cues written only
+        // into PCO2 are invisible to XDJ-RX2-era players (issue #33).
+        //
+        // The test and the code agreed with each other and both were
+        // wrong, which is why nothing caught it: the estimate was
+        // missing roughly half the analysis bytes on a real stick, in
+        // the direction that tells the user a backup fits.
+        writeFile(root / "PIONEER" / "USBANLZ" / "P002" / "ANLZ0000.DAT", 7000);
         // Audio is not backed up by a cue save at all.
         writeFile(root / "Contents" / "track.mp3", 900000);
         writeFile(root / "PIONEER" / "rekordbox" / "export.pdb", 1000);
 
         StickSpace measured = measureStickSpace(root);
         assert(measured.capacityBytes > 0);
-        assert(measured.worstCaseBackupBytes == 3000 + 5000 + 1000);
-        std::cout << "case 4 (analysis files and catalogs counted, .DAT and audio not) OK\n";
+        assert(measured.worstCaseBackupBytes == 3000 + 5000 + 7000 + 1000);
+        std::cout << "case 4 (analysis files of both kinds and catalogs counted, audio not) OK\n";
 
         fs::remove_all(root);
     }
+
+    // NOT TESTED HERE, deliberately: that one unexaminable entry does
+    // not end the walk.
+    //
+    // I wrote a case for it -- a symlink loop between two analysis files,
+    // asserting both are still counted -- and it passed against the bug.
+    // recursive_directory_iterator's order is unspecified, so when both
+    // readable files happen to come before the loop they are counted
+    // before the shared error_code ends the walk, and the assertion
+    // holds for a reason that has nothing to do with the fix. Adding
+    // more files only lowers the odds of a false pass; it does not
+    // remove them, and a case that is right most of the time is the kind
+    // this project has spent the day removing.
+    //
+    // The fix is still right: the iterator's error_code is the
+    // iterator's, and the body's calls get their own. It is untested
+    // because I could not find a way to test it that did not depend on
+    // readdir order.
 
     std::cout << "all cases passed\n";
     return 0;
