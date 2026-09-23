@@ -729,16 +729,82 @@ int main()
     }
 
     // Same count, different cues: a row can hold as many as the merged
-    // set and still be missing one. Counting would say no.
+    // set and still be about to lose one. Counting would say no.
     {
         DuplicateCleanupPlan plan;
         plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
         plan.survivor.cues = {cueA, cueB};
         plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {cueA, cueB}},
                                      {"engine", "en-keep", {cueA, cue(CuePoint::Kind::Hot, 3, 3000.0)}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {cueB};
+        doomed.catalogRows = {{"engine", "en-drop", {cueB}}};
+        plan.toRemove = {doomed};
         plan.mergedCuesForSurvivor = {cueA, cueB};
         assert(catalogNeedsMergedCues(plan, "engine") && "two cues is not the same two cues");
-        std::cout << "case 28 (a row with as many cues can still be missing one) OK\n";
+        std::cout << "case 28 (a row with as many cues can still be losing one) OK\n";
+    }
+
+    // Two catalogs that simply disagree, with nothing being removed that
+    // carries cues: divergence for Sync to settle, and not something a
+    // clean-up may overwrite. A DJ whose rekordbox hot cue 1 is at 5 s
+    // and whose Engine hot cue 1 is at 30 s put them there.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        const CuePoint rekordboxOne = cue(CuePoint::Kind::Hot, 1, 5000.0);
+        const CuePoint engineOne = cue(CuePoint::Kind::Hot, 1, 30000.0);
+        plan.survivor.cues = {rekordboxOne};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {rekordboxOne}},
+                                     {"engine", "en-keep", {engineOne}}};
+        Track stray = makeTrack("stray", 200.0, 128, 3'000'000);  // a loose copy, no cues, no rows
+        plan.toRemove = {stray};
+        plan.mergedCuesForSurvivor = {rekordboxOne};
+        assert(!catalogNeedsMergedCues(plan, "engine")
+               && "Engine's own hot cue 1 is not a cue this clean-up may move");
+        assert(!catalogNeedsMergedCues(plan, "rekordbox"));
+        std::cout << "case 28b (catalogs that merely disagree are left to Sync) OK\n";
+    }
+
+    // The loss has to be in THIS catalog. A copy being removed from
+    // rekordbox takes its rekordbox cues with it and costs Engine
+    // nothing, so Engine is not written -- writing it would push a
+    // rekordbox cue into a catalog that never had it, which is Sync's
+    // decision and not this one's.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {cueA};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {cueA}}, {"engine", "en-keep", {}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {cueA};
+        doomed.catalogRows = {{"rekordbox", "rb-drop", {cueA}}};  // no Engine row at all
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {cueA};
+        assert(!catalogNeedsMergedCues(plan, "rekordbox") && "rekordbox's survivor already has it");
+        assert(!catalogNeedsMergedCues(plan, "engine")
+               && "nothing is leaving Engine, so Engine has nothing to lose");
+        std::cout << "case 28d (a copy removed from one catalog is not a loss in another) OK\n";
+    }
+
+    // A memory cue read back a fraction off is the same cue: mergeCues
+    // decided that when it built the set, and this has to agree or it
+    // reports a loss that is not one, permanently, on every Engine row.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        const CuePoint memory = cue(CuePoint::Kind::Memory, 0, 10000.0);
+        const CuePoint sameMemoryDrifted = cue(CuePoint::Kind::Memory, 0, 10200.0);
+        plan.survivor.cues = {memory};
+        plan.survivor.catalogRows = {{"engine", "en-keep", {sameMemoryDrifted}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {memory};
+        doomed.catalogRows = {{"engine", "en-drop", {memory}}};
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {memory};
+        assert(!catalogNeedsMergedCues(plan, "engine")
+               && "200 ms apart is the same memory cue, by the rule that built the merged set");
+        std::cout << "case 28c (a memory cue within the merge's tolerance is already there) OK\n";
     }
 
     // Nothing to write: every catalog already holds the merged set. This

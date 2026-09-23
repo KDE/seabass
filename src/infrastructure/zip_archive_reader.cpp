@@ -28,8 +28,8 @@ constexpr std::uint16_t MethodDeflate = 8;
 
 std::uint16_t readU16(const std::string &bytes, size_t at)
 {
-    if (at + 2 > bytes.size()) {
-        throw std::runtime_error("zip: truncated");
+    if (at > bytes.size() || bytes.size() - at < 2) {
+        throw std::runtime_error("zip: truncated");  // see readU32 on why not at + 2
     }
     return static_cast<std::uint16_t>(static_cast<unsigned char>(bytes[at]))
         | static_cast<std::uint16_t>(static_cast<unsigned char>(bytes[at + 1]) << 8);
@@ -37,7 +37,13 @@ std::uint16_t readU16(const std::string &bytes, size_t at)
 
 std::uint32_t readU32(const std::string &bytes, size_t at)
 {
-    if (at + 4 > bytes.size()) {
+    // Subtraction, not addition: `at + 4` wraps where size_t is 32 bits,
+    // and `at` here comes straight out of the file -- a central
+    // directory claiming a local header at 0xFFFFFFFD would then pass
+    // this check and read four bytes from 4 GB away. The widened sum
+    // further down leans on this check refusing such an offset, so this
+    // is the half that has to hold.
+    if (at > bytes.size() || bytes.size() - at < 4) {
         throw std::runtime_error("zip: truncated");
     }
     return static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[at]))

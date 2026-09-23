@@ -248,13 +248,10 @@ int main()
         // fixed part of the entry (at +42), set just under 2^32.
         const size_t eocd = bytes.rfind("PK\x05\x06");
         assert(eocd != std::string::npos);
-        const size_t centralAt = static_cast<unsigned char>(bytes[eocd + 16])
-            | (static_cast<unsigned char>(bytes[eocd + 17]) << 8)
-            | (static_cast<unsigned char>(bytes[eocd + 18]) << 16)
-            | (static_cast<unsigned char>(bytes[eocd + 19]) << 24);
-        for (int i = 0; i < 4; ++i) {
-            bytes[centralAt + 42 + i] = static_cast<char>(0xF0 + (i == 3 ? 0x0F : 0x0F));
-        }
+        const size_t centralAt = static_cast<size_t>(static_cast<unsigned char>(bytes[eocd + 16]))
+            | (static_cast<size_t>(static_cast<unsigned char>(bytes[eocd + 17])) << 8)
+            | (static_cast<size_t>(static_cast<unsigned char>(bytes[eocd + 18])) << 16)
+            | (static_cast<size_t>(static_cast<unsigned char>(bytes[eocd + 19])) << 24);
         bytes[centralAt + 42] = static_cast<char>(0xF0);
         bytes[centralAt + 43] = static_cast<char>(0xFF);
         bytes[centralAt + 44] = static_cast<char>(0xFF);

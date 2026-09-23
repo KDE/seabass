@@ -309,41 +309,79 @@ std::string rowIdIn(const Track &track, const std::string &format)
     return {};
 }
 
+// True when this catalog's survivor row is missing a cue that one of the
+// doomed rows IN THIS CATALOG holds -- the only way removing those rows
+// makes this catalog worse off.
+//
+// Deliberately not "does this row differ from the merged set". Two
+// catalogs can hold genuinely different cues for one file, which is
+// divergence for Sync to settle and not something a clean-up may
+// overwrite: a DJ whose rekordbox hot cue 1 is at 5 s and whose Engine
+// hot cue 1 is at 30 s has that on purpose, and writing the merged set
+// over the Engine row would move it. Clean Up's job here is narrower --
+// keep what the copies being removed are carrying.
+//
+// Sameness is mergeCues()'s rule, because mergeCues() is what built the
+// merged set: a hot cue is the slot number, a memory cue is a position
+// within PositionToleranceMs. Comparing positions exactly would call a
+// memory cue missing that the merge had already decided was present,
+// and Engine's positions come back off by fractions of a millisecond
+// from a sample offset divided by a sample rate.
 bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string &format)
 {
     if (plan.mergedCuesForSurvivor.empty()) {
         return false;
     }
-    const auto rowFor = [&plan, &format]() -> const CatalogRowRef * {
-        for (const auto &row : plan.survivor.catalogRows) {
-            if (row.format == format) {
-                return &row;
-            }
+
+    const CatalogRowRef *survivorRow = nullptr;
+    for (const auto &row : plan.survivor.catalogRows) {
+        if (row.format == format) {
+            survivorRow = &row;
+            break;
         }
-        return nullptr;
-    };
-    const CatalogRowRef *row = rowFor();
-    if (row == nullptr) {
+    }
+    if (survivorRow == nullptr) {
         // Not collapsed, or a catalog the survivor has no row in. For an
         // uncollapsed plan Track::cues IS this catalog's own set, which
-        // is what the original comparison assumed and the only case it
-        // was right about.
+        // is the only case the size comparison was ever right about.
         return plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size();
     }
-    // Written when this catalog's row is missing any cue the merged set
-    // holds. Compared by what a player keeps them apart by, not by
-    // count: a row with as many cues as the merged set can still be
-    // missing one of them and carrying one of its own.
-    return std::any_of(plan.mergedCuesForSurvivor.begin(), plan.mergedCuesForSurvivor.end(),
-                       [row](const CuePoint &wanted) {
-                           return std::none_of(row->cues.begin(), row->cues.end(),
-                                               [&wanted](const CuePoint &have) {
-                                                   return have.kind == wanted.kind
-                                                       && have.hotCueNumber == wanted.hotCueNumber
-                                                       && std::llround(have.positionMs)
-                                                           == std::llround(wanted.positionMs);
-                                               });
-                       });
+
+    const auto alreadyThere = [](const std::vector<CuePoint> &have, const CuePoint &wanted) {
+        return std::any_of(have.begin(), have.end(), [&wanted](const CuePoint &c) {
+            if (wanted.kind == CuePoint::Kind::Hot) {
+                return c.kind == CuePoint::Kind::Hot && c.hotCueNumber == wanted.hotCueNumber;
+            }
+            return c.kind == CuePoint::Kind::Memory
+                && std::abs(c.positionMs - wanted.positionMs) <= LocalRestorePlanner::PositionToleranceMs;
+        });
+    };
+
+    for (const auto &doomed : plan.toRemove) {
+        const bool inThisCatalog =
+            std::any_of(doomed.catalogRows.begin(), doomed.catalogRows.end(),
+                        [&format](const CatalogRowRef &row) { return row.format == format; });
+        if (!inThisCatalog) {
+            continue;
+        }
+        for (const auto &row : doomed.catalogRows) {
+            if (row.format != format) {
+                continue;
+            }
+            for (const CuePoint &leaving : row.cues) {
+                if (alreadyThere(survivorRow->cues, leaving)) {
+                    continue;
+                }
+                // It is only a loss if the merged set carries it: a cue
+                // the merge dropped was already represented by one the
+                // survivor has.
+                if (alreadyThere(plan.mergedCuesForSurvivor, leaving)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 std::vector<std::string> rowIdsIn(const Track &track, const std::string &format)
