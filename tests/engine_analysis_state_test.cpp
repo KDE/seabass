@@ -99,7 +99,9 @@ void anOldSchemaIsNotZero(const fs::path &scratch)
     assert(!audit.hasColumn);
     assert(audit.notAnalyzed == 0);
     assert(!audit.worthReporting());
-    std::cout << "  an Engine 1.x library: no column, reported as unknown rather than as zero\n";
+    // Present, just too old to say. The page's wording turns on this.
+    assert(audit.libraryPresent);
+    std::cout << "  an Engine 1.x library: present but no column, reported as unknown rather than as zero\n";
 }
 
 void aNullFlagCountsAsNotAnalysed(const fs::path &scratch)
@@ -122,7 +124,16 @@ void anAbsentLibraryIsNotAnError(const fs::path &scratch)
     assert(missing.error.empty() && !missing.worthReporting() && missing.tracksChecked == 0);
     const AnalysisStateAudit empty = auditAnalysisState("");
     assert(empty.error.empty() && !empty.worthReporting());
-    std::cout << "  an absent library and an empty path both report nothing, without an error\n";
+    // Distinct from an Engine 1.x library, which is also "nothing to
+    // report" and is a completely different sentence on screen. Without
+    // this the page told a stick with no Engine library that its Engine
+    // library does not record analysis state -- a claim about something
+    // that is not there. Caught by looking at a screenshot of the page,
+    // not by any assertion, which is why this one exists now.
+    assert(!missing.libraryPresent);
+    assert(!empty.libraryPresent);
+    std::cout << "  an absent library and an empty path both report nothing, without an error, and are "
+                 "distinguishable from an old one\n";
 }
 
 void anUnreadableDatabaseIsAnError(const fs::path &scratch)

@@ -418,6 +418,15 @@ QtObject {
     readonly property real rowSpacing: 10       // between controls across a row
     readonly property real tightSpacing: 6      // a label and the thing it labels
     readonly property real crumbTextInset: scaled(8)
+    // How far a card's TEXT sits from the card's own left edge, and
+    // therefore how far anything outside a card has to be inset to line
+    // up with it. Named because two places have to agree: HealthCheckCard
+    // sets its content margin from this, and a page putting a bare label
+    // among cards insets it by the same amount. They were 20 and 0, so
+    // "Checked <stick> just now." sat twenty pixels left of the card text
+    // directly above it, and every card drew a second text column the
+    // bare labels never joined.
+    readonly property real cardTextInset: 20
 
     // ---- Titles -- a dedicated (non-bold) display face + scale, set once
     // here and consumed only via PageTitle.qml, so every page title stays

@@ -56,13 +56,18 @@ namespace seabass::infrastructure::engine
 // to keep it excluded is for it never to be a Track field at all.
 struct AnalysisStateAudit
 {
-    int tracksChecked = 0;   // rows in Track
-    int notAnalyzed = 0;     // of those, isAnalyzed = 0
-    bool hasColumn = false;  // false on Engine 1.x, which has no such column
-    std::string error;       // the library could not be read at all
+    bool libraryPresent = false;  // there is an Engine database here at all
+    int tracksChecked = 0;        // rows in Track
+    int notAnalyzed = 0;          // of those, isAnalyzed = 0
+    bool hasColumn = false;       // false on Engine 1.x, which has no such column
+    std::string error;            // the library could not be read at all
 
-    // Worth telling the user about. Nothing to say when the library is
-    // empty, unreadable, or too old to record the state.
+    // Worth telling the user about. Nothing to say when there is no
+    // library, or it is empty, unreadable, or too old to record the
+    // state -- and those are four different sentences, not one. A stick
+    // with no Engine library was being told its Engine library does not
+    // record analysis state, which is a claim about something that is
+    // not there.
     bool worthReporting() const { return error.empty() && hasColumn && notAnalyzed > 0; }
 };
 

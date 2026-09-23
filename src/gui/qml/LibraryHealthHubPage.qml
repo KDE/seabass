@@ -297,6 +297,9 @@ Page {
         if (healthController.analysisError.length > 0) {
             return healthController.analysisError;
         }
+        if (!healthController.analysisLibraryPresent) {
+            return "No Engine library on this stick, so there is nothing for an Engine player to analyse.";
+        }
         if (!healthController.analysisKnown) {
             return "This Engine library does not record whether its tracks have been analysed, so there is "
                  + "nothing to report. Engine 1.x libraries predate that.";
@@ -504,9 +507,16 @@ Page {
             // report something: an empty check that always says "not
             // checked" teaches people to ignore the page.
 
+            // Inset to the card TEXT, not to the card edge. These three
+            // sit under a column of cards, and the eye follows the text:
+            // at the page margin they read as stepping twenty pixels left
+            // of the sentence directly above them. Theme.cardTextInset is
+            // the same value HealthCheckCard insets its content by, so
+            // the two cannot drift apart.
             Label {
                 Layout.fillWidth: true
                 Layout.topMargin: 8
+                Layout.leftMargin: Theme.cardTextInset
                 visible: root.scanned
                 text: "Checked " + root.stickLabel + " just now."
                 color: Theme.textMuted
@@ -516,6 +526,13 @@ Page {
             Button {
                 objectName: "recheckButton"
                 Layout.alignment: Qt.AlignLeft
+                // The control's own padding IS the inset, rather than a
+                // margin outside it. A margin cannot do this job: the
+                // style pads by 24 and the inset is 20, so landing the
+                // label on the line would need a margin of -4, and the
+                // label is what has to be on the line -- the button's
+                // box is invisible on a flat style.
+                leftPadding: Theme.cardTextInset
                 visible: root.scanned
                 text: "Check again"
                 onClicked: root.runChecks()
@@ -524,6 +541,7 @@ Page {
             Label {
                 objectName: "errorLabel"
                 Layout.fillWidth: true
+                Layout.leftMargin: Theme.cardTextInset
                 visible: healthController.errorMessage.length > 0
                 text: healthController.errorMessage
                 color: Theme.danger

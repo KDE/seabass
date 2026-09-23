@@ -34,6 +34,7 @@ AnalysisStateAudit auditAnalysisState(const std::string &engineLibraryPath)
     if (!fs::is_regular_file(database, ec)) {
         return audit;  // no Engine library here; not a finding
     }
+    audit.libraryPresent = true;
 
     sqlite3 *handle = nullptr;
     if (sqlite3_open_v2(database.string().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {

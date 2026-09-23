@@ -295,6 +295,7 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(int analysisNotAnalyzedCount READ analysisNotAnalyzedCount NOTIFY analysisStateChanged)
     Q_PROPERTY(int analysisTracksChecked READ analysisTracksChecked NOTIFY analysisStateChanged)
     Q_PROPERTY(bool analysisKnown READ analysisKnown NOTIFY analysisStateChanged)
+    Q_PROPERTY(bool analysisLibraryPresent READ analysisLibraryPresent NOTIFY analysisStateChanged)
     Q_PROPERTY(QString analysisError READ analysisError NOTIFY analysisStateChanged)
     Q_PROPERTY(int sampleRateMissingCount READ sampleRateMissingCount NOTIFY sampleRatesChanged)
     Q_PROPERTY(int sampleRateFixableCount READ sampleRateFixableCount NOTIFY sampleRatesChanged)
@@ -392,6 +393,7 @@ public:
     int analysisNotAnalyzedCount() const { return m_analysisState.notAnalyzed; }
     int analysisTracksChecked() const { return m_analysisState.tracksChecked; }
     bool analysisKnown() const { return m_analysisState.error.empty() && m_analysisState.hasColumn; }
+    bool analysisLibraryPresent() const { return m_analysisState.libraryPresent; }
     QString analysisError() const { return QString::fromStdString(m_analysisState.error); }
     int sampleRateMissingCount() const { return static_cast<int>(m_sampleRates.missing.size()); }
     int sampleRateFixableCount() const { return m_sampleRates.fixable(); }

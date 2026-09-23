@@ -74,7 +74,7 @@ Rectangle {
         id: layout
         anchors.fill: parent
         anchors.margins: 14
-        anchors.leftMargin: 20
+        anchors.leftMargin: Theme.cardTextInset
         spacing: 6
 
         RowLayout {

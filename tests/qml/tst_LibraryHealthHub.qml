@@ -196,6 +196,90 @@ TestCase {
             grabImage(card).save(screenshotDir + "/" + states[i].name + ".png");
         }
     }
+    // The whole page, not one card at a time. The card screenshots above
+    // each render a card on its own at a fixed width, so they cannot show
+    // the thing alignment actually is: whether the cards agree with each
+    // other and with the page's own left line. A card that is correct in
+    // isolation and inset differently from its neighbours looks fine in
+    // every frame above.
+    function test_screenshotOfTheWholePage() {
+        if (!screenshotDir || screenshotDir.length === 0) {
+            skip("SEABASS_SCREENSHOT_DIR not set");
+        }
+        // Tall enough for every card at once. At the TestCase's own 600
+        // the grab stops after the fifth card, so the frame that was
+        // supposed to show the whole page showed most of it -- and the
+        // card added most recently is the one off the bottom.
+        var wasHeight = testCase.height;
+        testCase.height = 1500;
+        var page = createTemporaryObject(pageComponent, testCase);
+        page.width = testCase.width;
+        page.height = testCase.height;
+        tryCompare(page.consistencyController, "busy", false);
+        waitForRendering(page);
+        grabImage(page).save(screenshotDir + "/health-hub-page.png");
+
+        // Left edges, mapped into the page, printed rather than asserted:
+        // this case exists to LOOK at the page, and a number beside the
+        // picture is what makes "that card is out" checkable instead of a
+        // feeling.
+        var names = ["stickFilesystemCard", "brokenFilesCard", "junkCuesCard", "importPromptCard",
+                     "sampleRateCard", "analysisStateCard", "coverArtCard"];
+        for (var i = 0; i < names.length; ++i) {
+            var card = findByObjectName(page, names[i]);
+            if (card) {
+                var p = card.mapToItem(page, 0, 0);
+                console.log("  left edge  " + names[i] + " x=" + p.x + " width=" + card.width);
+            } else {
+                console.log("  left edge  " + names[i] + " NOT FOUND");
+            }
+        }
+        // The status line, the button, and the button's own label. A
+        // Button's item can sit on the left line while its TEXT does not,
+        // because the control carries horizontal padding -- and on a flat
+        // button with no visible background, the text IS the left edge as
+        // far as anyone looking at the page is concerned.
+        var status = findByObjectName(page, "errorLabel");
+        var button = findByObjectName(page, "recheckButton");
+        if (button) {
+            var bp = button.mapToItem(page, 0, 0);
+            console.log("  left edge  recheckButton item x=" + bp.x + " width=" + button.width
+                        + " leftPadding=" + button.leftPadding);
+            if (button.contentItem) {
+                var cp = button.contentItem.mapToItem(page, 0, 0);
+                console.log("  left edge  recheckButton TEXT x=" + cp.x);
+            }
+        }
+        if (status) {
+            var sp = status.mapToItem(page, 0, 0);
+            console.log("  left edge  errorLabel x=" + sp.x);
+        }
+        // TEXT left edges, which is what the eye reads as the left line.
+        // Item edges are not the same thing: a card sits at 16 and draws
+        // its title at 16 + its own padding, so anything that aligns to
+        // the CARD rather than to the card's TEXT is out by that padding.
+        function textEdges(item, depth, out) {
+            if (!item) return;
+            var kids = item.children ? item.children : [];
+            for (var i = 0; i < kids.length; ++i) {
+                var k = kids[i];
+                if (k.text !== undefined && String(k.text).length > 0 && k.visible) {
+                    var pt = k.mapToItem(page, 0, 0);
+                    out.push({x: Math.round(pt.x), y: Math.round(pt.y),
+                              t: String(k.text).substring(0, 46)});
+                }
+                textEdges(k, depth + 1, out);
+            }
+        }
+        var found = [];
+        textEdges(page, 0, found);
+        found.sort(function (a, b) { return a.y - b.y; });
+        for (var j = 0; j < found.length; ++j) {
+            console.log("  TEXT x=" + found[j].x + "  y=" + found[j].y + "  " + found[j].t);
+        }
+        testCase.height = wasHeight;
+    }
+
     // The page used to fill its parent with no margins at all, so every
     // card ran into the window edge while every sibling page inset its
     // content by 16. Asserted on both sides: a left-only anchor would

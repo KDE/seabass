@@ -715,8 +715,8 @@ void LibraryConsistencyController::onScanFinished()
         // wipe what a leg that did read left behind. hasColumn is part
         // of the test because an Engine 1.x library legitimately reports
         // zero tracks checked and is still a real answer.
-        if (result.analysisState.tracksChecked > 0 || result.analysisState.hasColumn
-            || !result.analysisState.error.empty()) {
+        if (result.analysisState.libraryPresent || result.analysisState.tracksChecked > 0
+            || result.analysisState.hasColumn || !result.analysisState.error.empty()) {
             m_analysisState = std::move(result.analysisState);
             emit analysisStateChanged();
         }
