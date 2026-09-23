@@ -50,14 +50,21 @@ bool appendDurably(const std::string &path, const std::string &data)
 {
     // GENERIC_WRITE as well as FILE_APPEND_DATA: cutting a partial write
     // back (below) needs SetEndOfFile, which append-only access does not
-    // allow. The appending itself still goes through the append offset.
+    // allow. But GENERIC_WRITE includes FILE_WRITE_DATA, and requesting
+    // that together with FILE_APPEND_DATA turns off the automatic
+    // seek-to-end-of-file WriteFile otherwise does for an append-only
+    // handle -- confirmed directly: two appends in the same process left
+    // the SECOND entry's (shorter) line overwriting the START of the
+    // FIRST entry's (longer) one, with the first entry's own tail left
+    // dangling afterwards as a second, truncated "line". The append
+    // offset is not automatic here, so it is made explicit instead.
     HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         return false;
     }
     LARGE_INTEGER before{};
-    const BOOL haveSize = GetFileSizeEx(h, &before);
+    const BOOL haveSize = SetFilePointerEx(h, LARGE_INTEGER{}, &before, FILE_END);
     DWORD written = 0;
     BOOL ok = WriteFile(h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
     if (ok && written == data.size()) {
