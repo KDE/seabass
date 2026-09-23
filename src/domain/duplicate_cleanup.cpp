@@ -309,28 +309,31 @@ std::string rowIdIn(const Track &track, const std::string &format)
     return {};
 }
 
-// True when this catalog's survivor row is missing a cue that one of the
-// doomed rows IN THIS CATALOG holds -- the only way removing those rows
-// makes this catalog worse off.
+// What this catalog's survivor row should end up holding: its own cues,
+// plus the cues carried by the copies being removed FROM THIS CATALOG.
 //
-// Deliberately not "does this row differ from the merged set". Two
-// catalogs can hold genuinely different cues for one file, which is
-// divergence for Sync to settle and not something a clean-up may
-// overwrite: a DJ whose rekordbox hot cue 1 is at 5 s and whose Engine
-// hot cue 1 is at 30 s has that on purpose, and writing the merged set
-// over the Engine row would move it. Clean Up's job here is narrower --
-// keep what the copies being removed are carrying.
+// Per catalog, payload and all. Two catalogs can hold genuinely
+// different cues for one file -- a DJ whose rekordbox hot cue 1 is at
+// 5 s and whose Engine hot cue 1 is at 30 s put them there -- and
+// writeHotCues() is a full replace, so handing every catalog the
+// cross-catalog union moves cues that nobody asked to move. That is
+// divergence for Sync to settle. Clean Up's job is narrower: keep what
+// the copies being removed are carrying, in the catalog they are
+// leaving.
 //
-// Sameness is mergeCues()'s rule, because mergeCues() is what built the
-// merged set: a hot cue is the slot number, a memory cue is a position
-// within PositionToleranceMs. Comparing positions exactly would call a
-// memory cue missing that the merge had already decided was present,
-// and Engine's positions come back off by fractions of a millisecond
-// from a sample offset divided by a sample rate.
-bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string &format)
+// mergeCues() does the folding, because it is what built
+// mergedCuesForSurvivor and its notion of sameness is the one that has
+// to hold: a hot cue is its slot number, a memory cue is a position
+// within PositionToleranceMs. Engine's positions come back from a
+// sample offset divided by a sample rate that falls back to 44.1 kHz,
+// so comparing them exactly reports a difference on nearly every row.
+std::vector<CuePoint> mergedCuesFor(const DuplicateCleanupPlan &plan, const std::string &format)
 {
-    if (plan.mergedCuesForSurvivor.empty()) {
-        return false;
+    // Uncollapsed: no per-catalog rows exist, Track::cues IS this
+    // catalog's own set, and mergedCuesForSurvivor was computed from
+    // exactly those. Same answer as before any of this.
+    if (plan.survivor.catalogRows.empty()) {
+        return plan.mergedCuesForSurvivor;
     }
 
     const CatalogRowRef *survivorRow = nullptr;
@@ -340,45 +343,43 @@ bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string 
             break;
         }
     }
+    // A catalog the survivor has no row in has nothing to write onto.
+    // (Not the union comparison that used to live here: for a collapsed
+    // survivor, Track::cues is the union across its OTHER catalogs,
+    // which says nothing about this one.)
     if (survivorRow == nullptr) {
-        // Not collapsed, or a catalog the survivor has no row in. For an
-        // uncollapsed plan Track::cues IS this catalog's own set, which
-        // is the only case the size comparison was ever right about.
-        return plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size();
+        return {};
     }
 
-    const auto alreadyThere = [](const std::vector<CuePoint> &have, const CuePoint &wanted) {
-        return std::any_of(have.begin(), have.end(), [&wanted](const CuePoint &c) {
-            if (wanted.kind == CuePoint::Kind::Hot) {
-                return c.kind == CuePoint::Kind::Hot && c.hotCueNumber == wanted.hotCueNumber;
-            }
-            return c.kind == CuePoint::Kind::Memory
-                && std::abs(c.positionMs - wanted.positionMs) <= LocalRestorePlanner::PositionToleranceMs;
-        });
-    };
-
+    std::vector<CuePoint> wanted = survivorRow->cues;
     for (const auto &doomed : plan.toRemove) {
-        const bool inThisCatalog =
-            std::any_of(doomed.catalogRows.begin(), doomed.catalogRows.end(),
-                        [&format](const CatalogRowRef &row) { return row.format == format; });
-        if (!inThisCatalog) {
+        if (doomed.catalogRows.empty()) {
+            // An uncollapsed copy is still a row in its own catalog --
+            // the same fallback rowIdIn() and catalogsWrittenBy() make.
+            if (doomed.format == format) {
+                wanted = LocalRestorePlanner::mergeCues(wanted, doomed.cues);
+            }
             continue;
         }
         for (const auto &row : doomed.catalogRows) {
-            if (row.format != format) {
-                continue;
+            if (row.format == format) {
+                wanted = LocalRestorePlanner::mergeCues(wanted, row.cues);
             }
-            for (const CuePoint &leaving : row.cues) {
-                if (alreadyThere(survivorRow->cues, leaving)) {
-                    continue;
-                }
-                // It is only a loss if the merged set carries it: a cue
-                // the merge dropped was already represented by one the
-                // survivor has.
-                if (alreadyThere(plan.mergedCuesForSurvivor, leaving)) {
-                    return true;
-                }
-            }
+        }
+    }
+    return wanted;
+}
+
+// True when the write above would add something. mergeCues() only ever
+// appends, so a longer result is a changed one.
+bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string &format)
+{
+    if (plan.survivor.catalogRows.empty()) {
+        return plan.mergedCuesForSurvivor.size() > plan.survivor.cues.size();
+    }
+    for (const auto &row : plan.survivor.catalogRows) {
+        if (row.format == format) {
+            return mergedCuesFor(plan, format).size() > row.cues.size();
         }
     }
     return false;

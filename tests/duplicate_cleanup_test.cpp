@@ -787,6 +787,59 @@ int main()
         std::cout << "case 28d (a copy removed from one catalog is not a loss in another) OK\n";
     }
 
+    // The payload is this catalog's too, not the union. Engine's own hot
+    // cue 1 sits at 30 s while rekordbox's is at 5 s, and a doomed
+    // Engine copy carries hot cue 2: Engine must end up with ITS cue 1
+    // and the new cue 2. Handing it the merged set would move cue 1 to
+    // 5 s, because writeHotCues replaces a row's whole set.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        const CuePoint rekordboxOne = cue(CuePoint::Kind::Hot, 1, 5000.0);
+        const CuePoint engineOne = cue(CuePoint::Kind::Hot, 1, 30000.0);
+        const CuePoint two = cue(CuePoint::Kind::Hot, 2, 60000.0);
+        plan.survivor.cues = {rekordboxOne};  // the union, cue 1 taken by rekordbox
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {rekordboxOne}},
+                                     {"engine", "en-keep", {engineOne}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.cues = {two};
+        doomed.catalogRows = {{"engine", "en-drop", {two}}};
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {rekordboxOne, two};
+
+        assert(catalogNeedsMergedCues(plan, "engine"));
+        const auto forEngine = mergedCuesFor(plan, "engine");
+        assert(forEngine.size() == 2);
+        const bool keptEngineOne = std::any_of(forEngine.begin(), forEngine.end(), [&](const CuePoint &c) {
+            return c.kind == CuePoint::Kind::Hot && c.hotCueNumber == 1 && c.positionMs == 30000.0;
+        });
+        const bool gainedTwo = std::any_of(forEngine.begin(), forEngine.end(), [&](const CuePoint &c) {
+            return c.kind == CuePoint::Kind::Hot && c.hotCueNumber == 2;
+        });
+        assert(keptEngineOne && "Engine keeps its own hot cue 1, at 30 s");
+        assert(gainedTwo && "and gains the one the copy being removed carried");
+        assert(!catalogNeedsMergedCues(plan, "rekordbox") && "rekordbox loses nothing here");
+        std::cout << "case 28e (each catalog is written its own set, not the union) OK\n";
+    }
+
+    // An uncollapsed copy is still a row in its own catalog: its cues
+    // leave with it, and the catalog it leaves has to be written.
+    {
+        DuplicateCleanupPlan plan;
+        plan.survivor = makeTrack("keep", 200.0, 320, 8'000'000);
+        plan.survivor.cues = {cueA};
+        plan.survivor.catalogRows = {{"rekordbox", "rb-keep", {cueA}}};
+        Track doomed = makeTrack("drop", 200.0, 128, 3'000'000);
+        doomed.format = "rekordbox";
+        doomed.cues = {cueB};  // no catalogRows at all
+        plan.toRemove = {doomed};
+        plan.mergedCuesForSurvivor = {cueA, cueB};
+        assert(catalogNeedsMergedCues(plan, "rekordbox")
+               && "a copy with no catalogRows is still a row in its own format");
+        assert(mergedCuesFor(plan, "rekordbox").size() == 2);
+        std::cout << "case 28f (an uncollapsed copy's cues are not lost) OK\n";
+    }
+
     // A memory cue read back a fraction off is the same cue: mergeCues
     // decided that when it built the set, and this has to agree or it
     // reports a loss that is not one, permanently, on every Engine row.

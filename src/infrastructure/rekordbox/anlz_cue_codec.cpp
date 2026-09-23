@@ -66,11 +66,21 @@ std::vector<RawHotCueEntry> AnlzCueCodec::decodeHotCues(const std::string &pco2S
             entry.rawBytes = pco2SectionBytes.substr(offset, lenEntry);
         }
 
-        size_t colorPos = offset + FixedEntrySize + 4 + lenComment;
-        if ((lenEntry - lenComment) > 44 && colorPos + 4 <= pco2SectionBytes.size()) {
-            unsigned char r = static_cast<unsigned char>(pco2SectionBytes[colorPos + 1]);
-            unsigned char g = static_cast<unsigned char>(pco2SectionBytes[colorPos + 2]);
-            unsigned char b = static_cast<unsigned char>(pco2SectionBytes[colorPos + 3]);
+        // Widened, and the companion guard cannot be relied on: lenEntry
+        // and lenComment are both file-supplied and unsigned, so
+        // (lenEntry - lenComment) wraps to a huge value whenever the
+        // comment claims to be longer than the entry, and sails past
+        // "> 44". The position itself is an offset plus a file-supplied
+        // length, which is the same wrap the rest of this sweep is
+        // about.
+        const std::uint64_t colorPos =
+            static_cast<std::uint64_t>(offset) + FixedEntrySize + 4 + lenComment;
+        if (lenEntry > lenComment && (lenEntry - lenComment) > 44
+            && colorPos + 4 <= pco2SectionBytes.size()) {
+            const size_t at = static_cast<size_t>(colorPos);
+            unsigned char r = static_cast<unsigned char>(pco2SectionBytes[at + 1]);
+            unsigned char g = static_cast<unsigned char>(pco2SectionBytes[at + 2]);
+            unsigned char b = static_cast<unsigned char>(pco2SectionBytes[at + 3]);
             entry.color = std::make_tuple(r, g, b);
         }
 

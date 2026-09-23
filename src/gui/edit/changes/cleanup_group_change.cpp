@@ -499,21 +499,23 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     // its backups on the any-catalog one, so skipping here writes less
     // than was declared, never more.
     if (domain::catalogNeedsMergedCues(plan, primaryFormat)) {
-        fc.cueWriter->writeHotCues(survivorId, plan.mergedCuesForSurvivor);
+        const std::vector<domain::CuePoint> forThisCatalog = domain::mergedCuesFor(plan, primaryFormat);
+        fc.cueWriter->writeHotCues(survivorId, forThisCatalog);
         w.session.noteItemApplied();
         log.record("cleanup: wrote merged cues onto survivor track id=" + survivorId);
-    }
 
-    // Outside the block above, and asking about its OWN catalog. While
-    // the gate was plan-wide the two questions had one answer; per
-    // catalog they do not, and nesting the mirror inside the page's
-    // answer meant a rekordbox row that happened to be up to date
-    // skipped the Device Library Plus write as well. Engine would then
-    // get its cues from the loop below, the doomed copy that carried
-    // them would be removed, and Device Library Plus would keep the
-    // survivor without them -- the split this block exists to prevent.
-    {
-        // The other half of the same library, not an optional extra.
+        // Inside this block on purpose, and it was moved out and back.
+        // Device Library Plus is the other half of the DEVICELIBRARY
+        // half: exportLibrary.db mirrors export.pdb, so it follows the
+        // rekordbox write and nothing else. Hoisting it out to ask its
+        // own question read well and was wrong twice over -- it made the
+        // mirror unreachable on every collapsed plan (a doomed
+        // OneLibrary row puts that format in catalogsToWrite, and this
+        // block is skipped when it is), and the case it was hoisted for
+        // is not a loss at all: if the Engine copy is what carried the
+        // cue, rekordbox did not change, and Device Library Plus
+        // differing from rekordbox is pre-existing divergence for Sync,
+        // not something this removal caused.
         // This is the block the retired convention named itself after --
         // "best-effort mirror, same convention as Clean Up's own
         // survivor-cue mirror block" -- and it did exactly what the
@@ -526,12 +528,11 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         // decided for every change, and which asks hasTrackAtPath()
         // first so a track Device Library Plus does not list stays a
         // non-event rather than becoming a refusal.
-        if (domain::catalogNeedsMergedCues(plan, "onelibrary") && !fc.pioneerRoot.empty()
-            && !plan.survivor.filePath.empty()
+        if (!fc.pioneerRoot.empty() && !plan.survivor.filePath.empty()
             && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(fc.pioneerRoot) && !oneLibraryWrittenAsCatalog) {
             const QString failed =
                 mirrorCuesOrExplain(sharedOneLibraryWriter(ctx, fc.pioneerRoot), plan.survivor.filePath,
-                                    plan.mergedCuesForSurvivor, ctx, "cleanup",
+                                    forThisCatalog, ctx, "cleanup",
                                     QStringLiteral("write the merged cues onto \"%1\"")
                                         .arg(QString::fromStdString(plan.survivor.title)));
             if (!failed.isEmpty()) {
@@ -873,7 +874,8 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         }
 
         if (domain::catalogNeedsMergedCues(plan, secondaryFormat)) {
-            sw.context.cueWriter->writeHotCues(targets.survivorSourceId, plan.mergedCuesForSurvivor);
+            sw.context.cueWriter->writeHotCues(targets.survivorSourceId,
+                                               domain::mergedCuesFor(plan, secondaryFormat));
             sw.session.noteItemApplied();
             log.record("cleanup: wrote merged cues onto the " + secondaryFormat + " survivor row id="
                        + targets.survivorSourceId);

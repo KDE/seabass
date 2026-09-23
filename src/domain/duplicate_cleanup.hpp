@@ -229,6 +229,12 @@ std::vector<std::string> rowIdsIn(const Track &track, const std::string &format)
 // site may write LESS than was declared but never more.
 bool catalogNeedsMergedCues(const DuplicateCleanupPlan &plan, const std::string &format);
 
+// What that write should contain: this catalog's own cues plus the ones
+// the copies being removed from it carry. Not the cross-catalog union --
+// writeHotCues() replaces a row's whole cue set, so handing every
+// catalog the union moves cues that differ between catalogs on purpose.
+std::vector<CuePoint> mergedCuesFor(const DuplicateCleanupPlan &plan, const std::string &format);
+
 // False when this catalog has rows to remove but no row for the survivor
 // to repoint at. Removing them anyway would drop the doomed rows'
 // playlist entries on the floor, or repoint them at an id this catalog
