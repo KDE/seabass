@@ -71,7 +71,15 @@ std::uint64_t directorySize(const fs::path &dir)
     for (const auto &entry : fs::recursive_directory_iterator(dir, ec)) {
         if (entry.is_regular_file() && entry.path().filename() != ManifestFileName &&
             entry.path().filename() != DescriptionFileName) {
-            total += entry.file_size(ec);
+            // A failed file_size() returns uintmax_t(-1); adding it
+            // makes the record about 16 exabytes, and the caller that
+            // frees space then stops after one backup believing it has
+            // reclaimed enough.
+            std::error_code sizeEc;
+            const std::uintmax_t bytes = entry.file_size(sizeEc);
+            if (!sizeEc) {
+                total += bytes;
+            }
         }
     }
     return total;
@@ -232,8 +240,39 @@ void sweepDeadRecords(const fs::path &base)
         if (!timestamped || name.compare(0, 15, cutoff) >= 0) {
             continue;
         }
-        if (fs::is_regular_file(entry.path() / ManifestFileName, ec)
-            || !fs::is_regular_file(entry.path() / ArchiveFileName, ec)) {
+        // A stat that FAILED is not an answer. is_regular_file reports
+        // "not there" and "I could not look" the same way -- plain
+        // false -- so a transient failure on the manifest of a
+        // complete, valid record reads as "an archive with no manifest"
+        // and this deletes somebody's backup. The project's own rule
+        // for exactly this is in fs_remove.cpp's stillThere(): a stat
+        // that fails for any reason other than "not found" counts as
+        // still there.
+        //
+        // Reached from releaseAutomaticBackups() on every save to a
+        // tight stick, so it runs often and on the sticks that are
+        // least healthy.
+        // "Not there" is an answer; any other error is not.
+        //
+        // is_regular_file() sets ec to ENOENT for a file that simply
+        // does not exist, so refusing on any ec at all would stop this
+        // sweeping the dead records it exists for -- which is what the
+        // first version of this fix did, and what the case below caught.
+        // The distinction is the one fs_remove.cpp's stillThere() draws.
+        auto looked = [](const fs::path &path, bool &answered) {
+            std::error_code ec;
+            const bool yes = fs::is_regular_file(path, ec);
+            answered = !ec || ec == std::errc::no_such_file_or_directory;
+            return yes;
+        };
+        bool manifestAnswered = false;
+        bool archiveAnswered = false;
+        const bool hasManifest = looked(entry.path() / ManifestFileName, manifestAnswered);
+        const bool hasArchive = looked(entry.path() / ArchiveFileName, archiveAnswered);
+        if (!manifestAnswered || !archiveAnswered) {
+            continue;  // could not look, so this is not a record to judge
+        }
+        if (hasManifest || !hasArchive) {
             continue;
         }
         fs::remove_all(entry.path(), ec);
@@ -594,7 +633,11 @@ FilesystemBackupStore::DirectoryState &FilesystemBackupStore::stateFor(const fs:
         }
         const std::string name = entry.path().filename().string();
         if (name != ManifestFileName && name != DescriptionFileName) {
-            state.sizeBytes += entry.file_size(ec);
+            std::error_code sizeEc;  // see directorySize(): -1 would make this 16 EB
+            const std::uintmax_t bytes = entry.file_size(sizeEc);
+            if (!sizeEc) {
+                state.sizeBytes += bytes;
+            }
         }
     }
     return m_directoryState.emplace(dir.string(), std::move(state)).first->second;
@@ -788,7 +831,13 @@ bool FilesystemBackupStore::restore(const std::string &id)
     std::vector<std::string> currentPaths;
     for (const auto &[onDisk, originalPath] : manifest.entries) {
         const fs::path target = resolveRecordedPath(originalPath);
-        if (fs::exists(target, ec)) {
+        // A file whose stat FAILS is included, not dropped. This list is
+        // what gets copied aside before the restore overwrites anything,
+        // so a target that is there but could not be examined must be
+        // protected rather than quietly written over -- and it is also
+        // what the free-space check is computed from.
+        std::error_code existsEc;
+        if (fs::exists(target, existsEc) || existsEc) {
             currentPaths.push_back(target.string());
         }
     }
@@ -949,7 +998,15 @@ bool FilesystemBackupStore::remove(const std::string &id)
     if (!fs::is_directory(dir, ec)) {
         return false;
     }
-    return fs::remove_all(dir, ec) > 0;
+    // remove_all() answers static_cast<uintmax_t>(-1) on failure, which
+    // is emphatically "> 0", so this used to report a removal that did
+    // not happen. discardBackupsTakenThisSave() counts what it removed
+    // against what stayed, and both sides of that count came from here.
+    const std::uintmax_t removed = fs::remove_all(dir, ec);
+    if (ec || removed == static_cast<std::uintmax_t>(-1)) {
+        return false;
+    }
+    return removed > 0;
 }
 
 }  // namespace seabass::infrastructure::backup

@@ -294,6 +294,36 @@ int main()
         std::cout << "case 7 (prune(0): removes every backup, the true empty-keep edge case) OK\n";
     }
 
+    // remove() must not report a removal it did not make.
+    //
+    // fs::remove_all() answers static_cast<uintmax_t>(-1) on failure,
+    // which is emphatically "> 0", so the old `remove_all(...) > 0`
+    // returned TRUE for a removal that failed. Everything that counts
+    // removed-against-stayed was counting on that answer.
+    //
+    // Arranged the way case 8 arranges its refusal: a read-only record
+    // directory, so its contents cannot be unlinked. POSIX only, and not
+    // as root, for the same reasons.
+#if !defined(_WIN32)
+    if (::geteuid() != 0) {
+        fs::remove_all(backupsDir);
+        FilesystemBackupStore store(backupsDir.string());
+        const std::string id = store.backup({targetFile.string()}, "keep-me").id;
+        assert(store.list().size() == 1);
+
+        const fs::path recordDir = fs::path(backupsDir) / id;
+        const fs::perms originalPerms = fs::status(recordDir).permissions();
+        fs::permissions(recordDir, fs::perms::owner_read | fs::perms::owner_exec);
+
+        const bool said = store.remove(id);
+        fs::permissions(recordDir, originalPerms);
+
+        assert(!said && "a removal that failed must not report success");
+        assert(store.list().size() == 1 && "and the record really is still there");
+        std::cout << "case 8b (remove() reports failure when remove_all could not do it) OK\n";
+    }
+#endif
+
     // prune(): a backup it selected but could not remove is reported,
     // not passed over in silence.
     //
@@ -751,6 +781,50 @@ int main()
         assert(fs::exists(foreignDir / "0-my-own-folder" / "precious.txt") && "nor a folder without an archive");
         std::cout << "case: a directory without a manifest is not a record and survives prune OK\n";
     }
+
+    // A record whose manifest cannot be STATTED is not a dead record.
+    //
+    // sweepDeadRecords() calls a directory dead when it holds an archive
+    // and no manifest, and is_regular_file() reports "not there" and "I
+    // could not look" identically. So a transient stat failure on a
+    // complete, valid backup over a day old read as "archive with no
+    // manifest" and remove_all()'d somebody's backup. It runs from
+    // releaseAutomaticBackups() on every save to a tight stick.
+    //
+    // Arranged by making the record directory unsearchable, which is
+    // what makes a stat of a file inside it fail with something other
+    // than ENOENT. POSIX only, and not as root.
+#if !defined(_WIN32)
+    if (::geteuid() != 0) {
+        fs::path deadDir = root / "Seabass-stat-fails" / "backups";
+        fs::create_directories(deadDir);
+        FilesystemBackupStore store(deadDir.string());
+        const fs::path oldRecord = deadDir / "20200101T000000-sync";
+        fs::create_directories(oldRecord);
+        writeFile(oldRecord / "backup.zip", "an archive");
+        writeFile(oldRecord / ".manifest", "and its manifest, so this record is COMPLETE");
+
+        // A symlink loop, so the MANIFEST's stat fails with something
+        // other than ENOENT while the ARCHIVE's still succeeds. That
+        // separation is the whole point: making the directory
+        // unsearchable fails both stats, and then `!hasArchive` saves
+        // the record whether or not the guard is there -- which is how
+        // the first version of this case passed against the bug.
+        fs::remove(oldRecord / ".manifest");
+        fs::create_symlink(".manifest", oldRecord / ".manifest");
+        std::error_code loopEc;
+        const bool loops = !fs::is_regular_file(oldRecord / ".manifest", loopEc) && loopEc
+                           && loopEc != std::errc::no_such_file_or_directory;
+        assert(loops && "the manifest stat must fail with a real error for this case to mean anything");
+        assert(fs::is_regular_file(oldRecord / "backup.zip") && "and the archive's stat must still work");
+
+        store.prune(10);  // sweepDeadRecords() runs first inside prune()
+
+        assert(fs::exists(oldRecord) && "a record whose manifest could not be statted is not swept");
+        assert(fs::exists(oldRecord / "backup.zip") && "and its archive is still there");
+        std::cout << "case: a stat that failed does not make a record dead OK\n";
+    }
+#endif
 
     // A database restored next to a stale -wal or -journal would have
     // those frames replayed over it on the next open. Restore removes
