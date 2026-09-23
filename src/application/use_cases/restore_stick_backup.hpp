@@ -147,6 +147,18 @@ struct RestoreSummary
     std::string message;
     std::size_t filesWritten = 0;
     std::size_t filesUnchanged = 0;
+    // Files this restore deliberately did not write because their
+    // database set was held back: a sibling could only be read in part
+    // and the drive's own copy of that sibling is whole, so writing any
+    // of the set would assemble one database out of two moments.
+    //
+    // Its own count because it is not "unchanged". filesUnchanged means
+    // "present with the same size and mtime", and the UI reads it aloud
+    // as "already up to date" -- which of a database that was withheld
+    // is not merely imprecise, it is the reassurance the user must not
+    // be given. The warning naming each one carries the detail; this is
+    // so the number beside it does not contradict it.
+    std::size_t filesHeldBack = 0;
     std::size_t directoriesCreated = 0;
     std::size_t extrasRemoved = 0;
     std::uint64_t bytesWritten = 0;

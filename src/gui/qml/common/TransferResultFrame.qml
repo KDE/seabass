@@ -65,7 +65,14 @@ Frame {
         }
         Label {
             font.family: Theme.dataFamily
+            // "held back" appears only when there is something to hold
+            // back. It is a restore-only outcome (a database set whose
+            // parts could not all be read off the failing drive), and
+            // this frame is shared with Clone, whose result has no such
+            // field -- undefined there, so the term stays off.
             text: resultFrame.result.filesWritten + " written · " + resultFrame.result.filesUnchanged + " unchanged · "
+                + (resultFrame.result.filesHeldBack > 0
+                       ? resultFrame.result.filesHeldBack + " held back · " : "")
                 + resultFrame.result.directoriesCreated + " folders created · " + resultFrame.result.extrasRemoved + " removed"
         }
         Label {

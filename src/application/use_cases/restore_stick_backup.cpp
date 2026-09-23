@@ -837,7 +837,13 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                                              "other files could be read off the failing drive and the copy already "
                                              "here is whole. The database on this drive was left exactly as it is.");
             }
-            ++summary.filesUnchanged;
+            // Neither arm wrote anything, and neither is "unchanged":
+            // one is a part the drive already beats, the other a whole
+            // file withheld to keep the set from being assembled out of
+            // two moments. Counted apart from filesUnchanged so the
+            // number the page reads aloud as "already up to date" is
+            // only ever about files that really are.
+            ++summary.filesHeldBack;
             continue;
         }
         if (row != nullptr && row->salvagedFromSize != 0) {

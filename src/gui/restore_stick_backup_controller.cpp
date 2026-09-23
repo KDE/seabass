@@ -533,6 +533,7 @@ void RestoreStickBackupController::onRestoreFinished()
     QVariantMap map;
     map["filesWritten"] = static_cast<qlonglong>(s.filesWritten);
     map["filesUnchanged"] = static_cast<qlonglong>(s.filesUnchanged);
+    map["filesHeldBack"] = static_cast<qlonglong>(s.filesHeldBack);
     map["directoriesCreated"] = static_cast<qlonglong>(s.directoriesCreated);
     map["extrasRemoved"] = static_cast<qlonglong>(s.extrasRemoved);
     map["bytesWritten"] = static_cast<qlonglong>(s.bytesWritten);
@@ -564,7 +565,19 @@ void RestoreStickBackupController::onRestoreFinished()
 
     switch (s.status) {
     case RestoreSummary::Status::Restored:
-        setStatusMessage(QStringLiteral("Restored %1 files (%2 already up to date).").arg(s.filesWritten).arg(s.filesUnchanged));
+        // "Already up to date" is only said about files that are. A
+        // member held back because its database set could not be
+        // restored whole is not up to date -- it is the backup's copy
+        // withheld -- and counting it here told the user the opposite of
+        // the warning printed beside it.
+        setStatusMessage(s.filesHeldBack == 0
+                             ? QStringLiteral("Restored %1 files (%2 already up to date).")
+                                   .arg(s.filesWritten)
+                                   .arg(s.filesUnchanged)
+                             : QStringLiteral("Restored %1 files (%2 already up to date, %3 held back).")
+                                   .arg(s.filesWritten)
+                                   .arg(s.filesUnchanged)
+                                   .arg(s.filesHeldBack));
         emit actionFeedback(m_statusMessage, false);
         break;
     case RestoreSummary::Status::RestoredWithProblems:
