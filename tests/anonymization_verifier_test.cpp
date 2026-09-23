@@ -392,6 +392,7 @@ int main(int argc, char **argv)
     // it, and an iterator that cannot open a directory returns end(): a
     // tree nothing could read was indistinguishable from a tree with
     // nothing in it, and the verdict is "no problems found".
+    int skipped = 0;
 #if !defined(_WIN32)
     if (::geteuid() != 0) {
         // A folder in the export that cannot be read.
@@ -423,7 +424,15 @@ int main(int argc, char **argv)
                    && "a file nothing could read is not a file that was found clean");
             std::cout << "case 11 (a file the sweep cannot read is refused) OK\n";
         }
+    } else {
+        skipped += 2;
+        std::cerr << "SKIPPED cases 10 and 11 (a folder and a file that cannot be read): running as root, where "
+                     "permissions do not bind. They are the two cases that prove the walks report what they "
+                     "could not read.\n";
     }
+#else
+    skipped += 2;
+    std::cerr << "SKIPPED cases 10 and 11 (a folder and a file that cannot be read): POSIX permissions only.\n";
 #endif
 
     // And the floor under all of it: an export with nothing in it swept
@@ -434,10 +443,42 @@ int main(int argc, char **argv)
         auto v = infrastructure::verifyAnonymizedExport(empty.string());
         assert(!v.ok && "an export this never looked inside must not pass");
         assert(mentions(v.problems, "proved nothing"));
-        std::cout << "case 12 (an export with nothing swept is refused) OK\n";
+        // And only for that reason. A tree that is not there is not a
+        // tree that could not be read: a rekordbox-only export has no
+        // engine/Database2, and reporting its absence as a leak would
+        // throw a good export away.
+        assert(!mentions(v.problems, "could not read")
+               && "a directory that does not exist is not a directory this failed to read");
+        std::cout << "case 12 (an export with nothing swept is refused, and only for that) OK\n";
+    }
+
+    // A path whose bytes cannot be read comes back as "could not read",
+    // not as a file that was read and found clean. Measured, not
+    // assumed: this case is satisfied by the stream failing to open (a
+    // directory here), and it stays green when the length comparison and
+    // the ios_base::failure catch beside it are removed one at a time.
+    // Those two are for a read that starts and then stops -- a dying
+    // stick giving EIO partway, where libstdc++ throws out of
+    // filebuf::underflow() and another library's underflow just returns
+    // eof with the stream's state bits untouched, since
+    // istreambuf_iterator sets neither. Nothing here can provoke either,
+    // so they are argued rather than tested, and this is the half that
+    // is tested.
+    {
+        const auto swept = infrastructure::readableTextInRawBytes(copy / "rekordbox");
+        assert(!swept && "a path whose bytes could not be read is not a clean file");
+        std::cout << "case 13 (a path whose bytes cannot be read says so) OK\n";
     }
 
     fs::remove_all(root, ec);
-    std::cout << "all cases passed\n";
+    // Said in the last line rather than left to whoever scrolls up: a
+    // run that skipped the two cases proving the central claim is not
+    // the same run as one that made them pass, and "all cases passed" on
+    // its own reads as if it were.
+    if (skipped > 0) {
+        std::cout << "all cases passed, " << skipped << " skipped (see SKIPPED above)\n";
+    } else {
+        std::cout << "all cases passed\n";
+    }
     return 0;
 }

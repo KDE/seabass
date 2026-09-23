@@ -8,6 +8,7 @@
 #include <cctype>
 #include <fstream>
 #include <iterator>
+#include <ios>
 #include <optional>
 #include <set>
 #include <string>
@@ -338,14 +339,32 @@ std::vector<std::string> proseFragments(const std::string &run)
 
 std::optional<std::vector<std::string>> readableTextInRawBytes(const fs::path &file)
 {
+    std::error_code sizeEc;
+    const auto expectedSize = fs::file_size(file, sizeEc);
+    if (sizeEc) {
+        return std::nullopt;
+    }
     std::ifstream in(file, std::ios::binary);
     if (!in) {
         // Was an empty list, which every caller reads as "swept, clean".
         return std::nullopt;
     }
-    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (!in.eof() && in.bad()) {
-        // Stopped partway: what was read says nothing about the rest.
+    std::string bytes;
+    try {
+        bytes.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    } catch (const std::ios_base::failure &) {
+        // libstdc++'s filebuf throws out of underflow() on a read error
+        // (a dying stick gives EIO), straight through this function and
+        // past every caller: the export's staging tree was then left on
+        // disk and the next run refused because it was not empty.
+        return std::nullopt;
+    }
+    // The stream's own state bits say nothing here: istreambuf_iterator
+    // reads through rdbuf() and sets neither eofbit nor badbit, so a
+    // short read looks exactly like a complete one and the prefix would
+    // be reported as the whole file, swept and clean. The length is the
+    // only thing that can tell them apart.
+    if (bytes.size() != expectedSize) {
         return std::nullopt;
     }
     if (bytes.empty()) {

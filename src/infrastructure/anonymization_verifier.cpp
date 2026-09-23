@@ -207,6 +207,9 @@ std::string AnonymizationVerification::describe() const
     return out.str();
 }
 
+namespace
+{
+
 // Every directory this file reads goes through these two, and they exist
 // for one reason: a std::filesystem iterator handed an error_code returns
 // end() when it cannot open the directory, and stops where it stands when
@@ -224,6 +227,13 @@ std::optional<std::string> walkWith(const fs::path &dir, const std::function<voi
 {
     std::error_code ec;
     Iterator it(dir, ec);
+    if (ec == std::errc::no_such_file_or_directory) {
+        // Not there at all is not the same as there and unreadable, and
+        // the callers here ask about trees that legitimately may not
+        // exist: a rekordbox-only export has no engine/Database2, and
+        // reporting that as a leak threw the whole export away.
+        return std::nullopt;
+    }
     if (ec) {
         return "could not read " + dir.string() + ": " + ec.message();
     }
@@ -250,6 +260,8 @@ std::optional<std::string> walkTree(const fs::path &dir, const std::function<voi
 {
     return walkWith<fs::recursive_directory_iterator>(dir, visit);
 }
+
+}  // namespace
 
 AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, int trackSampleSize)
 {
@@ -347,7 +359,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                     if (kindEc) {
                         fail("could not tell what engine/Database2/" + entry.path().filename().string()
                              + " is: " + kindEc.message());
-                    }
+                    }  // filename only: never the local absolute path, see below
                     return;
                 }
                 const std::string name = entry.path().filename().string();
@@ -366,7 +378,14 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             std::error_code kindEc;
             if (!entry.is_regular_file(kindEc) || kindEc) {
                 if (kindEc) {
-                    fail("could not tell what " + entry.path().string() + " is: " + kindEc.message());
+                    // Relative, like every other message here: this
+                    // report is shown to a contributor and pasted into
+                    // bug threads, and a native absolute path carries the
+                    // user's own name in it -- in the one feature whose
+                    // whole job is taking paths out.
+                    std::error_code relEc;
+                    fail("could not tell what " + fs::relative(entry.path(), root, relEc).generic_string()
+                         + " is: " + kindEc.message());
                 }
                 return;
             }
@@ -506,7 +525,9 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         std::error_code kindEc;
         if (!entry.is_regular_file(kindEc) || kindEc) {
             if (kindEc) {
-                fail("could not tell what " + entry.path().string() + " is: " + kindEc.message());
+                std::error_code relEc;
+                fail("could not tell what " + fs::relative(entry.path(), root, relEc).generic_string()
+                     + " is: " + kindEc.message());
             }
             return;
         }
