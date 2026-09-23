@@ -130,6 +130,22 @@ FormatUsbController::~FormatUsbController()
     if (m_monitor) {
         m_monitor->stop();
     }
+    // Waits for a format still running, because m_writeHold is a member
+    // and is released the moment this body returns. Leaving the page
+    // mid-format used to drop the edit lock while the partition was
+    // still being rewritten, so something else in the app could start
+    // writing to the drive being formatted.
+    //
+    // Only awaited, not cancelled. Every sibling controller
+    // (StickBackup, CloneStick) cancels first and then awaits, and this
+    // one has no cancellation token on purpose: a partition rewrite
+    // interrupted halfway is the thing a format exists to avoid
+    // producing. So the wait is the whole of it, and it is the reason
+    // closing this page during a format does not return instantly.
+    //
+    // awaitQuietly() rather than waitForFinished(): the latter rethrows
+    // a stored exception, and a destructor is noexcept.
+    awaitQuietly(m_watcher);
 }
 
 void FormatUsbController::refresh()

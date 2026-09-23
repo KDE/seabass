@@ -1190,9 +1190,16 @@ void LibraryConsistencyController::repairStickFilesystem()
 
 void LibraryConsistencyController::onFilesystemRepairFinished()
 {
-    const auto result = gui::takeResult(m_repairWatcher);
+    // The message goes somewhere. takeResult() without it swallows the
+    // exception and hands back a default result -- repaired false,
+    // declined false, message empty -- so a repair that THREW came out
+    // the other side as setErrorMessage("") and the user was told
+    // nothing at all. Every other takeResult in this file passes it;
+    // this was the one that did not.
+    QString thrown;
+    const auto result = gui::takeResult(m_repairWatcher, &thrown);
     m_repairingFilesystem = false;
-    m_filesystemMessage = QString::fromStdString(result.message);
+    m_filesystemMessage = thrown.isEmpty() ? QString::fromStdString(result.message) : thrown;
     const std::string stickRoot =
         std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
             .parent_path()

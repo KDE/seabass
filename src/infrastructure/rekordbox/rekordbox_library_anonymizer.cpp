@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "infrastructure/anonymization_placeholder.hpp"
+#include "application/path_key.hpp"
 #include "infrastructure/anonymization_export_layout.hpp"
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/onelibrary/onelibrary_anonymizer.hpp"
@@ -466,6 +467,15 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
 
         // already-anonymized name into a different one).
 
+        // Keyed, not spelled. datAnlzPath() and friends build their
+        // strings by concatenating root + "/" + relative, while the
+        // orphan sweep below compares entry.path().string() from a
+        // directory iterator -- a native path. The two agree on POSIX
+        // and do NOT agree on Windows, where the iterator hands back
+        // backslashes, so every analysis file this loop had already
+        // scrubbed looked unvisited to the sweep and was scrubbed a
+        // second time: a doubled failure count, and a placeholder
+        // rewritten from a hash of its own placeholder.
         std::set<std::string> visitedAnlz;
 
 
@@ -770,11 +780,11 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                 // Two rows can name one analysis file, and scrubbing it
                 // twice would report one failure twice and inflate a
                 // count a reader trusts.
-                if (visitedAnlz.count(anlz) > 0) {
+                if (visitedAnlz.count(application::normalizedPathKey(anlz)) > 0) {
                     continue;
                 }
                 scrubOrDrop(anlz, "analysis file");
-                visitedAnlz.insert(anlz);
+                visitedAnlz.insert(application::normalizedPathKey(anlz));
             }
         }
 
@@ -797,7 +807,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                 if (ext != ".DAT" && ext != ".EXT" && ext != ".2EX") {
                     continue;
                 }
-                if (visitedAnlz.count(entry.path().string()) > 0) {
+                if (visitedAnlz.count(application::normalizedPathKey(entry.path().string())) > 0) {
                     continue;
                 }
                 if (slimForTesting) {
