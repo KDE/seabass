@@ -249,7 +249,17 @@ void obfuscatePathSection(std::string &sectionBytes)
     }
     const uint32_t lenHeader = readU32BE(sectionBytes, LenHeaderOffset);
     const uint32_t lenPath = readU32BE(sectionBytes, LenPathOffset);
-    if (lenPath < 4 || lenHeader + lenPath > sectionBytes.size()) {
+    // Widened before adding, and the end checked rather than the sum.
+    // Both are uint32_t, so `lenHeader + lenPath` wraps in 32 bits: a
+    // section claiming len_header = 0xFFFFFFF8 and len_path = 0x10 sums
+    // to 8 and sails past a size check. AnlzFile::readRaw() validates
+    // section framing but never a section's own len_header, so that
+    // section can come off a stick -- and the indexing below is
+    // unchecked operator[], about 4 GB past the buffer. A heap write no
+    // enclosing catch can catch.
+    const std::size_t pathStart = lenHeader;
+    const std::size_t pathEnd = pathStart + static_cast<std::size_t>(lenPath);
+    if (lenPath < 4 || pathStart > sectionBytes.size() || pathEnd > sectionBytes.size()) {
         return;  // defensive: malformed section, leave it alone
     }
     const size_t capacityUnits = lenPath / 2 - 1;  // excludes the trailing NUL

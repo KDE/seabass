@@ -676,6 +676,63 @@ int main()
                   << result.placeholdersTruncated << ") OK\n";
     }
 
+    // A PPTH section whose len_header is nonsense must be left alone,
+    // not indexed with it.
+    //
+    // obfuscatePathSection() guarded with `lenHeader + lenPath >
+    // sectionBytes.size()`, and both are uint32_t, so the sum wraps:
+    // len_header = 0xFFFFFFF8 with len_path = 0x10 adds to 8 and passes
+    // a check meant to stop exactly this. The indexing that follows is
+    // unchecked operator[] about 4 GB past the buffer -- a heap write
+    // outside any catch. AnlzFile::readRaw() validates section framing
+    // but never a section's own len_header, so such a section can come
+    // off a stick.
+    //
+    // Without the fix this is undefined behaviour: the run may crash
+    // rather than reach the assertion. A crash here IS the failure.
+    {
+        const fs::path root2 = root / "hostile-ppth";
+        const fs::path src = root2 / "source";
+        const fs::path dst = root2 / "dest";
+        writeFile(src / "rekordbox" / "export.pdb", buildSyntheticPdb());
+
+        std::string ppth(4, '\0');
+        const uint32_t fourcc = static_cast<uint32_t>(Anlz::SECTION_TAGS_PATH);
+        ppth[0] = static_cast<char>((fourcc >> 24) & 0xFF);
+        ppth[1] = static_cast<char>((fourcc >> 16) & 0xFF);
+        ppth[2] = static_cast<char>((fourcc >> 8) & 0xFF);
+        ppth[3] = static_cast<char>(fourcc & 0xFF);
+        // Written by hand: two appendU32BE overloads are visible here.
+        auto be32 = [&ppth](uint32_t v) {
+            ppth.push_back(static_cast<char>((v >> 24) & 0xFF));
+            ppth.push_back(static_cast<char>((v >> 16) & 0xFF));
+            ppth.push_back(static_cast<char>((v >> 8) & 0xFF));
+            ppth.push_back(static_cast<char>(v & 0xFF));
+        };
+        be32(0xFFFFFFF8u);  // len_header: the wrap
+        be32(28u);          // len_tag, so the framing itself is sane
+        be32(0x10u);        // len_path: 0xFFFFFFF8 + 0x10 wraps to 8
+        ppth += std::string(12, 'p');
+
+        AnlzFile file = blankAnlzFile();
+        file.sections.push_back(AnlzRawSection{fourcc, ppth});
+        const fs::path anlz = src / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT";
+        fs::create_directories(anlz.parent_path());
+        file.writeRaw(anlz.string());
+
+        auto hostile = anonymizeRekordboxLibrary(src.string(), dst.string());
+        assert(hostile.errorMessage.empty() && "a malformed section must not fail the whole export");
+
+        // Left exactly as it was: refused, not partly rewritten.
+        const fs::path out = dst / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT";
+        assert(fs::is_regular_file(out));
+        std::ifstream in(out, std::ios::binary);
+        const std::string after((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        assert(after.find(std::string(12, 'p')) != std::string::npos
+               && "the malformed section's bytes must be untouched");
+        std::cout << "case 14 (a PPTH whose len_header wraps is refused, not indexed) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

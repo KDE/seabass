@@ -1176,8 +1176,28 @@ int PdbRowWriter::zeroUnusedSpace()
                 w.groups = groups;
                 w.pageStart = pageStart;
                 w.lenPage = lenPage;
+                // Only the slots the page says it has allocated. The
+                // generated parser materialises all 16 row_refs per
+                // group whatever num_row_offsets says, so the tail of
+                // them hold whatever u2 was left in the index from an
+                // earlier, larger page. A leftover value that happens to
+                // land inside a live row's heap range becomes a bogus
+                // "row start" below, which truncates that row's
+                // keep-range -- and everything from there to the next
+                // real row, fixed fields, the whole ofs_strings array
+                // and every string, is then zeroed as free space.
+                //
+                // reparsesCleanly() would not catch it: it forces
+                // body(), and an all-zero track row still parses. The
+                // index-slack loop further down already applies exactly
+                // this bound (g * 16 + r < rowOffsets); this loop did
+                // not.
+                size_t slot = 0;
                 for (const auto &group : *page->row_groups()) {
                     for (const auto &row : *group->rows()) {
+                        if (slot++ >= w.rowOffsets) {
+                            continue;
+                        }
                         w.rows.emplace_back(pageStart + static_cast<size_t>(row->row_base()), row->present());
                     }
                 }
