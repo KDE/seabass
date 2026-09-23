@@ -470,8 +470,13 @@ int main()
         CancellationToken token;
         token.cancel();
         Track track = sampleTrack(stick, "Contents/A/one.mp3", "One");
-        const auto summary =
-            metadata.store({track}, sourceFor(stick), NullProgressReporter::instance(), token);
+        const auto summary = metadata.store({track}, sourceFor(stick), NullProgressReporter::instance(), token);
+        // The branch of the invariant that only a cancelled run reaches,
+        // and the run most likely to leave the buckets disagreeing with
+        // tracksSeen, since it stops between tracks. Called here because
+        // this case goes straight to store() rather than through the
+        // helper the other cases use.
+        everyTrackCountedOnce(summary, 1);
         assert(summary.cancelled);
         assert(summary.tracksSeen == 0);
         assert(metadata.trackCount() == 0);

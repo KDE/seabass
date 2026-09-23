@@ -615,21 +615,35 @@ int main()
         writeSyntheticAnlz(badSrc / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
 
         auto result = anonymizeRekordboxLibrary(badSrc.string(), badDst.string());
-        const bool named = std::any_of(result.unremovedUnanonymizableFiles.begin(),
-                                       result.unremovedUnanonymizableFiles.end(),
-                                       [](const std::string &line) {
-                                           return line.find("ANLZ0000.DAT") != std::string::npos
-                                               && line.find("still holds the real path") != std::string::npos;
-                                       });
-        if (!named) {
-            std::cerr << "an analysis file that could not be scrubbed was not reported; the list holds "
-                      << result.unremovedUnanonymizableFiles.size() << " entries\n";
+        // Dropped, not left behind: an analysis file is derived data,
+        // and AnonymizeLibrary produces no export at all when anything
+        // is still in it, so listing this without removing it would let
+        // one truncated file destroy the whole export.
+        assert(result.errorMessage.empty() && "one unscrubbable analysis file must not refuse the export");
+        assert(!fs::exists(badDst / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT")
+               && "a file that could not be scrubbed must not be in the export");
+        assert(result.unremovedUnanonymizableFiles.empty());
+
+        // Exactly one line, and it names the file by where it sits in
+        // the export: rekordbox calls every one of them ANLZ0000.DAT, so
+        // the directory is the only identifying part. One line, because
+        // three reported failures would pass a "does it mention the
+        // name" check just as well.
+        if (result.removedUnanonymizableFiles.size() != 1) {
+            std::cerr << "expected exactly one dropped analysis file, got "
+                      << result.removedUnanonymizableFiles.size() << "\n";
+            for (const auto &line : result.removedUnanonymizableFiles) {
+                std::cerr << "  " << line << "\n";
+            }
         }
-        assert(named && "a file that could not be scrubbed has to be named by the thing that could not scrub it");
-        // The other two are ordinary and must still have been done, or
-        // this case would pass on an anonymizer that reported everything.
-        assert(result.tracksAnonymized == 3);
-        std::cout << "case 12 (an analysis file that cannot be scrubbed is named) OK\n";
+        assert(result.removedUnanonymizableFiles.size() == 1);
+        const std::string &line = result.removedUnanonymizableFiles.front();
+        assert(line.find("USBANLZ/P001/00000001/ANLZ0000.DAT") != std::string::npos
+               && "the line has to say WHICH analysis file, and they are all called ANLZ0000.DAT");
+        assert(line.find("could not be scrubbed") != std::string::npos);
+        assert(line.find(badDst.string()) == std::string::npos
+               && "and not carry the machine's own path into MANIFEST.txt");
+        std::cout << "case 12 (an analysis file that cannot be scrubbed is dropped and named) OK\n";
     }
 
     std::cout << "all cases passed\n";

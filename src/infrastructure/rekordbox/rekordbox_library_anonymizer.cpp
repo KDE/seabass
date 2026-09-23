@@ -298,6 +298,21 @@ void obfuscatePathSection(std::string &sectionBytes)
 // "Defensive only" was the old comment, which is a statement about what
 // cannot happen with nothing enforcing it. A truncated analysis file on
 // a real stick is not exotic.
+// A path, or a message carrying one, with the export's own root taken
+// off the front: what is left is where the file sits INSIDE the export,
+// which is what a contributor can act on and all they should be shown.
+// The machine's own directory layout is not theirs to paste anywhere.
+std::string insideExport(const std::string &text, const std::string &destinationRoot)
+{
+    std::string out = text;
+    for (const std::string &prefix : {destinationRoot + "/", destinationRoot + "\\", destinationRoot}) {
+        for (std::size_t at = out.find(prefix); at != std::string::npos; at = out.find(prefix, at)) {
+            out.erase(at, prefix.size());
+        }
+    }
+    return out;
+}
+
 std::string anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentIndex)
 {
     std::error_code ec;
@@ -691,26 +706,57 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         }
 
         size_t nextCueCommentIndex = 0;
+        // Scrub it, and if that cannot be done, drop it -- the same
+        // shape as every other unanonymizable file here (export.pdb,
+        // exportExt.pdb, the Database2 strays): removed and reported as
+        // removed, and only on the "still in this export" list when the
+        // removal ALSO failed. Listing it without removing it would have
+        // made one truncated analysis file produce no export at all,
+        // since AnonymizeLibrary deletes the staging tree whenever that
+        // list is not empty. An analysis file is derived data; the
+        // export is worth more than the waveform.
+        //
+        // Named by its path inside the export, never by e.what() alone:
+        // rekordbox calls every one of them ANLZ0000.DAT, so the
+        // directory is the only identifying part, and AnlzFile's
+        // messages carry the absolute destination path, which ends up in
+        // MANIFEST.txt and in whatever a contributor pastes into a bug
+        // thread.
+        auto scrubOrDrop = [&](const std::string &anlz, const char *what) {
+            const std::string failure = anonymizeAnlzFile(anlz, nextCueCommentIndex);
+            if (failure.empty()) {
+                return true;
+            }
+            const std::string shown = insideExport(anlz, destinationRoot);
+            const std::string why = insideExport(failure, destinationRoot);
+            std::string removalFailure;
+            if (infrastructure::removeEntry(anlz, removalFailure)) {
+                result.removedUnanonymizableFiles.push_back(shown + " (" + what + ", could not be scrubbed: " + why
+                                                            + ")");
+            } else {
+                result.unremovedUnanonymizableFiles.push_back(shown + " (" + what
+                                                              + ", still holds the real path: " + why
+                                                              + ") and could not be removed: " + removalFailure);
+            }
+            return false;
+        };
+
         for (const auto &t : tracks) {
             if (t.analyzePath.empty()) {
                 continue;
             }
-            // A file that could not be scrubbed still holds the real
-            // path in its PATH section, so it goes on the same list as a
-            // file that could not be dropped: a nonempty list means the
-            // export must not be shared, and the caller says so.
             for (const std::string &anlz : {datAnlzPath(destinationRoot, t.analyzePath),
                                             extAnlzPath(destinationRoot, t.analyzePath),
                                             twoExAnlzPath(destinationRoot, t.analyzePath)}) {
-                if (const std::string failure = anonymizeAnlzFile(anlz, nextCueCommentIndex); !failure.empty()) {
-                    result.unremovedUnanonymizableFiles.push_back(
-                        fs::path(anlz).filename().string() + " (analysis file, still holds the real path): "
-                        + failure);
+                // Two rows can name one analysis file, and scrubbing it
+                // twice would report one failure twice and inflate a
+                // count a reader trusts.
+                if (visitedAnlz.count(anlz) > 0) {
+                    continue;
                 }
+                scrubOrDrop(anlz, "analysis file");
+                visitedAnlz.insert(anlz);
             }
-            visitedAnlz.insert(datAnlzPath(destinationRoot, t.analyzePath));
-            visitedAnlz.insert(extAnlzPath(destinationRoot, t.analyzePath));
-            visitedAnlz.insert(twoExAnlzPath(destinationRoot, t.analyzePath));
         }
 
         reporter.finish();
@@ -747,15 +793,12 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                         ++result.orphanedAnalysisFilesRemoved;
                     } else {
                         result.unremovedUnanonymizableFiles.push_back(
-                            entry.path().filename().string() + " (orphaned analysis file): " + failure);
+                            insideExport(entry.path().string(), destinationRoot)
+                            + " (orphaned analysis file): " + failure);
                     }
                     continue;
                 }
-                if (const std::string failure = anonymizeAnlzFile(entry.path().string(), nextCueCommentIndex);
-                    !failure.empty()) {
-                    result.unremovedUnanonymizableFiles.push_back(
-                        entry.path().filename().string()
-                        + " (orphaned analysis file, still holds the real path): " + failure);
+                if (!scrubOrDrop(entry.path().string(), "orphaned analysis file")) {
                     continue;
                 }
                 ++result.orphanedAnalysisFilesScrubbed;

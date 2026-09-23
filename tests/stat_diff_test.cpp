@@ -70,9 +70,24 @@ void everyEntryInExactlyOneBucket(const TreeWalk &walk, const DiffResult &diff)
         }
     }
     if (in != out) {
+        // Sizes alone would read as agreement for the case that matters
+        // most: one path dropped and another counted twice gives "N
+        // walked, N bucketed" and sends the reader looking in the wrong
+        // place. So the difference is named, both ways round.
         std::cerr << "the diff's buckets do not add up: " << walk.entries.size() << " walked, " << out.size()
                   << " bucketed (" << diff.added.size() << " added, " << diff.changed.size() << " changed, "
                   << diff.unchanged.size() << " unchanged)\n";
+        for (const std::string &path : in) {
+            if (in.count(path) != out.count(path)) {
+                std::cerr << "  " << path << ": walked " << in.count(path) << ", bucketed " << out.count(path)
+                          << "\n";
+            }
+        }
+        for (const std::string &path : out) {
+            if (in.count(path) == 0) {
+                std::cerr << "  " << path << ": bucketed " << out.count(path) << ", never walked\n";
+            }
+        }
     }
     assert(in == out && "every walked entry is added, changed or unchanged, exactly once");
     std::set<std::string> removedOnce;
