@@ -21,6 +21,7 @@
 #include "domain/sync_planning.hpp"
 #include "domain/track.hpp"
 #include "gui/edit/changes/delete_orphan_change.hpp"
+#include "gui/edit/changes/finish_cleanup_change.hpp"
 #include "gui/edit/changes/remove_junk_cue_change.hpp"
 #include "gui/edit/changes/repair_issue_change.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
@@ -115,6 +116,15 @@ int main()
         domain::LibraryConsistencyIssue issue;
         gui::RepairIssueChange change(QStringLiteral("/stick/PIONEER"), issue, 3);
         check(change, "repair", "entries", "repaired");
+    }
+    {
+        // "281 duplicates removed.": what the DJ sees listed twice, and
+        // what happened to it.
+        domain::CleanupLeftover leftover;
+        leftover.kind = domain::CleanupLeftover::Kind::Repairable;
+        leftover.survivor = domain::Track{};
+        gui::FinishCleanupChange change(QStringLiteral("/stick/PIONEER"), leftover, true);
+        check(change, "finish a Clean Up", "duplicates", "removed");
     }
     {
         domain::SyncPlan plan;

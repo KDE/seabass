@@ -851,6 +851,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/copy_cues_change.cpp
         src/gui/edit/changes/delete_orphan_change.hpp
         src/gui/edit/changes/delete_orphan_change.cpp
+        src/gui/edit/changes/finish_cleanup_change.hpp
+        src/gui/edit/changes/finish_cleanup_change.cpp
         src/gui/edit/changes/device_setting_change.hpp
         src/gui/edit/changes/device_setting_change.cpp
         src/gui/edit/changes/merge_cues_change.hpp
@@ -2086,6 +2088,16 @@ if(TARGET seabass_edit)
         target_link_libraries(junk_cue_mirror_failure_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
     add_test(NAME junk_cue_mirror_failure_test COMMAND junk_cue_mirror_failure_test)
+
+    add_executable(finish_cleanup_change_test tests/finish_cleanup_change_test.cpp)
+    target_include_directories(finish_cleanup_change_test PRIVATE src)
+    target_compile_definitions(finish_cleanup_change_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(finish_cleanup_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(finish_cleanup_change_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME finish_cleanup_change_test COMMAND finish_cleanup_change_test)
 
     add_executable(mirror_failure_fails_the_change_test tests/mirror_failure_fails_the_change_test.cpp)
     target_include_directories(mirror_failure_fails_the_change_test PRIVATE src)
