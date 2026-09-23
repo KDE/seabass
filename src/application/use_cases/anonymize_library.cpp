@@ -210,7 +210,10 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
          "    replaced the same way, and the same real track gets the\n"
          "    same placeholder in all three catalogs.\n"
          "  ALSO SCRUBBED AND INCLUDED: your My Tag vocabulary\n"
-         "    (exportExt.pdb). Every tag and category name in it is\n"
+         "    (exportExt.pdb), "
+      + (summary.rekordboxTagsRenamed > 0 ? std::to_string(summary.rekordboxTagsRenamed) + " name(s) replaced.\n"
+                                          : "if this library had one.\n")
+      + "    Every tag and category name in it is\n"
          "    replaced, the same way and for the same reason as the\n"
          "    matching names in the Device Library Plus database. The\n"
          "    file used to be left out entirely; it is kept now only\n"
@@ -327,6 +330,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         summary.rekordboxTracksAnonymized = result.tracksAnonymized;
         summary.rekordboxArtistsRenamed = result.artistsRenamed;
         summary.rekordboxPlaylistsRenamed = result.playlistsRenamed;
+        summary.rekordboxTagsRenamed = result.tagsRenamed;
         summary.rekordboxError = result.errorMessage;
         summary.unanonymizableFilesDropped.insert(summary.unanonymizableFilesDropped.end(),
                                                   result.removedUnanonymizableFiles.begin(),

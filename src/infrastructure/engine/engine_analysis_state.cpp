@@ -57,6 +57,36 @@ AnalysisStateAudit auditAnalysisState(const std::string &engineLibraryPath)
     // "no such column" reported a corrupt library as merely an old one,
     // and an old one has nothing to report -- so an unreadable stick
     // came back reassuring. The probe failing is an error.
+    // Is there a Track table at all? pragma_table_info() on a table that
+    // does not exist returns no rows, so the column probe below counts
+    // zero and reports "no isAnalyzed column" -- which the page reads as
+    // an Engine 1.x library, i.e. nothing to worry about. A half-created
+    // or empty m.db would therefore come back reassuring, which is the
+    // exact failure the probe below was hardened against one step
+    // earlier. Asked separately because the two answers are different
+    // sentences.
+    {
+        sqlite3_stmt *table = nullptr;
+        bool hasTrackTable = false;
+        if (sqlite3_prepare_v2(handle,
+                               "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='Track';", -1,
+                               &table, nullptr)
+                == SQLITE_OK
+            && sqlite3_step(table) == SQLITE_ROW) {
+            hasTrackTable = sqlite3_column_int(table, 0) == 1;
+        } else {
+            audit.error = std::string("could not read the Engine schema: ") + sqlite3_errmsg(handle);
+        }
+        sqlite3_finalize(table);
+        if (!audit.error.empty() || !hasTrackTable) {
+            if (audit.error.empty()) {
+                audit.error = "this Engine database has no Track table";
+            }
+            sqlite3_close(handle);
+            return audit;
+        }
+    }
+
     {
         sqlite3_stmt *shape = nullptr;
         const bool prepared =

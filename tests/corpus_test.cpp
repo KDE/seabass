@@ -1827,16 +1827,40 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
     //
     // Keyed by basename + hot cue number + rounded position, which is
     // what the comparison below matches on.
-    std::set<std::string> mirrorCuesBefore;
+    // Keyed by file and hot cue SLOT, with the positions kept as a list
+    // and compared with samePosition() -- not folded into the key.
+    //
+    // An exact key was the first version and it was wrong in the
+    // direction that matters here. Positions round-trip through each
+    // format's own units, which is why samePosition() has a 1 ms
+    // tolerance a few hundred lines up; a cue the OneLibrary copy
+    // already holds at 61234.6 against a plan at 61234.0 rounds to
+    // 61235 and 61234, misses, and is counted as one the mirror had to
+    // write. That feeds both the reserved sample slots and the
+    // "exercised" tally below -- so the check built to stop this case
+    // reporting vacuous green could have reported it itself, one
+    // rounding away.
+    std::map<std::string, std::vector<double>> mirrorCuesBefore;
     auto basenameKey = [](std::string path) {
         while (!path.empty() && path.back() == ' ') {
             path.pop_back();
         }
         return fs::path(path).filename().string();
     };
-    auto cueKey = [&basenameKey](const std::string &path, int hotCueNumber, double positionMs) {
-        return basenameKey(path) + "|" + std::to_string(hotCueNumber) + "|"
-            + std::to_string(static_cast<long long>(positionMs + 0.5));
+    auto slotKey = [&basenameKey](const std::string &path, int hotCueNumber) {
+        return basenameKey(path) + "|" + std::to_string(hotCueNumber);
+    };
+    auto mirrorAlreadyHad = [&](const std::string &path, int hotCueNumber, double positionMs) {
+        const auto it = mirrorCuesBefore.find(slotKey(path, hotCueNumber));
+        if (it == mirrorCuesBefore.end()) {
+            return false;
+        }
+        for (double had : it->second) {
+            if (samePosition(had, positionMs)) {
+                return true;
+            }
+        }
+        return false;
     };
     const bool haveMirror = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string());
     if (haveMirror) {
@@ -1845,7 +1869,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
             for (const auto &t : reader.readAll()) {
                 for (const auto &c : t.cues) {
                     if (c.kind == domain::CuePoint::Kind::Hot) {
-                        mirrorCuesBefore.insert(cueKey(t.filePath, c.hotCueNumber, c.positionMs));
+                        mirrorCuesBefore[slotKey(t.filePath, c.hotCueNumber)].push_back(c.positionMs);
                     }
                 }
             }
@@ -1875,7 +1899,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
         }
         for (const auto &c : plan.cuesToApply) {
             if (c.kind == domain::CuePoint::Kind::Hot
-                && mirrorCuesBefore.count(cueKey(target.filePath, c.hotCueNumber, c.positionMs)) == 0) {
+                && !mirrorAlreadyHad(target.filePath, c.hotCueNumber, c.positionMs)) {
                 return true;
             }
         }
@@ -2073,7 +2097,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
                 }
                 ++checked;
                 const bool wasAlreadyThere =
-                    mirrorCuesBefore.count(cueKey(mirrored->filePath, planned.hotCueNumber, planned.positionMs)) > 0;
+                    mirrorAlreadyHad(mirrored->filePath, planned.hotCueNumber, planned.positionMs);
                 if (!wasAlreadyThere) {
                     ++exercised;
                 }

@@ -601,7 +601,11 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                     // this, a DJ who renamed a My Tag ships the old name.
                     // The committed fixture has no dead tag rows, which is
                     // why its absence went unnoticed.
-                    extWriter.zeroUnusedSpace();
+                    // Added to the same total export.pdb's sweep reports.
+                    // Discarding it meant the manifest under-stated what
+                    // had been swept, on the one file whose slack this
+                    // series added the sweep for.
+                    result.freeBytesZeroed += extWriter.zeroUnusedSpace();
                     // No rows means nothing was rewritten, and an empty
                     // vocabulary and a file this code could not read look
                     // identical from here. Treated as a failure, because

@@ -60,6 +60,11 @@ struct AnonymizationSummary
     int rekordboxTracksAnonymized = 0;
     int rekordboxArtistsRenamed = 0;
     int rekordboxPlaylistsRenamed = 0;
+    // My Tag and tag category names rewritten in exportExt.pdb. Carried
+    // so the manifest can put a number behind its claim that every one
+    // of them is replaced; zero is correct for a library with no My Tags
+    // and for one whose exportExt.pdb was dropped instead of scrubbed.
+    int rekordboxTagsRenamed = 0;
     std::string rekordboxError;  // empty on success
 
     bool engineAttempted = false;

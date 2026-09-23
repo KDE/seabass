@@ -318,11 +318,15 @@ bool reparsesCleanly(const std::string &buffer, bool isExt)
             // parsed nothing -- a verification that cannot fail, which
             // is worse than none because commit() trusts it. The rows
             // are reached through body_ext(), not body().
+            // EVERY ext table, not only the tags one. zeroUnusedSpace()
+            // clears the free space between rows on tag_tracks pages too
+            // (Shape::ExtOther), so a bad heap_pos or row-start there
+            // would destroy tag-to-track assignments -- and a check that
+            // walked only the tags tables would wave it through. The
+            // point of this function is that a bug in this class never
+            // reaches disk; it cannot do that for pages it does not read.
             bool sawARow = false;
             for (const auto &table : *pdb.tables()) {
-                if (table->type_ext() != Pdb::PAGE_TYPE_EXT_TAGS) {
-                    continue;
-                }
                 forEachDataPage(*table, [&](Pdb::page_t *page) {
                     for (const auto &group : *page->row_groups()) {
                         for (const auto &row : *group->rows()) {
@@ -334,8 +338,8 @@ bool reparsesCleanly(const std::string &buffer, bool isExt)
                     }
                 });
             }
-            // A tags table that parsed to nothing is how a bad edit
-            // would present itself, so it is a failure rather than a
+            // An ext file that parsed to no rows at all is how a bad
+            // edit presents itself, so it is a failure rather than a
             // quiet pass.
             return sawARow;
         }
@@ -850,13 +854,6 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
                         }
                         rowBodyOffsets.push_back(static_cast<size_t>(pdb.len_page()) * page->page_index()
                                                  + static_cast<size_t>(row->row_base()));
-                        // commit() bumps the sequence of every page
-                        // recorded here and refuses outright when the
-                        // set is empty. Leaving it out made the whole
-                        // rewrite land in memory and then be thrown
-                        // away, with commit() returning false and
-                        // nothing saying why.
-                        m_editedPageIndices.insert(page->page_index());
                     }
                 }
             });
@@ -887,16 +884,37 @@ int PdbRowWriter::overwriteAllTagNames(const std::function<std::string(size_t)> 
         if (lenPage == 0 || nameAt < base || nameAt >= pageEnd) {
             continue;
         }
+        // Where the write ENDS, not only where it starts. The first
+        // version of this guard checked the offset and stopped there,
+        // and the length is the other file-supplied number:
+        // overwriteDeviceSqlStringInPlace() writes textCapacityBytes,
+        // which for a long string is a u2 read straight out of the file.
+        // A name that begins inside the page and claims to be longer
+        // than the page still walks into the next one, which is the same
+        // bug the offset check was added for, one field along.
+        // tagRowKeepRanges() had this test from the start; this did not.
+        const DeviceSqlStringSpan span = readDeviceSqlStringSpan(m_buffer, nameAt);
+        if (span.totalBytes == 0 || nameAt + span.totalBytes > pageEnd) {
+            continue;
+        }
         // Counted only when there was somewhere to write. A
         // device_sql_string with no text capacity takes the overwrite
         // and keeps its bytes, so counting the visit rather than the
         // change would let the anonymizer's `renamed > 0` guard pass,
         // and tools/anonymize_export_ext report "rewrote N tag name(s)",
         // with every real name still in the file.
-        if (readDeviceSqlStringSpan(m_buffer, nameAt).textCapacityBytes == 0) {
+        if (span.textCapacityBytes == 0) {
             continue;
         }
         overwriteDeviceSqlStringInPlace(m_buffer, nameAt, placeholder(i));
+        // Recorded HERE, beside the write, not in the scan loop above.
+        // commit() refuses when this set is empty and its comment relies
+        // on "empty means nothing was edited"; filling it while merely
+        // looking at rows broke that, so a run where every row was
+        // skipped still presented itself as having edited pages. Both
+        // callers happen to short-circuit on a zero return today, which
+        // is the only reason it did not matter.
+        m_editedPageIndices.insert(static_cast<uint32_t>(pageOfRow));
         ++replaced;
     }
     return replaced;

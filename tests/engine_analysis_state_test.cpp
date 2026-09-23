@@ -136,6 +136,24 @@ void anAbsentLibraryIsNotAnError(const fs::path &scratch)
                  "distinguishable from an old one\n";
 }
 
+// A valid database with no Track table. Separate from the garbage-bytes
+// case, because that one fails at prepare() and this one does not: the
+// file opens, the schema query runs, and only the table is missing. It
+// used to read as "no isAnalyzed column", which the page renders as an
+// Engine 1.x library with nothing to report -- a reassurance about a
+// database that cannot answer the question at all.
+void aDatabaseWithNoTrackTableIsAnError(const fs::path &scratch)
+{
+    const fs::path root = scratch / "no-track-table";
+    makeLibrary(root, "CREATE TABLE Information (id INTEGER PRIMARY KEY);", "");
+    const AnalysisStateAudit audit = auditAnalysisState(root.string());
+    assert(audit.libraryPresent);
+    assert(!audit.error.empty() && "a database with no Track table is a question unanswered, not an old schema");
+    assert(!audit.hasColumn);
+    assert(!audit.worthReporting());
+    std::cout << "  a database with no Track table: an error, not an old schema\n";
+}
+
 void anUnreadableDatabaseIsAnError(const fs::path &scratch)
 {
     const fs::path root = scratch / "corrupt";
@@ -171,6 +189,7 @@ int main(int argc, char **argv)
     anOldSchemaIsNotZero(scratch);
     aNullFlagCountsAsNotAnalysed(scratch);
     anAbsentLibraryIsNotAnError(scratch);
+    aDatabaseWithNoTrackTableIsAnError(scratch);
     anUnreadableDatabaseIsAnError(scratch);
 
     fs::remove_all(scratch);
