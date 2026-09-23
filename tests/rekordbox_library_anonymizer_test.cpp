@@ -598,6 +598,40 @@ int main()
         std::cout << "case 11 (an exportExt.pdb that cannot be scrubbed is removed and reported) OK\n";
     }
 
+    // An analysis file that cannot be scrubbed is named, not swallowed.
+    // Its PATH section holds the audio file's real path -- artist, album
+    // and title on a typical library -- and MANIFEST.txt promises a
+    // contributor that those are gone. The verifier refuses such an
+    // export, but from a check that cannot say which file went wrong;
+    // this is the one that can.
+    {
+        const fs::path badSrc = root / "anlz-bad-source";
+        const fs::path badDst = root / "anlz-bad-dest";
+        writeFile(badSrc / "rekordbox" / "export.pdb", buildSyntheticPdb());
+        // Track 100's analysis file, the right name in the right place
+        // and not an ANLZ file at all: readRaw() throws on it.
+        writeFile(badSrc / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT", std::string(512, '\x7f'));
+        writeSyntheticAnlz(badSrc / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(badSrc / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
+
+        auto result = anonymizeRekordboxLibrary(badSrc.string(), badDst.string());
+        const bool named = std::any_of(result.unremovedUnanonymizableFiles.begin(),
+                                       result.unremovedUnanonymizableFiles.end(),
+                                       [](const std::string &line) {
+                                           return line.find("ANLZ0000.DAT") != std::string::npos
+                                               && line.find("still holds the real path") != std::string::npos;
+                                       });
+        if (!named) {
+            std::cerr << "an analysis file that could not be scrubbed was not reported; the list holds "
+                      << result.unremovedUnanonymizableFiles.size() << " entries\n";
+        }
+        assert(named && "a file that could not be scrubbed has to be named by the thing that could not scrub it");
+        // The other two are ordinary and must still have been done, or
+        // this case would pass on an anonymizer that reported everything.
+        assert(result.tracksAnonymized == 3);
+        std::cout << "case 12 (an analysis file that cannot be scrubbed is named) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

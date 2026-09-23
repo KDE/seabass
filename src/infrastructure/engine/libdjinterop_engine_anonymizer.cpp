@@ -202,15 +202,39 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
         // kept: OverviewData holds the low-resolution waveform previews,
         // which are derived numbers with no text in them.
         {
-            std::error_code listEc;
             const fs::path databaseDir = fs::path(destinationRoot) / "Database2";
             std::vector<fs::path> unknown;
-            for (const auto &entry : fs::directory_iterator(databaseDir, listEc)) {
-                if (!entry.is_regular_file()) {
-                    continue;
+            // The listing's own error used to go into an error_code
+            // nothing read, and a directory_iterator that cannot open
+            // returns end(): the loop ran zero times, `unknown` stayed
+            // empty, and the run reported it had dropped everything it
+            // needed to having examined no file at all. What stays
+            // behind in that case is hm.db, the play history, with real
+            // titles, artists, albums, paths and which set each track
+            // was played in.
+            std::error_code listEc;
+            fs::directory_iterator entry(databaseDir, listEc);
+            if (listEc) {
+                result.errorMessage = "could not list " + databaseDir.string() + ": " + listEc.message()
+                    + " -- so the files that have no anonymizer could not be found, let alone dropped";
+                return result;
+            }
+            for (const fs::directory_iterator end; entry != end;) {
+                std::error_code kindEc;
+                const bool isFile = entry->is_regular_file(kindEc);
+                if (kindEc) {
+                    result.errorMessage = "could not tell what " + entry->path().filename().string()
+                        + " in Database2 is: " + kindEc.message();
+                    return result;
                 }
-                if (!isKeptEngineDatabaseFile(entry.path().filename().string())) {
-                    unknown.push_back(entry.path());
+                if (isFile && !isKeptEngineDatabaseFile(entry->path().filename().string())) {
+                    unknown.push_back(entry->path());
+                }
+                entry.increment(listEc);
+                if (listEc) {
+                    result.errorMessage = "stopped listing " + databaseDir.string() + ": " + listEc.message()
+                        + " -- so the rest of it was never examined";
+                    return result;
                 }
             }
             for (const auto &path : unknown) {

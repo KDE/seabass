@@ -282,11 +282,35 @@ void obfuscatePathSection(std::string &sectionBytes)
     sectionBytes[lenHeader + capacityUnits * 2 + 1] = 0x00;
 }
 
-void anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentIndex)
+// Returns why the file could not be scrubbed, or an empty string when it
+// was (or when there is no such file, which is ordinary: a track may
+// have a .DAT and no .EXT).
+//
+// It used to swallow every exception and return. What stays behind then
+// is an analysis file in the export with its PATH section intact, and
+// that section holds the audio file's real path -- artist, album and
+// title, on a typical library -- which MANIFEST.txt promises a
+// contributor was removed. The verifier refuses such an export, so
+// nothing leaked; but the refusal arrives from the check that does not
+// know what went wrong, and says "this export did not verify" instead
+// of naming the file it could not scrub.
+//
+// "Defensive only" was the old comment, which is a statement about what
+// cannot happen with nothing enforcing it. A truncated analysis file on
+// a real stick is not exotic.
+std::string anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentIndex)
 {
     std::error_code ec;
-    if (!fs::exists(path, ec)) {
-        return;
+    const bool there = fs::exists(path, ec);
+    if (ec) {
+        // exists() answers false for both "not there" and "could not
+        // look", and only the error code tells them apart. Reported,
+        // because a file this could not examine is a file it did not
+        // scrub.
+        return "could not tell whether it is there: " + ec.message();
+    }
+    if (!there) {
+        return {};
     }
     try {
         AnlzFile file = AnlzFile::readRaw(path);
@@ -311,9 +335,10 @@ void anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentIndex)
         if (file.sections.size() != before || hadCues2 || pathScrubbed) {
             file.writeRaw(path);
         }
-    } catch (const std::exception &) {
-        // Defensive only -- see comment above.
+    } catch (const std::exception &e) {
+        return std::string("could not read or rewrite it: ") + e.what();
     }
+    return {};
 }
 
 void copyTreeIfPresent(const fs::path &from, const fs::path &to)
@@ -670,9 +695,19 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             if (t.analyzePath.empty()) {
                 continue;
             }
-            anonymizeAnlzFile(datAnlzPath(destinationRoot, t.analyzePath), nextCueCommentIndex);
-            anonymizeAnlzFile(extAnlzPath(destinationRoot, t.analyzePath), nextCueCommentIndex);
-            anonymizeAnlzFile(twoExAnlzPath(destinationRoot, t.analyzePath), nextCueCommentIndex);
+            // A file that could not be scrubbed still holds the real
+            // path in its PATH section, so it goes on the same list as a
+            // file that could not be dropped: a nonempty list means the
+            // export must not be shared, and the caller says so.
+            for (const std::string &anlz : {datAnlzPath(destinationRoot, t.analyzePath),
+                                            extAnlzPath(destinationRoot, t.analyzePath),
+                                            twoExAnlzPath(destinationRoot, t.analyzePath)}) {
+                if (const std::string failure = anonymizeAnlzFile(anlz, nextCueCommentIndex); !failure.empty()) {
+                    result.unremovedUnanonymizableFiles.push_back(
+                        fs::path(anlz).filename().string() + " (analysis file, still holds the real path): "
+                        + failure);
+                }
+            }
             visitedAnlz.insert(datAnlzPath(destinationRoot, t.analyzePath));
             visitedAnlz.insert(extAnlzPath(destinationRoot, t.analyzePath));
             visitedAnlz.insert(twoExAnlzPath(destinationRoot, t.analyzePath));
@@ -716,7 +751,13 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                     }
                     continue;
                 }
-                anonymizeAnlzFile(entry.path().string(), nextCueCommentIndex);
+                if (const std::string failure = anonymizeAnlzFile(entry.path().string(), nextCueCommentIndex);
+                    !failure.empty()) {
+                    result.unremovedUnanonymizableFiles.push_back(
+                        entry.path().filename().string()
+                        + " (orphaned analysis file, still holds the real path): " + failure);
+                    continue;
+                }
                 ++result.orphanedAnalysisFilesScrubbed;
             }
         }
