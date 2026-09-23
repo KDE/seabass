@@ -60,6 +60,35 @@ fs::path scratch(const std::string &name)
     return base;
 }
 
+#ifdef _WIN32
+// Bare "bash" depends on the launching process's own PATH reaching a
+// bash.exe, which held from an interactive MSYS/git-bash shell (this
+// file's own child processes inherit that shell's PATH) and did not
+// hold under ctest -j: "'bash' is not recognized as an internal or
+// external command" -- ctest.exe is a native binary, and whatever
+// spawns it does not necessarily hand its own children a PATH with any
+// bash.exe on it, even on a machine where several exist. Git for
+// Windows is the one bash this project can assume -- git itself is
+// required for every other line in this file -- and its own install
+// always carries bash.exe at these two fixed locations relative to
+// %ProgramFiles%, checked before falling back to a bare PATH search.
+std::string resolveBashCommand()
+{
+    char programFiles[MAX_PATH] = {};
+    DWORD len = ::GetEnvironmentVariableA("ProgramFiles", programFiles, sizeof(programFiles));
+    if (len > 0 && len < sizeof(programFiles)) {
+        for (const char *candidate : {"\\Git\\bin\\bash.exe", "\\Git\\usr\\bin\\bash.exe"}) {
+            const fs::path path = std::string(programFiles) + candidate;
+            std::error_code ec;
+            if (fs::is_regular_file(path, ec)) {
+                return "\"" + path.generic_string() + "\"";
+            }
+        }
+    }
+    return "bash";
+}
+#endif
+
 int run(const std::string &command)
 {
 #ifdef _WIN32
@@ -105,7 +134,7 @@ int run(const std::string &command)
         std::ofstream script(scriptPath, std::ios::binary);
         script << command << "\n";
     }
-    const std::string status = "bash " + scriptPath.generic_string();
+    const std::string status = resolveBashCommand() + " " + scriptPath.generic_string();
     const int result = std::system(status.c_str());
     std::error_code ec;
     fs::remove(scriptPath, ec);
