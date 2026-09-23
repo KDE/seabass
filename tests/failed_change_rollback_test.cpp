@@ -595,6 +595,61 @@ int main()
         }
     }
 
+    {
+        // Case 9: a change that redirects a write and then protects
+        // another file must not have its checkpoints overwrite each
+        // other.
+        //
+        // protectForThisChange() named each copy after m_checkpoints
+        // .size(), and redirectWrites() ERASES from that vector and
+        // deletes the copy. So the next protect reused a name still in
+        // use, copy_file(overwrite_existing) wrote over another
+        // checkpoint's saved bytes, and the rollback then restored one
+        // file's contents onto a different file -- reporting success.
+        //
+        // Three protects and one redirect are enough: A gets copy "0",
+        // B gets "1", the redirect erases A and drops size() to 1, and
+        // protecting C writes copy "1" over B's.
+        //
+        // Reproduction designed by the session that found it. Two points
+        // of its design kept deliberately: it drives redirectWrites()
+        // directly rather than through FormatWriteSession, so it does
+        // not break when that class changes; and it asserts BOTH files,
+        // because fileC restoring correctly is what shows the rollback
+        // ran at all -- without it, a rollback that simply never
+        // happened would look the same as the bug.
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_collide");
+        const fs::path &stick = scratch.path;
+        const fs::path fileA = stick / "PIONEER" / "a.DAT";
+        const fs::path fileB = stick / "PIONEER" / "b.DAT";
+        const fs::path fileC = stick / "PIONEER" / "c.DAT";
+        write(fileA, "A-original");
+        write(fileB, "B-original");
+        write(fileC, "C-original");
+
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>(
+                "collide", std::vector<std::string>{fileA.string(), fileB.string()}, [&](SaveContext &inner) {
+                    const fs::path scratch = stick / "scratch-a.DAT";
+                    write(scratch, "A-scratch");
+                    inner.redirectWrites(fileA.string(), scratch.string());
+                    inner.protectForThisChange(fileC.string());
+                    write(fileC, "C-written");
+                    write(fileB, "B-written");
+                    return ChangeOutcome::failure("and then it failed");
+                }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        assert(result.appliedIds.isEmpty());
+
+        assert(read(fileC) == "C-original" && "the rollback ran and put the third file back");
+        assert(read(fileB) == "B-original"
+               && "and the second file is NOT restored from the third file's copy");
+        std::cout << "case 9 (a redirect does not make two checkpoints share a name) OK\n";
+    }
+
     std::cout << "failed_change_rollback_test: all cases passed\n";
     return 0;
 }

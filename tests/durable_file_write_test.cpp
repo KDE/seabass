@@ -134,6 +134,57 @@ int main()
     }
 #endif
 
+    // copyFileDurablyAtomic refuses a source it cannot read WHOLE, and
+    // leaves the target alone.
+    //
+    // It used to do `buffer << in.rdbuf()` and then `if (in.bad())`,
+    // which cannot fire: extraction through the streambuf never touches
+    // the ifstream's state bits. Measured on both platforms -- a damaged
+    // stick on libstdc++ gave 131072 of 274432 bytes with bad=0 fail=0
+    // eof=0, and a refused read on libc++ gave 0 bytes with the same
+    // three clear. So a half-read file was written durably and
+    // atomically over the target and the call returned true, against a
+    // header promising the opposite. Its two callers are the rollback
+    // putting a checkpoint back and the commit of a scratch-built
+    // catalog onto the stick.
+    //
+    // Provoked with a source the kernel refuses to read rather than with
+    // damaged media: a directory. Verified to fail against the original
+    // implementation, which returned true and wrote an empty file over
+    // the target.
+    //
+    // What it does NOT reach, stated so nobody reads more into it: this
+    // takes the branch where fs::file_size ITSELF fails. The other
+    // branch -- a size that reads fine and a body that stops halfway,
+    // which is what a dying stick actually does -- cannot be provoked
+    // here without damaged media. It was measured by hand on one
+    // (131072 of 274432 bytes, every state bit clear) and that
+    // measurement is the evidence for the comparison in the function.
+    // If anyone gets a damaged volume onto a test machine, this is the
+    // case to extend.
+    {
+        const fs::path target = root / "copy-target.db";
+        writeFileDurablyAtomic(target.string(), "the good database");
+        const fs::path unreadable = root / "a-directory";
+        fs::create_directories(unreadable);
+
+        const bool ok = copyFileDurablyAtomic(unreadable.string(), target.string());
+        assert(!ok && "a source that cannot be read whole must be refused");
+        assert(readFile(target) == "the good database" && "and the target must be untouched");
+        std::cout << "case 6 (a source that cannot be read whole -> refused, target survives) OK\n";
+    }
+
+    // The other half, without which case 6 would hold for a function
+    // that had simply stopped copying anything.
+    {
+        const fs::path source = root / "copy-source.db";
+        const fs::path target = root / "copy-target-2.db";
+        writeFileDurablyAtomic(source.string(), "bytes worth copying");
+        assert(copyFileDurablyAtomic(source.string(), target.string()));
+        assert(readFile(target) == "bytes worth copying");
+        std::cout << "case 6b (a readable source still copies) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all cases passed\n";
     return 0;

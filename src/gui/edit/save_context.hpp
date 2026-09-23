@@ -295,6 +295,13 @@ private:
     bool m_inChange = false;
     std::optional<infrastructure::ScratchDirGuard> m_checkpointDir;
     std::vector<Checkpoint> m_checkpoints;
+    // Names the checkpoint copies, and NEVER goes down. m_checkpoints
+    // used to name them by its own size(), and redirectWrites() erases
+    // from that vector -- so the next protect reused a name still in use
+    // and copy_file(overwrite_existing) wrote over another checkpoint's
+    // saved bytes. A rollback then restored one file's contents onto a
+    // different file and reported success.
+    std::size_t m_nextCheckpointName = 0;
     std::set<std::string> m_protected;               // normalizedPathKey, this change
     std::map<std::string, std::string> m_redirects;  // normalizedPathKey(live) -> written
     std::vector<std::function<void(bool)>> m_changeEndHooks;

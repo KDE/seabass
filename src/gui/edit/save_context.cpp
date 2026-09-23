@@ -413,7 +413,10 @@ void SaveContext::protectForThisChange(const std::string &file)
                                          + " MB in " + m_checkpointDir->path.parent_path().string() + ", "
                                          + std::to_string(available / (1024 * 1024)) + " MB free");
             }
-            checkpoint.copy = (m_checkpointDir->path / std::to_string(m_checkpoints.size())).string();
+            // A counter, not m_checkpoints.size(): see the member's own
+            // comment. The vector shrinks under redirectWrites() and the
+            // names must not be reissued when it does.
+            checkpoint.copy = (m_checkpointDir->path / std::to_string(m_nextCheckpointName++)).string();
             fs::copy_file(member, checkpoint.copy, fs::copy_options::overwrite_existing);
         }
         m_checkpoints.push_back(std::move(checkpoint));

@@ -5,6 +5,7 @@
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/work_counters.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -238,16 +239,46 @@ bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
 
 bool copyFileDurablyAtomic(const std::string &sourcePath, const std::string &targetPath)
 {
+    // The size first, and it is the whole guard. `buffer << in.rdbuf()`
+    // used to be followed by `if (in.bad())`, which cannot fire:
+    // extraction through the streambuf never touches the ifstream's
+    // state bits, so a read that stops halfway leaves the stream
+    // looking untouched. Measured on both platforms rather than argued:
+    //
+    //   Linux, libstdc++, a damaged stick   got 131072 of 274432,
+    //                                       bad=0 fail=0 eof=0
+    //   macOS, libc++, a refused read       got 0,
+    //                                       bad=0 fail=0 eof=0
+    //
+    // Nothing is set anywhere. So this wrote a truncated file durably
+    // and atomically over the target and returned true -- against a
+    // header that promises the opposite -- and its two callers are the
+    // rollback putting a checkpoint back and the commit of a
+    // scratch-built catalog onto the stick. A dying stick could have a
+    // half-read catalog written over its good one, reported as success.
+    //
+    // Not badbit, because badbit does not survive the platform (see
+    // FileEntrySource::readFailed(), fixed for the same reason): what
+    // was read has to equal what the file says it holds.
+    std::error_code sizeEc;
+    const std::uintmax_t declared = fs::file_size(sourcePath, sizeEc);
+    if (sizeEc) {
+        return false;
+    }
     std::ifstream in(sourcePath, std::ios::binary);
     if (!in) {
         return false;
     }
     std::ostringstream buffer;
     buffer << in.rdbuf();
-    if (in.bad()) {
+    const std::string bytes = buffer.str();
+    // An empty source is indistinguishable from failing at byte 0, which
+    // is why the comparison is against the declared size rather than
+    // against zero.
+    if (bytes.size() != declared) {
         return false;
     }
-    return writeFileDurablyAtomic(targetPath, buffer.str());
+    return writeFileDurablyAtomic(targetPath, bytes);
 }
 
 }  // namespace seabass::infrastructure
