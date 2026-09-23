@@ -211,16 +211,23 @@ public:
     // them apart from the index. That is deliberate: which of the two a
     // row is says nothing a fixture needs, and a placeholder that
     // announced "CATEGORY" would leak the structure it was hiding.
-    // `rowsLeftAlone`, when given, receives the number of present tag
-    // rows this could NOT rewrite -- an offset that leaves its page, a
-    // field with no capacity, a placeholder the field cannot represent.
+    // `rowsLeftAlone` receives the number of present tag rows this could
+    // NOT rewrite -- an offset that leaves its page, a field with no
+    // capacity, a placeholder the field cannot represent.
     //
-    // Callers must look at it. A row skipped here keeps the name it
-    // already had, and in an anonymiser that is a My Tag a DJ typed. The
-    // return value counts rows REWRITTEN, so 27 of 28 still reads as a
-    // positive number and the one real name goes out with the export.
-    int overwriteAllTagNames(const std::function<std::string(size_t index)> &placeholder,
-                             int *rowsLeftAlone = nullptr);
+    // Required, with no default, and that is the point. A row skipped
+    // here keeps the name it already had, and in an anonymiser that is a
+    // My Tag a DJ typed; the return value counts rows REWRITTEN, so 27
+    // of 28 reads as a positive number while one real name goes out with
+    // the export. A comment telling callers to look at it is a note, not
+    // a guarantee (docs/write-path-rules.md), and it had already failed
+    // to be one: tools/anonymize_export_ext.cpp took the default, said
+    // "rewrote N tag name(s)", and regenerated the committed fixture
+    // with whatever it could not touch left in.
+    //
+    // Taking it away means every caller has to decide, and a new one
+    // cannot fail to by doing nothing.
+    int overwriteAllTagNames(const std::function<std::string(size_t index)> &placeholder, int *rowsLeftAlone);
 
     // Replaces the name in every present row of `table` with
     // placeholder(index), and returns how many rows were rewritten.

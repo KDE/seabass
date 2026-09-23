@@ -120,7 +120,10 @@ int main()
     int rewritten = 0;
     {
         PdbRowWriter writer(working.string(), PdbRowWriter::Format::ExportExt);
-        rewritten = writer.overwriteAllTagNames([](size_t i) { return "Zzzz" + std::to_string(i + 1); });
+        int leftAloneHere = 0;
+        rewritten = writer.overwriteAllTagNames([](size_t i) { return "Zzzz" + std::to_string(i + 1); },
+                                               &leftAloneHere);
+        assert(leftAloneHere == 0 && "every present row was rewritten");
         std::cout << "rewritten: " << rewritten << "\n";
         assert(rewritten == static_cast<int>(before.size()));
         assert(writer.commit());
@@ -267,7 +270,9 @@ int main()
     // flag finds no rows and reports success.
     {
         PdbRowWriter wrongFormat(working.string());
-        assert(wrongFormat.overwriteAllTagNames([](size_t) { return "x"; }) == 0);
+        int leftAloneWrongFormat = -1;
+        assert(wrongFormat.overwriteAllTagNames([](size_t) { return "x"; }, &leftAloneWrongFormat) == 0);
+        assert(leftAloneWrongFormat == 0 && "a writer of the wrong format left no tag row behind, it saw none");
     }
 
     fs::remove_all(scratch);
