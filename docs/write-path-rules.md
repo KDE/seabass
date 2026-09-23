@@ -89,6 +89,44 @@ and a false success is at least visible in a log. Corrupted bytes in a
 DJ's library are found at a gig, months later, by the person who needed
 them.
 
+### "Cannot represent" is not "cannot fit"
+
+The rule refuses what the field **cannot represent**. It does not refuse
+what the field represents by a documented lossy contract, and the two
+look alike enough that a careful reader has already mistaken one for the
+other.
+
+`PdbRowWriter` cannot resize a row: a pdb row that grew would have to
+reflow its page, so every overwrite preserves the field's on-disk byte
+length and text longer than the span is **truncated to fit**. That is
+the class's stated contract, not an accident, and the anonymizer -- the
+only production caller -- depends on it. `anonymizationPlaceholder()`
+puts its hash *before* the human-readable word precisely because
+truncation eats the tail, and a short field would otherwise leave every
+track with the same `Trac` prefix.
+
+So "make truncation refuse, the caller is not being told" would break
+anonymisation on every short field, in the name of this document.
+
+The distinction to apply:
+
+| | |
+|---|---|
+| **Cannot represent** | The write would produce *different* content: non-ASCII through a byte-per-code-unit path, a value the field has no encoding for. **Refuse.** |
+| **Cannot fit** | The write produces *less* content, by a contract the caller chose and the format forces. **Do it, and make sure the loss is visible somewhere.** |
+
+For truncation, "visible somewhere" is the open end. Nothing counts how
+often a placeholder was cut short, so a donated export cannot say how
+many of its fields were too small to carry a full one. That is a
+reporting gap worth closing; it is not a reason to start refusing.
+
+And the latent case is the same shape as every other one here: the
+contract holds because every caller today is an anonymiser writing
+placeholders it does not mind losing the tail of. The first caller that
+writes text a person typed and expects it back intact is the moment
+truncation becomes the wrong answer -- and nothing would announce that
+either.
+
 ### The corollary, which is where this actually bites
 
 **A comment saying "callers always pass X" is a note, not a guarantee.**
