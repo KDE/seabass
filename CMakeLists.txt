@@ -862,6 +862,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/remove_junk_cue_change.cpp
         src/gui/edit/changes/repair_artwork_change.hpp
         src/gui/edit/changes/repair_artwork_change.cpp
+        src/gui/artwork_rescue_sources.hpp
+        src/gui/artwork_rescue_sources.cpp
         src/gui/edit/changes/fill_sample_rate_change.hpp
         src/gui/edit/changes/fill_sample_rate_change.cpp
         src/gui/edit/changes/mark_rekordbox_imported_change.hpp
@@ -875,6 +877,14 @@ if(SEABASS_GUI AND Qt6_FOUND)
     target_link_libraries(seabass_edit PUBLIC seabass_core Qt6::Core)
     if(UNIX AND NOT APPLE)
         target_link_libraries(seabass_edit PUBLIC Qt6::DBus)
+    endif()
+    # RepairArtworkChange asks ArtworkRescueSources for a cover, so the
+    # sources live here with it: in the GUI's own list, any other user of
+    # this library failed to link. TagLib travels with it, PUBLIC, because
+    # the embedded-artwork source is behind SEABASS_HAVE_TAGLIB -- compiled
+    # without the definition it would drop out without a word.
+    if(TARGET seabass_taglib)
+        target_link_libraries(seabass_edit PUBLIC seabass_taglib)
     endif()
 
     # Times a real staged save against a real stick -- the wall-clock half

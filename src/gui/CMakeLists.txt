@@ -156,7 +156,6 @@ set(SEABASS_GUI_SOURCES
     add_cue_controller.cpp
     library_consistency_controller.hpp
     library_consistency_controller.cpp
-    artwork_rescue_sources.cpp
     stick_statistics_controller.hpp
     stick_statistics_controller.cpp
     stick_performance_controller.hpp
