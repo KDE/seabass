@@ -141,6 +141,13 @@ inline std::size_t checkCatalogFiles(const std::filesystem::path &archive, const
                 hasher.update(std::span<const std::byte>(reinterpret_cast<const std::byte *>(buffer.data()), static_cast<std::size_t>(got)));
             }
         }
+        // A read the stick refused leaves the loop just as an ending does,
+        // and the hash of a prefix is not the file's. Say which it was.
+        if (in.bad()) {
+            std::cout << "  UNREADABLE " << row.path << "\n";
+            ++bad;
+            continue;
+        }
         const bool same = hasher.finish() == row.sha256;
         std::cout << "  " << (same ? "same    " : "DIFFERS ") << row.path << "\n";
         if (!same) {
