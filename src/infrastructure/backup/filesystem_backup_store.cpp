@@ -971,7 +971,19 @@ std::uint64_t FilesystemBackupStore::restoreSpaceNeeded(const std::vector<std::p
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const std::uint64_t comesBack = opened.reader->entries()[opened.indexes[i]].size;
         const fs::path target = resolveRecordedPath(entries[i].second);
-        const std::uint64_t thereNow = fs::is_regular_file(target, ec) ? fs::file_size(target, ec) : 0;
+        // One question, one answer. This used to be is_regular_file()
+        // and then file_size(), two stats sharing one error_code, and
+        // when the file went between them the second came back as
+        // uintmax_t(-1) with nothing reading `ec`: `current` wrapped
+        // round to one byte less and `growth` got nothing for a file
+        // that comes back whole. The estimate went DOWN by the size of
+        // that file, and this is the figure that decides whether a
+        // restore is refused for space. file_size() alone fails for
+        // anything that is not a regular file, which is all the first
+        // stat was asking; a size it cannot give is read as nothing
+        // there, the same as before for a file that is absent.
+        const std::uintmax_t measured = fs::file_size(target, ec);
+        const std::uint64_t thereNow = ec ? 0 : measured;
         current += thereNow;
         largest = std::max(largest, comesBack);
         growth += comesBack > thereNow ? comesBack - thereNow : 0;
