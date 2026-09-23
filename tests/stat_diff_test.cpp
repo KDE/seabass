@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <set>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -43,6 +44,43 @@ std::vector<std::string> paths(const std::vector<const TreeEntry *> &entries)
     return out;
 }
 
+// Every entry the walk handed in lands in exactly one of added,
+// changed and unchanged. The cases below each assert one bucket's size,
+// which is the shape that hides a dropped entry: this is a backup, so an
+// entry in no bucket is a file that is never read and never carried,
+// and the next restore does not have it. The counts would still look
+// plausible.
+//
+// removed is the other direction (manifest paths the stick no longer
+// has) and deliberately CAN name a path the walk lists: a file that came
+// back as a directory, or the reverse, is the old row removed and the
+// new entry added under one name. Measured, not assumed -- asserting
+// otherwise fails on the kind-change case this file already covers. So
+// what is checked here is that no path is removed twice.
+void everyEntryInExactlyOneBucket(const TreeWalk &walk, const DiffResult &diff)
+{
+    std::multiset<std::string> in;
+    for (const TreeEntry &entry : walk.entries) {
+        in.insert(entry.relativePath);
+    }
+    std::multiset<std::string> out;
+    for (const auto *bucket : {&diff.unchanged, &diff.added, &diff.changed}) {
+        for (const TreeEntry *entry : *bucket) {
+            out.insert(entry->relativePath);
+        }
+    }
+    if (in != out) {
+        std::cerr << "the diff's buckets do not add up: " << walk.entries.size() << " walked, " << out.size()
+                  << " bucketed (" << diff.added.size() << " added, " << diff.changed.size() << " changed, "
+                  << diff.unchanged.size() << " unchanged)\n";
+    }
+    assert(in == out && "every walked entry is added, changed or unchanged, exactly once");
+    std::set<std::string> removedOnce;
+    for (const std::string &gone : diff.removed) {
+        assert(removedOnce.insert(gone).second && "a manifest path is removed at most once");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -52,6 +90,7 @@ int main()
         TreeWalk walk;
         walk.entries = {dir("d", 1), file("d/a", 10, 100), file("b", 20, 200)};
         DiffResult diff = diffTreeAgainstManifest(walk, nullptr);
+        everyEntryInExactlyOneBucket(walk, diff);
         assert(diff.added.size() == 3 && diff.unchanged.empty() && diff.changed.empty() && diff.removed.empty());
         assert(diff.bytesToRead == 30);
         std::cout << "case 1 (no previous manifest: all added) OK\n";
@@ -80,6 +119,7 @@ int main()
             dir("stays-dir", 9999),           // directory mtime is ignored
         };
         DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+        everyEntryInExactlyOneBucket(walk, diff);
         assert((paths(diff.unchanged) == std::vector<std::string>{"same", "within-window", "stays-dir"}));
         assert((paths(diff.changed) == std::vector<std::string>{"size-moved", "mtime-moved"}));
         assert((paths(diff.added) == std::vector<std::string>{"brand-new", "was-dir"}));
@@ -103,6 +143,7 @@ int main()
         previous.rows.push_back(row("grew", 100, 600));
         walk.entries.push_back(file("grew", 101, 600 + 3600));  // size moved too: changed regardless
         DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+        everyEntryInExactlyOneBucket(walk, diff);
         assert(diff.uniformShiftSeconds == 3600);
         assert(diff.uniformlyShiftedFiles == 20);
         assert(diff.unchanged.size() == 20);
@@ -123,6 +164,7 @@ int main()
                 walk.entries.push_back(file(p, 100, 4600));
             }
             DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+            everyEntryInExactlyOneBucket(walk, diff);
             assert(diff.uniformShiftSeconds == 0 && diff.changed.size() == 5);
         }
         {
@@ -134,6 +176,7 @@ int main()
                 walk.entries.push_back(file(p, 100, 1000 + 100 * (i + 1)));  // all different
             }
             DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+            everyEntryInExactlyOneBucket(walk, diff);
             assert(diff.uniformShiftSeconds == 0 && diff.changed.size() == 20);
         }
         {
@@ -145,6 +188,7 @@ int main()
                 walk.entries.push_back(file(p, 100, 1000 + 1000));  // uniform, but no timezone is 1000 s off
             }
             DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+            everyEntryInExactlyOneBucket(walk, diff);
             assert(diff.uniformShiftSeconds == 0 && diff.changed.size() == 20);
         }
         std::cout << "case 4 (too few / random / non-zone deltas are real changes) OK\n";
@@ -190,6 +234,7 @@ int main()
             previous.rows.push_back(row("PIONEER/USBANLZ/P030/ANLZ0000.DAT", 10846, epoch));
             walk.entries.push_back(file("PIONEER/USBANLZ/P030/ANLZ0000.DAT", 10846, epoch - 3600));
             DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+            everyEntryInExactlyOneBucket(walk, diff);
             assert(diff.unchanged.size() == 1 && diff.changed.empty() && diff.uniformShiftSeconds == 0);
         }
         {
@@ -214,6 +259,7 @@ int main()
                 walk.entries.push_back(file(p, 10846, epoch - 3600));
             }
             DiffResult diff = diffTreeAgainstManifest(walk, &previous);
+            everyEntryInExactlyOneBucket(walk, diff);
             assert(diff.uniformShiftSeconds == 3600);
             assert(diff.uniformlyShiftedFiles == 10);
             assert(diff.changed.empty() && diff.unchanged.size() == 30);

@@ -100,11 +100,46 @@ MetadataSource sourceFor(const fs::path &stickRoot, const std::string &label = "
     return source;
 }
 
+// MetadataBackupSummary's own comment says the counts "add up", and
+// every case here asserts one of them at a time. That is the shape that
+// let fillMissingDurations() lose a row per file while four counters
+// looked right: a track that falls into none of the buckets is a track
+// the store silently did not take, and this is the one place that holds
+// cues no stick has any more.
+//
+// Checked on every call rather than per case, so no case can forget.
+// tracksSeen is the input; the five buckets below are mutually
+// exclusive by construction (added on !exists, the other three inside
+// the matching if (exists), withoutIdentity before either), and this is
+// what says so out loud.
+void everyTrackCountedOnce(const seabass::infrastructure::local::MetadataBackupSummary &summary,
+                           std::size_t handedIn)
+{
+    if (summary.cancelled) {
+        // A cancelled run stops between tracks, so it reports on the
+        // ones it reached and no more.
+        assert(summary.tracksSeen <= static_cast<int>(handedIn));
+        return;
+    }
+    assert(summary.tracksSeen == static_cast<int>(handedIn) && "every track handed in is a track seen");
+    const int bucketed = summary.tracksAdded + summary.tracksUpdated + summary.tracksSkipped
+        + summary.tracksUnchanged + summary.tracksWithoutIdentity;
+    if (bucketed != summary.tracksSeen) {
+        std::cerr << "the buckets do not add up: " << summary.tracksSeen << " seen, " << bucketed
+                  << " counted (added " << summary.tracksAdded << ", updated " << summary.tracksUpdated
+                  << ", skipped " << summary.tracksSkipped << ", unchanged " << summary.tracksUnchanged
+                  << ", without identity " << summary.tracksWithoutIdentity << ")\n";
+    }
+    assert(bucketed == summary.tracksSeen && "every track seen lands in exactly one bucket");
+}
+
 seabass::infrastructure::local::MetadataBackupSummary store(MetadataStore &store,
                                                              const std::vector<Track> &tracks,
                                                              const MetadataSource &source)
 {
-    return store.store(tracks, source, NullProgressReporter::instance(), CancellationToken::none());
+    const auto summary = store.store(tracks, source, NullProgressReporter::instance(), CancellationToken::none());
+    everyTrackCountedOnce(summary, tracks.size());
+    return summary;
 }
 
 }  // namespace
