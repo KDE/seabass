@@ -450,7 +450,7 @@ using infrastructure::backup::availableBytes;
 // restoring the mtime. Returns an error message or empty.
 std::string writeEntry(const Zip64Reader &reader, const PlannedEntry &planned, const ManifestRow *row,
                        const fs::path &destination, std::size_t chunkSize,
-                       const std::function<void(std::uint64_t)> &progress, std::set<std::string> *placedIn)
+                       const std::function<void(std::uint64_t)> &progress, std::set<fs::path> *placedIn)
 {
     const CentralEntry &entry = reader.entries()[planned.index];
     if (row == nullptr) {
@@ -508,7 +508,7 @@ std::string writeEntry(const Zip64Reader &reader, const PlannedEntry &planned, c
             return "could not place " + entry.name + ": " + ec.message();
         }
         if (placedIn != nullptr) {
-            placedIn->insert(destination.parent_path().string());
+            placedIn->insert(destination.parent_path());
         }
     } catch (const std::exception &e) {
         fs::remove(longPathSafe(temp), ec);
@@ -783,10 +783,12 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     // Once per directory rather than once per file: the guarantee is the
     // same and a restore of ten thousand tracks does not pay ten
     // thousand fsyncs.
-    std::set<std::string> placedIn;
+    // Paths, not strings: path::string() narrows through the ANSI code
+    // page on Windows and throws for a folder name outside it.
+    std::set<fs::path> placedIn;
     auto flushDirectories = [&placedIn]() {
-        for (const std::string &dir : placedIn) {
-            infrastructure::fsyncDirectoryContaining((fs::path(dir) / "x").string());
+        for (const fs::path &dir : placedIn) {
+            infrastructure::fsyncDirectoryContaining(infrastructure::stick_backup::pathToUtf8(dir / "x"));
         }
         placedIn.clear();
     };
