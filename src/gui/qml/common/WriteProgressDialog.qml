@@ -30,6 +30,14 @@ SeabassDialog {
         }
     }
     onWritingChanged: sync()
+    // The open takes 220 ms of animation, and a save can be over sooner:
+    // nine rows that all skip finish in a few milliseconds. `writing` then
+    // went false while `opened` was still false, the close above was not
+    // taken, and nothing closed the dialog afterwards -- a modal dialog
+    // with no close policy, stuck over the page, which read as Seabass
+    // having frozen (macOS round 8, filling sample rates). Checked again
+    // once the open has finished, so a save that ended meanwhile closes it.
+    onOpenedChanged: sync()
     Component.onCompleted: sync()
 
     footer: DialogButtonBox {
