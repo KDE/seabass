@@ -13,6 +13,14 @@
 // QString <-> std::filesystem::path, by the rule in utf8_path.hpp. Never
 // fs::path(q.toStdString()) or QString::fromStdString(p.string()): both
 // go through the ANSI code page on Windows.
+//
+// A QString path has forward slashes on every platform, the way Qt's own
+// file dialogs, QUrl::toLocalFile and QDir hand them out; pathToQString
+// gives that form, so a path the app derived compares equal to one a
+// page was given. On Windows the native form has backslashes, and the
+// QML suite caught a session that knew "...\Engine Library" while its
+// page said "...\Engine Library" with a slash. QDir::toNativeSeparators
+// is for showing a path to a person, at the point of showing it.
 namespace seabass::gui
 {
 
@@ -23,7 +31,7 @@ inline std::filesystem::path pathFromQString(const QString &path)
 
 inline QString pathToQString(const std::filesystem::path &path)
 {
-    return QString::fromStdString(pathToUtf8(path));
+    return QString::fromStdString(pathToGenericUtf8(path));
 }
 
 }  // namespace seabass::gui
