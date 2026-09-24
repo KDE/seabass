@@ -29,15 +29,21 @@ fs::path databaseDirectory(const std::string &engineLibraryPath)
 // how this turns up on a real stick, in the log as "sample_rate
 // unreadable") fails inside libdjinterop, and a library full of those
 // must still be audited to the end.
-std::optional<double> rateOf(djinterop::track &track)
+// `unreadable` is set when the record could not be decoded, as opposed to
+// decoding to no rate. Only the second is a finding: a record Seabass
+// cannot decode is one it does not understand -- seven "unreadable" rows on
+// a stick a Prime 4 had played turned out to be healthy Engine 3.x records
+// with 24 extra bytes -- and nothing is said about what is not understood.
+std::optional<double> rateOf(djinterop::track &track, bool &unreadable)
 {
+    unreadable = false;
     try {
         const auto rate = track.sample_rate();
         if (rate && *rate > 0.0) {
             return rate;
         }
     } catch (const std::exception &) {
-        // Unreadable is the same finding as absent: the row cannot say.
+        unreadable = true;
     }
     return std::nullopt;
 }
@@ -69,7 +75,8 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
         auto db = djinterop::engine::load_database(engineLibraryPath);
         for (djinterop::track track : db.tracks()) {
             audit.tracksChecked++;
-            if (rateOf(track)) {
+            bool unreadable = false;
+            if (rateOf(track, unreadable) || unreadable) {
                 continue;
             }
             SampleRateEntry entry;
