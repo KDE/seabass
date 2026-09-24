@@ -1,0 +1,218 @@
+From 53ac679c7c31d9d373559f3ea25002c7c90e4f09 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Sebastian=20K=C3=BCgler?= <sebas@kde.org>
+Date: Thu, 24 Sep 2026 18:05:00 +0200
+Subject: [PATCH] Treat path strings as UTF-8 on Windows
+
+Directory and file paths reach the library as `std::string`.  The helpers
+in `util/filesystem.cpp` handed them to `stat()` and `_mkdir()`, which on
+Windows interpret the bytes in the active ANSI code page, whereas the same
+string given to SQLite is read as UTF-8.  A library in a directory whose
+name has characters outside the code page could therefore be created by
+SQLite but never found by `path_exists()`, or be found by neither.
+
+Path strings are now UTF-8 on every platform.  A new
+`util::path_from_utf8()` converts them to `std::filesystem::path`, going
+via `std::u8string` on Windows so that the conversion does not depend on
+the code page, and `path_exists()` and `create_dir()` use
+`std::filesystem` on the result.  The SQL script that `hydrate_database()`
+reads is opened through the same conversion.  The public headers say so
+where the directory parameters and `database::directory()` are documented.
+
+A test creates and loads a database in a directory named with non-ASCII
+characters.  On POSIX the previous code passed it too, as the bytes went
+through untouched, so the test only bites on Windows.
+---
+ include/djinterop/database.hpp                |  3 ++-
+ include/djinterop/engine/engine.hpp           |  5 ++++
+ .../djinterop/engine/v2/engine_library.hpp    |  3 +++
+ .../djinterop/engine/v3/engine_library.hpp    |  3 +++
+ src/djinterop/engine/engine.cpp               |  2 +-
+ src/djinterop/util/filesystem.cpp             | 25 +++++++++++--------
+ src/djinterop/util/filesystem.hpp             |  9 +++++++
+ test/djinterop/engine/engine_test.cpp         | 24 ++++++++++++++++++
+ 8 files changed, 62 insertions(+), 12 deletions(-)
+
+diff --git a/include/djinterop/database.hpp b/include/djinterop/database.hpp
+index cd50826..6cd3471 100644
+--- a/include/djinterop/database.hpp
++++ b/include/djinterop/database.hpp
+@@ -97,7 +97,8 @@ public:
+ 
+     /// Returns the path directory of the database
+     ///
+-    /// This is the same as the directory passed to the `database` constructor.
++    /// This is the same as the directory passed to the `database` constructor,
++    /// and is UTF-8 encoded on all platforms.
+     std::string directory() const;
+ 
+     /// Returns the UUID of the database
+diff --git a/include/djinterop/engine/engine.hpp b/include/djinterop/engine/engine.hpp
+index 2954b19..365d752 100644
+--- a/include/djinterop/engine/engine.hpp
++++ b/include/djinterop/engine/engine.hpp
+@@ -55,6 +55,11 @@ constexpr std::array<pad_color, 8> pads{pad_1, pad_2, pad_3, pad_4,
+ 
+ constexpr const char* default_database_dir_name = "Engine Library";
+ 
++// Every directory or file path that the functions below take or return as a
++// `std::string` is UTF-8 encoded, on all platforms.  This includes Windows,
++// where the string is converted to a wide path before it reaches the
++// operating system, so it must not be in the ANSI code page.
++
+ /// Creates a new, empty database in a directory using the version provided.
+ ///
+ /// By convention, the last part of the directory path is "Engine Library".  If
+diff --git a/include/djinterop/engine/v2/engine_library.hpp b/include/djinterop/engine/v2/engine_library.hpp
+index 72ac0f3..760169f 100644
+--- a/include/djinterop/engine/v2/engine_library.hpp
++++ b/include/djinterop/engine/v2/engine_library.hpp
+@@ -39,6 +39,9 @@ namespace djinterop::engine::v2
+ /// Note that the directory that should be passed to constructors and member
+ /// functions of this class must be the `Engine Library` directory, not the
+ /// `Database2` directory.
++///
++/// Directory paths are UTF-8 encoded strings on all platforms, including
++/// Windows.
+ class DJINTEROP_PUBLIC engine_library : public base_engine_library
+ {
+ public:
+diff --git a/include/djinterop/engine/v3/engine_library.hpp b/include/djinterop/engine/v3/engine_library.hpp
+index 5c95e5f..180356c 100644
+--- a/include/djinterop/engine/v3/engine_library.hpp
++++ b/include/djinterop/engine/v3/engine_library.hpp
+@@ -49,6 +49,9 @@ namespace djinterop::engine::v3
+ /// Note that the directory that should be passed to constructors and member
+ /// functions of this class must be the `Engine Library` directory, not the
+ /// `Database2` directory.
++///
++/// Directory paths are UTF-8 encoded strings on all platforms, including
++/// Windows.
+ class DJINTEROP_PUBLIC engine_library : public base_engine_library
+ {
+ public:
+diff --git a/src/djinterop/engine/engine.cpp b/src/djinterop/engine/engine.cpp
+index e2ac63a..b18d848 100644
+--- a/src/djinterop/engine/engine.cpp
++++ b/src/djinterop/engine/engine.cpp
+@@ -41,7 +41,7 @@ void hydrate_database(
+ {
+     std::string stmt;
+ 
+-    std::ifstream script{script_path};
++    std::ifstream script{djinterop::util::path_from_utf8(script_path)};
+     sqlite::database m_db{db_path};
+     while (std::getline(script, stmt))
+     {
+diff --git a/src/djinterop/util/filesystem.cpp b/src/djinterop/util/filesystem.cpp
+index 03a61d3..94dd967 100644
+--- a/src/djinterop/util/filesystem.cpp
++++ b/src/djinterop/util/filesystem.cpp
+@@ -18,21 +18,26 @@
+ #include "filesystem.hpp"
+ 
+ #include <stdexcept>
+-
+-#include <sys/stat.h>
+-#if defined(_WIN32)
+-#include <direct.h>
+-#endif
++#include <system_error>
+ 
+ namespace djinterop::util
+ {
+-void create_dir(const std::string& directory)
++std::filesystem::path path_from_utf8(const std::string& path)
+ {
+ #if defined(_WIN32)
+-    if (_mkdir(directory.c_str()) != 0)
++    // On Windows, constructing a path from a narrow string interprets it in
++    // the active ANSI code page.  The strings handed to this library are
++    // UTF-8, so go via std::u8string to get the conversion right.
++    return std::filesystem::path{std::u8string{path.begin(), path.end()}};
+ #else
+-    if (mkdir(directory.c_str(), 0755) != 0)
++    return std::filesystem::path{path};
+ #endif
++}
++
++void create_dir(const std::string& directory)
++{
++    std::error_code ec;
++    if (!std::filesystem::create_directory(path_from_utf8(directory), ec))
+     {
+         throw std::runtime_error{"Failed to create directory"};
+     }
+@@ -40,8 +45,8 @@ void create_dir(const std::string& directory)
+ 
+ bool path_exists(const std::string& directory)
+ {
+-    struct stat buf;
+-    return (stat(directory.c_str(), &buf) == 0);
++    std::error_code ec;
++    return std::filesystem::exists(path_from_utf8(directory), ec);
+ }
+ 
+ std::string get_filename(const std::string& file_path)
+diff --git a/src/djinterop/util/filesystem.hpp b/src/djinterop/util/filesystem.hpp
+index 5c72f8c..b440133 100644
+--- a/src/djinterop/util/filesystem.hpp
++++ b/src/djinterop/util/filesystem.hpp
+@@ -17,11 +17,20 @@
+ 
+ #pragma once
+ 
++#include <filesystem>
+ #include <optional>
+ #include <string>
+ 
+ namespace djinterop::util
+ {
++/// Converts a UTF-8 encoded path string into a `std::filesystem::path`.
++///
++/// Path strings are UTF-8 on all platforms.  On Windows, the narrow-string
++/// constructor of `std::filesystem::path` would read them in the ANSI code
++/// page instead, so any code that hands a path string to the operating system
++/// must go through this function.
++std::filesystem::path path_from_utf8(const std::string& path);
++
+ void create_dir(const std::string& directory);
+ bool path_exists(const std::string& directory);
+ std::string get_filename(const std::string& file_path);
+diff --git a/test/djinterop/engine/engine_test.cpp b/test/djinterop/engine/engine_test.cpp
+index 8284ac2..de0393b 100644
+--- a/test/djinterop/engine/engine_test.cpp
++++ b/test/djinterop/engine/engine_test.cpp
+@@ -48,6 +48,30 @@ BOOST_DATA_TEST_CASE(
+     }
+ }
+ 
++BOOST_TEST_DECORATOR(*utf::description(
++    "create_database() and load_database() with a UTF-8 directory name"))
++BOOST_DATA_TEST_CASE(
++    create_database__utf8_directory__loads, e::supported_schemas, schema)
++{
++    // Note separate scope to ensure no locks are held on the temporary dir.
++    temporary_directory tmp_loc;
++
++    {
++        // Arrange: a directory name with characters outside ASCII, as UTF-8.
++        // On Windows, these are also outside most ANSI code pages.
++        auto directory =
++            tmp_loc.temp_dir + "/Engine Library \xC3\xBC\xE2\x99\xAA";
++
++        // Act
++        auto db = e::create_database(directory, schema);
++
++        // Assert
++        BOOST_CHECK_EQUAL(db.directory(), directory);
++        BOOST_CHECK(e::database_exists(directory));
++        BOOST_CHECK_NO_THROW(e::load_database(directory).verify());
++    }
++}
++
+ BOOST_TEST_DECORATOR(
+     *utf::description("load_database() with a non-existent path"))
+ BOOST_AUTO_TEST_CASE(load_database__fake_path__throw)
+-- 
+2.43.0
+
