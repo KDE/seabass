@@ -18,7 +18,10 @@ TestCase {
     width: 100
     height: 100
 
-    readonly property string aFile: Qt.resolvedUrl("tst_PlaybackQueue.qml").toString().replace("file://", "")
+    // file:///C:/x on Windows leaves "/C:/x" after the scheme is cut, a path
+    // that does not exist, so every row here read as a missing file.
+    readonly property string aFile: Qt.resolvedUrl("tst_PlaybackQueue.qml").toString()
+        .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
 
     PlaybackController { id: player }
     SignalSpy { id: advanced; target: player; signalName: "advanced" }
