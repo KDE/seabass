@@ -19,6 +19,7 @@
 #include "infrastructure/anonymization_export_layout.hpp"
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/onelibrary/onelibrary_anonymizer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_anlz.h"
@@ -65,7 +66,7 @@ struct EnumerationResult
 
 EnumerationResult enumeratePdb(const std::string &pdbPath)
 {
-    std::ifstream ifs(pdbPath, std::ifstream::binary);
+    std::ifstream ifs(pathFromUtf8(pdbPath), std::ifstream::binary);
     if (!ifs.is_open()) {
         throw std::runtime_error("could not open " + pdbPath);
     }
@@ -343,7 +344,7 @@ std::string insideExport(const std::string &text, const std::string &destination
 std::string anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentIndex)
 {
     std::error_code ec;
-    const bool there = fs::exists(path, ec);
+    const bool there = fs::exists(pathFromUtf8(path), ec);
     if (ec) {
         // exists() answers false for both "not there" and "could not
         // look", and only the error code tells them apart. Reported,
@@ -391,7 +392,7 @@ void copyTreeIfPresent(const fs::path &from, const fs::path &to)
     }
     fs::copy(from, to, fs::copy_options::recursive, ec);
     if (ec) {
-        throw std::runtime_error("failed to copy " + from.string() + " to " + to.string() + ": " + ec.message());
+        throw std::runtime_error("failed to copy " + pathToUtf8(from) + " to " + pathToUtf8(to) + ": " + ec.message());
     }
 }
 
@@ -404,14 +405,16 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
     RekordboxAnonymizationResult result;
 
     std::error_code ec;
-    if (fs::exists(destinationRoot, ec) && !fs::is_empty(destinationRoot, ec)) {
+    const fs::path sourceDir = pathFromUtf8(sourceRoot);
+    const fs::path destinationDir = pathFromUtf8(destinationRoot);
+    if (fs::exists(destinationDir, ec) && !fs::is_empty(destinationDir, ec)) {
         result.errorMessage = destinationRoot + " already exists and isn't empty -- refusing to write into it";
         return result;
     }
-    fs::create_directories(destinationRoot, ec);
+    fs::create_directories(destinationDir, ec);
 
     try {
-        copyTreeIfPresent(fs::path(sourceRoot) / "rekordbox", fs::path(destinationRoot) / "rekordbox");
+        copyTreeIfPresent(sourceDir / "rekordbox", destinationDir / "rekordbox");
         // That copy takes the whole rekordbox/ directory, which on a real
         // stick holds more than export.pdb.
         //
@@ -429,13 +432,13 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // fail that way: an unknown file is dropped, not shipped.
         {
             std::error_code listEc;
-            const fs::path catalogDir = fs::path(destinationRoot) / "rekordbox";
+            const fs::path catalogDir = destinationDir / "rekordbox";
             std::vector<fs::path> unknown;
             for (const auto &entry : fs::directory_iterator(catalogDir, listEc)) {
                 if (!entry.is_regular_file()) {
                     continue;
                 }
-                const std::string name = entry.path().filename().string();
+                const std::string name = pathToUtf8(entry.path().filename());
                 if (!isKeptRekordboxCatalogFile(name)) {
                     unknown.push_back(entry.path());
                 }
@@ -448,13 +451,13 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                 // prevent.
                 std::string failure;
                 if (infrastructure::removeEntry(path, failure)) {
-                    result.removedUnanonymizableFiles.push_back(path.filename().string());
+                    result.removedUnanonymizableFiles.push_back(pathToUtf8(path.filename()));
                 } else {
-                    result.unremovedUnanonymizableFiles.push_back(path.filename().string() + ": " + failure);
+                    result.unremovedUnanonymizableFiles.push_back(pathToUtf8(path.filename()) + ": " + failure);
                 }
             }
         }
-        copyTreeIfPresent(fs::path(sourceRoot) / "USBANLZ", fs::path(destinationRoot) / "USBANLZ");
+        copyTreeIfPresent(sourceDir / "USBANLZ", destinationDir / "USBANLZ");
         // Device Profile reads these and nothing else does. They hold
         // player preferences (LCD brightness, quantize, jog feel), not
         // anything about the person or their music, so they go in as-is --
@@ -464,9 +467,9 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // audited for identifying content.
         for (const char *settingsFile : {"MYSETTING.DAT", "MYSETTING2.DAT", "DEVSETTING.DAT", "DJMMYSETTING.DAT"}) {
             std::error_code settingsEc;
-            const fs::path from = fs::path(sourceRoot) / settingsFile;
+            const fs::path from = sourceDir / settingsFile;
             if (fs::exists(from, settingsEc)) {
-                fs::copy_file(from, fs::path(destinationRoot) / settingsFile,
+                fs::copy_file(from, destinationDir / settingsFile,
                               fs::copy_options::overwrite_existing, settingsEc);
                 if (!settingsEc) {
                     ++result.deviceSettingsFilesCopied;
@@ -474,7 +477,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             }
         }
 
-        std::string pdbPath = (fs::path(destinationRoot) / "rekordbox" / "export.pdb").string();
+        std::string pdbPath = pathToUtf8(destinationDir / "rekordbox" / "export.pdb");
         EnumerationResult enumerated = enumeratePdb(pdbPath);
 
         // Every analysis file this run has already been through, so the sweep
@@ -485,7 +488,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
 
         // Keyed, not spelled. datAnlzPath() and friends build their
         // strings by concatenating root + "/" + relative, while the
-        // orphan sweep below compares entry.path().string() from a
+        // orphan sweep below compares pathToUtf8(entry.path()) from a
         // directory iterator -- a native path. The two agree on POSIX
         // and do NOT agree on Windows, where the iterator hands back
         // backslashes, so every analysis file this loop had already
@@ -508,10 +511,10 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // it rather than shipping it: this file is the worst one to get
         // wrong.
         {
-            const fs::path oneLibrary = fs::path(destinationRoot) / "rekordbox" / "exportLibrary.db";
+            const fs::path oneLibrary = destinationDir / "rekordbox" / "exportLibrary.db";
             std::error_code existsEc;
             if (fs::is_regular_file(oneLibrary, existsEc)) {
-                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(oneLibrary.string());
+                auto oneLibraryResult = onelibrary::anonymizeOneLibraryDatabase(pathToUtf8(oneLibrary));
                 result.oneLibraryTracksScrubbed = oneLibraryResult.tracksScrubbed;
                 result.oneLibraryError = oneLibraryResult.errorMessage;
                 if (!oneLibraryResult.errorMessage.empty()) {
@@ -523,7 +526,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                     std::string failure;
                     if (!infrastructure::removeEntry(oneLibrary, failure)) {
                         result.unremovedUnanonymizableFiles.push_back(
-                            oneLibrary.filename().string() + " (unscrubbed Device Library Plus mirror): " + failure);
+                            pathToUtf8(oneLibrary.filename()) + " (unscrubbed Device Library Plus mirror): " + failure);
                     }
                 }
             }
@@ -542,7 +545,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
             // export verifier's byte sweep would find it anyway.
             for (const char *sideFile : {"exportLibrary.db-shm", "exportLibrary.db-wal"}) {
                 std::error_code removeEc;
-                fs::remove(fs::path(destinationRoot) / "rekordbox" / sideFile, removeEc);
+                fs::remove(destinationDir / "rekordbox" / sideFile, removeEc);
             }
         }
         PdbRowWriter writer(pdbPath);
@@ -694,12 +697,12 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // An absent file is not a failure: rekordbox only writes one when
         // the library has My Tags.
         {
-            const fs::path extPdb = fs::path(destinationRoot) / "rekordbox" / "exportExt.pdb";
+            const fs::path extPdb = destinationDir / "rekordbox" / "exportExt.pdb";
             std::error_code extEc;
             if (fs::exists(extPdb, extEc)) {
                 bool scrubbed = false;
                 try {
-                    PdbRowWriter extWriter(extPdb.string(), PdbRowWriter::Format::ExportExt);
+                    PdbRowWriter extWriter(pathToUtf8(extPdb), PdbRowWriter::Format::ExportExt);
                     int leftAlone = 0;
                     const int renamed =
                         extWriter.overwriteAllTagNames([](size_t i) { return placeholder("Tag", i); }, &leftAlone);
@@ -822,17 +825,17 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // still held its real path. Verified on a real stick: 827 of 1983
         // triples were orphans of exactly this kind.
         std::error_code sweepEc;
-        const fs::path anlzRoot = fs::path(destinationRoot) / "USBANLZ";
+        const fs::path anlzRoot = destinationDir / "USBANLZ";
         if (fs::is_directory(anlzRoot, sweepEc)) {
             for (const auto &entry : fs::recursive_directory_iterator(anlzRoot, sweepEc)) {
                 if (!entry.is_regular_file()) {
                     continue;
                 }
-                const std::string ext = entry.path().extension().string();
+                const fs::path ext = entry.path().extension();
                 if (ext != ".DAT" && ext != ".EXT" && ext != ".2EX") {
                     continue;
                 }
-                if (visitedAnlz.count(application::normalizedPathKey(entry.path().string())) > 0) {
+                if (visitedAnlz.count(application::normalizedPathKey(pathToUtf8(entry.path()))) > 0) {
                     continue;
                 }
                 if (slimForTesting) {
@@ -847,12 +850,12 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
                         ++result.orphanedAnalysisFilesRemoved;
                     } else {
                         result.unremovedUnanonymizableFiles.push_back(
-                            insideExport(entry.path().string(), destinationRoot)
+                            insideExport(pathToUtf8(entry.path()), destinationRoot)
                             + " (orphaned analysis file): " + failure);
                     }
                     continue;
                 }
-                if (!scrubOrDrop(entry.path().string(), "orphaned analysis file")) {
+                if (!scrubOrDrop(pathToUtf8(entry.path()), "orphaned analysis file")) {
                     continue;
                 }
                 ++result.orphanedAnalysisFilesScrubbed;

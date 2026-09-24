@@ -4,6 +4,8 @@
 
 #include "infrastructure/onelibrary/onelibrary_anonymizer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #include <filesystem>
 #include <map>
 #include <set>
@@ -103,7 +105,7 @@ OneLibraryAnonymizationResult anonymizeOneLibraryDatabase(const std::string &dbP
 {
     OneLibraryAnonymizationResult result;
     std::error_code ec;
-    if (!fs::is_regular_file(dbPath, ec)) {
+    if (!fs::is_regular_file(pathFromUtf8(dbPath), ec)) {
         result.errorMessage = dbPath + " does not exist";
         return result;
     }

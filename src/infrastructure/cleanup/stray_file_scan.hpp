@@ -21,6 +21,7 @@
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 #include "infrastructure/local/metadata_cache.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -102,7 +103,8 @@ inline StrayFileScanResult scanStrayFiles(const std::string &stickRoot, const ap
         return result;
     }
 
-    auto walk = walkAudioFiles((std::filesystem::path(stickRoot) / "Contents").string(), cancel);
+    const std::filesystem::path root = pathFromUtf8(stickRoot);
+    auto walk = walkAudioFiles(pathToUtf8(root / "Contents"), cancel);
     auto scan = application::findUnreferencedFiles(walk.files, catalogs);
     if (!scan.usable) {
         result.refusal = "No catalog on this stick could be read, so nothing can be called unreferenced.";
@@ -120,7 +122,7 @@ inline StrayFileScanResult scanStrayFiles(const std::string &stickRoot, const ap
     // absolute paths, through normalizedPathKey().
     {
         std::set<std::string> listed;
-        for (const auto &entry : PendingDeletionManifest(paths::stickPendingDeletions(stickRoot).string()).list()) {
+        for (const auto &entry : PendingDeletionManifest(pathToUtf8(paths::stickPendingDeletions(root))).list()) {
             if (!entry.filePath.empty()) {
                 listed.insert(application::normalizedPathKey(entry.filePath));
             }

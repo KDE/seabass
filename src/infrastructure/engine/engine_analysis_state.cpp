@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_analysis_state.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
 
@@ -18,7 +19,7 @@ namespace
 
 fs::path engineDatabase(const std::string &engineLibraryPath)
 {
-    return fs::path(engineLibraryPath) / "Database2" / "m.db";
+    return pathFromUtf8(engineLibraryPath) / "Database2" / "m.db";
 }
 
 }  // namespace
@@ -37,7 +38,7 @@ AnalysisStateAudit auditAnalysisState(const std::string &engineLibraryPath)
     audit.libraryPresent = true;
 
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(database.string().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(database).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         audit.error = "could not open the Engine database";
         if (handle != nullptr) {
             sqlite3_close(handle);

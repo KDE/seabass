@@ -17,6 +17,7 @@
 
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::onelibrary
 {
@@ -46,8 +47,8 @@ std::string toContentPath(const std::string &stickRoot, const std::string &track
     }
 
     std::error_code ec;
-    fs::path rel = fs::relative(fs::path(filePath), fs::path(stickRoot), ec);
-    std::string relStr = ec ? filePath : rel.generic_string();
+    fs::path rel = fs::relative(pathFromUtf8(filePath), pathFromUtf8(stickRoot), ec);
+    std::string relStr = ec ? filePath : pathToGenericUtf8(rel);
     std::replace(relStr.begin(), relStr.end(), '\\', '/');
     if (relStr.empty() || relStr[0] != '/') {
         relStr = "/" + relStr;
@@ -82,23 +83,24 @@ std::vector<int64_t> contentIdsAt(SqlCipherDb &db, const std::string &contentPat
 
 std::string OneLibraryCueWriter::dbPathFor(const std::string &pioneerRoot)
 {
-    return (fs::path(pioneerRoot) / "rekordbox" / "exportLibrary.db").string();
+    return pathToUtf8(pathFromUtf8(pioneerRoot) / "rekordbox" / "exportLibrary.db");
 }
 
 bool OneLibraryCueWriter::existsFor(const std::string &pioneerRoot)
 {
     std::error_code ec;
-    return fs::is_regular_file(dbPathFor(pioneerRoot), ec);
+    return fs::is_regular_file(pathFromUtf8(dbPathFor(pioneerRoot)), ec);
 }
 
 OneLibraryCueWriter::OneLibraryCueWriter(std::string pioneerRoot, std::optional<std::string> realStickRoot)
     : m_pioneerRoot(std::move(pioneerRoot))
 {
-    m_stickRoot = realStickRoot ? std::move(*realStickRoot) : fs::path(m_pioneerRoot).parent_path().string();
+    m_stickRoot = realStickRoot ? std::move(*realStickRoot) : pathToUtf8(pathFromUtf8(m_pioneerRoot).parent_path());
     m_dbPath = dbPathFor(m_pioneerRoot);
+    m_dbFile = pathFromUtf8(m_dbPath);
     std::error_code ec;
-    m_originalFileSize = fs::file_size(m_dbPath, ec);
-    m_originalMtime = fs::last_write_time(m_dbPath, ec);
+    m_originalFileSize = fs::file_size(m_dbFile, ec);
+    m_originalMtime = fs::last_write_time(m_dbFile, ec);
     if (ec) {
         throw std::runtime_error("onelibrary: " + m_dbPath + " does not exist, check existsFor() first");
     }
@@ -107,7 +109,7 @@ OneLibraryCueWriter::OneLibraryCueWriter(std::string pioneerRoot, std::optional<
 
 std::uint32_t OneLibraryCueWriter::computeChecksum() const
 {
-    std::ifstream in(m_dbPath, std::ios::binary);
+    std::ifstream in(m_dbFile, std::ios::binary);
     if (!in) {
         throw std::runtime_error("onelibrary: " + m_dbPath + " could not be opened to checksum it");
     }
@@ -122,8 +124,8 @@ std::uint32_t OneLibraryCueWriter::computeChecksum() const
 void OneLibraryCueWriter::checkNotStale() const
 {
     std::error_code statEc;
-    auto currentSize = fs::file_size(m_dbPath, statEc);
-    auto currentMtime = fs::last_write_time(m_dbPath, statEc);
+    auto currentSize = fs::file_size(m_dbFile, statEc);
+    auto currentMtime = fs::last_write_time(m_dbFile, statEc);
     bool statMismatch = statEc || currentSize != m_originalFileSize || currentMtime != m_originalMtime;
     bool checksumMismatch = computeChecksum() != m_originalChecksum;
     if (statMismatch || checksumMismatch) {
@@ -135,8 +137,8 @@ void OneLibraryCueWriter::checkNotStale() const
 void OneLibraryCueWriter::refreshStalenessBaseline()
 {
     std::error_code refreshEc;
-    m_originalFileSize = fs::file_size(m_dbPath, refreshEc);
-    m_originalMtime = fs::last_write_time(m_dbPath, refreshEc);
+    m_originalFileSize = fs::file_size(m_dbFile, refreshEc);
+    m_originalMtime = fs::last_write_time(m_dbFile, refreshEc);
     m_originalChecksum = computeChecksum();
 }
 
@@ -739,7 +741,7 @@ void OneLibraryCueWriter::propagateMissingFieldsForPath(const std::string &donor
 std::optional<std::uint64_t> OneLibraryCueWriter::foldLogOf(const std::string &dbPath)
 {
     std::error_code ec;
-    if (!fs::is_regular_file(dbPath, ec) || ec) {
+    if (!fs::is_regular_file(pathFromUtf8(dbPath), ec) || ec) {
         return std::nullopt;  // no database to fold into, or it cannot be looked at
     }
     try {
@@ -755,7 +757,7 @@ std::optional<std::uint64_t> OneLibraryCueWriter::foldLogOf(const std::string &d
     } catch (const std::exception &) {
         // Cannot even open it: the measurement below still says what is left.
     }
-    const fs::path wal = fs::path(dbPath + "-wal");
+    const fs::path wal = pathFromUtf8(dbPath + "-wal");
     const bool walThere = fs::exists(wal, ec);
     if (ec) {
         return std::nullopt;
@@ -810,8 +812,8 @@ void OneLibraryCueWriter::finishWriting()
     m_writeDb.reset();
     m_finished = true;
 
-    const fs::path wal = fs::path(m_dbPath + "-wal");
-    const fs::path shm = fs::path(m_dbPath + "-shm");
+    const fs::path wal = pathFromUtf8(m_dbPath + "-wal");
+    const fs::path shm = pathFromUtf8(m_dbPath + "-shm");
     std::error_code ec;
     // The database itself first. fs::exists clears its error code for a
     // path that is simply not there, so on a stick that went away after
@@ -819,7 +821,7 @@ void OneLibraryCueWriter::finishWriting()
     // clean outcome, and reported "Done" for rows that live only in a log
     // on a device that is gone.
     std::error_code dbEc;
-    const bool dbThere = fs::is_regular_file(m_dbPath, dbEc) && !dbEc;
+    const bool dbThere = fs::is_regular_file(m_dbFile, dbEc) && !dbEc;
     const bool walThere = fs::exists(wal, ec);
     std::uintmax_t remaining = 0;
     if (!ec && walThere) {

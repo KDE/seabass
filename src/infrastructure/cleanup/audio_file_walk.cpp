@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::cleanup
 {
@@ -65,15 +66,16 @@ AudioFileWalkResult walkAudioFiles(const std::string &root, const application::C
         return result;
     }
 
+    const fs::path rootPath = pathFromUtf8(root);
     std::error_code ec;
-    if (!fs::exists(root, ec) || ec) {
+    if (!fs::exists(rootPath, ec) || ec) {
         result.incomplete = true;
         return result;
     }
 
     // Explicit stack rather than recursion: a deep tree on a real stick
     // should cost heap, not call frames.
-    std::vector<fs::path> pending{fs::path(root)};
+    std::vector<fs::path> pending{rootPath};
     while (!pending.empty()) {
         cancel.throwIfCancelled();
 
@@ -112,7 +114,7 @@ AudioFileWalkResult walkAudioFiles(const std::string &root, const application::C
                 continue;
             }
 
-            const std::string path = child.generic_string();
+            const std::string path = pathToGenericUtf8(child);
             if (!isAudioExtension(path)) {
                 continue;
             }

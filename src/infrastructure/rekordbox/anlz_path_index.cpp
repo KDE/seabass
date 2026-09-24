@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 
@@ -18,10 +20,10 @@ using Pdb = rekordbox_pdb_t;
 
 AnlzPathIndex::AnlzPathIndex(const std::string &pioneerRoot)
 {
-    const std::string pdbPath = pioneerRoot + "/rekordbox/export.pdb";
+    const std::filesystem::path pdbPath = pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb";
     std::ifstream ifs(pdbPath, std::ifstream::binary);
     if (!ifs.is_open()) {
-        throw std::runtime_error("could not open " + pdbPath);
+        throw std::runtime_error("could not open " + pathToUtf8(pdbPath));
     }
 
     WorkCounters::instance().noteTrackDatabaseParse();

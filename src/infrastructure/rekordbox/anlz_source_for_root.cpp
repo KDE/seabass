@@ -11,6 +11,7 @@
 #include <mutex>
 
 #include "infrastructure/local/browsed_backup_root.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/archive_anlz_source.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
@@ -39,11 +40,12 @@ std::map<std::string, OpenedArchive> g_opened;
 std::shared_ptr<AnlzByteSource> openArchiveSource(const std::string &archivePath)
 {
     std::error_code ec;
-    const auto size = fs::file_size(fs::path(archivePath), ec);
+    const fs::path archive = pathFromUtf8(archivePath);
+    const auto size = fs::file_size(archive, ec);
     if (ec) {
         return nullptr;
     }
-    const auto mtime = fs::last_write_time(fs::path(archivePath), ec);
+    const auto mtime = fs::last_write_time(archive, ec);
     if (ec) {
         return nullptr;
     }
@@ -68,7 +70,7 @@ std::shared_ptr<AnlzByteSource> openArchiveSource(const std::string &archivePath
         // The ArchiveFile is kept alive by the source itself, through the
         // Zip64Reader's shared_ptr, for as long as any reader holds it.
         auto file = std::make_shared<stick_backup::PosixArchiveFile>(
-            fs::path(archivePath), stick_backup::PosixArchiveFile::OpenMode::ReadOnly);
+            archive, stick_backup::PosixArchiveFile::OpenMode::ReadOnly);
         auto reader = std::make_shared<const stick_backup::Zip64Reader>(stick_backup::Zip64Reader::open(*file));
         source = std::make_shared<stick_backup::ArchiveAnlzSource>(std::move(reader), "PIONEER/", std::move(file));
     } catch (const std::exception &) {
@@ -92,11 +94,11 @@ std::shared_ptr<AnlzByteSource> openArchiveSource(const std::string &archivePath
 
 std::shared_ptr<AnlzByteSource> anlzSourceForPioneerRoot(const std::string &pioneerRoot)
 {
-    const auto archive = local::browsedBackupArchive(fs::path(pioneerRoot).parent_path());
+    const auto archive = local::browsedBackupArchive(pathFromUtf8(pioneerRoot).parent_path());
     if (!archive) {
         return std::make_shared<FilesystemAnlzSource>(pioneerRoot);
     }
-    if (auto source = openArchiveSource(archive->string())) {
+    if (auto source = openArchiveSource(pathToUtf8(*archive))) {
         return source;
     }
     return std::make_shared<FilesystemAnlzSource>(pioneerRoot);

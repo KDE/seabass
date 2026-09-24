@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
@@ -336,7 +337,7 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
         return -1;
     }
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(databaseFile.string().c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(databaseFile).c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return -1;
     }
@@ -380,7 +381,7 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
         if (auto seen = albumArtIdBySource.find(source); seen != albumArtIdBySource.end()) {
             albumArtId = seen->second;
         } else {
-            std::ifstream image(source, std::ios::binary);
+            std::ifstream image(pathFromUtf8(source), std::ios::binary);
             if (!image) {
                 continue;
             }
@@ -405,7 +406,7 @@ int copyArtworkInto(const std::filesystem::path &databaseDirectory,
                 continue;
             }
 
-            std::ofstream copy(artworkDir / (name + extension), std::ios::binary);
+            std::ofstream copy(artworkDir / pathFromUtf8(name + extension), std::ios::binary);
             if (!copy) {
                 continue;
             }
@@ -492,7 +493,7 @@ int markTracksForDeviceAnalysis(const std::filesystem::path &databaseDirectory)
         return -1;
     }
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(databaseFile.string().c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(databaseFile).c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return -1;
     }
@@ -578,7 +579,7 @@ std::string verifyInformationRowAtIdOne(const std::filesystem::path &databaseDir
     if (databaseFile.empty()) {
         return "the new Engine database was not written where it was expected.";
     }
-    const std::string dbPath = databaseFile.string();
+    const std::string dbPath = pathToUtf8(databaseFile);
     sqlite3 *db = nullptr;
     // READONLY: nothing here writes, and a wrong path must fail rather
     // than leave a stray empty database behind for the copy to carry onto
@@ -664,7 +665,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
 
     try {
         {
-            auto db = djinterop::engine::create_database(scratchDir.string(), schemaFor(schemaGeneration));
+            auto db = djinterop::engine::create_database(pathToUtf8(scratchDir), schemaFor(schemaGeneration));
 
             reporter.start("Creating Engine Library", tracks.size());
             size_t processed = 0;
@@ -717,7 +718,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                 }
 
                 std::error_code relError;
-                fs::path relative = fs::relative(track.filePath, directory, relError);
+                fs::path relative = fs::relative(pathFromUtf8(track.filePath), pathFromUtf8(directory), relError);
                 // fs::relative() does NOT report "no relation possible" as
                 // an error: per the standard it is lexically_relative()
                 // underneath, which returns an empty path when the two
@@ -730,7 +731,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                 // checking it was never going to catch this; emptiness is
                 // the only signal fs::relative() actually gives.
                 //
-                // The fallback needs generic_string() too, not just the
+                // The fallback needs the generic spelling too, not just the
                 // usual case: track.filePath is a platform-native
                 // absolute path -- backslashes on Windows -- and
                 // libdjinterop's own get_filename() only ever splits on
@@ -740,8 +741,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                 // either, create_track() throws "cannot auto-determine
                 // file type based on extension" for a track whose
                 // extension was never in question.
-                snapshot.relative_path =
-                    relative.empty() ? fs::path(track.filePath).generic_string() : relative.generic_string();
+                snapshot.relative_path = pathToGenericUtf8(relative.empty() ? pathFromUtf8(track.filePath) : relative);
 
                 // Simple, approximate two-point beatgrid: assumes the track
                 // starts exactly on a downbeat at sample 0, then a second
@@ -769,7 +769,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
                 result.tracksCreated++;
                 if (!track.artworkPath.empty()) {
                     std::error_code artEc;
-                    if (fs::exists(track.artworkPath, artEc)) {
+                    if (fs::exists(pathFromUtf8(track.artworkPath), artEc)) {
                         artworkByTrackPath[snapshot.relative_path.value_or("")] = track.artworkPath;
                     }
                 }
@@ -820,7 +820,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
         // prompt to suppress -- so a failure is reported as a flag.
         if (rekordboxLibrarySequence) {
             result.rekordboxImportRecorded = markRekordboxLibraryImported(
-                std::string(), *rekordboxLibrarySequence, nullptr, {}, engineDatabaseFile(scratchDir).string());
+                std::string(), *rekordboxLibrarySequence, nullptr, {}, pathToUtf8(engineDatabaseFile(scratchDir)));
         }
 
         // Cover art, also on the scratch copy. Unlike the row above this
@@ -839,7 +839,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
         // of the many small fsync'd writes the per-track loop above would
         // otherwise have done directly against it.
         reporter.start("Copying to stick", 1);
-        fs::copy(scratchDir, directory, fs::copy_options::recursive);
+        fs::copy(scratchDir, pathFromUtf8(directory), fs::copy_options::recursive);
         reporter.tick(1);
         reporter.finish();
     } catch (const std::exception &e) {

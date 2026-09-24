@@ -12,6 +12,7 @@
 #include "application/use_cases/fill_missing_durations.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/local/duration_cache.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_duration_probe.hpp"
@@ -45,7 +46,7 @@ namespace seabass::infrastructure::audio
 inline application::FillMissingDurationsResult fillTrackDurations(std::vector<domain::Track> &tracks,
                                                                     const std::string &libraryPath)
 {
-    const std::string stickRoot = std::filesystem::path(libraryPath).parent_path().string();
+    const std::string stickRoot = paths::stickRootForCatalogPath(libraryPath);
     local::DurationCache cache(stickRoot);
 
     // TagLib first wherever it is compiled in: synchronous, header-only

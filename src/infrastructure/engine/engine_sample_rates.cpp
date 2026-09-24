@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_sample_rates.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -20,7 +21,7 @@ namespace
 
 fs::path databaseDirectory(const std::string &engineLibraryPath)
 {
-    return fs::path(engineLibraryPath) / "Database2";
+    return pathFromUtf8(engineLibraryPath) / "Database2";
 }
 
 // A row's own sample rate, or nothing. Reading it can throw rather than
@@ -77,8 +78,8 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
                 entry.title = textOf(track.title());
                 entry.artist = textOf(track.artist());
                 // Engine stores it relative to the library directory.
-                const fs::path relative = track.relative_path();
-                entry.trackFile = fs::weakly_canonical(fs::path(engineLibraryPath) / relative, ec).string();
+                const fs::path relative = pathFromUtf8(track.relative_path());
+                entry.trackFile = pathToUtf8(fs::weakly_canonical(pathFromUtf8(engineLibraryPath) / relative, ec));
                 if (ec) {
                     entry.trackFile.clear();
                 }
@@ -86,7 +87,7 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
                 // A row too damaged to describe is still a row missing a
                 // sample rate; it just cannot be fixed from its file.
             }
-            if (probe && !entry.trackFile.empty() && fs::is_regular_file(entry.trackFile, ec)) {
+            if (probe && !entry.trackFile.empty() && fs::is_regular_file(pathFromUtf8(entry.trackFile), ec)) {
                 entry.sampleRateFromFile = probe(entry.trackFile);
             }
             audit.missing.push_back(std::move(entry));
@@ -108,13 +109,13 @@ SampleRateRepair repairSampleRates(const std::string &engineLibraryPath,
     SampleRateRepair result;
     const fs::path database = databaseFileOverride.empty()
         ? databaseDirectory(engineLibraryPath) / "m.db"
-        : fs::path(databaseFileOverride);
+        : pathFromUtf8(databaseFileOverride);
     try {
         if (beforeWrite) {
-            beforeWrite(database.string());
+            beforeWrite(pathToUtf8(database));
         }
         // Same again: from <root>/Database2/m.db back up to <root>.
-        auto db = djinterop::engine::load_database(database.parent_path().parent_path().string());
+        auto db = djinterop::engine::load_database(pathToUtf8(database.parent_path().parent_path()));
         for (const SampleRateEntry &entry : entries) {
             if (entry.sampleRateFromFile <= 0.0) {
                 result.skipped++;

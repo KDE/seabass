@@ -7,6 +7,7 @@
 #include "infrastructure/cleanup/stick_containment.hpp"
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <filesystem>
 #include <system_error>
@@ -53,7 +54,7 @@ std::vector<PendingDeletionOutcome> applyPendingDeletions(const std::vector<Pend
         // Prefixed: a track under a long artist/album path can sit past
         // MAX_PATH, and there the unprefixed calls answer "not there" and
         // "could not remove" about a file that is present and removable.
-        const fs::path path = longPathSafe(entry.filePath);
+        const fs::path path = longPathSafe(pathFromUtf8(entry.filePath));
         std::string failure;
         // exists() answers false for BOTH "it is gone" and "I could not
         // look", and only the error code tells them apart. Untested, the

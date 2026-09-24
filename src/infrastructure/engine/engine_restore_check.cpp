@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_restore_check.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <system_error>
 
@@ -20,7 +21,7 @@ std::optional<std::vector<std::string>> checkRestoredEngineLibrary(const fs::pat
     if (!fs::exists(engineMainDatabasePath(targetRoot), ec)) {
         return std::nullopt;
     }
-    LibdjinteropEngineReader reader(engineLibraryPath(targetRoot).string());
+    LibdjinteropEngineReader reader(pathToUtf8(engineLibraryPath(targetRoot)));
     std::vector<std::string> missing;
     for (const domain::Track &track : reader.readAll()) {
         if (!track.streamingSource.empty()) {
@@ -30,7 +31,7 @@ std::optional<std::vector<std::string>> checkRestoredEngineLibrary(const fs::pat
             missing.push_back(track.title.empty() ? track.filename : track.title + " (path unresolved)");
             continue;
         }
-        if (!fs::exists(fs::path(track.filePath), ec)) {
+        if (!fs::exists(pathFromUtf8(track.filePath), ec)) {
             missing.push_back(track.filePath);
         }
     }

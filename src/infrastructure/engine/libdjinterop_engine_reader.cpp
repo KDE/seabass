@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -105,8 +106,9 @@ void collectPlaylistMemberships(const djinterop::playlist &pl, const std::string
 std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &engineLibraryPath)
 {
     std::unordered_map<int64_t, std::string> result;
-    std::filesystem::path stickRoot = std::filesystem::path(engineLibraryPath).parent_path();
-    std::string dbPath = (std::filesystem::path(engineLibraryPath) / "Database2" / "m.db").string();
+    const std::filesystem::path root = pathFromUtf8(engineLibraryPath);
+    const std::filesystem::path stickRoot = root.parent_path();
+    std::string dbPath = pathToUtf8(root / "Database2" / "m.db");
 
     sqlite3 *db = nullptr;
     if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
@@ -140,22 +142,22 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
         // slashes ("PIONEER/Artwork/...") appended as one path component
         // in a single operator/ call, so fs::path preserves them as
         // literal characters rather than re-splitting into components --
-        // .string() would otherwise mix them with the native separator
+        // pathToUtf8() would otherwise mix them with the native separator
         // from the stickRoot join on Windows. Same bug/fix as
         // OneLibraryReader's artworkPath (onelibrary_reader.cpp), found
         // via a real Windows test failure there.
         //
-        // hash is a raw Engine sqlite column, so on Windows operator/ can
-        // throw filesystem_error over bytes that are not valid UTF-8 (see
-        // path_key.cpp's own doc comment on the same risk). Caught per
+        // hash is a raw Engine sqlite column, so on Windows pathFromUtf8()
+        // can throw over bytes that are not valid UTF-8 (see path_key.cpp's
+        // own doc comment on the same risk). Caught per
         // row, not just by readAll()'s outer try/catch around this whole
         // function: that one would otherwise lose every OTHER track's
         // artwork too, not just this row's.
         try {
-            std::filesystem::path candidate = (stickRoot / hash.substr(pos)).make_preferred();
+            std::filesystem::path candidate = (stickRoot / pathFromUtf8(hash.substr(pos))).make_preferred();
             std::error_code ec;
             if (std::filesystem::exists(candidate, ec)) {
-                result[trackId] = candidate.string();
+                result[trackId] = pathToUtf8(candidate);
             }
         } catch (const std::exception &) {
             // Best-effort, same as the rest of this loop's field reads:
@@ -178,7 +180,7 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 std::unordered_map<int64_t, std::string> readStreamingSources(const std::string &engineLibraryPath)
 {
     std::unordered_map<int64_t, std::string> result;
-    std::string dbPath = (std::filesystem::path(engineLibraryPath) / "Database2" / "m.db").string();
+    std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
 
     // Two outcomes that look alike and are not. An Engine 1.x library has no
     // Database2/m.db, and a 2.x one older than schema 2.18 no streamingSource
@@ -188,7 +190,7 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
     // local one looks like a broken file -- which Library Health offers to
     // repair by deleting the row. So that throws, and the read fails.
     std::error_code existsError;
-    if (!std::filesystem::exists(dbPath, existsError) && !existsError) {
+    if (!std::filesystem::exists(pathFromUtf8(dbPath), existsError) && !existsError) {
         return result;
     }
 
@@ -263,7 +265,7 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
 std::unordered_map<int64_t, std::int64_t> readLastEditTimes(const std::string &engineLibraryPath)
 {
     std::unordered_map<int64_t, std::int64_t> result;
-    std::string dbPath = (std::filesystem::path(engineLibraryPath) / "Database2" / "m.db").string();
+    std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
 
     sqlite3 *db = nullptr;
     if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
@@ -353,12 +355,12 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
             if (relative.empty()) {
                 return std::string();
             }
-            auto resolved = std::filesystem::path(m_engineLibraryPath) / relative;
-            return resolved.lexically_normal().string();
+            auto resolved = pathFromUtf8(m_engineLibraryPath) / pathFromUtf8(relative);
+            return pathToUtf8(resolved.lexically_normal());
         });
         if (!track.filePath.empty()) {
             std::error_code ec;
-            auto size = std::filesystem::file_size(track.filePath, ec);
+            auto size = std::filesystem::file_size(pathFromUtf8(track.filePath), ec);
             track.fileSizeBytes = ec ? 0 : size;
         }
         track.bpm = safeGet<double>(*m_progress, id, "bpm", [&] { return tr.bpm().value_or(0.0); });

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "infrastructure/anonymization_export_layout.hpp"
 #include "infrastructure/fs_remove.hpp"
@@ -95,7 +96,7 @@ void compactDatabase(const std::string &dbPath)
 
 int scrubFilenameColumn(const std::string &destinationRoot)
 {
-    const std::string dbPath = (std::filesystem::path(destinationRoot) / "Database2" / "m.db").string();
+    const std::string dbPath = pathToUtf8(pathFromUtf8(destinationRoot) / "Database2" / "m.db");
     sqlite3 *db = nullptr;
     if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
         sqlite3_close(db);
@@ -169,7 +170,7 @@ void copyTreeIfPresent(const fs::path &from, const fs::path &to)
     }
     fs::copy(from, to, fs::copy_options::recursive, ec);
     if (ec) {
-        throw std::runtime_error("failed to copy " + from.string() + " to " + to.string() + ": " + ec.message());
+        throw std::runtime_error("failed to copy " + pathToUtf8(from) + " to " + pathToUtf8(to) + ": " + ec.message());
     }
 }
 
@@ -182,14 +183,15 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
     EngineAnonymizationResult result;
 
     std::error_code ec;
-    if (fs::exists(destinationRoot, ec) && !fs::is_empty(destinationRoot, ec)) {
+    const fs::path destination = pathFromUtf8(destinationRoot);
+    if (fs::exists(destination, ec) && !fs::is_empty(destination, ec)) {
         result.errorMessage = destinationRoot + " already exists and isn't empty -- refusing to write into it";
         return result;
     }
-    fs::create_directories(destinationRoot, ec);
+    fs::create_directories(destination, ec);
 
     try {
-        copyTreeIfPresent(fs::path(sourceRoot) / "Database2", fs::path(destinationRoot) / "Database2");
+        copyTreeIfPresent(pathFromUtf8(sourceRoot) / "Database2", destination / "Database2");
         // That copy takes the whole Database2 directory, which holds more
         // than the catalog. Only m.db is scrubbed below; everything else
         // at that level went out untouched, and hm.db is the play history
@@ -202,7 +204,7 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
         // kept: OverviewData holds the low-resolution waveform previews,
         // which are derived numbers with no text in them.
         {
-            const fs::path databaseDir = fs::path(destinationRoot) / "Database2";
+            const fs::path databaseDir = destination / "Database2";
             std::vector<fs::path> unknown;
             // The listing's own error used to go into an error_code
             // nothing read, and a directory_iterator that cannot open
@@ -215,7 +217,7 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
             std::error_code listEc;
             fs::directory_iterator entry(databaseDir, listEc);
             if (listEc) {
-                result.errorMessage = "could not list " + databaseDir.string() + ": " + listEc.message()
+                result.errorMessage = "could not list " + pathToUtf8(databaseDir) + ": " + listEc.message()
                     + " -- so the files that have no anonymizer could not be found, let alone dropped";
                 return result;
             }
@@ -223,16 +225,16 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
                 std::error_code kindEc;
                 const bool isFile = entry->is_regular_file(kindEc);
                 if (kindEc) {
-                    result.errorMessage = "could not tell what " + entry->path().filename().string()
+                    result.errorMessage = "could not tell what " + pathToUtf8(entry->path().filename())
                         + " in Database2 is: " + kindEc.message();
                     return result;
                 }
-                if (isFile && !isKeptEngineDatabaseFile(entry->path().filename().string())) {
+                if (isFile && !isKeptEngineDatabaseFile(pathToUtf8(entry->path().filename()))) {
                     unknown.push_back(entry->path());
                 }
                 entry.increment(listEc);
                 if (listEc) {
-                    result.errorMessage = "stopped listing " + databaseDir.string() + ": " + listEc.message()
+                    result.errorMessage = "stopped listing " + pathToUtf8(databaseDir) + ": " + listEc.message()
                         + " -- so the rest of it was never examined";
                     return result;
                 }
@@ -245,9 +247,9 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
                 // content the anonymizer exists to keep out.
                 std::string failure;
                 if (infrastructure::removeEntry(path, failure)) {
-                    result.removedUnanonymizableFiles.push_back(path.filename().string());
+                    result.removedUnanonymizableFiles.push_back(pathToUtf8(path.filename()));
                 } else {
-                    result.unremovedUnanonymizableFiles.push_back(path.filename().string() + ": " + failure);
+                    result.unremovedUnanonymizableFiles.push_back(pathToUtf8(path.filename()) + ": " + failure);
                 }
             }
         }
@@ -263,9 +265,8 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
             // OverviewData is the same data again as .rgb files, 2.8 MB
             // of it, and nothing but a picture.
             std::error_code slimEc;
-            fs::remove_all(fs::path(destinationRoot) / "Database2" / "OverviewData", slimEc);
-            result.waveformRowsEmptied = emptyEngineWaveformColumn(
-                (fs::path(destinationRoot) / "Database2" / "m.db").string());
+            fs::remove_all(destination / "Database2" / "OverviewData", slimEc);
+            result.waveformRowsEmptied = emptyEngineWaveformColumn(pathToUtf8(destination / "Database2" / "m.db"));
         }
 
         if (!djinterop::engine::database_exists(destinationRoot)) {
@@ -401,7 +402,7 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
     if (result.errorMessage.empty()) {
         result.filenameColumnRows = scrubFilenameColumn(destinationRoot);
         // Last thing, after every writer above: see compactDatabase().
-        compactDatabase((std::filesystem::path(destinationRoot) / "Database2" / "m.db").string());
+        compactDatabase(pathToUtf8(destination / "Database2" / "m.db"));
     }
     // Same contract as tracksRefused: a file nothing can scrub, still in
     // Database2, means this export must not be shared. Said in

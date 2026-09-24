@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/anlz_file.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -63,7 +64,7 @@ void validateAnlzBytes(const std::string &data, const std::string &context)
 
 AnlzFile AnlzFile::readRaw(const std::string &path)
 {
-    std::ifstream ifs(path, std::ifstream::binary);
+    std::ifstream ifs(pathFromUtf8(path), std::ifstream::binary);
     if (!ifs.is_open()) {
         throw std::runtime_error("could not open " + path);
     }
@@ -85,8 +86,8 @@ AnlzFile AnlzFile::readRaw(const std::string &path)
 
     result.m_sourcePath = path;
     std::error_code ec;
-    result.m_sourceFileSize = fs::file_size(path, ec);
-    result.m_sourceMtime = fs::last_write_time(path, ec);
+    result.m_sourceFileSize = fs::file_size(pathFromUtf8(path), ec);
+    result.m_sourceMtime = fs::last_write_time(pathFromUtf8(path), ec);
     return result;
 }
 
@@ -98,8 +99,8 @@ void AnlzFile::writeRaw(const std::string &path) const
     // copy is no longer a safe base to overwrite it with.
     if (!m_sourcePath.empty() && path == m_sourcePath) {
         std::error_code ec;
-        auto currentSize = fs::file_size(path, ec);
-        auto currentMtime = fs::last_write_time(path, ec);
+        auto currentSize = fs::file_size(pathFromUtf8(path), ec);
+        auto currentMtime = fs::last_write_time(pathFromUtf8(path), ec);
         if (ec || currentSize != m_sourceFileSize || currentMtime != m_sourceMtime) {
             throw std::runtime_error(path + " changed on disk since it was read -- refusing to overwrite it with a stale copy");
         }

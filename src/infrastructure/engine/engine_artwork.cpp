@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
 
@@ -37,12 +38,12 @@ constexpr std::string_view StickTailWindows = "PIONEER\\Artwork";
 
 fs::path databaseFile(const std::string &engineLibraryPath)
 {
-    return fs::path(engineLibraryPath) / "Database2" / "m.db";
+    return pathFromUtf8(engineLibraryPath) / "Database2" / "m.db";
 }
 
 fs::path artworkDirectory(const std::string &engineLibraryPath)
 {
-    return fs::path(engineLibraryPath) / "Artwork";
+    return pathFromUtf8(engineLibraryPath) / "Artwork";
 }
 
 // The first bytes only: the audit asks this of every imported entry, and
@@ -72,8 +73,9 @@ std::string readWholeFile(const fs::path &file)
 std::string artworkSourceKey(const std::string &trackFile)
 {
     std::error_code ec;
-    fs::path resolved = fs::weakly_canonical(fs::path(trackFile), ec);
-    std::string key = (ec ? fs::path(trackFile) : resolved).string();
+    const fs::path file = pathFromUtf8(trackFile);
+    const fs::path resolved = fs::weakly_canonical(file, ec);
+    std::string key = pathToUtf8(ec ? file : resolved);
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return key;
@@ -149,15 +151,15 @@ std::string imageOnStickFor(std::string_view reference, const std::string &stick
     // reader's own artwork resolution takes, for the same Windows reason.
     //
     // And caught, for that same reason: `tail` is raw bytes out of a
-    // database column, and on Windows operator/ converts them to wide
-    // characters and throws filesystem_error when they are not valid
-    // UTF-8. libdjinterop_engine_reader.cpp catches the same throw per
-    // row, after a real Windows run did exactly that. Uncaught here it
-    // would leave runScanTask's outer handler to turn one unreadable
-    // artwork path into "the Engine scan failed", costing the user every
-    // missing file, junk cue and playlist tally for the format.
+    // database column, and on Windows pathFromUtf8() decodes them to
+    // wide characters and can throw when they are not valid UTF-8.
+    // libdjinterop_engine_reader.cpp catches the same throw per row,
+    // after a real Windows run did exactly that. Uncaught here it would
+    // leave runScanTask's outer handler to turn one unreadable artwork
+    // path into "the Engine scan failed", costing the user every missing
+    // file, junk cue and playlist tally for the format.
     try {
-        return (fs::path(stickRoot) / tail).make_preferred().string();
+        return pathToUtf8((pathFromUtf8(stickRoot) / pathFromUtf8(tail)).make_preferred());
     } catch (const std::exception &) {
         return {};
     }
@@ -169,11 +171,11 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     ArtworkAudit audit;
     const fs::path db = databaseFile(engineLibraryPath);
     const fs::path artwork = artworkDirectory(engineLibraryPath);
-    const std::string stickRoot = fs::path(engineLibraryPath).parent_path().string();
+    const std::string stickRoot = pathToUtf8(pathFromUtf8(engineLibraryPath).parent_path());
 
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(db.string().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
-        audit.error = "could not read " + db.string();
+    if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        audit.error = "could not read " + pathToUtf8(db);
         if (handle) {
             sqlite3_close(handle);
         }
@@ -218,7 +220,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     const auto findASourceFor = [&sources, &hasOtherSource](ArtworkEntry &entry) {
         if (!sources.empty() && !entry.trackFile.empty()) {
             const auto found = sources.find(artworkSourceKey(entry.trackFile));
-            if (found != sources.end() && isImageARepairCanName(found->second)) {
+            if (found != sources.end() && isImageARepairCanName(pathFromUtf8(found->second))) {
                 entry.imageOnStick = found->second;
                 return;
             }
@@ -242,9 +244,9 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             // ("../Contents/..."), which is where the rekordbox catalog's
             // own absolute paths meet it.
             std::error_code pathEc;
-            const fs::path absolute =
-                fs::weakly_canonical(fs::path(engineLibraryPath) / reinterpret_cast<const char *>(trackPath), pathEc);
-            entry.trackFile = pathEc ? std::string() : absolute.string();
+            const fs::path absolute = fs::weakly_canonical(
+                pathFromUtf8(engineLibraryPath) / pathFromUtf8(reinterpret_cast<const char *>(trackPath)), pathEc);
+            entry.trackFile = pathEc ? std::string() : pathToUtf8(absolute);
         }
         const void *blob = sqlite3_column_blob(stmt, 3);
         const int size = sqlite3_column_bytes(stmt, 3);
@@ -292,7 +294,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             entry.reference = reference;
             entry.imageOnStick = imageOnStickFor(reference, stickRoot);
             std::error_code ec;
-            if (!entry.imageOnStick.empty() && !fs::is_regular_file(entry.imageOnStick, ec)) {
+            if (!entry.imageOnStick.empty() && !fs::is_regular_file(pathFromUtf8(entry.imageOnStick), ec)) {
                 entry.imageOnStick.clear();
             }
             // And a file that is there but is not an image a repair can
@@ -301,7 +303,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             // here rather than at save time, so the count the page shows
             // and the button it offers are what a repair will actually do,
             // and so one odd file cannot stop a save of a thousand others.
-            if (!entry.imageOnStick.empty() && !isImageARepairCanName(entry.imageOnStick)) {
+            if (!entry.imageOnStick.empty() && !isImageARepairCanName(pathFromUtf8(entry.imageOnStick))) {
                 entry.imageOnStick.clear();
             }
             audit.unreadable.push_back(std::move(entry));
@@ -314,7 +316,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         bool readable = false;
         bool anyFile = false;
         for (const char *extension : {".jpg", ".jpeg", ".png"}) {
-            const fs::path cached = artwork / (name + extension);
+            const fs::path cached = artwork / pathFromUtf8(name + extension);
             if (!fs::is_regular_file(cached, ec)) {
                 continue;
             }
@@ -354,12 +356,12 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                             const ArtworkSourceReader &readOtherSource)
 {
     ArtworkRepair result;
-    const fs::path db = databaseFileOverride.empty() ? databaseFile(engineLibraryPath) : fs::path(databaseFileOverride);
+    const fs::path db = databaseFileOverride.empty() ? databaseFile(engineLibraryPath) : pathFromUtf8(databaseFileOverride);
     const fs::path artwork = artworkDirectory(engineLibraryPath);
 
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(db.string().c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
-        result.error = "could not open " + db.string();
+    if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+        result.error = "could not open " + pathToUtf8(db);
         if (handle) {
             sqlite3_close(handle);
         }
@@ -416,14 +418,14 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             // 20 bytes, the width Engine's own rows use.
             const std::span<const std::uint8_t> hash(full.data(), 20);
             const std::string name = artworkFileName(hash);
-            const fs::path destination = artwork / (name + extension);
+            const fs::path destination = artwork / pathFromUtf8(name + extension);
             // Not "is it there" but "is it an image": an empty file at
             // the right name is exactly what this repair exists to fix,
             // and skipping it because something is there would write the
             // row, report success, and leave the player showing nothing.
             if (!fs::is_regular_file(destination, ec) || !isImageARepairCanName(destination)) {
                 if (beforeWrite) {
-                    beforeWrite(destination.string());
+                    beforeWrite(pathToUtf8(destination));
                 }
                 // Durably, like every other write onto a stick: a bare
                 // ofstream leaves the bytes in the write-back cache, and a
@@ -433,10 +435,11 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 // then on, the page would call the library healthy, the
                 // player would show a broken cover, and no rescan could
                 // ever surface it -- worse than not having copied it.
-                if (!writeFileDurablyAtomic(destination.string(), bytes)) {
-                    return fail("could not write " + destination.string());
+                const std::string destinationUtf8 = pathToUtf8(destination);
+                if (!writeFileDurablyAtomic(destinationUtf8, bytes)) {
+                    return fail("could not write " + destinationUtf8);
                 }
-                result.filesWritten.push_back(destination.string());
+                result.filesWritten.push_back(destinationUtf8);
             }
 
             std::int64_t albumArtId = 0;
