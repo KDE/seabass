@@ -310,6 +310,29 @@ TestCase {
         compare(overlay.visible, false);
     }
 
+    // A restore refused before it starts (the write hold, a lock) never
+    // sets the controller's restoring flag, so it used to miss the overlay
+    // and its reason sat on the form's own error line, out of view. The
+    // overlay counts from the press instead.
+    function test_aRestoreRefusedBeforeItStartsSaysWhyOnTheOverlay() {
+        var page = makePage([makeDisk({})], {});
+        compare(findChild(page, "restoreOverlay").visible, false);
+        findChild(page, "confirmDialog").accepted();
+        compare(page.controller.lastRestore.mountPoint, "/media/STICK", "the restore was asked for");
+        // The controller answers with a refusal and never starts.
+        page.controller = makeFakeController([makeDisk({})], {errorMessage: "Another Seabass instance is writing to this stick."});
+        var overlay = findChild(page, "restoreOverlay");
+        compare(overlay.visible, true);
+        compare(overlay.title, "Restore stopped");
+        compare(findChild(overlay, "restoreFailedLabel").text, "Another Seabass instance is writing to this stick.");
+        // Closed, then refused again on a second press: shown again.
+        findChild(overlay, "closeReportButton").clicked();
+        compare(overlay.visible, false);
+        findChild(page, "confirmDialog").accepted();
+        page.controller = makeFakeController([makeDisk({})], {errorMessage: "Still refused."});
+        compare(findChild(page, "restoreOverlay").visible, true);
+    }
+
     function makeBackup(overrides) {
         var backup = {
             archivePath: "/home/u/Seabass Backups/WHALESHARK2.zip",

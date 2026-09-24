@@ -90,6 +90,12 @@ void SaveContext::noteSaveInProgress()
         ids.push_back(backup.id.toStdString());
     }
     const std::string backupDir = infrastructure::backup::backupDirForStickRoot(stickRoot());
+    if (ids.empty()) {
+        // Every record this save made is gone again: nothing to undo from,
+        // and no note to say otherwise.
+        infrastructure::backup::clearSaveInProgress(backupDir);
+        return;
+    }
     if (!infrastructure::backup::noteSaveInProgress(backupDir, ids)) {
         // The backup itself is there; only the way back after an
         // interruption is not. Said, not a reason to refuse the save.
@@ -282,6 +288,9 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
             return std::find(madeHere.begin(), madeHere.end(), id) != madeHere.end()
                 && std::find(stayedHere.begin(), stayedHere.end(), id) == stayedHere.end();
         });
+        // The note followed m_backups up; it follows it down too, or it
+        // would name records that are gone.
+        noteSaveInProgress();
         if (!madeHere.empty()) {
             log().record("backup failed: removed " + std::to_string(removedHere) + " of "
                          + std::to_string(madeHere.size()) + " record(s) this save had already made");
@@ -326,6 +335,9 @@ void SaveContext::discardBackupsTakenThisSave()
         m_recordByLabel.clear();
         m_backedUp.clear();
         m_backups.clear();
+        // The note named those records; with them gone it would promise an
+        // undo of a save that changed nothing.
+        noteSaveInProgress();
         if (hasStick() && removed > 0) {
             log().record("save: nothing was applied and everything went back, so " + std::to_string(removed)
                          + " backup record(s) this save had taken were removed");

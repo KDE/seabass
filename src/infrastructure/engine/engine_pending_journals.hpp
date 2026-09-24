@@ -33,10 +33,9 @@ inline void recoverEnginePendingJournals(const std::string &engineLibraryPath)
             continue;
         }
         const std::filesystem::path db = entry.path();
-        const PendingJournalRecovery recovery =
-            recoverPendingJournal(db, paths::localRoot() / "recovered", [&db]() {
+        const auto openAndRead = [&db](int flags) {
                 sqlite3 *handle = nullptr;
-                const int opened = sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr);
+                const int opened = sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, flags, nullptr);
                 const std::string openError = handle != nullptr ? sqlite3_errmsg(handle) : "could not open";
                 int read = SQLITE_ERROR;
                 std::string readError;
@@ -51,7 +50,11 @@ inline void recoverEnginePendingJournals(const std::string &engineLibraryPath)
                 if (read != SQLITE_OK) {
                     throw std::runtime_error(readError);
                 }
-            });
+        };
+        const PendingJournalRecovery recovery =
+            recoverPendingJournal(db, paths::localRoot() / "recovered",
+                                  [&openAndRead]() { openAndRead(SQLITE_OPEN_READONLY); },
+                                  [&openAndRead]() { openAndRead(SQLITE_OPEN_READWRITE); });
         if (recovery.found && !recovery.recovered) {
             throw std::runtime_error("the Engine Library on this stick was left mid-save (was the stick pulled while "
                                      "saving?) and " + pathToUtf8(db.filename()) + " could not be put back: "

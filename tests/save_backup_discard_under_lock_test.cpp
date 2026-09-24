@@ -199,6 +199,10 @@ void runCase(const std::string &name, bool holdStickLock)
         std::cerr << name << ": " << left << " backup record(s) left on the stick\n" << log;
     }
     assert(left == 0 && "a failed, fully rolled back save leaves no backup record behind");
+    // Nor the note that would offer an undo of it (#48): it named the
+    // records while the save ran, and goes with them.
+    assert(!fs::exists(stickRoot / "Seabass" / "backups" / ".save-in-progress")
+           && "no note of a save in progress survives a save that changed nothing");
 
     std::error_code ec;
     fs::remove_all(stickRoot, ec);

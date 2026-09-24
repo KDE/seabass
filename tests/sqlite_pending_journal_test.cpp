@@ -57,16 +57,23 @@ long long readOnlySum(const fs::path &path, std::string *errorOut = nullptr)
     return sum;
 }
 
-void openReadWriteAndRead(const fs::path &path)
+void openAndRead(const fs::path &path, int flags)
 {
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(seabass::pathToUtf8(path).c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(seabass::pathToUtf8(path).c_str(), &db, flags, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
-        throw std::runtime_error("could not open for writing");
+        throw std::runtime_error("could not open");
     }
-    exec(db, "SELECT count(*) FROM sqlite_master");
+    try {
+        exec(db, "SELECT count(*) FROM sqlite_master");
+    } catch (...) {
+        sqlite3_close(db);
+        throw;
+    }
     sqlite3_close(db);
 }
+void openReadOnlyAndRead(const fs::path &path) { openAndRead(path, SQLITE_OPEN_READONLY); }
+void openReadWriteAndRead(const fs::path &path) { openAndRead(path, SQLITE_OPEN_READWRITE); }
 
 // A database of 2000 rows summing to 2000, and a copy of it taken in the
 // middle of a transaction that sets every row to 7 -- with the database
@@ -125,6 +132,7 @@ int main()
     {
         const fs::path crashed = root / "crashed.db";
         const auto recovery = recoverPendingJournal(crashed, root / "recovered",
+                                                    [&crashed]() { openReadOnlyAndRead(crashed); },
                                                     [&crashed]() { openReadWriteAndRead(crashed); });
         assert(recovery.found && recovery.recovered && recovery.error.empty());
         assert(!hasPendingJournal(crashed));
@@ -138,7 +146,8 @@ int main()
     {
         const fs::path crashed = root / "crashed.db";
         bool opened = false;
-        const auto recovery = recoverPendingJournal(crashed, root / "recovered-again", [&opened]() { opened = true; });
+        const auto recovery = recoverPendingJournal(crashed, root / "recovered-again", [&opened]() { opened = true; },
+                                                    [&opened]() { opened = true; });
         assert(!recovery.found && !recovery.recovered && !opened);
         assert(!fs::exists(root / "recovered-again"));
         std::cout << "case 3 (nothing pending, nothing touched) OK\n";
@@ -150,9 +159,9 @@ int main()
         const fs::path second = root / "second";
         fs::create_directories(second);
         const fs::path crashed = makeInterrupted(second);
-        const auto recovery = recoverPendingJournal(crashed, root / "recovered-3", []() {
-            throw std::runtime_error("attempt to write a readonly database");
-        });
+        const auto recovery = recoverPendingJournal(crashed, root / "recovered-3",
+            [&crashed]() { openReadOnlyAndRead(crashed); },
+            []() { throw std::runtime_error("attempt to write a readonly database"); });
         assert(recovery.found && !recovery.recovered);
         assert(recovery.error.find("readonly") != std::string::npos);
         assert(hasPendingJournal(crashed) && "nothing was rolled back");
