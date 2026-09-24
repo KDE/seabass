@@ -981,6 +981,81 @@ Page {
                         columnSpacing: 12
                         rowSpacing: 12
 
+                        // First in the grid: on an empty stick these two are
+                        // what it is for, and neither shows on one with a
+                        // library, so they move nothing for a stick in use.
+                        // Restoring a backup onto an empty stick: the
+                        // disaster case, a blank replacement drive. Always
+                        // offered, whether or not a backup is known, so a
+                        // new stick shows where its library comes back from.
+                        // Its wording must not presuppose a backup exists:
+                        // "no-backups" is a real, common state here -- a
+                        // freshly formatted stick with an empty default
+                        // backup directory reaches it every time -- and the
+                        // old text, "Restore a library onto this USB stick",
+                        // was reported as "Seabass offers to restore a
+                        // backup ... but we don't have one".
+                        // Restoring writes a whole stick through devicePath,
+                        // which a folder row does not have. Not gated on
+                        // `mounted`: a stick fresh out of Format USB Stick is
+                        // not remounted, and the restore page mounts it
+                        // itself when handed the device path.
+                        ActionCard {
+                            objectName: "restoreBackupCard"
+                            cardTitle: "Restore Backup"
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
+                            cardSubtitle: delegateRoot.adviceState === "restore"
+                                ? "Restore " + delegateRoot.advice.backupLabel + "'s library onto this stick"
+                                : "No known stick backups yet. Browse for a backup file to restore"
+                            cardIcon: "document-revert"
+                            visible: !delegateRoot.hasKnownLibrary && !delegateRoot.isFolder
+                            enabled: !delegateRoot.thisRowBusy
+                            onClicked: root.restoreStickBackupRequested(delegateRoot.mountPoint, delegateRoot.devicePath,
+                                delegateRoot.adviceState === "restore" ? delegateRoot.advice.backupPath : "")
+                        }
+                        // Copying another mounted stick's live library onto
+                        // this empty one, through a fresh backup of it. Only
+                        // when there is such a stick: restoring a backup
+                        // from this computer is Restore Backup's job, and
+                        // this card used to do both, which hid the restore
+                        // behind a name about making backups.
+                        ActionCard {
+                            objectName: "createBackupStickCard"
+                            cardTitle: "Create Backup USB Stick"
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
+                            cardSubtitle: delegateRoot.cloneSource !== null ? delegateRoot.cloneSource.detail : ""
+                            cardIcon: "edit-copy"
+                            visible: !delegateRoot.hasKnownLibrary && !delegateRoot.isFolder
+                                && delegateRoot.cloneSource !== null
+                            // The source stick has to be mounted, which
+                            // cloneSource being non-null already implies
+                            // (peers are only ever mounted sticks).
+                            enabled: !delegateRoot.thisRowBusy && delegateRoot.cloneSource !== null
+                                && delegateRoot.mounted && delegateRoot.cloneSource.enoughSpace !== false
+                            onClicked: root.cloneStickRequested(delegateRoot.cloneSource.label,
+                                delegateRoot.cloneSource.rekordboxPath, delegateRoot.cloneSource.enginePath,
+                                delegateRoot.mountPoint, delegateRoot.label, false)
+                        }
                         ActionCard {
                             cardTitle: "Browse Library"
                             cardSubtitle: "View tracks, playlists and cues"
@@ -1208,75 +1283,6 @@ Page {
                             // stick with nothing recognizable on it yet.
                             enabled: !root.mediaController.busy
                             onClicked: root.formatUsbRequested()
-                        }
-                        // "Restore a Backup" and "Create Backup USB Stick" used
-                        // to be two separate cards for the same job (putting
-                        // a library onto an empty stick, whichever copy is
-                        // newer/available) -- merged into one, since an
-                        // empty stick never needs both at once. Prefers a
-                        // peer stick's own live copy (cloneSource) over a
-                        // disk backup when both exist, same priority order
-                        // adviseStickBackup already uses for the update case.
-                        ActionCard {
-                            cardTitle: "Create Backup USB Stick"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
-                                }
-                            }
-                            // Visible unconditionally (see below), so its
-                            // wording must not presuppose a backup exists:
-                            // "no-backups" is exactly the state where none
-                            // do, and it is a real, common state for this
-                            // card -- a freshly formatted stick with an
-                            // empty default backup directory reaches it
-                            // every time. The old fallback text, "Restore a
-                            // library onto this USB stick", read as though
-                            // a backup were known to exist and just needed
-                            // picking, which is what was reported as
-                            // "Seabass offers to restore a backup ... but
-                            // we don't have one".
-                            cardSubtitle: delegateRoot.cloneSource !== null ? delegateRoot.cloneSource.detail
-                                : (delegateRoot.adviceState === "restore"
-                                    ? "Restore " + delegateRoot.advice.backupLabel + "'s library onto this stick"
-                                    : "No known stick backups yet. Browse for a backup file to restore")
-                            cardIcon: "edit-copy"
-                            // Built on the stick backup: either a copy of
-                            // another mounted stick's own current library,
-                            // or an existing backup from this computer,
-                            // written onto this stick.
-                            // Only for a stick with nothing recognizable on
-                            // it: the disaster case is a blank replacement
-                            // drive. A stick that already has a library
-                            // updates from its own Backups page instead.
-                            // Restoring writes a whole stick through
-                            // devicePath, which a folder row does not have.
-                            visible: !delegateRoot.hasKnownLibrary && !delegateRoot.isFolder
-                            // The disk-backup path isn't gated on `mounted`:
-                            // a stick fresh out of Format USB Stick is not
-                            // remounted, and the restore page mounts it
-                            // itself when handed the device path. The clone
-                            // path does need the source stick mounted, which
-                            // cloneSource being non-null already implies
-                            // (peers are only ever mounted sticks).
-                            enabled: !delegateRoot.thisRowBusy && (delegateRoot.cloneSource === null
-                                || (delegateRoot.mounted && delegateRoot.cloneSource.enoughSpace !== false))
-                            onClicked: {
-                                if (delegateRoot.cloneSource !== null) {
-                                    root.cloneStickRequested(delegateRoot.cloneSource.label,
-                                        delegateRoot.cloneSource.rekordboxPath, delegateRoot.cloneSource.enginePath,
-                                        delegateRoot.mountPoint, delegateRoot.label, false);
-                                } else {
-                                    root.restoreStickBackupRequested(delegateRoot.mountPoint, delegateRoot.devicePath,
-                                        delegateRoot.adviceState === "restore" ? delegateRoot.advice.backupPath : "");
-                                }
-                            }
                         }
                     }
                 }

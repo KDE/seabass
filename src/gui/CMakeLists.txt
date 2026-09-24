@@ -86,6 +86,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/TransferProgressFrame.qml
     qml/common/TypedConfirmDialog.qml
     qml/common/TransferResultFrame.qml
+    qml/common/TransferOverlay.qml
     qml/common/PageScrollView.qml
     qml/common/DjSoftwareRunningDialog.qml
     qml/common/SaveOverlayButton.qml
