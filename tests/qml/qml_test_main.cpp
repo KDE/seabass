@@ -17,6 +17,7 @@
 #include "gui/interface_font.hpp"
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
+#include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/sync_controller.hpp"
 #include "gui/format_usb_controller.hpp"
@@ -216,6 +217,8 @@ private:
 class ControllerFixture : public QObject
 {
     Q_OBJECT
+    int m_stickCounter = 0;
+
 public:
     using QObject::QObject;
     ~ControllerFixture() override
@@ -236,6 +239,45 @@ public:
     Q_INVOKABLE void restoreFilesystemRepair()
     {
         seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
+    }
+
+    // What an edit session knows about its stick's catalogs after a page
+    // named one of them: {rekordbox, engine}. A fresh stick is made under
+    // the scratch root with export.pdb and/or Engine's m.db present --
+    // catalogPathFor() answers by presence only. See
+    // tst_EditSessionCatalogs.qml for why this matters.
+    Q_INVOKABLE QVariantMap sessionCatalogsAfter(bool hasRekordbox, bool hasEngine, const QString &openedAs,
+                                                 const QString &engineGiven = QString())
+    {
+        namespace fs = std::filesystem;
+        const fs::path stick = seabass::testing::scratchRoot()
+            / ("seabass_session_catalogs_" + std::to_string(++m_stickCounter));
+        std::error_code ec;
+        fs::remove_all(stick, ec);
+        auto touch = [](const fs::path &file) {
+            fs::create_directories(file.parent_path());
+            std::ofstream(file) << "x";
+        };
+        if (hasRekordbox) {
+            touch(stick / "PIONEER" / "rekordbox" / "export.pdb");
+        }
+        if (hasEngine) {
+            touch(stick / "Engine Library" / "Database2" / "m.db");
+        }
+        const QString root = QString::fromStdString(stick.string());
+        seabass::gui::LibraryEditSession session(seabass::gui::EditSessionRegistry::instance(),
+                                                 QStringLiteral("session-catalogs-%1").arg(m_stickCounter),
+                                                 QStringLiteral("TEST"), root);
+        if (openedAs == QLatin1String("engine")) {
+            session.setLibraryPaths(QString(), root + QStringLiteral("/Engine Library"));
+        } else {
+            session.setLibraryPaths(root + QStringLiteral("/PIONEER"), engineGiven);
+        }
+        QVariantMap result;
+        result[QStringLiteral("root")] = root;
+        result[QStringLiteral("rekordbox")] = session.rekordboxPath();
+        result[QStringLiteral("engine")] = session.enginePath();
+        return result;
     }
 
     // Starts a format and leaves the page while it runs, which destroys
