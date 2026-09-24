@@ -230,7 +230,14 @@ int main()
             assert(again.unopenable.size() == 1 && again.unopenable[0] == seabass::pathToUtf8(locked));
             assert(again.unreadable.empty());
             auto wear = seabass::domain::assessWear(again, seabass::domain::StickPerformanceMeasurement{});
-            assert(wear.state == seabass::domain::WearState::Healthy);
+            // Not Failing: a file that could not be opened is not a media
+            // failure. Not pinned to Healthy, because Watch is a throughput
+            // judgement over a 5 MB scratch tree and a loaded machine
+            // (ctest -j8 with three suites building) made one file read ten
+            // times slower than the median twice in one afternoon; that is
+            // the machine, not the code under test.
+            assert(wear.state != seabass::domain::WearState::Failing);
+            assert(wear.state != seabass::domain::WearState::Unknown);
             assert(wear.summary.find("could not be opened") != std::string::npos);
         }
 #endif
