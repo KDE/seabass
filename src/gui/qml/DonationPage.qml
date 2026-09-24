@@ -151,8 +151,16 @@ Page {
                     spacing: flow.gap
 
                     Column {
+                        objectName: "supportTitleBlock"
                         width: parent.width
-                        spacing: 6
+                        // A blank line of the byline's own text between the
+                        // title and it, as asked: the byline read as the
+                        // title's second line.
+                        spacing: bylineMetrics.lineSpacing
+                        FontMetrics {
+                            id: bylineMetrics
+                            font.pointSize: Theme.baseFontPointSize * 1.1
+                        }
 
                         FlowLabel {
                             objectName: "supportTitle"
