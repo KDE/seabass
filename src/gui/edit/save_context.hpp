@@ -100,6 +100,9 @@ public:
     // rekordbox and OneLibrary share the PIONEER root.
     QString pathFor(const QString &format) const;
     std::string stickRoot() const;
+    // Rewrites the stick's note of the records this save has made; see
+    // infrastructure/backup/interrupted_save.hpp.
+    void noteSaveInProgress();
 
     application::OperationLog &log();
     application::BackupStore &backupStore();

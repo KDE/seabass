@@ -22,6 +22,7 @@
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
+#include "infrastructure/backup/interrupted_save.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/stick_layout.hpp"
@@ -62,6 +63,44 @@ LibraryEditSession::LibraryEditSession(EditSessionRegistry *registry, QString li
         m_stickSpace = gui::takeResult(m_stickSpaceWatcher);
         emit stickSpaceChanged();
     });
+    adoptInterruptedSave();
+}
+
+// The stick's backups folder, from the catalog paths once known, else from
+// the mount point: the same folder SaveContext writes its records to.
+std::string LibraryEditSession::stickBackupDir() const
+{
+    const QString &catalog = m_rekordboxPath.isEmpty() ? m_enginePath : m_rekordboxPath;
+    const std::string root = catalog.isEmpty() ? m_mountPoint.toStdString()
+                                               : infrastructure::backup::stickRootForCatalogPath(catalog.toStdString());
+    return root.empty() ? std::string() : infrastructure::backup::backupDirForStickRoot(root);
+}
+
+void LibraryEditSession::adoptInterruptedSave()
+{
+    if (m_writing || !m_lastBackups.empty()) {
+        return;
+    }
+    const std::string backupDir = stickBackupDir();
+    if (backupDir.empty()) {
+        return;
+    }
+    std::vector<UndoableBackup> found;
+    infrastructure::backup::FilesystemBackupStore store(backupDir);
+    for (const std::string &id : infrastructure::backup::interruptedSaveRecords(backupDir)) {
+        // A record the interrupted save was still writing when the stick
+        // went is not one to restore from; the save wrote nothing it
+        // covers yet, since it is made before the files it holds change.
+        if (store.isRestorable(id)) {
+            found.push_back({QString::fromStdString(backupDir), QString::fromStdString(id)});
+        }
+    }
+    if (found.empty()) {
+        return;
+    }
+    m_lastBackups = std::move(found);
+    m_interruptedSave = true;
+    emit canUndoChanged();
 }
 
 LibraryEditSession::~LibraryEditSession()
@@ -128,6 +167,7 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
     if (m_rekordboxPath.isEmpty() && !m_enginePath.isEmpty()) {
         m_rekordboxPath = QString::fromStdString(infrastructure::catalogPathFor("rekordbox", m_enginePath.toStdString()));
     }
+    adoptInterruptedSave();
 
     // Measured once here rather than per save: this is where the stick
     // root becomes known, and the answer is shown when an edit page opens
@@ -483,7 +523,24 @@ void LibraryEditSession::onSaveFinished()
     }
 
     bool undoRan = applied.count(QStringLiteral("undo:last-save")) > 0;
-    m_lastBackups = undoRan ? std::vector<UndoableBackup>() : std::move(result.backups);
+    // A save that finished -- an undo included -- takes the stick's note of
+    // a save in progress with it; one that did not leaves it, so a session
+    // opened after the stick comes back can still offer the undo.
+    const bool finished = result.error.isEmpty();
+    if (finished) {
+        const std::string backupDir = stickBackupDir();
+        if (!backupDir.empty()) {
+            infrastructure::backup::clearSaveInProgress(backupDir);
+        }
+    }
+    if (undoRan && finished) {
+        m_lastBackups.clear();
+    } else if (!undoRan) {
+        m_lastBackups = std::move(result.backups);
+    }
+    // An undo that itself failed keeps the backups it was restoring from,
+    // so it can be tried again.
+    m_interruptedSave = !finished && !m_lastBackups.empty();
     emit canUndoChanged();
 
     m_lastSummary = {
@@ -541,7 +598,18 @@ void LibraryEditSession::cancelWrite()
 
 void LibraryEditSession::undoLastSave()
 {
-    if (m_writing || m_lastBackups.empty() || dirty()) {
+    if (m_writing || m_lastBackups.empty()) {
+        return;
+    }
+    // After an interrupted save, what is still pending is the rest of that
+    // same save, and the stick is half-written: putting the stick back is
+    // the point, and refusing because of those changes left the Undo
+    // button doing nothing at all. Anything else staged since an ordinary
+    // save still stops the undo, as before.
+    if (dirty() && m_interruptedSave) {
+        discard();
+    }
+    if (dirty()) {
         return;
     }
     if (stage(std::make_unique<RestoreBackupsChange>(m_lastBackups))) {
@@ -557,6 +625,9 @@ void LibraryEditSession::setStickPresent(bool present, const QString &identitySt
     m_stickPresent = present;
     m_stickIdentityStrength = identityStrength;
     emit stickPresenceChanged();
+    if (present) {
+        adoptInterruptedSave();
+    }
 }
 
 void LibraryEditSession::setWriting(bool writing)

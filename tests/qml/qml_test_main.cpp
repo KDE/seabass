@@ -9,6 +9,9 @@
 #include <QTemporaryDir>
 #include <filesystem>
 #include <fstream>
+#include "infrastructure/backup/stick_locks.hpp"
+#include "infrastructure/backup/interrupted_save.hpp"
+#include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/local/metadata_store.hpp"
@@ -279,6 +282,40 @@ public:
         result[QStringLiteral("root")] = root;
         result[QStringLiteral("rekordbox")] = session.rekordboxPath();
         result[QStringLiteral("engine")] = session.enginePath();
+        return result;
+    }
+
+    // A stick a save was pulled from (#48): a backup record the save
+    // finished making, and the note naming it that the save leaves before
+    // writing. `note` is "complete" (the note names that record), "missing"
+    // (it names one the save never finished) or "none". Returns what a
+    // session opened on the stick afterwards offers: {canUndo, interruptedSave}.
+    Q_INVOKABLE QVariantMap sessionAfterInterruptedSave(const QString &note)
+    {
+        namespace fs = std::filesystem;
+        namespace backup = seabass::infrastructure::backup;
+        const fs::path stick = seabass::testing::scratchRoot()
+            / ("seabass_interrupted_save_" + std::to_string(++m_stickCounter));
+        std::error_code ec;
+        fs::remove_all(stick, ec);
+        fs::create_directories(stick / "PIONEER" / "rekordbox");
+        std::ofstream(stick / "PIONEER" / "rekordbox" / "export.pdb") << "pdb";
+        std::ofstream(stick / "PIONEER" / "rekordbox" / "exportLibrary.db") << "onelibrary";
+        const std::string backupDir = backup::backupDirForStickRoot(seabass::pathToUtf8(stick));
+        backup::FilesystemBackupStore store(backupDir);
+        const auto record =
+            store.backup({seabass::pathToUtf8(stick / "PIONEER" / "rekordbox" / "exportLibrary.db")}, "sync");
+        if (note == QLatin1String("complete")) {
+            backup::noteSaveInProgress(backupDir, {record.id});
+        } else if (note == QLatin1String("missing")) {
+            backup::noteSaveInProgress(backupDir, {"20260924T195039-sync"});
+        }
+        seabass::gui::LibraryEditSession session(seabass::gui::EditSessionRegistry::instance(),
+                                                 QStringLiteral("interrupted-save-%1").arg(m_stickCounter),
+                                                 QStringLiteral("PULLED"), seabass::gui::pathToQString(stick));
+        QVariantMap result;
+        result[QStringLiteral("canUndo")] = session.canUndo();
+        result[QStringLiteral("interruptedSave")] = session.interruptedSave();
         return result;
     }
 

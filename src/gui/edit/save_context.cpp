@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/edit/save_context.hpp"
+#include "infrastructure/backup/interrupted_save.hpp"
 
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/fs_remove.hpp"
@@ -76,6 +77,25 @@ application::OperationLog &SaveContext::log()
             infrastructure::backup::operationLogForStickRoot(stickRoot()));
     }
     return *m_log;
+}
+
+// Before the first catalog file is written, the stick says which records
+// this save made, so a save that never finishes can still be undone by a
+// session opened later; see infrastructure/backup/interrupted_save.hpp.
+// The session removes the note when the save finishes.
+void SaveContext::noteSaveInProgress()
+{
+    std::vector<std::string> ids;
+    for (const UndoableBackup &backup : m_backups) {
+        ids.push_back(backup.id.toStdString());
+    }
+    const std::string backupDir = infrastructure::backup::backupDirForStickRoot(stickRoot());
+    if (!infrastructure::backup::noteSaveInProgress(backupDir, ids)) {
+        // The backup itself is there; only the way back after an
+        // interruption is not. Said, not a reason to refuse the save.
+        log().record("could not note the save in progress in " + backupDir
+                     + "; if this save is interrupted, undo it from Manage Backups");
+    }
 }
 
 application::BackupStore &SaveContext::backupStore()
@@ -217,6 +237,7 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
                 m_recordByLabel[label] = record.id;
                 m_backups.push_back({pathToQString(pathFromUtf8(record.path).parent_path()),
                                      QString::fromStdString(record.id)});
+                noteSaveInProgress();
             } else {
                 record = archiveStore().addToArchive(existing->second, files);
             }
@@ -362,6 +383,7 @@ bool SaveContext::backupOnce(const std::string &file, const std::string &label)
         m_recordByLabel[label] = record.id;
         m_backups.push_back({pathToQString(pathFromUtf8(record.path).parent_path()),
                              QString::fromStdString(record.id)});
+        noteSaveInProgress();
     } else {
         record = archiveStore().addToArchive(existing->second, {file});
     }
