@@ -26,19 +26,31 @@ namespace seabass::infrastructure::backup
 
 namespace fs = std::filesystem;
 
+namespace
+{
+
+// For messages only, which are UTF-8 everywhere in Seabass.
+std::string displayPath(const fs::path &path)
+{
+    const std::u8string u8 = path.u8string();
+    return std::string(reinterpret_cast<const char *>(u8.data()), u8.size());
+}
+
+}  // namespace
+
 #if defined(__linux__) || defined(__APPLE__)
 
-StickWriteLock::StickWriteLock(const std::string &lockFilePath) : m_fd(-1), m_path(lockFilePath)
+StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_fd(-1), m_path(lockFilePath)
 {
-    fs::create_directories(fs::path(lockFilePath).parent_path());
+    fs::create_directories(lockFilePath.parent_path());
     m_fd = ::open(lockFilePath.c_str(), O_CREAT | O_RDWR, 0644);
     if (m_fd < 0) {
-        throw std::runtime_error("Could not open stick lock file: " + lockFilePath);
+        throw std::runtime_error("Could not open stick lock file: " + displayPath(lockFilePath));
     }
     if (::flock(m_fd, LOCK_EX | LOCK_NB) != 0) {
         ::close(m_fd);
         m_fd = -1;
-        throw StickBusyError(lockFilePath);
+        throw StickBusyError(displayPath(lockFilePath));
     }
     // The file locked must still be the one at the path. A holder removing
     // its lock file (releaseAndRemoveFile) unlinks it while it still holds
@@ -53,7 +65,7 @@ StickWriteLock::StickWriteLock(const std::string &lockFilePath) : m_fd(-1), m_pa
         ::flock(m_fd, LOCK_UN);
         ::close(m_fd);
         m_fd = -1;
-        throw StickBusyError(lockFilePath);
+        throw StickBusyError(displayPath(lockFilePath));
     }
 }
 
@@ -82,20 +94,20 @@ void StickWriteLock::releaseAndRemoveFile()
 // lock), same as flock()'s open-file-description scoping above -- two
 // independent CreateFileW calls on the same path, even from the same
 // process, correctly contend for the same lock.
-StickWriteLock::StickWriteLock(const std::string &lockFilePath) : m_handle(nullptr), m_path(lockFilePath)
+StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_handle(nullptr), m_path(lockFilePath)
 {
-    fs::create_directories(fs::path(lockFilePath).parent_path());
-    HANDLE handle = ::CreateFileA(lockFilePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+    fs::create_directories(lockFilePath.parent_path());
+    HANDLE handle = ::CreateFileW(lockFilePath.c_str(), GENERIC_READ | GENERIC_WRITE,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
                                    FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
-        throw std::runtime_error("Could not open stick lock file: " + lockFilePath);
+        throw std::runtime_error("Could not open stick lock file: " + displayPath(lockFilePath));
     }
     OVERLAPPED overlapped = {};
     if (!::LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD,
                        &overlapped)) {
         ::CloseHandle(handle);
-        throw StickBusyError(lockFilePath);
+        throw StickBusyError(displayPath(lockFilePath));
     }
     m_handle = handle;
 }
@@ -121,7 +133,7 @@ void StickWriteLock::releaseAndRemoveFile()
     ::CloseHandle(handle);
     m_handle = nullptr;
     // Fails, harmlessly, when another holder has the file open: it is theirs now.
-    ::DeleteFileA(m_path.c_str());
+    ::DeleteFileW(m_path.c_str());
 }
 
 #else
@@ -131,7 +143,7 @@ void StickWriteLock::releaseAndRemoveFile()
 // cross-process protection outside Linux/macOS/Windows -- don't remove
 // this comment when that changes, callers rely on real exclusion where
 // it's implemented.
-StickWriteLock::StickWriteLock(const std::string &lockFilePath) : m_fd(-1), m_path(lockFilePath) {}
+StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_fd(-1), m_path(lockFilePath) {}
 StickWriteLock::~StickWriteLock() = default;
 void StickWriteLock::releaseAndRemoveFile() {}
 

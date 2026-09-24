@@ -644,7 +644,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     Opened opened;
     try {
         lock = std::make_unique<infrastructure::backup::StickWriteLock>(
-            journal::lockPathFor(options.archivePath).string());
+            journal::lockPathFor(options.archivePath));
     } catch (const infrastructure::backup::StickBusyError &e) {
         summary.message = e.what();
         return summary;
@@ -680,7 +680,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     }
     std::error_code ec;
     if (!fs::is_directory(options.targetRoot, ec)) {
-        summary.message = "the restore target is not a directory: " + options.targetRoot.string();
+        summary.message = "the restore target is not a directory: " + pathToUtf8(options.targetRoot);
         return summary;
     }
 

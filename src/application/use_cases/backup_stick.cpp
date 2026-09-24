@@ -637,7 +637,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     impl->options = options;
     try {
         impl->lock = std::make_unique<infrastructure::backup::StickWriteLock>(
-            journal::lockPathFor(options.archivePath).string());
+            journal::lockPathFor(options.archivePath));
     } catch (const infrastructure::backup::StickBusyError &e) {
         outcome.message = e.what();
         return outcome;

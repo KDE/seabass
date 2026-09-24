@@ -71,7 +71,7 @@ DeleteStickBackupResult ManageStickBackups::remove(const fs::path &archivePath)
     const fs::path lockPath = infrastructure::stick_backup::journal::lockPathFor(archivePath);
     std::unique_ptr<infrastructure::backup::StickWriteLock> lock;
     try {
-        lock = std::make_unique<infrastructure::backup::StickWriteLock>(lockPath.string());
+        lock = std::make_unique<infrastructure::backup::StickWriteLock>(lockPath);
     } catch (const infrastructure::backup::StickBusyError &) {
         result.status = DeleteStickBackupResult::Status::Busy;
         result.message = "Something is writing to " + archivePath.filename().string()

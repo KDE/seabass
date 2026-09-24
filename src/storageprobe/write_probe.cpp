@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "write_probe.hpp"
+#include "utf8_path.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -140,7 +141,7 @@ struct ScratchFolder
 void WriteProbe::removeScratch(const std::string &root, const std::string &scratchFolderName)
 {
     std::error_code ec;
-    fs::remove_all(fs::path(root) / scratchFolderName, ec);
+    fs::remove_all(pathFromUtf8(root) / pathFromUtf8(scratchFolderName), ec);
 }
 
 WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck &cancelled,
@@ -149,7 +150,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
     if (rootPath.empty()) {
         throw std::runtime_error("no drive root to write to");
     }
-    fs::path root(rootPath);
+    fs::path root = pathFromUtf8(rootPath);
     std::error_code ec;
     // fs::space() alone does not refuse a missing root on Windows: unlike
     // Linux's statvfs (ENOENT for a path that does not exist),
@@ -174,16 +175,16 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
         throw std::runtime_error("not enough free space on the drive; not writing a test onto it");
     }
 
-    fs::path scratch = root / options.scratchFolderName;
+    fs::path scratch = root / pathFromUtf8(options.scratchFolderName);
     fs::remove_all(scratch, ec);  // a crashed earlier run
     ec.clear();
     fs::create_directories(scratch, ec);
     if (ec) {
-        throw std::runtime_error("cannot create " + scratch.string() + ": " + ec.message());
+        throw std::runtime_error("cannot create " + utf8FromPath(scratch) + ": " + ec.message());
     }
     ScratchFolder cleanup(scratch);
     ScratchFiles files;
-    files.folder = scratch.string();
+    files.folder = utf8FromPath(scratch);
 
     WriteMeasurement m;
     std::mt19937_64 rng(0x5EABA55u);
@@ -204,16 +205,16 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
             fs::path path = scratch / ("stream-" + std::to_string(i) + ".bin");
             SyncedFile file(path, true);
             if (!file.ok()) {
-                throw std::runtime_error("cannot create a file in " + scratch.string());
+                throw std::runtime_error("cannot create a file in " + utf8FromPath(scratch));
             }
-            files.streamFiles.push_back(path.string());
+            files.streamFiles.push_back(utf8FromPath(path));
             for (std::uint64_t offset = 0; offset < options.streamingBytesPerFile; offset += chunk.size()) {
                 if (cancelled()) {
                     throw Cancelled();  // per MiB, so a cancel never waits on a whole file
                 }
                 std::uint64_t bytes = std::min<std::uint64_t>(chunk.size(), options.streamingBytesPerFile - offset);
                 if (!file.writeAt(offset, chunk.data(), bytes)) {
-                    throw std::runtime_error("write failed in " + scratch.string());
+                    throw std::runtime_error("write failed in " + utf8FromPath(scratch));
                 }
                 total += bytes;
             }
@@ -245,7 +246,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
             file.close();
             latencies.push_back(elapsedMs(start));
             m.bytesWritten += payload.size();
-            files.smallFiles.push_back(path.string());
+            files.smallFiles.push_back(utf8FromPath(path));
         }
         double seconds = std::chrono::duration<double>(Clock::now() - groupStart).count();
         m.smallFilesWritten = static_cast<int>(latencies.size());
@@ -260,7 +261,7 @@ WriteMeasurement WriteProbe::run(const std::string &rootPath, const CancelCheck 
             std::vector<char> fill(1024 * 1024, 'b');
             SyncedFile file(target, true);
             if (!file.ok()) {
-                throw std::runtime_error("cannot create a file in " + scratch.string());
+                throw std::runtime_error("cannot create a file in " + utf8FromPath(scratch));
             }
             for (std::uint64_t offset = 0; offset < options.inPlaceFileBytes; offset += fill.size()) {
                 file.writeAt(offset, fill.data(), std::min<std::uint64_t>(fill.size(), options.inPlaceFileBytes - offset));

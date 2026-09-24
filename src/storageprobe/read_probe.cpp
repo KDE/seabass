@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "read_probe.hpp"
+#include "utf8_path.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -117,7 +118,7 @@ public:
         // fs::path decodes the UTF-8 the callers hand in; widening byte by
         // byte would turn every accented filename into one that does not
         // exist and silently drop it from the measurement.
-        std::wstring wide = fs::path(path).wstring();
+        std::wstring wide = pathFromUtf8(path).wstring();
         m_handle = CreateFileW(wide.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
                                FILE_FLAG_NO_BUFFERING, nullptr);
         if (m_handle == INVALID_HANDLE_VALUE) {
@@ -126,7 +127,7 @@ public:
             m_direct = false;
         }
 #else
-        m_stream.open(path, std::ios::binary);
+        m_stream.open(pathFromUtf8(path), std::ios::binary);
         m_direct = false;
 #endif
     }
@@ -229,7 +230,7 @@ double measureStreaming(const std::vector<std::string> &files, std::uint64_t byt
         if (cancelled()) {
             throw Cancelled();
         }
-        std::ifstream in(path, std::ios::binary);
+        std::ifstream in(pathFromUtf8(path), std::ios::binary);
         if (!in) {
             continue;
         }
@@ -315,7 +316,7 @@ void measureSmallFiles(const std::vector<std::string> &files, std::uint64_t read
             throw Cancelled();
         }
         auto start = Clock::now();
-        std::ifstream in(path, std::ios::binary);
+        std::ifstream in(pathFromUtf8(path), std::ios::binary);
         if (!in) {
             continue;
         }
