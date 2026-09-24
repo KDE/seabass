@@ -310,10 +310,6 @@ Page {
                 text: "Puts a full stick backup onto a drive: a fresh stick after losing one, or the same stick after a bad "
                     + "night. Nothing is written until you confirm."
             }
-            StickWriteWarning {
-                visible: root.controller.restoring === true
-                text: "Restoring. Do not remove the drive until this finishes."
-            }
             Label {
                 Layout.fillWidth: true
                 visible: root.controller.errorMessage.length > 0
@@ -625,54 +621,6 @@ Page {
                 }
             }
 
-            // Progress while restoring: same shape as StickBackupPage's
-            // backup progress (phase strip, bar, rate, ETA, current file).
-            TransferProgressFrame {
-                Layout.fillWidth: true
-                visible: root.controller.restoring === true
-                phases: root.exact ? ["analyzing", "writing", "removing", "checking"] : ["analyzing", "writing", "checking"]
-                // Only the writing phase has a byte total; the others
-                // (comparing, removing, checking) sweep instead.
-                determinatePhases: ["writing"]
-                phase: root.controller.phase
-                phaseLabel: root.phaseLabel
-                filesDone: root.controller.filesDone
-                filesTotal: root.controller.filesTotal
-                bytesDone: root.controller.bytesDone
-                bytesTotal: root.controller.bytesTotal
-                bytesPerSecond: root.controller.bytesPerSecond
-                etaSeconds: root.controller.etaSeconds
-                currentFile: root.controller.currentFile
-                cancelButtonObjectName: "cancelRestoreButton"
-                onCancelRequested: root.controller.cancel()
-            }
-
-            // Result report. Problems are counted, not listed, until asked
-            // for: a stick yanked mid-restore used to produce one error per
-            // remaining file, a wall of text with nothing to do about it.
-            TransferResultFrame {
-                Layout.fillWidth: true
-                result: root.result
-                errorMessage: root.controller.errorMessage
-                statusMessage: root.controller.statusMessage
-                busy: root.controller.busy === true
-                startOverTooltip: "Clear this report and look for drives again. Files already restored are kept and skipped next time."
-                onStartOverRequested: {
-                    if (root.controller.clearResult) root.controller.clearResult();
-                    root.controller.refresh();
-                    root.selectedIndex = -1;
-                    root.applySelection(root.pickDefaultDrive());
-                }
-                // The disk just restored onto, not whatever was selected
-                // when the report was drawn -- selectedDisk can already
-                // have moved on (Start Over resets it) by the time this
-                // is clicked.
-                onRepairLibraryRequested: root.libraryHealthRequested(
-                    (root.selectedDisk && root.selectedDisk.label) || "",
-                    (root.selectedDisk && root.selectedDisk.rekordboxPath) || "",
-                    (root.selectedDisk && root.selectedDisk.enginePath) || "")
-            }
-
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -683,6 +631,124 @@ Page {
                     enabled: root.canRestore
                     onClicked: confirmDialog.open()
                 }
+            }
+        }
+    }
+
+    // A restore once it has started: on top of the form, not at its foot,
+    // where it used to land below the fold -- see TransferOverlay.qml.
+    readonly property bool restoring: root.controller.restoring === true
+    readonly property bool hasResult: root.result.filesWritten !== undefined
+    // A restore refused or failed before it produced a report says why
+    // here too: the page's own error line is at the top of the form,
+    // scrolled away by the time Restore was pressed.
+    property bool restoreStarted: false
+    property bool reportDismissed: false
+    onRestoringChanged: {
+        if (root.restoring) {
+            root.restoreStarted = true;
+            root.reportDismissed = false;
+        }
+    }
+    readonly property bool failedWithoutReport: root.restoreStarted && !root.restoring && !root.hasResult
+        && root.controller.errorMessage.length > 0
+
+    TransferOverlay {
+        id: restoreOverlay
+        objectName: "restoreOverlay"
+        anchors.fill: parent
+        active: root.restoring || (!root.reportDismissed && (root.hasResult || root.failedWithoutReport))
+        title: root.restoring
+            ? "Restoring onto " + (root.selectedDisk ? (root.selectedDisk.label.length > 0 ? root.selectedDisk.label : "the drive") : "the drive")
+            : (root.hasResult ? "Restore finished" : "Restore stopped")
+
+        StickWriteWarning {
+            Layout.fillWidth: true
+            visible: root.restoring
+            text: "Do not remove the drive until this finishes."
+        }
+
+        // Progress while restoring: same shape as StickBackupPage's
+        // backup progress (phase strip, bar, rate, ETA, current file).
+        TransferProgressFrame {
+            objectName: "restoreProgressFrame"
+            Layout.fillWidth: true
+            visible: root.controller.restoring === true
+            phases: root.exact ? ["analyzing", "writing", "removing", "checking"] : ["analyzing", "writing", "checking"]
+            // Only the writing phase has a byte total; the others
+            // (comparing, removing, checking) sweep instead.
+            determinatePhases: ["writing"]
+            phase: root.controller.phase
+            phaseLabel: root.phaseLabel
+            filesDone: root.controller.filesDone
+            filesTotal: root.controller.filesTotal
+            bytesDone: root.controller.bytesDone
+            bytesTotal: root.controller.bytesTotal
+            bytesPerSecond: root.controller.bytesPerSecond
+            etaSeconds: root.controller.etaSeconds
+            currentFile: root.controller.currentFile
+            cancelButtonObjectName: "cancelRestoreButton"
+            onCancelRequested: root.controller.cancel()
+        }
+
+        // Result report. Problems are counted, not listed, until asked
+        // for: a stick yanked mid-restore used to produce one error per
+        // remaining file, a wall of text with nothing to do about it.
+        TransferResultFrame {
+            objectName: "restoreResultFrame"
+            Layout.fillWidth: true
+            result: root.result
+            errorMessage: root.controller.errorMessage
+            statusMessage: root.controller.statusMessage
+            busy: root.controller.busy === true
+            startOverTooltip: "Clear this report and look for drives again. Files already restored are kept and skipped next time."
+            onStartOverRequested: {
+                if (root.controller.clearResult) root.controller.clearResult();
+                root.controller.refresh();
+                root.selectedIndex = -1;
+                root.applySelection(root.pickDefaultDrive());
+            }
+            // The disk just restored onto, not whatever was selected
+            // when the report was drawn -- selectedDisk can already
+            // have moved on (Start Over resets it) by the time this
+            // is clicked.
+            onRepairLibraryRequested: root.libraryHealthRequested(
+                (root.selectedDisk && root.selectedDisk.label) || "",
+                (root.selectedDisk && root.selectedDisk.rekordboxPath) || "",
+                (root.selectedDisk && root.selectedDisk.enginePath) || "")
+        }
+
+
+        Label {
+            objectName: "restoreFailedLabel"
+            Layout.fillWidth: true
+            visible: root.failedWithoutReport
+            wrapMode: Text.WordWrap
+            color: Theme.danger
+            text: root.controller.errorMessage
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            visible: !root.restoring
+            spacing: Theme.rowSpacing
+            Item { Layout.fillWidth: true }
+            // Back to the form, as it was: to pick another backup or drive
+            // and try again.
+            Button {
+                objectName: "closeReportButton"
+                text: "Close"
+                flat: true
+                onClicked: root.reportDismissed = true
+            }
+            // Where the restore was asked for -- Home or the stick's
+            // Backups page -- which reassesses the stick on its way in.
+            Button {
+                objectName: "doneButton"
+                visible: root.hasResult
+                text: "Done"
+                highlighted: true
+                onClicked: root.StackView.view ? root.StackView.view.pop() : (root.reportDismissed = true)
             }
         }
     }

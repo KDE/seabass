@@ -715,7 +715,6 @@ ApplicationWindow {
                 preselectedMountPoint: mountPoint,
                 preselectedDevicePath: devicePath,
                 preselectedArchivePath: archivePath,
-                preselectedLabel: stickLabel,
             })
             onCloneStickRequested: (sourceLabel, sourceRekordboxPath, sourceEnginePath, targetMountPoint, targetLabel, targetHasLibrary) => stackView.push(cloneStickPageComponent, {
                 sourceLabel: sourceLabel,

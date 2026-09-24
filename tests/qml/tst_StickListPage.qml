@@ -256,6 +256,12 @@ TestCase {
         compare(card.cardSubtitle, "Copy MAIN's library onto this stick.");
         verify(findCard(page, "/media/MAIN", "Create Backup USB Stick").visible === false);
         verify(findCard(page, "/media/MAIN", "Update Stick") === null);
+        // Restoring the backup is offered beside the copy, not instead of it.
+        var restoreCard = findCard(page, "/media/SPARE", "Restore Backup");
+        compare(restoreCard.visible, true);
+        compare(restoreCard.cardSubtitle, "Restore MAIN's library onto this stick");
+        // A stick with a library restores from its Backups page instead.
+        compare(findCard(page, "/media/MAIN", "Restore Backup").visible, false);
 
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "cloneStickRequested"});
         card.clicked();
@@ -307,9 +313,14 @@ TestCase {
             detail: "The newest backup can be restored onto this empty stick."});
         var page = makePage([makeStick({label: "MAIN", hasRekordbox: false, hasEngine: false,
                                         rekordboxPath: "", enginePath: ""})], advice);
-        var card = findCard(page, "/media/MAIN", "Create Backup USB Stick");
+        var card = findCard(page, "/media/MAIN", "Restore Backup");
         verify(card !== null);
+        compare(card.visible, true);
         compare(card.cardSubtitle, "Restore OLD's library onto this stick");
+        // No other stick to copy from: the clone card stays out of the way
+        // rather than doing a second, differently named restore.
+        compare(findCard(page, "/media/MAIN", "Create Backup USB Stick").visible, false);
+        saveScreenshot(page, "stick-list-empty-restore");
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreStickBackupRequested"});
         card.clicked();
         compare(spy.count, 1);
@@ -370,7 +381,7 @@ TestCase {
         var advice = {};
         advice["/media/BLANK"] = makeAdvice({});  // default state: "no-backups"
         var page = makePage([empty], advice);
-        var card = findCard(page, "/media/BLANK", "Create Backup USB Stick");
+        var card = findCard(page, "/media/BLANK", "Restore Backup");
         verify(card !== null);
         compare(card.visible, true);
         compare(card.cardSubtitle.toLowerCase().indexOf("one of your"), -1);

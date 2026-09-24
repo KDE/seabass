@@ -11,13 +11,11 @@ import SeabassGui
 // option that genuinely needs THIS stick present: the full stick backup
 // into one archive on this computer (reads the stick), bringing it up to
 // date from a newer copy of its library (writes the stick), and
-// Manage Backups (BackupsPage: every full stick backup on this computer,
-// this stick's first -- also reachable from Home's menu). Restoring a
-// stick backup moved to a general block on the Home page instead: it is
-// not actually about this specific stick -- Restore picks its own target
-// drive -- so requiring a stick already be inserted and scanned just to
-// reach them was the wrong gate. restoreStickBackupRequested stays here,
-// used internally by Update Stick's disk-backup route.
+// Restore Backup (a full stick backup back onto this stick, its own
+// preselected), and Manage Backups (BackupsPage: every full stick backup
+// on this computer, this stick's first -- also reachable from Home's
+// menu). Restoring onto any drive stays in Home's general block too: the
+// disaster case is a stick that is gone, which no hub can be opened for.
 Page {
     id: root
     required property string stickLabel
@@ -173,6 +171,20 @@ Page {
                     root.restoreStickBackupRequested(root.mountPoint, root.devicePath, root.updateSource.backupPath);
                 }
             }
+        }
+        ActionCard {
+            readOnly: root.lockedByOther
+            onReadOnlyClicked: root.explainLock()
+            objectName: "restoreBackupCard"
+            cardTitle: "Restore Backup"
+            cardSubtitle: root.currentArchivePath.length > 0
+                ? "Put this stick's full backup back onto it, or another one"
+                : "Put a full stick backup from this computer onto this stick"
+            cardIcon: "document-revert"
+            // The restore writes the whole drive through devicePath, which
+            // an opened folder library does not have.
+            visible: root.devicePath.length > 0
+            onClicked: root.restoreStickBackupRequested(root.mountPoint, root.devicePath, root.currentArchivePath)
         }
         ActionCard {
             readOnly: root.lockedByOther

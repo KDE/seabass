@@ -115,6 +115,10 @@ TestCase {
                                             bytesDone: 1024 * 1024 * 1024, bytesTotal: 4 * 1024 * 1024 * 1024,
                                             bytesPerSecond: 30 * 1024 * 1024, etaSeconds: 95,
                                             currentFile: "Contents/Artist - Title.mp3"})).save(screenshotDir + "/restore-page-progress.png");
+        grabImage(makePage([makeDisk({})], {
+            result: {filesWritten: 14, filesUnchanged: 1147, directoriesCreated: 3, extrasRemoved: 0, rejected: [],
+                     writeErrors: [], warnings: [], missingTracks: [], databaseChecked: true},
+            statusMessage: "Restored STICK from its backup."})).save(screenshotDir + "/restore-page-result.png");
     }
 
     function test_preselectsFirstUsableDriveAndAnalyzesIt() {
@@ -248,6 +252,62 @@ TestCase {
                                              bytesDone: 100, bytesTotal: 1000});
         compare(findChild(page, "openConfirmButton").enabled, false);
         compare(findChild(page, "cancelRestoreButton").visible, true);
+    }
+
+    // The progress and the report used to sit at the foot of the form,
+    // below the fold: Restore was pressed and nothing on screen changed.
+    // They are on an overlay now, over the page, from the first moment.
+    function test_aRunningRestoreIsShownOverThePage() {
+        var page = makePage([makeDisk({})], {busy: true, restoring: true, phase: "writing", filesDone: 3, filesTotal: 14,
+                                             bytesDone: 100, bytesTotal: 1000});
+        var overlay = findChild(page, "restoreOverlay");
+        compare(overlay.visible, true);
+        verify(overlay.title.indexOf("Restoring onto STICK") === 0);
+        // Inside the overlay, not somewhere down the scrolled page.
+        verify(findChild(overlay, "cancelRestoreButton") !== null);
+        compare(findChild(overlay, "cancelRestoreButton").visible, true);
+        // No way out of the overlay while it writes, other than Cancel.
+        compare(findChild(overlay, "closeReportButton").visible, false);
+        compare(findChild(overlay, "doneButton").visible, false);
+        // The card sits inside the window, whatever the page scrolled to.
+        var card = findChild(overlay, "transferOverlayCard");
+        var topLeft = card.mapToItem(page, 0, 0);
+        verify(topLeft.y >= 0 && topLeft.y + card.height <= page.height);
+    }
+
+    function test_noOverlayBeforeARestore() {
+        var page = makePage([makeDisk({})], {});
+        compare(findChild(page, "restoreOverlay").visible, false);
+    }
+
+    function test_theResultStaysOnTheOverlayUntilClosed() {
+        var page = makePage([makeDisk({})], {
+            result: {filesWritten: 14, filesUnchanged: 1147, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
+                     writeErrors: [], warnings: [], missingTracks: [], databaseChecked: true},
+            statusMessage: "Restored 14 files.",
+        });
+        var overlay = findChild(page, "restoreOverlay");
+        compare(overlay.visible, true);
+        compare(overlay.title, "Restore finished");
+        verify(findChild(overlay, "restoreResultFrame") !== null);
+        compare(findChild(overlay, "doneButton").visible, true);
+        findChild(overlay, "closeReportButton").clicked();
+        compare(overlay.visible, false);
+    }
+
+    // Refused or failed before any report: the reason is on the overlay,
+    // since the form's own error line is scrolled out of sight by then.
+    function test_aRestoreThatStopsWithoutAReportSaysWhyOnTheOverlay() {
+        var page = makePage([makeDisk({})], {busy: true, restoring: true, phase: "analyzing"});
+        compare(findChild(page, "restoreOverlay").visible, true);
+        page.controller = makeFakeController([makeDisk({})], {errorMessage: "The drive was removed."});
+        var overlay = findChild(page, "restoreOverlay");
+        compare(overlay.visible, true);
+        compare(overlay.title, "Restore stopped");
+        compare(findChild(overlay, "restoreFailedLabel").text, "The drive was removed.");
+        compare(findChild(overlay, "doneButton").visible, false);
+        findChild(overlay, "closeReportButton").clicked();
+        compare(overlay.visible, false);
     }
 
     function makeBackup(overrides) {

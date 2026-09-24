@@ -8,9 +8,8 @@ import SeabassGui
 
 // BackupsHubPage.qml headless with a fake advisor: the Update Stick card
 // (from a peer stick -> clone page, from the disk backup -> restore page)
-// and Manage Backups, which hands on this stick's own full backup. Restore a Stick Backup and
-// Local Cue Backup moved to a general block on Home (see
-// tst_StickListPage.qml) -- neither card lives here anymore.
+// Restore Backup, which puts this stick's own full backup back onto it,
+// and Manage Backups, which hands on this stick's own full backup.
 TestCase {
     id: testCase
     name: "BackupsHubPage"
@@ -75,6 +74,39 @@ TestCase {
         compare(spy.count, 0);
         tryCompare(findChild(page, "lockedDialog"), "opened", true);
         saveScreenshot(page, "backups-hub-read-only");
+    }
+
+    // A stick in use can have its own backup put back from here: the card
+    // hands on this stick's matched backup, and the drive to restore onto.
+    function test_restoreBackupPreselectsThisSticksBackup() {
+        var page = makePage({"/media/MAIN": {state: "current", detail: "", backupPath: "/b/MAIN.zip",
+                                             matchedBy: "fingerprint", updateSource: noSource()}});
+        var card = findChild(page, "restoreBackupCard");
+        compare(card.visible, true);
+        compare(card.cardTitle, "Restore Backup");
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreStickBackupRequested"});
+        card.clicked();
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "/media/MAIN");
+        compare(spy.signalArguments[0][1], "/dev/sdb1");
+        compare(spy.signalArguments[0][2], "/b/MAIN.zip");
+        saveScreenshot(page, "backups-hub-restore");
+    }
+
+    // Matched only by name: not preselected, since two sticks called the
+    // same would hand each other's backup over. The page opens to choose.
+    function test_restoreBackupDoesNotGuessByName() {
+        var page = makePage({"/media/MAIN": {state: "current", detail: "", backupPath: "/b/MAIN.zip",
+                                             matchedBy: "label", updateSource: noSource()}});
+        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreStickBackupRequested"});
+        findChild(page, "restoreBackupCard").clicked();
+        compare(spy.signalArguments[0][2], "");
+    }
+
+    // An opened folder library has no drive behind it to restore onto.
+    function test_restoreBackupNeedsADrive() {
+        var page = makePage({}, {devicePath: ""});
+        compare(findChild(page, "restoreBackupCard").visible, false);
     }
 
     function test_manageBackupsIsNoLongerDeprecatedAndNoUpdateSource() {
