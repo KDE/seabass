@@ -4,6 +4,8 @@
 
 #include "infrastructure/zip_archive_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #include <zlib.h>
 
 #include <chrono>
@@ -100,7 +102,7 @@ std::string readWholeFile(const fs::path &path)
 {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        throw std::runtime_error("could not open " + path.string() + " for reading");
+        throw std::runtime_error("could not open " + pathToUtf8(path) + " for reading");
     }
     std::ostringstream oss;
     oss << in.rdbuf();
@@ -124,13 +126,17 @@ constexpr std::uint32_t LocalFileHeaderSignature = 0x04034b50;
 constexpr std::uint32_t CentralDirectorySignature = 0x02014b50;
 constexpr std::uint32_t EndOfCentralDirectorySignature = 0x06054b50;
 constexpr std::uint16_t VersionNeeded = 20;  // 2.0 -- the format level deflate + long filenames requires
+// General-purpose bit 11, "language encoding": the entry names are UTF-8.
+// Without it a reader is entitled to take them as CP437, and a Japanese
+// artist folder restored by any tool but ours comes back as mojibake.
+constexpr std::uint16_t FlagUtf8Names = 0x0800;
 
 void writeLocalFileHeader(std::ofstream &out, EntryRecord &entry)
 {
     std::string header;
     putU32(header, LocalFileHeaderSignature);
     putU16(header, VersionNeeded);
-    putU16(header, 0);  // general purpose flags
+    putU16(header, FlagUtf8Names);  // general purpose flags
     putU16(header, Z_DEFLATED);
     putU16(header, entry.timestamp.time);
     putU16(header, entry.timestamp.date);
@@ -148,7 +154,7 @@ void writeCentralDirectoryEntry(std::string &out, const EntryRecord &entry)
     putU32(out, CentralDirectorySignature);
     putU16(out, VersionNeeded);  // version made by
     putU16(out, VersionNeeded);  // version needed to extract
-    putU16(out, 0);              // general purpose flags
+    putU16(out, FlagUtf8Names);  // general purpose flags
     putU16(out, Z_DEFLATED);
     putU16(out, entry.timestamp.time);
     putU16(out, entry.timestamp.date);
@@ -167,8 +173,7 @@ void writeCentralDirectoryEntry(std::string &out, const EntryRecord &entry)
 
 std::string toArchiveName(const fs::path &relative)
 {
-    std::string name = relative.generic_string();  // forward slashes, matches ZIP's own convention
-    return name;
+    return pathToGenericUtf8(relative);  // forward slashes, matches ZIP's own convention
 }
 
 }  // namespace
@@ -176,7 +181,7 @@ std::string toArchiveName(const fs::path &relative)
 void writeZipArchive(const fs::path &sourceDir, const fs::path &zipPath)
 {
     if (!fs::exists(sourceDir) || !fs::is_directory(sourceDir)) {
-        throw std::runtime_error("writeZipArchive: source directory does not exist: " + sourceDir.string());
+        throw std::runtime_error("writeZipArchive: source directory does not exist: " + pathToUtf8(sourceDir));
     }
 
     std::vector<fs::path> files;
@@ -186,12 +191,12 @@ void writeZipArchive(const fs::path &sourceDir, const fs::path &zipPath)
         }
     }
     if (files.empty()) {
-        throw std::runtime_error("writeZipArchive: source directory has no files: " + sourceDir.string());
+        throw std::runtime_error("writeZipArchive: source directory has no files: " + pathToUtf8(sourceDir));
     }
 
     std::ofstream out(zipPath, std::ios::binary | std::ios::trunc);
     if (!out) {
-        throw std::runtime_error("writeZipArchive: could not open " + zipPath.string() + " for writing");
+        throw std::runtime_error("writeZipArchive: could not open " + pathToUtf8(zipPath) + " for writing");
     }
 
     DosDateTime timestamp = currentDosDateTime();
@@ -237,7 +242,7 @@ void writeZipArchive(const fs::path &sourceDir, const fs::path &zipPath)
     out.write(eocd.data(), static_cast<std::streamsize>(eocd.size()));
 
     if (!out) {
-        throw std::runtime_error("writeZipArchive: write failed for " + zipPath.string());
+        throw std::runtime_error("writeZipArchive: write failed for " + pathToUtf8(zipPath));
     }
 }
 
