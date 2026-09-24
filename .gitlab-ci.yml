@@ -270,26 +270,34 @@ craft_windows_qt6_x86_64:
   - if: '$CI_PIPELINE_SOURCE == "schedule"'
   - if: '$CI_COMMIT_TAG'
 
-# Packages from a train's branch, on request, before anything is tagged.
+# The MSYS2 Windows chain (windows:build, :test, :package, :installer-test)
+# needs a self-hosted GitLab Runner tagged `windows`, and none is
+# registered. Until one is, the chain does not run AT ALL -- not on a
+# schedule, not on a tag, not as a button. A job with no runner is not a
+# failure, it is pending forever, and a pending job in `build` holds every
+# later stage: on 2026-09-24 one pressed on Seabass/0.8 left linux:package
+# and every Craft job in "created", and on a release tag the same chain
+# starts by itself and would have held the release's packages back the
+# same way. Windows packages come from craft_windows_qt6_x86_64 on KDE's
+# shared runners instead.
 #
-# A release tag is never moved (docs/releasing.md), so packaging has to be
-# proven before one exists: a tag whose package does not build costs a
-# release number. On a Seabass/X.Y branch the package jobs below appear as
-# buttons. Built without a tag they are channel "dev" -- named
-# seabass-<version>_dev_<os>, never published, and the app built from them
-# does not check for updates -- which is what a pre-tag test build is.
-#
-# The first of a chain is manual; the jobs that `need` it follow once it
-# has run. allow_failure only on the manual rule, for the reason given at
-# the Craft rules above: an unstarted button must not hold a pipeline open.
-.train_branch_manual_rules: &train_branch_manual_rules
+# When a runner tagged `windows` is registered, set
+#   SEABASS_WINDOWS_RUNNER: "yes"
+# in the top-level `variables:` of this file, and the chain comes back:
+# nightly, on tags, and as a button on a Seabass/X.Y branch (built
+# without a tag as channel "dev", like every pre-tag package).
+.windows_lane_manual_rules: &windows_lane_manual_rules
+  - if: '$SEABASS_WINDOWS_RUNNER != "yes"'
+    when: never
   - if: '$CI_PIPELINE_SOURCE == "schedule"'
   - if: '$CI_COMMIT_TAG'
   - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
     when: manual
     allow_failure: true
 
-.train_branch_follow_rules: &train_branch_follow_rules
+.windows_lane_follow_rules: &windows_lane_follow_rules
+  - if: '$SEABASS_WINDOWS_RUNNER != "yes"'
+    when: never
   - if: '$CI_PIPELINE_SOURCE == "schedule"'
   - if: '$CI_COMMIT_TAG'
   - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
@@ -609,7 +617,8 @@ linux:package:
   # passed.
   rules:
     - if: '$CI_COMMIT_TAG'
-    # A button on a train's branch; see &train_branch_manual_rules.
+    # A button on a train's branch, for a package before the tag: built
+    # without one it is channel "dev", never published.
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\//'
       when: manual
       allow_failure: true
@@ -671,7 +680,7 @@ linux:package:
 windows:build:
   stage: build
   tags: [windows]
-  rules: *train_branch_manual_rules
+  rules: *windows_lane_manual_rules
   script:
     - $env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
     - cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -685,7 +694,7 @@ windows:test:
   stage: test
   tags: [windows]
   needs: [windows:build]
-  rules: *train_branch_follow_rules
+  rules: *windows_lane_follow_rules
   script:
     - $env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
     - cd build-win
@@ -695,7 +704,7 @@ windows:package:
   stage: package
   tags: [windows]
   needs: [windows:test]
-  rules: *train_branch_follow_rules
+  rules: *windows_lane_follow_rules
   script:
     - $env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
     - .\tools\deploy-windows.ps1
@@ -730,6 +739,6 @@ windows:installer-test:
   stage: installer-test
   tags: [windows]
   needs: [windows:package]
-  rules: *train_branch_follow_rules
+  rules: *windows_lane_follow_rules
   script:
     - .\tools\test-installer.ps1

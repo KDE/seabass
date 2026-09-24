@@ -96,11 +96,16 @@ release number. On a `Seabass/X.Y` branch every package job is available
 as a button in the pipeline:
 
 - `linux:package` -- the Linux tarball.
-- `windows:build` -- starts the MSYS2 chain; `windows:test`,
-  `windows:package` and `windows:installer-test` follow on their own.
 - `craft_windows_qt6_x86_64`, `craft_macos_qt6_arm64`,
   `craft_macos_qt6_x86_64` -- the Craft packages (unsigned: signing
-  happens on tags).
+  happens on tags). They sit in the last stage, `deploy`, so their
+  buttons appear once the build and test stages have finished.
+
+The MSYS2 Windows chain (`windows:build` and what follows it) needs a
+self-hosted runner tagged `windows`, and none is registered, so it does
+not run anywhere until `SEABASS_WINDOWS_RUNNER: "yes"` is set in
+`.gitlab-ci.yml` -- see the comment there. A job with no runner does not
+fail, it waits forever, and holds every later stage with it.
 
 Built without a tag they are channel `dev`, named
 `seabass-<version>_dev_<os>`, never published, and the app they contain
@@ -116,7 +121,7 @@ and installer test, and the Craft macOS job that signs and notarises a
 | Platform | Job | Package |
 |---|---|---|
 | Linux | `linux:package` | `seabass-<version>_<channel>_linux.tar.gz` |
-| Windows | `windows:package` | `seabass-<version>_<channel>_windows.exe` |
+| Windows | `craft_windows_qt6_x86_64` (Craft; the MSYS2 `windows:package` only once a Windows runner exists) | `seabass-<version>_<channel>_windows.exe` |
 | macOS | `craft_macos_arm64_qt6` | `seabass-<version>_<channel>_macos.dmg` |
 
 `tools/fetch-release.sh` puts them in
