@@ -39,6 +39,7 @@
 // code matches.
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -282,7 +283,15 @@ int main(int argc, char **argv)
         std::cout << "back at " << formatted->mountPoint << ", label \"" << formatted->label << "\"\n";
 
         bool pass = true;
-        if (formatted->label != label) {
+        // Case-insensitively: a FAT32 label is stored upper-case, and
+        // Windows reads "e" back as "E". Round 8 on Windows failed here
+        // on nothing but that.
+        auto sameLabel = [](const std::string &l, const std::string &r) {
+            return std::equal(l.begin(), l.end(), r.begin(), r.end(), [](unsigned char a, unsigned char b) {
+                return std::toupper(a) == std::toupper(b);
+            });
+        };
+        if (!sameLabel(formatted->label, label)) {
             std::cout << "label is \"" << formatted->label << "\", asked for \"" << label << "\"\n";
             pass = false;
         }
