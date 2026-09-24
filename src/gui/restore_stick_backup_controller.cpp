@@ -586,13 +586,15 @@ void RestoreStickBackupController::onRestoreFinished()
             // Named ahead of the general wording: a restore that put back
             // truncated files is a different thing from one that hit a
             // checksum, and the person is about to play these tracks.
+            // No "see the report below": the report is on the overlay the
+            // restore runs in (TransferOverlay), right under this line.
             setStatusMessage(QStringLiteral("Restored %1 files. %2 of them could only be read in part off the "
-                                            "damaged stick; see the report below.")
+                                            "damaged stick.")
                                  .arg(s.filesWritten)
                                  .arg(s.partial.size()));
         } else {
             setStatusMessage(
-                QStringLiteral("Restored %1 files, but with problems; see the report below.").arg(s.filesWritten));
+                QStringLiteral("Restored %1 files, but with problems.").arg(s.filesWritten));
         }
         emit actionFeedback(m_statusMessage, true);
         break;
