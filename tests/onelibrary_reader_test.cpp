@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,6 +17,7 @@
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/sqlite_pending_journal.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::onelibrary;
@@ -233,6 +235,66 @@ int main()
         assert(threw);
 
         std::cout << "case 4 (missing exportLibrary.db throws rather than returning empty) OK\n";
+    }
+
+    // Case 5: a stick pulled mid-save (#48). OneLibrary is left with a hot
+    // journal and changed pages; a read-only open used to fail with
+    // "attempt to write a readonly database", which is what every page
+    // reading it showed in the macOS round 8 check P3. readAll() now rolls
+    // it back first -- keeping a copy on this computer -- and reads the
+    // library as it was before the unfinished transaction.
+    {
+        fs::path scratch = freshScratch();
+        // Where the kept copy goes: this test's scratch, never ~/Seabass.
+        const std::string home = seabass::pathToUtf8(scratch / "home");
+#ifdef _WIN32
+        _putenv_s("SEABASS_HOME", home.c_str());
+#else
+        setenv("SEABASS_HOME", home.c_str(), 1);
+#endif
+        fs::path live = scratch / "live" / "PIONEER";
+        createFixture(seabass::pathToUtf8(live));
+        const std::string liveDb = OneLibraryCueWriter::dbPathFor(seabass::pathToUtf8(live));
+
+        fs::path pulled = scratch / "pulled" / "PIONEER";
+        fs::create_directories(pulled / "rekordbox");
+        const std::string pulledDb = OneLibraryCueWriter::dbPathFor(seabass::pathToUtf8(pulled));
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, liveDb, /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec("PRAGMA journal_mode=DELETE;");
+            // Spill after one page, so the transaction reaches the file
+            // and the journal gets its live header before any commit.
+            db.exec("PRAGMA cache_size=1;");
+            db.exec("PRAGMA cache_spill=1;");
+            db.exec("BEGIN;");
+            db.exec("UPDATE content SET title = 'HALF WRITTEN';");
+            db.exec("CREATE TABLE filler(x TEXT);");
+            db.exec("WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 2000) "
+                    "INSERT INTO filler SELECT hex(randomblob(300)) FROM c;");
+            fs::copy_file(seabass::pathFromUtf8(liveDb), seabass::pathFromUtf8(pulledDb));
+            fs::copy_file(seabass::pathFromUtf8(liveDb + "-journal"), seabass::pathFromUtf8(pulledDb + "-journal"));
+            db.exec("ROLLBACK;");
+        }
+        assert(seabass::infrastructure::hasPendingJournal(seabass::pathFromUtf8(pulledDb))
+               && "the copy is a stick pulled mid-save");
+
+        OneLibraryReader reader(seabass::pathToUtf8(pulled));
+        std::vector<Track> tracks = reader.readAll();
+        assert(tracks.size() == 3 && "the library reads again");
+        const Track *t = findBySourceId(tracks, "566");
+        assert(t != nullptr && t->title == "Test Track" && "and reads as it was before the unfinished save");
+        assert(!seabass::infrastructure::hasPendingJournal(seabass::pathFromUtf8(pulledDb)));
+        bool kept = false;
+        std::error_code ec;
+        for (const auto &entry : fs::recursive_directory_iterator(scratch / "home" / "recovered", ec)) {
+            if (entry.path().filename() == "exportLibrary.db-journal") {
+                kept = true;
+            }
+        }
+        assert(kept && "a copy of the database and its journal was kept first");
+        std::cout << "case 5 (a stick pulled mid-save reads again, as it was) OK\n";
     }
 
     std::cout << "All onelibrary_reader_test cases passed.\n";

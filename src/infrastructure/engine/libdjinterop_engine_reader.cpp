@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <chrono>
@@ -304,6 +305,9 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
     if (!djinterop::engine::database_exists(m_engineLibraryPath)) {
         throw std::runtime_error("no Engine Library found at " + m_engineLibraryPath);
     }
+    // Before any of the read-only opens below (artwork, streaming
+    // sources, edit times) meets a journal a pulled stick left behind.
+    recoverEnginePendingJournals(m_engineLibraryPath);
 
     auto db = djinterop::engine::load_database(m_engineLibraryPath);
     auto allTracks = db.tracks();
