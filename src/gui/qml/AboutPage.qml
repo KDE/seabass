@@ -22,6 +22,17 @@ Page {
     id: root
 
     signal donationRequested()
+    // The running build's version, channel and commit (UpdateChecker; a
+    // fake in tests). Optional so the page still opens without one.
+    property var updateChecker: null
+    readonly property string versionNumber: root.updateChecker !== null ? root.updateChecker.currentVersion : ""
+    readonly property string buildLine: {
+        if (root.updateChecker === null) return "";
+        var channel = root.updateChecker.currentChannel;
+        var names = {dev: "Development build", alpha: "Alpha", beta: "Beta", stable: "Stable release"};
+        var commit = root.updateChecker.currentCommit;
+        return (names[channel] || channel) + (commit.length > 0 ? " · " + commit : "");
+    }
 
     readonly property string websiteUrl: "https://vizzzion.org/seabass/"
 
@@ -96,7 +107,38 @@ Page {
                 }
             }
 
+            // Which Seabass this is, first thing under the name: the
+            // question a bug report starts with, and the one About is
+            // opened to answer. The build line is selectable so it can be
+            // copied into one whole.
+            ColumnLayout {
+                objectName: "aboutVersionBlock"
+                visible: root.versionNumber.length > 0
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 2
+                Label {
+                    objectName: "aboutVersion"
+                    text: "Version " + root.versionNumber
+                    font.pointSize: Theme.baseFontPointSize * 1.5
+                    font.weight: Font.DemiBold
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                TextEdit {
+                    objectName: "aboutBuild"
+                    text: root.buildLine
+                    visible: text.length > 0
+                    readOnly: true
+                    selectByMouse: true
+                    color: Theme.textMuted
+                    selectionColor: Theme.accent
+                    font.family: Theme.dataFamily
+                    font.pointSize: Theme.fontSmall
+                    Layout.alignment: Qt.AlignHCenter
+                }
+            }
+
             Label {
+                objectName: "aboutIntro"
                 text: "Move between the Pioneer and Denon worlds with confidence. Seabass works on the "
                     + "library already on your USB stick: it keeps the Rekordbox and Engine DJ copies of "
                     + "it in step, and tells you the truth about what is on there."
