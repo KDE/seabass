@@ -177,6 +177,26 @@ int main()
         std::cout << "case 3 (restoring again writes nothing) OK\n";
     }
 
+    // ---- A folder name no Windows ANSI code page can hold ----
+    // Japanese, Latin-1 and Cyrillic together: whatever the system code
+    // page, one of the three is outside it, so any path::string() on the
+    // restore's way throws there. Round 8 on Windows lost two tracks to
+    // exactly that, written to the stick and then reported as failed.
+    {
+        Fixture f("non-ansi-folder");
+        const fs::path odd = pathFromUtf8("Contents/\xE6\x97\xA5\xE6\x9C\xAC \xC3\xA9 \xD0\x96/c.mp3");
+        writeFile(f.stick / odd, pseudoRandom(5'000, 5), 1'700'000'005);
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+        for (const std::string &e : summary.writeErrors) {
+            std::cerr << "non-ansi-folder: " << e << "\n";
+        }
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(summary.writeErrors.empty() && summary.filesWritten == 7);
+        assert(fs::exists(f.target / odd));
+        std::cout << "case non-ansi-folder (a folder name outside every ANSI code page restores cleanly) OK\n";
+    }
+
     // ---- A database that changed within the mtime window and kept its size is still restored ----
     // SQLite reuses pages, FAT keeps 2 s mtimes: size + mtime cannot tell
     // "one commit later" apart. The manifest's DbSetFingerprint can.
