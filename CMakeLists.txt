@@ -140,13 +140,13 @@ else()
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     set(CMAKE_DISABLE_FIND_PACKAGE_Boost ON)
 endif()
-if(WIN32)
-    # No SQLite3-for-mingw package exists for Ubuntu - libdjinterop
-    # already has its own bundled-amalgamation fallback for exactly this
-    # (see third_party/libdjinterop/CMakeLists.txt's SYSTEM_SQLITE
-    # option); seabass_core's own direct SQLite3 use (LocalCueStore)
-    # gets the identical amalgamation compiled straight into it below,
-    # instead of going through find_package(SQLite3) at all.
+if(MSVC)
+    # DjInterop keeps its private bundled amalgamation under MSVC, for the
+    # vcpkg dllimport reason explained at SQLite::SQLite3 below. Everywhere
+    # else, MSYS2 included, it uses the same system SQLite3 as the rest of
+    # the build: a second copy of every sqlite3_* symbol in one executable
+    # makes the link order-dependent, and some targets then fail with
+    # "multiple definition of `sqlite3_finalize'".
     set(SYSTEM_SQLITE OFF CACHE BOOL "" FORCE)
 endif()
 add_subdirectory(third_party/libdjinterop)
@@ -154,8 +154,8 @@ add_subdirectory(third_party/libdjinterop)
 # System SQLite3, already required to build libdjinterop (Engine's
 # library format is itself SQLite), so LocalCueStore reuses it rather
 # than vendoring a JSON library for the same job. seabass_core itself
-# doesn't use this on WIN32 (it compiles libdjinterop's bundled
-# amalgamation directly instead, see the WIN32 branch below). This
+# doesn't use this on MSVC (it compiles libdjinterop's bundled
+# amalgamation directly instead, see the MSVC branch below). This
 # find_package call runs so local_cue_store_test (which links
 # SQLite::SQLite3 directly, see tests/ below) has something to link
 # against on Windows too. MSYS2's UCRT64 environment ships a real
@@ -557,7 +557,7 @@ target_include_directories(seabass_core_testing PUBLIC src)
 target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe)
 
 # COMPILE_LANGUAGE:CXX-gated: this target also compiles sqlite3.c (below,
-# Windows only) as a plain C file, and both of these are C++-only. The
+# MSVC only) as a plain C file, and both of these are C++-only. The
 # forced include in particular does not merely not-apply to a C file --
 # msvc_assert_no_dialog.hpp pulls in <yvals_core.h>, and cl.exe's C
 # frontend refuses that STL header outright ("STL1003: Unexpected
@@ -567,7 +567,7 @@ target_compile_options(seabass_core_testing PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>>"
     "$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<COMPILE_LANGUAGE:CXX>>:/FI${CMAKE_SOURCE_DIR}/tests/msvc_assert_no_dialog.hpp>")
 
-if(WIN32)
+if(MSVC)
     # See the SYSTEM_SQLITE note above - same bundled amalgamation
     # libdjinterop uses privately, compiled straight into seabass_core
     # instead of going through find_package(SQLite3). seabass_core_testing
@@ -588,6 +588,9 @@ if(WIN32)
         third_party/libdjinterop/ext/sqlite-amalgamation)
     target_compile_definitions(seabass_core_testing PRIVATE SQLITE_OMIT_LOAD_EXTENSION)
 else()
+    # No copy of our own here, MinGW included: tests that #include
+    # <sqlite3.h> also link SQLite::SQLite3, and a second copy collides
+    # at link time (see SYSTEM_SQLITE above).
     target_link_libraries(seabass_core PUBLIC SQLite::SQLite3)
     target_link_libraries(seabass_core_testing PUBLIC SQLite::SQLite3)
 endif()
@@ -1176,6 +1179,12 @@ if(SEABASS_GUI AND Qt6_FOUND)
         list(APPEND _seabass_qml_test_env "SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots")
         if(MSVC)
             list(APPEND _seabass_qml_test_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
+        endif()
+        if(WIN32)
+            # With no console attached, Qt sends log output and QtQuickTest's
+            # PASS/FAIL report to OutputDebugString, where ctest never sees
+            # it: a failing run looks like an empty log and exit code 1.
+            list(APPEND _seabass_qml_test_env "QT_FORCE_STDERR_LOGGING=1")
         endif()
         set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT "${_seabass_qml_test_env}")
 
