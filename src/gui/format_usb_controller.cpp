@@ -92,7 +92,18 @@ FormatUsbTaskResult runFormatTask(QString wholeDiskPath, application::StickIdent
     return result;
 }
 
+std::function<FormatUsbTaskResult()> &formatTaskOverride()
+{
+    static std::function<FormatUsbTaskResult()> task;
+    return task;
+}
+
 }  // namespace
+
+void FormatUsbController::setFormatTaskForTesting(std::function<FormatUsbTaskResult()> task)
+{
+    formatTaskOverride() = std::move(task);
+}
 
 FormatUsbController::FormatUsbController(QObject *parent) : QObject(parent)
 {
@@ -265,9 +276,11 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
     auto reporter = std::make_shared<QtProgressReporter>();
     // Awake for the whole format: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Formatting a USB stick"));
-    m_watcher.setFuture(QtConcurrent::run([keepAwake, wholeDiskPath, chosen, filesystem, volumeLabel, reporter]() {
-        return runFormatTask(wholeDiskPath, chosen, filesystem, volumeLabel, reporter);
-    }));
+    auto overridden = formatTaskOverride();
+    m_watcher.setFuture(
+        QtConcurrent::run([keepAwake, wholeDiskPath, chosen, filesystem, volumeLabel, reporter, overridden]() {
+            return overridden ? overridden() : runFormatTask(wholeDiskPath, chosen, filesystem, volumeLabel, reporter);
+        }));
 }
 
 void FormatUsbController::onFormatFinished()

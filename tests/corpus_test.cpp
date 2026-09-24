@@ -55,6 +55,7 @@
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/cleanup/pending_deletion_resolver.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
@@ -2867,6 +2868,106 @@ void caseCleanUpAcrossCatalogs(const DataSet &set, const fs::path &scratch)
     fs::remove_all(stick);
 }
 
+// Matrix: a Clean Up on the rekordbox page whose doomed copy is listed
+// ONLY by Engine. Its Engine row is removed by the per-catalog pass, and
+// its file must still be scheduled for deletion. It was not: the loop
+// over doomed copies skipped one with no row in the page's own catalog
+// straight past the pending-deletion append, so the row went and the
+// file stayed on the stick, referenced by nothing and listed for deletion
+// by nothing -- the clutter Clean Up exists to clear (issue #46, item 8).
+void caseCleanUpDoomedOnlyInAnotherCatalog(const DataSet &set, const fs::path &scratch)
+{
+    if (!set.rekordboxRoot || !set.engineRoot) {
+        std::cout << "    skipped matrix/cleanup of an Engine-only copy: this set has only one catalog\n";
+        return;
+    }
+    const fs::path stick = scratch / "matrix-xcat-engine-only";
+    fs::remove_all(stick);
+    fs::create_directories(stick);
+    fs::copy(*set.rekordboxRoot, stick / "PIONEER", fs::copy_options::recursive);
+    fs::copy(*set.engineRoot, stick / "Engine Library", fs::copy_options::recursive);
+    const fs::path pioneer = stick / "PIONEER";
+    const fs::path engineLib = stick / "Engine Library";
+
+    auto rekordboxBefore = rescanRekordbox(pioneer);
+    auto engineBefore = rescanEngine(engineLib);
+    std::vector<domain::Track> rows = rekordboxBefore;
+    rows.insert(rows.end(), engineBefore.begin(), engineBefore.end());
+    const auto files = application::collapseCatalogRows(rows);
+
+    auto formatsOf = [](const domain::Track &file) {
+        std::set<std::string> formats;
+        for (const auto &row : file.catalogRows) {
+            formats.insert(row.format);
+        }
+        return formats;
+    };
+    // The survivor is listed by both, so each catalog has a row to repoint
+    // the doomed copy's playlist entries at; the doomed copy by Engine
+    // alone, and without cues, so nothing but the removal and the
+    // scheduling is being tested.
+    const domain::Track *survivor = nullptr;
+    const domain::Track *doomed = nullptr;
+    std::size_t engineOnly = 0;
+    for (const auto &file : files) {
+        const auto formats = formatsOf(file);
+        if (!survivor && formats.count("rekordbox") && formats.count("engine")) {
+            survivor = &file;
+        }
+        if (formats.size() == 1 && formats.count("engine")) {
+            ++engineOnly;
+            if (!doomed && file.cues.empty()) {
+                doomed = &file;
+            }
+        }
+    }
+    if (survivor == nullptr || doomed == nullptr) {
+        // An absent property, stated, as for the case above: a set whose
+        // catalogs share no file has no survivor both of them list.
+        std::cout << "    (no Engine-only cleanup to check: this set has " << engineOnly
+                  << " Engine-only file(s) but " << (survivor ? "none without cues" : "no file both catalogs list")
+                  << ")\n";
+        fs::remove_all(stick);
+        return;
+    }
+
+    domain::DuplicateCleanupPlan plan;
+    plan.group.tracks = {*survivor, *doomed};
+    plan.survivor = *survivor;
+    plan.toRemove = {*doomed};
+    plan.mergedCuesForSurvivor = survivor->cues;
+    std::string doomedEngineId;
+    for (const auto &row : doomed->catalogRows) {
+        doomedEngineId = row.sourceId;
+    }
+
+    // Where the change itself puts it: on the stick, beside the page's
+    // catalog, not in the app's home.
+    const fs::path manifestPath = infrastructure::paths::stickPendingDeletions(stick);
+    fs::remove(manifestPath);
+    auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
+                                                            plan, 1);
+    auto result = runChanges({change}, pioneer, engineLib);
+    if (!check(result.error.isEmpty(), "the cleanup save reported no error: " + result.error.toStdString())) {
+        fs::remove_all(stick);
+        return;
+    }
+    auto engineAfter = rescanEngine(engineLib);
+    check(findTrack(engineAfter, doomedEngineId) == nullptr,
+          "the Engine-only copy's row is gone (else the scheduling check below proves nothing)");
+    bool scheduled = false;
+    if (fs::exists(manifestPath)) {
+        infrastructure::cleanup::PendingDeletionManifest manifest(manifestPath.string());
+        for (const auto &entry : manifest.list()) {
+            scheduled = scheduled || entry.filePath == doomed->filePath;
+        }
+    }
+    check(scheduled, "and its file is named in the pending-deletion manifest, not left on the stick unlisted");
+    fs::remove(manifestPath);
+    fs::remove_all(stick);
+    pass("matrix: a Clean Up schedules the file of a copy only another catalog listed");
+}
+
 // Matrix: Clean Up merges play history, in every catalog that keeps it.
 //
 // Run against rekordbox and its OneLibrary mirror, which list the same
@@ -3193,6 +3294,7 @@ void runMatrix(const DataSet &set, const fs::path &scratch, const Catalogs &cata
     caseNoPaddedStringsFromRekordbox(set, catalogs);
     caseCollapseGroupsAcrossFormats(set, catalogs);
     caseCleanUpAcrossCatalogs(set, scratch);
+    caseCleanUpDoomedOnlyInAnotherCatalog(set, scratch);
     caseCleanUpMergesPlayHistory(set, scratch);
     caseBackupPathResolver(set, scratch, catalogs);
     caseBackupCoversEveryChangedFile(set, scratch, catalogs);

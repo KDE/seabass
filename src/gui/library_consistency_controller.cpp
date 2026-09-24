@@ -1165,6 +1165,21 @@ void LibraryConsistencyController::removeAllJunkCues()
     }
 }
 
+namespace
+{
+std::function<infrastructure::media::FilesystemRepairResult(const std::string &)> &filesystemRepairOverride()
+{
+    static std::function<infrastructure::media::FilesystemRepairResult(const std::string &)> repair;
+    return repair;
+}
+}  // namespace
+
+void LibraryConsistencyController::setFilesystemRepairForTesting(
+    std::function<infrastructure::media::FilesystemRepairResult(const std::string &)> repair)
+{
+    filesystemRepairOverride() = std::move(repair);
+}
+
 void LibraryConsistencyController::repairStickFilesystem()
 {
     if (m_repairingFilesystem || m_busy) {
@@ -1184,8 +1199,10 @@ void LibraryConsistencyController::repairStickFilesystem()
     emit stickHealthChanged();
     // The check unmounts, repairs and mounts again: minutes on a full
     // stick, and none of it belongs on the UI thread.
-    m_repairWatcher.setFuture(QtConcurrent::run(
-        [stickRoot]() { return infrastructure::media::repairFilesystem(stickRoot); }));
+    auto repair = filesystemRepairOverride();
+    m_repairWatcher.setFuture(QtConcurrent::run([stickRoot, repair]() {
+        return repair ? repair(stickRoot) : infrastructure::media::repairFilesystem(stickRoot);
+    }));
 }
 
 void LibraryConsistencyController::onFilesystemRepairFinished()

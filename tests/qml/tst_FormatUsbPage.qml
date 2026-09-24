@@ -617,4 +617,15 @@ TestCase {
         // And the typed confirmation is still required.
         compare(findChild(page, "formatAcceptButton").enabled, false);
     }
+
+    // Leaving the page mid-format destroys its controller, and the
+    // controller holds the library's edit lock as a member: its
+    // destructor has to wait for the format, or the lock is released
+    // while the partition is still being rewritten and something else in
+    // the app can start writing to that drive. The format is a stand-in
+    // here (see ControllerFixture in qml_test_main.cpp): nothing is
+    // formatted.
+    function test_leavingThePageMidFormatWaitsForTheFormat() {
+        compare(controllerFixture.leaveThePageMidFormat(), "");
+    }
 }

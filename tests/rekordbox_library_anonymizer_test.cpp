@@ -709,6 +709,34 @@ int main()
         std::cout << "case 13b (a name row the writer refuses is reported, not shipped silently) OK\n";
     }
 
+    // The orphan sweep scrubs what no track points at, and only that.
+    // Three analysis files a track references and one nothing does: the
+    // count is exactly one. It was four on Windows -- the sweep compared
+    // the per-track pass's "root/relative" strings with the directory
+    // iterator's native backslash paths, so every file already scrubbed
+    // looked unvisited and was scrubbed a second time, placeholder hashed
+    // from placeholder. On POSIX the two spellings agree and this cannot
+    // go red; on Windows it is the check. The orphan is here so that a
+    // sweep which never runs cannot pass as zero double-scrubs.
+    {
+        const fs::path src = root / "orphan-source";
+        const fs::path dst = root / "orphan-dest";
+        writeFile(src / "rekordbox" / "export.pdb", buildSyntheticPdb());
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
+        writeSyntheticAnlz(src / "USBANLZ" / "P002" / "00000009" / "ANLZ0000.DAT");  // no track's
+
+        auto result = anonymizeRekordboxLibrary(src.string(), dst.string());
+        assert(result.errorMessage.empty());
+        if (result.orphanedAnalysisFilesScrubbed != 1) {
+            std::cerr << "orphanedAnalysisFilesScrubbed = " << result.orphanedAnalysisFilesScrubbed << "\n";
+        }
+        assert(result.orphanedAnalysisFilesScrubbed == 1
+               && "the one orphan is scrubbed, and the three a track owns are not scrubbed again");
+        std::cout << "case 13c (the orphan sweep scrubs the orphan and nothing already scrubbed) OK\n";
+    }
+
     // A PPTH section whose len_header is nonsense must be left alone,
     // not indexed with it.
     //

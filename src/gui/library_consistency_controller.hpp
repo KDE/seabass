@@ -12,6 +12,7 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <utility>
@@ -433,6 +434,12 @@ public:
     // behind polkit on Linux, an elevated Repair-Volume behind UAC on
     // Windows, diskutil on macOS. Seabass itself never elevates.
     Q_INVOKABLE void repairStickFilesystem();
+    // Replaces infrastructure::media::repairFilesystem() for tests, since
+    // the real one unmounts and repairs a drive. An empty function puts
+    // the real one back. Not thread-safe against a repair in flight: set
+    // it before the repair starts.
+    static void setFilesystemRepairForTesting(
+        std::function<infrastructure::media::FilesystemRepairResult(const std::string &mountPoint)> repair);
 
     Q_INVOKABLE void repairArtwork();
     // Stages writing every sample rate a file could answer for. Staging

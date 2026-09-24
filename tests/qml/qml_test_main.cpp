@@ -19,6 +19,8 @@
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/sync_controller.hpp"
+#include "gui/format_usb_controller.hpp"
+#include "gui/library_consistency_controller.hpp"
 #include <QSettings>
 #include <QString>
 #include <QStringList>
@@ -26,7 +28,12 @@
 #include <QQuickWindow>
 #include <QtQuickTest/quicktest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <memory>
+#include <stdexcept>
+#include <thread>
 #include <string>
 #include <system_error>
 
@@ -200,6 +207,73 @@ private:
     }
 
     QStringList m_roots;
+};
+
+// Test seams on controllers whose real work touches hardware: a
+// filesystem repair unmounts and checks a drive, a format rewrites one.
+// Each Q_INVOKABLE puts a stand-in in place of that work, and each has a
+// matching restore; the stand-ins never reach a device.
+class ControllerFixture : public QObject
+{
+    Q_OBJECT
+public:
+    using QObject::QObject;
+    ~ControllerFixture() override
+    {
+        seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
+        seabass::gui::FormatUsbController::setFormatTaskForTesting({});
+    }
+
+    // The next filesystem repair throws `message` from its worker thread.
+    Q_INVOKABLE void makeFilesystemRepairThrow(const QString &message)
+    {
+        const std::string text = message.toStdString();
+        seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting(
+            [text](const std::string &) -> seabass::infrastructure::media::FilesystemRepairResult {
+                throw std::runtime_error(text);
+            });
+    }
+    Q_INVOKABLE void restoreFilesystemRepair()
+    {
+        seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
+    }
+
+    // Starts a format and leaves the page while it runs, which destroys
+    // the controller mid-format. The controller holds the library's edit
+    // lock as a member, so its destructor must wait for the format:
+    // returning early releases the lock while the partition is still
+    // being rewritten. The stand-in format takes half a second and marks
+    // when it is done.
+    //
+    // Returns an empty string when the destructor waited, otherwise what
+    // went wrong. Done in C++ because QML's destroy() is deferred to the
+    // event loop, and what matters is the order inside `delete`.
+    Q_INVOKABLE QString leaveThePageMidFormat()
+    {
+        auto finished = std::make_shared<std::atomic<bool>>(false);
+        seabass::gui::FormatUsbController::setFormatTaskForTesting([finished]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            finished->store(true);
+            return seabass::gui::FormatUsbTaskResult{};
+        });
+        QString verdict;
+        {
+            auto controller = std::make_unique<seabass::gui::FormatUsbController>();
+            // A path that names no device: the stand-in is what runs, and
+            // should it ever not be, the real formatter finds nothing here.
+            const QString noDisk = QStringLiteral("/dev/seabass-test-not-a-disk");
+            controller->chooseDrive(noDisk);
+            controller->format(noDisk, QStringLiteral("exfat"), QStringLiteral("TEST"));
+            if (!controller->busy()) {
+                verdict = QStringLiteral("the format never started: ") + controller->errorMessage();
+            }
+        }
+        if (verdict.isEmpty() && !finished->load()) {
+            verdict = QStringLiteral("the controller was destroyed while its format was still running");
+        }
+        seabass::gui::FormatUsbController::setFormatTaskForTesting({});
+        return verdict;
+    }
 };
 
 class SyncPageFixture : public QObject
@@ -668,6 +742,7 @@ void seedMetadataStoreForTests()
         engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
         engine->rootContext()->setContextProperty(QStringLiteral("syncPageFixture"), new SyncPageFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("artworkFixture"), new ArtworkFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("controllerFixture"), new ControllerFixture(engine));
     }
 };
 

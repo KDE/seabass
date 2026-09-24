@@ -70,6 +70,38 @@ TestCase {
         compare(page.stickAwayExpected, false);
     }
 
+    SignalSpy {
+        id: repairFinishedSpy
+        signalName: "filesystemRepairFinished"
+    }
+
+    // A repair that THROWS says why. The result was taken without asking
+    // for the exception, which hands back a default result -- not
+    // repaired, not declined, no message -- so the page showed an empty
+    // error and the user was told nothing. Every other result in the
+    // controller was taken with it; this one was not.
+    function test_aRepairThatThrowsSaysWhy() {
+        var page = createTemporaryObject(pageComponent, testCase);
+        var controller = page.consistencyController;
+        tryCompare(controller, "busy", false);
+        controllerFixture.makeFilesystemRepairThrow("the repair helper stopped responding");
+        repairFinishedSpy.clear();
+        repairFinishedSpy.target = controller;
+        controller.repairStickFilesystem();
+        repairFinishedSpy.wait(5000);
+        controllerFixture.restoreFilesystemRepair();
+        compare(repairFinishedSpy.count, 1);
+        const repaired = repairFinishedSpy.signalArguments[0][0];
+        const declined = repairFinishedSpy.signalArguments[0][1];
+        const message = repairFinishedSpy.signalArguments[0][2];
+        compare(repaired, false);
+        compare(declined, false, "a crash is not the user saying no");
+        verify(message.indexOf("the repair helper stopped responding") !== -1,
+               "the reason reaches the page, got: '" + message + "'");
+        verify(controller.errorMessage.indexOf("the repair helper stopped responding") !== -1,
+               "and is shown as the error, got: '" + controller.errorMessage + "'");
+    }
+
     function test_aCleanCheckStillGetsACard() {
         // "Nothing wrong here" is a result. A page that only lists problems
         // cannot distinguish a clean library from a check that never ran.

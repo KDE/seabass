@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include <functional>
 #include <memory>
 
 #include "application/ports/removable_media_monitor.hpp"
@@ -84,6 +85,11 @@ public:
     // own return values.
     Q_INVOKABLE void format(const QString &wholeDiskPath, const QString &filesystem, const QString &volumeLabel);
     Q_INVOKABLE void retryLockedAction() { m_writeHold.retryLockedAction(); }
+
+    // Replaces the background format task for tests, so that nothing is
+    // ever formatted; it runs on the worker thread in the real task's
+    // place. An empty function puts the real task back.
+    static void setFormatTaskForTesting(std::function<FormatUsbTaskResult()> task);
 
 signals:
     void disksChanged();
