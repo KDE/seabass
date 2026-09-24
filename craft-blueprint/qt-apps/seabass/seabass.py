@@ -45,6 +45,15 @@ class subinfo(info.infoclass):
         # Optional: Seabass's own CMakeLists.txt falls back to
         # application::NullTrackMetadataProbe when TagLib isn't found.
         self.runtimeDependencies["libs/taglib"] = None
+        if CraftCore.compiler.isLinux:
+            # The AppImage cannot use the system's Plasma integration, so it
+            # carries KDE's desktop style itself -- the look the app has on a
+            # Plasma desktop. The app selects it when APPIMAGE is set (see
+            # src/gui/controls_style.cpp). Same set NeoChat, Tokodon and
+            # Marknote bundle.
+            self.runtimeDependencies["kde/frameworks/tier3/qqc2-desktop-style"] = None
+            self.runtimeDependencies["kde/plasma/breeze"] = None
+            self.runtimeDependencies["kde/frameworks/tier1/breeze-icons"] = None
 
 
 from Package.CMakePackageBase import CMakePackageBase

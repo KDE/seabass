@@ -28,6 +28,18 @@ void applyDefaultControlsStyle()
     qputenv("QT_QUICK_CONTROLS_STYLE", "FluentWinUI3");
 #elif defined(Q_OS_MACOS)
     qputenv("QT_QUICK_CONTROLS_STYLE", "Material");
+#elif defined(Q_OS_LINUX)
+    // Inside an AppImage, KDE's desktop style, as on a Plasma desktop.
+    // Installed normally, the app gets org.kde.desktop from Plasma's
+    // platform theme and nothing needs setting. An AppImage carries its own
+    // Qt, which cannot load the system's Plasma plugins, so the same app
+    // would otherwise come up in Qt's plain Basic style -- on Plasma
+    // included. The AppImage bundles qqc2-desktop-style and Breeze (see
+    // craft-blueprint/qt-apps/seabass/seabass.py) and asks for them here.
+    // APPIMAGE is set by the AppImage runtime to the image's own path.
+    if (!qEnvironmentVariableIsEmpty("APPIMAGE")) {
+        qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.desktop");
+    }
 #endif
 }
 
