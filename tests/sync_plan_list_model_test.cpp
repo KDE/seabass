@@ -16,6 +16,7 @@
 #include <cassert>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gui/sync_plan_list_model.hpp"
@@ -221,5 +222,44 @@ int main(int argc, char **argv)
     }
 
     std::cout << "all cases passed\n";
+    // The view is told when a row's index moves. The model re-pointed its
+    // rows after a removal but said nothing, so a delegate kept the index
+    // it was created with: after one decision was resolved, the next one's
+    // "Use These Cues" asked for an index past the end and did nothing.
+    // Found on the second of two tracks in the macOS round 8 checks.
+    {
+        SyncPlanListModel shifting;
+        shifting.setAnalysis({rej(), loopInLoop(), flaschenpostEdit()}, {flaschenpost(), flaschenpost()});
+        std::vector<std::pair<int, QList<int>>> changed;
+        QObject::connect(&shifting, &QAbstractItemModel::dataChanged,
+                         [&changed](const QModelIndex &from, const QModelIndex &to, const QList<int> &roles) {
+                             for (int r = from.row(); r <= to.row(); ++r) {
+                                 changed.push_back({r, roles});
+                             }
+                         });
+        auto announced = [&changed](int row, int role) {
+            for (const auto &c : changed) {
+                if (c.first == row && c.second.contains(role)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        shifting.removeConflictAt(0);
+        assert(at(shifting, 0, SyncPlanListModel::ConflictIndexRole).toInt() == 0);
+        assert(announced(0, SyncPlanListModel::ConflictIndexRole)
+               && "the remaining decision is told its index is 0 now");
+
+        changed.clear();
+        const int firstPlanRow = 1;  // after the one decision left
+        shifting.removePlanAt(0);
+        assert(at(shifting, firstPlanRow, SyncPlanListModel::PlanIndexRole).toInt() == 0);
+        assert(announced(firstPlanRow, SyncPlanListModel::PlanIndexRole)
+               && announced(firstPlanRow + 1, SyncPlanListModel::PlanIndexRole)
+               && "every plan row past the removed one is told its new index");
+        std::cout << "case 7 (a removal tells the view which rows moved) OK\n";
+    }
+
     return 0;
 }
