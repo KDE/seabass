@@ -12,12 +12,17 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <system_error>
 #include <iostream>
 #include <string>
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
 
+#include <sqlite3.h>
+#include "infrastructure/paths/utf8_path.hpp"
 #include "domain/beat_grid.hpp"
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
@@ -210,7 +215,46 @@ int main(int argc, char **argv)
         }
         check(withMarkers == 40, "the fixture has 40 Engine tracks with markers, found " + std::to_string(withMarkers));
         check(withGrid == withMarkers, "and every one of them gets its grid, got " + std::to_string(withGrid));
-        check(rateUnreadable > 0, "some of them by working the sample rate out -- or this test no longer covers that");
+        // The rate-from-markers path is no longer exercised by the fixture
+        // itself: its "unreadable" records were Engine 3.x 68-byte ones,
+        // which libdjinterop reads now. Covered on a scratch copy instead,
+        // with one marker track's data record made undecodable the way a
+        // damaged stick has it -- the grid must still come out.
+        {
+            namespace fs = std::filesystem;
+            const fs::path scratch = fs::temp_directory_path()
+                / seabass::pathFromUtf8("seabass-beat-grid-" + std::to_string(
+                      std::chrono::steady_clock::now().time_since_epoch().count()));
+            fs::remove_all(scratch);
+            fs::copy(seabass::pathFromUtf8(enginePath), scratch, fs::copy_options::recursive);
+            int64_t victim = 0;
+            for (const auto &track : db.tracks()) {
+                if (track.beatgrid().size() >= 2) {
+                    victim = track.id();
+                    break;
+                }
+            }
+            sqlite3 *handle = nullptr;
+            check(sqlite3_open(seabass::pathToUtf8(scratch / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK,
+                  "the scratch copy opens");
+            const std::string damage = "UPDATE PerformanceData SET trackData = X'00' WHERE trackId = " + std::to_string(victim);
+            check(sqlite3_exec(handle, damage.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK, "its record is damaged");
+            sqlite3_close(handle);
+            auto damagedDb = djinterop::engine::load_database(seabass::pathToUtf8(scratch));
+            bool unreadable = false;
+            try {
+                (void)damagedDb.track_by_id(victim)->sample_rate();
+            } catch (const std::exception &) {
+                unreadable = true;
+            }
+            check(unreadable, "libdjinterop cannot read the damaged record's rate");
+            const auto beats = infrastructure::engine::readBeatGrid(seabass::pathToUtf8(scratch), std::to_string(victim));
+            check(!beats.empty() && looksLikeAGrid(beats, "damaged Engine track " + std::to_string(victim)),
+                  "the grid still comes out, its rate worked out from the markers");
+            std::error_code ec;
+            fs::remove_all(scratch, ec);
+        }
+        (void)rateUnreadable;
         check(infrastructure::engine::readBeatGrid(enginePath, "4000000").empty(), "an id the library has not is no grid");
         check(infrastructure::engine::readBeatGrid("/nonexistent/Engine Library", "1").empty(), "nor a library that is not there");
     }
