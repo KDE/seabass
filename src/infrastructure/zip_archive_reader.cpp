@@ -4,6 +4,8 @@
 
 #include "infrastructure/zip_archive_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #include <zlib.h>
 
 #include <cstdint>
@@ -104,15 +106,16 @@ fs::path safeTargetFor(const fs::path &destDir, const std::string &entryName)
         throw std::runtime_error("zip: refusing absolute entry name \"" + entryName + "\"");
     }
     fs::path target = destDir;
-    for (const auto &part : fs::path(entryName)) {
-        const std::string piece = part.string();
-        if (piece == "..") {
+    // Entry names are UTF-8: what zip_archive_writer.cpp stores, with the
+    // general-purpose bit that says so.
+    for (const auto &part : pathFromUtf8(entryName)) {
+        if (part == "..") {
             throw std::runtime_error("zip: refusing entry name that escapes the destination: \"" + entryName + "\"");
         }
-        if (piece == "." || piece.empty()) {
+        if (part == "." || part.empty()) {
             continue;
         }
-        target /= piece;
+        target /= part;
     }
     return target;
 }
@@ -123,7 +126,7 @@ void extractZipArchive(const fs::path &zipPath, const fs::path &destDir)
 {
     std::ifstream in(zipPath, std::ios::binary);
     if (!in) {
-        throw std::runtime_error("zip: could not open " + zipPath.string());
+        throw std::runtime_error("zip: could not open " + pathToUtf8(zipPath));
     }
     std::ostringstream buffer;
     buffer << in.rdbuf();
@@ -197,7 +200,7 @@ void extractZipArchive(const fs::path &zipPath, const fs::path &destDir)
         fs::create_directories(target.parent_path());
         std::ofstream out(target, std::ios::binary | std::ios::trunc);
         if (!out) {
-            throw std::runtime_error("zip: could not write " + target.string());
+            throw std::runtime_error("zip: could not write " + pathToUtf8(target));
         }
         out.write(content.data(), static_cast<std::streamsize>(content.size()));
     }
