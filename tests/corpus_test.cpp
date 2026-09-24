@@ -68,6 +68,7 @@
 #include "infrastructure/rekordbox/rekordbox_settings_fields.hpp"
 #include "infrastructure/rekordbox/rekordbox_settings_reader.hpp"
 #include "infrastructure/zip_archive_reader.hpp"
+#include "engine_edit_times.hpp"
 
 #ifdef SEABASS_CORPUS_HAS_EDIT
 #include <QString>
@@ -539,19 +540,37 @@ void caseScanCounts(const DataSet &set, Catalogs &catalogs, Expectations &expect
                             "Engine tracks-with-album unchanged");
             pass("case 2: Engine scan at real scale, track and cue counts hold");
 
-            // Sync's per-track clock, Engine side. Engine writes
-            // Track.lastEditTime for every track, so a real library should
-            // leave none undated; libdjinterop's high-level API does not
-            // expose the column, which is why the reader reads it itself.
-            long long undated = 0;
-            for (const auto &track : catalogs.engine) {
-                if (track.metadataModifiedAt <= 0) {
-                    undated++;
+            // Sync's per-track clock, Engine side. libdjinterop's high-level
+            // API does not expose Track.lastEditTime, so the reader reads the
+            // column itself -- and a reader that stopped doing so would
+            // leave every track undated, which Sync reads as "never edited".
+            //
+            // Checked against the database, not against a rule about it.
+            // This used to require every Engine track to carry one, on the
+            // grounds that Engine writes it for every track. It does not: a
+            // library a Prime 4 built by importing a rekordbox stick has it
+            // NULL on every row (measured on the test stick, 100 of 100
+            // before its planted defects), so the check failed on real data
+            // by construction and said nothing about the reader. What the
+            // reader must do is report exactly what the database holds.
+            const auto datedInDatabase = seabass::testing::engineTrackDatedById(*set.engineRoot);
+            const bool databaseRead = datedInDatabase.has_value();
+            if (check(databaseRead, "the Engine database's Track.lastEditTime column could be read directly")) {
+                long long dated = 0, disagree = 0;
+                for (const auto &track : catalogs.engine) {
+                    const bool readerDated = track.metadataModifiedAt > 0;
+                    const auto it = datedInDatabase->find(track.sourceId);
+                    if (it == datedInDatabase->end() || it->second != readerDated) {
+                        ++disagree;
+                    }
+                    dated += readerDated ? 1 : 0;
                 }
-            }
-            if (check(undated == 0, "every Engine track carries Track.lastEditTime (" + std::to_string(undated) + " of "
-                                        + std::to_string(catalogs.engine.size()) + " did not)")) {
-                pass("case 2c: Engine tracks carry their own edit time for Sync");
+                std::cout << "    engine edit times: " << dated << " of " << catalogs.engine.size() << " tracks dated\n";
+                if (check(disagree == 0, "the Engine reader reports exactly the edit times the database holds ("
+                                             + std::to_string(disagree) + " of "
+                                             + std::to_string(catalogs.engine.size()) + " disagree)")) {
+                    pass("case 2c: Engine tracks carry their own edit time for Sync, as the database has it");
+                }
             }
         }
     }

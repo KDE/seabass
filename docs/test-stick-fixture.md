@@ -58,7 +58,7 @@ engine.tracksWithCues 99
 engine.writeRefusals 0
 matrix.addCue.durableWritesPerSave 4
 matrix.addCue.pdbParses 1
-matrix.cleanup.durableWritesPerSave 5
+matrix.cleanup.durableWritesPerSave 6
 matrix.cleanup.pdbParses 2
 matrix.copyCues.durableWritesPerSave 4
 matrix.deleteOrphan.durableWritesPerSave 2
@@ -81,6 +81,17 @@ sync.matched 90
 
 `engine.tracks` is 103 rather than 100 because three of the planted
 defects add a second row for a file that already has one.
+
+`matrix.cleanup.durableWritesPerSave` was 5 when the stick was built and
+is 6 since `7f0276ee`, which made Clean Up's pending-deletion record
+durable. The reference backup a shakedown restores from is
+`SHAKEDOWN_8.zip` (2026-09-24), which carries the corrected file.
+
+The Prime 4's import leaves `Track.lastEditTime` NULL on every row it
+creates -- all 100 in `m.db.before-defects`. Sync reads that column as a
+track's own edit time, so every imported track reads as never edited.
+`corpus_test` checks that the reader reports exactly what the database
+holds, not that every track carries one.
 
 ## The catalogs disagree, on purpose and by accident
 

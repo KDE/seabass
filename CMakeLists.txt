@@ -2950,7 +2950,7 @@ add_test(NAME open_stick_backup_test COMMAND open_stick_backup_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(open_stick_backup_test PROPERTIES LABELS "integration")
 
-add_executable(corpus_test tests/corpus_test.cpp)
+add_executable(corpus_test tests/corpus_test.cpp tests/engine_edit_times.cpp)
 target_include_directories(corpus_test PRIVATE src)
 target_link_libraries(corpus_test PRIVATE seabass_core)
 # The matrix cases stage real edits through the real save loop, which
