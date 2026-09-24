@@ -22,6 +22,7 @@
 #include <sys/param.h>
 #endif
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/process/run_command.hpp"
 
 namespace seabass::infrastructure::media
@@ -37,12 +38,12 @@ bool isMountedReadOnly(const std::string &path)
     }
 #ifdef _WIN32
     // The volume the path sits on, which for a stick is its drive root.
-    char root[MAX_PATH] = {};
-    if (::GetVolumePathNameA(path.c_str(), root, MAX_PATH) == 0) {
+    wchar_t root[MAX_PATH] = {};
+    if (::GetVolumePathNameW(pathFromUtf8(path).c_str(), root, MAX_PATH) == 0) {
         return false;
     }
     DWORD flags = 0;
-    if (::GetVolumeInformationA(root, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0) == 0) {
+    if (::GetVolumeInformationW(root, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0) == 0) {
         return false;
     }
     return (flags & FILE_READ_ONLY_VOLUME) != 0;
@@ -96,11 +97,11 @@ std::string deviceForMountPoint(const std::string &mountPoint)
         return {};
     }
 #if defined(_WIN32)
-    char root[MAX_PATH] = {};
-    if (::GetVolumePathNameA(mountPoint.c_str(), root, MAX_PATH) == 0) {
+    wchar_t root[MAX_PATH] = {};
+    if (::GetVolumePathNameW(pathFromUtf8(mountPoint).c_str(), root, MAX_PATH) == 0) {
         return {};
     }
-    std::string drive(root);
+    std::string drive = pathToUtf8(fs::path(root));
     // "E:\" -> "E:", which is what Repair-Volume's -DriveLetter wants
     // without its colon, and what the caller trims.
     while (!drive.empty() && (drive.back() == '\\' || drive.back() == '/')) {
@@ -145,11 +146,11 @@ bool isMountPointRoot(const std::string &path)
         return false;
     }
 #if defined(_WIN32)
-    char root[MAX_PATH] = {};
-    if (::GetVolumePathNameA(path.c_str(), root, MAX_PATH) == 0) {
+    wchar_t root[MAX_PATH] = {};
+    if (::GetVolumePathNameW(pathFromUtf8(path).c_str(), root, MAX_PATH) == 0) {
         return false;
     }
-    return trimTrailingSeparators(root) == trimTrailingSeparators(path);
+    return trimTrailingSeparators(pathToUtf8(fs::path(root))) == trimTrailingSeparators(path);
 #elif defined(__APPLE__)
     struct statfs info = {};
     if (::statfs(path.c_str(), &info) != 0) {
@@ -182,7 +183,7 @@ namespace
 // formatter builds for Block.Format.
 std::string blockObjectPath(const std::string &devicePath)
 {
-    return "/org/freedesktop/UDisks2/block_devices/" + fs::path(devicePath).filename().string();
+    return "/org/freedesktop/UDisks2/block_devices/" + pathToUtf8(pathFromUtf8(devicePath).filename());
 }
 #endif
 

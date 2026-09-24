@@ -17,10 +17,13 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <sstream>
 #include <string>
+
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::media
 {
@@ -62,14 +65,17 @@ std::string escapePowerShellSingleQuoted(const std::string &s)
     return escaped;
 }
 
-std::string tempFilePath(const std::string &suffix)
+// Under the user's temp directory, whose path carries the user's name:
+// a path, never a narrow string, so a name outside the ANSI code page
+// still opens.
+std::filesystem::path tempFilePath(const std::string &suffix)
 {
-    char tempDir[MAX_PATH + 1] = {};
-    ::GetTempPathA(sizeof(tempDir), tempDir);
+    std::error_code ec;
+    const std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
     auto uniquePart = std::chrono::steady_clock::now().time_since_epoch().count();
     std::ostringstream oss;
-    oss << tempDir << "seabass-format-" << ::GetCurrentProcessId() << "-" << uniquePart << suffix;
-    return oss.str();
+    oss << "seabass-format-" << ::GetCurrentProcessId() << "-" << uniquePart << suffix;
+    return tempDir / oss.str();
 }
 
 }  // namespace
@@ -104,12 +110,18 @@ bool WindowsUsbFormatter::format(const std::string &wholeDiskPath, domain::UsbFi
 
     progress.start("Formatting disk " + std::to_string(*diskNumber), 0);
 
-    const std::string scriptPath = tempFilePath(".ps1");
-    const std::string resultPath = tempFilePath(".result.txt");
+    const std::filesystem::path scriptPath = tempFilePath(".ps1");
+    const std::filesystem::path resultPath = tempFilePath(".result.txt");
+    // Inside the script the result path is text in a single-quoted
+    // PowerShell literal; the script itself is written with a UTF-8 byte
+    // order mark so PowerShell reads that text as UTF-8 rather than in
+    // the ANSI code page.
+    const std::string resultPathLiteral = escapePowerShellSingleQuoted(pathToUtf8(resultPath));
     const std::string fsName = fsType == domain::UsbFilesystem::Fat32 ? "FAT32" : "exFAT";
 
     {
-        std::ofstream script(scriptPath);
+        std::ofstream script(scriptPath, std::ios::binary);
+        script << "\xEF\xBB\xBF";
         script << "$ErrorActionPreference = 'Stop'\n";
         script << "try {\n";
         script << "    Clear-Disk -Number " << *diskNumber << " -RemoveData -RemoveOEM -Confirm:$false\n";
@@ -141,26 +153,28 @@ bool WindowsUsbFormatter::format(const std::string &wholeDiskPath, domain::UsbFi
                << " -UseMaximumSize -AssignDriveLetter\n";
         script << "    Format-Volume -Partition $partition -FileSystem " << fsName << " -NewFileSystemLabel '"
                << escapePowerShellSingleQuoted(volumeLabel) << "' -Confirm:$false | Out-Null\n";
-        script << "    Set-Content -Path '" << resultPath << "' -Value 'OK'\n";
+        script << "    Set-Content -Path '" << resultPathLiteral << "' -Value 'OK'\n";
         script << "} catch {\n";
-        script << "    Set-Content -Path '" << resultPath << "' -Value ('ERROR: ' + $_.Exception.Message)\n";
+        script << "    Set-Content -Path '" << resultPathLiteral << "' -Value ('ERROR: ' + $_.Exception.Message)\n";
         script << "}\n";
     }
 
-    std::string parameters = "-NoProfile -ExecutionPolicy Bypass -File \"" + scriptPath + "\"";
+    // The wide call, because the script path is in the parameters.
+    const std::wstring parameters = L"-NoProfile -ExecutionPolicy Bypass -File \"" + scriptPath.wstring() + L"\"";
 
-    SHELLEXECUTEINFOA execInfo = {};
-    execInfo.cbSize = sizeof(SHELLEXECUTEINFOA);
+    SHELLEXECUTEINFOW execInfo = {};
+    execInfo.cbSize = sizeof(SHELLEXECUTEINFOW);
     execInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
-    execInfo.lpVerb = "runas";  // triggers the real UAC consent prompt -- see this class's own comment
-    execInfo.lpFile = "powershell.exe";
+    execInfo.lpVerb = L"runas";  // triggers the real UAC consent prompt -- see this class's own comment
+    execInfo.lpFile = L"powershell.exe";
     execInfo.lpParameters = parameters.c_str();
     execInfo.nShow = SW_HIDE;
 
-    if (!::ShellExecuteExA(&execInfo) || execInfo.hProcess == nullptr) {
+    std::error_code removeEc;
+    if (!::ShellExecuteExW(&execInfo) || execInfo.hProcess == nullptr) {
         DWORD err = ::GetLastError();
         progress.finish();
-        std::remove(scriptPath.c_str());
+        std::filesystem::remove(scriptPath, removeEc);
         if (err == ERROR_CANCELLED) {
             errorMessage = "Formatting was cancelled at the Windows permission prompt.";
         } else {
@@ -172,13 +186,13 @@ bool WindowsUsbFormatter::format(const std::string &wholeDiskPath, domain::UsbFi
     ::WaitForSingleObject(execInfo.hProcess, INFINITE);
     ::CloseHandle(execInfo.hProcess);
     progress.finish();
-    std::remove(scriptPath.c_str());
+    std::filesystem::remove(scriptPath, removeEc);
 
     std::ifstream resultFile(resultPath);
     std::string result;
     std::getline(resultFile, result);
     resultFile.close();
-    std::remove(resultPath.c_str());
+    std::filesystem::remove(resultPath, removeEc);
 
     if (result == "OK") {
         return true;
