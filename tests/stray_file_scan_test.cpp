@@ -25,7 +25,9 @@
 
 #include "domain/duplicate_cleanup.hpp"
 #include "domain/duplicate_cue_consolidation.hpp"
+#include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 #include "infrastructure/cleanup/stray_file_scan.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "mp3_fixture.hpp"
 
 #include "scratch_path.hpp"
@@ -224,6 +226,32 @@ int main()
         assert(again.tracks.size() == scan.tracks.size());
         assert(findStray(again.tracks, "guessed.mp3")->durationIsEstimated);
         std::cout << "case 6 (a second scan, served from the on-stick cache, answers identically) OK\n";
+    }
+
+    // A file a Clean Up has already scheduled is not a stray to offer.
+    // Clean Up removes a duplicate's rows from every catalog and puts its
+    // FILE on the stick's pending-deletion list, which makes that file
+    // exactly what this scan finds: audio no catalog references. Offered,
+    // it came back as a duplicate of the copy that was kept, and the group
+    // just cleaned up reappeared (shakedown round 8, W5, Linux and macOS).
+    {
+        infrastructure::cleanup::PendingDeletionManifest manifest(
+            infrastructure::paths::stickPendingDeletions(root).string());
+        infrastructure::cleanup::PendingDeletion pending;
+        pending.format = "rekordbox";
+        pending.filePath = stray.string();
+        pending.title = "Flaschenpost";
+        manifest.append(pending);
+
+        auto after = infrastructure::cleanup::scanStrayFiles(root.string(), catalogs, {},
+                                                              application::CancellationToken::none());
+        assert(after.usable);
+        assert(findStray(after.tracks, "33_stray.mp3") == nullptr && "already waiting for deletion: not offered again");
+        assert(after.alreadyListedForDeletion == 1);
+        assert(after.filesFound == scan.filesFound - 1 && "and not counted as a new stray either");
+        assert(findStray(after.tracks, "lonely.mp3") != nullptr && "every other stray is still offered");
+        assert(findStray(after.tracks, "guessed.mp3") != nullptr);
+        std::cout << "case 7 (a file already waiting for deletion is not offered as a stray again) OK\n";
     }
 
     fs::remove_all(root);
