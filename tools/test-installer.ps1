@@ -36,9 +36,15 @@ function Fail($message) {
 }
 
 Write-Output "=== locating the built installer ==="
-$installers = @(Get-ChildItem -Path $InstallerPath -Filter "Seabass-Setup-*.exe" -ErrorAction SilentlyContinue)
+# Either name: Seabass-Setup-*.exe is what the .iss produces on its own;
+# CI's windows:package renames it to the release name the website uses,
+# seabass-<version>_<channel>_windows.exe (on a tag, and on a test build
+# from a Seabass/X.Y branch). Looking for the first name only, the CI
+# installer test could never have found the installer CI had just built.
+$installers = @(Get-ChildItem -Path $InstallerPath -Filter "*.exe" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like "Seabass-Setup-*.exe" -or $_.Name -like "seabass-*_windows.exe" })
 if ($installers.Count -eq 0) {
-    Fail "No Seabass-Setup-*.exe found in $InstallerPath -- build and package first (see tools\windows-installer.iss)."
+    Fail "No Seabass-Setup-*.exe or seabass-*_windows.exe found in $InstallerPath -- build and package first (see tools\windows-installer.iss)."
 }
 if ($installers.Count -gt 1) {
     Fail "Found $($installers.Count) installers in $InstallerPath -- expected exactly one. Clear stale ones out first: $($installers.Name -join ', ')"
