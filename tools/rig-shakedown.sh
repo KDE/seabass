@@ -189,8 +189,8 @@ real_profile_now() {
 real_profile_now > "$out/real-profile-before.txt"
 summary="$out/summary.tsv"
 : > "$summary"
-a="$(basename "$A")"
-b="$(basename "$B")"
+a="$(stick_label "$A")"
+b="$(stick_label "$B")"
 
 # check NAME COMMAND... -- runs it into NAME.log; PASS when it exits 0 AND
 # nothing inside it skipped. A skipped test proves nothing, and QtTest

@@ -172,6 +172,22 @@ stick_uuid() {  # <mount point>
     fi
 }
 
+# The volume label a mounted stick carries, which D2 asks rig_format to
+# put back. On Linux and macOS the mount point's last component is the
+# label (/media/sebas/RV2, /Volumes/RV2); on Windows it is a drive letter
+# (/e), and round 8 asked to name stick A "e". `vol` prints
+# "Volume in drive E is RIGB" (or "... has no label").
+stick_label() {  # <mount point>
+    if rig_is_windows; then
+        local drive
+        drive="$(printf '%s' "${1#/}" | cut -c1 | tr '[:lower:]' '[:upper:]')"
+        cmd //c "vol ${drive}:" 2>/dev/null | tr -d '\r' \
+            | sed -n 's/^ *Volume in drive [A-Za-z] is //p' | head -1
+    else
+        basename "$1"
+    fi
+}
+
 # The device node behind a mount point (/dev/sdc1, /dev/disk6s1).
 stick_device() {  # <mount point>
     if [ "$rig_os" = "Darwin" ]; then
