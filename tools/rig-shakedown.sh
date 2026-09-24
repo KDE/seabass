@@ -793,6 +793,7 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # the better part of an hour for exactly the same proof.
     # The newest piece, for the "records left behind" check below.
     local filler; filler=$(filler_newest)
+    sync
     local free_kb; free_kb=$(free_kb_of "$A")
     # Under a quarter megabyte, and measured rather than assumed: the
     # backup this save writes is about 460 KB (the analysis file plus
@@ -846,14 +847,22 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
     # and F4 passed having tested a stick with space on it. Top up in
     # cluster-sized steps (exFAT on these sticks: 32 KiB) to the margin,
     # then measure again; the limit is one cluster of rounding, no more.
-    local left_kb; left_kb=$(free_kb_of "$A")
-    if [ "$left_kb" -gt "$leave_kb" ]; then
-        # Its own small piece: appending to the newest one could take it
-        # over the 4 GiB a FAT32 file may hold.
-        dd if=/dev/zero of="$A/RIG-FILLER-top.bin" bs=32K count=$(((left_kb - leave_kb) / 32)) status=none || true
+    #
+    # A loop, measured after a sync each time: space the check before
+    # gave back can reach the free count only after one. macOS round 8
+    # measured 272 KB, topped up nothing, and then had 944 KB free.
+    local left_kb tries=0 top=0
+    while :; do
         sync
         left_kb=$(free_kb_of "$A")
-    fi
+        [ "$left_kb" -gt $((leave_kb + 32)) ] && [ "$tries" -lt 8 ] || break
+        # Its own small piece: appending to the newest one could take it
+        # over the 4 GiB a FAT32 file may hold. A new name each time, since
+        # dd onto a piece the pass before kept would shrink it first.
+        while [ -e "$A/RIG-FILLER-top$top.bin" ]; do top=$((top + 1)); done
+        dd if=/dev/zero of="$A/RIG-FILLER-top$top.bin" bs=32K count=$(((left_kb - leave_kb) / 32)) status=none || true
+        tries=$((tries + 1))
+    done
     filler=$(filler_newest)
     /bin/df -hP "$A" | tail -1
     echo "left on $A after the fill: $left_kb KB (target $leave_kb KB)"
