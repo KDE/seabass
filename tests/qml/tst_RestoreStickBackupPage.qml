@@ -343,6 +343,15 @@ TestCase {
     // With nothing preselected, the newest readable backup is chosen by
     // itself and analyzed against the default drive; picking another one
     // takes over as the archive and re-analyzes.
+    // The restore page lists backups by file too: that is what is picked.
+    function test_backupsAreListedByFileName() {
+        var page = makePage([makeDisk({})], {knownBackups: [
+            makeBackup({archivePath: "/b/SHAKEDOWN_8.zip", fileName: "SHAKEDOWN_8.zip", label: "TESTRIG_2"}),
+            makeBackup({archivePath: "/b/TESTRIG_2.zip", fileName: "TESTRIG_2.zip", label: "TESTRIG_2"})]});
+        var titles = findChildren(page, "backupRadioTitle").map(function(l) { return l.text; }).sort();
+        compare(titles.join(","), "SHAKEDOWN_8,TESTRIG_2");
+    }
+
     function test_newestKnownBackupIsPickedAndAnotherCanBeChosen() {
         var older = makeBackup({archivePath: "/home/u/Seabass Backups/OLD.zip", fileName: "OLD.zip", label: "OLD",
                                 createdAt: "2026-08-01T10:00:00"});

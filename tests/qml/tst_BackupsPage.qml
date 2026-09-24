@@ -104,6 +104,8 @@ TestCase {
 
         var main = row(page, 0);
         compare(findChild(main, "backupTitle").text, "MAIN");
+        // Named like its stick: nothing to add beside the title.
+        compare(findChild(main, "backupStickLabel").visible, false);
         compare(findChild(main, "currentStickBadge").visible, true);
         var details = findChild(main, "backupDetails").text;
         verify(details.indexOf("Backed up 3 days ago") === 0, details);
@@ -120,11 +122,33 @@ TestCase {
         verify(findChild(spare, "backupStatus").text.indexOf("Incomplete") === 0);
 
         var broken = row(page, 2);
-        compare(findChild(broken, "backupTitle").text, "BROKEN.zip");
+        compare(findChild(broken, "backupTitle").text, "BROKEN");
         compare(findChild(broken, "backupError").visible, true);
         compare(findChild(broken, "browseButton").enabled, false, "an unreadable backup cannot be browsed");
         compare(findChild(broken, "deleteButton").enabled, true, "but it can be deleted");
         saveScreenshot(page, "manage-backups");
+    }
+
+    // A backup copied under a new name keeps its old stick's label inside:
+    // SHAKEDOWN_8.zip is TESTRIG_2's backup, renamed for round 8. The file
+    // is what is picked, so it is the title; two such rows used to read
+    // "TESTRIG_2" twice, with the file name only in a tooltip.
+    function test_theFileNameIsTheTitle() {
+        var list = backups();
+        list.push({archivePath: "/home/u/Backups/SHAKEDOWN_8.zip", fileName: "SHAKEDOWN_8.zip", error: "",
+                   label: "TESTRIG_2", identifier: "uuid-rig", status: "complete", createdAt: daysAgo(3),
+                   bytes: 1300917097, entries: 1200, trackCount: 156, playlistCount: 4, isCurrentStick: false});
+        var page = makePage(makeController({backups: list}), {});
+        var copy = row(page, 3);
+        compare(findChild(copy, "backupTitle").text, "SHAKEDOWN_8");
+        compare(findChild(copy, "backupStickLabel").visible, true);
+        compare(findChild(copy, "backupStickLabel").text, "from TESTRIG_2");
+        saveScreenshot(page, "manage-backups-renamed");
+        // And deleting it names the file that goes.
+        var dialog = findChild(page, "confirmDeleteDialog");
+        dialog.backup = list[3];
+        verify(dialog.headline.indexOf("This permanently deletes SHAKEDOWN_8 (") === 0, dialog.headline);
+        verify(dialog.headline.indexOf("a full backup of TESTRIG_2") > 0, dialog.headline);
     }
 
     // The folder reaches the controller from the page, after this stick's
