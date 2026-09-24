@@ -5,7 +5,7 @@
 #include "infrastructure/system/stick_hardware_info.hpp"
 
 #include "domain/stick_performance.hpp"
-#include "storageprobe/utf8_path.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -186,7 +186,7 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
 
     // Widened as UTF-8, not byte by byte: a mount point is usually "E:\",
     // but a volume mounted into an NTFS folder can be named anything.
-    std::wstring root = storageprobe::pathFromUtf8(mountPoint).wstring();
+    std::wstring root = pathFromUtf8(mountPoint).wstring();
     if (!root.empty() && root.back() != L'\\') {
         root += L'\\';
     }

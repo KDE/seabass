@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <cstdlib>
+#include <cstring>
 
 namespace seabass::infrastructure::paths
 {
@@ -18,22 +20,46 @@ constexpr const char *OrphanedSubdir = "orphaned";
 constexpr const char *MetadataSubdir = "metadata";
 constexpr const char *FullSubdir = "full";
 
+// An environment variable as a path, or empty when unset or blank. On
+// Windows the narrow environment is in the ANSI code page, so a profile
+// directory named for an account outside it (a Japanese user name) would
+// not survive std::getenv(); the wide copy the CRT keeps alongside has
+// the real characters. The variable names themselves are ASCII.
+fs::path envPath(const char *name)
+{
+#if defined(_WIN32)
+    const std::wstring wideName(name, name + std::strlen(name));
+    const wchar_t *value = _wgetenv(wideName.c_str());
+    if (value != nullptr && *value != L'\0') {
+        return fs::path(value);
+    }
+#else
+    const char *value = std::getenv(name);
+    if (value != nullptr && *value != '\0') {
+        return fs::path(value);
+    }
+#endif
+    return {};
+}
+
 fs::path homeDirectory()
 {
 #if defined(_WIN32)
-    const char *profile = std::getenv("USERPROFILE");
-    if (profile != nullptr && *profile != '\0') {
-        return fs::path(profile);
+    if (const fs::path profile = envPath("USERPROFILE"); !profile.empty()) {
+        return profile;
     }
-    const char *drive = std::getenv("HOMEDRIVE");
-    const char *path = std::getenv("HOMEPATH");
-    if (drive != nullptr && path != nullptr && *drive != '\0') {
-        return fs::path(std::string(drive) + path);
+    const fs::path drive = envPath("HOMEDRIVE");
+    const fs::path path = envPath("HOMEPATH");
+    if (!drive.empty() && !path.empty()) {
+        // "C:" + "\Users\x": concatenation, not operator/, which would
+        // put a separator after the drive letter's colon.
+        fs::path home = drive;
+        home += path;
+        return home;
     }
 #else
-    const char *home = std::getenv("HOME");
-    if (home != nullptr && *home != '\0') {
-        return fs::path(home);
+    if (const fs::path home = envPath("HOME"); !home.empty()) {
+        return home;
     }
 #endif
     // No home is not a situation to invent a path for -- returning "."
@@ -45,7 +71,7 @@ fs::path homeDirectory()
 
 std::string stickRootForCatalogPath(const std::string &catalogPath)
 {
-    return fs::path(catalogPath).parent_path().string();
+    return pathToUtf8(pathFromUtf8(catalogPath).parent_path());
 }
 
 fs::path stickDir(const fs::path &stickRoot)
@@ -114,9 +140,8 @@ fs::path localRoot()
     }
     // Read every call rather than cached: a test sets it after this
     // translation unit is already loaded.
-    const char *fromEnv = std::getenv("SEABASS_HOME");
-    if (fromEnv != nullptr && *fromEnv != '\0') {
-        return fs::path(fromEnv);
+    if (const fs::path fromEnv = envPath("SEABASS_HOME"); !fromEnv.empty()) {
+        return fromEnv;
     }
     return homeDirectory() / "Seabass";
 }

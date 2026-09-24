@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
 #include <cstdint>
@@ -29,9 +30,13 @@ namespace
 
 #if defined(_WIN32)
 
-bool writeFileDurably(const std::string &path, const std::string &data)
+// The private halves take the fs::path: on Windows its c_str() is the
+// wchar_t* the W calls want, on POSIX the char* open() wants. The public
+// std::string paths are UTF-8 by the rule in utf8_path.hpp and are
+// converted once, at the entry points below.
+bool writeFileDurably(const fs::path &path, const std::string &data)
 {
-    HANDLE h = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         return false;
     }
@@ -46,7 +51,7 @@ bool writeFileDurably(const std::string &path, const std::string &data)
     return ok != 0;
 }
 
-bool appendDurably(const std::string &path, const std::string &data)
+bool appendDurably(const fs::path &path, const std::string &data)
 {
     // GENERIC_WRITE as well as FILE_APPEND_DATA: cutting a partial write
     // back (below) needs SetEndOfFile, which append-only access does not
@@ -58,7 +63,7 @@ bool appendDurably(const std::string &path, const std::string &data)
     // FIRST entry's (longer) one, with the first entry's own tail left
     // dangling afterwards as a second, truncated "line". The append
     // offset is not automatic here, so it is made explicit instead.
-    HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+    HANDLE h = CreateFileW(path.c_str(), FILE_APPEND_DATA | GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         return false;
@@ -86,7 +91,7 @@ bool appendDurably(const std::string &path, const std::string &data)
 
 #else
 
-bool writeFileDurably(const std::string &path, const std::string &data)
+bool writeFileDurably(const fs::path &path, const std::string &data)
 {
     int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
@@ -118,7 +123,7 @@ bool writeFileDurably(const std::string &path, const std::string &data)
     return ok;
 }
 
-bool appendDurably(const std::string &path, const std::string &data)
+bool appendDurably(const fs::path &path, const std::string &data)
 {
     // O_APPEND, so every write goes to the current end of the file even
     // with another process appending to the same manifest -- the
@@ -194,7 +199,7 @@ void fsyncDirectoryContaining(const std::string &)
 // can still lose that update on some filesystems/media.
 void fsyncDirectoryContaining(const std::string &filePath)
 {
-    fs::path dir = fs::path(filePath).parent_path();
+    fs::path dir = pathFromUtf8(filePath).parent_path();
     if (dir.empty()) {
         dir = ".";
     }
@@ -210,8 +215,9 @@ void fsyncDirectoryContaining(const std::string &filePath)
 bool appendToFileDurably(const std::string &path, const std::string &data)
 {
     WorkCounters::instance().noteDurableFileWrite();
-    const bool existed = fs::exists(path);
-    if (!appendDurably(path, data)) {
+    const fs::path file = pathFromUtf8(path);
+    const bool existed = fs::exists(file);
+    if (!appendDurably(file, data)) {
         return false;
     }
     if (!existed) {
@@ -227,7 +233,9 @@ bool appendToFileDurably(const std::string &path, const std::string &data)
 bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
 {
     WorkCounters::instance().noteDurableFileWrite();
-    std::string tempPath = path + ".tmp-seabass-write";
+    const fs::path target = pathFromUtf8(path);
+    fs::path tempPath = target;
+    tempPath += ".tmp-seabass-write";
     if (!writeFileDurably(tempPath, data)) {
         std::error_code removeEc;
         fs::remove(tempPath, removeEc);
@@ -235,7 +243,7 @@ bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
     }
 
     std::error_code ec;
-    fs::rename(tempPath, path, ec);
+    fs::rename(tempPath, target, ec);
     if (ec) {
         fs::remove(tempPath, ec);
         return false;
@@ -267,12 +275,13 @@ bool copyFileDurablyAtomic(const std::string &sourcePath, const std::string &tar
     // Not badbit, because badbit does not survive the platform (see
     // FileEntrySource::readFailed(), fixed for the same reason): what
     // was read has to equal what the file says it holds.
+    const fs::path source = pathFromUtf8(sourcePath);
     std::error_code sizeEc;
-    const std::uintmax_t declared = fs::file_size(sourcePath, sizeEc);
+    const std::uintmax_t declared = fs::file_size(source, sizeEc);
     if (sizeEc) {
         return false;
     }
-    std::ifstream in(sourcePath, std::ios::binary);
+    std::ifstream in(source, std::ios::binary);
     if (!in) {
         return false;
     }
