@@ -826,15 +826,13 @@ fill_and_run() {  # <leave KB> <full test name> <records may appear: 0|1> <keep 
             echo "$A is already at $free_kb KB free, at or under the $leave_kb KB this check wants; no fill needed"
         fi
         sync
-    elif [ "$size_kb" -lt "$leave_kb" ]; then
-        # What the stick actually has, not the margin: this is the one
-        # path that gives up on F4, so it should not misdescribe why. A
-        # filler left from a pass before goes too, or the restore that
-        # follows finds a full stick.
-        echo "$A has $free_kb KB free, too little to fill down to $leave_kb KB; F4 cannot be proven here"
-        rm -f "$A"/RIG-FILLER-*.bin
-        sync
-        return 1
+    elif [ "$size_kb" -lt 1024 ]; then
+        # Under a megabyte to go, which filler_grow's bs=1M would round to
+        # nothing: the cluster top-up below closes it. This used to give up
+        # whenever the gap was smaller than the margin, but the pass before
+        # hands its filler over within a cluster of the target, not at it.
+        # macOS round 8 got 288 KB for a 256 KB margin and lost F4 to 32 KB.
+        echo "$A has $free_kb KB free, $size_kb KB over the $leave_kb KB target; topping up"
     else
         echo "filling $A: $free_kb KB free -> leaving about $leave_kb KB"
         # Growing: a filler kept from a pass whose margin was larger gains
