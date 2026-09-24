@@ -7,4 +7,4 @@
 	url = https://github.com/kaitai-io/kaitai_struct_cpp_stl_runtime.git
 [submodule "third_party/libdjinterop"]
 	path = third_party/libdjinterop
-	url = https://github.com/xsco/libdjinterop.git
+	url = https://github.com/sebasje/libdjinterop.git
