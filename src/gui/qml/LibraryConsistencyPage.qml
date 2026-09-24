@@ -25,9 +25,16 @@ Page {
     // stick. When it hands its controller over, this page shows those
     // results instead of asking the user to wait through the same work a
     // second time. Opened directly (no hub), it scans for itself.
-    property var sharedController: null
-    readonly property var consistencyController: root.sharedController !== null
-        && root.sharedController !== undefined ? root.sharedController : ownController
+    // The hub can be torn down before this page, taking its controller with
+    // it (a stick pulled and its changes discarded does exactly that). So
+    // this is an object-typed property, which turns null when that happens,
+    // and consistencyController then falls back to ownController. Bindings
+    // re-read in between, while it is null, so every read below goes
+    // through ?. -- before, each one logged "Cannot read property ... of
+    // null", hundreds of lines per pull.
+    property QtObject sharedController: null
+    readonly property QtObject consistencyController: root.sharedController !== null
+        ? root.sharedController : ownController
 
     LibraryConsistencyController {
         id: ownController
@@ -145,7 +152,7 @@ Page {
     }
 
     function rescan() {
-        consistencyController.scan(root.rekordboxPath, root.enginePath);
+        consistencyController?.scan(root.rekordboxPath, root.enginePath);
     }
 
     // Only when there is nothing to show yet: a shared controller arrives
@@ -180,18 +187,18 @@ Page {
                 stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Library Health"
-                backEnabled: !consistencyController.writing
+                backEnabled: !consistencyController?.writing
                 onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
                 onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
             }
             Item { Layout.fillWidth: true }
             RowLayout {
-                visible: consistencyController.busy
+                visible: consistencyController?.busy
                 spacing: 8
                 BusyIndicator { running: true; implicitWidth: 20; implicitHeight: 20 }
                 Label {
-                    text: consistencyController.scanningFormat.length > 0
-                        ? "Scanning " + root.formatLabel(consistencyController.scanningFormat) + "..."
+                    text: consistencyController?.scanningFormat.length > 0
+                        ? "Scanning " + root.formatLabel(consistencyController?.scanningFormat) + "..."
                         : "Scanning..."
                     color: Theme.textMuted
                 }
@@ -202,12 +209,12 @@ Page {
     MessageDialog {
         id: confirmRepairAllDialog
         severity: SeabassDialog.Question
-        title: "Stage repairing " + consistencyController.repairableCount + " row(s)?"
+        title: "Stage repairing " + consistencyController?.repairableCount + " row(s)?"
         headline: "Merges any cues these rows have onto their already-valid survivor (only where the "
             + "survivor doesn't already have them), then removes the broken row."
         detailText: "Nothing is written until you press Save; everything is backed up first."
         acceptText: "Stage Repairs"
-        onAccepted: consistencyController.repairAll()
+        onAccepted: consistencyController?.repairAll()
     }
 
     MessageDialog {
@@ -219,7 +226,7 @@ Page {
             + "doesn't already have them), then removes the broken row."
         detailText: "Backed up first."
         acceptText: "Stage Repair"
-        onAccepted: if (pendingIndex >= 0) consistencyController.repairOne(pendingIndex)
+        onAccepted: if (pendingIndex >= 0) consistencyController?.repairOne(pendingIndex)
     }
 
     MessageDialog {
@@ -232,7 +239,7 @@ Page {
         detailText: "Backed up first, but there's nothing to restore it from besides re-adding the track "
             + "via Rekordbox or Engine's own software and re-exporting."
         acceptText: "Stage Deletion"
-        onAccepted: if (pendingIndex >= 0) consistencyController.deleteOrphan(pendingIndex)
+        onAccepted: if (pendingIndex >= 0) consistencyController?.deleteOrphan(pendingIndex)
     }
 
     MessageDialog {
@@ -243,7 +250,7 @@ Page {
         headline: "Removes this cue sitting at 0:00 from the track."
         detailText: "Backed up first."
         acceptText: "Stage Removal"
-        onAccepted: if (pendingIndex >= 0) consistencyController.removeJunkCue(pendingIndex)
+        onAccepted: if (pendingIndex >= 0) consistencyController?.removeJunkCue(pendingIndex)
     }
 
     MessageDialog {
@@ -254,12 +261,12 @@ Page {
         // ListView footer, whose ids are scoped to the footer
         // component, so from out here it is a ReferenceError and this
         // title never binds. The model is the shared thing both can see.
-        title: "Stage removing all " + consistencyController.junkCues.count + " cue(s) that look accidental?"
+        title: "Stage removing all " + consistencyController?.junkCues.count + " cue(s) that look accidental?"
         headline: "This stages removing every cue at 0:00 currently listed, across every catalog on "
             + "this stick. Once you press Save that is a real write, not just dismissing them from view."
         detailText: "Everything is backed up first, but make sure this is really what you want."
         acceptText: "Stage Removal"
-        onAccepted: consistencyController.removeAllJunkCues()
+        onAccepted: consistencyController?.removeAllJunkCues()
     }
 
     MessageDialog {
@@ -269,7 +276,7 @@ Page {
         headline: "Dismisses every cue at 0:00 currently listed, just for this view."
         detailText: "Nothing is written, they'll show up again the next time you scan."
         acceptText: "Ignore All"
-        onAccepted: consistencyController.ignoreAllJunkCues()
+        onAccepted: consistencyController?.ignoreAllJunkCues()
     }
 
     // Step 2 of resolving a Conflict row manually: review the plan
@@ -404,15 +411,15 @@ Page {
         spacing: 8
 
         Label {
-            visible: consistencyController.errorMessage.length > 0
-            text: consistencyController.errorMessage
+            visible: consistencyController?.errorMessage.length > 0
+            text: consistencyController?.errorMessage
             color: Theme.danger
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
         Label {
-            visible: consistencyController.statusMessage.length > 0
-            text: consistencyController.statusMessage
+            visible: consistencyController?.statusMessage.length > 0
+            text: consistencyController?.statusMessage
             color: Theme.good
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
@@ -424,8 +431,8 @@ Page {
             color: Theme.textMuted
             // The sixth check only exists on a stick with OneLibrary, so
             // the count follows it rather than promising one it skips.
-            text: (consistencyController.cleanupLeftoversChecked
-                   || consistencyController.cleanupLeftoverError.length > 0
+            text: (consistencyController?.cleanupLeftoversChecked
+                   || consistencyController?.cleanupLeftoverError.length > 0
                    ? "Six checks on this stick: catalog rows whose audio file is missing, cues sitting at 0:00, "
                      + "whether a player will offer to overwrite the Engine library with the rekordbox one, Engine "
                      + "tracks that do not say what sample rate they are, duplicates Clean Up left in OneLibrary, "
@@ -453,27 +460,27 @@ Page {
                 // note sat beside the repair buttons and counted staged
                 // cue removals too, so removing 29 stray cues put "29
                 // staged" next to a button about missing files.
-                visible: consistencyController.stagedIssueCount > 0
-                text: consistencyController.stagedIssueCount + " staged, not saved yet"
+                visible: consistencyController?.stagedIssueCount > 0
+                text: consistencyController?.stagedIssueCount + " staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
                 text: "Undo Last Save"
-                visible: consistencyController.canUndo
-                enabled: !consistencyController.busy && !consistencyController.writing
-                onClicked: consistencyController.undoLastOperation()
+                visible: consistencyController?.canUndo
+                enabled: !consistencyController?.busy && !consistencyController?.writing
+                onClicked: consistencyController?.undoLastOperation()
             }
             Button {
                 text: "Stage All Safe Repairs"
                 // What it has left to stage, not what the check found:
                 // once every safe repair is staged there is nothing
                 // behind this button, and it should not look pressable.
-                enabled: !consistencyController.busy && !consistencyController.writing
-                    && consistencyController.unstagedRepairableCount > 0 && !consistencyController.stickReadOnly
+                enabled: !consistencyController?.busy && !consistencyController?.writing
+                    && consistencyController?.unstagedRepairableCount > 0 && !consistencyController?.stickReadOnly
                 ToolTip.visible: hovered
-                ToolTip.text: consistencyController.stickReadOnly
+                ToolTip.text: consistencyController?.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController.unstagedRepairableCount === 0 && consistencyController.repairableCount > 0
+                    : consistencyController?.unstagedRepairableCount === 0 && consistencyController?.repairableCount > 0
                     ? "Every safe repair is staged already. Press Save to write them."
                     : "Repair every entry with an exact healthy match. Conflicts are left for you."
                 onClicked: confirmRepairAllDialog.open()
@@ -493,7 +500,7 @@ Page {
                 objectName: "importPromptSummary"
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: consistencyController.playerWillOfferImport
+                text: consistencyController?.playerWillOfferImport
                     ? "A player will ask whether to update the Engine library from the rekordbox library on this "
                       + "stick, warning that existing playlist and track metadata will be overwritten. Accepting "
                       + "replaces the Engine side, cues and cover art included."
@@ -502,27 +509,27 @@ Page {
             }
             Label {
                 objectName: "stagedImportMarkNote"
-                visible: consistencyController.importMarkStaged
+                visible: consistencyController?.importMarkStaged
                 text: "staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
                 objectName: "markImportedButton"
-                visible: consistencyController.playerWillOfferImport || consistencyController.importMarkStaged
-                text: consistencyController.importMarkStaged ? "Unstage" : "Mark As Already Imported"
-                enabled: !consistencyController.busy && !consistencyController.writing
-                    && !consistencyController.stickReadOnly
+                visible: consistencyController?.playerWillOfferImport || consistencyController?.importMarkStaged
+                text: consistencyController?.importMarkStaged ? "Unstage" : "Mark As Already Imported"
+                enabled: !consistencyController?.busy && !consistencyController?.writing
+                    && !consistencyController?.stickReadOnly
                 ToolTip.visible: hovered
-                ToolTip.text: consistencyController.stickReadOnly
+                ToolTip.text: consistencyController?.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController.importMarkStaged
+                    : consistencyController?.importMarkStaged
                     ? "Take this back out of the changes to save"
                     : "Writes the rekordbox library's own sequence number into the Engine library, which is what "
                       + "the player compares. Nothing else changes, and importing stays available on the player "
                       + "if you ever do want it."
-                onClicked: consistencyController.importMarkStaged
-                    ? consistencyController.unstageRekordboxImportMark()
-                    : consistencyController.markRekordboxImported()
+                onClicked: consistencyController?.importMarkStaged
+                    ? consistencyController?.unstageRekordboxImportMark()
+                    : consistencyController?.markRekordboxImported()
             }
         }
 
@@ -539,92 +546,92 @@ Page {
                 objectName: "sampleRateSummary"
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: consistencyController.sampleRateMissingCount === 0
+                text: consistencyController?.sampleRateMissingCount === 0
                     ? "Every Engine track says what sample rate it is."
-                    : consistencyController.sampleRateMissingCount + " Engine track(s) do not say what sample rate "
+                    : consistencyController?.sampleRateMissingCount + " Engine track(s) do not say what sample rate "
                       + "they are, so every cue on them is placed by a guess. "
-                      + (consistencyController.sampleRateFixableCount > 0
-                          ? consistencyController.sampleRateFixableCount
+                      + (consistencyController?.sampleRateFixableCount > 0
+                          ? consistencyController?.sampleRateFixableCount
                             + " of their files can say, and Seabass can write it in."
                           : "None of their files could be read to find out.")
             }
             Label {
                 objectName: "stagedSampleRatesNote"
-                visible: consistencyController.sampleRateFillStaged
+                visible: consistencyController?.sampleRateFillStaged
                 text: "staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
                 objectName: "fillSampleRatesButton"
-                visible: consistencyController.sampleRateFixableCount > 0
-                    || consistencyController.sampleRateFillStaged
-                text: consistencyController.sampleRateFillStaged ? "Unstage" : "Fill In From The Files"
-                enabled: !consistencyController.busy && !consistencyController.writing
-                    && !consistencyController.stickReadOnly
+                visible: consistencyController?.sampleRateFixableCount > 0
+                    || consistencyController?.sampleRateFillStaged
+                text: consistencyController?.sampleRateFillStaged ? "Unstage" : "Fill In From The Files"
+                enabled: !consistencyController?.busy && !consistencyController?.writing
+                    && !consistencyController?.stickReadOnly
                 ToolTip.visible: hovered
-                ToolTip.text: consistencyController.stickReadOnly
+                ToolTip.text: consistencyController?.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController.sampleRateFillStaged
+                    : consistencyController?.sampleRateFillStaged
                     ? "Take this back out of the changes to save"
                     : "Stage writing each track's real sample rate, read from the file itself. Save writes it."
-                onClicked: consistencyController.sampleRateFillStaged
-                    ? consistencyController.unstageSampleRateFill()
-                    : consistencyController.fillSampleRates()
+                onClicked: consistencyController?.sampleRateFillStaged
+                    ? consistencyController?.unstageSampleRateFill()
+                    : consistencyController?.fillSampleRates()
             }
         }
 
         // #8: shown only once the check has run (a stick with OneLibrary).
         Subtitle {
             objectName: "cleanupLeftoverSubtitle"
-            visible: consistencyController.cleanupLeftoversChecked
-                || consistencyController.cleanupLeftoverError.length > 0
+            visible: consistencyController?.cleanupLeftoversChecked
+                || consistencyController?.cleanupLeftoverError.length > 0
             Layout.topMargin: Theme.sectionSpacing
             text: "Duplicates left in OneLibrary"
         }
 
         RowLayout {
-            visible: consistencyController.cleanupLeftoversChecked
-                || consistencyController.cleanupLeftoverError.length > 0
+            visible: consistencyController?.cleanupLeftoversChecked
+                || consistencyController?.cleanupLeftoverError.length > 0
             Layout.fillWidth: true
             spacing: Theme.rowSpacing
             Label {
                 objectName: "cleanupLeftoverSummary"
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: consistencyController.cleanupLeftoverError.length > 0
-                    ? consistencyController.cleanupLeftoverError
-                    : consistencyController.cleanupLeftoverCount === 0
+                text: consistencyController?.cleanupLeftoverError.length > 0
+                    ? consistencyController?.cleanupLeftoverError
+                    : consistencyController?.cleanupLeftoverCount === 0
                     ? "Every duplicate Clean Up removed from the rekordbox library is gone from OneLibrary too."
-                    : consistencyController.cleanupLeftoverCount + " duplicate(s) Clean Up removed from the "
+                    : consistencyController?.cleanupLeftoverCount + " duplicate(s) Clean Up removed from the "
                       + "rekordbox library are still in OneLibrary. "
-                      + (consistencyController.cleanupLeftoverFixableCount > 0
-                          ? consistencyController.cleanupLeftoverFixableCount + " can be removed, their playlist "
+                      + (consistencyController?.cleanupLeftoverFixableCount > 0
+                          ? consistencyController?.cleanupLeftoverFixableCount + " can be removed, their playlist "
                             + "entries moved onto the copy Clean Up kept."
                           : "None of them can be matched to the copy Clean Up kept.")
             }
             Label {
                 objectName: "stagedCleanupLeftoversNote"
-                visible: consistencyController.cleanupLeftoverFixStaged
+                visible: consistencyController?.cleanupLeftoverFixStaged
                 text: "staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
                 objectName: "finishCleanupButton"
-                visible: consistencyController.cleanupLeftoverFixableCount > 0
-                    || consistencyController.cleanupLeftoverFixStaged
-                text: consistencyController.cleanupLeftoverFixStaged ? "Unstage" : "Finish The Clean Up"
-                enabled: !consistencyController.busy && !consistencyController.writing
-                    && !consistencyController.stickReadOnly
+                visible: consistencyController?.cleanupLeftoverFixableCount > 0
+                    || consistencyController?.cleanupLeftoverFixStaged
+                text: consistencyController?.cleanupLeftoverFixStaged ? "Unstage" : "Finish The Clean Up"
+                enabled: !consistencyController?.busy && !consistencyController?.writing
+                    && !consistencyController?.stickReadOnly
                 ToolTip.visible: hovered
-                ToolTip.text: consistencyController.stickReadOnly
+                ToolTip.text: consistencyController?.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController.cleanupLeftoverFixStaged
+                    : consistencyController?.cleanupLeftoverFixStaged
                     ? "Take this back out of the changes to save"
                     : "Stage removing these from OneLibrary and moving their playlist entries onto the copy "
                       + "Clean Up kept. Save writes it."
-                onClicked: consistencyController.cleanupLeftoverFixStaged
-                    ? consistencyController.unstageCleanupLeftoverFix()
-                    : consistencyController.finishCleanupLeftovers()
+                onClicked: consistencyController?.cleanupLeftoverFixStaged
+                    ? consistencyController?.unstageCleanupLeftoverFix()
+                    : consistencyController?.finishCleanupLeftovers()
             }
         }
 
@@ -632,7 +639,7 @@ Page {
         // to make by hand, so it is named rather than counted.
         Repeater {
             objectName: "cleanupLeftoverHeldBack"
-            model: consistencyController.cleanupLeftoversHeldBack
+            model: consistencyController?.cleanupLeftoversHeldBack
             delegate: Label {
                 required property var modelData
                 Layout.fillWidth: true
@@ -656,23 +663,23 @@ Page {
                 // start of a track, and one of a crowd of hot cues in
                 // its first two seconds (#41). Naming only the first
                 // would describe a row at 1.2 s as being at 0:00.
-                text: consistencyController.junkCues.count === 0
+                text: consistencyController?.junkCues.count === 0
                     ? "No cues look accidental."
-                    : "I found " + consistencyController.junkCues.count
+                    : "I found " + consistencyController?.junkCues.count
                       + " cue(s) that look accidental rather than placed"
             }
             Item { Layout.fillWidth: true }
             Label {
                 objectName: "stagedJunkCuesNote"
-                visible: consistencyController.stagedJunkCueCount > 0
-                text: consistencyController.stagedJunkCueCount + " staged, not saved yet"
+                visible: consistencyController?.stagedJunkCueCount > 0
+                text: consistencyController?.stagedJunkCueCount + " staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
-                visible: consistencyController.junkCues.count > 0
+                visible: consistencyController?.junkCues.count > 0
                 text: "Remove All"
-                enabled: !consistencyController.busy && !consistencyController.stickReadOnly
-                    && consistencyController.unstagedJunkCueCount > 0
+                enabled: !consistencyController?.busy && !consistencyController?.stickReadOnly
+                    && consistencyController?.unstagedJunkCueCount > 0
                 ToolTip.visible: hovered
                 // It stages; it does not remove. The row buttons
                 // beside it and the confirmation this opens both
@@ -682,17 +689,17 @@ Page {
                 // either avoid a reversible action thinking it is
                 // final, or click it and believe the cues are
                 // already gone.
-                ToolTip.text: consistencyController.stickReadOnly
+                ToolTip.text: consistencyController?.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController.unstagedJunkCueCount === 0
+                    : consistencyController?.unstagedJunkCueCount === 0
                     ? "Every one of them is staged already. Press Save to write it."
                     : "Stage removing every cue at 0:00 listed, in all catalogs. Save writes it."
                 onClicked: confirmRemoveAllJunkCuesDialog.open()
             }
             Button {
-                visible: consistencyController.junkCues.count > 0
+                visible: consistencyController?.junkCues.count > 0
                 text: "Ignore All"
-                enabled: !consistencyController.busy
+                enabled: !consistencyController?.busy
                 ToolTip.visible: hovered
                 ToolTip.text: "Hide these from this view only. Nothing on the stick changes."
                 onClicked: confirmIgnoreAllJunkCuesDialog.open()
@@ -718,7 +725,7 @@ Page {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            model: consistencyController.issues
+            model: consistencyController?.issues
             // A little more breathing room between findings than the
             // tight 4px this used to be -- each row can expand into a
             // whole track-detail view (waveform, cues), so they read as
@@ -865,13 +872,13 @@ Page {
                         Button {
                             visible: issueDelegate.staged
                             text: "Unstage"
-                            enabled: !consistencyController.busy && !consistencyController.writing
-                            onClicked: consistencyController.unstageIssue(issueDelegate.index)
+                            enabled: !consistencyController?.busy && !consistencyController?.writing
+                            onClicked: consistencyController?.unstageIssue(issueDelegate.index)
                         }
                         Button {
                             visible: issueDelegate.kind === "repairable" && !issueDelegate.staged
                             text: "Repair"
-                            enabled: !consistencyController.busy && !consistencyController.writing
+                            enabled: !consistencyController?.busy && !consistencyController?.writing
                             onClicked: {
                                 confirmRepairOneDialog.pendingIndex = issueDelegate.index;
                                 confirmRepairOneDialog.open();
@@ -880,7 +887,7 @@ Page {
                         Button {
                             visible: issueDelegate.kind === "conflict"
                             text: "Resolve..."
-                            enabled: !consistencyController.busy && issueDelegate.format !== "onelibrary"
+                            enabled: !consistencyController?.busy && issueDelegate.format !== "onelibrary"
                             ToolTip.visible: hovered
                             ToolTip.text: issueDelegate.format === "onelibrary"
                                 ? "Manual merging isn't supported on OneLibrary yet"
@@ -892,7 +899,7 @@ Page {
                         Button {
                             visible: issueDelegate.kind === "missing" && issueDelegate.format === "onelibrary" && !issueDelegate.staged
                             text: "Delete Orphaned Entry"
-                            enabled: !consistencyController.busy && !consistencyController.writing
+                            enabled: !consistencyController?.busy && !consistencyController?.writing
                             onClicked: {
                                 confirmDeleteOrphanDialog.pendingIndex = issueDelegate.index;
                                 confirmDeleteOrphanDialog.open();
@@ -1050,7 +1057,7 @@ Page {
 
                 Repeater {
                     id: junkCueRepeater
-                    model: consistencyController.junkCues
+                    model: consistencyController?.junkCues
                     // Was a bare format-badge + title/artist line with no
                     // way to see or hear the cue in question at all --
                     // the same shared track delegate the missing-file
@@ -1104,10 +1111,10 @@ Page {
                             actionButtonTooltip: junkDelegate.staged
                                 ? "Staged for removal, not on the stick yet: press Save. Click to take it back out."
                                 : "Stage removing this cue at 0:00 from the track; Save writes it. Backed up first."
-                            actionButtonEnabled: !consistencyController.busy && !consistencyController.writing
+                            actionButtonEnabled: !consistencyController?.busy && !consistencyController?.writing
                             onActionTriggered: {
                                 if (junkDelegate.staged) {
-                                    consistencyController.unstageJunkCue(junkDelegate.index);
+                                    consistencyController?.unstageJunkCue(junkDelegate.index);
                                 } else {
                                     confirmRemoveJunkCueDialog.pendingIndex = junkDelegate.index;
                                     confirmRemoveJunkCueDialog.open();
@@ -1121,10 +1128,10 @@ Page {
                             Item { Layout.fillWidth: true }
                             Button {
                                 text: "Ignore"
-                                enabled: !consistencyController.busy
+                                enabled: !consistencyController?.busy
                                 ToolTip.visible: hovered
                                 ToolTip.text: "Dismiss this one, just for this view. Nothing on the stick changes"
-                                onClicked: consistencyController.ignoreJunkCue(junkDelegate.index)
+                                onClicked: consistencyController?.ignoreJunkCue(junkDelegate.index)
                             }
                         }
                     }
@@ -1142,12 +1149,12 @@ Page {
 
     BusyOverlay {
         anchors.fill: parent
-        busy: consistencyController.busy
-        current: consistencyController.scanCurrent
-        total: consistencyController.scanTotal
-        label: (consistencyController.scanningFormat.length > 0
-                ? "Scanning " + root.formatLabel(consistencyController.scanningFormat) + "..." : "Scanning...")
-        cancellable: consistencyController.scanCancellable
-        onCancelRequested: consistencyController.cancelScan()
+        busy: consistencyController?.busy
+        current: consistencyController?.scanCurrent
+        total: consistencyController?.scanTotal
+        label: (consistencyController?.scanningFormat.length > 0
+                ? "Scanning " + root.formatLabel(consistencyController?.scanningFormat) + "..." : "Scanning...")
+        cancellable: consistencyController?.scanCancellable
+        onCancelRequested: consistencyController?.cancelScan()
     }
 }

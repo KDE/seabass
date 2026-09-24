@@ -115,6 +115,22 @@ TestCase {
         }
     }
 
+    // The hub hands over its own controller, and the hub can go first: a
+    // stick pulled and its changes discarded took both pages down, the
+    // hub's controller before this page, and every binding here that
+    // read it then logged "Cannot read property ... of null" -- 468 of
+    // them on Windows, one per row delegate per binding.
+    function test_aSharedControllerThatGoesAwayIsNotReadAfterwards() {
+        failOnWarning(/Cannot read property/);
+        var controller = controllerComponent.createObject(testCase);
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page.consistencyController === controller);
+        controller.destroy();
+        wait(50);
+        verify(page.consistencyController !== null, "the page falls back to a controller of its own");
+        compare(page.consistencyController.busy, false);
+    }
+
     function test_eachChecksStagedWorkIsCountedBesideItsOwnButtons() {
         var controller = createTemporaryObject(controllerComponent, testCase);
         var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
