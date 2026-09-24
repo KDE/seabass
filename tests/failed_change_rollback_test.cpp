@@ -32,9 +32,11 @@
 #include "gui/edit/pending_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "scratch_path.hpp"
 
@@ -89,7 +91,7 @@ void write(const fs::path &file, const std::string &bytes)
 int64_t cueCount(const fs::path &dbPath, int64_t contentId)
 {
     SqlCipherLibrary lib;
-    SqlCipherDb db(lib, dbPath.string(), /*readOnly=*/true);
+    SqlCipherDb db(lib, pathToUtf8(dbPath), /*readOnly=*/true);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     SqlCipherStatement count(db, "SELECT count(*) FROM cue WHERE content_id = ?");
     count.bindInt64(1, contentId);
@@ -108,7 +110,7 @@ int64_t cueCount(const fs::path &dbPath, int64_t contentId)
 void makeWalFixture(const std::filesystem::path &dbPath)
 {
     SqlCipherLibrary lib;
-    SqlCipherDb db(lib, dbPath.string(), /*readOnly=*/false);
+    SqlCipherDb db(lib, pathToUtf8(dbPath), /*readOnly=*/false);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("CREATE TABLE content(content_id integer primary key, title varchar, path varchar);");
@@ -128,7 +130,7 @@ struct ScratchStick
         std::error_code ec;
         fs::remove_all(path, ec);
         if (ec) {
-            std::cerr << "warning: could not remove " << path.string() << ": " << ec.message() << "\n";
+            std::cerr << "warning: could not remove " << pathToUtf8(path) << ": " << ec.message() << "\n";
         }
     }
     ScratchStick(const ScratchStick &) = delete;
@@ -154,19 +156,19 @@ int main()
         write(extra, "extra-original");
 
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
                 write(pdb, "pdb-from-a");
                 return ChangeOutcome::success();
             }),
-            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pdb.string(), anlz.string()},
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(pdb), pathToUtf8(anlz)},
                                              [&](SaveContext &c) {
                                                  write(pdb, "pdb-from-b");
                                                  write(anlz, "anlz-from-b");
-                                                 c.protectForThisChange(extra.string());
+                                                 c.protectForThisChange(pathToUtf8(extra));
                                                  write(extra, "extra-from-b");
-                                                 c.protectForThisChange(created.string());
+                                                 c.protectForThisChange(pathToUtf8(created));
                                                  write(created, "line from b\n");
                                                  return ChangeOutcome::failure("the second catalog refused");
                                              }),
@@ -190,9 +192,9 @@ int main()
         fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
         write(pdb, "pdb-original");
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
                 write(pdb, "pdb-from-a");
                 throw std::runtime_error("boom");
                 return ChangeOutcome::success();
@@ -215,20 +217,20 @@ int main()
         write(mdb, std::string(1 << 20, 'o'));
 
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, {}, QString::fromStdString(engineLibrary.string()));
+        SaveContext ctx(token, noProgress, {}, {}, pathToQString(engineLibrary));
         auto writeThroughSession = [&](SaveContext &c, char fill) {
             FormatWriteSession &session =
-                sharedFormatWriteSession(c, "engine", engineLibrary.string(), 100000, "rollback-test");
+                sharedFormatWriteSession(c, "engine", pathToUtf8(engineLibrary), 100000, "rollback-test");
             assert(session.usesScratch());
-            write(fs::path(session.writeRoot()) / "Database2" / "m.db", std::string(1 << 20, fill));
+            write(pathFromUtf8(session.writeRoot()) / "Database2" / "m.db", std::string(1 << 20, fill));
             session.noteItemApplied();
         };
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<ScriptedChange>("a", std::vector<std::string>{mdb.string()}, [&](SaveContext &c) {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(mdb)}, [&](SaveContext &c) {
                 writeThroughSession(c, 'a');
                 return ChangeOutcome::success();
             }),
-            std::make_shared<ScriptedChange>("b", std::vector<std::string>{mdb.string()}, [&](SaveContext &c) {
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(mdb)}, [&](SaveContext &c) {
                 writeThroughSession(c, 'b');
                 return ChangeOutcome::failure("no Engine track with id=546");
             }),
@@ -250,10 +252,10 @@ int main()
         const fs::path &stick = scratch.path;
         fs::path pioneer = stick / "PIONEER";
         fs::create_directories(pioneer / "rekordbox");
-        const fs::path dbPath = OneLibraryCueWriter::dbPathFor(pioneer.string());
+        const fs::path dbPath = pathFromUtf8(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)));
         {
             SqlCipherLibrary lib;
-            SqlCipherDb db(lib, dbPath.string(), /*readOnly=*/false);
+            SqlCipherDb db(lib, pathToUtf8(dbPath), /*readOnly=*/false);
             db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
             db.exec("PRAGMA journal_mode = WAL;");
             db.exec("CREATE TABLE content(content_id integer primary key, title varchar, path varchar);");
@@ -269,14 +271,14 @@ int main()
         };
 
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneer.string()), {});
+        SaveContext ctx(token, noProgress, {}, pathToQString(pioneer), {});
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<ScriptedChange>("a", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
-                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "One.mp3").string(), cues);
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(dbPath)}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pathToUtf8(pioneer)).writeCuesForPath(pathToUtf8(stick / "Contents" / "One.mp3"), cues);
                 return ChangeOutcome::success();
             }),
-            std::make_shared<ScriptedChange>("b", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
-                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "Two.mp3").string(), cues);
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(dbPath)}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pathToUtf8(pioneer)).writeCuesForPath(pathToUtf8(stick / "Contents" / "Two.mp3"), cues);
                 return ChangeOutcome::failure("Device Library Plus refused the next write");
             }),
         };
@@ -297,7 +299,7 @@ int main()
         const fs::path &stick = scratch.path;
         fs::path pioneer = stick / "PIONEER";
         fs::create_directories(pioneer / "rekordbox");
-        const fs::path dbPath = OneLibraryCueWriter::dbPathFor(pioneer.string());
+        const fs::path dbPath = pathFromUtf8(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)));
         makeWalFixture(dbPath);
         const fs::path unrelated = stick / "unrelated.txt";
         write(unrelated, "before");
@@ -312,21 +314,21 @@ int main()
         // quiet test SQLite folds the log on close by itself and the check
         // would pass with the fold deleted.
         SqlCipherLibrary readerLib;
-        SqlCipherDb reader(readerLib, dbPath.string(), /*readOnly=*/true);
+        SqlCipherDb reader(readerLib, pathToUtf8(dbPath), /*readOnly=*/true);
         reader.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
         SqlCipherStatement holdOpen(reader, "SELECT content_id, title FROM content;");
         assert(holdOpen.step() && "the reader holds a read transaction open across the save");
 
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneer.string()), {});
+        SaveContext ctx(token, noProgress, {}, pathToQString(pioneer), {});
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<ScriptedChange>("a", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
-                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "One.mp3").string(), cues);
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(dbPath)}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pathToUtf8(pioneer)).writeCuesForPath(pathToUtf8(stick / "Contents" / "One.mp3"), cues);
                 return ChangeOutcome::success();
             }),
             // Declares only the unrelated file: exportLibrary.db is nowhere
             // in this change's checkpoints.
-            std::make_shared<ScriptedChange>("b", std::vector<std::string>{unrelated.string()}, [&](SaveContext &) {
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(unrelated)}, [&](SaveContext &) {
                 write(unrelated, "after");
                 return ChangeOutcome::failure("something else refused");
             }),
@@ -363,14 +365,14 @@ int main()
         const fs::path &stick = scratch.path;
         fs::path pioneer = stick / "PIONEER";
         fs::create_directories(pioneer / "rekordbox");
-        const fs::path dbPath = OneLibraryCueWriter::dbPathFor(pioneer.string());
+        const fs::path dbPath = pathFromUtf8(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)));
         makeWalFixture(dbPath);
 
         const std::vector<domain::CuePoint> cues = {
             domain::CuePoint{domain::CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""},
         };
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneer.string()), {});
+        SaveContext ctx(token, noProgress, {}, pathToQString(pioneer), {});
         // Set from inside change "b" once it knows whether the sabotage
         // below actually took: a Windows-only sharing violation the rest
         // of this case's own assertions have to be skipped for, not
@@ -383,12 +385,12 @@ int main()
         bool bRan = false;
         bool removalRefused = false;
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<ScriptedChange>("a", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
-                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "One.mp3").string(), cues);
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(dbPath)}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pathToUtf8(pioneer)).writeCuesForPath(pathToUtf8(stick / "Contents" / "One.mp3"), cues);
                 return ChangeOutcome::success();
             }),
-            std::make_shared<ScriptedChange>("b", std::vector<std::string>{dbPath.string()}, [&](SaveContext &c) {
-                sharedOneLibraryWriter(c, pioneer.string()).writeCuesForPath((stick / "Contents" / "Two.mp3").string(), cues);
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(dbPath)}, [&](SaveContext &c) {
+                sharedOneLibraryWriter(c, pathToUtf8(pioneer)).writeCuesForPath(pathToUtf8(stick / "Contents" / "Two.mp3"), cues);
                 // Only the database's put-back must fail -- its -wal has to go
                 // back fine, so the stick ends up with an old log beside a
                 // database of another generation. A non-empty directory where
@@ -438,8 +440,8 @@ int main()
             const std::string logText = read(stickLog);
             // Out of SQLite's reach, not merely unfolded: a live -wal beside the
             // wrong generation is replayed into it on the next open.
-            const fs::path wal = fs::path(dbPath.string() + "-wal");
-            const fs::path stale = fs::path(dbPath.string() + "-wal.seabass-stale");
+            const fs::path wal = pathFromUtf8(pathToUtf8(dbPath) + "-wal");
+            const fs::path stale = pathFromUtf8(pathToUtf8(dbPath) + "-wal.seabass-stale");
             if (fs::exists(wal, ec) || !fs::exists(stale, ec)) {
                 std::cerr << "case 6: wal live=" << fs::exists(wal, ec) << " stale=" << fs::exists(stale, ec)
                           << "\n" << logText << "\n";
@@ -468,18 +470,18 @@ int main()
         write(pdb, "pdb-original");
 
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
         bool bRan = false;
         bool blinded = false;
         std::vector<std::shared_ptr<PendingChange>> changes = {
-            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+            std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
                 write(pdb, "pdb-from-a");
                 return ChangeOutcome::success();
             }),
-            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pdb.string()}, [&](SaveContext &c) {
+            std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &c) {
                 bRan = true;
                 write(pdb, "pdb-from-b");
-                c.protectForThisChange(created.string());
+                c.protectForThisChange(pathToUtf8(created));
                 write(created, "line from b\n");
                 // Take away the right to search the directory the file is
                 // in: the file is untouched, only the answer about it is.
@@ -546,7 +548,7 @@ int main()
         {
             write(pdb, "pdb-original");
             CancellationToken token;
-            SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+            SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
             // Counted from INSIDE the change, which runs after the save
             // has taken its backup: without this, the case passes just as
             // happily against a save that never backed anything up, since
@@ -554,7 +556,7 @@ int main()
             // agreeable-counter shape this round kept meeting.
             int recordsDuringTheSave = -1;
             std::vector<std::shared_ptr<PendingChange>> changes = {
-                std::make_shared<ScriptedChange>("only", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                std::make_shared<ScriptedChange>("only", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
                     recordsDuringTheSave = recordsNow();
                     write(pdb, "pdb-from-the-change");
                     return ChangeOutcome::failure("the catalog refused");
@@ -575,13 +577,13 @@ int main()
             // back from it. Undo lives on exactly this.
             write(pdb, "pdb-original");
             CancellationToken token;
-            SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+            SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
             std::vector<std::shared_ptr<PendingChange>> changes = {
-                std::make_shared<ScriptedChange>("a", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                std::make_shared<ScriptedChange>("a", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
                     write(pdb, "pdb-from-a");
                     return ChangeOutcome::success();
                 }),
-                std::make_shared<ScriptedChange>("b", std::vector<std::string>{pdb.string()}, [&](SaveContext &) {
+                std::make_shared<ScriptedChange>("b", std::vector<std::string>{pathToUtf8(pdb)}, [&](SaveContext &) {
                     write(pdb, "pdb-from-b");
                     return ChangeOutcome::failure("the second catalog refused");
                 }),
@@ -628,14 +630,14 @@ int main()
         write(fileC, "C-original");
 
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString((stick / "PIONEER").string()), {});
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
         std::vector<std::shared_ptr<PendingChange>> changes = {
             std::make_shared<ScriptedChange>(
-                "collide", std::vector<std::string>{fileA.string(), fileB.string()}, [&](SaveContext &inner) {
+                "collide", std::vector<std::string>{pathToUtf8(fileA), pathToUtf8(fileB)}, [&](SaveContext &inner) {
                     const fs::path scratch = stick / "scratch-a.DAT";
                     write(scratch, "A-scratch");
-                    inner.redirectWrites(fileA.string(), scratch.string());
-                    inner.protectForThisChange(fileC.string());
+                    inner.redirectWrites(pathToUtf8(fileA), pathToUtf8(scratch));
+                    inner.protectForThisChange(pathToUtf8(fileC));
                     write(fileC, "C-written");
                     write(fileB, "B-written");
                     return ChangeOutcome::failure("and then it failed");

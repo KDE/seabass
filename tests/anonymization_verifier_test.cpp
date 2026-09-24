@@ -38,6 +38,7 @@
 
 #include "infrastructure/anonymization_byte_sweep.hpp"
 #include "infrastructure/anonymization_verifier.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
@@ -95,6 +96,9 @@ void dump(const char *what, const infrastructure::AnonymizationVerification &v)
 
 int main(int argc, char **argv)
 {
+    // argv is what the C runtime hands over: the ANSI code page on
+    // Windows, so fs::path(char*) is the right decoding of it there, and
+    // pathFromUtf8 would be the wrong one. Not a std::string path.
     const fs::path fixture = argc > 1 ? fs::path(argv[1]) : fs::path("tests/fixtures/anonymized_library");
     if (!fs::is_directory(fixture)) {
         std::cerr << "fixture not found at " << fixture << " -- run from the repository root\n";
@@ -122,7 +126,7 @@ int main(int argc, char **argv)
     // The clean copy must pass, or every "it refused" below proves
     // nothing -- a verifier that refuses everything would satisfy them all.
     {
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         const auto rest = beyondKnownBaseline(v.problems);
         if (!rest.empty()) {
             dump("clean copy, beyond the known baseline", v);
@@ -145,7 +149,7 @@ int main(int argc, char **argv)
     {
         const fs::path stray = copy / "my-real-library.txt";
         std::ofstream(stray) << "real content";
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         assert(!v.problems.empty());
         assert(mentions(v.problems, "my-real-library.txt"));
         fs::remove(stray);
@@ -161,7 +165,7 @@ int main(int argc, char **argv)
     {
         const fs::path stray = copy / "rekordbox" / "rekordbox" / "exportExt.pdb";
         std::ofstream(stray) << "Deep House\nPeak Time\nSecond Floor\nBuild up";
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         assert(!v.problems.empty());
         // Refused for its CONTENTS, not merely for existing -- so one
         // single problem has to name both the file and the leak. Two
@@ -186,7 +190,7 @@ int main(int argc, char **argv)
     {
         const fs::path stray = copy / "rekordbox" / "playlists3.sync";
         std::ofstream(stray) << "playlist names rekordbox keeps in sync state";
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         assert(!v.problems.empty());
         assert(mentions(v.problems, "unexpected entry in the rekordbox tree"));
         assert(mentions(v.problems, "playlists3.sync"));
@@ -205,7 +209,7 @@ int main(int argc, char **argv)
         assert(fs::is_regular_file(scrubbed) && "the anonymized exportExt.pdb fixture is missing");
         const fs::path kept = copy / "rekordbox" / "rekordbox" / "exportExt.pdb";
         fs::copy_file(scrubbed, kept, fs::copy_options::overwrite_existing);
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         assert(!mentions(v.problems, "exportExt.pdb"));
         fs::remove(kept);
         std::cout << "case 3c (a scrubbed exportExt.pdb is kept) OK\n";
@@ -222,7 +226,7 @@ int main(int argc, char **argv)
     {
         const fs::path stray = copy / "engine" / "Database2" / "hm.db";
         std::ofstream(stray) << "play history: every real title this DJ played, and when";
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         assert(!v.problems.empty());
         assert(mentions(v.problems, "hm.db"));
         fs::remove(stray);
@@ -233,18 +237,18 @@ int main(int argc, char **argv)
     // samples. Written through the app's own writer so the row is a real
     // row, not a hand-built one.
     {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader((copy / "rekordbox").string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(copy / "rekordbox"));
         const auto tracks = reader.readAll();
         assert(!tracks.empty());
         const std::uint32_t id = static_cast<std::uint32_t>(std::stoul(tracks.front().sourceId));
 
-        infrastructure::rekordbox::PdbRowWriter writer(pdb.string());
+        infrastructure::rekordbox::PdbRowWriter writer(pathToUtf8(pdb));
         infrastructure::rekordbox::PdbRowWriter::TrackTextOverride text;
         text.title = "Blue Monday";
         assert(writer.overwriteTrackText(id, text));
         assert(writer.commit());
 
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         if (v.problems.empty()) {
             dump("planted title", v);
         }
@@ -254,17 +258,17 @@ int main(int argc, char **argv)
     }
 
     {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader((copy / "rekordbox").string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(copy / "rekordbox"));
         const auto tracks = reader.readAll();
         const std::uint32_t id = static_cast<std::uint32_t>(std::stoul(tracks.front().sourceId));
 
-        infrastructure::rekordbox::PdbRowWriter writer(pdb.string());
+        infrastructure::rekordbox::PdbRowWriter writer(pathToUtf8(pdb));
         infrastructure::rekordbox::PdbRowWriter::TrackTextOverride text;
         text.filename = "realsong.mp3";
         assert(writer.overwriteTrackText(id, text));
         assert(writer.commit());
 
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         assert(mentions(v.problems, "still has a real filename") || mentions(v.problems, "still has a real file path"));
         restorePdb();
         std::cout << "case 5 (a real filename on a sampled track is refused) OK\n";
@@ -279,25 +283,25 @@ int main(int argc, char **argv)
     // it, and a deliberately small sample still misses it, which is the
     // evidence for why the default changed.
     {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader((copy / "rekordbox").string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(copy / "rekordbox"));
         const auto tracks = reader.readAll();
         assert(tracks.size() > 400);
         const std::uint32_t lateId =
             static_cast<std::uint32_t>(std::stoul(tracks[tracks.size() - 1].sourceId));
 
-        infrastructure::rekordbox::PdbRowWriter writer(pdb.string());
+        infrastructure::rekordbox::PdbRowWriter writer(pathToUtf8(pdb));
         infrastructure::rekordbox::PdbRowWriter::TrackTextOverride text;
         text.title = "Blue Monday";
         assert(writer.overwriteTrackText(lateId, text));
         assert(writer.commit());
 
-        auto byDefault = infrastructure::verifyAnonymizedExport(copy.string());
+        auto byDefault = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         if (!mentions(byDefault.problems, "still has a real title")) {
             dump("leak on the last track, default settings", byDefault);
         }
         assert(mentions(byDefault.problems, "still has a real title"));
 
-        auto sampled200 = infrastructure::verifyAnonymizedExport(copy.string(), 200);
+        auto sampled200 = infrastructure::verifyAnonymizedExport(pathToUtf8(copy), 200);
         assert(!mentions(sampled200.problems, "still has a real title"));
 
         std::cout << "case 6 (a leak on the last track is caught by default, and missed at sample=200) OK\n";
@@ -306,9 +310,9 @@ int main(int argc, char **argv)
 
     // Every track really is examined, not merely more of them.
     {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader((copy / "rekordbox").string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(copy / "rekordbox"));
         const auto tracks = reader.readAll();
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         assert(beyondKnownBaseline(v.problems).empty());
         assert(v.rekordboxTracksSampled == static_cast<int>(tracks.size()));
         std::cout << "case 7 (the default sweeps every track in the catalog: "
@@ -340,13 +344,13 @@ int main(int argc, char **argv)
             out.write(planted.data(), static_cast<std::streamsize>(planted.size()));
         }
 
-        auto v = infrastructure::verifyAnonymizedExport(copy.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
         const auto rest = beyondKnownBaseline(v.problems);
         if (rest.empty()) {
             dump("planted text in a waveform blob", v);
         }
         assert(!rest.empty());
-        assert(mentions(rest, blob.filename().string()));
+        assert(mentions(rest, pathToUtf8(blob.filename())));
         assert(mentions(rest, "Blue Monday"));
         // And nothing that reads rows noticed, which is the whole point.
         assert(!mentions(rest, "still has a real title"));
@@ -400,7 +404,7 @@ int main(int argc, char **argv)
             const fs::path anlz = copy / "rekordbox" / "USBANLZ";
             assert(fs::is_directory(anlz));
             fs::permissions(anlz, fs::perms::none, fs::perm_options::replace);
-            auto v = infrastructure::verifyAnonymizedExport(copy.string());
+            auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
             fs::permissions(anlz, fs::perms::owner_all, fs::perm_options::replace);
 
             const auto rest = beyondKnownBaseline(v.problems);
@@ -417,7 +421,7 @@ int main(int argc, char **argv)
         {
             const fs::path pdbFile = copy / "rekordbox" / "rekordbox" / "export.pdb";
             fs::permissions(pdbFile, fs::perms::none, fs::perm_options::replace);
-            auto v = infrastructure::verifyAnonymizedExport(copy.string());
+            auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(copy));
             fs::permissions(pdbFile, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
 
             assert(mentions(v.problems, "never swept")
@@ -453,7 +457,7 @@ int main(int argc, char **argv)
         // behind a "is this tree present" gate. An Engine export that
         // failed partway leaves exactly this.
         fs::create_directories(empty / "engine");
-        auto v = infrastructure::verifyAnonymizedExport(empty.string());
+        auto v = infrastructure::verifyAnonymizedExport(pathToUtf8(empty));
         assert(!v.ok && "an export this never looked inside must not pass");
         assert(mentions(v.problems, "proved nothing"));
         // And only for that reason. A tree that is not there is not a
