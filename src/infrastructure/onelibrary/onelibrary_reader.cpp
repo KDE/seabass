@@ -5,13 +5,16 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 
 #include <filesystem>
+#include <iostream>
 #include <stdexcept>
 #include <unordered_map>
 
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/sqlite_pending_journal.hpp"
 
 namespace seabass::infrastructure::onelibrary
 {
@@ -69,6 +72,25 @@ std::vector<Track> OneLibraryReader::readAll()
     fs::path stickRoot = pathFromUtf8(m_pioneerRoot).parent_path();
 
     SqlCipherLibrary lib;
+    // A stick pulled mid-save leaves OneLibrary with a pending journal,
+    // which a read-only open cannot get past. Roll it back first, keeping
+    // a copy on this computer; see sqlite_pending_journal.hpp (#48).
+    const PendingJournalRecovery recovery = recoverPendingJournal(
+        pathFromUtf8(dbPath), paths::localRoot() / "recovered", [&lib, &dbPath]() {
+            SqlCipherDb writable(lib, dbPath, /*readOnly=*/false);
+            writable.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            SqlCipherStatement read(writable, "SELECT count(*) FROM sqlite_master");
+            read.step();
+        });
+    if (recovery.found && !recovery.recovered) {
+        throw std::runtime_error("OneLibrary on this stick was left mid-save (was the stick pulled while saving?) "
+                                 "and could not be put back: " + recovery.error
+                                 + ". If the stick is mounted read-only, repair it in Library Health first.");
+    }
+    if (recovery.recovered) {
+        std::cerr << "onelibrary: rolled back an unfinished save in " << dbPath << "; a copy of how it was is in "
+                  << pathToUtf8(recovery.keptCopy) << "\n";
+    }
     SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
 

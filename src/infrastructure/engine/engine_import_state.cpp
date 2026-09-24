@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_import_state.hpp"
+#include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
@@ -56,6 +57,14 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
     state.hasRekordboxLibrary = sequence.has_value();
     state.librarySequence = sequence.value_or(0);
     if (!state.hasEngineLibrary) {
+        return state;
+    }
+    // A journal left by a pulled stick would fail the read-only open
+    // below with "readonly"; see engine_pending_journals.hpp (#48).
+    try {
+        recoverEnginePendingJournals(engineLibraryPath);
+    } catch (const std::exception &e) {
+        state.error = e.what();
         return state;
     }
 

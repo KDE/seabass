@@ -1508,6 +1508,7 @@ add_test(NAME filesystem_health_test COMMAND filesystem_health_test)
 add_executable(engine_import_state_test
     src/infrastructure/engine/engine_analysis_state.cpp
     src/infrastructure/engine/engine_import_state.cpp
+    src/infrastructure/paths/seabass_paths.cpp
     tests/engine_import_state_test.cpp
 )
 target_include_directories(engine_import_state_test PRIVATE src tests)
@@ -1899,6 +1900,13 @@ add_test(NAME stick_presence_diff_test COMMAND stick_presence_diff_test)
 add_executable(mount_unless_mounted_test tests/mount_unless_mounted_test.cpp)
 target_include_directories(mount_unless_mounted_test PRIVATE src)
 add_test(NAME mount_unless_mounted_test COMMAND mount_unless_mounted_test)
+
+# A stick pulled mid-save leaves a hot SQLite journal; this makes one and
+# rolls it back (#48).
+add_executable(sqlite_pending_journal_test tests/sqlite_pending_journal_test.cpp)
+target_include_directories(sqlite_pending_journal_test PRIVATE src)
+target_link_libraries(sqlite_pending_journal_test PRIVATE SQLite::SQLite3)
+add_test(NAME sqlite_pending_journal_test COMMAND sqlite_pending_journal_test)
 
 # Forks a child process on POSIX to prove the pid-liveness staleness rule
 # against a real second process, not just an injected fake.
