@@ -1543,7 +1543,7 @@ add_executable(engine_sample_rates_test
     tests/engine_sample_rates_test.cpp
 )
 target_include_directories(engine_sample_rates_test PRIVATE src tests)
-target_link_libraries(engine_sample_rates_test PRIVATE DjInterop SQLite::SQLite3)
+target_link_libraries(engine_sample_rates_test PRIVATE DjInterop SQLite::SQLite3 ZLIB::ZLIB)
 add_test(NAME engine_sample_rates_test COMMAND engine_sample_rates_test)
 
 add_executable(engine_artwork_test
