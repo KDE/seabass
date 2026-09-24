@@ -19,6 +19,63 @@
 namespace seabass::testing
 {
 
+namespace detail
+{
+
+inline std::filesystem::path &scratchToRemove()
+{
+    static std::filesystem::path root;
+    return root;
+}
+
+inline long long &scratchOwner()
+{
+    static long long pid = 0;
+    return pid;
+}
+
+inline void removeScratch()
+{
+#if defined(_WIN32)
+    const auto pid = static_cast<long long>(_getpid());
+#else
+    const auto pid = static_cast<long long>(::getpid());
+#endif
+    // A forked child inherits the handler; the tree is its parent's.
+    if (pid != scratchOwner() || scratchToRemove().empty()) {
+        return;
+    }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    // Some tests lock a directory on purpose; unlocked first, or
+    // remove_all stops at it.
+    for (auto it = fs::recursive_directory_iterator(scratchToRemove(), ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code permEc;
+        if (it->is_directory(permEc)) {
+            fs::permissions(it->path(), fs::perms::owner_all, fs::perm_options::add, permEc);
+        }
+    }
+    fs::remove_all(scratchToRemove(), ec);
+}
+
+}  // namespace detail
+
+// Removes the scratch tree when the process exits normally (main returns
+// or exit() is called), so a suite run no longer leaves ~190 of them
+// behind. A test that fails on an assert or a crash never gets here, and
+// its tree stays for the post-mortem; one that reports failure by
+// returning non-zero does clean up, so its output has to say enough.
+inline void removeOnCleanExit(const std::filesystem::path &root, long long pid)
+{
+    if (!detail::scratchToRemove().empty()) {
+        return;
+    }
+    detail::scratchToRemove() = root;
+    detail::scratchOwner() = pid;
+    std::atexit(detail::removeScratch);
+}
+
 // The temp directory this test process owns, and nobody else does.
 //
 // Every test in the tree builds its scratch path from
@@ -52,6 +109,7 @@ inline std::filesystem::path scratchRoot()
     std::filesystem::path root = std::filesystem::temp_directory_path() / ("seabass-test-" + std::to_string(pid));
     std::error_code ec;
     std::filesystem::create_directories(root, ec);
+    removeOnCleanExit(root, pid);
     // Canonical, because production code canonicalises the paths it is
     // handed and tests compare against what they passed in: macOS's temp
     // directory lives under /var, a symlink to /private/var.

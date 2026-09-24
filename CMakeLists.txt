@@ -3066,6 +3066,24 @@ endif()
 # the few that were noticed: any test can reach a default path through a
 # controller it merely constructs. Appended rather than assigned, because
 # some tests already carry an ENVIRONMENT property.
+# And no test's scratch space may sit in RAM. Tests build their scratch
+# trees under the temp directory (tests/scratch_path.hpp), and /tmp is a
+# tmpfs here: a few suites' worth of leftover fixture sticks and archives
+# held 7 GB of memory that nothing would ever evict, and got builds
+# OOM-killed. A directory under $HOME is on disk, where the page cache can
+# drop it. POSIX only: TMPDIR is what temp_directory_path(), QTemporaryDir
+# and mkstemp all read there; Windows' %TEMP% is on disk already.
+#
+# Created by a setup fixture rather than once at configure time, because
+# libstdc++'s temp_directory_path() throws when the directory is missing,
+# and deleting it between runs must not turn the whole suite red.
+if(NOT WIN32 AND DEFINED ENV{HOME})
+    set(SEABASS_TEST_TMPDIR "$ENV{HOME}/tmp/seabass-tests" CACHE PATH
+        "Where tests keep their scratch trees (TMPDIR); on disk, not tmpfs")
+    add_test(NAME seabass_test_tmpdir COMMAND ${CMAKE_COMMAND} -E make_directory "${SEABASS_TEST_TMPDIR}")
+    set_tests_properties(seabass_test_tmpdir PROPERTIES FIXTURES_SETUP seabass_test_tmpdir)
+endif()
+
 get_property(_seabass_all_tests DIRECTORY PROPERTY TESTS)
 foreach(_seabass_test IN LISTS _seabass_all_tests)
     get_test_property(${_seabass_test} ENVIRONMENT _seabass_test_env)
@@ -3098,6 +3116,11 @@ foreach(_seabass_test IN LISTS _seabass_all_tests)
     if(NOT _seabass_test_env MATCHES "APPDATA=")
         list(APPEND _seabass_test_env
             "APPDATA=${CMAKE_CURRENT_BINARY_DIR}/test-home/${_seabass_test}/config")
+    endif()
+    if(SEABASS_TEST_TMPDIR AND NOT _seabass_test STREQUAL "seabass_test_tmpdir"
+       AND NOT _seabass_test_env MATCHES "TMPDIR=")
+        list(APPEND _seabass_test_env "TMPDIR=${SEABASS_TEST_TMPDIR}")
+        set_property(TEST ${_seabass_test} APPEND PROPERTY FIXTURES_REQUIRED seabass_test_tmpdir)
     endif()
     if(_seabass_test_path_prepend AND NOT _seabass_test_env MATCHES "PATH=")
         list(APPEND _seabass_test_env "PATH=${_seabass_test_path_prepend}")
