@@ -49,6 +49,8 @@ struct TreeWalk
     std::vector<std::string> skipped;
 };
 
+// root, every path in the result and every relative path handed to
+// `shouldDescend` are UTF-8 on every platform (utf8_path.hpp).
 // `shouldDescend` is asked before entering a directory (its path relative
 // to root, generic separators); returning false prunes it, which is how
 // callers apply their own exclusions. Empty means descend everywhere.

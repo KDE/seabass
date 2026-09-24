@@ -177,7 +177,7 @@ CompactionOutcome CompactStickBackup::execute(const CompactStickBackupOptions &o
     std::unique_ptr<infrastructure::backup::StickWriteLock> lock;
     try {
         lock = std::make_unique<infrastructure::backup::StickWriteLock>(
-            journal::lockPathFor(options.archivePath).string());
+            journal::lockPathFor(options.archivePath));
     } catch (const infrastructure::backup::StickBusyError &e) {
         outcome.message = e.what();
         return outcome;

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <string>
 #include <thread>
 
 #include "infrastructure/backup/stick_write_lock.hpp"
@@ -109,6 +110,35 @@ int main()
         StickWriteLock again(removedPath);  // releaseAndRemoveFile left nothing held
         assert(fs::exists(removedPath));
         std::cout << "case 6 (releaseAndRemoveFile removes the file and holds nothing) OK\n";
+    }
+
+    // A backup in a folder named outside the Windows ANSI code page. The
+    // lock took a std::string and opened it with CreateFileA, so on Windows
+    // this threw "Could not open stick lock file" and the backup, compact
+    // or restore behind it never started. Linux has no code page to fall
+    // outside of, so here it pins the path-based contract; on Windows it
+    // is the regression test.
+    {
+        const std::u8string folder = u8"Sicherung \u00c4rger \u65e5\u672c \u041a\u0438\u043d\u043e \U0001F3A7";
+        const fs::path unicodeLock = root / fs::path(folder) / ".write.lock";
+        {
+            StickWriteLock first(unicodeLock);
+            assert(fs::exists(unicodeLock));
+            bool threw = false;
+            try {
+                StickWriteLock second(unicodeLock);
+            } catch (const StickBusyError &e) {
+                threw = true;
+                // The message names the folder readably, as UTF-8.
+                const std::u8string u8 = fs::path(folder).u8string();
+                assert(std::string(e.what()).find(std::string(reinterpret_cast<const char *>(u8.data()), u8.size()))
+                       != std::string::npos);
+            }
+            assert(threw);
+            first.releaseAndRemoveFile();
+            assert(!fs::exists(unicodeLock));
+        }
+        std::cout << "case 7 (a lock in a folder named outside the code page) OK\n";
     }
 
     fs::remove_all(root);

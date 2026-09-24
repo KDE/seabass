@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "walk_tree.hpp"
+#include "utf8_path.hpp"
 
 #include <filesystem>
 #include <system_error>
@@ -24,7 +25,7 @@ TreeWalk walkTree(const std::string &root, const std::function<bool(const std::s
         std::string relative;
     };
 
-    std::vector<Level> stack{{fs::path(root), std::string()}};
+    std::vector<Level> stack{{pathFromUtf8(root), std::string()}};
 
     while (!stack.empty()) {
         const Level level = stack.back();
@@ -41,21 +42,21 @@ TreeWalk walkTree(const std::string &root, const std::function<bool(const std::s
         if (ec) {
             // The whole point: one unreadable directory costs that
             // directory, not the stick.
-            walk.skipped.push_back(level.relative.empty() ? level.path.string() : level.relative);
+            walk.skipped.push_back(level.relative.empty() ? utf8FromPath(level.path) : level.relative);
             continue;
         }
 
         const fs::directory_iterator end;
         for (; it != end; it.increment(ec)) {
             if (ec) {
-                walk.skipped.push_back(level.relative.empty() ? level.path.string() : level.relative);
+                walk.skipped.push_back(level.relative.empty() ? utf8FromPath(level.path) : level.relative);
                 break;
             }
 
             std::error_code entryEc;
             const fs::path path = it->path();
             const std::string relative =
-                level.relative.empty() ? path.filename().string() : level.relative + "/" + path.filename().string();
+                level.relative.empty() ? utf8FromPath(path.filename()) : level.relative + "/" + utf8FromPath(path.filename());
 
             if (it->is_directory(entryEc) && !entryEc) {
                 if (!shouldDescend || shouldDescend(relative)) {
@@ -77,7 +78,7 @@ TreeWalk walkTree(const std::string &root, const std::function<bool(const std::s
                 walk.skipped.push_back(relative);
                 continue;
             }
-            walk.files.push_back({path.string(), size});
+            walk.files.push_back({utf8FromPath(path), size});
             if (onProgress && (walk.files.size() & 0xFF) == 0) {
                 onProgress(walk.files.size());
             }

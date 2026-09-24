@@ -31,6 +31,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/scratch_dir_guard.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+#include "storageprobe/utf8_path.hpp"
 #include "storageprobe/walk_tree.hpp"
 
 namespace seabass::gui
@@ -173,10 +174,10 @@ std::string stickRootFromPaths(const QString &rekordboxPath, const QString &engi
         return mountPoint.toStdString();
     }
     if (!rekordboxPath.isEmpty()) {
-        return fs::path(rekordboxPath.toStdString()).parent_path().string();
+        return storageprobe::utf8FromPath(storageprobe::pathFromUtf8(rekordboxPath.toStdString()).parent_path());
     }
     if (!enginePath.isEmpty()) {
-        return fs::path(enginePath.toStdString()).parent_path().string();
+        return storageprobe::utf8FromPath(storageprobe::pathFromUtf8(enginePath.toStdString()).parent_path());
     }
     return "";
 }
@@ -209,7 +210,7 @@ WalkResult walk(const fs::path &dir, Accept accept, const application::Cancellat
     // skip_permission_denied does not cover). A no-library measurement then
     // found no files to sample on a stick full of them.
     auto walked = storageprobe::walkTree(
-        dir.string(),
+        storageprobe::utf8FromPath(dir),
         [skipHidden](const std::string &relative) {
             // The same exclusions Full Stick Backup applies (the recycle
             // bin, System Volume Information, this app's own backups and
@@ -221,11 +222,12 @@ WalkResult walk(const fs::path &dir, Accept accept, const application::Cancellat
 
     result.folders = walked.folders;
     for (const auto &file : walked.files) {
-        const std::string relative = fs::path(file.path).lexically_relative(dir).generic_string();
+        const std::string relative =
+            storageprobe::utf8FromPath(storageprobe::pathFromUtf8(file.path).lexically_relative(dir).generic_u8string());
         if (skipHidden && infrastructure::stick_backup::isExcludedFromBackup(relative, false)) {
             continue;
         }
-        if (accept(fs::path(file.path), file.size)) {
+        if (accept(storageprobe::pathFromUtf8(file.path), file.size)) {
             result.files.push_back(file.path);
             result.sizes.push_back(file.size);
         }
@@ -335,7 +337,7 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             // read back. Written and measured first, read second, removed
             // whatever happens in between.
             infrastructure::benchmark::ScratchFiles files;
-            scratchGuard.emplace(fs::path(stickRoot) / infrastructure::benchmark::StickWriteProbe::kScratchFolderName);
+            scratchGuard.emplace(storageprobe::pathFromUtf8(stickRoot) / infrastructure::benchmark::StickWriteProbe::kScratchFolderName);
             writeMeasurement = infrastructure::benchmark::StickWriteProbe::run(stickRoot, cancel, {}, &files);
             audioFiles = files.streamFiles;
             smallFiles = files.smallFiles;
@@ -369,18 +371,19 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             }
             if (!enginePath.isEmpty()) {
                 collect("engine", enginePath);
-                databaseFiles.push_back((fs::path(enginePath.toStdString()) / "Database2" / "m.db").string());
+                databaseFiles.push_back(
+                    storageprobe::utf8FromPath(storageprobe::pathFromUtf8(enginePath.toStdString()) / "Database2" / "m.db"));
             }
 
             // Small files: rekordbox's per-track analysis files, or
             // Engine's overview data when there is no rekordbox export.
             WalkResult analysis;
             if (!rekordboxPath.isEmpty()) {
-                analysis = walk(fs::path(rekordboxPath.toStdString()) / "USBANLZ",
+                analysis = walk(storageprobe::pathFromUtf8(rekordboxPath.toStdString()) / "USBANLZ",
                                 [](const fs::path &path, std::uint64_t) { return path.filename() == "ANLZ0000.DAT"; }, cancel);
             }
             if (analysis.files.empty() && !enginePath.isEmpty()) {
-                analysis = walk(fs::path(enginePath.toStdString()) / "Database2" / "OverviewData",
+                analysis = walk(storageprobe::pathFromUtf8(enginePath.toStdString()) / "Database2" / "OverviewData",
                                 [](const fs::path &, std::uint64_t) { return true; }, cancel);
             }
             sampleKind = QStringLiteral("library");
@@ -389,7 +392,7 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
                 // No library, or one with no local files: any file on the
                 // stick big enough to stream from and seek in will do, and
                 // any small one stands in for an analysis file.
-                auto everything = walk(fs::path(stickRoot),
+                auto everything = walk(storageprobe::pathFromUtf8(stickRoot),
                                        [](const fs::path &, std::uint64_t size) { return size >= 4 * 1024; }, cancel, true);
                 analysis.folders = everything.folders;
                 for (std::size_t i = 0; i < everything.files.size(); ++i) {

@@ -17,7 +17,10 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
+#include "storageprobe/surface_check.hpp"
+#include "storageprobe/utf8_path.hpp"
 #include "storageprobe/walk_tree.hpp"
 
 namespace fs = std::filesystem;
@@ -136,6 +139,39 @@ void testMissingRootIsReportedNotThrown()
     assert(walk.skipped.size() == 1);
 }
 
+void testNamesOutsideTheCodePage()
+{
+    // Stick folders named in scripts no Windows ANSI code page holds. Every
+    // path crosses this library as UTF-8 (utf8_path.hpp); before that, on
+    // Windows, path::string() threw on these and path(std::string) read the
+    // bytes as ANSI and named a folder that does not exist. On Linux the
+    // native encoding is UTF-8 anyway, so here this pins the contract --
+    // what goes in comes back byte for byte and names a real file -- and
+    // it is on Windows that it would go red without the fix.
+    const fs::path root = scratch("utf8") / storageprobe::pathFromUtf8("\xc3\x84rger \xe6\x97\xa5\xe6\x9c\xac");
+    const std::string artist = "\xd0\x9a\xd0\xb8\xd0\xbd\xd0\xbe \xf0\x9f\x8e\xa7"; // "Кино 🎧"
+    write(root / storageprobe::pathFromUtf8(artist) / "a.mp3", "aaaa");
+
+    std::vector<std::string> descended;
+    auto walk = walkTree(storageprobe::utf8FromPath(root), [&descended](const std::string &relative) {
+        descended.push_back(relative);
+        return true;
+    });
+    assert(walk.skipped.empty());
+    assert(walk.files.size() == 1);
+    assert(descended.size() == 1 && descended.front() == artist);
+    assert(walk.files.front().path.find(artist) != std::string::npos);
+    assert(fs::exists(storageprobe::pathFromUtf8(walk.files.front().path)));
+
+    // And read back through the same contract: a file the walk found but
+    // could not open would land in unopenable, not throw.
+    const auto surface = storageprobe::SurfaceCheck::run(storageprobe::utf8FromPath(root));
+    assert(surface.filesRead == 1);
+    assert(surface.bytesRead == 4);
+    assert(surface.unopenable.empty() && surface.unreadable.empty());
+    tearDown(root.parent_path());
+}
+
 }  // namespace
 
 int main()
@@ -144,6 +180,7 @@ int main()
     testUnreadableDirectoryCostsThatDirectoryOnly();
     testPruning();
     testMissingRootIsReportedNotThrown();
+    testNamesOutsideTheCodePage();
     std::cout << "walk_tree_test passed\n";
     return 0;
 }

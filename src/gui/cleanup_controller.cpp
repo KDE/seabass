@@ -512,7 +512,7 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
     try {
         fs::path stickRoot = fs::path(path.toStdString()).parent_path();
         infrastructure::backup::StickWriteLock lock(
-            (infrastructure::paths::stickBackupsDir(stickRoot) / ".write.lock").string());
+            (infrastructure::paths::stickBackupsDir(stickRoot) / ".write.lock"));
         infrastructure::cleanup::PendingDeletionManifest manifest(
             infrastructure::paths::stickPendingDeletions(stickRoot).string());
         infrastructure::logging::FileOperationLog log(infrastructure::paths::stickOperationLog(stickRoot).string());

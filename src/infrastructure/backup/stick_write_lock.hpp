@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -41,7 +42,12 @@ public:
     // compute for FilesystemBackupStore. Throws StickBusyError if another
     // holder already has it; std::runtime_error if the lock file itself
     // can't be created/opened.
-    explicit StickWriteLock(const std::string &lockFilePath);
+    //
+    // A path, not a string: on Windows a std::string path is read in the
+    // ANSI code page, and CreateFileA could not open a lock beside a backup
+    // in a folder named outside it -- so neither could the backup, compact
+    // or restore that takes the lock first.
+    explicit StickWriteLock(const std::filesystem::path &lockFilePath);
     ~StickWriteLock();
 
     // Releases the lock and deletes its file, for a holder that is removing
@@ -67,7 +73,7 @@ private:
 #else
     int m_fd;
 #endif
-    std::string m_path;
+    std::filesystem::path m_path;
 };
 
 }  // namespace seabass::infrastructure::backup

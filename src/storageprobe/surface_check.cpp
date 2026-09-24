@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "surface_check.hpp"
+#include "utf8_path.hpp"
 
 #include "walk_tree.hpp"
 
@@ -91,7 +92,7 @@ SurfaceCheckResult SurfaceCheck::run(const std::string &root, const SurfaceProgr
         }
         dropCacheFor(entry.path);
         auto fileStart = Clock::now();
-        std::ifstream in(entry.path, std::ios::binary);
+        std::ifstream in(pathFromUtf8(entry.path), std::ios::binary);
         if (!in) {
             // Could not be opened: nothing read, nothing learned about
             // the media. Counted apart from files that failed mid-read.
