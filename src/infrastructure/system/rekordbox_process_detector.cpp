@@ -66,7 +66,7 @@ bool isProcessRunning(const std::string &name)
             if (!entry.is_directory(ec) || ec) {
                 continue;
             }
-            std::string pid = entry.path().filename().string();
+            std::string pid = entry.path().filename().string();  // narrow-ok: a /proc pid, ASCII digits, Linux only
             if (!isAllDigits(pid)) {
                 continue;
             }

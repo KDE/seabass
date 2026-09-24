@@ -47,7 +47,7 @@ std::vector<const char *> candidateNames()
 }
 void *openLibrary(const char *name)
 {
-    return LoadLibraryA(name);
+    return LoadLibraryA(name);  // narrow-ok: a DLL name from candidateNames(), ASCII by construction
 }
 void *resolveSymbol(void *mod, const char *name)
 {

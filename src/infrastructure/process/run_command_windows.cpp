@@ -13,12 +13,32 @@
 #include <windows.h>
 
 #include <array>
+#include <string>
+#include <vector>
 
 namespace seabass::infrastructure::process
 {
 
 namespace
 {
+
+// The command line is assembled in UTF-8 (every argument is, by the rule
+// in utf8_path.hpp: script paths and device paths come through here) and
+// widened once for CreateProcessW. The A variant would read the bytes in
+// the ANSI code page and hand the child a mangled path.
+std::wstring widen(const std::string &utf8)
+{
+    if (utf8.empty()) {
+        return {};
+    }
+    const int needed = ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    if (needed <= 0) {
+        return {};
+    }
+    std::wstring wide(static_cast<size_t>(needed), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), needed);
+    return wide;
+}
 
 // The standard argv[i]->CreateProcess command-line quoting algorithm
 // (matches what CommandLineToArgvW/the Windows CRT's own argv parser
@@ -89,21 +109,21 @@ CommandResult runCommand(const std::vector<std::string> &args)
     // once the child itself exits.
     ::SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOA startupInfo = {};
-    startupInfo.cb = sizeof(STARTUPINFOA);
+    STARTUPINFOW startupInfo = {};
+    startupInfo.cb = sizeof(STARTUPINFOW);
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
     startupInfo.hStdOutput = writePipe;
     startupInfo.hStdError = writePipe;
     startupInfo.hStdInput = ::GetStdHandle(STD_INPUT_HANDLE);
 
     PROCESS_INFORMATION processInfo = {};
-    std::string commandLine = buildCommandLine(args);
-    // CreateProcessA's lpCommandLine must be a mutable buffer -- it can
+    const std::wstring commandLine = widen(buildCommandLine(args));
+    // CreateProcessW's lpCommandLine must be a mutable buffer -- it can
     // rewrite embedded nulls/whitespace in place.
-    std::vector<char> mutableCommandLine(commandLine.begin(), commandLine.end());
-    mutableCommandLine.push_back('\0');
+    std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
+    mutableCommandLine.push_back(L'\0');
 
-    BOOL started = ::CreateProcessA(nullptr, mutableCommandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+    BOOL started = ::CreateProcessW(nullptr, mutableCommandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
                                      nullptr, nullptr, &startupInfo, &processInfo);
     ::CloseHandle(writePipe);
     if (!started) {
