@@ -410,6 +410,14 @@ TestCase {
     }
 
     // ---- 9. Clean Up: one duplicate group's extra copies, save, rescan, undo ----
+    // The count of groups offered differs by platform on SHAKEDOWN_8, and
+    // that is the stick, not a bug: its Contents/A.D.H.S. folder ends in
+    // a dot, which Windows cannot store, so a restore there writes
+    // A.D.H.S_ and the catalog rows still name A.D.H.S.; Clean Up then
+    // holds back the two groups in it (Hyena, Zulu) because their
+    // survivor's rows cannot be matched to a file. Linux offers 9 of the
+    // finder's 11, Windows 8 (round 8, 2026-09-24). The held-back groups
+    // are logged by CleanupController as "Clean Up: not offering ...".
     // Counts, not rows: the group is no longer offered, its extra copies'
     // rows are gone and their files wait in Delete Orphaned Files; undo
     // brings every row back. The files themselves are only deleted there.
