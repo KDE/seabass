@@ -193,7 +193,7 @@ Page {
             }
             Item { Layout.fillWidth: true }
             RowLayout {
-                visible: consistencyController?.busy
+                visible: consistencyController?.busy ?? false
                 spacing: 8
                 BusyIndicator { running: true; implicitWidth: 20; implicitHeight: 20 }
                 Label {
@@ -412,14 +412,14 @@ Page {
 
         Label {
             visible: consistencyController?.errorMessage.length > 0
-            text: consistencyController?.errorMessage
+            text: consistencyController?.errorMessage ?? ""
             color: Theme.danger
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
         Label {
             visible: consistencyController?.statusMessage.length > 0
-            text: consistencyController?.statusMessage
+            text: consistencyController?.statusMessage ?? ""
             color: Theme.good
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
@@ -466,7 +466,7 @@ Page {
             }
             Button {
                 text: "Undo Last Save"
-                visible: consistencyController?.canUndo
+                visible: consistencyController?.canUndo ?? false
                 enabled: !consistencyController?.busy && !consistencyController?.writing
                 onClicked: consistencyController?.undoLastOperation()
             }
@@ -509,13 +509,13 @@ Page {
             }
             Label {
                 objectName: "stagedImportMarkNote"
-                visible: consistencyController?.importMarkStaged
+                visible: consistencyController?.importMarkStaged ?? false
                 text: "staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
                 objectName: "markImportedButton"
-                visible: consistencyController?.playerWillOfferImport || consistencyController?.importMarkStaged
+                visible: consistencyController?.playerWillOfferImport || (consistencyController?.importMarkStaged ?? false)
                 text: consistencyController?.importMarkStaged ? "Unstage" : "Mark As Already Imported"
                 enabled: !consistencyController?.busy && !consistencyController?.writing
                     && !consistencyController?.stickReadOnly
@@ -557,14 +557,14 @@ Page {
             }
             Label {
                 objectName: "stagedSampleRatesNote"
-                visible: consistencyController?.sampleRateFillStaged
+                visible: consistencyController?.sampleRateFillStaged ?? false
                 text: "staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
                 objectName: "fillSampleRatesButton"
                 visible: consistencyController?.sampleRateFixableCount > 0
-                    || consistencyController?.sampleRateFillStaged
+                    || (consistencyController?.sampleRateFillStaged ?? false)
                 text: consistencyController?.sampleRateFillStaged ? "Unstage" : "Fill In From The Files"
                 enabled: !consistencyController?.busy && !consistencyController?.writing
                     && !consistencyController?.stickReadOnly
@@ -611,14 +611,14 @@ Page {
             }
             Label {
                 objectName: "stagedCleanupLeftoversNote"
-                visible: consistencyController?.cleanupLeftoverFixStaged
+                visible: consistencyController?.cleanupLeftoverFixStaged ?? false
                 text: "staged, not saved yet"
                 color: Theme.warnText
             }
             Button {
                 objectName: "finishCleanupButton"
                 visible: consistencyController?.cleanupLeftoverFixableCount > 0
-                    || consistencyController?.cleanupLeftoverFixStaged
+                    || (consistencyController?.cleanupLeftoverFixStaged ?? false)
                 text: consistencyController?.cleanupLeftoverFixStaged ? "Unstage" : "Finish The Clean Up"
                 enabled: !consistencyController?.busy && !consistencyController?.writing
                     && !consistencyController?.stickReadOnly
@@ -1149,12 +1149,12 @@ Page {
 
     BusyOverlay {
         anchors.fill: parent
-        busy: consistencyController?.busy
-        current: consistencyController?.scanCurrent
-        total: consistencyController?.scanTotal
+        busy: consistencyController?.busy ?? false
+        current: consistencyController?.scanCurrent ?? 0
+        total: consistencyController?.scanTotal ?? 0
         label: (consistencyController?.scanningFormat.length > 0
                 ? "Scanning " + root.formatLabel(consistencyController?.scanningFormat) + "..." : "Scanning...")
-        cancellable: consistencyController?.scanCancellable
+        cancellable: consistencyController?.scanCancellable ?? false
         onCancelRequested: consistencyController?.cancelScan()
     }
 }
