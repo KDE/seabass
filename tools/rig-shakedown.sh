@@ -1396,12 +1396,19 @@ check X4-everyday-profile-untouched sandbox_profile_still_clean
 # anything. That is the half a round can afford unconditionally, and it
 # is a real row: a locator that stops resolving wholeDiskPath fails here.
 #
-# D2 is the format itself and only runs with RIG_FORMAT_EXECUTE set. It
-# formats stick A back to the filesystem and label it already had (read,
-# never assumed: see stick_fstype) and then restores it, which costs a
-# full restore on top of the round. A round that leaves it off says so
-# in the log and writes no result for it at all, so the board cannot keep
-# a green D2 from whenever it last ran.
+# D2 is the format itself, and it runs every round. It formats stick A
+# back to the filesystem and label it already had (read, never assumed:
+# see stick_fstype) and then restores it, which costs a full restore on
+# top of the round.
+#
+# It used to be opt-in behind RIG_FORMAT_EXECUTE, and no round ever set
+# it: Round 7 ran on every platform and logged "D2 not run ... nothing
+# was erased" each time, so the one check that erases a stick had never
+# been exercised by the rig at all. Every test stick is cleared for
+# wiping, and D1 above has already proved the four refusals that stop a
+# format landing anywhere but stick A -- no such drive, no whole-disk
+# path, over the capacity ceiling, a reference's own directory. A check
+# that is always skipped is not a check.
 # X3: a file that cannot be read has to become an issue somebody can act
 # on. Plants a directory where a track's file should be -- the only way
 # to make a read fail that behaves the same on FAT, macOS, Linux and
@@ -1410,20 +1417,10 @@ check X4-everyday-profile-untouched sandbox_profile_still_clean
 check X3-file-failures-as-issues "$build/rig_file_failure" "$B"
 
 check D1-format-preflight "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a"
-if [ -n "${RIG_FORMAT_EXECUTE:-}" ]; then
-    check D2-format-stick-A "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a" --execute
-    # Whatever D2 decided: a stick left empty is worse than a failed
-    # format, and the next round starts from the references.
-    check D2-restore-A-after-format "$build/rig_restore" "$refA" "$A" --execute
-else
-    # Deliberately no summary line. The recorder takes PASS or FAIL and
-    # nothing else, so a third word here would be dropped on the floor
-    # and the board would keep whatever it last said about D2 -- the
-    # exact "goes on reading green" failure this rig is built against.
-    # D2 is a by-hand row instead, like P1 and P3: set by the person who
-    # ran a format round, left alone by every round that did not.
-    echo "D2 not run: RIG_FORMAT_EXECUTE is unset, so nothing was erased"
-fi
+check D2-format-stick-A "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a" --execute
+# Whatever D2 decided: a stick left empty is worse than a failed format,
+# and the next round starts from the references.
+check D2-restore-A-after-format "$build/rig_restore" "$refA" "$A" --execute
 
 # Last, as its own comment promises: the longest test there is, run once
 # everything that touches a stick has finished with it. It needs no stick
