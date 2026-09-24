@@ -77,42 +77,147 @@ Page {
                 }
             }
 
-            // The heading and the face that goes with it: the text on
-            // the left, Sebastian at the top right of it. The row spans
-            // the content column, so the portrait's right edge IS the
-            // text block's right edge, and AlignTop puts its top on the
-            // first line of the title rather than on the centre of the
-            // row. Nothing here is anchored to a number: change the
-            // column's width and both edges follow.
-            RowLayout {
+            // The heading, the face that goes with it, and the letter,
+            // as one block the text flows around: Sebastian at the top
+            // right, the title and every paragraph beside him narrowed to
+            // clear him, and full width once they are past. A row with
+            // the portrait in it used to hold only the title and the
+            // byline, so the letter started under the photo and left a
+            // hole the height of it beside a two-line byline.
+            //
+            // QML text has no float, so each paragraph narrows its own
+            // lines: onLineLaidOut sees every line as it is placed, and a
+            // line whose top is still beside the portrait gets the width
+            // left of it. A paragraph lays itself out again when it moves,
+            // since the lines to narrow depend on where it now starts.
+            // Nothing here is anchored to a number: change the column's
+            // width or the system font and the flow follows.
+            Item {
+                id: flow
                 objectName: "supportHeading"
                 Layout.fillWidth: true
-                spacing: 20
+                implicitHeight: Math.max(letter.implicitHeight, portrait.height)
 
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignTop
-                    spacing: 6
+                readonly property real gap: 20
+                // Past this, a line has the full width again.
+                readonly property real besidePortraitUntil: portrait.height + flow.gap / 2
+                readonly property real besideWidth: flow.width - portrait.width - flow.gap
 
-                    Label {
-                        objectName: "supportTitle"
-                        text: "Supporting Seabass"
-                        font.family: Theme.titleFamily
-                        font.weight: Theme.titleWeight
-                        font.pointSize: Theme.titleLarge
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
+                // Returns whether the line was narrowed, for the test.
+                function narrow(item, line) {
+                    if (item.mapToItem(flow, 0, line.y).y < flow.besidePortraitUntil) {
+                        line.width = flow.besideWidth;
+                        return true;
+                    }
+                    return false;
+                }
+                signal relayout()
+                onBesidePortraitUntilChanged: flow.relayout()
+                onBesideWidthChanged: flow.relayout()
+
+                component FlowLabel: Label {
+                    id: flowLabel
+                    wrapMode: Text.WordWrap
+                    width: parent ? parent.width : 0
+                    font.pointSize: Theme.baseFontPointSize * 1.1
+                    // Justified, with the last line of each paragraph left
+                    // ragged, as a letter is set.
+                    horizontalAlignment: Text.AlignJustify
+                    // How many of this paragraph's lines sit beside the
+                    // portrait, and the widest of them: what the test
+                    // checks, since a Label cannot be asked for a line.
+                    property int linesBeside: 0
+                    property real widestLineBeside: 0
+                    onLineLaidOut: line => {
+                        if (line.number === 0) {
+                            flowLabel.linesBeside = 0;
+                            flowLabel.widestLineBeside = 0;
+                        }
+                        if (flow.narrow(flowLabel, line)) {
+                            flowLabel.linesBeside += 1;
+                            flowLabel.widestLineBeside = Math.max(flowLabel.widestLineBeside, line.x + line.width);
+                        }
+                    }
+                    onYChanged: forceLayout()
+                    Connections {
+                        target: flow
+                        function onRelayout() { flowLabel.forceLayout(); }
+                    }
+                }
+
+                Column {
+                    id: letter
+                    width: parent.width
+                    spacing: flow.gap
+
+                    Column {
+                        width: parent.width
+                        spacing: 6
+
+                        FlowLabel {
+                            objectName: "supportTitle"
+                            text: "Supporting Seabass"
+                            font.family: Theme.titleFamily
+                            font.weight: Theme.titleWeight
+                            font.pointSize: Theme.titleLarge
+                            horizontalAlignment: Text.AlignLeft
+                        }
+
+                        FlowLabel {
+                            objectName: "supportByline"
+                            // Part of the heading, not the letter: ragged like
+                            // the title. Justified beside the portrait in a
+                            // narrow window, its three words a line opened
+                            // gaps wider than the words.
+                            horizontalAlignment: Text.AlignLeft
+                            // The heart is the page's own mark, in the
+                            // sentence it belongs to rather than as an emoji
+                            // the font may not have.
+                            text: "Seabass is created with love by Sebastian K\u00fcgler (a.k.a. Whaleshark) and friends."
+                        }
                     }
 
-                    Label {
-                        objectName: "supportByline"
-                        // The heart is the page's own mark, in the
-                        // sentence it belongs to rather than as an emoji
-                        // the font may not have.
-                        text: "Seabass is created with love by Sebastian K\u00fcgler (a.k.a. Whaleshark) and friends."
-                        wrapMode: Text.WordWrap
-                        font.pointSize: Theme.baseFontPointSize * 1.1
-                        Layout.fillWidth: true
+                    FlowLabel {
+                        objectName: "supportKindWords"
+                        textFormat: Text.StyledText
+                        linkColor: Theme.accent
+                        text: "Kind words mean a lot to me. If you like Seabass, let me know! An endorsement from a "
+                            + "fellow DJ goes a long way in making my day a bit brighter. Send an email to "
+                            + "<a href=\"mailto:sebas@kde.org\">sebas@kde.org</a>"
+                        onLinkActivated: link => Qt.openUrlExternally(link)
+                    }
+
+                    FlowLabel {
+                        objectName: "supportCosts"
+                        text: "With that said, making Seabass available for free isn't free for me. Aside from my time "
+                            + "and hardware to test with, I also have to pay for various services that keep this "
+                            + "project going. Chipping in is hugely welcome."
+                    }
+
+                    FlowLabel {
+                        objectName: "supportDonate"
+                        textFormat: Text.StyledText
+                        linkColor: Theme.accent
+                        // Both halves of the sentence are links, and each goes
+                        // where it says: the one-time ask to PayPal, the regular
+                        // one to Patreon. "One-time donation" used to be plain
+                        // text with nowhere to click, and the word Patreon linked
+                        // to kde.org/donate -- which is the sentence below's link,
+                        // so the page offered the KDE donation page twice and the
+                        // two things it actually asks for not at all.
+                        text: "You can either send a <a href=\"https://paypal.me/sjkugler\">one-time donation</a> or "
+                            + "become a regular supporter of Seabass over on "
+                            + "<a href=\"https://www.patreon.com/cw/SebastianKugler\">Patreon</a>."
+                        onLinkActivated: link => Qt.openUrlExternally(link)
+                    }
+
+                    FlowLabel {
+                        objectName: "supportKde"
+                        textFormat: Text.StyledText
+                        linkColor: Theme.accent
+                        text: "If you'd rather donate money to the KDE community, this is of great value for Seabass "
+                            + "as well, you can do so at <a href=\"https://kde.org/donate\">kde.org/donate</a>."
+                        onLinkActivated: link => Qt.openUrlExternally(link)
                     }
                 }
 
@@ -136,9 +241,10 @@ Page {
                 // these pages, so it stays in proportion to the text
                 // beside it rather than shrinking as the type grows.
                 readonly property int side: Math.round(120 * Theme.iconScale)
-                Layout.preferredWidth: side
-                Layout.preferredHeight: side
-                Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                width: side
+                height: side
+                anchors.top: parent.top
+                anchors.right: parent.right
                 antialiasing: true
 
                 Component.onCompleted: loadImage(photo)
@@ -187,61 +293,6 @@ Page {
                     ctx.restore();
                 }
                 }
-            }
-
-            Label {
-                objectName: "supportKindWords"
-                textFormat: Text.StyledText
-                linkColor: Theme.accent
-                text: "Kind words mean a lot to me. If you like Seabass, let me know! An endorsement from a "
-                    + "fellow DJ goes a long way in making my day a bit brighter. Send an email to "
-                    + "<a href=\"mailto:sebas@kde.org\">sebas@kde.org</a>"
-                wrapMode: Text.WordWrap
-                font.pointSize: Theme.baseFontPointSize * 1.1
-                Layout.fillWidth: true
-                onLinkActivated: link => Qt.openUrlExternally(link)
-            }
-
-            Label {
-                objectName: "supportCosts"
-                text: "With that said, making Seabass available for free isn't free for me. Aside from my time "
-                    + "and hardware to test with, I also have to pay for various services that keep this "
-                    + "project going. Chipping in is hugely welcome."
-                wrapMode: Text.WordWrap
-                font.pointSize: Theme.baseFontPointSize * 1.1
-                Layout.fillWidth: true
-            }
-
-            Label {
-                objectName: "supportDonate"
-                textFormat: Text.StyledText
-                linkColor: Theme.accent
-                // Both halves of the sentence are links, and each goes
-                // where it says: the one-time ask to PayPal, the regular
-                // one to Patreon. "One-time donation" used to be plain
-                // text with nowhere to click, and the word Patreon linked
-                // to kde.org/donate -- which is the sentence below's link,
-                // so the page offered the KDE donation page twice and the
-                // two things it actually asks for not at all.
-                text: "You can either send a <a href=\"https://paypal.me/sjkugler\">one-time donation</a> or "
-                    + "become a regular supporter of Seabass over on "
-                    + "<a href=\"https://www.patreon.com/cw/SebastianKugler\">Patreon</a>."
-                wrapMode: Text.WordWrap
-                font.pointSize: Theme.baseFontPointSize * 1.1
-                Layout.fillWidth: true
-                onLinkActivated: link => Qt.openUrlExternally(link)
-            }
-
-            Label {
-                objectName: "supportKde"
-                textFormat: Text.StyledText
-                linkColor: Theme.accent
-                text: "If you'd rather donate money to the KDE community, this is of great value for Seabass "
-                    + "as well, you can do so at <a href=\"https://kde.org/donate\">kde.org/donate</a>."
-                wrapMode: Text.WordWrap
-                font.pointSize: Theme.baseFontPointSize * 1.1
-                Layout.fillWidth: true
-                onLinkActivated: link => Qt.openUrlExternally(link)
             }
 
             Label {
