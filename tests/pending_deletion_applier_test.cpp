@@ -20,10 +20,13 @@
 
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::cleanup;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 namespace fs = std::filesystem;
 
 namespace
@@ -41,9 +44,9 @@ void writeLongPathFile(const fs::path &path, const std::string &content)
     // MAX_PATH, so this goes through the prefixed path.
     fs::path full = seabass::infrastructure::longPathSafe(path);
 #if defined(_WIN32)
-    FILE *f = _wfopen(full.c_str(), L"wb");
+    FILE *f = _wfopen(full.c_str(), L"wb");  // narrow-ok: the wide CRT call; path::c_str() is wchar_t* here
 #else
-    FILE *f = std::fopen(full.c_str(), "wb");
+    FILE *f = std::fopen(full.c_str(), "wb");  // narrow-ok: POSIX branch; path::c_str() is the native UTF-8 char* here
 #endif
     assert(f != nullptr);
     std::fwrite(content.data(), 1, content.size(), f);
@@ -108,7 +111,7 @@ PendingDeletion makeEntry(const std::string &filePath, const std::string &backup
     // carrying the WRONG entry (a stale loop variable, a mis-indexed
     // copy) is invisible while every entry reads the same, and the page
     // shows this title beside the file it is about to delete.
-    e.title = "Track for " + fs::path(filePath).filename().string();
+    e.title = "Track for " + pathToUtf8(pathFromUtf8(filePath).filename());
     e.artist = "Some Artist";
     e.backupId = backupId;
     return e;
@@ -188,11 +191,11 @@ int main()
         fs::remove(manifestPath);
         fs::path filePath = root / "orphaned.mp3";
         touch(filePath);
-        PendingDeletionManifest manifest(manifestPath.string());
-        manifest.append(makeEntry(filePath.string()));
+        PendingDeletionManifest manifest(pathToUtf8(manifestPath));
+        manifest.append(makeEntry(pathToUtf8(filePath)));
 
         const auto given = manifest.list();
-        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        auto outcomes = applyPendingDeletions(given, pathToUtf8(root), manifest);
         everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 1);
@@ -209,12 +212,12 @@ int main()
     {
         fs::remove(manifestPath);
         fs::path filePath = root / "already_gone.mp3";
-        PendingDeletionManifest manifest(manifestPath.string());
-        manifest.append(makeEntry(filePath.string()));
+        PendingDeletionManifest manifest(pathToUtf8(manifestPath));
+        manifest.append(makeEntry(pathToUtf8(filePath)));
         assert(!fs::exists(filePath));  // never created
 
         const auto given = manifest.list();
-        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        auto outcomes = applyPendingDeletions(given, pathToUtf8(root), manifest);
         everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 1);
@@ -233,8 +236,8 @@ int main()
         fs::path filePath = lockedDir / "cant_delete.mp3";
         touch(filePath);
 
-        PendingDeletionManifest manifest(manifestPath.string());
-        manifest.append(makeEntry(filePath.string()));
+        PendingDeletionManifest manifest(pathToUtf8(manifestPath));
+        manifest.append(makeEntry(pathToUtf8(filePath)));
 
         std::vector<PendingDeletionOutcome> outcomes;
         std::vector<PendingDeletion> given;
@@ -242,7 +245,7 @@ int main()
         {
             UndeletableFile blocked(filePath);
             given = manifest.list();
-            outcomes = applyPendingDeletions(given, root.string(), manifest);
+            outcomes = applyPendingDeletions(given, pathToUtf8(root), manifest);
             stillThere = fs::exists(filePath);  // genuinely untouched, while still blocked
         }
         // Checked out here, not inside: an assert aborts, an abort skips
@@ -291,11 +294,11 @@ int main()
         writeLongPathFile(filePath, "audio data");
         assert(fs::exists(seabass::infrastructure::longPathSafe(filePath)));
 
-        PendingDeletionManifest manifest(manifestPath.string());
-        manifest.append(makeEntry(filePath.string()));
+        PendingDeletionManifest manifest(pathToUtf8(manifestPath));
+        manifest.append(makeEntry(pathToUtf8(filePath)));
 
         const auto given = manifest.list();
-        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        auto outcomes = applyPendingDeletions(given, pathToUtf8(root), manifest);
         everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 1);
@@ -316,12 +319,12 @@ int main()
         fs::path keepFile = root / "batch_still_referenced.mp3";
         touch(keepFile);
 
-        PendingDeletionManifest manifest(manifestPath.string());
-        manifest.append(makeEntry(deletableFile.string()));
-        manifest.append(makeEntry(keepFile.string()));  // simulates an entry NOT passed to applyPendingDeletions
+        PendingDeletionManifest manifest(pathToUtf8(manifestPath));
+        manifest.append(makeEntry(pathToUtf8(deletableFile)));
+        manifest.append(makeEntry(pathToUtf8(keepFile)));  // simulates an entry NOT passed to applyPendingDeletions
 
-        std::vector<PendingDeletion> toDelete = {makeEntry(deletableFile.string())};
-        auto outcomes = applyPendingDeletions(toDelete, root.string(), manifest);
+        std::vector<PendingDeletion> toDelete = {makeEntry(pathToUtf8(deletableFile))};
+        auto outcomes = applyPendingDeletions(toDelete, pathToUtf8(root), manifest);
         everyEntryReportedOnce(toDelete, outcomes, false);
 
         assert(outcomes.size() == 1);
@@ -331,7 +334,7 @@ int main()
 
         auto remaining = manifest.list();
         assert(remaining.size() == 1);
-        assert(remaining[0].filePath == keepFile.string());  // only the processed entry was cleared
+        assert(remaining[0].filePath == pathToUtf8(keepFile));  // only the processed entry was cleared
         std::cout << "case 5 (mixed batch: only processed entries cleared, others left in the manifest) OK\n";
     }
 
@@ -345,14 +348,14 @@ int main()
         touch(first);
         touch(second);
 
-        PendingDeletionManifest manifest(manifestPath.string());
-        manifest.append(makeEntry(first.string()));
-        manifest.append(makeEntry(second.string()));
+        PendingDeletionManifest manifest(pathToUtf8(manifestPath));
+        manifest.append(makeEntry(pathToUtf8(first)));
+        manifest.append(makeEntry(pathToUtf8(second)));
 
         seabass::application::CancellationToken cancel;
         size_t reported = 0;
         const auto given = manifest.list();
-        auto outcomes = applyPendingDeletions(given, root.string(), manifest, cancel, [&](size_t done) {
+        auto outcomes = applyPendingDeletions(given, pathToUtf8(root), manifest, cancel, [&](size_t done) {
             reported = done;
             cancel.cancel();  // the user pressed Cancel while the first file was being deleted
         });
@@ -365,7 +368,7 @@ int main()
         assert(fs::exists(second));
         auto remaining = manifest.list();
         assert(remaining.size() == 1);
-        assert(remaining[0].filePath == second.string());
+        assert(remaining[0].filePath == pathToUtf8(second));
         std::cout << "case 6 (cancel between files: the rest stays on disk and in the manifest) OK\n";
     }
 
@@ -380,12 +383,12 @@ int main()
         touch(elsewhere);
         fs::path own = root / "own.mp3";
         touch(own);
-        PendingDeletionManifest manifest(manifestPath.string());
-        manifest.append(makeEntry(elsewhere.string()));
-        manifest.append(makeEntry(own.string()));
+        PendingDeletionManifest manifest(pathToUtf8(manifestPath));
+        manifest.append(makeEntry(pathToUtf8(elsewhere)));
+        manifest.append(makeEntry(pathToUtf8(own)));
 
         const auto given = manifest.list();
-        auto outcomes = applyPendingDeletions(given, root.string(), manifest);
+        auto outcomes = applyPendingDeletions(given, pathToUtf8(root), manifest);
         everyEntryReportedOnce(given, outcomes, false);
 
         assert(outcomes.size() == 2);
@@ -395,7 +398,7 @@ int main()
         assert(outcomes[1].status == PendingDeletionOutcome::Status::Deleted);
         assert(!fs::exists(own));
         auto remaining = manifest.list();
-        assert(remaining.size() == 1 && remaining[0].filePath == elsewhere.string());
+        assert(remaining.size() == 1 && remaining[0].filePath == pathToUtf8(elsewhere));
         fs::remove_all(elsewhere.parent_path());
         std::cout << "case: a path outside the stick root is refused and kept in the manifest OK\n";
     }

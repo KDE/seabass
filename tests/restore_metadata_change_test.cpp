@@ -34,11 +34,13 @@
 #include "domain/track.hpp"
 #include "gui/edit/changes/restore_metadata_change.hpp"
 #include "gui/edit/save_context.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/work_counters.hpp"
 
@@ -48,6 +50,8 @@ using namespace seabass::gui;
 using namespace seabass::domain;
 using namespace seabass::infrastructure::onelibrary;
 using seabass::application::CancellationToken;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 namespace fs = std::filesystem;
 
 namespace
@@ -56,10 +60,10 @@ namespace
 // The same minimal-but-real fixture onelibrary_cue_writer_test.cpp
 // builds -- see that file for why this schema shape -- plus the two
 // annotation columns, which a real stick's content table also carries.
-void createFixture(const std::string &pioneerRoot)
+void createFixture(const fs::path &pioneerRoot)
 {
-    fs::create_directories(fs::path(pioneerRoot) / "rekordbox");
-    const std::string dbPath = OneLibraryCueWriter::dbPathFor(pioneerRoot);
+    fs::create_directories(pioneerRoot / "rekordbox");
+    const std::string dbPath = OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot));
 
     const std::string key = deriveOneLibraryKey();
     SqlCipherLibrary lib;
@@ -82,20 +86,20 @@ void createFixture(const std::string &pioneerRoot)
 
 // Everything read back goes through an independent second connection, so
 // a case proves what is in the file rather than what a writer returned.
-int cueCount(const std::string &pioneerRoot)
+int cueCount(const fs::path &pioneerRoot)
 {
     SqlCipherLibrary lib;
-    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
+    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     SqlCipherStatement stmt(db, "SELECT COUNT(*) FROM cue WHERE content_id = 1");
     assert(stmt.step());
     return static_cast<int>(stmt.columnInt64(0));
 }
 
-std::optional<int> storedRating(const std::string &pioneerRoot)
+std::optional<int> storedRating(const fs::path &pioneerRoot)
 {
     SqlCipherLibrary lib;
-    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
+    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     SqlCipherStatement stmt(db, "SELECT rating FROM content WHERE content_id = 1");
     assert(stmt.step());
@@ -105,10 +109,10 @@ std::optional<int> storedRating(const std::string &pioneerRoot)
     return static_cast<int>(stmt.columnInt64(0));
 }
 
-std::string storedComment(const std::string &pioneerRoot)
+std::string storedComment(const fs::path &pioneerRoot)
 {
     SqlCipherLibrary lib;
-    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
+    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     SqlCipherStatement stmt(db, "SELECT djComment FROM content WHERE content_id = 1");
     assert(stmt.step());
@@ -138,13 +142,13 @@ struct Fixture
 Fixture freshFixture(const std::string &name)
 {
     Fixture fixture;
-    fixture.scratch = seabass::testing::scratchRoot() / ("seabass_restore_metadata_change_" + name);
+    fixture.scratch = seabass::testing::scratchRoot() / pathFromUtf8("seabass_restore_metadata_change_" + name);
     std::error_code ec;
     fs::remove_all(fixture.scratch, ec);
     fs::create_directories(fixture.scratch);
     fixture.pioneerRoot = fixture.scratch / "PIONEER";
-    createFixture(fixture.pioneerRoot.string());
-    fixture.filePath = (fixture.scratch / "Contents" / "Test Track.mp3").string();
+    createFixture(fixture.pioneerRoot);
+    fixture.filePath = pathToUtf8(fixture.scratch / "Contents" / "Test Track.mp3");
     return fixture;
 }
 
@@ -164,7 +168,7 @@ void applyChange(const Fixture &fixture, const MetadataRestoreProposal &proposal
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    const QString root = QString::fromStdString(fixture.pioneerRoot.string());
+    const QString root = pathToQString(fixture.pioneerRoot);
     SaveContext ctx(token, noProgress, {}, root, {});
     RestoreMetadataChange change("onelibrary", root, "1", proposal);
     const ChangeOutcome outcome = change.apply(ctx);
@@ -185,10 +189,10 @@ int main()
     {
         Fixture fixture = freshFixture("keeps_cues");
         {
-            OneLibraryCueWriter writer(fixture.pioneerRoot.string());
+            OneLibraryCueWriter writer(pathToUtf8(fixture.pioneerRoot));
             writer.writeCuesForPath(fixture.filePath, liveCues());
         }
-        assert(cueCount(fixture.pioneerRoot.string()) == 2);
+        assert(cueCount(fixture.pioneerRoot) == 2);
 
         MetadataRestoreProposal proposal = proposalFor(fixture);
         proposal.cuesConflict = true;  // the store had cues; they differ
@@ -199,8 +203,8 @@ int main()
 
         applyChange(fixture, proposal);
 
-        assert(cueCount(fixture.pioneerRoot.string()) == 2);
-        assert(storedRating(fixture.pioneerRoot.string()) == 4);
+        assert(cueCount(fixture.pioneerRoot) == 2);
+        assert(storedRating(fixture.pioneerRoot) == 4);
         std::cout << "case 1: a rating-only restore leaves the track's own cues alone\n";
     }
 
@@ -209,10 +213,10 @@ int main()
     {
         Fixture fixture = freshFixture("writes_cues");
         {
-            OneLibraryCueWriter writer(fixture.pioneerRoot.string());
+            OneLibraryCueWriter writer(pathToUtf8(fixture.pioneerRoot));
             writer.writeCuesForPath(fixture.filePath, liveCues());
         }
-        assert(cueCount(fixture.pioneerRoot.string()) == 2);
+        assert(cueCount(fixture.pioneerRoot) == 2);
 
         MetadataRestoreProposal proposal = proposalFor(fixture);
         proposal.cuesOffered = true;
@@ -220,7 +224,7 @@ int main()
 
         applyChange(fixture, proposal);
 
-        assert(cueCount(fixture.pioneerRoot.string()) == 1);
+        assert(cueCount(fixture.pioneerRoot) == 1);
         std::cout << "case 2: an offered cue set replaces what was there\n";
     }
 
@@ -238,8 +242,8 @@ int main()
 
         applyChange(fixture, proposal);
 
-        assert(storedRating(fixture.pioneerRoot.string()) == 4);
-        assert(storedComment(fixture.pioneerRoot.string()) == "mixes into the Larry Heard");
+        assert(storedRating(fixture.pioneerRoot) == 4);
+        assert(storedComment(fixture.pioneerRoot) == "mixes into the Larry Heard");
         std::cout << "case 3: rating in stars, comment in djComment\n";
     }
 
@@ -261,8 +265,8 @@ int main()
         ratingOnly.rating = 2;
         applyChange(fixture, ratingOnly);
 
-        assert(storedRating(fixture.pioneerRoot.string()) == 2);
-        assert(storedComment(fixture.pioneerRoot.string()) == "keep me");
+        assert(storedRating(fixture.pioneerRoot) == 2);
+        assert(storedComment(fixture.pioneerRoot) == "keep me");
         std::cout << "case 4: restoring one field leaves the other alone\n";
     }
 
@@ -277,7 +281,7 @@ int main()
         proposal.rating = 3;
         proposal.commentOffered = true;
         proposal.comment = "a comment";
-        const QString root = QString::fromStdString(fixture.pioneerRoot.string());
+        const QString root = pathToQString(fixture.pioneerRoot);
         RestoreMetadataChange change("onelibrary", root, "1", proposal);
         const QString description = change.description();
         assert(!description.contains("cue"));
@@ -321,7 +325,7 @@ int main()
             Fixture fixture = freshFixture("open_count_" + std::to_string(trackCount));
             auto &noProgress = seabass::application::NullProgressReporter::instance();
             CancellationToken token;
-            const QString root = QString::fromStdString(fixture.pioneerRoot.string());
+            const QString root = pathToQString(fixture.pioneerRoot);
             const std::string names[3] = {"Test Track", "Second", "Third"};
 
             seabass::infrastructure::WorkCounters::instance().reset();
@@ -332,7 +336,7 @@ int main()
                     proposal.storedId = "stored-" + std::to_string(i + 1);
                     proposal.stickTrack.sourceId = std::to_string(i + 1);
                     proposal.stickTrack.filePath =
-                        (fixture.scratch / "Contents" / (names[i] + ".mp3")).string();
+                        pathToUtf8(fixture.scratch / "Contents" / (names[i] + ".mp3"));
                     proposal.stickTrack.title = names[i];
                     proposal.cuesOffered = true;
                     proposal.cues = storedCues();
@@ -391,7 +395,7 @@ int main()
         const fs::path pioneer = scratch / "PIONEER";
         fs::copy(source, pioneer, fs::copy_options::recursive);
 
-        seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(pioneer));
         const auto before = reader.readAll();
         assert(!before.empty());
         std::string targetId;
@@ -407,14 +411,14 @@ int main()
 
         auto &noProgress = seabass::application::NullProgressReporter::instance();
         CancellationToken token;
-        const QString root = QString::fromStdString(pioneer.string());
+        const QString root = pathToQString(pioneer);
         {
             SaveContext ctx(token, noProgress, {}, root, {});
 
             // Stand-in for a Clean Up or Sync change staged into the same
             // save: the session, asked for first and with a hint big
             // enough that it redirects to a scratch copy.
-            auto &other = sharedFormatWriteSession(ctx, "rekordbox", pioneer.string(), 5000, "test-other-feature");
+            auto &other = sharedFormatWriteSession(ctx, "rekordbox", pathToUtf8(pioneer), 5000, "test-other-feature");
             assert(other.usesScratch());  // otherwise this case proves nothing
 
             MetadataRestoreProposal proposal;
@@ -431,7 +435,7 @@ int main()
 
         // Off the stick's own file, through a reader that knows nothing
         // about any of the above.
-        seabass::infrastructure::rekordbox::KaitaiRekordboxReader after(pioneer.string());
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader after(pathToUtf8(pioneer));
         bool found = false;
         for (const auto &track : after.readAll()) {
             if (track.sourceId == targetId) {
@@ -463,13 +467,13 @@ int main()
         Fixture fixture = freshFixture("cancelled_save");
         auto &noProgress = seabass::application::NullProgressReporter::instance();
         CancellationToken token;
-        const QString root = QString::fromStdString(fixture.pioneerRoot.string());
+        const QString root = pathToQString(fixture.pioneerRoot);
         {
             SaveContext ctx(token, noProgress, {}, root, {});
             // A hint far past the scratch threshold, from a stand-in for
             // some other feature staged into the same save. It must make
             // no difference.
-            auto &session = sharedFormatWriteSession(ctx, "onelibrary", fixture.pioneerRoot.string(), 5000,
+            auto &session = sharedFormatWriteSession(ctx, "onelibrary", pathToUtf8(fixture.pioneerRoot), 5000,
                                                      "test-other-feature");
             assert(!session.usesScratch());
             assert(session.writeRoot() == session.realRoot());
@@ -484,7 +488,7 @@ int main()
             // track went through.
             assert(!ctx.runFinishHooks(false).error);
         }
-        assert(cueCount(fixture.pioneerRoot.string()) == 1);
+        assert(cueCount(fixture.pioneerRoot) == 1);
         std::cout << "case 8: OneLibrary declines the scratch copy, and a cancel keeps the write\n";
     }
 
@@ -510,7 +514,7 @@ int main()
         const fs::path pioneer = scratch / "PIONEER";
         fs::copy(source, pioneer, fs::copy_options::recursive);
 
-        seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(pioneer));
         std::string targetId;
         for (const auto &track : reader.readAll()) {
             if (!track.rating) {
@@ -522,12 +526,12 @@ int main()
 
         auto &noProgress = seabass::application::NullProgressReporter::instance();
         CancellationToken token;
-        const QString root = QString::fromStdString(pioneer.string());
+        const QString root = pathToQString(pioneer);
         {
             SaveContext ctx(token, noProgress, {}, root, {});
             // A batch big enough to earn the scratch copy, which is the
             // only situation in which the count matters at all.
-            auto &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer.string(), 400, "test-batch");
+            auto &session = sharedFormatWriteSession(ctx, "rekordbox", pathToUtf8(pioneer), 400, "test-batch");
             assert(session.usesScratch());
 
             MetadataRestoreProposal proposal;
@@ -544,7 +548,7 @@ int main()
             assert(!ctx.runFinishHooks(false).error);
         }
 
-        seabass::infrastructure::rekordbox::KaitaiRekordboxReader after(pioneer.string());
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader after(pathToUtf8(pioneer));
         bool found = false;
         for (const auto &track : after.readAll()) {
             if (track.sourceId == targetId) {

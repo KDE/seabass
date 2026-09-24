@@ -56,12 +56,14 @@ private:
 
 }  // namespace
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::engine;
 using seabass::domain::CuePoint;
 using seabass::domain::Track;
+using seabass::pathToUtf8;
 namespace fs = std::filesystem;
 
 namespace
@@ -102,16 +104,16 @@ int main()
     // the same, already-proven LibdjinteropEngineReader.
     {
         std::vector<Track> tracks = {
-            makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string()),
-            makeTrack("r2", "Song Two", "Artist Two", (root / "song2.mp3").string(), 140.0, "Gbm", 200.0),
+            makeTrack("r1", "Song One", "Artist One", pathToUtf8(root / "song1.mp3")),
+            makeTrack("r2", "Song Two", "Artist Two", pathToUtf8(root / "song2.mp3"), 140.0, "Gbm", 200.0),
         };
-        auto result = EngineLibraryCreator::create(enginePath.string(), tracks, EngineSchemaGeneration::V2);
+        auto result = EngineLibraryCreator::create(pathToUtf8(enginePath), tracks, EngineSchemaGeneration::V2);
         assert(result.errorMessage.empty());
         assert(result.tracksCreated == 2);
         assert(result.tracksSkipped == 0);
         assert(result.cuesCopied == 4);
 
-        LibdjinteropEngineReader reader(enginePath.string());
+        LibdjinteropEngineReader reader(pathToUtf8(enginePath));
         auto readBack = seabass::application::ScanLibrary(reader).execute();
         assert(readBack.size() == 2);
 
@@ -139,8 +141,8 @@ int main()
 
     // Case 2: refuses to overwrite an existing Engine Library.
     {
-        std::vector<Track> tracks = {makeTrack("r3", "Song Three", "Artist Three", (root / "song3.mp3").string())};
-        auto result = EngineLibraryCreator::create(enginePath.string(), tracks, EngineSchemaGeneration::V2);
+        std::vector<Track> tracks = {makeTrack("r3", "Song Three", "Artist Three", pathToUtf8(root / "song3.mp3"))};
+        auto result = EngineLibraryCreator::create(pathToUtf8(enginePath), tracks, EngineSchemaGeneration::V2);
         assert(!result.errorMessage.empty());
         assert(result.tracksCreated == 0);
         std::cout << "case 2 (refuses to overwrite an existing library) OK\n";
@@ -152,7 +154,7 @@ int main()
         fs::path secondEnginePath = root / "Engine Library 2";
         Track noFile = makeTrack("r4", "No File", "Nobody", "");
         std::vector<Track> tracks = {noFile};
-        auto result = EngineLibraryCreator::create(secondEnginePath.string(), tracks, EngineSchemaGeneration::V2);
+        auto result = EngineLibraryCreator::create(pathToUtf8(secondEnginePath), tracks, EngineSchemaGeneration::V2);
         assert(result.errorMessage.empty());
         assert(result.tracksCreated == 0);
         assert(result.tracksSkipped == 1);
@@ -177,8 +179,8 @@ int main()
         int which = 0;
         for (EngineSchemaGeneration generation : generations) {
             fs::path path = root / ("Engine Library gen" + std::to_string(++which));
-            std::vector<Track> tracks = {makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string())};
-            auto result = EngineLibraryCreator::create(path.string(), tracks, generation);
+            std::vector<Track> tracks = {makeTrack("r1", "Song One", "Artist One", pathToUtf8(root / "song1.mp3"))};
+            auto result = EngineLibraryCreator::create(pathToUtf8(path), tracks, generation);
             if (!result.errorMessage.empty()) {
                 // Say which generation and why: an assertion that hides the
                 // reason costs an hour every time this fires. On cerr, because
@@ -196,7 +198,7 @@ int main()
             assert(fs::exists(dbFile));
 
             sqlite3 *db = nullptr;
-            const std::string dbPath = dbFile.string();
+            const std::string dbPath = pathToUtf8(dbFile);
             assert(sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
             sqlite3_stmt *stmt = nullptr;
             assert(sqlite3_prepare_v2(db, "SELECT count(*), coalesce(min(id), 0) FROM Information;", -1, &stmt,
@@ -221,15 +223,15 @@ int main()
     for (const auto generation : {EngineSchemaGeneration::V2, EngineSchemaGeneration::V3}) {
         const fs::path given = root / ("Engine Library seq " + std::to_string(static_cast<int>(generation)));
         const fs::path none = root / ("Engine Library noseq " + std::to_string(static_cast<int>(generation)));
-        std::vector<Track> tracks = {makeTrack("s1", "Seq", "Artist", (root / "song1.mp3").string())};
-        auto result = EngineLibraryCreator::create(given.string(), tracks, generation,
+        std::vector<Track> tracks = {makeTrack("s1", "Seq", "Artist", pathToUtf8(root / "song1.mp3"))};
+        auto result = EngineLibraryCreator::create(pathToUtf8(given), tracks, generation,
                                                    seabass::application::NullProgressReporter::instance(),
                                                    seabass::application::CancellationToken::none(), 777);
         assert(result.errorMessage.empty() && result.rekordboxImportRecorded);
-        assert(seabass::infrastructure::engine::readRekordboxImportState(given.string(), {}).engineCounter == 777);
-        auto plain = EngineLibraryCreator::create(none.string(), tracks, generation);
+        assert(seabass::infrastructure::engine::readRekordboxImportState(pathToUtf8(given), {}).engineCounter == 777);
+        auto plain = EngineLibraryCreator::create(pathToUtf8(none), tracks, generation);
         assert(plain.errorMessage.empty() && !plain.rekordboxImportRecorded);
-        assert(seabass::infrastructure::engine::readRekordboxImportState(none.string(), {}).engineCounter == 0);
+        assert(seabass::infrastructure::engine::readRekordboxImportState(pathToUtf8(none), {}).engineCounter == 0);
     }
     std::cout << "case 4b (a created library records the export it was made from as imported) OK\n";
 
@@ -238,9 +240,9 @@ int main()
     // notices immediately when it is treated as one.
     {
         fs::path path = root / "Engine Library playlists";
-        Track first = makeTrack("r1", "Opener", "Artist One", (root / "song1.mp3").string());
-        Track second = makeTrack("r2", "Closer", "Artist Two", (root / "song2.mp3").string(), 140.0, "Gbm", 200.0);
-        Track third = makeTrack("r3", "Middle", "Artist Three", (root / "song3.mp3").string());
+        Track first = makeTrack("r1", "Opener", "Artist One", pathToUtf8(root / "song1.mp3"));
+        Track second = makeTrack("r2", "Closer", "Artist Two", pathToUtf8(root / "song2.mp3"), 140.0, "Gbm", 200.0);
+        Track third = makeTrack("r3", "Middle", "Artist Three", pathToUtf8(root / "song3.mp3"));
         // Deliberately out of order in the input, and in two playlists
         // that share one folder, so both the ordering and the folder
         // reuse are actually exercised.
@@ -249,13 +251,13 @@ int main()
         second.playlists = {{"Techno/Peak Time", 2}, {"Techno/Warm Up", 0}};
         std::vector<Track> tracks = {second, third, first};
 
-        auto result = EngineLibraryCreator::create(path.string(), tracks, EngineSchemaGeneration::V2);
+        auto result = EngineLibraryCreator::create(pathToUtf8(path), tracks, EngineSchemaGeneration::V2);
         assert(result.errorMessage.empty());
         assert(result.tracksCreated == 3);
         // Two playlists plus the "Techno" folder they share.
         assert(result.playlistsCreated == 3);
 
-        LibdjinteropEngineReader reader(path.string());
+        LibdjinteropEngineReader reader(pathToUtf8(path));
         auto readBack = seabass::application::ScanLibrary(reader).execute();
         assert(readBack.size() == 3);
 
@@ -291,14 +293,14 @@ int main()
         int which = 0;
         for (EngineSchemaGeneration generation : modern) {
             fs::path path = root / ("Engine Library analysis" + std::to_string(++which));
-            std::vector<Track> tracks = {makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string())};
-            auto result = EngineLibraryCreator::create(path.string(), tracks, generation);
+            std::vector<Track> tracks = {makeTrack("r1", "Song One", "Artist One", pathToUtf8(root / "song1.mp3"))};
+            auto result = EngineLibraryCreator::create(pathToUtf8(path), tracks, generation);
             assert(result.errorMessage.empty());
             assert(result.tracksCreated == 1);
             assert(result.tracksLeftForDeviceAnalysis == result.tracksCreated);
 
             sqlite3 *db = nullptr;
-            const std::string dbPath = (path / "Database2" / "m.db").string();
+            const std::string dbPath = pathToUtf8(path / "Database2" / "m.db");
             assert(sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
             const auto count = [db](const char *sql) {
                 sqlite3_stmt *stmt = nullptr;
@@ -319,7 +321,7 @@ int main()
 
             // And the library still reads back, NULL analysis columns and all,
             // exactly as a Denon-written stick full of them does.
-            LibdjinteropEngineReader reader(path.string());
+            LibdjinteropEngineReader reader(pathToUtf8(path));
             auto readBack = seabass::application::ScanLibrary(reader).execute();
             assert(readBack.size() == 1);
             assert(readBack.front().title == "Song One");
@@ -330,8 +332,8 @@ int main()
         // hardware has been available to check it, so it is left alone --
         // and says so rather than claiming tracks it did not touch.
         fs::path v1Path = root / "Engine Library analysis v1";
-        std::vector<Track> v1Tracks = {makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string())};
-        auto v1Result = EngineLibraryCreator::create(v1Path.string(), v1Tracks, EngineSchemaGeneration::V1);
+        std::vector<Track> v1Tracks = {makeTrack("r1", "Song One", "Artist One", pathToUtf8(root / "song1.mp3"))};
+        auto v1Result = EngineLibraryCreator::create(pathToUtf8(v1Path), v1Tracks, EngineSchemaGeneration::V1);
         assert(v1Result.errorMessage.empty());
         assert(v1Result.tracksCreated == 1);
         assert(v1Result.tracksLeftForDeviceAnalysis == 0);
@@ -368,15 +370,15 @@ int main()
         for (EngineSchemaGeneration generation : all) {
             fs::path path = root / ("Engine Library artwork" + std::to_string(++which));
             std::vector<Track> tracks = {
-                makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string()),
-                makeTrack("r2", "Song Two", "Artist Two", (root / "song2.mp3").string()),
-                makeTrack("r3", "Song Three", "Artist Three", (root / "song3.mp3").string()),
+                makeTrack("r1", "Song One", "Artist One", pathToUtf8(root / "song1.mp3")),
+                makeTrack("r2", "Song Two", "Artist Two", pathToUtf8(root / "song2.mp3")),
+                makeTrack("r3", "Song Three", "Artist Three", pathToUtf8(root / "song3.mp3")),
             };
-            tracks[0].artworkPath = (root / "cover.jpg").string();
-            tracks[1].artworkPath = (root / "cover.PNG").string();
-            tracks[2].artworkPath = (root / "cover.webp").string();
+            tracks[0].artworkPath = pathToUtf8(root / "cover.jpg");
+            tracks[1].artworkPath = pathToUtf8(root / "cover.PNG");
+            tracks[2].artworkPath = pathToUtf8(root / "cover.webp");
 
-            auto result = EngineLibraryCreator::create(path.string(), tracks, generation);
+            auto result = EngineLibraryCreator::create(pathToUtf8(path), tracks, generation);
             assert(result.errorMessage.empty());
 
             // Two of the three: the third is neither JPEG nor PNG, so it
@@ -389,7 +391,7 @@ int main()
             int jpg = 0;
             int other = 0;
             for (const auto &entry : fs::directory_iterator(path / "Artwork")) {
-                const std::string ext = entry.path().extension().string();
+                const fs::path ext = entry.path().extension();
                 if (ext == ".png") {
                     ++png;
                 } else if (ext == ".jpg") {
@@ -408,7 +410,7 @@ int main()
             // put it under Database2/.
             sqlite3 *db = nullptr;
             const fs::path modern = path / "Database2" / "m.db";
-            const std::string dbPath = (fs::exists(modern) ? modern : path / "m.db").string();
+            const std::string dbPath = pathToUtf8(fs::exists(modern) ? modern : path / "m.db");
             assert(sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
             const std::string column = generation == EngineSchemaGeneration::V1 ? "idAlbumArt" : "albumArtId";
             const auto countOf = [db](const std::string &sql) {
@@ -443,12 +445,12 @@ int main()
         fs::path cancelledPath = root / "cancelled" / "Engine Library";
         fs::create_directories(cancelledPath.parent_path());
         std::vector<Track> tracks = {
-            makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string()),
-            makeTrack("r2", "Song Two", "Artist Two", (root / "song2.mp3").string(), 140.0, "Gbm", 200.0),
+            makeTrack("r1", "Song One", "Artist One", pathToUtf8(root / "song1.mp3")),
+            makeTrack("r2", "Song Two", "Artist Two", pathToUtf8(root / "song2.mp3"), 140.0, "Gbm", 200.0),
         };
         seabass::application::CancellationToken cancel;
         CancelOnFirstTick reporter(cancel);
-        auto result = EngineLibraryCreator::create(cancelledPath.string(), tracks, EngineSchemaGeneration::V2,
+        auto result = EngineLibraryCreator::create(pathToUtf8(cancelledPath), tracks, EngineSchemaGeneration::V2,
                                                    reporter, cancel);
         assert(result.cancelled);
         assert(result.errorMessage.empty());
@@ -465,13 +467,13 @@ int main()
     {
         fs::path cancelledPath = root / "cancelled-at-playlists" / "Engine Library";
         fs::create_directories(cancelledPath.parent_path());
-        Track first = makeTrack("r1", "Song One", "Artist One", (root / "song1.mp3").string());
-        Track second = makeTrack("r2", "Song Two", "Artist Two", (root / "song2.mp3").string(), 140.0, "Gbm", 200.0);
+        Track first = makeTrack("r1", "Song One", "Artist One", pathToUtf8(root / "song1.mp3"));
+        Track second = makeTrack("r2", "Song Two", "Artist Two", pathToUtf8(root / "song2.mp3"), 140.0, "Gbm", 200.0);
         first.playlists = {{"Set/Opening", 0}};
         second.playlists = {{"Set/Opening", 1}};
         seabass::application::CancellationToken cancel;
         CancelAtPlaylists reporter(cancel);
-        auto result = EngineLibraryCreator::create(cancelledPath.string(), {first, second}, EngineSchemaGeneration::V2,
+        auto result = EngineLibraryCreator::create(pathToUtf8(cancelledPath), {first, second}, EngineSchemaGeneration::V2,
                                                    reporter, cancel);
         assert(reporter.sawPlaylistPass && "the cancel really landed in the playlist pass");
         assert(result.tracksCreated == 2 && "every track was built before it");
@@ -494,7 +496,7 @@ int main()
         fs::create_directories(loopRoot);
         fs::path loopLibrary = loopRoot / "Engine Library";
 
-        Track track = makeTrack("r1", "Looper", "An Artist", (loopRoot / "song.mp3").string());
+        Track track = makeTrack("r1", "Looper", "An Artist", pathToUtf8(loopRoot / "song.mp3"));
         track.cues = {
             {CuePoint::Kind::Hot, 1, 4000.0, "#00FF00", "the loop"},
             {CuePoint::Kind::Hot, 2, 9000.0, "#0000FF", "a plain pad"},
@@ -502,13 +504,13 @@ int main()
         track.cues[0].isLoop = true;
         track.cues[0].loopEndMs = 12000.0;
 
-        auto created = EngineLibraryCreator::create(loopLibrary.string(), {track}, EngineSchemaGeneration::V2);
+        auto created = EngineLibraryCreator::create(pathToUtf8(loopLibrary), {track}, EngineSchemaGeneration::V2);
         assert(created.errorMessage.empty());
         assert(created.tracksCreated == 1);
 
         // Read back through the app's own reader, so this asserts what
         // Seabass will see rather than what libdjinterop stored.
-        LibdjinteropEngineReader reader(loopLibrary.string());
+        LibdjinteropEngineReader reader(pathToUtf8(loopLibrary));
         const auto readBack = reader.readAll();
         assert(readBack.size() == 1);
 

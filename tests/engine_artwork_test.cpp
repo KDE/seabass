@@ -22,10 +22,13 @@
 #include <sqlite3.h>
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass::infrastructure::engine;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 
 namespace
 {
@@ -70,7 +73,7 @@ struct Fixture
         // it writes from the bytes rather than from the source's extension.
         write(stick / "PIONEER" / "Artwork" / "00001" / "a5_m.jpg", jpeg("FOR-TRACK-3"));
         sqlite3 *db = nullptr;
-        assert(sqlite3_open((library / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_open(pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
         exec(db, "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT, albumArt BLOB);");
         exec(db, "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER);");
         sqlite3_close(db);
@@ -86,7 +89,7 @@ struct Fixture
     sqlite3 *open()
     {
         sqlite3 *db = nullptr;
-        assert(sqlite3_open((library / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_open(pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
         return db;
     }
 };
@@ -157,7 +160,7 @@ int main(int argc, char **argv)
         assert(classifyArtworkReference(std::string("\x01\x02\x03", 3)) == ArtworkStorage::Cached);
         const std::string here =
             imageOnStickFor("image://fileart//media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg", "/media/OTHER");
-        assert(here == (fs::path("/media/OTHER") / "PIONEER/Artwork/00001/a5_m.jpg").make_preferred().string());
+        assert(here == pathToUtf8((fs::path("/media/OTHER") / "PIONEER/Artwork/00001/a5_m.jpg").make_preferred()));
         assert(imageOnStickFor("image://fileart//somewhere/else.jpg", "/media/OTHER").empty());
         // The reference is the path the IMPORTING computer wrote, and that
         // machine is often a Windows one: "...\PIONEER\Artwork\...".
@@ -170,10 +173,10 @@ int main(int argc, char **argv)
         // and call the track unrepairable.
         const std::string literalBackslash =
             imageOnStickFor("image://fileart//media/W/PIONEER/Artwork/00001/a\\b.jpg", "/media/OTHER");
-        assert(literalBackslash == (fs::path("/media/OTHER") / "PIONEER/Artwork/00001/a\\b.jpg").make_preferred().string());
+        assert(literalBackslash == pathToUtf8((fs::path("/media/OTHER") / "PIONEER/Artwork/00001/a\\b.jpg").make_preferred()));
         const std::string fromWindows =
             imageOnStickFor("image://fileart//E:\\PIONEER\\Artwork\\00001\\a5_m.jpg", "/media/OTHER");
-        assert(fromWindows == (fs::path("/media/OTHER") / "PIONEER/Artwork/00001/a5_m.jpg").make_preferred().string());
+        assert(fromWindows == pathToUtf8((fs::path("/media/OTHER") / "PIONEER/Artwork/00001/a5_m.jpg").make_preferred()));
         std::cout << "case 2 (an imported path is recognised, either spelling, and re-anchored here) OK\n";
     }
 
@@ -200,7 +203,7 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (5, 'No art at all', 'E', NULL);");
         sqlite3_close(db);
 
-        const ArtworkAudit audit = auditArtwork(fixture.library.string());
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
         assert(audit.error.empty());
         assert(audit.tracksWithArt == 4);  // the fifth asked for none
         assert(audit.readableByAPlayer == 1);
@@ -215,13 +218,13 @@ int main(int argc, char **argv)
         // 4. The repair gives that track Engine's own storage, and the
         //    audit then counts it as readable. The one with no image on
         //    this stick is left exactly as it was.
-        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable);
         assert(repair.error.empty());
         assert(repair.repaired == 1);
         assert(repair.filesWritten.size() == 1);
         assert(fs::is_regular_file(repair.filesWritten[0]));
 
-        const ArtworkAudit after = auditArtwork(fixture.library.string());
+        const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library));
         assert(after.readableByAPlayer == 2);
         assert(after.repairable() == 0);
         assert(after.unreadable.size() == 2);  // the cached-file-gone one, and the one with no image
@@ -258,7 +261,7 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (3, 'Text file', 'C', 3);");
         sqlite3_close(db);
 
-        const ArtworkAudit audit = auditArtwork(fixture.library.string());
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
         // The text file is on the stick, so it used to count as repairable
         // and the page offered it. The audit reads the first bytes now, so
         // the count it shows and the button it offers are what a repair
@@ -269,16 +272,16 @@ int main(int argc, char **argv)
         assert(audit.unreadable[2].trackId == 3);  // the text file, listed but not offered
         assert(audit.unreadable[2].imageOnStick.empty());
 
-        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable);
         assert(repair.error.empty());
         assert(repair.repaired == 2);   // the JPEG and the PNG
         assert(repair.notAnImage == 0); // the text file was never offered
         assert(repair.filesWritten.size() == 2);
         for (const std::string &written : repair.filesWritten) {
-            const std::string ext = fs::path(written).extension().string();
+            const fs::path ext = pathFromUtf8(written).extension();
             assert(ext == ".jpg" || ext == ".png");
         }
-        const ArtworkAudit after = auditArtwork(fixture.library.string());
+        const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library));
         assert(after.readableByAPlayer == 2);
         assert(after.unreadable.size() == 1);  // only the text file is left
         assert(after.unreadable[0].trackId == 3);
@@ -287,8 +290,8 @@ int main(int argc, char **argv)
         // the scan and the save -- the repair refuses it by name rather
         // than writing a <hash>.txt no player will open.
         ArtworkEntry forced = after.unreadable[0];
-        forced.imageOnStick = (fixture.stick / "PIONEER" / "Artwork" / "00001" / "notes.txt").string();
-        const ArtworkRepair refused = repairArtwork(fixture.library.string(), {forced});
+        forced.imageOnStick = pathToUtf8(fixture.stick / "PIONEER" / "Artwork" / "00001" / "notes.txt");
+        const ArtworkRepair refused = repairArtwork(pathToUtf8(fixture.library), {forced});
         assert(refused.error.empty());
         assert(refused.repaired == 0);
         assert(refused.notAnImage == 1);
@@ -309,13 +312,13 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (7, 'Here for now', 'A', 1);");
         sqlite3_close(db);
 
-        const ArtworkAudit audit = auditArtwork(fixture.library.string());
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
         assert(audit.repairable() == 1);
         db = fixture.open();
         exec(db, "DELETE FROM Track WHERE id = 7;");
         sqlite3_close(db);
 
-        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable);
         assert(repair.error.empty());
         assert(repair.repaired == 0);
         assert(repair.tracksNoLongerThere == 1);
@@ -335,10 +338,10 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Protected', 'A', 1);");
         sqlite3_close(db);
 
-        const ArtworkAudit audit = auditArtwork(fixture.library.string());
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
         assert(audit.repairable() == 1);
         const ArtworkRepair repair =
-            repairArtwork(fixture.library.string(), audit.unreadable, [](const std::string &) {
+            repairArtwork(pathToUtf8(fixture.library), audit.unreadable, [](const std::string &) {
                 throw std::runtime_error("not enough temporary space to protect it");
             });
         assert(!repair.error.empty());
@@ -363,18 +366,18 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Redirected', 'A', 1);");
         sqlite3_close(db);
 
-        const ArtworkAudit audit = auditArtwork(fixture.library.string());
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
         const fs::path scratch = fixture.stick / "scratch-m.db";
         fs::copy_file(fixture.library / "Database2" / "m.db", scratch);
-        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable, {}, scratch.string());
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable, {}, pathToUtf8(scratch));
         assert(repair.error.empty());
         assert(repair.repaired == 1);
         assert(repair.filesWritten.size() == 1);
         // The image went into the library, as always.
-        assert(fs::path(repair.filesWritten[0]).parent_path() == fixture.library / "Artwork");
+        assert(pathFromUtf8(repair.filesWritten[0]).parent_path() == fixture.library / "Artwork");
 
         sqlite3 *scratchDb = nullptr;
-        assert(sqlite3_open(scratch.string().c_str(), &scratchDb) == SQLITE_OK);
+        assert(sqlite3_open(pathToUtf8(scratch).c_str(), &scratchDb) == SQLITE_OK);
         assert(hashOf(scratchDb, 1).rfind("image://", 0) != 0);  // the scratch got the row
         sqlite3_close(scratchDb);
         db = fixture.open();
@@ -407,7 +410,7 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (5, 'Empty row', 'E', 6);");
         sqlite3_close(db);
 
-        const ArtworkAudit audit = auditArtwork(fixture.library.string());
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
         assert(audit.error.empty());
         assert(audit.tracksWithArt == 2);  // the three with no cover asked for none
         assert(audit.readableByAPlayer == 0);
@@ -433,7 +436,7 @@ int main(int argc, char **argv)
         write(fixture.stick / "Contents" / "song.mp3", "AUDIO");
         write(fixture.stick / "PIONEER" / "Artwork" / "00002" / "cover.jpg", jpeg("REKORDBOX-COVER"));
         sqlite3 *db = nullptr;
-        assert(sqlite3_open((fixture.library / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_open(pathToUtf8(fixture.library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
         exec(db, "DROP TABLE Track;");
         exec(db, "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER, path TEXT);");
         std::vector<std::uint8_t> lost(20, 0x44);
@@ -447,7 +450,7 @@ int main(int argc, char **argv)
 
         // Without the rekordbox side: found, named as its own kind of
         // fault, and not repairable -- never counted as readable.
-        const ArtworkAudit alone = auditArtwork(fixture.library.string());
+        const ArtworkAudit alone = auditArtwork(pathToUtf8(fixture.library));
         assert(alone.error.empty());
         assert(alone.readableByAPlayer == 0);
         assert(alone.unreadable.size() == 1);
@@ -456,18 +459,18 @@ int main(int argc, char **argv)
 
         // With it: the same fault, now repairable from the art beside it.
         ArtworkSourceByTrackFile sources;
-        sources.emplace(artworkSourceKey((fixture.stick / "Contents" / "song.mp3").string()),
-                        (fixture.stick / "PIONEER" / "Artwork" / "00002" / "cover.jpg").string());
-        const ArtworkAudit audit = auditArtwork(fixture.library.string(), sources);
+        sources.emplace(artworkSourceKey(pathToUtf8(fixture.stick / "Contents" / "song.mp3")),
+                        pathToUtf8(fixture.stick / "PIONEER" / "Artwork" / "00002" / "cover.jpg"));
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library), sources);
         assert(audit.repairable() == 1);
         assert(!audit.unreadable[0].imageOnStick.empty());
 
-        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable);
         assert(repair.error.empty());
         assert(repair.repaired == 1);
         // The empty file is not what the row points at any more, and what
         // it does point at has bytes in it.
-        const ArtworkAudit after = auditArtwork(fixture.library.string(), sources);
+        const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library), sources);
         assert(after.readableByAPlayer == 1);
         assert(after.unreadable.empty());
         std::cout << "case 10 (an emptied artwork file is a fault, and the rekordbox art beside it fixes it) OK\n";
@@ -483,7 +486,7 @@ int main(int argc, char **argv)
         write(fixture.stick / "Contents" / "tagged.mp3", "AUDIO-WITH-A-PICTURE-INSIDE");
         write(fixture.stick / "Contents" / "bare.mp3", "AUDIO-WITH-NOTHING-INSIDE");
         sqlite3 *db = nullptr;
-        assert(sqlite3_open((fixture.library / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_open(pathToUtf8(fixture.library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
         exec(db, "DROP TABLE Track;");
         exec(db, "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER, path TEXT);");
         exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (7, NULL);");
@@ -493,13 +496,13 @@ int main(int argc, char **argv)
                  "(2, 'Has none anywhere', 'B', 7, '../Contents/bare.mp3');");
         sqlite3_close(db);
 
-        const std::string tagged = (fixture.stick / "Contents" / "tagged.mp3").string();
+        const std::string tagged = pathToUtf8(fixture.stick / "Contents" / "tagged.mp3");
         const auto probe = [&tagged](const ArtworkEntry &entry) { return entry.trackFile == tagged; };
         const auto reader = [&tagged](const ArtworkEntry &entry) {
             return entry.trackFile == tagged ? jpeg("EMBEDDED-COVER") : std::string();
         };
 
-        const ArtworkAudit audit = auditArtwork(fixture.library.string(), {}, probe);
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library), {}, probe);
         assert(audit.error.empty());
         assert(audit.unreadable.size() == 2);
         assert(audit.unreadable[0].storage == ArtworkStorage::RowWithoutHash);
@@ -508,12 +511,12 @@ int main(int argc, char **argv)
         assert(audit.unreadable[0].otherSource);
         assert(!audit.unreadable[1].otherSource);
 
-        const ArtworkRepair repair = repairArtwork(fixture.library.string(), audit.unreadable, {}, {}, reader);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable, {}, {}, reader);
         assert(repair.error.empty());
         assert(repair.repaired == 1);
         assert(repair.filesWritten.size() == 1);
 
-        const ArtworkAudit after = auditArtwork(fixture.library.string(), {}, probe);
+        const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library), {}, probe);
         assert(after.readableByAPlayer == 1);
         assert(after.unreadable.size() == 1);  // the one with no art anywhere stays a fault
         assert(after.repairable() == 0);

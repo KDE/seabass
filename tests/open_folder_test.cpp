@@ -26,13 +26,18 @@
 #include "scratch_path.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/media_controller.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using seabass::gui::DetectedStickListModel;
 using seabass::gui::MediaController;
+using seabass::gui::pathToQString;
+using seabass::pathToGenericUtf8;
+using seabass::pathToUtf8;
 
 namespace
 {
@@ -96,7 +101,7 @@ int main(int argc, char **argv)
     // came to hold 232 rows -- so neither belt is dropped for the other.
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
-                       QString::fromStdString((scratch / "config").string()));
+                       pathToQString(scratch / "config"));
 
     // And proof, before anything is written: if this ever resolves back
     // to the real store, the assert fires here rather than after the
@@ -120,7 +125,7 @@ int main(int argc, char **argv)
         // QDir/QFile), regardless of platform, so comparing against
         // fs::path's native (backslash, on Windows) form failed this
         // assert even once the path itself resolved correctly.
-        assert(where.rfind((scratch / "config").generic_string(), 0) == 0
+        assert(where.rfind(pathToGenericUtf8(scratch / "config"), 0) == 0
                && "QSettings must resolve inside the test's scratch tree");
     }
 
@@ -135,8 +140,8 @@ int main(int argc, char **argv)
     // and with the same paths every downstream page already expects.
     {
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(both.string())).isEmpty());
-        const int row = rowForMountPoint(*controller.sticksModel(), both.string());
+        assert(controller.openFolder(pathToQString(both)).isEmpty());
+        const int row = rowForMountPoint(*controller.sticksModel(), pathToUtf8(both));
         assert(row >= 0);
         const auto &stick = controller.sticksModel()->sticks()[static_cast<size_t>(row)];
         assert(stick.isFolder);
@@ -144,8 +149,8 @@ int main(int argc, char **argv)
         assert(stick.devicePath.empty());  // and nothing to eject or format
         assert(stick.rekordboxPath.has_value());
         assert(stick.enginePath.has_value());
-        assert(*stick.rekordboxPath == (both / "PIONEER").string());
-        assert(*stick.enginePath == (both / "Engine Library").string());
+        assert(*stick.rekordboxPath == pathToUtf8(both / "PIONEER"));
+        assert(*stick.enginePath == pathToUtf8(both / "Engine Library"));
         assert(stick.label == "restored-backup");
         std::cout << "case 1 (folder with both catalogs opens) OK\n";
     }
@@ -153,8 +158,8 @@ int main(int argc, char **argv)
     // One catalog is enough -- a rekordbox-only export is a normal stick.
     {
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(rbOnly.string())).isEmpty());
-        const int row = rowForMountPoint(*controller.sticksModel(), rbOnly.string());
+        assert(controller.openFolder(pathToQString(rbOnly)).isEmpty());
+        const int row = rowForMountPoint(*controller.sticksModel(), pathToUtf8(rbOnly));
         assert(row >= 0);
         const auto &stick = controller.sticksModel()->sticks()[static_cast<size_t>(row)];
         assert(stick.rekordboxPath.has_value());
@@ -166,10 +171,10 @@ int main(int argc, char **argv)
     // act on -- and nothing is added to the list.
     {
         MediaController controller;
-        const QString message = controller.openFolder(QString::fromStdString(empty.string()));
+        const QString message = controller.openFolder(pathToQString(empty));
         assert(!message.isEmpty());
         assert(message.contains("PIONEER"));  // says which folder to pick instead
-        assert(rowForMountPoint(*controller.sticksModel(), empty.string()) < 0);
+        assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(empty)) < 0);
         std::cout << "case 3 (folder with no library refused) OK\n";
     }
 
@@ -183,11 +188,11 @@ int main(int argc, char **argv)
     // Opening the same folder twice leaves one row, not two.
     {
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(both.string())).isEmpty());
-        assert(controller.openFolder(QString::fromStdString(both.string())).isEmpty());
+        assert(controller.openFolder(pathToQString(both)).isEmpty());
+        assert(controller.openFolder(pathToQString(both)).isEmpty());
         int count = 0;
         for (const auto &stick : controller.sticksModel()->sticks()) {
-            count += (stick.mountPoint == both.string()) ? 1 : 0;
+            count += (stick.mountPoint == pathToUtf8(both)) ? 1 : 0;
         }
         assert(count == 1);
         std::cout << "case 5 (re-opening does not duplicate) OK\n";
@@ -198,23 +203,23 @@ int main(int argc, char **argv)
     {
         {
             MediaController controller;
-            assert(controller.openFolder(QString::fromStdString(both.string())).isEmpty());
-            assert(controller.openFolder(QString::fromStdString(rbOnly.string())).isEmpty());
-            assert(rowForMountPoint(*controller.sticksModel(), both.string()) < 0);
-            assert(rowForMountPoint(*controller.sticksModel(), rbOnly.string()) >= 0);
+            assert(controller.openFolder(pathToQString(both)).isEmpty());
+            assert(controller.openFolder(pathToQString(rbOnly)).isEmpty());
+            assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(both)) < 0);
+            assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(rbOnly)) >= 0);
         }
         MediaController restarted;
-        assert(rowForMountPoint(*restarted.sticksModel(), both.string()) < 0);
-        assert(rowForMountPoint(*restarted.sticksModel(), rbOnly.string()) >= 0);
+        assert(rowForMountPoint(*restarted.sticksModel(), pathToUtf8(both)) < 0);
+        assert(rowForMountPoint(*restarted.sticksModel(), pathToUtf8(rbOnly)) >= 0);
 
         // ...and closing it drops it, on disk too, without touching the
         // folder itself.
-        restarted.closeFolder(QString::fromStdString(rbOnly.string()));
-        assert(rowForMountPoint(*restarted.sticksModel(), rbOnly.string()) < 0);
+        restarted.closeFolder(pathToQString(rbOnly));
+        assert(rowForMountPoint(*restarted.sticksModel(), pathToUtf8(rbOnly)) < 0);
         assert(fs::exists(rbOnly / "PIONEER" / "rekordbox" / "export.pdb"));
 
         MediaController afterClose;
-        assert(rowForMountPoint(*afterClose.sticksModel(), rbOnly.string()) < 0);
+        assert(rowForMountPoint(*afterClose.sticksModel(), pathToUtf8(rbOnly)) < 0);
         std::cout << "case 6 (one folder remembered across restarts, closable) OK\n";
     }
 
@@ -224,13 +229,13 @@ int main(int argc, char **argv)
         const fs::path vanishing = scratch / "goes-away";
         makeStickShapedFolder(vanishing, true, false);
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(vanishing.string())).isEmpty());
+        assert(controller.openFolder(pathToQString(vanishing)).isEmpty());
         fs::rename(vanishing / "PIONEER", scratch / "goes-away-PIONEER");
         controller.detect();
-        assert(rowForMountPoint(*controller.sticksModel(), vanishing.string()) < 0);
+        assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(vanishing)) < 0);
         fs::rename(scratch / "goes-away-PIONEER", vanishing / "PIONEER");
         controller.detect();
-        assert(rowForMountPoint(*controller.sticksModel(), vanishing.string()) >= 0);
+        assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(vanishing)) >= 0);
         std::cout << "case 7 (folder without a library is not listed, and returns with it) OK\n";
     }
 
@@ -251,8 +256,8 @@ int main(int argc, char **argv)
     // either.
     {
         MediaController controller;
-        assert(controller.openFolder(seabass::gui::toLocalFileUrl(both.string())).isEmpty());
-        assert(rowForMountPoint(*controller.sticksModel(), both.string()) >= 0);
+        assert(controller.openFolder(seabass::gui::toLocalFileUrl(pathToUtf8(both))).isEmpty());
+        assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(both)) >= 0);
         std::cout << "case 7b (file:// URL accepted) OK\n";
     }
 
@@ -261,10 +266,10 @@ int main(int argc, char **argv)
     {
         {
             MediaController controller;
-            assert(controller.openFolder(QString::fromStdString(both.string()), "TOURSTICK").isEmpty());
+            assert(controller.openFolder(pathToQString(both), "TOURSTICK").isEmpty());
         }
         MediaController restarted;
-        const int row = rowForMountPoint(*restarted.sticksModel(), both.string());
+        const int row = rowForMountPoint(*restarted.sticksModel(), pathToUtf8(both));
         assert(row >= 0);
         assert(restarted.sticksModel()->sticks()[static_cast<size_t>(row)].label == "TOURSTICK");
         assert(restarted.sticksModel()->sticks()[static_cast<size_t>(row)].identity.label == "TOURSTICK");
@@ -279,11 +284,11 @@ int main(int argc, char **argv)
         makeStickShapedFolder(browsed, true, false);
         assert(seabass::infrastructure::local::writeBrowsedBackupMarker(browsed, "/nonexistent/TOURSTICK.zip", browsed));
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(browsed.string())).isEmpty());
-        int row = rowForMountPoint(*controller.sticksModel(), browsed.string());
+        assert(controller.openFolder(pathToQString(browsed)).isEmpty());
+        int row = rowForMountPoint(*controller.sticksModel(), pathToUtf8(browsed));
         assert(row >= 0);
         assert(controller.sticksModel()->sticks()[static_cast<size_t>(row)].isBrowsedBackup);
-        row = rowForMountPoint(*controller.sticksModel(), both.string());
+        row = rowForMountPoint(*controller.sticksModel(), pathToUtf8(both));
         assert(row < 0 || !controller.sticksModel()->sticks()[static_cast<size_t>(row)].isBrowsedBackup);
         std::cout << "case 7d (marker flags a browsed backup) OK\n";
     }
@@ -297,8 +302,8 @@ int main(int argc, char **argv)
         fs::copy_file(scratch / "browsed" / seabass::infrastructure::local::BrowsedBackupMarkerName,
                       stray / seabass::infrastructure::local::BrowsedBackupMarkerName);
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(stray.string())).isEmpty());
-        const int row = rowForMountPoint(*controller.sticksModel(), stray.string());
+        assert(controller.openFolder(pathToQString(stray)).isEmpty());
+        const int row = rowForMountPoint(*controller.sticksModel(), pathToUtf8(stray));
         assert(row >= 0);
         assert(!controller.sticksModel()->sticks()[static_cast<size_t>(row)].isBrowsedBackup);
         std::cout << "case 7e (marker copied from elsewhere is ignored) OK\n";
@@ -321,23 +326,23 @@ int main(int argc, char **argv)
         makeStickShapedFolder(share, true, false);
         {
             MediaController opener;
-            assert(opener.openFolder(QString::fromStdString(share.string())).isEmpty());
+            assert(opener.openFolder(pathToQString(share)).isEmpty());
         }
         fs::remove_all(share);  // the whole directory, as an unmounted share looks
         {
             MediaController whileAway;
-            assert(rowForMountPoint(*whileAway.sticksModel(), share.string()) < 0);
+            assert(rowForMountPoint(*whileAway.sticksModel(), pathToUtf8(share)) < 0);
             // openSeabassSettings(), not a bare QSettings("seabass",
             // "seabass"): on Windows the two-argument constructor ignores
             // setDefaultFormat() and would read the real registry.
             QSettings settings = seabass::gui::openSeabassSettings();
-            assert(settings.value(QStringLiteral("openedFolder/path")).toString().toStdString() == share.string()
+            assert(settings.value(QStringLiteral("openedFolder/path")).toString().toStdString() == pathToUtf8(share)
                    && "an unreachable folder must be kept, not forgotten");
         }
         makeStickShapedFolder(share, true, false);
         {
             MediaController back;
-            assert(rowForMountPoint(*back.sticksModel(), share.string()) >= 0);
+            assert(rowForMountPoint(*back.sticksModel(), pathToUtf8(share)) >= 0);
         }
         std::cout << "case 9 (unreachable folder is hidden, kept, and returns) OK\n";
     }
@@ -354,7 +359,7 @@ int main(int argc, char **argv)
         const fs::path blips = scratch / "share-that-blips";
         makeStickShapedFolder(blips, true, false);
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(blips.string())).isEmpty());
+        assert(controller.openFolder(pathToQString(blips)).isEmpty());
 
         int removed = 0;
         int returned = 0;
@@ -374,7 +379,7 @@ int main(int argc, char **argv)
         makeStickShapedFolder(blips, true, false);
         controller.detect();
         assert(returned == 1 && "coming back must be announced, or the dialog cannot be dismissed");
-        assert(rowForMountPoint(*controller.sticksModel(), blips.string()) >= 0);
+        assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(blips)) >= 0);
         controller.detect();
         assert(returned == 1);
         std::cout << "case 10 (going and returning are announced as a pair) OK\n";
@@ -388,14 +393,14 @@ int main(int argc, char **argv)
         makeStickShapedFolder(first, true, false);
         makeStickShapedFolder(second, false, true);
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(first.string())).isEmpty());
+        assert(controller.openFolder(pathToQString(first)).isEmpty());
         QStringList removedIds;
         QObject::connect(&controller, &MediaController::stickRemoved,
                          [&](const QString &id, const QString &) { removedIds << id; });
-        assert(controller.openFolder(QString::fromStdString(second.string())).isEmpty());
-        assert(rowForMountPoint(*controller.sticksModel(), first.string()) < 0);
-        assert(rowForMountPoint(*controller.sticksModel(), second.string()) >= 0);
-        assert(removedIds == QStringList{QString::fromStdString(MediaController::folderLibraryId(first.string()))});
+        assert(controller.openFolder(pathToQString(second)).isEmpty());
+        assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(first)) < 0);
+        assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(second)) >= 0);
+        assert(removedIds == QStringList{QString::fromStdString(MediaController::folderLibraryId(pathToUtf8(first)))});
         std::cout << "case 11 (a replaced folder is announced gone) OK\n";
     }
 
@@ -406,13 +411,13 @@ int main(int argc, char **argv)
         makeStickShapedFolder(withOneLibrary, true, false);
         writeFile(withOneLibrary / "PIONEER" / "rekordbox" / "exportLibrary.db");
         MediaController controller;
-        assert(controller.openFolder(QString::fromStdString(withOneLibrary.string())).isEmpty());
+        assert(controller.openFolder(pathToQString(withOneLibrary)).isEmpty());
         const auto *model = controller.sticksModel();
-        const int row = rowForMountPoint(*model, withOneLibrary.string());
+        const int row = rowForMountPoint(*model, pathToUtf8(withOneLibrary));
         assert(row >= 0);
         assert(model->data(model->index(row), DetectedStickListModel::HasOneLibraryRole).toBool());
-        assert(controller.openFolder(QString::fromStdString(rbOnly.string())).isEmpty());
-        const int plain = rowForMountPoint(*model, rbOnly.string());
+        assert(controller.openFolder(pathToQString(rbOnly)).isEmpty());
+        const int plain = rowForMountPoint(*model, pathToUtf8(rbOnly));
         assert(plain >= 0);
         assert(!model->data(model->index(plain), DetectedStickListModel::HasOneLibraryRole).toBool());
         std::cout << "case 12 (hasOneLibrary follows exportLibrary.db) OK\n";

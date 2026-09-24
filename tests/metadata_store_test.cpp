@@ -16,6 +16,7 @@
 #include "application/ports/progress_reporter.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/local/metadata_store.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "scratch_path.hpp"
 
@@ -26,6 +27,8 @@ using seabass::domain::PlaylistMembership;
 using seabass::domain::Track;
 using seabass::infrastructure::local::MetadataSource;
 using seabass::infrastructure::local::MetadataStore;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 namespace fs = std::filesystem;
 
 namespace
@@ -70,8 +73,8 @@ Track sampleTrack(const fs::path &stickRoot, const std::string &relative, const 
     Track track;
     track.format = "rekordbox";
     track.sourceId = title;
-    track.filePath = (stickRoot / relative).string();
-    track.filename = fs::path(relative).filename().string();
+    track.filePath = pathToUtf8(stickRoot / pathFromUtf8(relative));
+    track.filename = pathToUtf8(pathFromUtf8(relative).filename());
     track.title = title;
     track.artist = "Kalte Nacht";
     track.durationSeconds = 361.5;
@@ -167,11 +170,11 @@ int main()
         first.cues = {memoryCue(12'000.0), hotCue(1, 32000.0)};
         first.rating = 4;
         first.comment = "opener";
-        first.artworkPath = cover.string();
+        first.artworkPath = pathToUtf8(cover);
         first.playlists = {PlaylistMembership{"Techno/Peak Time", 3}};
 
         Track second = sampleTrack(stick, "Contents/Kalte Nacht/Zweite.mp3", "Zweite");
-        second.artworkPath = cover.string();
+        second.artworkPath = pathToUtf8(cover);
 
         const auto summary = store(metadata, {first, second}, sourceFor(stick));
         assert(summary.tracksSeen == 2);
@@ -209,7 +212,7 @@ int main()
         assert(all.size() == 2);
         for (const auto &track : all) {
             assert(!track.artworkPath.empty());
-            assert(fs::exists(track.artworkPath));
+            assert(fs::exists(pathFromUtf8(track.artworkPath)));
             assert(track.artworkPath == rows[0].artworkPath);
         }
         std::cout << "case 1b (readAll hands over the cover it copied) OK\n";
@@ -222,7 +225,7 @@ int main()
         first.cues = {memoryCue(12'000.0), hotCue(1, 32000.0)};
         first.rating = 4;
         first.comment = "opener";
-        first.artworkPath = cover.string();
+        first.artworkPath = pathToUtf8(cover);
 
         const auto summary = store(metadata, {first}, sourceFor(stick));
         assert(summary.tracksAdded == 0);
@@ -496,7 +499,7 @@ int main()
             // A plausible earlier schema: a tracks table keyed the way
             // this store used to key it, and a version that is not ours.
             sqlite3 *raw = nullptr;
-            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
             sqlite3_exec(raw, "CREATE TABLE tracks (id INTEGER PRIMARY KEY, path_key TEXT)", nullptr, nullptr,
                          nullptr);
             sqlite3_exec(raw, "INSERT INTO tracks (path_key) VALUES ('contents/a.mp3')", nullptr, nullptr, nullptr);
@@ -516,7 +519,7 @@ int main()
         // And the old file is still on disk, beside it.
         bool foundSuperseded = false;
         for (const auto &entry : fs::directory_iterator(oldDb.parent_path())) {
-            if (entry.path().filename().string().find("metadata.db.superseded-99-") == 0) {
+            if (pathToUtf8(entry.path().filename()).find("metadata.db.superseded-99-") == 0) {
                 foundSuperseded = true;
             }
         }
@@ -578,7 +581,7 @@ int main()
         fs::create_directories(oldDb.parent_path());
         {
             sqlite3 *raw = nullptr;
-            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
             // Version 1's tracks table, with the one key column it had.
             sqlite3_exec(raw,
                          "CREATE TABLE tracks (id INTEGER PRIMARY KEY, match_key TEXT NOT NULL, "
@@ -630,7 +633,7 @@ int main()
 
         // Nothing was moved aside: the file itself was migrated.
         for (const auto &entry : fs::directory_iterator(oldDb.parent_path())) {
-            assert(entry.path().filename().string().find("superseded") == std::string::npos);
+            assert(pathToUtf8(entry.path().filename()).find("superseded") == std::string::npos);
         }
 
         // And the weak row's key was carried into the new column, so the
@@ -842,7 +845,7 @@ int main()
         radioEdit.durationSeconds = 210.0;
         Track extended = radioEdit;
         extended.sourceId = "Erste-extended";
-        extended.filePath = (stick / "Contents/Kalte Nacht/Erste (Extended).mp3").string();
+        extended.filePath = pathToUtf8(stick / "Contents/Kalte Nacht/Erste (Extended).mp3");
         extended.filename = "Erste (Extended).mp3";
         extended.durationSeconds = 480.0;
         store(metadata, {radioEdit, extended}, sourceFor(stick, "RV2", CatalogOld));
@@ -850,7 +853,7 @@ int main()
 
         Track unknownLength = radioEdit;
         unknownLength.sourceId = "Erste-unknown";
-        unknownLength.filePath = (stick / "Contents/Kalte Nacht/Erste (Club).mp3").string();
+        unknownLength.filePath = pathToUtf8(stick / "Contents/Kalte Nacht/Erste (Club).mp3");
         unknownLength.filename = "Erste (Club).mp3";
         unknownLength.durationSeconds = 0.0;
         unknownLength.cues = {hotCue(3, 3000.0)};
@@ -883,7 +886,7 @@ int main()
         radioEdit.cues = {hotCue(1, 1000.0)};
         Track extended = radioEdit;
         extended.sourceId = "Erste-extended";
-        extended.filePath = (stick / "Contents/Kalte Nacht/Erste (Extended).mp3").string();
+        extended.filePath = pathToUtf8(stick / "Contents/Kalte Nacht/Erste (Extended).mp3");
         extended.filename = "Erste (Extended).mp3";
         extended.cues = {hotCue(1, 5000.0)};
 
@@ -943,9 +946,9 @@ int main()
         const fs::path empty = root / "empty-cover.jpg";
         writeFile(present, "JPEGDATA");
         writeFile(empty, "");
-        assert(MetadataStore::canTakeArtwork(present.string()));
-        assert(!MetadataStore::canTakeArtwork((stick / "PIONEER" / "Artwork" / "gone.jpg").string()));
-        assert(!MetadataStore::canTakeArtwork(empty.string()));
+        assert(MetadataStore::canTakeArtwork(pathToUtf8(present)));
+        assert(!MetadataStore::canTakeArtwork(pathToUtf8(stick / "PIONEER" / "Artwork" / "gone.jpg")));
+        assert(!MetadataStore::canTakeArtwork(pathToUtf8(empty)));
         assert(!MetadataStore::canTakeArtwork(""));
         std::cout << "case 20 (a missing or empty cover cannot be taken in) OK\n";
     }
@@ -997,7 +1000,7 @@ int main()
         // next open has something to migrate.
         {
             sqlite3 *raw = nullptr;
-            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
             const char *insert = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
                                  "is_loop, loop_end_ms) SELECT id, 'memory', 0, -0.0226757, '', '', 0, 0 FROM tracks";
             assert(sqlite3_exec(raw, insert, nullptr, nullptr, nullptr) == SQLITE_OK);
@@ -1032,7 +1035,7 @@ int main()
         }
         {
             sqlite3 *raw = nullptr;
-            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
             const char *phantom = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
                                   "is_loop, loop_end_ms) SELECT id, 'memory', 0, -0.0226757, '', '', 0, 0 FROM tracks";
             const char *startPad = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
@@ -1081,7 +1084,7 @@ int main()
         }
         {
             sqlite3 *raw = nullptr;
-            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
             const char *insert = "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, "
                                  "is_loop, loop_end_ms) SELECT id, 'memory', 0, -0.0226757, '', '', 0, 0 FROM tracks";
             assert(sqlite3_exec(raw, insert, nullptr, nullptr, nullptr) == SQLITE_OK);
@@ -1110,7 +1113,7 @@ int main()
         int cueRows = 0;
         {
             sqlite3 *raw = nullptr;
-            assert(sqlite3_open(oldDb.string().c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
             sqlite3_stmt *statement = nullptr;
             assert(sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM cues", -1, &statement, nullptr) == SQLITE_OK);
             assert(sqlite3_step(statement) == SQLITE_ROW);

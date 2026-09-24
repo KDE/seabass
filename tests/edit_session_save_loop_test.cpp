@@ -27,13 +27,17 @@
 #include "gui/edit/pending_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/sleep_inhibitor.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "engine_information_fixture.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::gui;
 using seabass::application::CancellationToken;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 namespace fs = std::filesystem;
 
 namespace
@@ -161,11 +165,11 @@ public:
     QStringList formatsTouched() const override { return {QStringLiteral("rekordbox")}; }
     ChangeOutcome apply(SaveContext &ctx) override
     {
-        FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", m_pioneer.string(), m_hint, "cleanup");
+        FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pathToUtf8(m_pioneer), m_hint, "cleanup");
         if (m_usedScratch != nullptr) {
             *m_usedScratch = session.usesScratch();
         }
-        const fs::path pdb = fs::path(session.writeRoot()) / "rekordbox" / "export.pdb";
+        const fs::path pdb = pathFromUtf8(session.writeRoot()) / "rekordbox" / "export.pdb";
         std::fstream out(pdb, std::ios::binary | std::ios::in | std::ios::out);
         out.seekp(20);
         out.write(reinterpret_cast<const char *>(&m_to), sizeof m_to);
@@ -192,7 +196,7 @@ int main()
     fs::path root = seabass::testing::scratchRoot() / "seabass_edit_session_save_loop_test";
     fs::path pioneer = makeStick(root);
     auto &noProgress = seabass::application::NullProgressReporter::instance();
-    QString rb = QString::fromStdString(pioneer.string());
+    QString rb = pathToQString(pioneer);
 
     // 1. Every change applies: all ids reported, hooks ran with ok=true,
     //    the status line named each change.
@@ -281,7 +285,7 @@ int main()
         Log log;
         CancellationToken token;
         SaveContext ctx(token, noProgress, {}, rb, {});
-        std::string pdb = (pioneer / "rekordbox" / "export.pdb").string();
+        std::string pdb = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
         int madeNow = 0;
         auto backup = [&](SaveContext &c) { madeNow += c.backupOnce(pdb, "test") ? 1 : 0; };
         std::vector<std::shared_ptr<PendingChange>> changes = {
@@ -291,8 +295,8 @@ int main()
         auto result = runSaveLoop(changes, ctx);
         assert(madeNow == 1);
         assert(result.backups.size() == 1);
-        assert(fs::is_directory(result.backups[0].backupDir.toStdString()));
-        assert(result.backups[0].backupDir.toStdString() == (root / "Seabass" / "backups").string());
+        assert(fs::is_directory(pathFromQString(result.backups[0].backupDir)));
+        assert(result.backups[0].backupDir.toStdString() == pathToUtf8(root / "Seabass" / "backups"));
         assert(fs::exists(root / "Seabass" / "seabass.log"));
         std::cout << "case 5 (backupOnce dedups and feeds undo) OK\n";
     }
@@ -405,8 +409,8 @@ int main()
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-level", 500, 500);
         bool usedScratch = false;
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(stick.pioneer, 501, hint, &usedScratch)}, ctx);
         assert(result.error.isEmpty() && result.warning.isEmpty());
         assert(usedScratch == (hint > 1) && "both write paths are exercised");
@@ -428,8 +432,8 @@ int main()
     {
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-apart", 500, 400);
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(stick.pioneer, 501, 1)}, ctx);
         assert(result.error.isEmpty());
         assert(engineCounter(stick.engine) == 400 && "a pending offer is left for the DJ to see");
@@ -442,8 +446,8 @@ int main()
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-still", 500, 500);
         Log log;
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         auto result = runSaveLoop({std::make_shared<FakeChange>("addcue:a", Behavior::Ok, log)}, ctx);
         assert(result.error.isEmpty() && result.backups.empty());
         assert(engineCounter(stick.engine) == 500);
@@ -455,8 +459,8 @@ int main()
     {
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-row2", 500, 500, /*rowId=*/2);
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(stick.pioneer, 502, 1)}, ctx);
         assert(result.error.isEmpty() && engineCounter(stick.engine) == 502);
         std::cout << "case 12 (the Information row's id is not assumed) OK\n";
@@ -467,8 +471,8 @@ int main()
         TwoCatalogs stick = makeTwoCatalogStick(root / "import-noengine", 500, 500);
         fs::remove_all(stick.engine);
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(stick.pioneer, 501, 1)}, ctx);
         assert(result.error.isEmpty() && result.warning.isEmpty());
         assert(!fs::exists(stick.engine) && "no Engine library is conjured up");
@@ -481,8 +485,8 @@ int main()
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-cancel", 500, 500);
         Log log;
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(stick.pioneer, 501, 100000),
                                    std::make_shared<FakeChange>("stop", Behavior::CancelDuringApply, log),
                                    std::make_shared<FakeChange>("never", Behavior::Ok, log)},
@@ -501,8 +505,8 @@ int main()
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-commit-fails", 500, 500);
         const fs::path rekordboxDir = stick.pioneer / "rekordbox";
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         bool usedScratch = false;
         auto result = runSaveLoop({std::make_shared<MovesPdbSequence>(
                                       stick.pioneer, 501, 100000, &usedScratch,
@@ -524,10 +528,10 @@ int main()
     {
         const TwoCatalogs stick = makeTwoCatalogStick(root / "import-mark-and-move", 500, 400);
         CancellationToken token;
-        SaveContext ctx(token, noProgress, nullptr, QString::fromStdString(stick.pioneer.string()),
-                        QString::fromStdString(stick.engine.string()));
+        SaveContext ctx(token, noProgress, nullptr, pathToQString(stick.pioneer),
+                        pathToQString(stick.engine));
         auto result = runSaveLoop(
-            {std::make_shared<MarkRekordboxImportedChange>(QString::fromStdString(stick.engine.string()), 500),
+            {std::make_shared<MarkRekordboxImportedChange>(pathToQString(stick.engine), 500),
              std::make_shared<MovesPdbSequence>(stick.pioneer, 501, 1)},
             ctx);
         assert(result.error.isEmpty());
@@ -578,10 +582,10 @@ int main()
         auto entry = [&](std::int64_t trackId, const fs::path &imageOnStick) {
             seabass::infrastructure::engine::ArtworkEntry e;
             e.trackId = trackId;
-            e.imageOnStick = imageOnStick.string();
+            e.imageOnStick = pathToUtf8(imageOnStick);
             return e;
         };
-        const QString enginePath = QString::fromStdString(library.string());
+        const QString enginePath = pathToQString(library);
         CancellationToken token;
         SaveContext ctx(token, noProgress, nullptr, {}, enginePath);
         auto result = runSaveLoop(

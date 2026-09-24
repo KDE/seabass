@@ -56,6 +56,7 @@
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/cleanup/pending_deletion_resolver.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
@@ -91,6 +92,7 @@
 #include "gui/edit/changes/sync_plan_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #endif
 
@@ -105,6 +107,7 @@
 
 namespace fs = std::filesystem;
 using namespace seabass;
+using gui::pathToQString;
 using infrastructure::WorkCounters;
 
 namespace
@@ -143,18 +146,18 @@ struct DataSet
     // the end of the run, so its file has to live beside the archive
     // instead -- otherwise every run re-records and the guard never fires.
     fs::path expectationsPath;
-    std::optional<std::string> rekordboxRoot;
-    std::optional<std::string> engineRoot;
+    std::optional<fs::path> rekordboxRoot;
+    std::optional<fs::path> engineRoot;
     bool anonymized = false;
 };
 
-std::optional<std::string> firstExisting(const fs::path &base, std::initializer_list<const char *> candidates)
+std::optional<fs::path> firstExisting(const fs::path &base, std::initializer_list<const char *> candidates)
 {
     std::error_code ec;
     for (const char *candidate : candidates) {
         const fs::path path = base / candidate;
         if (fs::is_directory(path, ec)) {
-            return path.string();
+            return path;
         }
     }
     return std::nullopt;
@@ -163,7 +166,7 @@ std::optional<std::string> firstExisting(const fs::path &base, std::initializer_
 std::optional<DataSet> asDataSet(const fs::path &dir)
 {
     DataSet set;
-    set.name = dir.filename().string();
+    set.name = pathToUtf8(dir.filename());
     set.root = dir;
     set.expectationsPath = dir / "SET-EXPECTATIONS.txt";
     std::error_code ec;
@@ -209,26 +212,26 @@ fs::path unpackedSetsRoot()
 // directory and then treated exactly like a directory set.
 std::optional<DataSet> unpackZippedSet(const fs::path &zipPath)
 {
-    const std::string stem = zipPath.stem().string();
-    const fs::path target = unpackedSetsRoot() / stem;
+    const std::string stem = pathToUtf8(zipPath.stem());
+    const fs::path target = unpackedSetsRoot() / zipPath.stem();
     std::error_code ec;
     fs::remove_all(target, ec);
     try {
         infrastructure::extractZipArchive(zipPath, target);
     } catch (const std::exception &e) {
-        std::cout << "skipping " << zipPath.filename().string() << ": could not unpack it (" << e.what() << ")\n";
+        std::cout << "skipping " << pathToUtf8(zipPath.filename()) << ": could not unpack it (" << e.what() << ")\n";
         return std::nullopt;
     }
     auto set = asDataSet(target);
     if (!set) {
-        std::cout << "skipping " << zipPath.filename().string()
+        std::cout << "skipping " << pathToUtf8(zipPath.filename())
                   << ": unpacked, but holds neither catalog (no rekordbox/PIONEER, no engine/Engine Library)\n";
         fs::remove_all(target, ec);
         return std::nullopt;
     }
     set->name = stem;
-    set->expectationsPath = zipPath.parent_path() / (stem + "-EXPECTATIONS.txt");
-    std::cout << "unpacked " << zipPath.filename().string() << " into " << target.string() << "\n";
+    set->expectationsPath = zipPath.parent_path() / pathFromUtf8(stem + "-EXPECTATIONS.txt");
+    std::cout << "unpacked " << pathToUtf8(zipPath.filename()) << " into " << pathToUtf8(target) << "\n";
     return set;
 }
 
@@ -272,8 +275,8 @@ std::vector<DataSet> discoverSets()
             }
             // The runner writes a zipped set's numbers beside the
             // archive, so those are its own files, not candidates.
-            if (entry.path().filename().string().find("-EXPECTATIONS.txt") == std::string::npos) {
-                std::cout << "skipping " << entry.path().filename().string()
+            if (pathToUtf8(entry.path().filename()).find("-EXPECTATIONS.txt") == std::string::npos) {
+                std::cout << "skipping " << pathToUtf8(entry.path().filename())
                           << ": neither a directory nor a .zip\n";
             }
             continue;
@@ -281,7 +284,7 @@ std::vector<DataSet> discoverSets()
         if (auto set = asDataSet(entry.path())) {
             sets.push_back(*set);
         } else {
-            std::cout << "skipping " << entry.path().filename().string()
+            std::cout << "skipping " << pathToUtf8(entry.path().filename())
                       << ": holds neither catalog (no rekordbox/PIONEER, no engine/Engine Library)\n";
         }
     }
@@ -371,7 +374,7 @@ public:
         // half-written file that neither run could read back. Rare -- it
         // needs two runs recording new expectations at the same moment --
         // and cheap enough not to reason about.
-        const fs::path temp = m_path.string() + ".tmp-" + std::to_string(::getpid());
+        const fs::path temp = pathFromUtf8(pathToUtf8(m_path) + ".tmp-" + std::to_string(::getpid()));
         {
             std::ofstream out(temp, std::ios::trunc);
             out << "# Written by corpus_test. Delete this file to re-record after a\n"
@@ -411,7 +414,7 @@ fs::path scratchFor(const std::string &name)
     for (char c : name) {
         safe += (c == ' ' || c == '/') ? '_' : c;
     }
-    fs::path root = seabass::testing::scratchRoot() / ("seabass_corpus_test_" + safe);
+    fs::path root = seabass::testing::scratchRoot() / pathFromUtf8("seabass_corpus_test_" + safe);
     fs::remove_all(root);
     fs::create_directories(root);
     return root;
@@ -421,7 +424,7 @@ fs::path scratchFor(const std::string &name)
 // and each needs to start from the untouched original.
 fs::path freshRekordboxCopy(const DataSet &set, const fs::path &scratch, const std::string &name)
 {
-    fs::path target = scratch / name;
+    fs::path target = scratch / pathFromUtf8(name);
     fs::remove_all(target);
     fs::copy(*set.rekordboxRoot, target, fs::copy_options::recursive);
     return target;
@@ -475,7 +478,7 @@ void caseScanCounts(const DataSet &set, Catalogs &catalogs, Expectations &expect
 {
     if (set.rekordboxRoot) {
         try {
-            infrastructure::rekordbox::KaitaiRekordboxReader reader(*set.rekordboxRoot);
+            infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(*set.rekordboxRoot));
             catalogs.rekordbox = application::ScanLibrary(reader).execute();
         } catch (const std::exception &e) {
             check(false, std::string("the rekordbox catalog could not be read at all: ") + e.what());
@@ -512,9 +515,9 @@ void caseScanCounts(const DataSet &set, Catalogs &catalogs, Expectations &expect
             }
         }
     }
-    if (set.rekordboxRoot && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*set.rekordboxRoot)) {
+    if (set.rekordboxRoot && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(*set.rekordboxRoot))) {
         try {
-            infrastructure::onelibrary::OneLibraryReader reader(*set.rekordboxRoot);
+            infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(*set.rekordboxRoot));
             catalogs.oneLibrary = reader.readAll();
             expected.expect("onelibrary.tracks", static_cast<long long>(catalogs.oneLibrary.size()),
                             "OneLibrary track count unchanged");
@@ -525,7 +528,7 @@ void caseScanCounts(const DataSet &set, Catalogs &catalogs, Expectations &expect
     }
     if (set.engineRoot) {
         try {
-            infrastructure::engine::LibdjinteropEngineReader reader(*set.engineRoot);
+            infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(*set.engineRoot));
             catalogs.engine = application::ScanLibrary(reader).execute();
         } catch (const std::exception &e) {
             check(false, std::string("the Engine catalog could not be read at all: ") + e.what());
@@ -553,7 +556,7 @@ void caseScanCounts(const DataSet &set, Catalogs &catalogs, Expectations &expect
             // before its planted defects), so the check failed on real data
             // by construction and said nothing about the reader. What the
             // reader must do is report exactly what the database holds.
-            const auto datedInDatabase = seabass::testing::engineTrackDatedById(*set.engineRoot);
+            const auto datedInDatabase = seabass::testing::engineTrackDatedById(pathToUtf8(*set.engineRoot));
             const bool databaseRead = datedInDatabase.has_value();
             if (check(databaseRead, "the Engine database's Track.lastEditTime column could be read directly")) {
                 long long dated = 0, disagree = 0;
@@ -739,10 +742,10 @@ void caseCueRoundTrip(const DataSet &set, const fs::path &scratch, const Catalog
     cue.positionMs = 12345.0;
     cue.color = "#FF0000";
 
-    infrastructure::rekordbox::RekordboxCueWriter writer(root.string());
+    infrastructure::rekordbox::RekordboxCueWriter writer(pathToUtf8(root));
     writer.writeHotCues(targetId, {cue});
 
-    infrastructure::rekordbox::KaitaiRekordboxReader rereader(root.string());
+    infrastructure::rekordbox::KaitaiRekordboxReader rereader(pathToUtf8(root));
     auto reread = application::ScanLibrary(rereader).execute();
     bool found = false;
     for (const auto &track : reread) {
@@ -771,7 +774,7 @@ void casePendingDeletion(const DataSet &set, const fs::path &scratch, const Cata
         return;
     }
     const fs::path root = freshRekordboxCopy(set, scratch, "deletion");
-    infrastructure::rekordbox::KaitaiRekordboxReader reader(root.string());
+    infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(root));
     auto tracks = application::ScanLibrary(reader).execute();
     const size_t before = tracks.size();
 
@@ -785,13 +788,13 @@ void casePendingDeletion(const DataSet &set, const fs::path &scratch, const Cata
     // points the manifest at that instead of the track's real path.
     const fs::path victim = scratch / "deletion-victim.mp3";
     std::ofstream(victim) << "fake audio data";
-    doomed.filePath = victim.string();
+    doomed.filePath = pathToUtf8(victim);
 
     fs::path manifestPath = scratch / "Seabass" / "orphaned" / "pending-deletions.jsonl";
     fs::remove(manifestPath);
-    infrastructure::cleanup::PendingDeletionManifest manifest(manifestPath.string());
+    infrastructure::cleanup::PendingDeletionManifest manifest(pathToUtf8(manifestPath));
 
-    infrastructure::rekordbox::RekordboxCleanupWriter cleanupWriter(root.string());
+    infrastructure::rekordbox::RekordboxCleanupWriter cleanupWriter(pathToUtf8(root));
     cleanupWriter.removeTrackReplacingWith(doomed.sourceId, survivor.sourceId);
 
     infrastructure::cleanup::PendingDeletion pending;
@@ -802,7 +805,7 @@ void casePendingDeletion(const DataSet &set, const fs::path &scratch, const Cata
     pending.backupId = "corpus-test";
     manifest.append(pending);
 
-    infrastructure::rekordbox::KaitaiRekordboxReader postRemovalReader(root.string());
+    infrastructure::rekordbox::KaitaiRekordboxReader postRemovalReader(pathToUtf8(root));
     auto postRemoval = application::ScanLibrary(postRemovalReader).execute();
     check(postRemoval.size() == before - 1, "the removed row is gone from a fresh scan");
     bool stillThere = false;
@@ -819,7 +822,7 @@ void casePendingDeletion(const DataSet &set, const fs::path &scratch, const Cata
     // manifest still lists it.
     auto staleScan = postRemoval;
     staleScan[0].filePath = doomed.filePath;
-    auto stale = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(staleScan), scratch.string());
+    auto stale = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(staleScan), pathToUtf8(scratch));
     check(stale.safeToDelete.empty(), "a still-referenced path is not offered for deletion");
     if (check(stale.stillReferenced.size() == 1, "the still-referenced path is reported as such")) {
         check(stale.stillReferenced[0].filePath == doomed.filePath, "the right path was protected");
@@ -827,10 +830,10 @@ void casePendingDeletion(const DataSet &set, const fs::path &scratch, const Cata
     check(fs::exists(victim), "the protected file is still on disk");
     pass("case 7b: a stale manifest entry is refused, not acted on");
 
-    auto real = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(postRemoval), scratch.string());
+    auto real = infrastructure::cleanup::resolvePendingDeletions(manifest.list(), asRekordboxCatalog(postRemoval), pathToUtf8(scratch));
     if (check(real.safeToDelete.size() == 1, "the genuinely orphaned file is offered for deletion")) {
         check(real.stillReferenced.empty(), "nothing else was flagged");
-        auto outcomes = infrastructure::cleanup::applyPendingDeletions(real.safeToDelete, scratch.string(), manifest);
+        auto outcomes = infrastructure::cleanup::applyPendingDeletions(real.safeToDelete, pathToUtf8(scratch), manifest);
         if (check(outcomes.size() == 1, "one deletion was attempted")) {
             check(outcomes[0].status == infrastructure::cleanup::PendingDeletionOutcome::Status::Deleted,
                   "the deletion reported success");
@@ -852,7 +855,7 @@ void caseInterruptedBatch(const DataSet &set, const fs::path &scratch, const Cat
         return;
     }
     const fs::path root = freshRekordboxCopy(set, scratch, "rollback");
-    infrastructure::rekordbox::KaitaiRekordboxReader reader(root.string());
+    infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(root));
     auto tracks = application::ScanLibrary(reader).execute();
     const size_t before = tracks.size();
 
@@ -888,20 +891,20 @@ void caseInterruptedBatch(const DataSet &set, const fs::path &scratch, const Cat
     // Mirrors the save loop's own rule: export.pdb is the one shared file
     // every group's write touches, backed up exactly once before any of
     // them run.
-    infrastructure::backup::FilesystemBackupStore backupStore((scratch / "rollback-backups").string());
-    const std::string pdbPath = (root / "rekordbox" / "export.pdb").string();
+    infrastructure::backup::FilesystemBackupStore backupStore(pathToUtf8(scratch / "rollback-backups"));
+    const fs::path pdbPath = root / "rekordbox" / "export.pdb";
     if (!check(fs::exists(pdbPath), "the catalog database is where the backup expects it")) {
         return;
     }
-    auto record = backupStore.backup({pdbPath}, "duplicate-file-cleanup");
+    auto record = backupStore.backup({pathToUtf8(pdbPath)}, "duplicate-file-cleanup");
 
     {
-        infrastructure::rekordbox::RekordboxCleanupWriter cleanupWriter(root.string());
+        infrastructure::rekordbox::RekordboxCleanupWriter cleanupWriter(pathToUtf8(root));
         cleanupWriter.removeTrackReplacingWith(doomedId, survivor->sourceId);
     }
 
     {
-        infrastructure::rekordbox::KaitaiRekordboxReader midReader(root.string());
+        infrastructure::rekordbox::KaitaiRekordboxReader midReader(pathToUtf8(root));
         auto mid = application::ScanLibrary(midReader).execute();
         check(mid.size() == before - 1, "the first group's removal landed");
         bool present = false;
@@ -917,7 +920,7 @@ void caseInterruptedBatch(const DataSet &set, const fs::path &scratch, const Cat
     check(backupStore.restore(record.id), "the backup restored");
 
     {
-        infrastructure::rekordbox::KaitaiRekordboxReader postReader(root.string());
+        infrastructure::rekordbox::KaitaiRekordboxReader postReader(pathToUtf8(root));
         auto post = application::ScanLibrary(postReader).execute();
         check(post.size() == before, "every row is back");
         const domain::Track *restored = nullptr;
@@ -964,7 +967,7 @@ void caseEngineStability(const DataSet &set, const fs::path &scratch, const Cata
     // still open elsewhere in the same process (frees it on last close),
     // so this only showed up on Windows, which locks it.
     {
-        infrastructure::engine::LibdjinteropEngineCueWriter writer(root.string());
+        infrastructure::engine::LibdjinteropEngineCueWriter writer(pathToUtf8(root));
         domain::CuePoint cue;
         cue.kind = domain::CuePoint::Kind::Hot;
         cue.hotCueNumber = 1;
@@ -1020,7 +1023,7 @@ void caseWorkCounts(const DataSet &set, const fs::path &scratch, const Catalogs 
     // remove_all() below deletes the tree -- see caseEngineStability's
     // own comment on the same fix.
     {
-        infrastructure::engine::LibdjinteropEngineCueWriter writer(root.string());
+        infrastructure::engine::LibdjinteropEngineCueWriter writer(pathToUtf8(root));
         domain::CuePoint cue;
         cue.kind = domain::CuePoint::Kind::Hot;
         cue.hotCueNumber = 1;
@@ -1083,8 +1086,8 @@ gui::SaveLoopResult runChanges(const std::vector<std::shared_ptr<gui::PendingCha
                                application::CancellationToken cancel)
 {
     gui::SaveContext ctx(cancel, application::NullProgressReporter::instance(), nullptr,
-                         QString::fromStdString(rekordboxRoot.string()),
-                         QString::fromStdString(engineRoot.string()));
+                         pathToQString(rekordboxRoot),
+                         pathToQString(engineRoot));
     return runSaveLoop(changes, ctx);
 }
 
@@ -1093,20 +1096,20 @@ gui::SaveLoopResult runChanges(const std::vector<std::shared_ptr<gui::PendingCha
 {
     application::CancellationToken cancel;
     gui::SaveContext ctx(cancel, application::NullProgressReporter::instance(), nullptr,
-                         QString::fromStdString(rekordboxRoot.string()),
-                         QString::fromStdString(engineRoot.string()));
+                         pathToQString(rekordboxRoot),
+                         pathToQString(engineRoot));
     return runSaveLoop(changes, ctx);
 }
 
 std::vector<domain::Track> rescanRekordbox(const fs::path &root)
 {
-    infrastructure::rekordbox::KaitaiRekordboxReader reader(root.string());
+    infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(root));
     return application::ScanLibrary(reader).execute();
 }
 
 std::vector<domain::Track> rescanEngine(const fs::path &root)
 {
-    infrastructure::engine::LibdjinteropEngineReader reader(root.string());
+    infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(root));
     return application::ScanLibrary(reader).execute();
 }
 
@@ -1158,7 +1161,7 @@ void caseAddCue(const DataSet &set, const fs::path &scratch, const Catalogs &cat
     const fs::path root = freshRekordboxCopy(set, scratch, "matrix-addcue");
 
     WorkCounters::instance().reset();
-    auto change = std::make_shared<gui::AddCueChange>("rekordbox", QString::fromStdString(root.string()),
+    auto change = std::make_shared<gui::AddCueChange>("rekordbox", pathToQString(root),
                                                       QString::fromStdString(id), 45000.0, "hot", 2, "#00FF00", "",
                                                       false, 0.0, QString::fromStdString(target->title));
     auto result = runChanges({change}, root, {});
@@ -1180,15 +1183,15 @@ void caseAddCue(const DataSet &set, const fs::path &scratch, const Catalogs &cat
             // library. Nothing asserted that until now, and it was
             // silently doing nothing whenever the track's path came back
             // space-padded from export.pdb -- see toContentPath().
-            if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root.string())) {
+            if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(root))) {
                 auto trimmed = [](std::string path) {
                     while (!path.empty() && path.back() == ' ') {
                         path.pop_back();
                     }
-                    return fs::path(path).filename().string();
+                    return pathToUtf8(pathFromUtf8(path).filename());
                 };
                 try {
-                    infrastructure::onelibrary::OneLibraryReader reader(root.string());
+                    infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(root));
                     // Named, not a temporary bound into the range-for: a
                     // pointer taken into readAll()'s returned vector must
                     // outlive the loop that fills `mirrored`, and a
@@ -1227,7 +1230,7 @@ void caseAddCue(const DataSet &set, const fs::path &scratch, const Catalogs &cat
 
     // Same slot again, a different position: a hardware pad holds one cue,
     // so this replaces rather than adds.
-    auto replacement = std::make_shared<gui::AddCueChange>("rekordbox", QString::fromStdString(root.string()),
+    auto replacement = std::make_shared<gui::AddCueChange>("rekordbox", pathToQString(root),
                                                            QString::fromStdString(id), 60000.0, "hot", 2, "#0000FF", "",
                                                            false, 0.0, QString::fromStdString(target->title));
     auto second = runChanges({replacement}, root, {});
@@ -1284,7 +1287,7 @@ void caseBackupCoversEveryChangedFile(const DataSet &set, const fs::path &scratc
     const fs::path stickRoot = scratch / "matrix-covers-stick";
     fs::remove_all(stickRoot);
     fs::create_directories(stickRoot);
-    const fs::path root = stickRoot / fs::path(*set.rekordboxRoot).filename();
+    const fs::path root = stickRoot / set.rekordboxRoot->filename();
     fs::copy(*set.rekordboxRoot, root, fs::copy_options::recursive);
 
     // Content before, for every file the save could possibly touch.
@@ -1293,7 +1296,7 @@ void caseBackupCoversEveryChangedFile(const DataSet &set, const fs::path &scratc
         std::error_code ec;
         for (fs::recursive_directory_iterator it(under, ec), end; it != end && !ec; it.increment(ec)) {
             if (it->is_regular_file(ec)) {
-                byPath[it->path().string()] = readWholeFile(it->path());
+                byPath[pathToUtf8(it->path())] = readWholeFile(it->path());
             }
         }
         return byPath;
@@ -1303,7 +1306,7 @@ void caseBackupCoversEveryChangedFile(const DataSet &set, const fs::path &scratc
     std::vector<std::shared_ptr<gui::PendingChange>> changes;
     for (const auto *t : withJunk) {
         domain::Track copy = *t;
-        changes.push_back(std::make_shared<gui::RemoveJunkCueChange>(QString::fromStdString(root.string()), copy));
+        changes.push_back(std::make_shared<gui::RemoveJunkCueChange>(pathToQString(root), copy));
     }
     auto result = runChanges(changes, root, {});
     if (!check(result.error.isEmpty(), "the save reported no error: " + result.error.toStdString())) {
@@ -1315,10 +1318,10 @@ void caseBackupCoversEveryChangedFile(const DataSet &set, const fs::path &scratc
 
     std::set<std::string> backedUp;
     infrastructure::backup::FilesystemBackupStore store(
-        infrastructure::backup::backupDirForCatalogPath(root.string()));
+        infrastructure::backup::backupDirForCatalogPath(pathToUtf8(root)));
     for (const auto &record : store.list()) {
         for (const auto &recorded : record.filePaths) {
-            backedUp.insert(fs::weakly_canonical(fs::path(recorded)).string());
+            backedUp.insert(pathToUtf8(fs::weakly_canonical(pathFromUtf8(recorded))));
         }
     }
 
@@ -1328,7 +1331,7 @@ void caseBackupCoversEveryChangedFile(const DataSet &set, const fs::path &scratc
         if (now == after.end() || now->second == contentBefore) {
             continue;  // untouched, or removed (a removal is a different property)
         }
-        if (!backedUp.count(fs::weakly_canonical(fs::path(path)).string())) {
+        if (!backedUp.count(pathToUtf8(fs::weakly_canonical(pathFromUtf8(path))))) {
             unbacked.push_back(path);
         }
     }
@@ -1388,7 +1391,7 @@ void caseNoPaddedStringsFromRekordbox(const DataSet &set, const Catalogs &catalo
             continue;
         }
         if (application::normalizedPathKey(track.filePath)
-            == application::normalizedPathKey(fs::path(track.filePath).lexically_normal().string())) {
+            == application::normalizedPathKey(pathToUtf8(pathFromUtf8(track.filePath).lexically_normal()))) {
             ++agreed;
         }
     }
@@ -1444,11 +1447,11 @@ void caseCollapseGroupsAcrossFormats(const DataSet &set, const Catalogs &catalog
     std::set<std::string> rekordboxKeys, engineKeys, rekordboxNames, engineNames;
     for (const auto &track : catalogs.rekordbox) {
         rekordboxKeys.insert(application::normalizedPathKey(track.filePath));
-        rekordboxNames.insert(fs::path(track.filePath).filename().string());
+        rekordboxNames.insert(pathToUtf8(pathFromUtf8(track.filePath).filename()));
     }
     for (const auto &track : catalogs.engine) {
         engineKeys.insert(application::normalizedPathKey(track.filePath));
-        engineNames.insert(fs::path(track.filePath).filename().string());
+        engineNames.insert(pathToUtf8(pathFromUtf8(track.filePath).filename()));
     }
     std::size_t sharedPaths = 0, sharedNames = 0;
     for (const auto &key : rekordboxKeys) {
@@ -1517,8 +1520,8 @@ void caseBackupPathResolver(const DataSet &set, const fs::path &scratch, const C
 
     application::CancellationToken cancel;
     gui::SaveContext ctx(cancel, application::NullProgressReporter::instance(), nullptr,
-                         QString::fromStdString(root.string()), QString());
-    const QString qroot = QString::fromStdString(root.string());
+                         pathToQString(root), QString());
+    const QString qroot = pathToQString(root);
 
     const domain::Track &track = catalogs.rekordbox.front();
     const domain::TrackId id{"rekordbox", track.sourceId};
@@ -1544,10 +1547,10 @@ void caseBackupPathResolver(const DataSet &set, const fs::path &scratch, const C
 
     // The resolver must agree with the lookup the writers themselves use.
     const auto direct = infrastructure::rekordbox::findAnlzPathForTrackId(
-        root.string(), static_cast<std::uint32_t>(std::stoul(track.sourceId)));
+        pathToUtf8(root), static_cast<std::uint32_t>(std::stoul(track.sourceId)));
     if (check(direct.has_value(), "the fixture resolves this track's analysis path directly")) {
-        const std::string expected = infrastructure::rekordbox::extAnlzPath(root.string(), *direct);
-        check(has(cuesOnly, fs::path(expected).parent_path().filename().string()),
+        const std::string expected = infrastructure::rekordbox::extAnlzPath(pathToUtf8(root), *direct);
+        check(has(cuesOnly, pathToUtf8(pathFromUtf8(expected).parent_path().filename())),
               "the resolver names the same analysis file the writers would open");
     }
 
@@ -1565,7 +1568,7 @@ void caseBackupPathResolver(const DataSet &set, const fs::path &scratch, const C
     // database being present. Sync leaves it alone even on a stick that
     // has one; Add Cue writes it. Both directions are defects.
     const auto mirrored = gui::filesWrittenFor(gui::WriteScope{.oneLibraryMirror = true}, id, qroot, ctx);
-    if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root.string())) {
+    if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(root))) {
         check(has(mirrored, "exportLibrary.db"), "a mirroring write names the OneLibrary database");
         check(!has(cuesOnly, "exportLibrary.db"),
               "a non-mirroring write does NOT name it, even though the stick has one");
@@ -1573,7 +1576,7 @@ void caseBackupPathResolver(const DataSet &set, const fs::path &scratch, const C
 
     // Engine names one shared database whatever the track.
     const auto engine = gui::filesWrittenFor(gui::WriteScope{}, {"engine", track.sourceId},
-                                             QString::fromStdString((root / "Engine Library").string()), ctx);
+                                             pathToQString(root / "Engine Library"), ctx);
     check(has(engine, "m.db"), "an Engine write names m.db");
 
     fs::remove_all(root);
@@ -1654,7 +1657,7 @@ void caseBackupPrecedesWrites(const DataSet &set, const fs::path &scratch, const
     const fs::path stickRoot = scratch / "matrix-ordering-stick";
     fs::remove_all(stickRoot);
     fs::create_directories(stickRoot);
-    const fs::path root = stickRoot / fs::path(*set.rekordboxRoot).filename();
+    const fs::path root = stickRoot / set.rekordboxRoot->filename();
     fs::copy(*set.rekordboxRoot, root, fs::copy_options::recursive);
 
     application::CancellationToken cancel;
@@ -1665,7 +1668,7 @@ void caseBackupPrecedesWrites(const DataSet &set, const fs::path &scratch, const
     std::set<std::string> declared;
     for (const auto *t : withJunk) {
         domain::Track copy = *t;
-        auto inner = std::make_shared<gui::RemoveJunkCueChange>(QString::fromStdString(root.string()), copy);
+        auto inner = std::make_shared<gui::RemoveJunkCueChange>(pathToQString(root), copy);
         changes.push_back(std::make_shared<CancelAfterApplies>(inner, cancel, applied, cancelAfter));
     }
 
@@ -1679,7 +1682,7 @@ void caseBackupPrecedesWrites(const DataSet &set, const fs::path &scratch, const
     // `root` is the PIONEER folder; the backups sit beside it under the
     // stick root, which is its parent.
     infrastructure::backup::FilesystemBackupStore store(
-        infrastructure::backup::backupDirForCatalogPath(root.string()));
+        infrastructure::backup::backupDirForCatalogPath(pathToUtf8(root)));
     std::set<std::string> backedUp;
     for (const auto &record : store.list()) {
         if (record.label != "junk-cue-cleanup") {
@@ -1696,7 +1699,7 @@ void caseBackupPrecedesWrites(const DataSet &set, const fs::path &scratch, const
             }
             // Every one of them is named ANLZ0000.EXT; the containing
             // directory is what tells them apart.
-            backedUp.insert(p.parent_path().filename().string());
+            backedUp.insert(pathToUtf8(p.parent_path().filename()));
         }
     }
 
@@ -1756,7 +1759,7 @@ void caseStrayCueRemoval(const DataSet &set, const fs::path &scratch, const Cata
         straysBefore[t->sourceId] = static_cast<size_t>(std::count_if(t->cues.begin(), t->cues.end(), [](const auto &c) {
             return domain::isJunkCue(c);
         }));
-        changes.push_back(std::make_shared<gui::RemoveJunkCueChange>(QString::fromStdString(root.string()), copy));
+        changes.push_back(std::make_shared<gui::RemoveJunkCueChange>(pathToQString(root), copy));
     }
 
     WorkCounters::instance().reset();
@@ -1873,7 +1876,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
         while (!path.empty() && path.back() == ' ') {
             path.pop_back();
         }
-        return fs::path(path).filename().string();
+        return pathToUtf8(pathFromUtf8(path).filename());
     };
     auto slotKey = [&basenameKey](const std::string &path, int hotCueNumber) {
         return basenameKey(path) + "|" + std::to_string(hotCueNumber);
@@ -1890,10 +1893,10 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
         }
         return false;
     };
-    const bool haveMirror = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string());
+    const bool haveMirror = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(rekordboxRoot));
     if (haveMirror) {
         try {
-            infrastructure::onelibrary::OneLibraryReader reader(rekordboxRoot.string());
+            infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(rekordboxRoot));
             for (const auto &t : reader.readAll()) {
                 for (const auto &c : t.cues) {
                     if (c.kind == domain::CuePoint::Kind::Hot) {
@@ -2023,8 +2026,8 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
 
     std::vector<std::shared_ptr<gui::PendingChange>> changes;
     for (const auto &plan : withCues) {
-        changes.push_back(std::make_shared<gui::SyncPlanChange>(QString::fromStdString(rekordboxRoot.string()),
-                                                                QString::fromStdString(engineRoot.string()), plan,
+        changes.push_back(std::make_shared<gui::SyncPlanChange>(pathToQString(rekordboxRoot),
+                                                                pathToQString(engineRoot), plan,
                                                                 static_cast<int>(withCues.size())));
     }
 
@@ -2079,7 +2082,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
     if (haveMirror) {
         std::vector<domain::Track> oneLibraryAfter;
         try {
-            infrastructure::onelibrary::OneLibraryReader reader(rekordboxRoot.string());
+            infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(rekordboxRoot));
             oneLibraryAfter = reader.readAll();
         } catch (const std::exception &e) {
             check(false, std::string("could not re-read OneLibrary after the sync: ") + e.what());
@@ -2182,7 +2185,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
                 while (!path.empty() && path.back() == ' ') {
                     path.pop_back();
                 }
-                return fs::path(path).filename().string();
+                return pathToUtf8(pathFromUtf8(path).filename());
             };
             std::set<std::string> oneLibraryNames;
             for (const auto &t : oneLibraryAfter) {
@@ -2249,7 +2252,7 @@ void caseDeviceSettings(const DataSet &set, const fs::path &scratch, Expectation
         return;
     }
 
-    auto files = infrastructure::rekordbox::readDeviceSettings(root.string());
+    auto files = infrastructure::rekordbox::readDeviceSettings(pathToUtf8(root));
     const infrastructure::rekordbox::SettingsFile *mySetting = nullptr;
     for (const auto &file : files) {
         if (file.fileName == "MYSETTING.DAT" && !file.fields.empty()) {
@@ -2294,7 +2297,7 @@ void caseDeviceSettings(const DataSet &set, const fs::path &scratch, Expectation
 
     const std::string before = readWholeFile(settingsFile);
     auto change = std::make_shared<gui::DeviceSettingChange>(
-        QString::fromStdString(root.string()), "MYSETTING.DAT", QString::fromStdString(label),
+        pathToQString(root), "MYSETTING.DAT", QString::fromStdString(label),
         QString::fromStdString(current), QString::fromStdString(wanted));
     WorkCounters::instance().reset();
     auto result = runChanges({change}, root, {});
@@ -2307,7 +2310,7 @@ void caseDeviceSettings(const DataSet &set, const fs::path &scratch, Expectation
         return;
     }
 
-    auto after = infrastructure::rekordbox::readDeviceSettings(root.string());
+    auto after = infrastructure::rekordbox::readDeviceSettings(pathToUtf8(root));
     bool found = false;
     for (const auto &file : after) {
         if (file.fileName != "MYSETTING.DAT") {
@@ -2371,7 +2374,7 @@ void caseCopyCues(const DataSet &set, const fs::path &scratch, const Catalogs &c
     gui::DuplicatesCopyOp op;
     op.source = *source;
     op.targets = {*target};
-    auto change = std::make_shared<gui::CopyCuesChange>("rekordbox", QString::fromStdString(root.string()),
+    auto change = std::make_shared<gui::CopyCuesChange>("rekordbox", pathToQString(root),
                                                         QString::fromStdString(targetId), op);
     WorkCounters::instance().reset();
     auto result = runChanges({change}, root, {});
@@ -2435,7 +2438,7 @@ void caseLocalCueRestore(const DataSet &set, const fs::path &scratch, const Cata
     restored.positionMs = 21000.0;
     candidate.mergedCues = {restored};
 
-    auto change = std::make_shared<gui::MergeCuesChange>("rekordbox", QString::fromStdString(root.string()), candidate);
+    auto change = std::make_shared<gui::MergeCuesChange>("rekordbox", pathToQString(root), candidate);
     WorkCounters::instance().reset();
     auto result = runChanges({change}, root, {});
     const auto counts = WorkCounters::instance().snapshot();
@@ -2504,7 +2507,7 @@ void caseLibraryHealthRepair(const DataSet &set, const fs::path &scratch, const 
     issue.survivorCues = broken->cues;
 
     WorkCounters::instance().reset();
-    auto change = std::make_shared<gui::RepairIssueChange>(QString::fromStdString(root.string()), issue, 1);
+    auto change = std::make_shared<gui::RepairIssueChange>(pathToQString(root), issue, 1);
     auto result = runChanges({change}, root, {});
     const auto counts = WorkCounters::instance().snapshot();
     if (!check(result.error.isEmpty(), "the repair save reported no error: " + result.error.toStdString())) {
@@ -2552,7 +2555,7 @@ void caseLibraryHealthRepair(const DataSet &set, const fs::path &scratch, const 
 void caseAddCueOnTrackOneLibraryDoesNotList(const DataSet &set, const fs::path &scratch, const Catalogs &catalogs)
 {
     if (catalogs.rekordbox.empty() || !set.rekordboxRoot
-        || !infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*set.rekordboxRoot)) {
+        || !infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(*set.rekordboxRoot))) {
         std::cout << "    skipped matrix/add cue without a OneLibrary row: no rekordbox with OneLibrary\n";
         return;
     }
@@ -2561,10 +2564,10 @@ void caseAddCueOnTrackOneLibraryDoesNotList(const DataSet &set, const fs::path &
         while (!path.empty() && path.back() == ' ') {
             path.pop_back();
         }
-        return fs::path(path).filename().string();
+        return pathToUtf8(pathFromUtf8(path).filename());
     };
     std::map<std::string, int> listed;
-    const std::vector<domain::Track> oneLibrary = infrastructure::onelibrary::OneLibraryReader(root.string()).readAll();
+    const std::vector<domain::Track> oneLibrary = infrastructure::onelibrary::OneLibraryReader(pathToUtf8(root)).readAll();
     for (const auto &t : oneLibrary) {
         ++listed[filename(t.filePath)];
     }
@@ -2586,12 +2589,12 @@ void caseAddCueOnTrackOneLibraryDoesNotList(const DataSet &set, const fs::path &
     const std::string name = filename(target->filePath);
     for (const auto &t : oneLibrary) {
         if (filename(t.filePath) == name) {
-            infrastructure::onelibrary::OneLibraryCueWriter(root.string()).removeTrackByPath(t.filePath);
+            infrastructure::onelibrary::OneLibraryCueWriter(pathToUtf8(root)).removeTrackByPath(t.filePath);
             break;
         }
     }
     bool stillListed = false;
-    for (const auto &t : infrastructure::onelibrary::OneLibraryReader(root.string()).readAll()) {
+    for (const auto &t : infrastructure::onelibrary::OneLibraryReader(pathToUtf8(root)).readAll()) {
         stillListed = stillListed || filename(t.filePath) == name;
     }
     if (!check(!stillListed, "the setup removed the track's OneLibrary row")) {
@@ -2599,7 +2602,7 @@ void caseAddCueOnTrackOneLibraryDoesNotList(const DataSet &set, const fs::path &
         return;
     }
 
-    auto change = std::make_shared<gui::AddCueChange>("rekordbox", QString::fromStdString(root.string()),
+    auto change = std::make_shared<gui::AddCueChange>("rekordbox", pathToQString(root),
                                                       QString::fromStdString(id), 33000.0, "memory", 0, "", "",
                                                       false, 0.0, QString::fromStdString(target->title));
     auto result = runChanges({change}, root, {});
@@ -2635,7 +2638,7 @@ void caseLibraryHealthRepairOnBothCatalogs(const DataSet &set, const fs::path &s
         return;
     }
     const fs::path root = freshRekordboxCopy(set, scratch, "matrix-repair-both");
-    if (!infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root.string())) {
+    if (!infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(root))) {
         std::cout << "    skipped matrix/repair on both catalogs: this set has no OneLibrary\n";
         fs::remove_all(root);
         return;
@@ -2644,10 +2647,10 @@ void caseLibraryHealthRepairOnBothCatalogs(const DataSet &set, const fs::path &s
         while (!path.empty() && path.back() == ' ') {
             path.pop_back();
         }
-        return fs::path(path).filename().string();
+        return pathToUtf8(pathFromUtf8(path).filename());
     };
     const auto rekordbox = rescanRekordbox(root);
-    const std::vector<domain::Track> oneLibrary = infrastructure::onelibrary::OneLibraryReader(root.string()).readAll();
+    const std::vector<domain::Track> oneLibrary = infrastructure::onelibrary::OneLibraryReader(pathToUtf8(root)).readAll();
 
     // Only files each catalog lists exactly once, so a row is found by
     // its file name alone.
@@ -2704,7 +2707,7 @@ void caseLibraryHealthRepairOnBothCatalogs(const DataSet &set, const fs::path &s
 
     // In the order Repair All stages them: rekordbox's issues are listed
     // before OneLibrary's.
-    const QString path = QString::fromStdString(root.string());
+    const QString path = pathToQString(root);
     auto result = runChanges({std::make_shared<gui::RepairIssueChange>(path, inRekordbox, 1),
                               std::make_shared<gui::RepairIssueChange>(path, inOneLibrary, 1)},
                              root, {});
@@ -2717,7 +2720,7 @@ void caseLibraryHealthRepairOnBothCatalogs(const DataSet &set, const fs::path &s
     check(findTrack(rekordboxAfter, brokenId) == nullptr, "the broken rekordbox row is gone");
     bool brokenListed = false;
     bool survivorListed = false;
-    for (const auto &o : infrastructure::onelibrary::OneLibraryReader(root.string()).readAll()) {
+    for (const auto &o : infrastructure::onelibrary::OneLibraryReader(pathToUtf8(root)).readAll()) {
         brokenListed = brokenListed || filename(o.filePath) == brokenName;
         survivorListed = survivorListed || filename(o.filePath) == survivorName;
     }
@@ -2839,11 +2842,11 @@ void caseCleanUpAcrossCatalogs(const DataSet &set, const fs::path &scratch)
     // rekordbox library. The committed fixture is not -- Engine holds 521,
     // the pdb 522, an offer already pending, which the save must leave
     // alone -- so mark it imported first, as Library Health does.
-    const auto importBefore = infrastructure::engine::readRekordboxImportState(engineLib.string(), pioneer.string());
-    check(infrastructure::engine::markRekordboxLibraryImported(engineLib.string(), importBefore.librarySequence),
+    const auto importBefore = infrastructure::engine::readRekordboxImportState(pathToUtf8(engineLib), pathToUtf8(pioneer));
+    check(infrastructure::engine::markRekordboxLibraryImported(pathToUtf8(engineLib), importBefore.librarySequence),
           "the copy is marked as imported before the cleanup");
 
-    auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
+    auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", pathToQString(pioneer),
                                                             plan, 1);
     auto result = runChanges({change}, pioneer, engineLib);
     if (!check(result.error.isEmpty(),
@@ -2851,7 +2854,7 @@ void caseCleanUpAcrossCatalogs(const DataSet &set, const fs::path &scratch)
         fs::remove_all(stick);
         return;
     }
-    const auto importAfter = infrastructure::engine::readRekordboxImportState(engineLib.string(), pioneer.string());
+    const auto importAfter = infrastructure::engine::readRekordboxImportState(pathToUtf8(engineLib), pathToUtf8(pioneer));
     check(importAfter.librarySequence != importBefore.librarySequence,
           "the cleanup rewrote export.pdb and moved its sequence (else the next check proves nothing)");
     check(!importAfter.playerWillOfferImport() && importAfter.engineCounter == importAfter.librarySequence,
@@ -2964,7 +2967,7 @@ void caseCleanUpDoomedOnlyInAnotherCatalog(const DataSet &set, const fs::path &s
     // catalog, not in the app's home.
     const fs::path manifestPath = infrastructure::paths::stickPendingDeletions(stick);
     fs::remove(manifestPath);
-    auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
+    auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", pathToQString(pioneer),
                                                             plan, 1);
     auto result = runChanges({change}, pioneer, engineLib);
     if (!check(result.error.isEmpty(), "the cleanup save reported no error: " + result.error.toStdString())) {
@@ -2976,7 +2979,7 @@ void caseCleanUpDoomedOnlyInAnotherCatalog(const DataSet &set, const fs::path &s
           "the Engine-only copy's row is gone (else the scheduling check below proves nothing)");
     bool scheduled = false;
     if (fs::exists(manifestPath)) {
-        infrastructure::cleanup::PendingDeletionManifest manifest(manifestPath.string());
+        infrastructure::cleanup::PendingDeletionManifest manifest(pathToUtf8(manifestPath));
         for (const auto &entry : manifest.list()) {
             scheduled = scheduled || entry.filePath == doomed->filePath;
         }
@@ -3006,13 +3009,13 @@ void caseCleanUpDoomedOnlyInAnotherCatalog(const DataSet &set, const fs::path &s
 // the test does not depend on what the fixture's library happens to hold.
 void caseCleanUpMergesPlayHistory(const DataSet &set, const fs::path &scratch)
 {
-    if (!set.rekordboxRoot || !infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*set.rekordboxRoot)) {
+    if (!set.rekordboxRoot || !infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(*set.rekordboxRoot))) {
         std::cout << "    skipped matrix/play-history cleanup: no rekordbox catalog with a OneLibrary mirror\n";
         return;
     }
 
     auto freshStick = [&](const std::string &name) {
-        const fs::path stick = scratch / name;
+        const fs::path stick = scratch / pathFromUtf8(name);
         fs::remove_all(stick);
         fs::create_directories(stick);
         fs::copy(*set.rekordboxRoot, stick / "PIONEER", fs::copy_options::recursive);
@@ -3020,7 +3023,7 @@ void caseCleanUpMergesPlayHistory(const DataSet &set, const fs::path &scratch)
     };
     auto scanBoth = [](const fs::path &pioneer) {
         std::vector<domain::Track> rows = rescanRekordbox(pioneer);
-        infrastructure::onelibrary::OneLibraryReader reader(pioneer.string());
+        infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(pioneer));
         auto oneLibraryRows = reader.readAll();
         rows.insert(rows.end(), oneLibraryRows.begin(), oneLibraryRows.end());
         return application::collapseCatalogRows(rows);
@@ -3092,7 +3095,7 @@ void caseCleanUpMergesPlayHistory(const DataSet &set, const fs::path &scratch)
             std::cout << "    (no play-history cleanup to check: no pair listed by rekordbox and OneLibrary "
                          "with nothing else to fill in)\n";
         } else {
-            auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
+            auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", pathToQString(pioneer),
                                                                     *plan, 1);
             auto result = runChanges({change}, pioneer, {});
             check(result.error.isEmpty(),
@@ -3121,7 +3124,7 @@ void caseCleanUpMergesPlayHistory(const DataSet &set, const fs::path &scratch)
         }
         const std::string survivorRekordboxId = domain::rowIdIn(plan->survivor, "rekordbox");
         const std::string survivorOneLibraryId = domain::rowIdIn(plan->survivor, "onelibrary");
-        auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(pioneer.string()),
+        auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", pathToQString(pioneer),
                                                                 *plan, 1);
         auto result = runChanges({change}, pioneer, {});
         if (check(result.error.isEmpty(), "the play-count cleanup saves: " + result.error.toStdString())) {
@@ -3130,7 +3133,7 @@ void caseCleanUpMergesPlayHistory(const DataSet &set, const fs::path &scratch)
             if (check(kept != nullptr, "the kept rekordbox row is still there")) {
                 check(kept->playCount && *kept->playCount == 8, "export.pdb holds the added-up play count");
             }
-            infrastructure::onelibrary::OneLibraryReader reader(pioneer.string());
+            infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(pioneer));
             auto oneLibraryAfter = reader.readAll();
             const domain::Track *keptMirror = findTrack(oneLibraryAfter, survivorOneLibraryId);
             if (check(keptMirror != nullptr, "the kept OneLibrary row is still there")) {
@@ -3188,7 +3191,7 @@ void caseCleanUpDuplicates(const DataSet &set, const fs::path &scratch, const Ca
     plan.mergedCuesForSurvivor = doomed->cues;
 
     WorkCounters::instance().reset();
-    auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", QString::fromStdString(root.string()), plan, 1);
+    auto change = std::make_shared<gui::CleanupGroupChange>("rekordbox", pathToQString(root), plan, 1);
     auto result = runChanges({change}, root, {});
     const auto counts = WorkCounters::instance().snapshot();
     if (!check(result.error.isEmpty(), "the cleanup save reported no error: " + result.error.toStdString())) {
@@ -3217,7 +3220,7 @@ void caseCleanUpDuplicates(const DataSet &set, const fs::path &scratch, const Ca
     // there and the manifest must name it.
     const fs::path manifestPath = scratch / "Seabass" / "orphaned" / "pending-deletions.jsonl";
     if (check(fs::exists(manifestPath), "a pending-deletion manifest was written")) {
-        infrastructure::cleanup::PendingDeletionManifest manifest(manifestPath.string());
+        infrastructure::cleanup::PendingDeletionManifest manifest(pathToUtf8(manifestPath));
         auto entries = manifest.list();
         bool named = false;
         for (const auto &entry : entries) {
@@ -3252,7 +3255,7 @@ void caseDeleteOrphan(const DataSet &set, const fs::path &scratch, const Catalog
     const fs::path root = freshRekordboxCopy(set, scratch, "matrix-orphan");
     std::vector<domain::Track> tracks;
     try {
-        infrastructure::onelibrary::OneLibraryReader reader(root.string());
+        infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(root));
         tracks = reader.readAll();
     } catch (const std::exception &e) {
         check(false, std::string("could not read OneLibrary from the scratch copy: ") + e.what());
@@ -3271,7 +3274,7 @@ void caseDeleteOrphan(const DataSet &set, const fs::path &scratch, const Catalog
     issue.kind = domain::LibraryConsistencyIssue::Kind::Missing;
     issue.brokenGroup = {doomed};
 
-    auto change = std::make_shared<gui::DeleteOrphanChange>(QString::fromStdString(root.string()), issue);
+    auto change = std::make_shared<gui::DeleteOrphanChange>(pathToQString(root), issue);
     WorkCounters::instance().reset();
     auto result = runChanges({change}, root, {});
     const auto counts = WorkCounters::instance().snapshot();
@@ -3285,7 +3288,7 @@ void caseDeleteOrphan(const DataSet &set, const fs::path &scratch, const Catalog
 
     std::vector<domain::Track> after;
     try {
-        infrastructure::onelibrary::OneLibraryReader reader(root.string());
+        infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(root));
         after = reader.readAll();
     } catch (const std::exception &e) {
         check(false, std::string("could not re-read OneLibrary after the deletion: ") + e.what());

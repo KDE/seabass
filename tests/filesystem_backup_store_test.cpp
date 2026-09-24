@@ -19,6 +19,7 @@
 
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/file_clock.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "scratch_path.hpp"
 
@@ -29,6 +30,8 @@
 
 using namespace seabass::infrastructure::backup;
 using seabass::application::BackupOrigin;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 namespace fs = std::filesystem;
 
 namespace
@@ -62,15 +65,15 @@ int main()
 
     // Basic backup + restore round trip.
     {
-        FilesystemBackupStore store(backupsDir.string());
-        auto record = store.backup({targetFile.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        auto record = store.backup({pathToUtf8(targetFile)}, "sync");
         assert(!record.id.empty());
 
         auto records = store.list();
         assert(records.size() == 1);
         assert(records[0].id == record.id);
         assert(records[0].filePaths.size() == 1);
-        assert(records[0].filePaths[0] == fs::absolute(targetFile).string());
+        assert(records[0].filePaths[0] == pathToUtf8(fs::absolute(targetFile)));
 
         writeFile(targetFile, "corrupted by something later");
         assert(readFile(targetFile) == "corrupted by something later");
@@ -104,8 +107,8 @@ int main()
         fs::path dated = root / "dated" / "export.pdb";
         writeFile(dated, "as exported");
         fs::last_write_time(dated, fromUnixSeconds(1'483'254'692));  // 2017-01-01, like a real export
-        FilesystemBackupStore store((root / "dated" / "Seabass" / "backups").string());
-        auto record = store.backup({dated.string()}, "add-cue");
+        FilesystemBackupStore store(pathToUtf8(root / "dated" / "Seabass" / "backups"));
+        auto record = store.backup({pathToUtf8(dated)}, "add-cue");
         writeFile(dated, "after the save");
         assert(toUnixSeconds(fs::last_write_time(dated)) > 1'483'254'692);
         assert(store.restore(record.id));
@@ -125,9 +128,9 @@ int main()
         fs::create_directories(b1.parent_path());
         writeFile(a1, "a original");
         writeFile(b1, "b original");
-        FilesystemBackupStore store(backupsDir.string());
-        auto record = store.backup({a1.string()}, "junk-cue-cleanup");
-        auto grown = store.addToArchive(record.id, {b1.string()});
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        auto record = store.backup({pathToUtf8(a1)}, "junk-cue-cleanup");
+        auto grown = store.addToArchive(record.id, {pathToUtf8(b1)});
         assert(grown.id == record.id);
         assert(grown.sizeBytes > record.sizeBytes);
         auto records = store.list();
@@ -140,7 +143,7 @@ int main()
         assert(readFile(b1) == "b original");
         bool threw = false;
         try {
-            store.addToArchive("no-such-backup", {a1.string()});
+            store.addToArchive("no-such-backup", {pathToUtf8(a1)});
         } catch (const std::exception &) {
             threw = true;
         }
@@ -153,10 +156,10 @@ int main()
     // so it is refused rather than guessed at.
     {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
-        auto record = store.backup({targetFile.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        auto record = store.backup({pathToUtf8(targetFile)}, "sync");
 
-        fs::path manifestPath = fs::path(record.path) / ".manifest";
+        fs::path manifestPath = pathFromUtf8(record.path) / ".manifest";
         std::string original = readFile(manifestPath);
         size_t firstNewline = original.find('\n');
         writeFile(manifestPath, original.substr(firstNewline + 1));
@@ -171,10 +174,10 @@ int main()
     // understand is refused, not misinterpreted.
     {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
-        auto record = store.backup({targetFile.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        auto record = store.backup({pathToUtf8(targetFile)}, "sync");
 
-        fs::path manifestPath = fs::path(record.path) / ".manifest";
+        fs::path manifestPath = pathFromUtf8(record.path) / ".manifest";
         std::string original = readFile(manifestPath);
         size_t firstNewline = original.find('\n');
         std::string rest = original.substr(firstNewline + 1);
@@ -189,9 +192,9 @@ int main()
     // Deleting a single backup removes just that one.
     {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
-        auto record1 = store.backup({targetFile.string()}, "sync");
-        auto record2 = store.backup({targetFile.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        auto record1 = store.backup({pathToUtf8(targetFile)}, "sync");
+        auto record2 = store.backup({pathToUtf8(targetFile)}, "sync");
         assert(store.list().size() == 2);
 
         bool removed = store.remove(record1.id);
@@ -207,7 +210,7 @@ int main()
     // the newest keepCount intact, and returns exactly the bytes freed.
     {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
         // Same label for every call, matching case 4's own convention:
         // ids are timestamp-*and*-label-prefixed, so distinct labels
         // created within the same second wouldn't sort chronologically
@@ -215,11 +218,11 @@ int main()
         // the same label instead forces the "-1"/"-2"/... disambiguating
         // suffix (filesystem_backup_store.cpp's own backup() comment),
         // which *does* sort chronologically.
-        auto r1 = store.backup({targetFile.string()}, "sync");
-        auto r2 = store.backup({targetFile.string()}, "sync");
-        auto r3 = store.backup({targetFile.string()}, "sync");
-        auto r4 = store.backup({targetFile.string()}, "sync");
-        auto r5 = store.backup({targetFile.string()}, "sync");
+        auto r1 = store.backup({pathToUtf8(targetFile)}, "sync");
+        auto r2 = store.backup({pathToUtf8(targetFile)}, "sync");
+        auto r3 = store.backup({pathToUtf8(targetFile)}, "sync");
+        auto r4 = store.backup({pathToUtf8(targetFile)}, "sync");
+        auto r5 = store.backup({pathToUtf8(targetFile)}, "sync");
         assert(store.list().size() == 5);
 
         auto beforeRecords = store.list();
@@ -257,9 +260,9 @@ int main()
     // off-by-one that removes one anyway.
     {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
-        store.backup({targetFile.string()}, "one");
-        store.backup({targetFile.string()}, "two");
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        store.backup({pathToUtf8(targetFile)}, "one");
+        store.backup({pathToUtf8(targetFile)}, "two");
         assert(store.list().size() == 2);
 
         auto keepAll = store.prune(2);
@@ -281,9 +284,9 @@ int main()
     // by-one bugs love this exact boundary.
     {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
-        store.backup({targetFile.string()}, "one");
-        store.backup({targetFile.string()}, "two");
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        store.backup({pathToUtf8(targetFile)}, "one");
+        store.backup({pathToUtf8(targetFile)}, "two");
         assert(store.list().size() == 2);
 
         auto pruned = store.prune(0);
@@ -307,11 +310,11 @@ int main()
 #if !defined(_WIN32)
     if (::geteuid() != 0) {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
-        const std::string id = store.backup({targetFile.string()}, "keep-me").id;
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        const std::string id = store.backup({pathToUtf8(targetFile)}, "keep-me").id;
         assert(store.list().size() == 1);
 
-        const fs::path recordDir = fs::path(backupsDir) / id;
+        const fs::path recordDir = backupsDir / pathFromUtf8(id);
         const fs::perms originalPerms = fs::status(recordDir).permissions();
         fs::permissions(recordDir, fs::perms::owner_read | fs::perms::owner_exec);
 
@@ -342,10 +345,10 @@ int main()
 #if !defined(_WIN32)
     if (::geteuid() != 0) {
         fs::remove_all(backupsDir);
-        FilesystemBackupStore store(backupsDir.string());
-        store.backup({targetFile.string()}, "one");
-        store.backup({targetFile.string()}, "two");
-        store.backup({targetFile.string()}, "three");
+        FilesystemBackupStore store(pathToUtf8(backupsDir));
+        store.backup({pathToUtf8(targetFile)}, "one");
+        store.backup({pathToUtf8(targetFile)}, "two");
+        store.backup({pathToUtf8(targetFile)}, "three");
         assert(store.list().size() == 3);
 
         // The two oldest are what prune(1) will go for. Made
@@ -383,13 +386,13 @@ int main()
         fs::path exportPdb = pioneer / "export.pdb";
         writeFile(exportPdb, "original library");
 
-        FilesystemBackupStore store((stickA / "Seabass" / "backups").string());
-        auto record = store.backup({exportPdb.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(stickA / "Seabass" / "backups"));
+        auto record = store.backup({pathToUtf8(exportPdb)}, "sync");
 
         // Nothing absolute may have been written down.
-        std::string manifest = readFile(stickA / "Seabass" / "backups" / record.id / ".manifest");
+        std::string manifest = readFile(stickA / "Seabass" / "backups" / pathFromUtf8(record.id) / ".manifest");
         assert(manifest.find("MANIFEST-VERSION\t4") != std::string::npos);
-        assert(manifest.find(stickA.string()) == std::string::npos);
+        assert(manifest.find(pathToUtf8(stickA)) == std::string::npos);
         assert(manifest.find("PIONEER/rekordbox/export.pdb") != std::string::npos);
 
         // The same stick, now mounted somewhere else entirely.
@@ -397,7 +400,7 @@ int main()
         fs::rename(stickA, stickB);
         writeFile(stickB / "PIONEER" / "rekordbox" / "export.pdb", "changed since");
 
-        FilesystemBackupStore moved((stickB / "Seabass" / "backups").string());
+        FilesystemBackupStore moved(pathToUtf8(stickB / "Seabass" / "backups"));
         assert(moved.restore(record.id));
         assert(readFile(stickB / "PIONEER" / "rekordbox" / "export.pdb") == "original library");
         // ...and nothing was resurrected at the old mount point.
@@ -408,7 +411,7 @@ int main()
         bool found = false;
         for (const auto &r : listed) {
             for (const auto &fp : r.filePaths) {
-                if (fp == fs::absolute(stickB / "PIONEER" / "rekordbox" / "export.pdb").string()) {
+                if (fp == pathToUtf8(fs::absolute(stickB / "PIONEER" / "rekordbox" / "export.pdb"))) {
                     found = true;
                 }
             }
@@ -425,10 +428,10 @@ int main()
         writeFile(elsewhere, "local cue store");
         fs::create_directories(stick);
 
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
-        auto record = store.backup({elsewhere.string()}, "local-restore");
-        std::string manifest = readFile(stick / "Seabass" / "backups" / record.id / ".manifest");
-        assert(manifest.find(fs::absolute(elsewhere).string()) != std::string::npos);
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        auto record = store.backup({pathToUtf8(elsewhere)}, "local-restore");
+        std::string manifest = readFile(stick / "Seabass" / "backups" / pathFromUtf8(record.id) / ".manifest");
+        assert(manifest.find(pathToUtf8(fs::absolute(elsewhere))) != std::string::npos);
 
         writeFile(elsewhere, "clobbered");
         assert(store.restore(record.id));
@@ -447,10 +450,10 @@ int main()
         writeFile(a, aBody);
         writeFile(b, bBody);
 
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
-        auto record = store.backup({a.string(), b.string()}, "stray-cues");
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        auto record = store.backup({pathToUtf8(a), pathToUtf8(b)}, "stray-cues");
         assert(record.filePaths.size() == 2);
-        assert(fs::exists(fs::path(record.path) / "backup.zip"));
+        assert(fs::exists(pathFromUtf8(record.path) / "backup.zip"));
         // Both files are called ANLZ0000.EXT. The loose layout has to
         // rename the second one; the archive tells them apart by path.
         assert(record.filePaths[0] != record.filePaths[1]);
@@ -481,10 +484,10 @@ int main()
         fs::path stick = root / "arch-damaged";
         fs::path a = stick / "PIONEER" / "export.pdb";
         writeFile(a, "the original");
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
-        auto record = store.backup({a.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        auto record = store.backup({pathToUtf8(a)}, "sync");
 
-        fs::path archive = fs::path(record.path) / "backup.zip";
+        fs::path archive = pathFromUtf8(record.path) / "backup.zip";
         fs::resize_file(archive, fs::file_size(archive) / 2);
 
         writeFile(a, "current contents");
@@ -507,11 +510,11 @@ int main()
         }
         writeFile(a, payload);
         writeFile(b, "analysis before");
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
-        auto record = store.backup({a.string(), b.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        auto record = store.backup({pathToUtf8(a), pathToUtf8(b)}, "sync");
 
         // Damage the first entry's data, inside the archive, past its header.
-        fs::path archive = fs::path(record.path) / "backup.zip";
+        fs::path archive = pathFromUtf8(record.path) / "backup.zip";
         std::fstream zip(archive, std::ios::in | std::ios::out | std::ios::binary);
         char header[30];
         zip.read(header, 30);
@@ -544,14 +547,14 @@ int main()
     {
         fs::path stick = root / "origins";
         fs::path a = stick / "PIONEER" / "export.pdb";
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
 
         writeFile(a, "one");
-        auto auto1 = store.backup({a.string()}, "sync");
+        auto auto1 = store.backup({pathToUtf8(a)}, "sync");
         writeFile(a, "two");
-        auto mine = store.backup({a.string()}, "before-gig", BackupOrigin::UserRequested);
+        auto mine = store.backup({pathToUtf8(a)}, "before-gig", BackupOrigin::UserRequested);
         writeFile(a, "three");
-        auto auto2 = store.backup({a.string()}, "sync");
+        auto auto2 = store.backup({pathToUtf8(a)}, "sync");
 
         auto records = store.list();
         assert(records.size() == 3);
@@ -571,9 +574,9 @@ int main()
         assert(pruned.bytesFreed > 0);
         assert(pruned.removed == 1);
         assert(pruned.failed == 0);
-        assert(fs::exists(mine.path));   // never Seabass's to delete
-        assert(fs::exists(auto2.path));  // newest automatic, the keepCount survivor
-        assert(!fs::exists(auto1.path));
+        assert(fs::exists(pathFromUtf8(mine.path)));   // never Seabass's to delete
+        assert(fs::exists(pathFromUtf8(auto2.path)));  // newest automatic, the keepCount survivor
+        assert(!fs::exists(pathFromUtf8(auto1.path)));
         std::cout << "case 17 (prune deletes automatic backups and leaves the user's) OK\n";
     }
 
@@ -585,16 +588,16 @@ int main()
     {
         fs::path stick = root / "candidates";
         fs::path a = stick / "PIONEER" / "export.pdb";
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
 
         writeFile(a, "zero");
-        auto mineOldest = store.backup({a.string()}, "first-gig", BackupOrigin::UserRequested);
+        auto mineOldest = store.backup({pathToUtf8(a)}, "first-gig", BackupOrigin::UserRequested);
         writeFile(a, "one");
-        auto auto1 = store.backup({a.string()}, "sync");
+        auto auto1 = store.backup({pathToUtf8(a)}, "sync");
         writeFile(a, "two");
-        auto mineBetween = store.backup({a.string()}, "before-gig", BackupOrigin::UserRequested);
+        auto mineBetween = store.backup({pathToUtf8(a)}, "before-gig", BackupOrigin::UserRequested);
         writeFile(a, "three");
-        auto auto2 = store.backup({a.string()}, "sync");
+        auto auto2 = store.backup({pathToUtf8(a)}, "sync");
 
         auto keepOne = store.pruneCandidates(1);
         assert(keepOne.size() == 1);
@@ -622,26 +625,26 @@ int main()
     {
         fs::path stick = root / "release";
         fs::path a = stick / "PIONEER" / "export.pdb";
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
 
         writeFile(a, std::string(4096, 'x'));
-        auto oldest = store.backup({a.string()}, "sync");
+        auto oldest = store.backup({pathToUtf8(a)}, "sync");
         writeFile(a, std::string(4096, 'y'));
-        auto middle = store.backup({a.string()}, "sync");
+        auto middle = store.backup({pathToUtf8(a)}, "sync");
         writeFile(a, std::string(4096, 'z'));
-        auto newest = store.backup({a.string()}, "sync");
+        auto newest = store.backup({pathToUtf8(a)}, "sync");
 
         std::uint64_t freed = store.releaseAutomaticBackups(1);
         assert(freed > 0);
-        assert(!fs::exists(oldest.path));  // oldest first
-        assert(fs::exists(middle.path));   // asked for 1 byte, stopped once it had it
-        assert(fs::exists(newest.path));
+        assert(!fs::exists(pathFromUtf8(oldest.path)));  // oldest first
+        assert(fs::exists(pathFromUtf8(middle.path)));   // asked for 1 byte, stopped once it had it
+        assert(fs::exists(pathFromUtf8(newest.path)));
         std::cout << "case 18 (the release takes the oldest first and stops when satisfied) OK\n";
 
         // Far more than the records hold: it must still refuse the last one.
         store.releaseAutomaticBackups(1ull << 40);
-        assert(fs::exists(newest.path));
-        assert(!fs::exists(middle.path));
+        assert(fs::exists(pathFromUtf8(newest.path)));
+        assert(!fs::exists(pathFromUtf8(middle.path)));
         std::cout << "case 19 (the newest automatic backup is never released) OK\n";
 
         // Nothing asked for, nothing deleted.
@@ -658,30 +661,30 @@ int main()
         fs::path stick = root / "release-spare";
         fs::path a = stick / "PIONEER" / "export.pdb";
         fs::path b = stick / "PIONEER" / "USBANLZ" / "P001" / "ANLZ0000.EXT";
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
 
         writeFile(a, std::string(4096, 'o'));
         writeFile(b, std::string(4096, 'o'));
         // Ids are a timestamp and the label, so records made within one
         // second sort by label. "auto-sync" sorts before the save's two,
         // so it is the oldest whether or not the clock ticked in between.
-        auto older = store.backup({a.string()}, "auto-sync");
+        auto older = store.backup({pathToUtf8(a)}, "auto-sync");
         writeFile(a, std::string(4096, 'p'));
-        auto saveRepair = store.backup({a.string()}, "consistency-repair");
-        auto saveOrphans = store.backup({b.string()}, "consistency-delete-orphan");
+        auto saveRepair = store.backup({pathToUtf8(a)}, "consistency-repair");
+        auto saveOrphans = store.backup({pathToUtf8(b)}, "consistency-delete-orphan");
         const std::string newestOfSave = std::max(saveRepair.id, saveOrphans.id);
         const std::string otherOfSave = std::min(saveRepair.id, saveOrphans.id);
 
         store.releaseAutomaticBackups(1ull << 40, {saveRepair.id, saveOrphans.id});
-        assert(!fs::exists(older.path));  // not this save's, so it may go
-        assert(fs::exists(saveRepair.path));
-        assert(fs::exists(saveOrphans.path));
+        assert(!fs::exists(pathFromUtf8(older.path)));  // not this save's, so it may go
+        assert(fs::exists(pathFromUtf8(saveRepair.path)));
+        assert(fs::exists(pathFromUtf8(saveOrphans.path)));
 
         // Without being told, only the newest record survives -- which is
         // exactly how a save used to lose half its undo.
         store.releaseAutomaticBackups(1ull << 40);
-        assert(fs::exists((stick / "Seabass" / "backups" / newestOfSave)));
-        assert(!fs::exists((stick / "Seabass" / "backups" / otherOfSave)));
+        assert(fs::exists((stick / "Seabass" / "backups" / pathFromUtf8(newestOfSave))));
+        assert(!fs::exists((stick / "Seabass" / "backups" / pathFromUtf8(otherOfSave))));
         std::cout << "case 20b (the release spares every record of the save that just finished) OK\n";
     }
 
@@ -690,10 +693,10 @@ int main()
     {
         fs::path stick = root / "prerestore";
         fs::path a = stick / "PIONEER" / "export.pdb";
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
 
         writeFile(a, "original");
-        auto record = store.backup({a.string()}, "sync");
+        auto record = store.backup({pathToUtf8(a)}, "sync");
         writeFile(a, "changed");
         assert(store.restore(record.id));
 
@@ -721,9 +724,9 @@ int main()
     {
         fs::path stick = root / "marker";
         fs::path a = stick / "PIONEER" / "export.pdb";
-        FilesystemBackupStore store((stick / "Seabass" / "backups").string());
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
         writeFile(a, "payload");
-        auto record = store.backup({a.string()}, "sync");
+        auto record = store.backup({pathToUtf8(a)}, "sync");
 
         bool seen = false;
         for (const auto &listed : store.list()) {
@@ -737,7 +740,7 @@ int main()
             // The record is one deflated archive, so its size is the
             // archive's -- not the payload's, and not zero.
             assert(listed.sizeBytes > 0);
-            assert(fs::exists(fs::path(listed.path) / "backup.zip"));
+            assert(fs::exists(pathFromUtf8(listed.path) / "backup.zip"));
         }
         assert(seen);
         std::cout << "case 23 (manifest headers are not read back as files to restore) OK\n";
@@ -750,11 +753,11 @@ int main()
         fs::path foreignDir = root / "Seabass2" / "backups";
         fs::create_directories(foreignDir / "0-my-own-folder");
         writeFile(foreignDir / "0-my-own-folder" / "precious.txt", "mine");
-        FilesystemBackupStore store(foreignDir.string());
+        FilesystemBackupStore store(pathToUtf8(foreignDir));
         fs::path victim = root / "victim.db";
         writeFile(victim, "v1");
-        store.backup({victim.string()}, "sync");
-        store.backup({victim.string()}, "sync");
+        store.backup({pathToUtf8(victim)}, "sync");
+        store.backup({pathToUtf8(victim)}, "sync");
         assert(store.list().size() == 2);
         store.prune(1);
         assert(fs::exists(foreignDir / "0-my-own-folder" / "precious.txt"));
@@ -767,7 +770,7 @@ int main()
         // timestamp id is a day old; a younger one waits (a backup may
         // still be writing it), and a folder that is not the store's --
         // no timestamp, or no archive -- is never touched.
-        const std::string young = store.backup({victim.string()}, "sync").id;
+        const std::string young = store.backup({pathToUtf8(victim)}, "sync").id;
         fs::remove(foreignDir / young / ".manifest");
         fs::create_directories(foreignDir / "20200101T000000-add-cue");
         writeFile(foreignDir / "20200101T000000-add-cue" / "backup.zip", "not really a zip, but the store's own file name");
@@ -776,7 +779,7 @@ int main()
         assert(store.list().size() == 1 && "none of the three manifest-less directories is a record");
         store.prune(1);
         assert(!fs::exists(foreignDir / "20200101T000000-add-cue") && "an old dead record is swept");
-        assert(fs::exists(foreignDir / young) && "a young one is left for a backup that may still be writing it");
+        assert(fs::exists(foreignDir / pathFromUtf8(young)) && "a young one is left for a backup that may still be writing it");
         assert(fs::exists(foreignDir / "1-not-ours") && "a folder without the store's timestamp id is not touched");
         assert(fs::exists(foreignDir / "0-my-own-folder" / "precious.txt") && "nor a folder without an archive");
         std::cout << "case: a directory without a manifest is not a record and survives prune OK\n";
@@ -798,7 +801,7 @@ int main()
     if (::geteuid() != 0) {
         fs::path deadDir = root / "Seabass-stat-fails" / "backups";
         fs::create_directories(deadDir);
-        FilesystemBackupStore store(deadDir.string());
+        FilesystemBackupStore store(pathToUtf8(deadDir));
         const fs::path oldRecord = deadDir / "20200101T000000-sync";
         fs::create_directories(oldRecord);
         writeFile(oldRecord / "backup.zip", "an archive");
@@ -831,10 +834,10 @@ int main()
     // the sidecars the archive does not itself contain.
     {
         fs::path walDir = root / "Seabass3" / "backups";
-        FilesystemBackupStore store(walDir.string());
+        FilesystemBackupStore store(pathToUtf8(walDir));
         fs::path db = root / "wal" / "exportLibrary.db";
         writeFile(db, "generation 1");
-        auto record = store.backup({db.string()}, "sync");
+        auto record = store.backup({pathToUtf8(db)}, "sync");
         writeFile(db, "generation 2");
         writeFile(root / "wal" / "exportLibrary.db-wal", "frames from generation 2");
         writeFile(root / "wal" / "exportLibrary.db-shm", std::string(32, '\0'));
@@ -858,10 +861,10 @@ int main()
     // nothing.
     {
         fs::path walDir = root / "Seabass4" / "backups";
-        FilesystemBackupStore store(walDir.string());
+        FilesystemBackupStore store(pathToUtf8(walDir));
         fs::path db = root / "stuck-wal" / "exportLibrary.db";
         writeFile(db, "generation 1");
-        auto record = store.backup({db.string()}, "sync");
+        auto record = store.backup({pathToUtf8(db)}, "sync");
         writeFile(db, "generation 2");
         const fs::path stuck = root / "stuck-wal" / "exportLibrary.db-wal";
         fs::create_directories(stuck);
@@ -902,8 +905,8 @@ int main()
         fs::path first = failRoot / "m.db";
         const std::string firstContents = seabass::testing::incompressible(64 * 1024, 1);
         writeFile(first, firstContents);
-        FilesystemBackupStore store(failBackups.string());
-        auto good = store.backup({first.string()}, "sync");
+        FilesystemBackupStore store(pathToUtf8(failBackups));
+        auto good = store.backup({pathToUtf8(first)}, "sync");
         assert(store.list().size() == 1);
 
         // A first backup that fails: no record is left behind, and the
@@ -911,7 +914,7 @@ int main()
         limitWritesTo(4096);
         bool threw = false;
         try {
-            store.backup({first.string()}, "add-cue");
+            store.backup({pathToUtf8(first)}, "add-cue");
         } catch (const std::exception &e) {
             threw = true;
             arranged = e.what();
@@ -921,7 +924,7 @@ int main()
         assert(threw && "a backup whose archive cannot be written reports the failure");
         std::vector<std::string> left;
         for (const auto &entry : fs::directory_iterator(failBackups)) {
-            left.push_back(entry.path().filename().string());
+            left.push_back(pathToUtf8(entry.path().filename()));
         }
         assert(left.size() == 1 && left[0] == good.id && "the failed backup's directory is gone, the earlier record stays");
         assert(store.list().size() == 1 && store.list()[0].id == good.id);
@@ -933,14 +936,14 @@ int main()
         // and the reader refuses the whole archive, first file included.
         fs::path second = failRoot / "export.pdb";
         writeFile(second, seabass::testing::incompressible(64 * 1024, 2));
-        const fs::path archive = fs::path(good.path) / "backup.zip";
-        const fs::path manifest = fs::path(good.path) / ".manifest";
+        const fs::path archive = pathFromUtf8(good.path) / "backup.zip";
+        const fs::path manifest = pathFromUtf8(good.path) / ".manifest";
         const auto archiveBefore = fs::file_size(archive);
         const std::string manifestBefore = readFile(manifest);
         limitWritesTo(archiveBefore + 512);
         threw = false;
         try {
-            store.addToArchive(good.id, {second.string()});
+            store.addToArchive(good.id, {pathToUtf8(second)});
         } catch (const std::exception &e) {
             threw = true;
             arranged = e.what();
@@ -969,7 +972,7 @@ int main()
         const std::string manifestBeforeRefusal = readFile(manifest);
         threw = false;
         try {
-            store.addToArchive(good.id, {second.string()});
+            store.addToArchive(good.id, {pathToUtf8(second)});
         } catch (const std::exception &e) {
             threw = true;
             std::cout << "  the append was refused: " << e.what() << '\n';
@@ -994,8 +997,8 @@ int main()
             const std::string bigContents = seabass::testing::incompressible(64 * 1024, 3);
             writeFile(big, bigContents);
             writeFile(small, std::string(1000, 'p'));
-            FilesystemBackupStore spaceStore((spaceRoot / "Seabass" / "backups").string());
-            auto record = spaceStore.backup({big.string(), small.string()}, "sync");
+            FilesystemBackupStore spaceStore(pathToUtf8(spaceRoot / "Seabass" / "backups"));
+            auto record = spaceStore.backup({pathToUtf8(big), pathToUtf8(small)}, "sync");
             writeFile(big, "ten bytes!");
             writeFile(small, std::string(20, 'q'));
             // The peak's upper bound: the copy of what is there now (30
@@ -1027,7 +1030,7 @@ int main()
             // and is refused before any pre-restore copy is made.
             const std::size_t recordsBefore = spaceStore.list().size();
             {
-                std::ofstream tail(fs::path(record.path) / "backup.zip", std::ios::app | std::ios::binary);
+                std::ofstream tail(pathFromUtf8(record.path) / "backup.zip", std::ios::app | std::ios::binary);
                 tail << "trailing bytes";
             }
             assert(!spaceStore.restore(record.id));
