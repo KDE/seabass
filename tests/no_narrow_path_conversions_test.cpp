@@ -87,7 +87,7 @@ const std::vector<Rule> &rules()
                     R"(GetVolumeInformation|GetDiskFreeSpace|GetDiskFreeSpaceEx|GetFullPathName|GetLongPathName|)"
                     R"(GetShortPathName|GetTempPath|GetVolumePathName|GetVolumeNameForVolumeMountPoint|)"
                     R"(SetCurrentDirectory|GetCurrentDirectory|ShellExecute|LoadLibrary|GetModuleFileName|)"
-                    R"(CreateProcess|OpenFile|_mkdir|_rmdir|_unlink|_access|_stat|_open|_wfopen|fopen)A?\s*\()")},
+                    R"(CreateProcess|OpenFile|_mkdir|_rmdir|_unlink|_access|_stat|_open|fopen)A?\s*\()")},
         // Qt's "local 8-bit" is the ANSI code page on Windows.
         {"toLocal8Bit/fromLocal8Bit is the ANSI code page on Windows; paths are UTF-8",
          std::regex(R"((toLocal8Bit|fromLocal8Bit)\s*\()")},
@@ -98,7 +98,9 @@ const std::vector<Rule> &rules()
 // The Win32 rule above lists the narrow CRT names without the A suffix;
 // the plain POSIX-looking calls (fopen, _open ...) it catches are wrong
 // on Windows for the same reason, and a POSIX-only file behind #if
-// defined(__linux__) says so with the marker.
+// defined(__linux__) says so with the marker. The wide CRT calls
+// (_wfopen, _wrename, _wmkdir ...) are what those are replaced with, and
+// are not matched.
 bool allowedByMarker(const std::string &line)
 {
     return line.find("narrow-ok:") != std::string::npos;
