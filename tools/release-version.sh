@@ -16,6 +16,17 @@ seabass_project_version() {  # <repo root>
     sed -n 's/^project(seabass VERSION \([0-9][0-9.]*\).*/\1/p' "$1/CMakeLists.txt" | head -1
 }
 
+# Writes X.Y.Z into project(seabass VERSION ...). A temporary file and a
+# rename rather than sed -i, whose syntax differs between GNU and BSD sed
+# and so between Linux and the Mac. Fails when the line is not there, or
+# when the file does not say the new version afterwards.
+seabass_set_project_version() {  # <repo root> <X.Y.Z>
+    local file="$1/CMakeLists.txt"
+    sed "s/^\(project(seabass VERSION \)[0-9][0-9.]*/\1$2/" "$file" > "$file.version-tmp" \
+        && mv "$file.version-tmp" "$file" \
+        && [ "$(seabass_project_version "$1")" = "$2" ]
+}
+
 seabass_release_from_tag() {  # <repo root> <tag or empty>
     local root="$1"
     local tag="${2:-}"

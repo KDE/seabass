@@ -15,49 +15,96 @@ good enough to offer people.
 place a version is written down. Everything else reads it: the generated
 `seabass_version.hpp` the app shows in Settings, the Windows installer's
 filename and Add/Remove Programs entry, the package names, the website's
-`releases.json`, and the app's own update check.
+`releases.json`, and the app's own update check. It is numbers only --
+"alpha" is never part of it, see channels below.
 
-Semantic: `X.Y.Z`. Every `X.Y` gets a branch `release/X.Y`, cut from
-master at the `.0` and never merged back. `X.Y.Z` releases are tagged
-from that branch, so a fix for something already shipped does not have to
-carry whatever master has moved on to.
+## The train
 
-Tags are `releases/<channel>/X.Y.Z`, channel being `alpha`, `beta` or
-`stable`. The tag is what CI builds packages from, and the channel is
-compiled into the build: a beta binary knows it is a beta and checks the
-beta channel for its updates.
+| Version | What it is | Where it lives |
+|---|---|---|
+| `X.Y.8` | master between trains: in development, never released | `master` |
+| `X.Y.9`, `.10`, `.11` ... | alphas and betas of `X.(Y+1).0` | `Seabass/X.(Y+1)` |
+| `X.(Y+1).0` | the train's first stable release | `Seabass/X.(Y+1)` |
+| `X.(Y+1).1` to `.7` | its point releases | `Seabass/X.(Y+1)` |
+
+So the first alpha is 0.7.9, on `Seabass/0.8`, and master says 0.8.8
+from the moment that branch exists. 0.7.10 and 0.7.11 follow on the same
+branch (switching to beta is a different channel, not a different
+number), then 0.8.0, then 0.8.1 to 0.8.7. A series has room for seven
+point releases: 0.8.8 is master's development version and 0.8.9 is the
+first alpha of 0.9.
+
+Every comparison in the release path is numeric, part by part -- the
+update check, `releases.json`, git's `--sort=v:refname` -- so 0.7.10 is
+newer than 0.7.9 and 0.10.0 than 0.9.0.
+
+**Fixes are made on the train's branch** while it is being stabilized,
+and brought to master with `git cherry-pick -x`. The branch is never
+merged back; history stays linear.
+
+**Channels** are `alpha`, `beta` and `stable`. The channel is compiled
+into the build and is part of the tag, `releases/<channel>/X.Y.Z`: a beta
+binary knows it is a beta and checks the beta and stable channels for its
+updates, an alpha checks all three, a stable build only stable.
 
 A tag whose version disagrees with `CMakeLists.txt` is refused, by
 `tools/release.sh` before the push and by `linux:package` in CI after it.
-That one mistake -- a tag saying 0.3.0 on a tree that builds 0.2.0 -- is
-what the whole scheme exists to prevent, because every artefact
-downstream inherits the wrong answer.
+**A tag is never moved.** If a package does not build from it, retry the
+CI job when the failure had nothing to do with the code, and otherwise fix
+it on the branch and release the next number: pre-release numbers cost
+nothing.
 
 ## Releasing
 
 ```sh
-# 1. Bump the version and commit it (on master for a .0, on release/X.Y
-#    for a patch).
-$EDITOR CMakeLists.txt        # project(seabass VERSION 0.2.0 ...)
-git commit -am "Seabass 0.2.0"
+# 1. Cut the train: from master as Invent has it. Makes Seabass/0.8,
+#    commits 0.7.9 there, moves master to 0.8.8, pushes both. No tag.
+tools/release.sh cut 0.7.9            # read what it would do
+tools/release.sh cut 0.7.9 --go
 
-# 2. See what would happen, then do it. Cuts release/0.2 if this is a
-#    .0, runs the whole suite, tags, and pushes to Invent then GitHub.
-tools/release.sh alpha 0.2.0
-tools/release.sh alpha 0.2.0 --go
+# 2. Test the branch before anything is tagged: the shakedown rig, and
+#    packages from CI (below). Fix on the branch, cherry-pick to master.
 
-# 3. Wait for CI and bring the packages down.
-tools/fetch-release.sh alpha 0.2.0 --watch
+# 3. Tag it, from the branch. Runs the whole suite first.
+git checkout Seabass/0.8
+tools/release.sh alpha 0.7.9 --go
 
-# 4. Verify them (below), then publish from the website repository.
-../project/website/scripts/publish-release.py alpha 0.2.0 --go
+# 4. Wait for CI and bring the packages down.
+tools/fetch-release.sh alpha 0.7.9 --watch
+
+# 5. Verify them (below), then publish from the website repository.
+../project/website/scripts/publish-release.py alpha 0.7.9 --go
+
+# The next pre-release, and every later release of the train, on the branch:
+$EDITOR CMakeLists.txt                # project(seabass VERSION 0.7.10 ...)
+git commit -am "Seabass 0.7.10"
+tools/release.sh alpha 0.7.10 --go
 ```
 
 `tools/release.sh` does nothing at all without `--go`: run it once to
 read what it intends to do. It refuses a dirty tree, a version that
-disagrees with `CMakeLists.txt`, a tag that already exists (a released
-version is never re-tagged -- bump the patch instead), and a patch
-release with no series branch to tag from.
+disagrees with `CMakeLists.txt`, an `X.Y.8`, a pre-release number on the
+stable channel or a stable number on alpha or beta, a tag that already
+exists, a cut that is not at a train's first pre-release, a cut from
+anything but Invent's master, and a tag from anywhere but the train's
+branch.
+
+## Packages before the tag
+
+A tag is never moved, so a package that does not build from one costs a
+release number. On a `Seabass/X.Y` branch every package job is available
+as a button in the pipeline:
+
+- `linux:package` -- the Linux tarball.
+- `windows:build` -- starts the MSYS2 chain; `windows:test`,
+  `windows:package` and `windows:installer-test` follow on their own.
+- `craft_windows_qt6_x86_64`, `craft_macos_qt6_arm64`,
+  `craft_macos_qt6_x86_64` -- the Craft packages (unsigned: signing
+  happens on tags).
+
+Built without a tag they are channel `dev`, named
+`seabass-<version>_dev_<os>`, never published, and the app they contain
+does not check for updates. That is what a pre-tag test build is.
 
 ## What CI builds
 
