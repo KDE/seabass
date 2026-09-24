@@ -24,9 +24,11 @@ Page {
     // Library Health hands over the controller that just scanned this
     // library, so this page reports that scan rather than repeating work
     // that reads three catalogs. Opened on its own, it scans for itself.
-    property var sharedController: null
-    readonly property var consistencyController: root.sharedController !== null
-        && root.sharedController !== undefined ? root.sharedController : ownController
+    // Object-typed and read through ?., for the reason LibraryConsistencyPage
+    // gives: the hub's controller can go before this page does.
+    property QtObject sharedController: null
+    readonly property QtObject consistencyController: root.sharedController !== null
+        ? root.sharedController : ownController
 
     LibraryConsistencyController {
         id: ownController
@@ -40,7 +42,7 @@ Page {
         // with its cards re-counted from what was just written. Only then:
         // a cancelled or failed save leaves the page as it is.
         onSummaryDismissed: {
-            if (!consistencyController.artworkRepairStaged) {
+            if (!consistencyController?.artworkRepairStaged) {
                 root.StackView.view.pop();
             }
         }
@@ -56,7 +58,7 @@ Page {
 
     Component.onCompleted: {
         if (root.sharedController === null || root.sharedController === undefined) {
-            consistencyController.scan(root.rekordboxPath, root.enginePath);
+            consistencyController?.scan(root.rekordboxPath, root.enginePath);
         }
     }
 
@@ -76,7 +78,7 @@ Page {
                 stack: root.StackView.view
                 middleLabel: root.stickLabel
                 title: "Cover Art"
-                backEnabled: !consistencyController.busy && !consistencyController.writing
+                backEnabled: !consistencyController?.busy && !consistencyController?.writing
                 onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
                 onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
             }
@@ -95,16 +97,16 @@ Page {
             wrapMode: Text.WordWrap
             font.family: Theme.titleFamily
             font.pointSize: Theme.subtitleSize
-            text: consistencyController.busy
+            text: consistencyController?.busy
                 ? "Checking where each Engine track's cover art is stored..."
-                : consistencyController.artworkError.length > 0
+                : consistencyController?.artworkError.length > 0
                     ? "Seabass could not check this library's cover art"
-                    : consistencyController.artworkTracksWithArt === 0
+                    : consistencyController?.artworkTracksWithArt === 0
                         ? "No Engine library on this stick, or no track carries cover art."
-                        : consistencyController.artworkUnreadableCount === 0
+                        : consistencyController?.artworkUnreadableCount === 0
                             ? "Every Engine track's cover art is stored where a player can find it."
-                            : consistencyController.artworkUnreadableCount + " of "
-                              + consistencyController.artworkTracksWithArt
+                            : consistencyController?.artworkUnreadableCount + " of "
+                              + consistencyController?.artworkTracksWithArt
                               + " Engine track(s) have cover art no player can show"
         }
 
@@ -120,16 +122,16 @@ Page {
             // right whose image was deleted, and a row with no hash has
             // nothing to look for at all.
             text: {
-                if (consistencyController.busy) {
+                if (consistencyController?.busy) {
                     return "";
                 }
-                if (consistencyController.artworkError.length > 0) {
-                    return consistencyController.artworkError;
+                if (consistencyController?.artworkError.length > 0) {
+                    return consistencyController?.artworkError;
                 }
-                var imported = consistencyController.artworkImportedCount;
-                var missing = consistencyController.artworkMissingFileCount;
-                var broken = consistencyController.artworkBrokenRowCount;
-                var fixable = consistencyController.artworkRepairableCount;
+                var imported = consistencyController?.artworkImportedCount;
+                var missing = consistencyController?.artworkMissingFileCount;
+                var broken = consistencyController?.artworkBrokenRowCount;
+                var fixable = consistencyController?.artworkRepairableCount;
                 var parts = [];
                 if (imported > 0) {
                     parts.push(imported + " point at a folder on the computer that ran Engine's "
@@ -145,7 +147,7 @@ Page {
                         + "from Engine Library/Artwork. Engine DJ writes those again the next time it analyses "
                         + "or re-imports them.");
                 }
-                var emptied = consistencyController.artworkEmptyFileCount;
+                var emptied = consistencyController?.artworkEmptyFileCount;
                 if (emptied > 0) {
                     parts.push(emptied + " have their image file sitting in Engine Library/Artwork with nothing in "
                         + "it: the name is right and the file is empty, which is what a stick pulled out "
@@ -159,7 +161,7 @@ Page {
                         + "the file's own tags or from a backup that knows it.");
                 }
                 parts.push(fixable > 0
-                    ? fixable + " of " + consistencyController.artworkUnreadableCount + " can be put back: Seabass "
+                    ? fixable + " of " + consistencyController?.artworkUnreadableCount + " can be put back: Seabass "
                       + "takes the image from the rekordbox art on this stick, the track's own tags, or a stick "
                       + "backup on this computer, whichever still has a copy, in that order."
                     : "None of them has a copy left on this stick, in the tracks themselves, or in a backup on this "
@@ -175,29 +177,29 @@ Page {
 
             Button {
                 objectName: "fixCoverArtButton"
-                text: consistencyController.artworkRepairStaged ? "Unstage" : "Fix Cover Art"
-                visible: consistencyController.artworkRepairableCount > 0
-                    || consistencyController.artworkRepairStaged
+                text: consistencyController?.artworkRepairStaged ? "Unstage" : "Fix Cover Art"
+                visible: consistencyController?.artworkRepairableCount > 0
+                    || consistencyController?.artworkRepairStaged
                 // Staging a fix onto a stick that refuses writes only
                 // moves the failure to the Save press.
-                enabled: !consistencyController.busy && !consistencyController.writing
-                    && !consistencyController.stickReadOnly
+                enabled: !consistencyController?.busy && !consistencyController?.writing
+                    && !consistencyController?.stickReadOnly
                 ToolTip.visible: hovered
-                ToolTip.text: consistencyController.stickReadOnly
+                ToolTip.text: consistencyController?.stickReadOnly
                     ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController.artworkRepairStaged
+                    : consistencyController?.artworkRepairStaged
                     ? "Take this back out of the changes to save"
                     : "Stage copying each image into Engine Library/Artwork and pointing the track at it. "
                         + "Save writes it to the stick."
                 // Staging only. Save is the press that writes, like
                 // everywhere else in this app.
-                onClicked: consistencyController.artworkRepairStaged
-                    ? consistencyController.unstageArtworkRepair()
-                    : consistencyController.repairArtwork()
+                onClicked: consistencyController?.artworkRepairStaged
+                    ? consistencyController?.unstageArtworkRepair()
+                    : consistencyController?.repairArtwork()
             }
             Label {
                 objectName: "coverArtStagedNote"
-                visible: consistencyController.artworkRepairStaged
+                visible: consistencyController?.artworkRepairStaged
                 color: Theme.warnText
                 text: "staged, not saved yet. Press Save to write it to the stick"
             }
@@ -209,8 +211,8 @@ Page {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: Theme.textMuted
-            visible: !consistencyController.busy && consistencyController.artworkUnreadableCount > 0
-                && consistencyController.artworkRepairableCount === 0
+            visible: !consistencyController?.busy && consistencyController?.artworkUnreadableCount > 0
+                && consistencyController?.artworkRepairableCount === 0
             text: "There is nothing for Seabass to copy in here, so this page has no action to offer."
         }
 
@@ -219,11 +221,11 @@ Page {
 
     BusyOverlay {
         anchors.fill: parent
-        busy: consistencyController.busy
-        current: consistencyController.scanCurrent
-        total: consistencyController.scanTotal
+        busy: consistencyController?.busy
+        current: consistencyController?.scanCurrent
+        total: consistencyController?.scanTotal
         label: "Checking cover art..."
-        cancellable: consistencyController.scanCancellable
-        onCancelRequested: consistencyController.cancelScan()
+        cancellable: consistencyController?.scanCancellable
+        onCancelRequested: consistencyController?.cancelScan()
     }
 }
