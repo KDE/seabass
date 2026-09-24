@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -437,11 +438,32 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                        const std::function<std::vector<std::string>(const std::string &)> &filesToBackUpFor,
                        bool autoMode,
                        const std::function<std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>>()>
-                           &acquireLocks)
+                           &acquireLocks,
+                       bool listGroups)
 {
     auto plans = ConsolidateDuplicateCues().execute(tracks);
     if (plans.empty()) {
         return;
+    }
+    // Every group, whatever its cues say: what Clean Up would offer. The
+    // section below only names the groups whose cues need attention, and
+    // "how many groups, and which" is the question when two platforms
+    // disagree on a count (Windows offered 8 where Linux offered 9 on the
+    // same stick, shakedown round 8).
+    if (listGroups) {
+        Console::info("");
+        Console::heading(formatName + ": duplicate groups (" + std::to_string(plans.size()) + ")");
+        size_t n = 0;
+        for (const auto &plan : plans) {
+            const Track &first = plan.group.tracks.front();
+            Console::info("group " + std::to_string(++n) + ": " + first.title + " (" + first.artist + ")");
+            for (const auto &t : plan.group.tracks) {
+                std::ostringstream line;
+                line << "  id=" << t.sourceId << "  " << t.filename << "  [" << t.durationSeconds << "s]  cues="
+                     << t.cues.size();
+                Console::info(line.str());
+            }
+        }
     }
     std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>> locks;
 
@@ -1745,7 +1767,7 @@ int main(int argc, char **argv)
                 }
                 return seabass::infrastructure::rekordbox::rekordboxCueFilesFor(pioneerRoot, *analyzePath);
             };
-            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks);
+            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks, verbose);
         }
 
         bool multipleEngine = scanTargets.engineTargets.size() > 1;
@@ -1772,7 +1794,7 @@ int main(int argc, char **argv)
             auto filesToBackUpFor = [engineDbFile](const std::string &) -> std::vector<std::string> {
                 return {engineDbFile};
             };
-            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks);
+            handleDuplicates(heading, tracks, &writer, &backupStore, &log, filesToBackUpFor, autoMode, takeLocks, verbose);
         }
     } catch (const std::exception &e) {
         Console::error(e.what());
