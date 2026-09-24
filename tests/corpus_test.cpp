@@ -107,8 +107,10 @@
 
 namespace fs = std::filesystem;
 using namespace seabass;
-using gui::pathToQString;
 using infrastructure::WorkCounters;
+#ifdef SEABASS_CORPUS_HAS_EDIT
+using gui::pathToQString;  // gui/qt_path.hpp is included under the same guard above
+#endif
 
 namespace
 {

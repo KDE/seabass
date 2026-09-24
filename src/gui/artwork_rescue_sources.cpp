@@ -4,11 +4,11 @@
 
 #include "gui/artwork_rescue_sources.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/backup_artwork_lookup.hpp"
 
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/embedded_artwork.hpp"
-#include "infrastructure/paths/utf8_path.hpp"
 #endif
 
 #include <algorithm>
