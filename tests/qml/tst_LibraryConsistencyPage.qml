@@ -122,6 +122,7 @@ TestCase {
     // them on Windows, one per row delegate per binding.
     function test_aSharedControllerThatGoesAwayIsNotReadAfterwards() {
         failOnWarning(/Cannot read property/);
+        failOnWarning(/Unable to assign/);
         var controller = controllerComponent.createObject(testCase);
         var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
         verify(page.consistencyController === controller);

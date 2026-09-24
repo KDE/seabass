@@ -179,7 +179,7 @@ Page {
                 objectName: "fixCoverArtButton"
                 text: consistencyController?.artworkRepairStaged ? "Unstage" : "Fix Cover Art"
                 visible: consistencyController?.artworkRepairableCount > 0
-                    || consistencyController?.artworkRepairStaged
+                    || (consistencyController?.artworkRepairStaged ?? false)
                 // Staging a fix onto a stick that refuses writes only
                 // moves the failure to the Save press.
                 enabled: !consistencyController?.busy && !consistencyController?.writing
@@ -199,7 +199,7 @@ Page {
             }
             Label {
                 objectName: "coverArtStagedNote"
-                visible: consistencyController?.artworkRepairStaged
+                visible: consistencyController?.artworkRepairStaged ?? false
                 color: Theme.warnText
                 text: "staged, not saved yet. Press Save to write it to the stick"
             }
@@ -221,11 +221,11 @@ Page {
 
     BusyOverlay {
         anchors.fill: parent
-        busy: consistencyController?.busy
-        current: consistencyController?.scanCurrent
-        total: consistencyController?.scanTotal
+        busy: consistencyController?.busy ?? false
+        current: consistencyController?.scanCurrent ?? 0
+        total: consistencyController?.scanTotal ?? 0
         label: "Checking cover art..."
-        cancellable: consistencyController?.scanCancellable
+        cancellable: consistencyController?.scanCancellable ?? false
         onCancelRequested: consistencyController?.cancelScan()
     }
 }

@@ -79,6 +79,24 @@ TestCase {
         }
     }
 
+    Component {
+        id: hubControllerComponent
+        LibraryConsistencyController {}
+    }
+
+    // The hub's controller can go before this page does (a stick pulled and
+    // its changes discarded); nothing here may read it afterwards.
+    function test_aSharedControllerThatGoesAwayIsNotReadAfterwards() {
+        failOnWarning(/Cannot read property/);
+        failOnWarning(/Unable to assign/);
+        var controller = hubControllerComponent.createObject(testCase);
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page.consistencyController === controller);
+        controller.destroy();
+        wait(50);
+        verify(page.consistencyController !== null, "the page falls back to a controller of its own");
+    }
+
     function test_theCoverArtNoticeDoesNotOfferAReimportForDeletedImages() {
         testCase.missingImagesLibrary = artworkFixture.libraryWithMissingImages(testCase.fixtureEngineRoot);
         verify(testCase.missingImagesLibrary.length > 0, "the fixture library must be built");
