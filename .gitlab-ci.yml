@@ -156,6 +156,8 @@ include:
 # download that does not start.
 - project: sysadmin/ci-utilities
   file: /gitlab-templates/craft-macos-x86-64-qt6.yml
+- project: sysadmin/ci-utilities
+  file: /gitlab-templates/craft-appimage-qt6.yml
 variables:
   SECRET_DETECTION_ENABLED: 'true'
 secret_detection:
@@ -256,6 +258,15 @@ craft_macos_qt6_x86_64:
 # replaces the template's list outright; every other key of the job --
 # image, tags, script, artifacts -- still comes from the template.
 craft_windows_qt6_x86_64:
+  rules: *craft_lane_rules
+
+# --- Linux AppImage, from the same Craft blueprint as the other two.
+# Built on KDE's AlmaLinux 9 VM image and packaged by linuxdeploy. It
+# carries qqc2-desktop-style and Breeze (see the blueprint), because an
+# AppImage cannot use the system's Plasma integration and would otherwise
+# look like Qt's plain Basic style. Same rules as the other Craft jobs: a
+# button on a push, automatic on schedules and release tags.
+craft_appimage_qt6_x86_64:
   rules: *craft_lane_rules
 
 # ---- shared rule fragments ----

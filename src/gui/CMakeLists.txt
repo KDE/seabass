@@ -386,3 +386,16 @@ endif()
 install(TARGETS seabass
     RUNTIME DESTINATION bin
     BUNDLE DESTINATION ${KDE_INSTALL_BUNDLEDIR})
+
+# A Linux desktop wants a .desktop file and an icon in the hicolor theme:
+# menus and launchers find the app through them, a Wayland compositor
+# matches the window to its icon by the desktop file's name (see
+# setDesktopFileName in main.cpp), and linuxdeploy will not build an
+# AppImage without both. The icon is the same SVG the app sets as its
+# window icon, installed under the reverse-DNS name the .desktop file uses.
+if(UNIX AND NOT APPLE)
+    install(FILES org.kde.seabass.desktop DESTINATION share/applications)
+    install(FILES qml/icons/seabass_soundbass.svg
+        DESTINATION share/icons/hicolor/scalable/apps
+        RENAME org.kde.seabass.svg)
+endif()

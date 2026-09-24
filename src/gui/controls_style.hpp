@@ -15,7 +15,8 @@ namespace seabass::gui
 // style refuses the background and contentItem overrides every control
 // here is built on -- it logs "does not support customization" and
 // draws its own -- so it takes Material, which honours the palette.
-// Linux keeps its KDE-driven auto-selection.
+// Linux keeps its KDE-driven auto-selection, except inside an AppImage,
+// which cannot load Plasma's plugins and so asks for org.kde.desktop itself.
 //
 // An explicit QT_QUICK_CONTROLS_STYLE always wins, so a developer, and
 // ctest, can still pin a style deliberately.

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Seabass
+GenericName=DJ Library Tool
+Comment=Keeps rekordbox and Engine DJ libraries on a USB stick in step
+Exec=seabass
+Icon=org.kde.seabass
+Terminal=false
+Categories=AudioVideo;Audio;Qt;KDE;
+StartupWMClass=seabass
