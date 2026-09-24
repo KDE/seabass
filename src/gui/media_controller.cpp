@@ -18,6 +18,7 @@
 #include <system_error>
 #include <utility>
 
+#include "application/mount_unless_mounted.hpp"
 #include "application/stick_presence_diff.hpp"
 #include "application/use_cases/open_stick_backup.hpp"
 #include "gui/seabass_settings.hpp"
@@ -46,7 +47,12 @@ MediaTaskResult runMediaTask(bool mount, QString devicePath)
     auto mounter = infrastructure::media::createRemovableMediaMounter();
     std::string error;
     if (mount) {
-        result.success = mounter->mount(devicePath.toStdString(), error).has_value();
+        // A stick already mounted is not ours: see mountUnlessMounted.
+        auto locator = infrastructure::media::createRemovableMediaLocator();
+        const auto outcome = application::mountUnlessMounted(*locator, *mounter, devicePath.toStdString());
+        result.success = outcome.success;
+        result.mountedHere = outcome.mountedHere;
+        error = outcome.errorMessage;
     } else {
         result.success = mounter->unmount(devicePath.toStdString(), error);
     }
@@ -684,8 +690,9 @@ std::optional<application::StickIdentity> MediaController::lastKnownIdentity(con
     return std::nullopt;
 }
 
-// Every stick with a filesystem and no mount point becomes a candidate,
-// except one the user ejected here or one that already failed; both
+// Every stick with a filesystem and no mount point becomes a candidate
+// (except on macOS, which mounts sticks itself; see below), except one the
+// user ejected here or one that already failed; both
 // forget their exemption once the stick is gone, so re-inserting it
 // mounts it again.
 void MediaController::queueAutoMounts()
@@ -718,7 +725,19 @@ void MediaController::queueAutoMounts()
             || m_userUnmounted.contains(devicePath)) {
             continue;
         }
+        // macOS mounts a removable stick by itself, a second or so after it
+        // appears -- after a filesystem check, when the stick was pulled out of
+        // a player without ejecting, which can take much longer. An automatic
+        // mount of our own could only race that one, and "diskutil mount" says
+        // yes to a volume the system mounted meanwhile, so the stick was
+        // counted as Seabass's and ejected when Seabass quit. A stick that
+        // stays unmounted (one ejected here, or unmounted in Disk Utility) is
+        // mounted from its row, as ever.
+        // Only the mount is skipped: forgetting sticks that are gone, below,
+        // still runs.
+#ifndef Q_OS_MACOS
         enqueue(devicePath, true, true, false);
+#endif
     }
     for (QSet<QString> *set : {&m_userUnmounted, &m_mountedByUs}) {
         for (auto it = set->begin(); it != set->end();) {
@@ -798,9 +817,9 @@ void MediaController::onTaskFinished()
     m_busy = false;
     m_busyTask = {};
     if (task.mount) {
-        if (result.success) {
+        if (result.success && result.mountedHere) {
             m_mountedByUs.insert(task.devicePath);
-        } else if (task.automatic) {
+        } else if (!result.success && task.automatic) {
             m_autoMountFailed.insert(task.devicePath, labelOf(task.devicePath));
         }
     } else if (result.success) {
