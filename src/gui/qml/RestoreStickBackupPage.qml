@@ -256,7 +256,11 @@ Page {
         rejectText: "Cancel"
         acceptObjectName: "restoreAnywayButton"
         rejectObjectName: "cancelChangedTargetButton"
-        onAccepted: root.controller.restoreAnyway(targetChangedDialog.targetRoot, targetChangedDialog.exact)
+        onAccepted: {
+            root.restoreStarted = true;
+            root.reportDismissed = false;
+            root.controller.restoreAnyway(targetChangedDialog.targetRoot, targetChangedDialog.exact);
+        }
     }
 
     TypedConfirmDialog {
@@ -281,7 +285,15 @@ Page {
             + " will be written from the backup"
             + (root.exact ? " and " + (root.preview.extras || 0) + " file(s) or folder(s) not in the backup removed." : ".")
             + " Audio files on the drive are not backed up first."
-        onAccepted: root.controller.restore(root.selectedDisk.mountPoint, root.exact)
+        onAccepted: {
+            // Counted from the press, not from the controller's restoring
+            // flag: a restore refused before it starts (the write hold,
+            // a lock) never sets that flag, and its reason belongs on the
+            // overlay too -- the form's own error line is out of view.
+            root.restoreStarted = true;
+            root.reportDismissed = false;
+            root.controller.restore(root.selectedDisk.mountPoint, root.exact);
+        }
 
         GridLayout {
             Layout.fillWidth: true

@@ -76,7 +76,14 @@ std::vector<Track> OneLibraryReader::readAll()
     // which a read-only open cannot get past. Roll it back first, keeping
     // a copy on this computer; see sqlite_pending_journal.hpp (#48).
     const PendingJournalRecovery recovery = recoverPendingJournal(
-        pathFromUtf8(dbPath), paths::localRoot() / "recovered", [&lib, &dbPath]() {
+        pathFromUtf8(dbPath), paths::localRoot() / "recovered",
+        [&lib, &dbPath]() {
+            SqlCipherDb readable(lib, dbPath, /*readOnly=*/true);
+            readable.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            SqlCipherStatement read(readable, "SELECT count(*) FROM sqlite_master");
+            read.step();
+        },
+        [&lib, &dbPath]() {
             SqlCipherDb writable(lib, dbPath, /*readOnly=*/false);
             writable.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
             SqlCipherStatement read(writable, "SELECT count(*) FROM sqlite_master");

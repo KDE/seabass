@@ -535,12 +535,23 @@ void LibraryEditSession::onSaveFinished()
     }
     if (undoRan && finished) {
         m_lastBackups.clear();
-    } else if (!undoRan) {
+    } else if (!undoRan && (finished || !result.backups.empty())) {
+        // A save refused before it made a backup changed nothing on the
+        // stick and leaves the last save's backups -- an adopted
+        // interrupted save's among them -- where they were.
         m_lastBackups = std::move(result.backups);
     }
     // An undo that itself failed keeps the backups it was restoring from,
-    // so it can be tried again.
-    m_interruptedSave = !finished && !m_lastBackups.empty();
+    // so it can be tried again. A save that failed with nothing applied
+    // (refused, or every change rolled back) is not an interrupted one.
+    if (!finished && result.appliedIds.isEmpty() && result.backups.empty()) {
+        const std::string backupDir = stickBackupDir();
+        if (!backupDir.empty() && !m_interruptedSave) {
+            infrastructure::backup::clearSaveInProgress(backupDir);
+        }
+    } else {
+        m_interruptedSave = !finished && !m_lastBackups.empty();
+    }
     emit canUndoChanged();
 
     m_lastSummary = {
@@ -601,14 +612,10 @@ void LibraryEditSession::undoLastSave()
     if (m_writing || m_lastBackups.empty()) {
         return;
     }
-    // After an interrupted save, what is still pending is the rest of that
-    // same save, and the stick is half-written: putting the stick back is
-    // the point, and refusing because of those changes left the Undo
-    // button doing nothing at all. Anything else staged since an ordinary
-    // save still stops the undo, as before.
-    if (dirty() && m_interruptedSave) {
-        discard();
-    }
+    // Refused while anything is pending, as ever: nothing is thrown away
+    // by an undo. After an interrupted save the pending changes are the
+    // rest of that save, and the page's notice offers to discard them and
+    // undo in one press -- saying so, rather than doing it quietly here.
     if (dirty()) {
         return;
     }

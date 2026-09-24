@@ -55,7 +55,7 @@ inline bool hasPendingJournal(const std::filesystem::path &database)
 
 struct PendingJournalRecovery
 {
-    bool found = false;      // there was a pending journal
+    bool found = false;      // there was a hot journal, one a read-only read could not get past
     bool recovered = false;  // and it has been rolled back
     std::filesystem::path keptCopy;  // where the database and journal were copied first
     std::string error;
@@ -70,13 +70,26 @@ struct PendingJournalRecovery
 // connection is never rolled back from under it. The copy goes to
 // `safekeepingRoot` on this computer, never to the stick, which may be the
 // thing that is failing.
+// `openReadOnlyAndRead` is tried first: a journal with a live header is
+// also what another connection mid-transaction leaves while it works
+// (Engine DJ on the desktop, a second Seabass), and a read-only read then
+// simply succeeds -- SQLite sees the RESERVED lock and the journal is not
+// hot. Nothing is copied or touched in that case. Only a read-only read
+// that fails is the pull's leftover, and then the copy and the roll back.
 inline PendingJournalRecovery recoverPendingJournal(const std::filesystem::path &database,
                                                     const std::filesystem::path &safekeepingRoot,
+                                                    const std::function<void()> &openReadOnlyAndRead,
                                                     const std::function<void()> &openReadWriteAndRead)
 {
     PendingJournalRecovery result;
     if (!hasPendingJournal(database)) {
         return result;
+    }
+    try {
+        openReadOnlyAndRead();
+        return result;  // readable as it is: busy, not hot
+    } catch (const std::exception &) {
+        // The read a hot journal refuses; recovered below.
     }
     result.found = true;
 
@@ -117,11 +130,12 @@ inline PendingJournalRecovery recoverPendingJournal(const std::filesystem::path 
         result.error = e.what();
         return result;
     }
-    if (hasPendingJournal(database)) {
-        // SQLite leaves a journal that another connection is still
-        // writing through: it is not hot then, only busy.
-        result.error = "the unfinished transaction in " + pathToUtf8(database.filename())
-            + " is still there after opening it for writing; is another program writing to this stick?";
+    // Recovered means readable the way every reader reads: the same
+    // read-only read that failed above, tried again.
+    try {
+        openReadOnlyAndRead();
+    } catch (const std::exception &e) {
+        result.error = "still cannot be read after opening it for writing: " + std::string(e.what());
         return result;
     }
     result.recovered = true;

@@ -231,12 +231,22 @@ Item {
                 wrapMode: Text.WordWrap
                 text: "The last save to this stick did not finish. Undo Last Save puts back everything it had "
                     + "written, from the backup it made first."
+                    + (host.dirty ? " The " + host.session.pendingCount + " change(s) still staged are the rest of "
+                                    + "that save; undoing discards them." : "")
             }
+            // What is pending after an interrupted save is the rest of that
+            // save. The undo needs it gone, and says so on the button rather
+            // than dropping it quietly: an undo throws nothing away unasked.
             Button {
                 objectName: "undoInterruptedSaveButton"
-                text: "Undo Last Save"
+                text: host.dirty ? "Discard and Undo Last Save" : "Undo Last Save"
                 highlighted: true
-                onClicked: host.session.undoLastSave()
+                onClicked: {
+                    if (host.dirty) {
+                        host.session.discard();
+                    }
+                    host.session.undoLastSave();
+                }
             }
         }
     }

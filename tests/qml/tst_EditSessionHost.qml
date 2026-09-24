@@ -37,8 +37,10 @@ TestCase {
             property var calls: []
             signal saveFinished(var summary)
             signal lockRefused(var holder)
+            property bool interruptedSave: false
             function save() { calls.push("save"); }
             function discard() { calls.push("discard"); dirty = false; pendingCount = 0; state = "idle"; }
+            function undoLastSave() { calls.push("undoLastSave"); }
             function cancelWrite() { calls.push("cancelWrite"); }
         }
     }
@@ -199,6 +201,32 @@ TestCase {
         t.host.requestLeave(function() { left++; });
         compare(left, 0);
         compare(findByObjectName(t.host, "unsavedDialog").opened, false);
+    }
+
+    // The last save to the stick did not finish (#48): the notice is on the
+    // host, so it shows on every editing page, with the undo beside it.
+    // With the rest of that save still pending, the button says it will
+    // discard first, and does exactly that -- an undo throws nothing away
+    // unasked, and the session itself refuses to undo while dirty.
+    function test_anInterruptedSaveIsNoticedAndUndoneFromTheHost() {
+        var t = makeHost();
+        var host = t.host;
+        var session = t.session;
+        var banner = findByObjectName(host, "interruptedSaveBanner");
+        compare(banner.visible, false);
+        session.interruptedSave = true;
+        tryCompare(banner, "visible", true);
+        var button = findByObjectName(host, "undoInterruptedSaveButton");
+        compare(button.text, "Undo Last Save");
+        button.clicked();
+        compare(session.calls[session.calls.length - 1], "undoLastSave");
+
+        session.dirty = true;
+        session.pendingCount = 3;
+        tryCompare(button, "text", "Discard and Undo Last Save");
+        button.clicked();
+        compare(session.calls.slice(-2).join(","), "discard,undoLastSave");
+        compare(session.dirty, false);
     }
 
     function test_closesTheSessionOnDestruction() {
