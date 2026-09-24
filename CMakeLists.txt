@@ -239,9 +239,10 @@ find_package(Threads REQUIRED)
 
 # TagLib: reads artist/title/duration/bitrate straight out of an audio
 # file, for files no catalog references and for catalog rows that left
-# fields empty. Optional, exactly like Qt6::Multimedia below -- without
-# it every caller falls back to application::NullTrackMetadataProbe and
-# behaves correctly, just less usefully.
+# fields empty. Required: every package build ships it (Craft's
+# libs/taglib, MSYS2, Linux), and a build without it tests an app nobody
+# ships -- every caller quietly falls back to NullTrackMetadataProbe,
+# and code only a TagLib-less build compiles goes unbuilt everywhere.
 #
 # find_package(TagLib) only works with TagLib 2.x, which ships a CMake
 # config; 1.x (what Debian/Ubuntu's libtag1-dev and MSYS2's
@@ -258,6 +259,15 @@ if(NOT TARGET TagLib::tag)
     if(PkgConfig_FOUND)
         pkg_check_modules(TAGLIB QUIET IMPORTED_TARGET taglib)
     endif()
+endif()
+if(NOT TARGET TagLib::tag AND NOT TAGLIB_FOUND)
+    message(FATAL_ERROR
+        "TagLib not found (neither TagLib 2.x's CMake config nor taglib.pc).\n"
+        "  Debian/Ubuntu: apt install libtag1-dev pkg-config\n"
+        "  Fedora:        dnf install taglib-devel\n"
+        "  MSYS2/UCRT64:  pacman -S mingw-w64-ucrt-x86_64-taglib\n"
+        "  vcpkg (MSVC):  vcpkg install taglib:x64-windows\n"
+        "  macOS:         brew install taglib")
 endif()
 
 add_library(kaitai_cpp_stl_runtime STATIC
