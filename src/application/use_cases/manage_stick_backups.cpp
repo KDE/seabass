@@ -10,6 +10,7 @@
 
 #include "domain/library_fingerprint.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 
 namespace seabass::application
@@ -64,7 +65,7 @@ DeleteStickBackupResult ManageStickBackups::remove(const fs::path &archivePath)
     DeleteStickBackupResult result;
     std::error_code ec;
     if (!fs::is_regular_file(archivePath, ec)) {
-        result.message = "The backup " + archivePath.filename().string() + " is no longer there.";
+        result.message = "The backup " + pathToUtf8(archivePath.filename()) + " is no longer there.";
         return result;
     }
 
@@ -74,7 +75,7 @@ DeleteStickBackupResult ManageStickBackups::remove(const fs::path &archivePath)
         lock = std::make_unique<infrastructure::backup::StickWriteLock>(lockPath);
     } catch (const infrastructure::backup::StickBusyError &) {
         result.status = DeleteStickBackupResult::Status::Busy;
-        result.message = "Something is writing to " + archivePath.filename().string()
+        result.message = "Something is writing to " + pathToUtf8(archivePath.filename())
             + " right now (a backup, a restore or a compaction). Delete it once that has finished.";
         return result;
     } catch (const std::exception &e) {
@@ -83,7 +84,7 @@ DeleteStickBackupResult ManageStickBackups::remove(const fs::path &archivePath)
     }
 
     if (!fs::remove(archivePath, ec) || ec) {
-        result.message = "Could not delete " + archivePath.filename().string() + ": "
+        result.message = "Could not delete " + pathToUtf8(archivePath.filename()) + ": "
             + (ec ? ec.message() : std::string("it is no longer there"));
         return result;
     }

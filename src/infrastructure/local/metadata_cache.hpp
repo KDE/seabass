@@ -6,6 +6,7 @@
 
 #include <map>
 #include <optional>
+#include <filesystem>
 #include <string>
 
 #include "application/ports/metadata_cache_port.hpp"
@@ -76,7 +77,7 @@ private:
     std::string relativeKey(const std::string &absoluteFilePath) const;
 
     std::string m_stickRoot;
-    std::string m_cachePath;
+    std::filesystem::path m_cachePath;
     std::map<std::string, Entry> m_entries;
     bool m_dirty = false;
 };

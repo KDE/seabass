@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include "infrastructure/engine/engine_library_layout.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::media
 {
@@ -17,15 +18,15 @@ using application::DetectedStick;
 void scanMountedRoot(const std::string &mountPoint, DetectedStick &stick)
 {
     std::error_code ec;
-    fs::path root(mountPoint);
+    const fs::path root = pathFromUtf8(mountPoint);
     fs::path pdbPath = root / "PIONEER" / "rekordbox" / "export.pdb";
     fs::path engineDbPath = engine::engineMainDatabasePath(root);
 
     if (fs::exists(pdbPath, ec)) {
-        stick.rekordboxPath = (root / "PIONEER").string();
+        stick.rekordboxPath = pathToUtf8(root / "PIONEER");
     }
     if (fs::exists(engineDbPath, ec)) {
-        stick.enginePath = engine::engineLibraryPath(root).string();
+        stick.enginePath = pathToUtf8(engine::engineLibraryPath(root));
     }
 
     // A cheap, top-level-only peek at what's already on the drive -- for
@@ -43,7 +44,7 @@ void scanMountedRoot(const std::string &mountPoint, DetectedStick &stick)
         }
         std::error_code entryEc;
         bool isDir = entry.is_directory(entryEc);
-        std::string name = entry.path().filename().string();
+        std::string name = pathToUtf8(entry.path().filename());
         stick.rootEntries.push_back(isDir ? name + "/" : name);
     }
 }

@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <filesystem>
 #include <string>
 
 #include "domain/audio_content_probe.hpp"
@@ -90,7 +91,7 @@ private:
     std::string relativeKey(const std::string &absoluteFilePath) const;
 
     std::string m_stickRoot;
-    std::string m_cachePath;
+    std::filesystem::path m_cachePath;
     std::map<std::string, Entry> m_entries;
     // Paths the decoder already refused THIS RUN. In memory only, never
     // written: a failure is about this moment (an unplugged stick, a

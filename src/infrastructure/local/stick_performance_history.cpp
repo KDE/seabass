@@ -12,6 +12,7 @@
 
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/app_data_directory.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::local
 {
@@ -114,8 +115,8 @@ void StickPerformanceHistory::writeAll(const std::vector<StickPerformanceRecord>
     // Temp file, fsync, rename: a crash or a full disk mid-write leaves
     // the previous file intact rather than an empty one, like every
     // other store under infrastructure/local.
-    if (!infrastructure::writeFileDurablyAtomic(m_path.string(), out.str())) {
-        throw std::runtime_error("could not write " + m_path.string());
+    if (!infrastructure::writeFileDurablyAtomic(pathToUtf8(m_path), out.str())) {
+        throw std::runtime_error("could not write " + pathToUtf8(m_path));
     }
 }
 

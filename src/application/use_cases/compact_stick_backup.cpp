@@ -13,6 +13,7 @@
 #include "infrastructure/backup/stick_space.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/archive_compactor.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 #include "infrastructure/stick_backup/archive_recovery.hpp"
@@ -131,7 +132,7 @@ bool replaceArchive(const fs::path &tempPath, const fs::path &archivePath, std::
         error = "could not replace the archive: " + ec.message();
         return false;
     }
-    infrastructure::fsyncDirectoryContaining(archivePath.string());
+    infrastructure::fsyncDirectoryContaining(seabass::pathToUtf8(archivePath));
     return true;
 #endif
 }

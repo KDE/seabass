@@ -8,6 +8,7 @@
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/file_clock.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
 #include <algorithm>
@@ -174,7 +175,7 @@ bool writeManifest(const fs::path &dir, const Manifest &manifest)
     for (const auto &[entryName, recorded] : manifest.entries) {
         out << entryName << '\t' << recorded << '\n';
     }
-    return writeFileDurablyAtomic((dir / ManifestFileName).string(), out.str());
+    return writeFileDurablyAtomic(pathToUtf8(dir / ManifestFileName), out.str());
 }
 
 // Puts an archive back to the length it had before an append that
@@ -231,7 +232,7 @@ void sweepDeadRecords(const fs::path &base)
         if (!entry.is_directory(ec)) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
+        const std::string name = pathToUtf8(entry.path().filename());
         // "YYYYMMDDTHHMMSS-label", as timestampNow() + sanitize() make it.
         bool timestamped = name.size() > 15 && name[8] == 'T' && name[15] == '-';
         for (size_t i = 0; timestamped && i < 15; ++i) {
@@ -297,7 +298,7 @@ fs::path FilesystemBackupStore::stickRoot() const
     // nasty: every recorded path would be stored relative to
     // <stick>/Seabass, and restore would resolve it to a path inside the
     // Seabass directory instead of back to the real file.
-    return fs::path(m_baseDirectory).parent_path().parent_path();
+    return m_baseDirectory.parent_path().parent_path();
 }
 
 // What goes in the manifest for `source`: relative to the stick when it is
@@ -308,16 +309,16 @@ std::string FilesystemBackupStore::recordedPathFor(const fs::path &source) const
     const fs::path root = stickRoot().lexically_normal();
     const fs::path relative = absolute.lexically_relative(root);
     if (relative.empty() || *relative.begin() == "..") {
-        return absolute.string();  // genuinely off the stick
+        return pathToUtf8(absolute);  // genuinely off the stick
     }
-    return relative.generic_string();
+    return pathToGenericUtf8(relative);
 }
 
 // The reverse: a relative manifest entry names a file on whichever stick
 // this store is on *now*, which is the whole point of recording it that way.
 fs::path FilesystemBackupStore::resolveRecordedPath(const std::string &recorded) const
 {
-    const fs::path path(recorded);
+    const fs::path path = pathFromUtf8(recorded);
     if (path.is_absolute()) {
         return path;
     }
@@ -332,7 +333,7 @@ fs::path FilesystemBackupStore::resolveRecordedPath(const std::string &recorded)
     return (stickRoot() / path).lexically_normal();
 }
 
-FilesystemBackupStore::FilesystemBackupStore(std::string baseDirectory) : m_baseDirectory(std::move(baseDirectory)) {}
+FilesystemBackupStore::FilesystemBackupStore(std::string baseDirectory) : m_baseDirectory(pathFromUtf8(baseDirectory)) {}
 
 BackupRecord FilesystemBackupStore::backup(const std::vector<std::string> &filePaths, const std::string &label,
                                           BackupOrigin origin)
@@ -343,10 +344,10 @@ BackupRecord FilesystemBackupStore::backup(const std::vector<std::string> &fileP
     // each other's contents, defeating the point of backing up first.
     std::string baseId = timestampNow() + "-" + sanitize(label);
     std::string id = baseId;
-    fs::path dir = fs::path(m_baseDirectory) / id;
+    fs::path dir = m_baseDirectory / pathFromUtf8(id);
     for (int suffix = 1; fs::exists(dir); ++suffix) {
         id = baseId + "-" + std::to_string(suffix);
-        dir = fs::path(m_baseDirectory) / id;
+        dir = m_baseDirectory / pathFromUtf8(id);
     }
     fs::create_directories(dir);
 
@@ -367,7 +368,7 @@ BackupRecord FilesystemBackupStore::backup(const std::vector<std::string> &fileP
         manifest.origin = origin;
         manifest.entries = written;
         if (!writeManifest(dir, manifest)) {
-            throw std::runtime_error("could not write the manifest of backup " + id + " under " + m_baseDirectory);
+            throw std::runtime_error("could not write the manifest of backup " + id + " under " + pathToUtf8(m_baseDirectory));
         }
     } catch (...) {
         std::error_code removeEc;
@@ -380,7 +381,7 @@ BackupRecord FilesystemBackupStore::backup(const std::vector<std::string> &fileP
 
     BackupRecord record;
     record.id = id;
-    record.path = dir.string();
+    record.path = pathToUtf8(dir);
     record.label = label;
     record.origin = origin;
     record.sizeBytes = archiveBytes;
@@ -409,7 +410,7 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
             // manifest that still names the old ones: a record that lists
             // as restorable and then is not. Refusing makes the save say
             // "could not back up", which is the truth.
-            throw std::runtime_error("backup archive " + archivePath.string() + " is unreadable, so nothing is added to it: "
+            throw std::runtime_error("backup archive " + pathToUtf8(archivePath) + " is unreadable, so nothing is added to it: "
                                      + error);
         }
         carried = reader->entries();
@@ -421,7 +422,7 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
         stick_backup::PosixArchiveFile file(archivePath, stick_backup::PosixArchiveFile::OpenMode::ReadWrite);
         stick_backup::Zip64Writer writer(file, carried);
         for (const auto &filePath : filePaths) {
-            fs::path source(filePath);
+            const fs::path source = pathFromUtf8(filePath);
             if (!fs::exists(source, ec)) {
                 continue;
             }
@@ -484,7 +485,7 @@ FilesystemBackupStore::writeArchiveEntries(const fs::path &dir, const std::vecto
 
 BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const std::vector<std::string> &filePaths)
 {
-    fs::path dir = fs::path(m_baseDirectory) / id;
+    fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
         throw std::runtime_error("no backup with id " + id + " to add to");
@@ -509,7 +510,7 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     } else if (sizeEc) {
         // Refused before anything is written: a length taken from a
         // failed stat would have the cut-back remove a good archive.
-        throw std::runtime_error("could not read the size of " + archivePath.string() + ": " + sizeEc.message());
+        throw std::runtime_error("could not read the size of " + pathToUtf8(archivePath) + ": " + sizeEc.message());
     }
     std::vector<std::pair<std::string, std::string>> written;
     std::uint64_t archiveBytes = 0;
@@ -519,7 +520,7 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
         // whole from what was read, never spliced onto raw bytes.
         manifest.entries.insert(manifest.entries.end(), written.begin(), written.end());
         if (!writeManifest(dir, manifest)) {
-            throw std::runtime_error("could not write the manifest of backup " + id + " under " + m_baseDirectory);
+            throw std::runtime_error("could not write the manifest of backup " + id + " under " + pathToUtf8(m_baseDirectory));
         }
     } catch (...) {
         cutArchiveBackTo(dir, archiveBefore);
@@ -529,7 +530,7 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
 
     BackupRecord record;
     record.id = id;
-    record.path = dir.string();
+    record.path = pathToUtf8(dir);
     record.sizeBytes = archiveBytes;
     for (const auto &[entryName, recorded] : manifest.entries) {
         record.filePaths.push_back(recorded);
@@ -563,9 +564,9 @@ bool FilesystemBackupStore::restoreFromArchive(const OpenedArchive &opened,
         }
         const fs::path target = resolveRecordedPath(originalPath);
         fs::create_directories(target.parent_path(), ec);
-        if (!writeFileDurablyAtomic(target.string(), contents)) {
+        if (!writeFileDurablyAtomic(pathToUtf8(target), contents)) {
             // A write, not a read: the archive was fine, the volume was not.
-            *failure = "could not write " + target.string() + " (" + megabytes(availableBytes(target.parent_path()))
+            *failure = "could not write " + pathToUtf8(target) + " (" + megabytes(availableBytes(target.parent_path()))
                        + " MB free there)";
             return false;
         }
@@ -608,7 +609,7 @@ bool FilesystemBackupStore::restoreFromArchive(const OpenedArchive &opened,
                 // the delete is refused.
                 std::string sidecarFailure;
                 if (!infrastructure::removeEntry(side, sidecarFailure)) {
-                    *failure = "restored " + target.string() + ", but " + side.filename().string()
+                    *failure = "restored " + pathToUtf8(target) + ", but " + pathToUtf8(side.filename())
                                + " beside it could not be removed, and its contents would be replayed over the "
                                  "restored file: " + sidecarFailure;
                     return false;
@@ -621,7 +622,7 @@ bool FilesystemBackupStore::restoreFromArchive(const OpenedArchive &opened,
 
 FilesystemBackupStore::DirectoryState &FilesystemBackupStore::stateFor(const fs::path &dir)
 {
-    auto it = m_directoryState.find(dir.string());
+    auto it = m_directoryState.find(pathToUtf8(dir));
     if (it != m_directoryState.end()) {
         return it->second;
     }
@@ -631,7 +632,7 @@ FilesystemBackupStore::DirectoryState &FilesystemBackupStore::stateFor(const fs:
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
+        const std::string name = pathToUtf8(entry.path().filename());
         if (name != ManifestFileName && name != DescriptionFileName) {
             std::error_code sizeEc;  // see directorySize(): -1 would make this 16 EB
             const std::uintmax_t bytes = entry.file_size(sizeEc);
@@ -640,7 +641,7 @@ FilesystemBackupStore::DirectoryState &FilesystemBackupStore::stateFor(const fs:
             }
         }
     }
-    return m_directoryState.emplace(dir.string(), std::move(state)).first->second;
+    return m_directoryState.emplace(pathToUtf8(dir), std::move(state)).first->second;
 }
 
 std::vector<BackupRecord> FilesystemBackupStore::list()
@@ -673,8 +674,8 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
             continue;
         }
         BackupRecord record;
-        record.id = entry.path().filename().string();
-        record.path = entry.path().string();
+        record.id = pathToUtf8(entry.path().filename());
+        record.path = pathToUtf8(entry.path());
         size_t dash = record.id.find('-');
         record.label = dash == std::string::npos ? "" : record.id.substr(dash + 1);
         record.description = readWholeFile(entry.path() / DescriptionFileName);
@@ -682,7 +683,7 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
         const Manifest manifest = readManifest(entry.path());
         record.origin = manifest.origin.value_or(BackupOrigin::Automatic);
         for (const auto &[onDisk, originalPath] : manifest.entries) {
-            record.filePaths.push_back(resolveRecordedPath(originalPath).string());
+            record.filePaths.push_back(pathToUtf8(resolveRecordedPath(originalPath)));
         }
         records.push_back(std::move(record));
     }
@@ -714,7 +715,7 @@ application::PruneResult FilesystemBackupStore::prune(size_t keepCount)
     application::PruneResult result;
     for (const BackupRecord &record : automatic) {
         std::error_code ec;
-        fs::remove_all(record.path, ec);
+        fs::remove_all(pathFromUtf8(record.path), ec);
         // remove_all() answers "how many did I remove", and 0 with no
         // error is the directory having gone already -- which is fine,
         // it is not there any more either way. What is not fine is
@@ -722,7 +723,7 @@ application::PruneResult FilesystemBackupStore::prune(size_t keepCount)
         // a refusal here (a read-only folder, a name this filesystem
         // will not resolve for unlink) used to leave the caller
         // reporting nothing freed and nothing wrong.
-        if (ec || fs::exists(record.path)) {
+        if (ec || fs::exists(pathFromUtf8(record.path))) {
             result.failed++;
             continue;
         }
@@ -760,7 +761,7 @@ std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytes
             continue;
         }
         std::error_code ec;
-        fs::remove_all(automatic[i].path, ec);
+        fs::remove_all(pathFromUtf8(automatic[i].path), ec);
         if (!ec) {
             freed += automatic[i].sizeBytes;
         }
@@ -770,7 +771,7 @@ std::uint64_t FilesystemBackupStore::releaseAutomaticBackups(std::uint64_t bytes
 
 void FilesystemBackupStore::setDescription(const std::string &id, const std::string &description)
 {
-    fs::path dir = fs::path(m_baseDirectory) / id;
+    fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
         return;
@@ -781,7 +782,7 @@ void FilesystemBackupStore::setDescription(const std::string &id, const std::str
 
 bool FilesystemBackupStore::isRestorable(const std::string &id) const
 {
-    const fs::path dir = fs::path(m_baseDirectory) / id;
+    const fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
         return false;
@@ -795,7 +796,7 @@ bool FilesystemBackupStore::restore(const std::string &id)
 {
     m_lastRestoreError.clear();
     m_lastPreRestoreId.reset();
-    fs::path dir = fs::path(m_baseDirectory) / id;
+    fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
         m_lastRestoreError = "backup " + id + " is not on the stick";
@@ -838,7 +839,7 @@ bool FilesystemBackupStore::restore(const std::string &id)
         // what the free-space check is computed from.
         std::error_code existsEc;
         if (fs::exists(target, existsEc) || existsEc) {
-            currentPaths.push_back(target.string());
+            currentPaths.push_back(pathToUtf8(target));
         }
     }
 
@@ -865,7 +866,7 @@ bool FilesystemBackupStore::restore(const std::string &id)
     };
     measure(m_baseDirectory);
     for (const std::string &path : currentPaths) {
-        measure(fs::path(path).parent_path());
+        measure(pathFromUtf8(path).parent_path());
     }
     if (available && *available < needed) {
         m_lastRestoreError = std::format("not enough space on the stick to put {} file(s) back: needs about {} MB, {} MB free",
@@ -993,7 +994,7 @@ std::uint64_t FilesystemBackupStore::restoreSpaceNeeded(const std::vector<std::p
 
 std::optional<std::uint64_t> FilesystemBackupStore::restoreSpaceNeeded(const std::string &id) const
 {
-    const fs::path dir = fs::path(m_baseDirectory) / id;
+    const fs::path dir = m_baseDirectory / pathFromUtf8(id);
     const Manifest manifest = readManifest(dir);
     OpenedArchive opened;
     std::string ignored;
@@ -1005,7 +1006,7 @@ std::optional<std::uint64_t> FilesystemBackupStore::restoreSpaceNeeded(const std
 
 bool FilesystemBackupStore::remove(const std::string &id)
 {
-    fs::path dir = fs::path(m_baseDirectory) / id;
+    fs::path dir = m_baseDirectory / pathFromUtf8(id);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
         return false;

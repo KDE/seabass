@@ -6,6 +6,8 @@
 
 #include <filesystem>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/file.h>
@@ -26,18 +28,6 @@ namespace seabass::infrastructure::backup
 
 namespace fs = std::filesystem;
 
-namespace
-{
-
-// For messages only, which are UTF-8 everywhere in Seabass.
-std::string displayPath(const fs::path &path)
-{
-    const std::u8string u8 = path.u8string();
-    return std::string(reinterpret_cast<const char *>(u8.data()), u8.size());
-}
-
-}  // namespace
-
 #if defined(__linux__) || defined(__APPLE__)
 
 StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_fd(-1), m_path(lockFilePath)
@@ -45,12 +35,12 @@ StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_fd(-1), m_path(
     fs::create_directories(lockFilePath.parent_path());
     m_fd = ::open(lockFilePath.c_str(), O_CREAT | O_RDWR, 0644);
     if (m_fd < 0) {
-        throw std::runtime_error("Could not open stick lock file: " + displayPath(lockFilePath));
+        throw std::runtime_error("Could not open stick lock file: " + pathToUtf8(lockFilePath));
     }
     if (::flock(m_fd, LOCK_EX | LOCK_NB) != 0) {
         ::close(m_fd);
         m_fd = -1;
-        throw StickBusyError(displayPath(lockFilePath));
+        throw StickBusyError(pathToUtf8(lockFilePath));
     }
     // The file locked must still be the one at the path. A holder removing
     // its lock file (releaseAndRemoveFile) unlinks it while it still holds
@@ -65,7 +55,7 @@ StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_fd(-1), m_path(
         ::flock(m_fd, LOCK_UN);
         ::close(m_fd);
         m_fd = -1;
-        throw StickBusyError(displayPath(lockFilePath));
+        throw StickBusyError(pathToUtf8(lockFilePath));
     }
 }
 
@@ -101,13 +91,13 @@ StickWriteLock::StickWriteLock(const fs::path &lockFilePath) : m_handle(nullptr)
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
                                    FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
-        throw std::runtime_error("Could not open stick lock file: " + displayPath(lockFilePath));
+        throw std::runtime_error("Could not open stick lock file: " + pathToUtf8(lockFilePath));
     }
     OVERLAPPED overlapped = {};
     if (!::LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD,
                        &overlapped)) {
         ::CloseHandle(handle);
-        throw StickBusyError(displayPath(lockFilePath));
+        throw StickBusyError(pathToUtf8(lockFilePath));
     }
     m_handle = handle;
 }

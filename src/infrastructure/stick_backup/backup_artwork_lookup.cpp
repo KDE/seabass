@@ -5,6 +5,7 @@
 #include "infrastructure/stick_backup/backup_artwork_lookup.hpp"
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
 
@@ -35,7 +36,7 @@ BackupArtworkLookup::~BackupArtworkLookup()
 // does not know the track, or knows it without a cover.
 std::string BackupArtworkLookup::artworkNameForTrack(const fs::path &archive, const std::string &trackPath)
 {
-    ExtractedDatabase &extracted = m_databases[archive.string()];
+    ExtractedDatabase &extracted = m_databases[seabass::pathToUtf8(archive)];
     if (!extracted.tried) {
         extracted.tried = true;
         try {
@@ -67,7 +68,7 @@ std::string BackupArtworkLookup::artworkNameForTrack(const fs::path &archive, co
     }
 
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(extracted.file.string().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(seabass::pathToUtf8(extracted.file).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         if (handle != nullptr) {
             sqlite3_close(handle);
         }

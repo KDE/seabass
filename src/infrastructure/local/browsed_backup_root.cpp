@@ -9,6 +9,7 @@
 #include <system_error>
 
 #include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::local
 {
@@ -45,10 +46,10 @@ std::optional<fs::path> archiveFromValidMarker(const fs::path &libraryRoot)
     }
     std::error_code ec;
     const fs::path here = fs::weakly_canonical(libraryRoot, ec);
-    if (ec || here != fs::path(rootLine)) {
+    if (ec || here != pathFromUtf8(rootLine)) {
         return std::nullopt;
     }
-    return fs::path(archiveLine);
+    return pathFromUtf8(archiveLine);
 }
 
 }  // namespace
@@ -95,8 +96,8 @@ bool writeBrowsedBackupMarker(const fs::path &markerDir, const fs::path &archive
     // other catalog file. The archive path is stored canonical, so the
     // open-archive cache keyed on it sees one key per file, whatever
     // spelling the user opened it by.
-    return writeFileDurablyAtomic((markerDir / BrowsedBackupMarkerName).string(),
-                                  archive.string() + "\n" + root.string() + "\n");
+    return writeFileDurablyAtomic(pathToUtf8(markerDir / BrowsedBackupMarkerName),
+                                  pathToUtf8(archive) + "\n" + pathToUtf8(root) + "\n");
 }
 
 }  // namespace seabass::infrastructure::local

@@ -20,6 +20,7 @@
 #include "infrastructure/compression/zlib_compressor.hpp"
 #include "infrastructure/local/app_data_directory.hpp"
 #include "infrastructure/local/sqlite_statement.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::local
 {
@@ -284,12 +285,12 @@ std::vector<Track> deserializeTracks(const std::string &data, int formatVersion)
 
 std::string LocalCueStore::defaultPath()
 {
-    return (appDataDirectory() / "cues.db").string();
+    return pathToUtf8(appDataDirectory() / "cues.db");
 }
 
 LocalCueStore::LocalCueStore(std::string path)
 {
-    fs::create_directories(fs::path(path).parent_path());
+    fs::create_directories(pathFromUtf8(path).parent_path());
 
     if (sqlite3_open(path.c_str(), &m_db) != SQLITE_OK) {
         std::string message = m_db ? sqlite3_errmsg(m_db) : "failed to open database";

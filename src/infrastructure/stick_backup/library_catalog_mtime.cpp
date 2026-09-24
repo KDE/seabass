@@ -18,6 +18,8 @@ namespace fs = std::filesystem;
 std::int64_t libraryCatalogModifiedAt(const fs::path &stickRoot)
 {
     const fs::path engineMain = engine::engineMainDatabasePath(stickRoot);
+    fs::path engineWal = engineMain;
+    engineWal += "-wal";
     // exportLibrary.db (OneLibrary) is a catalog too, and the one a Seabass
     // cue edit on a rekordbox stick actually writes: the cues live in the
     // analysis files and the OneLibrary mirror, while export.pdb keeps the
@@ -29,7 +31,7 @@ std::int64_t libraryCatalogModifiedAt(const fs::path &stickRoot)
         stickRoot / "PIONEER" / "rekordbox" / "exportLibrary.db",
         stickRoot / "PIONEER" / "rekordbox" / "exportLibrary.db-wal",
         engineMain,
-        fs::path(engineMain.string() + "-wal"),
+        engineWal,
         engineMain.parent_path() / engine::HistoryDbName,
     };
     std::int64_t newest = 0;

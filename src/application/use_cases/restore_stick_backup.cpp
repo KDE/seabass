@@ -26,6 +26,7 @@
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 #include "infrastructure/stick_backup/archive_recovery.hpp"
 #include "infrastructure/stick_backup/archive_updater.hpp"
@@ -302,9 +303,9 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
         planned.name = entry.name;
         planned.relative = *relative;
         planned.isDirectory = isDirectory || entry.isDirectory;
-        plan.backupPaths.insert(pathToUtf8(*relative));
+        plan.backupPaths.insert(pathToGenericUtf8(*relative));
         if (planned.isDirectory) {
-            plan.backupDirectories.insert(pathToUtf8(*relative));
+            plan.backupDirectories.insert(pathToGenericUtf8(*relative));
             plan.directories.push_back(std::move(planned));
             continue;
         }
@@ -321,10 +322,10 @@ RestorePlan planRestore(const Zip64Reader &reader, const BackupManifest &manifes
                 planned.unchanged = true;
             }
         }
-        std::string filename = pathToUtf8(relative->filename());
-        if (const std::optional<fs::path> mainFile = engine::dbSetMainFile(fs::path(filename))) {
+        std::string filename = pathToGenericUtf8(relative->filename());
+        if (const std::optional<fs::path> mainFile = engine::dbSetMainFile(relative->filename())) {
             planned.databaseMember = true;
-            planned.setMainPath = entry.name.substr(0, entry.name.size() - filename.size()) + pathToUtf8(*mainFile);
+            planned.setMainPath = entry.name.substr(0, entry.name.size() - filename.size()) + pathToGenericUtf8(*mainFile);
             // Size and mtime cannot tell a database apart from itself one
             // commit later (SQLite reuses pages; FAT keeps 2 s mtimes): a
             // set whose main file the manifest fingerprinted is unchanged
@@ -406,8 +407,8 @@ std::vector<std::string> extrasOnTarget(const fs::path &targetRoot, const Restor
             // on the key alone made an exact restore there not exact.
             std::error_code ec;
             if (match->second == path
-                || (fs::equivalent(longPathSafe(targetRoot / pathFromUtf8(path)),
-                                   longPathSafe(targetRoot / pathFromUtf8(match->second)), ec)
+                || (fs::equivalent(longPathSafe(targetRoot / seabass::pathFromUtf8(path)),
+                                   longPathSafe(targetRoot / seabass::pathFromUtf8(match->second)), ec)
                     && !ec)) {
                 continue;
             }
@@ -680,7 +681,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     }
     std::error_code ec;
     if (!fs::is_directory(options.targetRoot, ec)) {
-        summary.message = "the restore target is not a directory: " + pathToUtf8(options.targetRoot);
+        summary.message = "the restore target is not a directory: " + seabass::pathToUtf8(options.targetRoot);
         return summary;
     }
 
@@ -759,11 +760,11 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                                         const std::string dir =
                                             slash == std::string::npos ? std::string() : extra.substr(0, slash + 1);
                                         const auto main = engine::dbSetMainFile(
-                                            pathFromUtf8(extra.substr(dir.size())));
+                                            seabass::pathFromUtf8(extra.substr(dir.size())));
                                         if (!main) {
                                             return false;
                                         }
-                                        const std::string mainPath = dir + pathToUtf8(*main);
+                                        const std::string mainPath = dir + pathToGenericUtf8(*main);
                                         return heldKeys.count(normalizedPathKey(mainPath)) != 0;
                                     }),
                      extras.end());
@@ -788,7 +789,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     std::set<fs::path> placedIn;
     auto flushDirectories = [&placedIn]() {
         for (const fs::path &dir : placedIn) {
-            infrastructure::fsyncDirectoryContaining(infrastructure::stick_backup::pathToUtf8(dir / "x"));
+            infrastructure::fsyncDirectoryContaining(seabass::pathToUtf8(dir / "x"));
         }
         placedIn.clear();
     };
@@ -910,7 +911,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         // Files first, then directories deepest-first so they are empty.
         std::sort(extras.begin(), extras.end(), [](const std::string &a, const std::string &b) { return a.size() > b.size(); });
         for (const std::string &extra : extras) {
-            fs::path target = options.targetRoot / pathFromUtf8(extra);
+            fs::path target = options.targetRoot / seabass::pathFromUtf8(extra);
             const bool isDirectory = fs::is_directory(longPathSafe(target), ec);
             ec.clear();
             if (!isDirectory && extraIsBackupFile(options.targetRoot, target, plan)) {

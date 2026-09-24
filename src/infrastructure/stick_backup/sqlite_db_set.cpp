@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 namespace seabass::infrastructure::stick_backup
@@ -214,7 +215,7 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
     // Members are the main file plus a suffix, so their archive names are
     // the main file's name plus the same suffix -- no path arithmetic.
     auto relativeNameOf = [&](const fs::path &member) {
-        return relativeMainDb + member.filename().string().substr(mainDb.filename().string().size());
+        return relativeMainDb + pathToGenericUtf8(member.filename()).substr(pathToGenericUtf8(mainDb.filename()).size());
     };
     std::error_code ec;
     bool presenceKnown = true;

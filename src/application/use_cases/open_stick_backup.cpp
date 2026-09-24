@@ -11,6 +11,7 @@
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/scratch_dir_guard.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
@@ -70,20 +71,21 @@ OpenedStickBackup OpenStickBackup::execute(const fs::path &archivePath, const fs
     // place. Only a leftover beside an intact cache is cleared, up front,
     // so a failure to clear it stops this open before any extraction
     // rather than after all of it.
-    const fs::path retired = cacheRoot.string() + ".old";
+    fs::path retired = cacheRoot;
+    retired += ".old";
     std::error_code ec;
     if (fs::exists(retired, ec)) {
         if (!fs::exists(cacheRoot, ec)) {
             fs::rename(retired, cacheRoot, ec);
             if (ec) {
-                result.error = "The previous copy of this backup is at " + retired.string()
+                result.error = "The previous copy of this backup is at " + pathToUtf8(retired)
                                + " and could not be put back: " + ec.message();
                 return result;
             }
         } else {
             fs::remove_all(retired, ec);
             if (fs::exists(retired, ec)) {
-                result.error = "A previous copy of this backup could not be cleared away (" + retired.string()
+                result.error = "A previous copy of this backup could not be cleared away (" + pathToUtf8(retired)
                                + "). Something still has a file in it open -- possibly a scan of this "
                                  "backup that is still running in Seabass; wait for it and try again.";
                 return result;
@@ -109,7 +111,8 @@ OpenedStickBackup OpenStickBackup::execute(const fs::path &archivePath, const fs
     // library with no cues and no explanation. And any reader that opens
     // the real directory while this runs sees a complete state, never one
     // with the marker missing.
-    const fs::path staging = cacheRoot.string() + ".partial";
+    fs::path staging = cacheRoot;
+    staging += ".partial";
     fs::remove_all(staging, ec);
     if (ec) {
         result.error = "Could not clear the staging directory for the backup: " + ec.message();
@@ -170,7 +173,7 @@ OpenedStickBackup OpenStickBackup::execute(const fs::path &archivePath, const fs
         // cannot leave a present-but-empty database. longPathSafe for the
         // cache's depth on Windows, as restore already does for these
         // entries.
-        if (!infrastructure::writeFileDurablyAtomic(infrastructure::longPathSafe(fs::absolute(target)).string(),
+        if (!infrastructure::writeFileDurablyAtomic(pathToUtf8(infrastructure::longPathSafe(fs::absolute(target))),
                                                     bytes)) {
             result.error = "Could not write \"" + entry.name + "\" while opening the backup.";
             return result;
@@ -229,7 +232,7 @@ OpenedStickBackup OpenStickBackup::execute(const fs::path &archivePath, const fs
             std::error_code undo;
             fs::rename(retired, cacheRoot, undo);
             if (undo) {
-                result.error += " The previous copy is still intact at " + retired.string() + ".";
+                result.error += " The previous copy is still intact at " + pathToUtf8(retired) + ".";
             }
         }
         return result;

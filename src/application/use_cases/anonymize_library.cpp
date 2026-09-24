@@ -17,6 +17,7 @@
 #include "infrastructure/anonymization_verifier.hpp"
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/rekordbox_library_anonymizer.hpp"
 #include "infrastructure/zip_archive_writer.hpp"
 
@@ -98,7 +99,7 @@ void writeFileListing(const fs::path &listingPath, const fs::path &stickRoot, in
         if (!entry.is_regular_file(ec)) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
+        const std::string name = pathToUtf8(entry.path().filename());
         if (!infrastructure::cleanup::isAudioExtension(name)) {
             continue;
         }
@@ -305,6 +306,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
                                                 ProgressReporter &reporter)
 {
     AnonymizationSummary summary;
+    const fs::path outputPath = pathFromUtf8(outputDir);
 
     // The staging directory is created here and removed at the end, so it
     // must be ours from the start. A user who typed an existing folder as
@@ -314,28 +316,28 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     // and anything that would swallow one.
     {
         std::error_code ec;
-        const auto normalized = [&ec](const fs::path &p) { return fs::absolute(p, ec).lexically_normal().string(); };
+        const auto normalized = [&ec](const fs::path &p) { return pathToUtf8(fs::absolute(p, ec).lexically_normal()); };
         const auto contains = [](const std::string &outer, const std::string &inner) {
             return outer == inner || pathIsUnder(inner, outer);
         };
-        const std::string out = normalized(fs::path(outputDir));
+        const std::string out = normalized(outputPath);
         for (const auto &source : {rekordboxRoot, engineRoot}) {
             if (!source) {
                 continue;
             }
-            const std::string catalog = normalized(fs::path(*source));
+            const std::string catalog = normalized(pathFromUtf8(*source));
             if (contains(catalog, out) || contains(out, catalog)) {
                 summary.outputError = "the output location " + outputDir + " overlaps the library being read (" + *source
                                       + "); pick a folder of its own";
                 return summary;
             }
         }
-        if (fs::exists(out, ec)) {
-            if (!fs::is_directory(out, ec)) {
+        if (fs::exists(outputPath, ec)) {
+            if (!fs::is_directory(outputPath, ec)) {
                 summary.outputError = "the output location " + outputDir + " exists and is not a directory";
                 return summary;
             }
-            if (!fs::is_empty(out, ec)) {
+            if (!fs::is_empty(outputPath, ec)) {
                 summary.outputError = "the output directory " + outputDir + " already exists and is not empty; refusing to "
                                       "use it, since it would be removed when the zip is written. If it is the leftover "
                                       "of an earlier run that did not finish, delete it or choose another name";
@@ -344,12 +346,12 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         }
     }
 
-    fs::create_directories(outputDir);
+    fs::create_directories(outputPath);
 
     if (rekordboxRoot) {
         summary.rekordboxAttempted = true;
         auto result = infrastructure::rekordbox::anonymizeRekordboxLibrary(
-            *rekordboxRoot, (fs::path(outputDir) / "rekordbox").string(),
+            *rekordboxRoot, pathToUtf8(outputPath / "rekordbox"),
             options.slimForTesting, reporter);
         summary.rekordboxTracksAnonymized = result.tracksAnonymized;
         summary.rekordboxArtistsRenamed = result.artistsRenamed;
@@ -370,7 +372,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     if (engineRoot) {
         summary.engineAttempted = true;
         auto result = infrastructure::engine::anonymizeEngineLibrary(
-            *engineRoot, (fs::path(outputDir) / "engine").string(), options.slimForTesting,
+            *engineRoot, pathToUtf8(outputPath / "engine"), options.slimForTesting,
             reporter);
         summary.engineTracksAnonymized = result.tracksAnonymized;
         summary.enginePlaylistsRenamed = result.playlistsRenamed;
@@ -385,11 +387,11 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
                                                      result.unremovedUnanonymizableFiles.end());
     }
 
-    std::uintmax_t rekordboxBytes = infrastructure::directoryTreeSizeBytes(fs::path(outputDir) / "rekordbox");
-    std::uintmax_t engineBytes = infrastructure::directoryTreeSizeBytes(fs::path(outputDir) / "engine");
+    std::uintmax_t rekordboxBytes = infrastructure::directoryTreeSizeBytes(outputPath / "rekordbox");
+    std::uintmax_t engineBytes = infrastructure::directoryTreeSizeBytes(outputPath / "engine");
     summary.outputSizeBytes = rekordboxBytes + engineBytes;
     std::error_code countEc;
-    for (const auto &entry : fs::recursive_directory_iterator(outputDir, countEc)) {
+    for (const auto &entry : fs::recursive_directory_iterator(outputPath, countEc)) {
         if (entry.is_regular_file(countEc)) {
             ++summary.filesWritten;
         }
@@ -398,18 +400,19 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     // The stick root is the parent of whichever catalog directory was
     // given; both live directly under it.
     if (rekordboxRoot || engineRoot) {
-        const fs::path anyCatalog(rekordboxRoot ? *rekordboxRoot : *engineRoot);
-        writeFileListing(fs::path(outputDir) / "files.tsv", anyCatalog.parent_path(), summary.audioFilesListed);
+        const fs::path anyCatalog = pathFromUtf8(rekordboxRoot ? *rekordboxRoot : *engineRoot);
+        writeFileListing(outputPath / "files.tsv", anyCatalog.parent_path(), summary.audioFilesListed);
     }
 
-    summary.manifestPath = (fs::path(outputDir) / "MANIFEST.txt").string();
-    writeManifest(summary.manifestPath, summary, options);
+    const fs::path manifestFile = outputPath / "MANIFEST.txt";
+    summary.manifestPath = pathToUtf8(manifestFile);
+    writeManifest(manifestFile, summary, options);
 
     // Captured before the staging directory is removed below -- once
     // execute() returns, MANIFEST.txt only exists inside outputZipPath,
     // not as a standalone file a caller could read back off disk.
     {
-        std::ifstream manifestIn(summary.manifestPath, std::ios::binary);
+        std::ifstream manifestIn(manifestFile, std::ios::binary);
         std::ostringstream manifestContent;
         manifestContent << manifestIn.rdbuf();
         summary.manifestText = manifestContent.str();
@@ -443,7 +446,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     // it while still carrying the real path of a deleted track. See #35
     // for why that removal can fail at all.
     if (!summary.unanonymizableFilesLeftBehind.empty() || !summary.rowsNotAnonymized.empty()) {
-        infrastructure::removeTreeDeepestFirst(outputDir);
+        infrastructure::removeTreeDeepestFirst(outputPath);
         return summary;
     }
 
@@ -451,7 +454,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     if (!verification.ok) {
         summary.verificationFailed = true;
         summary.verificationReport = verification.describe();
-        infrastructure::removeTreeDeepestFirst(outputDir);
+        infrastructure::removeTreeDeepestFirst(outputPath);
         return summary;
     }
 
@@ -460,16 +463,16 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     // opens the database after this point, so nothing recreates them.
     for (const char *sideFile : {"exportLibrary.db-shm", "exportLibrary.db-wal"}) {
         std::error_code sideEc;
-        fs::remove(fs::path(outputDir) / "rekordbox" / "rekordbox" / sideFile, sideEc);
+        fs::remove(outputPath / "rekordbox" / "rekordbox" / sideFile, sideEc);
     }
 
-    fs::path zipPath(outputDir);
+    fs::path zipPath = outputPath;
     if (zipPath.filename().empty()) {
         zipPath = zipPath.parent_path();
     }
     zipPath += ".zip";
-    infrastructure::writeZipArchive(outputDir, zipPath);
-    summary.outputZipPath = zipPath.string();
+    infrastructure::writeZipArchive(outputPath, zipPath);
+    summary.outputZipPath = pathToUtf8(zipPath);
     std::error_code sizeEc;
     summary.finalZipBytes = fs::file_size(zipPath, sizeEc);
 
@@ -477,7 +480,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
     // library, so it can hold a path past MAX_PATH, and remove_all never
     // returns on one -- it spins instead of reporting that it is stuck.
     // See infrastructure/long_paths.hpp.
-    infrastructure::removeTreeDeepestFirst(outputDir);
+    infrastructure::removeTreeDeepestFirst(outputPath);
 
     return summary;
 }

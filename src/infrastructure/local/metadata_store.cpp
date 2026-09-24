@@ -24,6 +24,7 @@
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/local/sqlite_statement.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::local
 {
@@ -69,8 +70,8 @@ std::string stickRelativePath(const std::string &filePath, const fs::path &stick
         return {};
     }
     if (!stickRoot.empty()) {
-        fs::path relative = fs::path(filePath).lexically_normal().lexically_relative(stickRoot.lexically_normal());
-        const std::string text = relative.generic_string();
+        fs::path relative = pathFromUtf8(filePath).lexically_normal().lexically_relative(stickRoot.lexically_normal());
+        const std::string text = pathToGenericUtf8(relative);
         // lexically_relative walks up with ".." when the path is not
         // under the root at all; such an answer says nothing about the
         // stick and must not become a key.
@@ -81,7 +82,7 @@ std::string stickRelativePath(const std::string &filePath, const fs::path &stick
     // A path we cannot place on the stick still has a filename, and a
     // filename is a weaker key rather than no key. Losing the track
     // entirely would be worse.
-    return fs::path(filePath).filename().generic_string();
+    return pathToGenericUtf8(pathFromUtf8(filePath).filename());
 }
 
 // What two rows have to agree on to be the same track: artist, title
@@ -248,7 +249,7 @@ int MetadataStore::storedTrackCountIfPresent(fs::path databasePath)
     sqlite3 *db = nullptr;
     // READONLY and no CREATE: the point of this function is that asking
     // costs nothing and changes nothing.
-    if (sqlite3_open_v2(databasePath.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(databasePath).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return 0;
     }
@@ -272,7 +273,7 @@ bool MetadataStore::canTakeArtwork(const std::string &path)
     // intakeArtwork() reads the whole file and takes nothing from an
     // empty one; this asks the same question without reading it.
     std::error_code ec;
-    const fs::path file(path);
+    const fs::path file = pathFromUtf8(path);
     return fs::is_regular_file(file, ec) && fs::file_size(file, ec) > 0 && !ec;
 }
 
@@ -293,7 +294,7 @@ int schemaVersionOf(const fs::path &databasePath)
         return 0;
     }
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(databasePath.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(databasePath).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return -1;  // there is a file, and it is not a database we can read
     }
@@ -358,7 +359,7 @@ void MetadataStore::openAndMigrate()
         }
     }
 
-    if (sqlite3_open(m_databasePath.string().c_str(), &m_db) != SQLITE_OK) {
+    if (sqlite3_open(pathToUtf8(m_databasePath).c_str(), &m_db) != SQLITE_OK) {
         const std::string message = m_db ? sqlite3_errmsg(m_db) : "could not open database";
         sqlite3_close(m_db);
         m_db = nullptr;
@@ -581,20 +582,20 @@ ArtworkIntake intakeArtwork(const std::string &sourcePath, const fs::path &artwo
     if (sourcePath.empty()) {
         return intake;
     }
-    const std::string bytes = readWholeFile(sourcePath);
+    const std::string bytes = readWholeFile(pathFromUtf8(sourcePath));
     if (bytes.empty()) {
         return intake;
     }
 
     intake.sha = hashing::toHex(hashing::Sha256::of(bytes));
-    intake.extension = lowercased(fs::path(sourcePath).extension().generic_string());
+    intake.extension = lowercased(pathToGenericUtf8(pathFromUtf8(sourcePath).extension()));
     if (intake.extension.empty()) {
         intake.extension = ".jpg";
     }
 
     std::error_code ec;
     fs::create_directories(artworkDir, ec);
-    const fs::path destination = artworkDir / (intake.sha + intake.extension);
+    const fs::path destination = artworkDir / pathFromUtf8(intake.sha + intake.extension);
     if (fs::exists(destination, ec)) {
         return intake;
     }
@@ -1276,7 +1277,7 @@ std::vector<Track> MetadataStore::readAll()
             // supply.
             const std::string artworkSha = stmt.columnText(13);
             if (!artworkSha.empty()) {
-                track.artworkPath = (artworkDir() / (artworkSha + stmt.columnText(14))).string();
+                track.artworkPath = pathToUtf8(artworkDir() / pathFromUtf8(artworkSha + stmt.columnText(14)));
             }
             tracks.push_back(std::move(track));
         }
@@ -1360,7 +1361,7 @@ std::vector<StoredTrack> MetadataStore::browse(const std::string &search, int li
         row.lastPlayedAt = stmt.columnText(11);
         const std::string sha = stmt.columnText(12);
         if (!sha.empty()) {
-            row.artworkPath = (artworkDir() / (sha + stmt.columnText(13))).string();
+            row.artworkPath = pathToUtf8(artworkDir() / pathFromUtf8(sha + stmt.columnText(13)));
         }
         row.stickLabel = stmt.columnText(14);
         row.sourceFormat = stmt.columnText(15);
