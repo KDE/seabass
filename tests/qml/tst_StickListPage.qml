@@ -580,6 +580,13 @@ TestCase {
         var folder = findChild(page, "openFolderItem");
         verify(full !== null && manage !== null && meta !== null && folder !== null, "all four entries must be in the menu");
         compare(folder.text, "Open a Library From a Folder…");
+        // Every entry at its full length: the menu is as wide as its
+        // longest one, not the style's default width with the text elided.
+        var entries = [full, manage, meta, folder];
+        for (var i = 0; i < entries.length; ++i) {
+            verify(entries[i].implicitWidth <= entries[i].width,
+                   entries[i].text + " needs " + entries[i].implicitWidth + " px and got " + entries[i].width);
+        }
         // And the button closes what it opened: a press on it no longer
         // closes the menu only for the click to open it again.
         mouseClick(button);

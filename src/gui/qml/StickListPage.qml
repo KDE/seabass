@@ -387,6 +387,19 @@ Page {
                     // from a button near the right edge.
                     x: homeMenuButton.width - width
                     y: homeMenuButton.height
+                    // As wide as its longest entry. A Menu keeps the style's
+                    // own width, 200 px, whatever its items hold, and elided
+                    // "Browse a Full Stick Backup…" with the window half
+                    // empty. Rounded up for the reason BackBreadcrumb's
+                    // crumbs are: a fraction short of the text elides it.
+                    width: {
+                        var widest = 0;
+                        for (var i = 0; i < count; ++i) {
+                            var item = itemAt(i);
+                            if (item) widest = Math.max(widest, item.implicitWidth);
+                        }
+                        return Math.max(implicitWidth, Math.ceil(widest) + 1 + leftPadding + rightPadding);
+                    }
                     MenuItem {
                         objectName: "browseFullBackupItem"
                         text: "Browse a Full Stick Backup…"
