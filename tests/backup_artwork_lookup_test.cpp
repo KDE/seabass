@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_writer.hpp"
@@ -53,7 +54,7 @@ void writeBackup(const fs::path &archive, const std::string &artworkName, const 
     const fs::path db = staging / "m.db";
     fs::create_directories(staging);
     sqlite3 *handle = nullptr;
-    assert(sqlite3_open(db.string().c_str(), &handle) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(db).c_str(), &handle) == SQLITE_OK);
     auto exec = [&](const std::string &sql) {
         assert(sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
     };

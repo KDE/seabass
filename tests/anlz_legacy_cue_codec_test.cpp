@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_cue_codec.hpp"
 #include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
 
@@ -118,7 +119,7 @@ int main(int argc, char **argv)
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
+        const std::string name = seabass::pathToUtf8(entry.path().filename());
         const bool isDat = name.size() > 4 && name.compare(name.size() - 4, 4, ".DAT") == 0;
         const bool isExt = name.size() > 4 && name.compare(name.size() - 4, 4, ".EXT") == 0;
         if (!isDat && !isExt) {
@@ -134,7 +135,7 @@ int main(int argc, char **argv)
             try {
                 decoded = AnlzLegacyCueCodec::decodeCues(section.bytes);
             } catch (const std::exception &e) {
-                check(false, std::string("decoding ") + entry.path().string() + ": " + e.what());
+                check(false, std::string("decoding ") + seabass::pathToUtf8(entry.path()) + ": " + e.what());
                 continue;
             }
             entriesSeen += decoded.size();
@@ -149,7 +150,7 @@ int main(int argc, char **argv)
             if (reencoded == section.bytes) {
                 ++roundTripped;
             } else {
-                check(false, "re-encoding changed the bytes of " + entry.path().string());
+                check(false, "re-encoding changed the bytes of " + seabass::pathToUtf8(entry.path()));
             }
         }
     }

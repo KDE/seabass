@@ -35,6 +35,7 @@
 
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::cleanup;
@@ -54,7 +55,7 @@ struct Stick
 Stick makeStick(const std::string &name)
 {
     Stick s;
-    s.root = seabass::testing::scratchRoot() / name;
+    s.root = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(s.root, ec);
     fs::create_directories(s.root / "Contents" / "locked");
@@ -70,8 +71,8 @@ PendingDeletion entryFor(const fs::path &file)
 {
     PendingDeletion e;
     e.format = "rekordbox";
-    e.filePath = file.string();
-    e.title = file.filename().string();
+    e.filePath = seabass::pathToUtf8(file);
+    e.title = seabass::pathToUtf8(file.filename());
     e.artist = "rig";
     return e;
 }
@@ -83,7 +84,7 @@ int main()
     Stick stick = makeStick("seabass_pending_unreadable");
     const fs::path manifestPath = stick.root / "pending.jsonl";
 
-    PendingDeletionManifest manifest(manifestPath.string());
+    PendingDeletionManifest manifest(seabass::pathToUtf8(manifestPath));
     manifest.append(entryFor(stick.hidden));
     manifest.append(entryFor(stick.plain));
     assert(manifest.list().size() == 2);
@@ -108,7 +109,7 @@ int main()
     }
 
     const std::vector<PendingDeletion> safeToDelete = {entryFor(stick.hidden), entryFor(stick.plain)};
-    const auto outcomes = applyPendingDeletions(safeToDelete, stick.root.string(), manifest);
+    const auto outcomes = applyPendingDeletions(safeToDelete, seabass::pathToUtf8(stick.root), manifest);
     fs::permissions(stick.locked, fs::perms::owner_all, fs::perm_options::replace, ec);
 
     assert(outcomes.size() == 2);
@@ -131,7 +132,7 @@ int main()
     // The point of the whole thing: it is still on the list, so a later
     // pass can retry it. Before the fix the manifest was left empty.
     const auto left = manifest.list();
-    if (left.size() != 1 || left[0].filePath != stick.hidden.string()) {
+    if (left.size() != 1 || left[0].filePath != seabass::pathToUtf8(stick.hidden)) {
         std::cerr << "manifest holds " << left.size() << " entr(ies) after the run; expected only the "
                   << "unreadable one\n";
         for (const auto &e : left) {
@@ -139,7 +140,7 @@ int main()
         }
     }
     assert(left.size() == 1 && "the deleted file is cleared and the unexaminable one is kept");
-    assert(left[0].filePath == stick.hidden.string());
+    assert(left[0].filePath == seabass::pathToUtf8(stick.hidden));
     assert(fs::exists(stick.hidden) && "and it is still on the stick, which is why it must stay listed");
 
     fs::remove_all(stick.root, ec);

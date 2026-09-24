@@ -12,6 +12,7 @@
 #include <iostream>
 
 #include "infrastructure/audio/taglib_duration_probe.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "mp3_fixture.hpp"
 #include "scratch_path.hpp"
 
@@ -30,7 +31,7 @@ int main()
         const int frames = 40;
         const fs::path path = root / "xing.mp3";
         writeMp3(path, frames, true);
-        const auto seconds = probe.durationSeconds(path.string());
+        const auto seconds = probe.durationSeconds(seabass::pathToUtf8(path));
         assert(seconds.has_value());
         assert(std::abs(*seconds - expectedSeconds(frames)) < 0.01);
         std::cout << "case 1 (a real file's length, in seconds) OK\n";
@@ -40,10 +41,10 @@ int main()
     // catalog row pointing at a file that is gone, and something that is
     // not audio at all. Both are "don't know", never a throw.
     {
-        assert(!probe.durationSeconds((root / "not-here.mp3").string()).has_value());
+        assert(!probe.durationSeconds(seabass::pathToUtf8(root / "not-here.mp3")).has_value());
         const fs::path text = root / "notes.txt";
         std::ofstream(text) << "not audio";
-        assert(!probe.durationSeconds(text.string()).has_value());
+        assert(!probe.durationSeconds(seabass::pathToUtf8(text)).has_value());
         assert(!probe.durationSeconds("").has_value());
         std::cout << "case 2 (missing file, non-audio file and an empty path are all \"don't know\") OK\n";
     }

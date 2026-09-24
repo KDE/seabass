@@ -26,6 +26,7 @@
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::engine;
@@ -38,7 +39,7 @@ namespace
 // existing database (same reason the propagate test does this).
 fs::path freshRoot(const std::string &caseName)
 {
-    fs::path root = seabass::testing::scratchRoot() / "seabass_engine_cue_writer_main_cue_test" / caseName / "Engine Library";
+    fs::path root = seabass::testing::scratchRoot() / "seabass_engine_cue_writer_main_cue_test" / seabass::pathFromUtf8(caseName) / "Engine Library";
     fs::remove_all(root.parent_path());
     fs::create_directories(root.parent_path());
     return root;
@@ -81,9 +82,9 @@ int main()
     // A memory cue in the incoming set becomes the main cue.
     {
         fs::path root = freshRoot("case1");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         auto track = makeTrack(db);
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
 
         writer.writeHotCues(std::to_string(track.id()), {hotCue(1, 1000.0), memoryCue(5000.0)});
 
@@ -99,9 +100,9 @@ int main()
     // than leaving the previous one behind.
     {
         fs::path root = freshRoot("case2");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         auto track = makeTrack(db);
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
 
         writer.writeHotCues(std::to_string(track.id()), {hotCue(1, 1000.0), memoryCue(5000.0)});
         auto seeded = db.track_by_id(track.id());
@@ -119,9 +120,9 @@ int main()
     // An empty set clears everything, hot cues included.
     {
         fs::path root = freshRoot("case3");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         auto track = makeTrack(db);
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
 
         writer.writeHotCues(std::to_string(track.id()), {hotCue(1, 1000.0), memoryCue(5000.0)});
         writer.writeHotCues(std::to_string(track.id()), {});
@@ -141,13 +142,13 @@ int main()
     // loop. The writer refuses, and the track's cues are untouched.
     {
         fs::path root = freshRoot("case4");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         auto track = makeTrack(db);
-        seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(root.string());
+        seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.writeHotCues(std::to_string(track.id()), {hotCue(1, 1000.0), hotCue(2, 2000.0)});
         {
             sqlite3 *raw = nullptr;
-            assert(sqlite3_open((root / "Database2" / "m.db").string().c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_open(seabass::pathToUtf8(root / "Database2" / "m.db").c_str(), &raw) == SQLITE_OK);
             char *err = nullptr;
             // One byte: no valid loops blob has that length.
             assert(sqlite3_exec(raw, ("UPDATE PerformanceData SET loops = X'00' WHERE trackId = "
@@ -162,7 +163,7 @@ int main()
             refused = std::string(e.what()).find("refusing") != std::string::npos;
         }
         assert(refused);
-        auto reread = djinterop::engine::load_database(root.string()).track_by_id(track.id());
+        auto reread = djinterop::engine::load_database(seabass::pathToUtf8(root)).track_by_id(track.id());
         assert(reread.has_value());
         auto cues = reread->hot_cues();
         assert(cues.size() >= 2 && cues[0].has_value() && cues[1].has_value() && !cues[2].has_value());

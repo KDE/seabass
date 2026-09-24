@@ -21,6 +21,7 @@
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #include "mp3_fixture.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::infrastructure::audio::TagLibMetadataProbe;
@@ -43,7 +44,7 @@ int main()
         const fs::path path = root / "xing.mp3";
         writeMp3(path, frames, true);
 
-        auto metadata = probe.read(path.string());
+        auto metadata = probe.read(seabass::pathToUtf8(path));
         assert(metadata.has_value());
         assert(!metadata->durationIsEstimated);
         assert(std::abs(metadata->durationSeconds - expectedSeconds(frames)) < 0.01);
@@ -62,7 +63,7 @@ int main()
         const fs::path path = root / "plain.mp3";
         writeMp3(path, frames, false);
 
-        auto metadata = probe.read(path.string());
+        auto metadata = probe.read(seabass::pathToUtf8(path));
         assert(metadata.has_value());
         assert(metadata->durationIsEstimated);
         assert(metadata->durationSeconds > 0.0);
@@ -78,7 +79,7 @@ int main()
         const fs::path path = root / "tagged.mp3";
         writeMp3(path, 40, true);
         {
-            TagLib::FileRef file(path.string().c_str());
+            TagLib::FileRef file(path.c_str());  // TagLib::FileName takes wchar_t on Windows, char elsewhere
             assert(!file.isNull());
             file.tag()->setTitle(TagLib::String("Una Hora M\xc3\xa1s", TagLib::String::UTF8));
             file.tag()->setArtist("The Rocketman");
@@ -86,7 +87,7 @@ int main()
             assert(file.save());
         }
 
-        auto metadata = probe.read(path.string());
+        auto metadata = probe.read(seabass::pathToUtf8(path));
         assert(metadata.has_value());
         assert(metadata->title == "Una Hora M\xc3\xa1s");
         assert(metadata->artist == "The Rocketman");
@@ -103,7 +104,7 @@ int main()
         const fs::path path = root / "untagged.mp3";
         writeMp3(path, 40, true);
 
-        auto metadata = probe.read(path.string());
+        auto metadata = probe.read(seabass::pathToUtf8(path));
         assert(metadata.has_value());
         assert(metadata->title.empty());
         assert(metadata->artist.empty());
@@ -117,8 +118,8 @@ int main()
     // at a deleted file is normal.
     {
         writeBytes(root / "notaudio.mp3", std::vector<unsigned char>{'n', 'o', 'p', 'e'});
-        assert(!probe.read((root / "notaudio.mp3").string()).has_value());
-        assert(!probe.read((root / "does-not-exist.mp3").string()).has_value());
+        assert(!probe.read(seabass::pathToUtf8(root / "notaudio.mp3")).has_value());
+        assert(!probe.read(seabass::pathToUtf8(root / "does-not-exist.mp3")).has_value());
         std::cout << "case 5 (garbage file and missing file -> nullopt) OK\n";
     }
 

@@ -29,9 +29,11 @@
 #include "gui/edit/changes/add_cue_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
 
@@ -58,11 +60,11 @@ struct Target
 
 fs::path freshCopy(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     assert(fs::exists(source / "rekordbox" / "exportLibrary.db"));
     const fs::path pioneerRoot = scratch / "PIONEER";
     fs::copy(source, pioneerRoot, fs::copy_options::recursive);
@@ -77,14 +79,14 @@ fs::path freshCopy(const std::string &name)
 // below would hold for the wrong reason.
 Target findTarget(const fs::path &pioneerRoot)
 {
-    seabass::infrastructure::onelibrary::OneLibraryReader mirror(pioneerRoot.string());
+    seabass::infrastructure::onelibrary::OneLibraryReader mirror(seabass::pathToUtf8(pioneerRoot));
     std::set<std::string> mirrored;
     for (const Track &track : mirror.readAll()) {
         if (!track.filePath.empty()) {
             mirrored.insert(track.filePath);
         }
     }
-    seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneerRoot.string());
+    seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneerRoot));
     for (const Track &track : reader.readAll()) {
         if (track.filePath.empty() || !mirrored.count(track.filePath)) {
             continue;
@@ -128,7 +130,7 @@ SaveOutcome addCueThroughSave(const fs::path &pioneerRoot, const Target &target)
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    const QString root = QString::fromStdString(pioneerRoot.string());
+    const QString root = seabass::gui::pathToQString(pioneerRoot);
     const fs::path db = pioneerRoot / "rekordbox" / "exportLibrary.db";
     SaveOutcome outcome;
     {
@@ -140,8 +142,8 @@ SaveOutcome addCueThroughSave(const fs::path &pioneerRoot, const Target &target)
         outcome.result = runSaveLoop(changes, ctx);
         // Still inside ctx's scope: the shared writers it owns are open,
         // and the finish hooks have already run (runSaveLoop calls them).
-        const fs::path wal = fs::path(db.string() + "-wal");
-        const fs::path shm = fs::path(db.string() + "-shm");
+        const fs::path wal = fs::path(db).concat("-wal");
+        const fs::path shm = fs::path(db).concat("-shm");
         std::error_code ec;
         outcome.walPresent = fs::exists(wal, ec);
         outcome.walBytes = outcome.walPresent ? fs::file_size(wal, ec) : 0;
@@ -157,7 +159,7 @@ int mirroredCueCount(const fs::path &db)
 {
     using namespace seabass::infrastructure::onelibrary;
     SqlCipherLibrary lib;
-    SqlCipherDb conn(lib, db.string(), /*readOnly=*/true);
+    SqlCipherDb conn(lib, seabass::pathToUtf8(db), /*readOnly=*/true);
     conn.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     SqlCipherStatement count(conn, "SELECT COUNT(*) FROM cue;");
     return count.step() ? static_cast<int>(count.columnInt64(0)) : -1;
@@ -179,8 +181,8 @@ int main()
     assert(target.freeSlot != 0 && "the fixture must have a rekordbox track with a cue, a path and a free slot");
 
     const fs::path db = pioneerRoot / "rekordbox" / "exportLibrary.db";
-    const fs::path wal = fs::path(db.string() + "-wal");
-    const fs::path shm = fs::path(db.string() + "-shm");
+    const fs::path wal = fs::path(db).concat("-wal");
+    const fs::path shm = fs::path(db).concat("-shm");
 
     const int cuesBefore = mirroredCueCount(db);
     const SaveOutcome outcome = addCueThroughSave(pioneerRoot, target);
@@ -211,7 +213,7 @@ int main()
     // file. A -wal with frames in it means rows that every reader of the
     // database alone cannot see.
     if (walAfterSave && walBytesAfterSave > 0) {
-        std::cerr << "a successful save left " << walBytesAfterSave << " bytes in " << wal.filename().string() << "\n";
+        std::cerr << "a successful save left " << walBytesAfterSave << " bytes in " << seabass::pathToUtf8(wal.filename()) << "\n";
     }
     assert(!(walAfterSave && walBytesAfterSave > 0) && "a successful save must leave no frames in the write-ahead log");
 
@@ -219,10 +221,10 @@ int main()
     // -wal beside a -shm is what the sticks carry today, and it is what
     // "make sure it cannot get in the way" asks us to stop leaving.
     if (walAfterSave) {
-        std::cerr << "left behind: " << wal.filename().string() << " (" << walBytesAfterSave << " bytes)\n";
+        std::cerr << "left behind: " << seabass::pathToUtf8(wal.filename()) << " (" << walBytesAfterSave << " bytes)\n";
     }
     if (shmAfterSave) {
-        std::cerr << "left behind: " << shm.filename().string() << "\n";
+        std::cerr << "left behind: " << seabass::pathToUtf8(shm.filename()) << "\n";
     }
     assert(!walAfterSave && "a checkpointed database keeps no -wal beside it");
     assert(!shmAfterSave && "a checkpointed database keeps no -shm beside it");

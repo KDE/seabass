@@ -43,6 +43,7 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 #include "stick_fixture.hpp"
 
@@ -67,15 +68,15 @@ std::vector<Catalog> readCatalogs(const fs::path &root)
     const fs::path pioneer = root / "PIONEER";
     const fs::path engine = root / "Engine Library";
     if (fs::exists(pioneer / "rekordbox" / "export.pdb")) {
-        seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneer));
         catalogs.push_back({"rekordbox", ScanLibrary(reader).execute()});
     }
     if (fs::exists(pioneer / "rekordbox" / "exportLibrary.db")) {
-        seabass::infrastructure::onelibrary::OneLibraryReader reader(pioneer.string());
+        seabass::infrastructure::onelibrary::OneLibraryReader reader(seabass::pathToUtf8(pioneer));
         catalogs.push_back({"onelibrary", ScanLibrary(reader).execute()});
     }
     if (fs::exists(engine / "Database2" / "m.db")) {
-        seabass::infrastructure::engine::LibdjinteropEngineReader reader(engine.string());
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(engine));
         catalogs.push_back({"engine", ScanLibrary(reader).execute()});
     }
     return catalogs;

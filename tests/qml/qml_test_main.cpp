@@ -15,6 +15,8 @@
 #include "application/ports/progress_reporter.hpp"
 #include "gui/controls_style.hpp"
 #include "gui/interface_font.hpp"
+#include "gui/qt_path.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -86,7 +88,7 @@ public:
     {
         std::error_code ec;
         for (const QString &root : m_roots) {
-            std::filesystem::remove_all(root.toStdString(), ec);
+            std::filesystem::remove_all(seabass::gui::pathFromQString(root), ec);
         }
     }
 
@@ -107,7 +109,7 @@ public:
             return {};
         }
         sqlite3 *db = nullptr;
-        const std::string file = (std::filesystem::path(library.toStdString()) / "Database2" / "m.db").string();
+        const std::string file = seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db");
         if (sqlite3_open(file.c_str(), &db) != SQLITE_OK) {
             sqlite3_close(db);
             return {};
@@ -132,9 +134,9 @@ public:
         if (library.isEmpty()) {
             return {};
         }
-        const fs::path stick = fs::path(library.toStdString()).parent_path();
+        const fs::path stick = seabass::gui::pathFromQString(library).parent_path();
         sqlite3 *db = nullptr;
-        if (sqlite3_open((fs::path(library.toStdString()) / "Database2" / "m.db").string().c_str(), &db)
+        if (sqlite3_open(seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db").c_str(), &db)
             != SQLITE_OK) {
             sqlite3_close(db);
             return {};
@@ -163,7 +165,7 @@ public:
             // A real JPEG header: the audit reads the first bytes and
             // refuses to name a repair after a file that is not an image.
             // The name follows it, so each image hashes to its own row.
-            out << "\xFF\xD8\xFF" << image.filename().string();
+            out << "\xFF\xD8\xFF" << seabass::pathToUtf8(image.filename());
             written++;
         }
         sqlite3_finalize(stmt);
@@ -182,20 +184,20 @@ private:
         fs::remove_all(root, ec);
         const fs::path library = root / "Engine Library";
         fs::create_directories(root, ec);
-        fs::copy(fromLibrary.toStdString(), library, fs::copy_options::recursive, ec);
+        fs::copy(seabass::gui::pathFromQString(fromLibrary), library, fs::copy_options::recursive, ec);
         if (ec) {
             return {};
         }
-        m_roots.append(QString::fromStdString(root.string()));
+        m_roots.append(seabass::gui::pathToQString(root));
         if (!eraseImages) {
-            return QString::fromStdString(library.string());
+            return seabass::gui::pathToQString(library);
         }
 
         // Every image the copy might have had, gone.
         fs::remove_all(library / "Artwork", ec);
         fs::create_directories(library / "Artwork", ec);
         sqlite3 *db = nullptr;
-        if (sqlite3_open((library / "Database2" / "m.db").string().c_str(), &db) != SQLITE_OK) {
+        if (sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) != SQLITE_OK) {
             sqlite3_close(db);
             return {};
         }
@@ -204,7 +206,7 @@ private:
         const bool ok =
             sqlite3_exec(db, "UPDATE AlbumArt SET hash = randomblob(20);", nullptr, nullptr, nullptr) == SQLITE_OK;
         sqlite3_close(db);
-        return ok ? QString::fromStdString(library.string()) : QString();
+        return ok ? seabass::gui::pathToQString(library) : QString();
     }
 
     QStringList m_roots;
@@ -264,7 +266,7 @@ public:
         if (hasEngine) {
             touch(stick / "Engine Library" / "Database2" / "m.db");
         }
-        const QString root = QString::fromStdString(stick.string());
+        const QString root = seabass::gui::pathToQString(stick);
         seabass::gui::LibraryEditSession session(seabass::gui::EditSessionRegistry::instance(),
                                                  QStringLiteral("session-catalogs-%1").arg(m_stickCounter),
                                                  QStringLiteral("TEST"), root);
@@ -485,10 +487,10 @@ void seedMetadataStoreForTests()
         infrastructure::local::MetadataSource source;
         const QByteArray liveStick = qgetenv("SEABASS_LIVE_STICK");
         if (!liveStick.isEmpty()) {
-            const std::filesystem::path root = liveStick.toStdString();
+            const std::filesystem::path root = seabass::gui::pathFromQString(liveStick);
             const std::filesystem::path pioneer = root / "PIONEER";
             if (std::filesystem::exists(pioneer / "rekordbox" / "export.pdb")) {
-                infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+                infrastructure::rekordbox::KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneer));
                 std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
                 // A handful, not the library: this runs before every
                 // test in the binary and a full store costs seconds.
@@ -634,7 +636,7 @@ void seedMetadataStoreForTests()
                       qPrintable(sandbox.errorString()));
             std::abort();
         }
-        const std::filesystem::path sandboxRoot(sandbox.path().toStdString());
+        const std::filesystem::path sandboxRoot = seabass::gui::pathFromQString(sandbox.path());
         // Named "Seabass" rather than "home": SEABASS_HOME stands in for
         // the real ~/Seabass, and pages that show the user where they
         // write show this path. tst_MetadataBackupPage asserts the label
@@ -645,7 +647,7 @@ void seedMetadataStoreForTests()
         seabass::testing::sandboxSettings(sandboxRoot / "config");
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
-                           QString::fromStdString((sandboxRoot / "config").string()));
+                           seabass::gui::pathToQString(sandboxRoot / "config"));
 
         // And proof -- against the real store, computed independently,
         // rather than against the string just handed to setPath(), which
@@ -688,9 +690,8 @@ void seedMetadataStoreForTests()
 
     void qmlEngineAvailable(QQmlEngine *engine)
     {
-        const char *dir = std::getenv("SEABASS_SCREENSHOT_DIR");
         engine->rootContext()->setContextProperty(QStringLiteral("screenshotDir"),
-                                                  dir != nullptr ? QString::fromLocal8Bit(dir) : QString());
+                                                  qEnvironmentVariable("SEABASS_SCREENSHOT_DIR"));
         // Whether this run ended up under a Qt Quick Controls style other
         // than "Basic", the one the pixel-measuring tests are calibrated
         // against: the screenshot mode forces Material, a run under the
@@ -712,20 +713,19 @@ void seedMetadataStoreForTests()
         // platform without a display -- the tests still cover both paths.
         engine->rootContext()->setContextProperty(
             QStringLiteral("shaderExpected"),
-            QString::fromLocal8Bit(qgetenv("SEABASS_SHADER_EXPECTED")) == QStringLiteral("1"));
+            qEnvironmentVariable("SEABASS_SHADER_EXPECTED") == QStringLiteral("1"));
         // A writable directory a QML test may point a controller at: the
         // same per-pid scratch tree the C++ fixtures use, already created.
         // Without it a live test that needs a folder of its own has to
         // invent an absolute path, which means either the developer's real
         // ~/Seabass or a path that does not exist.
         engine->rootContext()->setContextProperty(
-            QStringLiteral("testScratchDir"), QString::fromStdString(seabass::testing::scratchRoot().string()));
+            QStringLiteral("testScratchDir"), seabass::gui::pathToQString(seabass::testing::scratchRoot()));
         // tests/qml-live/: the mount point of a real (scratch) stick to
         // drive the real pages and controllers against. Empty under
         // ctest, and every live test skips itself then.
-        const char *stick = std::getenv("SEABASS_LIVE_STICK");
         engine->rootContext()->setContextProperty(QStringLiteral("liveStickRoot"),
-                                                  stick != nullptr ? QString::fromLocal8Bit(stick) : QString());
+                                                  qEnvironmentVariable("SEABASS_LIVE_STICK"));
         // Which of the orchestrated live scenarios this run is (see
         // tests/qml-live/run-live.sh); each file skips itself otherwise.
         engine->rootContext()->setContextProperty(QStringLiteral("liveLockPlanted"),
@@ -756,10 +756,8 @@ void seedMetadataStoreForTests()
         // tests/qml-live/tst_LivePages.qml, R5: the folder whose entries
         // link to the reference backups, so Manage Backups can be pointed
         // at them without naming a path in the test.
-        const char *referenceDir = std::getenv("SEABASS_RIG_REFERENCE_DIR");
         engine->rootContext()->setContextProperty(QStringLiteral("liveRigReferenceDir"),
-                                                  referenceDir != nullptr ? QString::fromLocal8Bit(referenceDir)
-                                                                          : QString());
+                                                  qEnvironmentVariable("SEABASS_RIG_REFERENCE_DIR"));
         // tests/qml-live/tst_LiveFullStick.qml, F4: the runner has filled
         // the stick to within a few MB of full and will delete the filler
         // afterwards. Without this the check skips, because a save that
@@ -769,9 +767,8 @@ void seedMetadataStoreForTests()
         // A second (scratch) stick, for the flows that read one stick and
         // write another -- metadata backed up from it, restored onto
         // liveStickRoot. Empty: those tests skip themselves.
-        const char *secondStick = std::getenv("SEABASS_LIVE_SECOND_STICK");
         engine->rootContext()->setContextProperty(QStringLiteral("liveSecondStickRoot"),
-                                                  secondStick != nullptr ? QString::fromLocal8Bit(secondStick) : QString());
+                                                  qEnvironmentVariable("SEABASS_LIVE_SECOND_STICK"));
         // The Breeze icons compiled into this binary, by name, read from
         // the resources rather than listed: tst_SeabassIcon loads each one
         // through Theme.iconUrl(), so a file registered under a different

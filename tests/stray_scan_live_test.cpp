@@ -44,6 +44,7 @@
 #include "infrastructure/cleanup/stray_file_scan.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 using namespace seabass;
@@ -85,7 +86,7 @@ std::string normalizedPath(std::string path)
             c = static_cast<char>(c - 'A' + 'a');
         }
     }
-    return fs::path(path).lexically_normal().generic_string();
+    return seabass::pathToGenericUtf8(seabass::pathFromUtf8(path).lexically_normal());
 }
 
 }  // namespace
@@ -138,17 +139,17 @@ int main()
             failed.emplace_back(name);
         }
     };
-    if (fs::exists(fs::path(root) / "PIONEER" / "rekordbox" / "export.pdb")) {
+    if (fs::exists(seabass::pathFromUtf8(root) / "PIONEER" / "rekordbox" / "export.pdb")) {
         read("rekordbox", root + "/PIONEER",
              [&] { return infrastructure::rekordbox::KaitaiRekordboxReader(root + "/PIONEER").readAll(); },
              catalogs.rekordbox);
     }
-    if (fs::exists(fs::path(root) / "Engine Library" / "Database2" / "m.db")) {
+    if (fs::exists(seabass::pathFromUtf8(root) / "Engine Library" / "Database2" / "m.db")) {
         read("engine", root + "/Engine Library",
              [&] { return infrastructure::engine::LibdjinteropEngineReader(root + "/Engine Library").readAll(); },
              catalogs.engine);
     }
-    if (fs::exists(fs::path(root) / "PIONEER" / "rekordbox" / "exportLibrary.db")) {
+    if (fs::exists(seabass::pathFromUtf8(root) / "PIONEER" / "rekordbox" / "exportLibrary.db")) {
         read("onelibrary", root + "/PIONEER",
              [&] { return infrastructure::onelibrary::OneLibraryReader(root + "/PIONEER").readAll(); },
              catalogs.oneLibrary);

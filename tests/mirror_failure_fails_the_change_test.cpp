@@ -54,8 +54,10 @@
 #include "gui/edit/changes/restore_metadata_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
 
@@ -69,11 +71,11 @@ namespace
 
 fs::path freshCopy(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     assert(fs::exists(source / "rekordbox" / "export.pdb"));
     assert(fs::exists(source / "rekordbox" / "exportLibrary.db"));
     const fs::path pioneerRoot = scratch / "PIONEER";
@@ -93,7 +95,7 @@ fs::path freshCopy(const std::string &name)
 std::vector<Track> mirroredTracks(const fs::path &pioneerRoot, std::size_t wanted, bool firstNeedsACue)
 {
     std::vector<Track> picked;
-    const std::string root = pioneerRoot.string();
+    const std::string root = seabass::pathToUtf8(pioneerRoot);
     if (!seabass::infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root)) {
         return picked;
     }
@@ -178,7 +180,7 @@ std::map<std::string, std::string> snapshot(const fs::path &root)
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
+        const std::string name = seabass::pathToUtf8(entry.path().filename());
         // -shm is rebuilt from the -wal a rollback puts back, and an
         // EMPTY -wal is the same state as no -wal: SQLite makes a
         // zero-length one the moment a database is opened, which this
@@ -192,7 +194,7 @@ std::map<std::string, std::string> snapshot(const fs::path &root)
             continue;
         }
         std::ifstream in(entry.path(), std::ios::binary);
-        files[fs::relative(entry.path(), root).generic_string()] =
+        files[seabass::pathToGenericUtf8(fs::relative(entry.path(), root))] =
             std::string(std::istreambuf_iterator<char>(in), {});
     }
     return files;
@@ -201,7 +203,7 @@ std::map<std::string, std::string> snapshot(const fs::path &root)
 void setMirrorReadOnly(const fs::path &pioneerRoot, bool readOnly)
 {
     const fs::path db = pioneerRoot / "rekordbox" / "exportLibrary.db";
-    for (const fs::path &file : {db, fs::path(db.string() + "-wal"), fs::path(db.string() + "-shm")}) {
+    for (const fs::path &file : {db, fs::path(db).concat("-wal"), fs::path(db).concat("-shm")}) {
         std::error_code ec;
         if (!fs::exists(file, ec)) {
             continue;
@@ -219,7 +221,7 @@ SaveLoopResult runOne(const fs::path &pioneerRoot, const std::shared_ptr<Pending
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneerRoot.string()), {});
+    SaveContext ctx(token, noProgress, {}, seabass::gui::pathToQString(pioneerRoot), {});
     std::vector<std::shared_ptr<PendingChange>> changes = {change};
     return runSaveLoop(changes, ctx);
 }
@@ -310,7 +312,7 @@ int main()
         extra.positionMs = 4321.0;
         candidate.mergedCues.push_back(extra);
         return std::make_shared<MergeCuesChange>(QStringLiteral("rekordbox"),
-                                                 QString::fromStdString(root.string()), candidate);
+                                                 seabass::gui::pathToQString(root), candidate);
     });
 
     // RepairIssueChange -- Library Health's repair, writing the
@@ -326,7 +328,7 @@ int main()
         extra.kind = CuePoint::Kind::Memory;
         extra.positionMs = 8765.0;
         issue.survivorCues.push_back(extra);
-        return std::make_shared<RepairIssueChange>(QString::fromStdString(root.string()), issue, 1);
+        return std::make_shared<RepairIssueChange>(seabass::gui::pathToQString(root), issue, 1);
     });
 
     // RestoreMetadataChange -- Restore Metadata's cue write.
@@ -341,7 +343,7 @@ int main()
         proposal.cues.push_back(extra);
         proposal.cuesOffered = true;
         return std::make_shared<RestoreMetadataChange>(QStringLiteral("rekordbox"),
-                                                       QString::fromStdString(root.string()),
+                                                       seabass::gui::pathToQString(root),
                                                        QString::fromStdString(track.sourceId), proposal, 1);
     });
 
@@ -353,7 +355,7 @@ int main()
     // with the copies that had them gone.
     bothWays("cleanup-merged-cues", 2, true, [](const fs::path &root, const std::vector<Track> &tracks) {
         return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
-                                                    QString::fromStdString(root.string()),
+                                                    seabass::gui::pathToQString(root),
                                                     cleanupPlan(tracks[0], {tracks[1]}, true), 1);
     });
 
@@ -365,7 +367,7 @@ int main()
     // save schedules for deletion.
     bothWays("cleanup-row-removal", 2, true, [](const fs::path &root, const std::vector<Track> &tracks) {
         return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
-                                                    QString::fromStdString(root.string()),
+                                                    seabass::gui::pathToQString(root),
                                                     cleanupPlan(tracks[0], {tracks[1]}, false), 1);
     });
 
@@ -376,7 +378,7 @@ int main()
     auto cleanupChange = [](const fs::path &root, const Track &survivor, const std::vector<Track> &doomed,
                             bool withAnExtraCue) {
         return std::make_shared<CleanupGroupChange>(QStringLiteral("rekordbox"),
-                                                    QString::fromStdString(root.string()),
+                                                    seabass::gui::pathToQString(root),
                                                     cleanupPlan(survivor, doomed, withAnExtraCue), 1);
     };
 
@@ -555,7 +557,7 @@ int main()
         issue.survivor = pair[0];
         issue.brokenGroup = {withAPathTheMirrorDoesNotKnow(pair[1], "broken")};
         const SaveLoopResult result =
-            runOne(root, std::make_shared<RepairIssueChange>(QString::fromStdString(root.string()), issue, 1));
+            runOne(root, std::make_shared<RepairIssueChange>(seabass::gui::pathToQString(root), issue, 1));
 
         if (!result.error.isEmpty()) {
             std::cerr << "repair-unlisted-broken: refused a broken row Device Library Plus never listed: "

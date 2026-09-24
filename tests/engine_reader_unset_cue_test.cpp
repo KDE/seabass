@@ -21,6 +21,7 @@
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -33,7 +34,7 @@ int main()
     fs::create_directories(root.parent_path());
 
     {
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
 
         djinterop::track_snapshot bare;
         bare.title = "Never Cued";
@@ -48,7 +49,7 @@ int main()
         db.create_track(cued);
     }
 
-    infrastructure::engine::LibdjinteropEngineReader reader(root.string());
+    infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(root));
     const std::vector<domain::Track> tracks = reader.readAll();
     assert(tracks.size() == 2);
 

@@ -15,6 +15,7 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::onelibrary;
@@ -45,7 +46,7 @@ fs::path freshScratch()
 // track with no image row at all.
 void createFixture(const std::string &pioneerRoot)
 {
-    fs::create_directories(fs::path(pioneerRoot) / "rekordbox");
+    fs::create_directories(seabass::pathFromUtf8(pioneerRoot) / "rekordbox");
     std::string dbPath = OneLibraryCueWriter::dbPathFor(pioneerRoot);
 
     std::string key = deriveOneLibraryKey();
@@ -116,13 +117,13 @@ int main()
     {
         fs::path scratch = freshScratch();
         fs::path pioneerRoot = scratch / "PIONEER";
-        createFixture(pioneerRoot.string());
+        createFixture(seabass::pathToUtf8(pioneerRoot));
 
         fs::path artFile = scratch / "PIONEER" / "Artwork" / "00001" / "a1.jpg";
         fs::create_directories(artFile.parent_path());
         std::ofstream(artFile) << "fake jpeg bytes";
 
-        OneLibraryReader reader(pioneerRoot.string());
+        OneLibraryReader reader(seabass::pathToUtf8(pioneerRoot));
         std::vector<Track> tracks = reader.readAll();
         assert(tracks.size() == 3);
 
@@ -135,12 +136,12 @@ int main()
         assert(t->album == "Test Album");
         assert(t->bpm == 128.0);
         assert(t->durationSeconds == 245.0);
-        assert(t->filePath == (scratch / "Contents" / "Test Track.mp3").string());
+        assert(t->filePath == seabass::pathToUtf8(scratch / "Contents" / "Test Track.mp3"));
         assert(t->key == "Fm");
         assert(t->bitrate == 320);
         assert(t->fileSizeBytes == 654321);
         assert(t->playCount.has_value() && *t->playCount == 5);
-        assert(t->artworkPath == artFile.string());
+        assert(t->artworkPath == seabass::pathToUtf8(artFile));
 
         assert(t->cues.size() == 3);
         bool sawHot = false, sawMemory = false, sawLoop = false;
@@ -178,10 +179,10 @@ int main()
     {
         fs::path scratch = freshScratch();
         fs::path pioneerRoot = scratch / "PIONEER";
-        createFixture(pioneerRoot.string());
+        createFixture(seabass::pathToUtf8(pioneerRoot));
         // Deliberately not creating the file image_id 2 points at.
 
-        OneLibraryReader reader(pioneerRoot.string());
+        OneLibraryReader reader(seabass::pathToUtf8(pioneerRoot));
         std::vector<Track> tracks = reader.readAll();
 
         const Track *t = findBySourceId(tracks, "2");
@@ -202,9 +203,9 @@ int main()
     {
         fs::path scratch = freshScratch();
         fs::path pioneerRoot = scratch / "PIONEER";
-        createFixture(pioneerRoot.string());
+        createFixture(seabass::pathToUtf8(pioneerRoot));
 
-        OneLibraryReader reader(pioneerRoot.string());
+        OneLibraryReader reader(seabass::pathToUtf8(pioneerRoot));
         std::vector<Track> tracks = reader.readAll();
 
         const Track *t = findBySourceId(tracks, "3");
@@ -222,7 +223,7 @@ int main()
         fs::path pioneerRoot = scratch / "PIONEER";
         fs::create_directories(pioneerRoot);  // PIONEER exists, but no rekordbox/exportLibrary.db under it
 
-        OneLibraryReader reader(pioneerRoot.string());
+        OneLibraryReader reader(seabass::pathToUtf8(pioneerRoot));
         bool threw = false;
         try {
             reader.readAll();

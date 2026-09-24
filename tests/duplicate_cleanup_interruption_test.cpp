@@ -11,6 +11,7 @@
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::backup;
@@ -44,7 +45,7 @@ int main()
 
     int64_t survivor1Id, doomed1Id, survivor2Id, doomed2Id;
     {
-        auto db = djinterop::engine::create_database(engineRoot.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(engineRoot));
 
         djinterop::track_snapshot snapshot;
         snapshot.title = "Group 1 Survivor";
@@ -68,25 +69,25 @@ int main()
         pl.add_track_back(*db.track_by_id(doomed2Id));
     }
 
-    std::string engineDbFile = (engineRoot / "Database2" / "m.db").string();
-    FilesystemBackupStore backupStore(backupDir.string());
+    std::string engineDbFile = seabass::pathToUtf8(engineRoot / "Database2" / "m.db");
+    FilesystemBackupStore backupStore(seabass::pathToUtf8(backupDir));
 
     // Mirrors runApplyTask()'s backupIfNeeded(): back up the (single,
     // shared) database file exactly once, before any group's write.
     auto backupRecord = backupStore.backup({engineDbFile}, "duplicate-file-cleanup");
-    assert(fs::exists(engineDbFile));
+    assert(fs::exists(engineRoot / "Database2" / "m.db"));
 
     // Process group 1 only -- group 2 is never touched, simulating the
     // app being killed/closed right after group 1 completes.
     {
-        LibdjinteropEngineCleanupWriter writer(engineRoot.string());
+        LibdjinteropEngineCleanupWriter writer(seabass::pathToUtf8(engineRoot));
         writer.removeTrackReplacingWith(std::to_string(doomed1Id), std::to_string(survivor1Id));
     }
 
     // Confirm the "interrupted" state: group 1 processed, group 2
     // completely untouched.
     {
-        auto db = djinterop::engine::load_database(engineRoot.string());
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(engineRoot));
         assert(!db.track_by_id(doomed1Id).has_value());
         assert(db.track_by_id(survivor1Id).has_value());
         assert(db.track_by_id(survivor2Id).has_value());
@@ -101,7 +102,7 @@ int main()
     // Everything is back exactly as it was before the batch started --
     // group 1's removal is undone too, not just group 2 left alone.
     {
-        auto db = djinterop::engine::load_database(engineRoot.string());
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(engineRoot));
         assert(db.track_by_id(doomed1Id).has_value());
         assert(db.track_by_id(doomed1Id)->title() == std::optional<std::string>("Group 1 Doomed"));
         assert(db.track_by_id(survivor1Id).has_value());

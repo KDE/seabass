@@ -35,6 +35,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/work_counters.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure;
@@ -125,21 +126,21 @@ std::optional<std::string> expectedFor(const std::string &storedPath)
 // ever seeing the bytes it was about.
 fs::path rootWithDatabase(const fs::path &scratch, const std::string &name, const std::string &bytes)
 {
-    const fs::path root = scratch / name;
+    const fs::path root = scratch / seabass::pathFromUtf8(name);
     fs::create_directories(root / "rekordbox");
     const fs::path pdb = root / "rekordbox" / "export.pdb";
     {
         std::ofstream out(pdb, std::ios::binary | std::ios::trunc);
         if (!out) {
-            throw std::runtime_error("could not create " + pdb.string());
+            throw std::runtime_error("could not create " + seabass::pathToUtf8(pdb));
         }
         out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
         if (!out) {
-            throw std::runtime_error("could not write " + pdb.string());
+            throw std::runtime_error("could not write " + seabass::pathToUtf8(pdb));
         }
     }
     if (fs::file_size(pdb) != bytes.size()) {
-        throw std::runtime_error("short write to " + pdb.string());
+        throw std::runtime_error("short write to " + seabass::pathToUtf8(pdb));
     }
     return root;
 }
@@ -160,7 +161,7 @@ std::string readFile(const fs::path &path)
 bool indexThrows(const fs::path &root)
 {
     try {
-        AnlzPathIndex index(root.string());
+        AnlzPathIndex index(seabass::pathToUtf8(root));
         return false;
     } catch (const std::exception &) {
         return true;
@@ -170,7 +171,7 @@ bool indexThrows(const fs::path &root)
 bool lookupThrows(const fs::path &root, uint32_t id)
 {
     try {
-        (void)findAnlzPathForTrackId(root.string(), id);
+        (void)findAnlzPathForTrackId(seabass::pathToUtf8(root), id);
         return false;
     } catch (const std::exception &) {
         return true;
@@ -195,7 +196,7 @@ int main(int argc, char **argv)
         std::cerr << "fixture not found at " << fixture << " -- run from the repository root\n";
         return 1;
     }
-    const std::string root = pioneerRoot.string();
+    const std::string root = seabass::pathToUtf8(pioneerRoot);
 
     const TrackRows rows = everyTrackRow(root);
     const auto &byId = rows.byId;
@@ -358,12 +359,12 @@ int main(int argc, char **argv)
                                         + (lookupThrew ? "threw" : "did not throw") + ")");
         size_t answered = 0;
         if (!threw && !lookupThrew) {
-            AnlzPathIndex partial(truncated.string());
+            AnlzPathIndex partial(seabass::pathToUtf8(truncated));
             size_t disagreements = 0;
             for (const auto &[id, path] : byId) {
                 const auto indexed = partial.pathFor(id);
                 answered += indexed ? 1 : 0;
-                if (findAnlzPathForTrackId(truncated.string(), id) != indexed) {
+                if (findAnlzPathForTrackId(seabass::pathToUtf8(truncated), id) != indexed) {
                     ++disagreements;
                 }
             }

@@ -21,6 +21,8 @@
 #include "gui/edit/save_loop.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 
+#include "gui/qt_path.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -32,11 +34,11 @@ namespace
 
 fs::path freshCopy(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     const fs::path pioneerRoot = scratch / "PIONEER";
     fs::copy(source, pioneerRoot, fs::copy_options::recursive);
     return pioneerRoot;
@@ -44,7 +46,7 @@ fs::path freshCopy(const std::string &name)
 
 std::vector<domain::Track> oneLibrary(const fs::path &root)
 {
-    return infrastructure::onelibrary::OneLibraryReader(root.string()).readAll();
+    return infrastructure::onelibrary::OneLibraryReader(seabass::pathToUtf8(root)).readAll();
 }
 
 std::vector<const domain::Track *> rowsAt(const std::vector<domain::Track> &rows, const std::string &path)
@@ -72,7 +74,7 @@ std::set<std::string> playlistsOf(const std::vector<domain::Track> &rows, const 
 SaveLoopResult save(const fs::path &root, std::vector<std::shared_ptr<PendingChange>> changes)
 {
     application::CancellationToken token;
-    SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, QString::fromStdString(root.string()),
+    SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, seabass::gui::pathToQString(root),
                     {});
     return runSaveLoop(changes, ctx);
 }
@@ -134,7 +136,7 @@ int main()
     // 1. Finished: the leftover's row is gone, the survivor is in every
     //    playlist the leftover was in, and nothing else lost a row.
     {
-        auto change = std::make_shared<FinishCleanupChange>(QString::fromStdString(root.string()),
+        auto change = std::make_shared<FinishCleanupChange>(seabass::gui::pathToQString(root),
                                                             leftover(*doomed, keptPath), true);
         const QString id = change->id();
         const SaveLoopResult result = save(root, {change});
@@ -161,7 +163,7 @@ int main()
     // 2. The same change again finds nothing to finish: a skip, counted
     //    apart, not a failure that stops the rest of the save.
     {
-        auto change = std::make_shared<FinishCleanupChange>(QString::fromStdString(root.string()),
+        auto change = std::make_shared<FinishCleanupChange>(seabass::gui::pathToQString(root),
                                                             leftover(*doomed, keptPath), true);
         const SaveLoopResult result = save(root, {change});
         assert(result.error.isEmpty());
@@ -184,7 +186,7 @@ int main()
         assert(another);
         const std::string path = another->filePath;
         auto change = std::make_shared<FinishCleanupChange>(
-            QString::fromStdString(root.string()), leftover(*another, (root / "no-such-file.mp3").string()), true);
+            seabass::gui::pathToQString(root), leftover(*another, seabass::pathToUtf8(root / "no-such-file.mp3")), true);
         const SaveLoopResult result = save(root, {change});
         assert(result.error.isEmpty());
         assert(result.skippedIds == QStringList{change->id()});

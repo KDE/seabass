@@ -20,6 +20,7 @@
 
 #include "infrastructure/engine/engine_analysis_state.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::infrastructure::engine::auditAnalysisState;
@@ -37,7 +38,7 @@ void makeLibrary(const fs::path &root, const std::string &createTrack, const std
 {
     fs::create_directories(root / "Database2");
     sqlite3 *db = nullptr;
-    assert(sqlite3_open((root / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(root / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
     auto run = [&](const std::string &sql) {
         char *err = nullptr;
         const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err);
@@ -56,7 +57,7 @@ void makeLibrary(const fs::path &root, const std::string &createTrack, const std
 
 void theFixtureReportsItsRealDistribution(const fs::path &fixtureEngineRoot)
 {
-    const AnalysisStateAudit audit = auditAnalysisState(fixtureEngineRoot.string());
+    const AnalysisStateAudit audit = auditAnalysisState(seabass::pathToUtf8(fixtureEngineRoot));
     assert(audit.error.empty());
     assert(audit.hasColumn);
     // The committed fixture came off a Denon-written stick, and these are
@@ -74,7 +75,7 @@ void aFullyAnalysedLibraryReportsNothing(const fs::path &scratch)
     const fs::path root = scratch / "analysed";
     makeLibrary(root, "CREATE TABLE Track (id INTEGER PRIMARY KEY, isAnalyzed BOOLEAN);",
                 "INSERT INTO Track (isAnalyzed) VALUES (1), (1), (1);");
-    const AnalysisStateAudit audit = auditAnalysisState(root.string());
+    const AnalysisStateAudit audit = auditAnalysisState(seabass::pathToUtf8(root));
     assert(audit.error.empty());
     assert(audit.hasColumn);
     assert(audit.tracksChecked == 3);
@@ -91,7 +92,7 @@ void anOldSchemaIsNotZero(const fs::path &scratch)
     // Engine 1.x: a Track table with no isAnalyzed column at all.
     makeLibrary(root, "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT);",
                 "INSERT INTO Track (title) VALUES ('a'), ('b');");
-    const AnalysisStateAudit audit = auditAnalysisState(root.string());
+    const AnalysisStateAudit audit = auditAnalysisState(seabass::pathToUtf8(root));
     assert(audit.error.empty());
     // The distinction this case exists for: "too old to record the
     // state" is not "everything is analysed", and both would otherwise
@@ -109,7 +110,7 @@ void aNullFlagCountsAsNotAnalysed(const fs::path &scratch)
     const fs::path root = scratch / "nulls";
     makeLibrary(root, "CREATE TABLE Track (id INTEGER PRIMARY KEY, isAnalyzed BOOLEAN);",
                 "INSERT INTO Track (isAnalyzed) VALUES (1), (NULL), (0);");
-    const AnalysisStateAudit audit = auditAnalysisState(root.string());
+    const AnalysisStateAudit audit = auditAnalysisState(seabass::pathToUtf8(root));
     assert(audit.tracksChecked == 3);
     // NULL is no recorded result, which is the same thing to the player
     // as a zero. Counting only `= 0` would silently under-report.
@@ -120,7 +121,7 @@ void aNullFlagCountsAsNotAnalysed(const fs::path &scratch)
 
 void anAbsentLibraryIsNotAnError(const fs::path &scratch)
 {
-    const AnalysisStateAudit missing = auditAnalysisState((scratch / "not-there").string());
+    const AnalysisStateAudit missing = auditAnalysisState(seabass::pathToUtf8(scratch / "not-there"));
     assert(missing.error.empty() && !missing.worthReporting() && missing.tracksChecked == 0);
     const AnalysisStateAudit empty = auditAnalysisState("");
     assert(empty.error.empty() && !empty.worthReporting());
@@ -146,7 +147,7 @@ void aDatabaseWithNoTrackTableIsAnError(const fs::path &scratch)
 {
     const fs::path root = scratch / "no-track-table";
     makeLibrary(root, "CREATE TABLE Information (id INTEGER PRIMARY KEY);", "");
-    const AnalysisStateAudit audit = auditAnalysisState(root.string());
+    const AnalysisStateAudit audit = auditAnalysisState(seabass::pathToUtf8(root));
     assert(audit.libraryPresent);
     assert(!audit.error.empty() && "a database with no Track table is a question unanswered, not an old schema");
     assert(!audit.hasColumn);
@@ -160,7 +161,7 @@ void anUnreadableDatabaseIsAnError(const fs::path &scratch)
     fs::create_directories(root / "Database2");
     // Present, the right name, and not a database.
     std::ofstream(root / "Database2" / "m.db", std::ios::binary) << std::string(4096, '\x7f');
-    const AnalysisStateAudit audit = auditAnalysisState(root.string());
+    const AnalysisStateAudit audit = auditAnalysisState(seabass::pathToUtf8(root));
     // An error, NOT a quiet zero: a library this cannot read is a
     // question unanswered, and reporting "nothing to analyse" for it
     // would be a reassurance nobody earned.

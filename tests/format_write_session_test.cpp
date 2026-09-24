@@ -19,6 +19,8 @@
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 
+#include "gui/qt_path.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::gui;
@@ -73,13 +75,13 @@ int main()
         fs::path engine = makeStick(root);
         fs::path db = engine / "Database2" / "m.db";
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, {}, QString::fromStdString(engine.string()));
+        SaveContext ctx(token, noProgress, {}, {}, seabass::gui::pathToQString(engine));
         auto &session = ctx.shared<FormatWriteSession>("engine", [&]() {
-            return std::make_unique<FormatWriteSession>("engine", engine.string(), 1000, "test", ctx);
+            return std::make_unique<FormatWriteSession>("engine", seabass::pathToUtf8(engine), 1000, "test", ctx);
         });
         assert(session.usesScratch());
         assert(session.writeRoot() != session.realRoot());
-        fs::path scratchDb = fs::path(session.writeRoot()) / "Database2" / "m.db";
+        fs::path scratchDb = seabass::pathFromUtf8(session.writeRoot()) / "Database2" / "m.db";
         assert(fs::exists(scratchDb));
         writeFile(scratchDb, "new-content");
         session.noteItemApplied();
@@ -101,22 +103,22 @@ int main()
         fs::path db = engine / "Database2" / "m.db";
         CancellationToken token;
         {
-            SaveContext ctx(token, noProgress, {}, {}, QString::fromStdString(engine.string()));
+            SaveContext ctx(token, noProgress, {}, {}, seabass::gui::pathToQString(engine));
             auto &session = ctx.shared<FormatWriteSession>("engine", [&]() {
-                return std::make_unique<FormatWriteSession>("engine", engine.string(), 1000, "test", ctx);
+                return std::make_unique<FormatWriteSession>("engine", seabass::pathToUtf8(engine), 1000, "test", ctx);
             });
-            writeFile(fs::path(session.writeRoot()) / "Database2" / "m.db", "one-item");
+            writeFile(seabass::pathFromUtf8(session.writeRoot()) / "Database2" / "m.db", "one-item");
             session.noteItemApplied();
             assert(!ctx.runFinishHooks(false).error);
             assert(readFile(db) == "one-item");
         }
         {
-            SaveContext ctx(token, noProgress, {}, {}, QString::fromStdString(engine.string()));
+            SaveContext ctx(token, noProgress, {}, {}, seabass::gui::pathToQString(engine));
             auto &session = ctx.shared<FormatWriteSession>("engine", [&]() {
-                return std::make_unique<FormatWriteSession>("engine", engine.string(), 1000, "test", ctx);
+                return std::make_unique<FormatWriteSession>("engine", seabass::pathToUtf8(engine), 1000, "test", ctx);
             });
             std::string scratchRoot = session.writeRoot();
-            writeFile(fs::path(scratchRoot) / "Database2" / "m.db", "never-applied");
+            writeFile(seabass::pathFromUtf8(scratchRoot) / "Database2" / "m.db", "never-applied");
             assert(!ctx.runFinishHooks(false).error);
             assert(readFile(db) == "one-item");
             // The scratch directory is gone once the context is.
@@ -129,8 +131,8 @@ int main()
     {
         fs::path engine = makeStick(root);
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, {}, QString::fromStdString(engine.string()));
-        FormatWriteSession session("engine", engine.string(), 1, "test", ctx);
+        SaveContext ctx(token, noProgress, {}, {}, seabass::gui::pathToQString(engine));
+        FormatWriteSession session("engine", seabass::pathToUtf8(engine), 1, "test", ctx);
         assert(!session.usesScratch());
         assert(session.writeRoot() == session.realRoot());
         assert(!ctx.runFinishHooks(true).error);

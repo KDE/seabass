@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -57,7 +58,7 @@ void writeArchiveOf(const fs::path &archivePath, const fs::path &pioneerRoot, Co
     PosixArchiveFile file(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
     Zip64Writer writer(file, {});
     for (const auto &entry : fs::recursive_directory_iterator(pioneerRoot)) {
-        const std::string name = "PIONEER/" + fs::relative(entry.path(), pioneerRoot).generic_string();
+        const std::string name = "PIONEER/" + seabass::pathToGenericUtf8(fs::relative(entry.path(), pioneerRoot));
         if (entry.is_directory()) {
             writer.addDirectory(name + "/", 1);
             continue;
@@ -113,7 +114,7 @@ int main(int argc, char **argv)
     fs::create_directories(scratch);
 
     // Baseline: the library as read off a real folder.
-    KaitaiRekordboxReader onDisk(fixture.string());
+    KaitaiRekordboxReader onDisk(seabass::pathToUtf8(fixture));
     const std::vector<CueDigest> expected = digestOf(onDisk);
     assert(!expected.empty());
     std::size_t totalCues = 0;
@@ -134,7 +135,7 @@ int main(int argc, char **argv)
         auto reader = std::make_shared<const Zip64Reader>(Zip64Reader::open(*archiveFile));
         auto source = std::make_shared<ArchiveAnlzSource>(reader, "PIONEER/");
 
-        KaitaiRekordboxReader fromArchive(fixture.string(), source);
+        KaitaiRekordboxReader fromArchive(seabass::pathToUtf8(fixture), source);
         const std::vector<CueDigest> actual = digestOf(fromArchive);
 
         assert(actual.size() == expected.size());

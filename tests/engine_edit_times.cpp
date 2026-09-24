@@ -8,14 +8,16 @@
 
 #include <filesystem>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 namespace seabass::testing
 {
 
 std::optional<std::map<std::string, bool>> engineTrackDatedById(const std::string &engineLibraryRoot)
 {
-    const std::filesystem::path mainDb = std::filesystem::path(engineLibraryRoot) / "Database2" / "m.db";
+    const std::filesystem::path mainDb = seabass::pathFromUtf8(engineLibraryRoot) / "Database2" / "m.db";
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(mainDb.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(seabass::pathToUtf8(mainDb).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return std::nullopt;
     }

@@ -12,6 +12,7 @@
 #include <string>
 
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass::infrastructure::paths;
@@ -43,10 +44,10 @@ int main()
 
     // A catalog path is PIONEER or Engine Library; the stick root is its
     // parent, and both catalogs on one stick must agree on it.
-    assert(stickRootForCatalogPath((stick / "PIONEER").string()) == stick.string());
-    assert(stickRootForCatalogPath((stick / "Engine Library").string()) == stick.string());
-    assert(stickBackupsDir(stickRootForCatalogPath((stick / "PIONEER").string()))
-           == stickBackupsDir(stickRootForCatalogPath((stick / "Engine Library").string())));
+    assert(stickRootForCatalogPath(seabass::pathToUtf8(stick / "PIONEER")) == seabass::pathToUtf8(stick));
+    assert(stickRootForCatalogPath(seabass::pathToUtf8(stick / "Engine Library")) == seabass::pathToUtf8(stick));
+    assert(stickBackupsDir(stickRootForCatalogPath(seabass::pathToUtf8(stick / "PIONEER")))
+           == stickBackupsDir(stickRootForCatalogPath(seabass::pathToUtf8(stick / "Engine Library"))));
     std::cout << "case 3 (both catalogs on a stick resolve to one backups dir) OK\n";
 
     // SEABASS_HOME exists so a test run can never write into the real

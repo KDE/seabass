@@ -19,6 +19,7 @@
 #include <string>
 
 #include "application/ports/cancellation_token.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 namespace seabass::test_fixture
@@ -59,7 +60,7 @@ inline void createEngineDb(const fs::path &path)
 {
     fs::create_directories(path.parent_path());
     sqlite3 *db = nullptr;
-    assert(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(path).c_str(), &db) == SQLITE_OK);
     char *error = nullptr;
     assert(sqlite3_exec(db, "CREATE TABLE Track(id INTEGER PRIMARY KEY, path TEXT); INSERT INTO Track(path) VALUES('Contents/a.mp3')",
                         nullptr, nullptr, &error) == SQLITE_OK);
@@ -71,7 +72,7 @@ inline void createEngineDb(const fs::path &path)
 inline void appendEngineDbRow(const fs::path &path, const std::string &trackPath)
 {
     sqlite3 *db = nullptr;
-    assert(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(path).c_str(), &db) == SQLITE_OK);
     const std::string sql = "INSERT INTO Track(path) VALUES('" + trackPath + "')";
     char *error = nullptr;
     assert(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &error) == SQLITE_OK);
@@ -85,7 +86,7 @@ inline std::map<std::string, std::string> snapshot(const fs::path &root)
     using namespace infrastructure::stick_backup;
     std::map<std::string, std::string> out;
     for (const TreeEntry &e : walkStickTree(root, application::CancellationToken::none()).entries) {
-        out[e.relativePath] = e.isDirectory ? "<dir>" : readFile(root / pathFromUtf8(e.relativePath));
+        out[e.relativePath] = e.isDirectory ? "<dir>" : readFile(root / seabass::pathFromUtf8(e.relativePath));
     }
     return out;
 }

@@ -31,7 +31,9 @@
 #include "gui/edit/changes/merge_cues_change.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::gui;
@@ -45,7 +47,7 @@ int main()
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "engine";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "engine";
     assert(fs::is_directory(source / "Database2"));
     const fs::path engineRoot = scratch / "Engine Library";
     fs::copy(source, engineRoot, fs::copy_options::recursive);
@@ -56,7 +58,7 @@ int main()
     Track target;
     int freeSlot = 0;
     {
-        seabass::infrastructure::engine::LibdjinteropEngineReader reader(engineRoot.string());
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(engineRoot));
         for (const Track &track : reader.readAll()) {
             std::set<int> used;
             for (const CuePoint &cue : track.cues) {
@@ -93,14 +95,14 @@ int main()
 
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    const QString root = QString::fromStdString(engineRoot.string());
+    const QString root = seabass::gui::pathToQString(engineRoot);
     {
         SaveContext ctx(token, noProgress, {}, root, {});
 
         // Stand-in for a Clean Up or Sync change staged into the same save:
         // the session, asked for first and with a hint big enough that it
         // redirects m.db to a scratch copy.
-        auto &other = sharedFormatWriteSession(ctx, "engine", engineRoot.string(), 5000, "test-other-feature");
+        auto &other = sharedFormatWriteSession(ctx, "engine", seabass::pathToUtf8(engineRoot), 5000, "test-other-feature");
         assert(other.usesScratch());  // otherwise this case proves nothing
 
         MergeCuesChange change("engine", root, candidate);
@@ -108,7 +110,7 @@ int main()
         assert(!ctx.runFinishHooks(true).error);
     }
 
-    seabass::infrastructure::engine::LibdjinteropEngineReader after(engineRoot.string());
+    seabass::infrastructure::engine::LibdjinteropEngineReader after(seabass::pathToUtf8(engineRoot));
     bool found = false;
     for (const Track &track : after.readAll()) {
         if (track.sourceId != target.sourceId) {

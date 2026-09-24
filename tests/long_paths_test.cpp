@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 #include "scratch_path.hpp"
@@ -56,9 +57,9 @@ void writeThrough(const fs::path &path, const std::string &content)
     fs::path full = longPathSafe(path);
     std::filesystem::remove(full, ec);
 #if defined(_WIN32)
-    FILE *f = _wfopen(full.c_str(), L"wb");
+    FILE *f = _wfopen(full.c_str(), L"wb");  // narrow-ok: the wide CRT call, on the path's own wchar_t
 #else
-    FILE *f = std::fopen(full.c_str(), "wb");
+    FILE *f = std::fopen(full.c_str(), "wb");  // narrow-ok: POSIX branch, the path's own native bytes
 #endif
     assert(f != nullptr);
     std::fwrite(content.data(), 1, content.size(), f);
@@ -113,7 +114,7 @@ int main()
         fs::path child;
         std::error_code readEc;
         while (reader.next(child, readEc)) {
-            names.insert(child.filename().string());
+            names.insert(seabass::pathToUtf8(child.filename()));
         }
         assert(!readEc);
         // The exact-set assertion is the point. std::filesystem's

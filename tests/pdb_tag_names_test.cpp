@@ -35,6 +35,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::infrastructure::rekordbox::PdbRowWriter;
@@ -89,12 +90,12 @@ std::vector<std::string> tagNamesIn(const fs::path &path)
 
 int main()
 {
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "exportExt.pdb";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "exportExt.pdb";
     if (!fs::is_regular_file(source)) {
         // Deliberately a failure, not a skip. This test exists because
         // no fixture carried one; a run that quietly passes without the
         // file would restore exactly the gap issue #1 is about.
-        std::cout << "missing fixture: " << source.string() << "\n"
+        std::cout << "missing fixture: " << seabass::pathToUtf8(source) << "\n"
                   << "An exportExt.pdb is needed for this test. It is produced from a real stick by\n"
                   << "the anonymizer, which now keeps the file instead of deleting it.\n";
         return 1;
@@ -122,7 +123,7 @@ int main()
     // fixture cannot already contain.
     int rewritten = 0;
     {
-        PdbRowWriter writer(working.string(), PdbRowWriter::Format::ExportExt);
+        PdbRowWriter writer(seabass::pathToUtf8(working), PdbRowWriter::Format::ExportExt);
         int leftAloneHere = 0;
         rewritten = writer.overwriteAllTagNames([](size_t i) { return "Zzzz" + std::to_string(i + 1); },
                                                &leftAloneHere);
@@ -214,7 +215,7 @@ int main()
 
         int cleared = 0;
         {
-            PdbRowWriter writer(slack.string(), PdbRowWriter::Format::ExportExt);
+            PdbRowWriter writer(seabass::pathToUtf8(slack), PdbRowWriter::Format::ExportExt);
             cleared = writer.zeroUnusedSpace();
             assert(writer.commit());
         }
@@ -253,7 +254,7 @@ int main()
         fs::copy_file(source, refused, fs::copy_options::overwrite_existing);
         const std::vector<std::string> namesBefore = tagNamesIn(refused);
 
-        PdbRowWriter writer(refused.string(), PdbRowWriter::Format::ExportExt);
+        PdbRowWriter writer(seabass::pathToUtf8(refused), PdbRowWriter::Format::ExportExt);
         int leftAlone = -1;
         const int rewritten = writer.overwriteAllTagNames([](size_t) { return std::string("Café"); }, &leftAlone);
         std::cout << "unrepresentable placeholder: " << rewritten << " rewritten, " << leftAlone
@@ -272,7 +273,7 @@ int main()
     // because it is the failure mode of this whole area: a mismatched
     // flag finds no rows and reports success.
     {
-        PdbRowWriter wrongFormat(working.string());
+        PdbRowWriter wrongFormat(seabass::pathToUtf8(working));
         int leftAloneWrongFormat = -1;
         assert(wrongFormat.overwriteAllTagNames([](size_t) { return "x"; }, &leftAloneWrongFormat) == 0);
         assert(leftAloneWrongFormat == 0 && "a writer of the wrong format left no tag row behind, it saw none");

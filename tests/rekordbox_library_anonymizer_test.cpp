@@ -20,6 +20,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_library_anonymizer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -249,7 +250,7 @@ void writeSyntheticAnlz(const fs::path &path)
     file.sections.push_back(makeSection(Anlz::SECTION_TAGS_CUES, 8));
     file.sections.push_back(makeSection(Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW, 2000));
     file.sections.push_back(makeSection(Anlz::SECTION_TAGS_WAVE_SCROLL, 2000));
-    file.writeRaw(path.string());
+    file.writeRaw(seabass::pathToUtf8(path));
 }
 
 // One real CUES_2 (extended cue list) section holding a single memory
@@ -297,7 +298,7 @@ AnlzRawSection makeCueExtendedSectionWithComment(const std::string &commentText)
 
 std::string readCueCommentUtf8(const fs::path &anlzPath)
 {
-    AnlzFile file = AnlzFile::readRaw(anlzPath.string());
+    AnlzFile file = AnlzFile::readRaw(seabass::pathToUtf8(anlzPath));
     for (const auto &section : file.sections) {
         if (section.fourcc != static_cast<uint32_t>(Anlz::SECTION_TAGS_CUES_2)) {
             continue;
@@ -453,14 +454,14 @@ int main()
     track100File.sections.push_back(makeSection(Anlz::SECTION_TAGS_CUES, 8));
     track100File.sections.push_back(makeSection(Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW, 2000));
     track100File.sections.push_back(makeCueExtendedSectionWithComment("Real DJ Note"));
-    track100File.writeRaw(track100Anlz.string());
+    track100File.writeRaw(seabass::pathToUtf8(track100Anlz));
 
     writeSyntheticAnlz(sourceRoot / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
     writeSyntheticAnlz(sourceRoot / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
 
     assert(readCueCommentUtf8(track100Anlz) == "Real DJ Note");  // fixture self-check
 
-    auto result = anonymizeRekordboxLibrary(sourceRoot.string(), destRoot.string());
+    auto result = anonymizeRekordboxLibrary(seabass::pathToUtf8(sourceRoot), seabass::pathToUtf8(destRoot));
 
     assert(result.errorMessage.empty());
     assert(result.tracksAnonymized == 3);
@@ -504,7 +505,7 @@ int main()
     assert(has100 && has101 && has102);
     std::cout << "case 5 (every playlist entry is kept) OK\n";
 
-    AnlzFile kept1 = AnlzFile::readRaw((destRoot / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT").string());
+    AnlzFile kept1 = AnlzFile::readRaw(seabass::pathToUtf8(destRoot / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT"));
     assert(hasFourcc(kept1, Anlz::SECTION_TAGS_CUES));                 // preserved
     assert(!hasFourcc(kept1, Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW));  // stripped
     assert(!hasFourcc(kept1, Anlz::SECTION_TAGS_WAVE_SCROLL));  // stripped too -- large and unused by this app's reader
@@ -520,7 +521,7 @@ int main()
     std::cout << "case 7 (every track's analysis file is kept) OK\n";
 
     // Source untouched -- every edit happens on the destination copy.
-    AnlzFile sourceStill = AnlzFile::readRaw((sourceRoot / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT").string());
+    AnlzFile sourceStill = AnlzFile::readRaw(seabass::pathToUtf8(sourceRoot / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT"));
     assert(hasFourcc(sourceStill, Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW));
     assert(readCueCommentUtf8(track100Anlz) == "Real DJ Note");
     std::cout << "case 8 (source library untouched) OK\n";
@@ -540,7 +541,7 @@ int main()
         writeFile(source2 / "rekordbox" / "export.pdb", noTracks);
         assert(artistNameById(source2 / "rekordbox" / "export.pdb", 5) == "Real Artist A");  // fixture self-check
 
-        auto noTrackResult = anonymizeRekordboxLibrary(source2.string(), dest2.string());
+        auto noTrackResult = anonymizeRekordboxLibrary(seabass::pathToUtf8(source2), seabass::pathToUtf8(dest2));
         assert(noTrackResult.errorMessage.empty());
         assert(noTrackResult.tracksAnonymized == 0);
         assert(noTrackResult.artistsRenamed == 2);
@@ -562,7 +563,7 @@ int main()
     // scrub that never works keeps the file out of both, and a scrub
     // that never fails keeps it in both.
     {
-        const fs::path realExt = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "exportExt.pdb";
+        const fs::path realExt = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "exportExt.pdb";
         assert(fs::is_regular_file(realExt) && "the anonymized exportExt.pdb fixture is missing");
 
         // A real one: kept, and every name in it a placeholder.
@@ -572,7 +573,7 @@ int main()
         fs::create_directories(src / "rekordbox");
         fs::copy_file(realExt, src / "rekordbox" / "exportExt.pdb");
 
-        auto kept = anonymizeRekordboxLibrary(src.string(), dst.string());
+        auto kept = anonymizeRekordboxLibrary(seabass::pathToUtf8(src), seabass::pathToUtf8(dst));
         assert(kept.errorMessage.empty());
         const fs::path keptExt = dst / "rekordbox" / "exportExt.pdb";
         assert(fs::is_regular_file(keptExt) && "a scrubbable exportExt.pdb must survive the export");
@@ -591,7 +592,7 @@ int main()
         // but not a pdb: PdbRowWriter's construction throws on it.
         writeFile(badSrc / "rekordbox" / "exportExt.pdb", std::string(73728, '\x7f'));
 
-        auto dropped = anonymizeRekordboxLibrary(badSrc.string(), badDst.string());
+        auto dropped = anonymizeRekordboxLibrary(seabass::pathToUtf8(badSrc), seabass::pathToUtf8(badDst));
         assert(dropped.errorMessage.empty() && "an unscrubbable exportExt.pdb must not fail the whole export");
         assert(!fs::exists(badDst / "rekordbox" / "exportExt.pdb")
                && "an exportExt.pdb that could not be scrubbed must not be in the export");
@@ -618,7 +619,7 @@ int main()
         writeSyntheticAnlz(badSrc / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
         writeSyntheticAnlz(badSrc / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
 
-        auto result = anonymizeRekordboxLibrary(badSrc.string(), badDst.string());
+        auto result = anonymizeRekordboxLibrary(seabass::pathToUtf8(badSrc), seabass::pathToUtf8(badDst));
         // Dropped, not left behind: an analysis file is derived data,
         // and AnonymizeLibrary produces no export at all when anything
         // is still in it, so listing this without removing it would let
@@ -645,7 +646,7 @@ int main()
         assert(line.find("USBANLZ/P001/00000001/ANLZ0000.DAT") != std::string::npos
                && "the line has to say WHICH analysis file, and they are all called ANLZ0000.DAT");
         assert(line.find("could not be scrubbed") != std::string::npos);
-        assert(line.find(badDst.string()) == std::string::npos
+        assert(line.find(seabass::pathToUtf8(badDst)) == std::string::npos
                && "and not carry the machine's own path into MANIFEST.txt");
         std::cout << "case 12 (an analysis file that cannot be scrubbed is dropped and named) OK\n";
     }
@@ -664,7 +665,7 @@ int main()
         writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
         writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
 
-        auto result = anonymizeRekordboxLibrary(src.string(), dst.string());
+        auto result = anonymizeRekordboxLibrary(seabass::pathToUtf8(src), seabass::pathToUtf8(dst));
         assert(result.errorMessage.empty());
         if (result.placeholdersTruncated <= 0) {
             std::cerr << "nothing was reported as cut short, on a fixture whose fields are one and two bytes "
@@ -695,7 +696,7 @@ int main()
         writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000002" / "ANLZ0000.DAT");
         writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
 
-        auto result = anonymizeRekordboxLibrary(src.string(), dst.string());
+        auto result = anonymizeRekordboxLibrary(seabass::pathToUtf8(src), seabass::pathToUtf8(dst));
         const bool named = std::any_of(result.rowsNotAnonymized.begin(), result.rowsNotAnonymized.end(),
                                        [](const std::string &r) { return r.find("artist row") != std::string::npos; });
         if (!named) {
@@ -727,7 +728,7 @@ int main()
         writeSyntheticAnlz(src / "USBANLZ" / "P001" / "00000003" / "ANLZ0000.DAT");
         writeSyntheticAnlz(src / "USBANLZ" / "P002" / "00000009" / "ANLZ0000.DAT");  // no track's
 
-        auto result = anonymizeRekordboxLibrary(src.string(), dst.string());
+        auto result = anonymizeRekordboxLibrary(seabass::pathToUtf8(src), seabass::pathToUtf8(dst));
         assert(result.errorMessage.empty());
         if (result.orphanedAnalysisFilesScrubbed != 1) {
             std::cerr << "orphanedAnalysisFilesScrubbed = " << result.orphanedAnalysisFilesScrubbed << "\n";
@@ -779,9 +780,9 @@ int main()
         file.sections.push_back(AnlzRawSection{fourcc, ppth});
         const fs::path anlz = src / "USBANLZ" / "P001" / "00000001" / "ANLZ0000.DAT";
         fs::create_directories(anlz.parent_path());
-        file.writeRaw(anlz.string());
+        file.writeRaw(seabass::pathToUtf8(anlz));
 
-        auto hostile = anonymizeRekordboxLibrary(src.string(), dst.string());
+        auto hostile = anonymizeRekordboxLibrary(seabass::pathToUtf8(src), seabass::pathToUtf8(dst));
         assert(hostile.errorMessage.empty() && "a malformed section must not fail the whole export");
 
         // Left exactly as it was: refused, not partly rewritten.

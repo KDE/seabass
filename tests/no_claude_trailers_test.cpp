@@ -26,6 +26,7 @@
 #include <sstream>
 #include <string>
 
+#include "../src/infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 #ifdef _WIN32
@@ -37,7 +38,7 @@ namespace fs = std::filesystem;
 namespace
 {
 
-const fs::path HooksDir = fs::path(SEABASS_SOURCE_DIR) / ".githooks";
+const fs::path HooksDir = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / ".githooks";
 
 // seabass::testing::scratchRoot() rather than $TMPDIR-or-"/tmp": every
 // path built here ends up embedded in a command bash runs (see run()
@@ -81,7 +82,7 @@ std::string resolveBashCommand()
             const fs::path path = std::string(programFiles) + candidate;
             std::error_code ec;
             if (fs::is_regular_file(path, ec)) {
-                return "\"" + path.generic_string() + "\"";
+                return "\"" + seabass::pathToGenericUtf8(path) + "\"";
             }
         }
     }
@@ -134,7 +135,7 @@ int run(const std::string &command)
         std::ofstream script(scriptPath, std::ios::binary);
         script << command << "\n";
     }
-    const std::string status = resolveBashCommand() + " " + scriptPath.generic_string();
+    const std::string status = resolveBashCommand() + " " + seabass::pathToGenericUtf8(scriptPath);
     const int result = std::system(status.c_str());
     std::error_code ec;
     fs::remove(scriptPath, ec);
@@ -181,7 +182,7 @@ void testCommitMsgStripsTrailers()
           "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n"
           "Claude-Session: https://claude.ai/code/session_01Abc\n");
 
-    assert(run((HooksDir / "commit-msg").generic_string() + " " + message.generic_string() + " 2>/dev/null") == 0);
+    assert(run(seabass::pathToGenericUtf8(HooksDir / "commit-msg") + " " + seabass::pathToGenericUtf8(message) + " 2>/dev/null") == 0);
 
     const std::string result = readFile(message);
     assert(result.find("Claude") == std::string::npos);
@@ -205,7 +206,7 @@ void testCommitMsgLeavesHumanCoAuthorsAlone()
           "Co-Authored-By: A Person <person@example.org>\n"
           "Claude-Session: https://claude.ai/code/session_01Abc\n");
 
-    assert(run((HooksDir / "commit-msg").generic_string() + " " + message.generic_string() + " 2>/dev/null") == 0);
+    assert(run(seabass::pathToGenericUtf8(HooksDir / "commit-msg") + " " + seabass::pathToGenericUtf8(message) + " 2>/dev/null") == 0);
 
     const std::string result = readFile(message);
     assert(result.find("A Person <person@example.org>") != std::string::npos);
@@ -219,7 +220,7 @@ void testCommitMsgLeavesACleanMessageByteIdentical()
     const std::string original = "Subject line\n\nA body.\n\nSigned-off-by: A Person <person@example.org>\n";
     write(message, original);
 
-    assert(run((HooksDir / "commit-msg").generic_string() + " " + message.generic_string() + " 2>/dev/null") == 0);
+    assert(run(seabass::pathToGenericUtf8(HooksDir / "commit-msg") + " " + seabass::pathToGenericUtf8(message) + " 2>/dev/null") == 0);
     assert(readFile(message) == original);
 }
 
@@ -235,13 +236,13 @@ struct Repo
 
     std::string git(const std::string &args) const
     {
-        return "git -C " + dir.generic_string() + " -c user.name=Test -c user.email=test@example.org " + args;
+        return "git -C " + seabass::pathToGenericUtf8(dir) + " -c user.name=Test -c user.email=test@example.org " + args;
     }
 
     std::string revParse(const std::string &rev) const
     {
         const fs::path out = dir / ".rev";
-        [[maybe_unused]] const int status = run(git("rev-parse " + rev) + " > " + out.generic_string());
+        [[maybe_unused]] const int status = run(git("rev-parse " + rev) + " > " + seabass::pathToGenericUtf8(out));
         std::string sha = readFile(out);
         while (!sha.empty() && (sha.back() == '\n' || sha.back() == '\r')) {
             sha.pop_back();
@@ -256,16 +257,16 @@ struct Repo
         const fs::path msgFile = dir / ".msg";
         write(msgFile, message);
         assert(run(git("add -A")) == 0);
-        assert(run(git("commit -q --no-verify -F " + msgFile.generic_string())) == 0);
+        assert(run(git("commit -q --no-verify -F " + seabass::pathToGenericUtf8(msgFile))) == 0);
     }
 };
 
 Repo makeRepo(const std::string &name)
 {
     Repo repo{scratch(name), scratch(name + "-remote")};
-    assert(run("git init -q -b master " + repo.dir.generic_string()) == 0);
-    assert(run("git init -q --bare " + repo.remote.generic_string()) == 0);
-    assert(run(repo.git("remote add origin " + repo.remote.generic_string())) == 0);
+    assert(run("git init -q -b master " + seabass::pathToGenericUtf8(repo.dir)) == 0);
+    assert(run("git init -q --bare " + seabass::pathToGenericUtf8(repo.remote)) == 0);
+    assert(run(repo.git("remote add origin " + seabass::pathToGenericUtf8(repo.remote))) == 0);
     repo.commit("Base commit, clean\n");
     assert(run(repo.git("push -q --no-verify origin master")) == 0);
     return repo;
@@ -275,8 +276,8 @@ Repo makeRepo(const std::string &name)
 int runPrePush(const Repo &repo, const std::string &localSha, const std::string &remoteSha)
 {
     const std::string line = "refs/heads/master " + localSha + " refs/heads/master " + remoteSha;
-    return run("cd " + repo.dir.generic_string() + " && printf '%s\\n' '" + line + "' | " + (HooksDir / "pre-push").generic_string()
-               + " origin " + repo.remote.generic_string() + " >/dev/null 2>&1");
+    return run("cd " + seabass::pathToGenericUtf8(repo.dir) + " && printf '%s\\n' '" + line + "' | " + seabass::pathToGenericUtf8(HooksDir / "pre-push")
+               + " origin " + seabass::pathToGenericUtf8(repo.remote) + " >/dev/null 2>&1");
 }
 
 std::string zeroSha()

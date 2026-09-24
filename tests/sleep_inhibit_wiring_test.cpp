@@ -17,6 +17,8 @@
 #include <sstream>
 #include <string>
 
+#include "../src/infrastructure/paths/utf8_path.hpp"
+
 namespace fs = std::filesystem;
 
 namespace
@@ -60,7 +62,7 @@ int main()
     bool ok = true;
     int checked = 0;
     for (const Site &site : kSites) {
-        const fs::path path = fs::path(SEABASS_SOURCE_DIR) / site.file;
+        const fs::path path = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / site.file;
         const std::string text = read(path);
         assert(!text.empty() && "a listed source file is missing -- the list is out of date");
         const std::string marker = site.marker;

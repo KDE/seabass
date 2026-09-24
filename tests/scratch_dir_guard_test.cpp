@@ -10,6 +10,7 @@
 
 #include "infrastructure/scratch_dir_guard.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure;
@@ -20,7 +21,7 @@ namespace
 
 fs::path makeScratchWithFile(const std::string &name)
 {
-    fs::path dir = seabass::testing::scratchRoot() / name;
+    fs::path dir = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir);

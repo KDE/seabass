@@ -24,6 +24,7 @@
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -36,7 +37,7 @@ struct Db
 {
     SqlCipherLibrary lib;
     SqlCipherDb db;
-    explicit Db(const fs::path &path, bool readOnly = false) : db(lib, path.string(), readOnly)
+    explicit Db(const fs::path &path, bool readOnly = false) : db(lib, seabass::pathToUtf8(path), readOnly)
     {
         db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     }
@@ -139,7 +140,7 @@ int main(int argc, char **argv)
         std::cout << "case 1 (the secrets really are in the database before scrubbing) OK\n";
     }
 
-    const auto result = anonymizeOneLibraryDatabase(db.string());
+    const auto result = anonymizeOneLibraryDatabase(seabass::pathToUtf8(db));
     assert(result.errorMessage.empty());
     assert(result.tracksScrubbed > 0);
     assert(result.artistsRenamed > 0);

@@ -16,6 +16,7 @@
 
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::cleanup;
@@ -31,7 +32,7 @@ int main()
     // A fresh manifest that doesn't exist yet on disk lists as empty,
     // not an error.
     {
-        PendingDeletionManifest manifest(manifestPath.string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(manifestPath));
         assert(manifest.list().empty());
         std::cout << "case 1 (missing file -> empty list) OK\n";
     }
@@ -39,7 +40,7 @@ int main()
     // Append/list round trip, including a value with characters that
     // need JSON escaping (quotes, backslash, a real path separator).
     {
-        PendingDeletionManifest manifest(manifestPath.string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(manifestPath));
 
         PendingDeletion a;
         a.format = "rekordbox";
@@ -78,7 +79,7 @@ int main()
     // entries plus its own new append -- confirms append-only, not
     // truncate-on-open.
     {
-        PendingDeletionManifest manifest(manifestPath.string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(manifestPath));
         PendingDeletion c;
         c.format = "rekordbox";
         c.filePath = "/Volumes/STICK/Contents/track three.mp3";
@@ -95,7 +96,7 @@ int main()
     // other entry's original timestamp untouched, and is a no-op when
     // nothing matches.
     {
-        PendingDeletionManifest manifest(manifestPath.string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(manifestPath));
         auto before = manifest.list();
         assert(before.size() == 3);
         std::string keptTimestamp = before[2].timestampUtc;
@@ -119,13 +120,13 @@ int main()
     // or cleared.
     {
         {
-            std::ofstream ofs(manifestPath.string(), std::ofstream::app);
+            std::ofstream ofs(manifestPath, std::ofstream::app);
             ofs << R"({"timestampUtc":"","format":"","filePath":"","title":"","artist":"","backupId":""})" << "\n";
             ofs << "not json at all\n";
             ofs << R"({"timestampUtc":"2026-09-17T10:00:00Z","format":"rekordbox","filePath":"/Volumes/STICK/ok.mp3",)"
                 << R"("title":"Kept","artist":"Someone","backupId":"b1"})" << "\n";
         }
-        PendingDeletionManifest manifest(manifestPath.string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(manifestPath));
         auto listed = manifest.list();
         assert(listed.size() == 3);  // the two real ones from case 4, plus the good line just added
         for (const auto &entry : listed) {
@@ -135,7 +136,7 @@ int main()
         // The rewrite keeps only what list() returned, so the blank line
         // is gone from the file as well, not merely ignored.
         manifest.removeProcessed({"/Volumes/STICK/ok.mp3"});
-        std::ifstream ifs(manifestPath.string());
+        std::ifstream ifs(manifestPath);
         std::string line;
         int lines = 0;
         while (std::getline(ifs, line)) {
@@ -171,7 +172,7 @@ int main()
         entry.title = "Orphan";
         bool threw = false;
         try {
-            PendingDeletionManifest(lockedManifest.string()).append(entry);
+            PendingDeletionManifest(seabass::pathToUtf8(lockedManifest)).append(entry);
         } catch (const std::runtime_error &) {
             threw = true;
         }
@@ -189,7 +190,7 @@ int main()
         fs::create_directories(keptDir);
         const fs::path keptManifest = keptDir / "pending.jsonl";
         {
-            PendingDeletionManifest manifest(keptManifest.string());
+            PendingDeletionManifest manifest(seabass::pathToUtf8(keptManifest));
             PendingDeletion a;
             a.filePath = "/Volumes/STICK/Contents/gone.mp3";
             a.title = "Deleted just now";
@@ -200,7 +201,7 @@ int main()
             manifest.append(b);
         }
         const std::string before = [&] {
-            std::ifstream ifs(keptManifest.string());
+            std::ifstream ifs(keptManifest);
             return std::string(std::istreambuf_iterator<char>(ifs), {});
         }();
         assert(!before.empty());
@@ -212,13 +213,13 @@ int main()
         // situation worth asking about -- what does the caller get told.
         fs::permissions(keptManifest, fs::perms::owner_read, fs::perm_options::replace);
         fs::permissions(keptDir, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
-        PendingDeletionManifest manifest(keptManifest.string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(keptManifest));
         const bool rewritten = manifest.removeProcessed({"/Volumes/STICK/Contents/gone.mp3"});
         fs::permissions(keptDir, fs::perms::owner_all, fs::perm_options::replace);
         fs::permissions(keptManifest, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
 
         const std::string after = [&] {
-            std::ifstream ifs(keptManifest.string());
+            std::ifstream ifs(keptManifest);
             return std::string(std::istreambuf_iterator<char>(ifs), {});
         }();
         if (permissionsBind) {
@@ -243,13 +244,13 @@ int main()
         fs::create_directories(unreadableDir);
         const fs::path unreadableManifest = unreadableDir / "pending.jsonl";
         {
-            PendingDeletionManifest manifest(unreadableManifest.string());
+            PendingDeletionManifest manifest(seabass::pathToUtf8(unreadableManifest));
             PendingDeletion a;
             a.filePath = "/Volumes/STICK/Contents/gone.mp3";
             manifest.append(a);
         }
         fs::permissions(unreadableManifest, fs::perms::none, fs::perm_options::replace);
-        PendingDeletionManifest unreadable(unreadableManifest.string());
+        PendingDeletionManifest unreadable(seabass::pathToUtf8(unreadableManifest));
         const bool claimed = unreadable.removeProcessed({"/Volumes/STICK/Contents/gone.mp3"});
         fs::permissions(unreadableManifest, fs::perms::owner_read | fs::perms::owner_write,
                         fs::perm_options::replace);

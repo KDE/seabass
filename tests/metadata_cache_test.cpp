@@ -12,6 +12,7 @@
 
 #include "infrastructure/local/metadata_cache.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::application::FileMetadata;
@@ -26,19 +27,19 @@ std::string writeFile(const fs::path &p, const std::string &data)
     fs::create_directories(p.parent_path());
     std::ofstream out(p, std::ios::binary);
     out << data;
-    return p.string();
+    return seabass::pathToUtf8(p);
 }
 
 // The same two values MetadataCache itself stats, so a hand-written
 // cache line can be made to match a real file and actually hit.
 std::string currentSizeBytes(const std::string &path)
 {
-    return std::to_string(static_cast<long long>(fs::file_size(path)));
+    return std::to_string(static_cast<long long>(fs::file_size(seabass::pathFromUtf8(path))));
 }
 
 std::string currentMtimeSeconds(const std::string &path)
 {
-    auto mtime = fs::last_write_time(path);
+    auto mtime = fs::last_write_time(seabass::pathFromUtf8(path));
     return std::to_string(static_cast<long long>(
         std::chrono::duration_cast<std::chrono::seconds>(mtime.time_since_epoch()).count()));
 }
@@ -69,14 +70,14 @@ int main()
     // through save/load. The non-ASCII title is deliberate -- it has to
     // survive the hand-written JSON escaping both ways.
     {
-        MetadataCache cache(root.string());
+        MetadataCache cache(seabass::pathToUtf8(root));
         assert(!cache.lookup(audio).has_value());
         cache.store(audio, sample());
         assert(cache.dirty());
         assert(cache.save());
         assert(fs::exists(root / "Seabass" / "caches" / "metadata.jsonl"));
 
-        MetadataCache reloaded(root.string());
+        MetadataCache reloaded(seabass::pathToUtf8(root));
         auto got = reloaded.lookup(audio);
         assert(got.has_value());
         assert(got->title == "Una Hora M\xc3\xa1s");
@@ -97,11 +98,11 @@ int main()
         FileMetadata estimated = sample();
         estimated.durationIsEstimated = true;
 
-        MetadataCache cache(root.string());
+        MetadataCache cache(seabass::pathToUtf8(root));
         cache.store(audio, estimated);
         assert(cache.save());
 
-        MetadataCache reloaded(root.string());
+        MetadataCache reloaded(seabass::pathToUtf8(root));
         auto got = reloaded.lookup(audio);
         assert(got.has_value());
         assert(got->durationIsEstimated);
@@ -119,7 +120,7 @@ int main()
                   "{\"artist\":\"A\",\"duration\":\"120.000000\",\"mtime\":\"" + currentMtimeSeconds(audio)
                       + "\",\"path\":\"Contents/a/track.mp3\",\"size\":\"" + currentSizeBytes(audio)
                       + "\",\"title\":\"T\"}\n");
-        MetadataCache cache(root.string());
+        MetadataCache cache(seabass::pathToUtf8(root));
         auto got = cache.lookup(audio);
         assert(got.has_value());
         assert(got->title == "T");
@@ -133,12 +134,12 @@ int main()
     // one of the two must not return stale artist/title.
     {
         fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
-        MetadataCache cache(root.string());
+        MetadataCache cache(seabass::pathToUtf8(root));
         cache.store(audio, sample());
         assert(cache.save());
 
         writeFile(root / "Contents" / "a" / "track.mp3", "the file changed underneath us, and got longer");
-        MetadataCache reloaded(root.string());
+        MetadataCache reloaded(seabass::pathToUtf8(root));
         assert(!reloaded.lookup(audio).has_value());
         std::cout << "case 4 (size/mtime change invalidates the entry) OK\n";
     }
@@ -149,7 +150,7 @@ int main()
     // permanent).
     {
         fs::remove(root / "Seabass" / "caches" / "metadata.jsonl");
-        MetadataCache cache(root.string());
+        MetadataCache cache(seabass::pathToUtf8(root));
         cache.store("/somewhere/else/track.mp3", sample());
         assert(!cache.dirty());
 

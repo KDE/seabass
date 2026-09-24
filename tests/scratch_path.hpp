@@ -10,6 +10,8 @@
 #include <filesystem>
 #include <string>
 
+#include "../src/infrastructure/paths/utf8_path.hpp"
+
 #if defined(_WIN32)
 #include <process.h>
 #else
@@ -57,6 +59,20 @@ inline void removeScratch()
         }
     }
     fs::remove_all(scratchToRemove(), ec);
+}
+
+// An environment variable that holds a path. On Windows the process
+// environment is wide, and _putenv_s narrows through the ANSI code page,
+// so the value goes in through _wputenv_s as the path's own wchar_t.
+// Elsewhere the environment is bytes, and a path's are UTF-8.
+inline void setPathEnv(const char *name, const std::filesystem::path &value)
+{
+#if defined(_WIN32)
+    const std::wstring wideName(name, name + std::char_traits<char>::length(name));
+    _wputenv_s(wideName.c_str(), value.c_str());
+#else
+    setenv(name, pathToUtf8(value).c_str(), 1);
+#endif
 }
 
 }  // namespace detail
@@ -126,11 +142,7 @@ inline void sandboxSeabassHome(const std::filesystem::path &home)
     if (std::getenv("SEABASS_HOME") != nullptr) {
         return;
     }
-#if defined(_WIN32)
-    _putenv_s("SEABASS_HOME", home.string().c_str());
-#else
-    setenv("SEABASS_HOME", home.string().c_str(), 1);
-#endif
+    detail::setPathEnv("SEABASS_HOME", home);
 }
 
 // The settings store, which SEABASS_HOME does NOT cover.
@@ -164,9 +176,9 @@ inline void sandboxSettings(const std::filesystem::path &configHome)
 #if defined(_WIN32)
     // Only bites once the caller has asked for IniFormat: the Windows
     // native store is the registry, which ignores this entirely.
-    _putenv_s("APPDATA", configHome.string().c_str());
+    detail::setPathEnv("APPDATA", configHome);
 #else
-    setenv("XDG_CONFIG_HOME", configHome.string().c_str(), 1);
+    detail::setPathEnv("XDG_CONFIG_HOME", configHome);
 #endif
 }
 

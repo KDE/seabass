@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "infrastructure/logging/file_operation_log.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -81,7 +82,7 @@ int main()
     {
         const fs::path logFile = root / "stick" / "Seabass" / "operations.log";
         assert(!fs::exists(logFile.parent_path()));
-        FileOperationLog log(logFile.string());
+        FileOperationLog log(seabass::pathToUtf8(logFile));
         log.record("wrote export.pdb");
 
         assert(fs::exists(logFile));
@@ -95,7 +96,7 @@ int main()
     // object, so the second line must not be the first one overwritten.
     {
         const fs::path logFile = root / "ordered" / "operations.log";
-        FileOperationLog log(logFile.string());
+        FileOperationLog log(seabass::pathToUtf8(logFile));
         log.record("first");
         log.record("second");
         log.record("third");
@@ -114,11 +115,11 @@ int main()
     {
         const fs::path logFile = root / "appending" / "operations.log";
         {
-            FileOperationLog first(logFile.string());
+            FileOperationLog first(seabass::pathToUtf8(logFile));
             first.record("run one");
         }
         {
-            FileOperationLog second(logFile.string());
+            FileOperationLog second(seabass::pathToUtf8(logFile));
             second.record("run two");
         }
 
@@ -134,8 +135,8 @@ int main()
     // torn: each of the six comes back whole and attributable.
     {
         const fs::path logFile = root / "interleaved" / "operations.log";
-        FileOperationLog a(logFile.string());
-        FileOperationLog b(logFile.string());
+        FileOperationLog a(seabass::pathToUtf8(logFile));
+        FileOperationLog b(seabass::pathToUtf8(logFile));
         for (int i = 0; i < 3; ++i) {
             a.record("from A " + std::to_string(i));
             b.record("from B " + std::to_string(i));
@@ -165,7 +166,7 @@ int main()
         std::ofstream(blocker) << "I am a file\n";
         const fs::path logFile = blocker / "Seabass" / "operations.log";
 
-        FileOperationLog log(logFile.string());
+        FileOperationLog log(seabass::pathToUtf8(logFile));
         log.record("first attempt");
         log.record("second attempt");
         log.record("third attempt");
@@ -180,7 +181,7 @@ int main()
     // with it rather than the log quietly becoming unreadable.
     {
         const fs::path logFile = root / "newline" / "operations.log";
-        FileOperationLog log(logFile.string());
+        FileOperationLog log(seabass::pathToUtf8(logFile));
         log.record("two\nlines");
 
         const auto lines = linesOf(logFile);

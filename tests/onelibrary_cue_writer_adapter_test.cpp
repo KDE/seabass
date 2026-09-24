@@ -15,6 +15,7 @@
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::onelibrary;
@@ -29,7 +30,7 @@ namespace
 // .cpp uses -- see that file's own comment for why this schema shape.
 void createFixture(const std::string &pioneerRoot)
 {
-    fs::create_directories(fs::path(pioneerRoot) / "rekordbox");
+    fs::create_directories(seabass::pathFromUtf8(pioneerRoot) / "rekordbox");
     std::string dbPath = OneLibraryCueWriter::dbPathFor(pioneerRoot);
 
     std::string key = deriveOneLibraryKey();
@@ -68,16 +69,16 @@ int main()
         fs::remove_all(scratch, ec);
         fs::create_directories(scratch);
         fs::path pioneerRoot = scratch / "PIONEER";
-        createFixture(pioneerRoot.string());
+        createFixture(seabass::pathToUtf8(pioneerRoot));
 
-        std::string filePath = (scratch / "Contents" / "Test Track.mp3").string();
+        std::string filePath = seabass::pathToUtf8(scratch / "Contents" / "Test Track.mp3");
         std::unordered_map<std::string, std::string> sourceIdToPath{{"1", filePath}};
-        OneLibraryCueWriterAdapter adapter(pioneerRoot.string(), sourceIdToPath);
+        OneLibraryCueWriterAdapter adapter(seabass::pathToUtf8(pioneerRoot), sourceIdToPath);
         adapter.writeHotCues("1", sampleCues());
 
         std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
-        SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot.string()), /*readOnly=*/true);
+        SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(seabass::pathToUtf8(pioneerRoot)), /*readOnly=*/true);
         db.exec("PRAGMA key = '" + key + "';");
         SqlCipherStatement countStmt(db, "SELECT count(*) FROM cue WHERE content_id = 1");
         countStmt.step();
@@ -97,9 +98,9 @@ int main()
         fs::remove_all(scratch, ec);
         fs::create_directories(scratch);
         fs::path pioneerRoot = scratch / "PIONEER";
-        createFixture(pioneerRoot.string());
+        createFixture(seabass::pathToUtf8(pioneerRoot));
 
-        OneLibraryCueWriterAdapter adapter(pioneerRoot.string(), {});
+        OneLibraryCueWriterAdapter adapter(seabass::pathToUtf8(pioneerRoot), {});
         bool threw = false;
         try {
             adapter.writeHotCues("does-not-exist", sampleCues());

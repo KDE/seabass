@@ -18,6 +18,7 @@
 #include "application/use_cases/export_rekordbox_xml.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 namespace fs = std::filesystem;
@@ -213,8 +214,8 @@ void testAgainstFixture(const fs::path &fixture)
         return;
     }
 
-    seabass::infrastructure::rekordbox::KaitaiRekordboxReader rekordbox((fixture / "rekordbox").string());
-    seabass::infrastructure::engine::LibdjinteropEngineReader engine((fixture / "engine").string());
+    seabass::infrastructure::rekordbox::KaitaiRekordboxReader rekordbox(seabass::pathToUtf8(fixture / "rekordbox"));
+    seabass::infrastructure::engine::LibdjinteropEngineReader engine(seabass::pathToUtf8(fixture / "engine"));
 
     std::vector<Track> rows = rekordbox.readAll();
     const size_t rekordboxRows = rows.size();

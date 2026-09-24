@@ -30,6 +30,7 @@
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "mp3_fixture.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -44,9 +45,9 @@ namespace
 fs::path writeTrackFile(const fs::path &stickRoot, const std::string &name, const std::string &title,
                          const std::string &artist, int frames, bool exactLength)
 {
-    fs::path path = stickRoot / "Contents" / name;
+    fs::path path = stickRoot / "Contents" / seabass::pathFromUtf8(name);
     writeMp3(path, frames, exactLength);
-    TagLib::FileRef file(path.string().c_str());
+    TagLib::FileRef file(path.c_str());  // TagLib::FileName takes wchar_t on Windows, char elsewhere
     assert(!file.isNull());
     file.tag()->setTitle(TagLib::String(title, TagLib::String::UTF8));
     file.tag()->setArtist(TagLib::String(artist, TagLib::String::UTF8));
@@ -64,8 +65,8 @@ domain::Track catalogRow(const std::string &format, const std::string &sourceId,
     t.format = format;
     t.title = title;
     t.artist = artist;
-    t.filename = path.filename().string();
-    t.filePath = path.string();
+    t.filename = seabass::pathToUtf8(path.filename());
+    t.filePath = seabass::pathToUtf8(path);
     t.durationSeconds = duration;
     t.bitrate = bitrate;
     t.fileSizeBytes = fs::file_size(path);
@@ -113,7 +114,7 @@ int main()
     // still needs would otherwise be presented as unreferenced, and the
     // review it enters ends in deleting it.
     {
-        auto refused = infrastructure::cleanup::scanStrayFiles(root.string(), catalogs, {"engine"},
+        auto refused = infrastructure::cleanup::scanStrayFiles(seabass::pathToUtf8(root), catalogs, {"engine"},
                                                                 application::CancellationToken::none());
         assert(!refused.usable);
         assert(refused.tracks.empty());
@@ -125,14 +126,14 @@ int main()
     // No catalog at all is the same refusal, not "everything on this
     // stick is unreferenced".
     {
-        auto refused = infrastructure::cleanup::scanStrayFiles(root.string(), application::CatalogTracks{}, {},
+        auto refused = infrastructure::cleanup::scanStrayFiles(seabass::pathToUtf8(root), application::CatalogTracks{}, {},
                                                                 application::CancellationToken::none());
         assert(!refused.usable);
         assert(refused.tracks.empty());
         std::cout << "case 2 (no catalog at all -> refused, never 'all unreferenced') OK\n";
     }
 
-    auto scan = infrastructure::cleanup::scanStrayFiles(root.string(), catalogs, {},
+    auto scan = infrastructure::cleanup::scanStrayFiles(seabass::pathToUtf8(root), catalogs, {},
                                                          application::CancellationToken::none());
     assert(scan.usable);
     assert(scan.metadataProbeAvailable);
@@ -195,7 +196,7 @@ int main()
             // separators. Identical to .string() on Linux (where this
             // test was first written), so compare against it explicitly
             // rather than the platform-dependent one.
-            assert(plan.unreferencedFilesToDelete[0].filePath == stray.generic_string());
+            assert(plan.unreferencedFilesToDelete[0].filePath == seabass::pathToGenericUtf8(stray));
             assert(plan.unreferencedFilesHeldBack.empty());
         } else if (plan.survivor.title == "Sky and Sand") {
             sawSkyAndSand = true;
@@ -204,7 +205,7 @@ int main()
             assert(plan.unreferencedFilesToDelete.empty());
             assert(plan.unreferencedFilesHeldBack.size() == 1);
             // See the same fix on unreferencedFilesToDelete above.
-            assert(plan.unreferencedFilesHeldBack[0].filePath == guessed.generic_string());
+            assert(plan.unreferencedFilesHeldBack[0].filePath == seabass::pathToGenericUtf8(guessed));
         } else {
             assert(false && "no other group should exist");
         }
@@ -220,7 +221,7 @@ int main()
     // and must not change a single answer.
     {
         assert(fs::exists(root / "Seabass" / "caches" / "metadata.jsonl"));
-        auto again = infrastructure::cleanup::scanStrayFiles(root.string(), catalogs, {},
+        auto again = infrastructure::cleanup::scanStrayFiles(seabass::pathToUtf8(root), catalogs, {},
                                                               application::CancellationToken::none());
         assert(again.filesFound == scan.filesFound);
         assert(again.tracks.size() == scan.tracks.size());
@@ -236,14 +237,14 @@ int main()
     // just cleaned up reappeared (shakedown round 8, W5, Linux and macOS).
     {
         infrastructure::cleanup::PendingDeletionManifest manifest(
-            infrastructure::paths::stickPendingDeletions(root).string());
+            seabass::pathToUtf8(infrastructure::paths::stickPendingDeletions(root)));
         infrastructure::cleanup::PendingDeletion pending;
         pending.format = "rekordbox";
-        pending.filePath = stray.string();
+        pending.filePath = seabass::pathToUtf8(stray);
         pending.title = "Flaschenpost";
         manifest.append(pending);
 
-        auto after = infrastructure::cleanup::scanStrayFiles(root.string(), catalogs, {},
+        auto after = infrastructure::cleanup::scanStrayFiles(seabass::pathToUtf8(root), catalogs, {},
                                                               application::CancellationToken::none());
         assert(after.usable);
         assert(findStray(after.tracks, "33_stray.mp3") == nullptr && "already waiting for deletion: not offered again");

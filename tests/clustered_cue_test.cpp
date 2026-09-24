@@ -26,6 +26,7 @@
 #include "domain/clustered_cue.hpp"
 #include "domain/junk_cue.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 namespace fs = std::filesystem;
@@ -159,9 +160,9 @@ int main()
     // count alone: a rule that flagged half the library would also
     // satisfy a >= 1 assertion.
     {
-        const fs::path fixture = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library";
+        const fs::path fixture = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library";
 
-        seabass::infrastructure::rekordbox::KaitaiRekordboxReader rekordbox((fixture / "rekordbox").string());
+        seabass::infrastructure::rekordbox::KaitaiRekordboxReader rekordbox(seabass::pathToUtf8(fixture / "rekordbox"));
         const auto rekordboxTracks = rekordbox.readAll();
         assert(rekordboxTracks.size() > 1000 && "the fixture must still be the whole library");
         const auto rekordboxIssues = ClusteredCueFinder::find(rekordboxTracks);
@@ -179,7 +180,7 @@ int main()
         assert(rekordboxIssues[0].cluster[2].positionMs == 1657.0);
         assert(removableClusterCues(rekordboxIssues[0]).size() == 2);
 
-        seabass::infrastructure::engine::LibdjinteropEngineReader engine((fixture / "engine").string());
+        seabass::infrastructure::engine::LibdjinteropEngineReader engine(seabass::pathToUtf8(fixture / "engine"));
         const auto engineTracks = engine.readAll();
         assert(engineTracks.size() > 1000);
         // The Engine side of the same library has no cluster at all: its

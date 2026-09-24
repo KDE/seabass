@@ -29,6 +29,7 @@
 #include "infrastructure/stick_backup/zip_format.hpp"
 #include "stick_fixture.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::application;
@@ -65,7 +66,7 @@ std::size_t tempFilesUnder(const fs::path &root)
 {
     std::size_t n = 0;
     for (const auto &entry : fs::recursive_directory_iterator(root)) {
-        if (entry.path().filename().string().find(".seabass-restore-tmp") != std::string::npos) {
+        if (seabass::pathToUtf8(entry.path().filename()).find(".seabass-restore-tmp") != std::string::npos) {
             ++n;
         }
     }
@@ -397,7 +398,7 @@ int main()
             file.barrier();
         }
 
-        const fs::path destination = target / fs::path(entryName);
+        const fs::path destination = target / seabass::pathFromUtf8(entryName);
         assert(destination.native().size() > 260);
         std::error_code ec;
         fs::create_directories(longPathSafe(destination.parent_path()), ec);
@@ -626,7 +627,7 @@ int main()
     {
         Fixture f("salvage-db");
         const fs::path stickDb = f.stick / "Engine Library" / "Database2" / "m.db";
-        writeFile(fs::path(stickDb.string() + "-journal"), pseudoRandom(512, 9), 1'700'000'100);
+        writeFile(fs::path(stickDb).concat("-journal"), pseudoRandom(512, 9), 1'700'000'100);
         const std::string wholeDb = readFile(stickDb);
         BackupStickOptions salvage = f.backup;
         salvage.sourceReadOnly = true;
@@ -640,7 +641,7 @@ int main()
         assert(taken.salvaged.size() == 1 && taken.salvaged[0].path == "Engine Library/Database2/m.db");
 
         const fs::path targetDb = f.target / "Engine Library" / "Database2" / "m.db";
-        const fs::path targetJournal = fs::path(targetDb.string() + "-journal");
+        const fs::path targetJournal = fs::path(targetDb).concat("-journal");
         {
             RestoreSummary summary = RestoreStickBackup::execute(f.restore);
             assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
@@ -660,7 +661,7 @@ int main()
         // an extra: the backup has no m.db-wal, the target's is part of
         // the database being kept.
         {
-            const fs::path targetWal = fs::path(targetDb.string() + "-wal");
+            const fs::path targetWal = fs::path(targetDb).concat("-wal");
             writeFile(targetWal, "the target's own wal", 1'700'000'202);
             RestoreOptions exact = f.restore;
             exact.exact = true;
@@ -683,7 +684,7 @@ int main()
     {
         Fixture f("salvage-db-sidecar");
         const fs::path stickDb = f.stick / "Engine Library" / "Database2" / "m.db";
-        const fs::path stickJournal = fs::path(stickDb.string() + "-journal");
+        const fs::path stickJournal = fs::path(stickDb).concat("-journal");
         const std::string wholeJournal = pseudoRandom(8192, 11);
         writeFile(stickJournal, wholeJournal, 1'700'000'100);
         const std::string wholeDb = readFile(stickDb);
@@ -700,7 +701,7 @@ int main()
                && "the main database was read whole; only its journal is a part");
 
         const fs::path targetDb = f.target / "Engine Library" / "Database2" / "m.db";
-        const fs::path targetJournal = fs::path(targetDb.string() + "-journal");
+        const fs::path targetJournal = fs::path(targetDb).concat("-journal");
         writeFile(targetDb, std::string(wholeDb.size(), 'x'), 1'700'000'200);
         writeFile(targetJournal, wholeJournal, 1'700'000'201);
         RestoreSummary summary = RestoreStickBackup::execute(f.restore);

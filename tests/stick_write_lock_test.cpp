@@ -12,6 +12,7 @@
 
 #include "infrastructure/backup/stick_write_lock.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::backup;
@@ -22,7 +23,7 @@ int main()
     fs::path root = seabass::testing::scratchRoot() / "seabass_stick_write_lock_test";
     fs::remove_all(root);
     fs::create_directories(root);
-    std::string lockPath = (root / "Seabass" / "backups" / ".write.lock").string();
+    std::string lockPath = seabass::pathToUtf8(root / "Seabass" / "backups" / ".write.lock");
 
     // Basic acquire/release: creating and destroying a lock cleanly is
     // not itself an error, and does not leave anything held.
@@ -90,7 +91,7 @@ int main()
     // each other, or a write to one stick would needlessly block a write
     // to an unrelated one.
     {
-        std::string otherLockPath = (root / "other-stick" / "Seabass" / "backups" / ".write.lock").string();
+        std::string otherLockPath = seabass::pathToUtf8(root / "other-stick" / "Seabass" / "backups" / ".write.lock");
         StickWriteLock a(lockPath);
         StickWriteLock b(otherLockPath);  // would throw if locks weren't scoped per-path
         std::cout << "case 5 (locks for different sticks don't contend) OK\n";
@@ -100,15 +101,15 @@ int main()
     // file), and a lock still held on the old, deleted file is not the
     // lock on the path.
     {
-        std::string removedPath = (root / "discarded" / "stick.zip.lock").string();
+        std::string removedPath = seabass::pathToUtf8(root / "discarded" / "stick.zip.lock");
         {
             StickWriteLock lock(removedPath);
-            assert(fs::exists(removedPath));
+            assert(fs::exists(seabass::pathFromUtf8(removedPath)));
             lock.releaseAndRemoveFile();
-            assert(!fs::exists(removedPath));
+            assert(!fs::exists(seabass::pathFromUtf8(removedPath)));
         }
         StickWriteLock again(removedPath);  // releaseAndRemoveFile left nothing held
-        assert(fs::exists(removedPath));
+        assert(fs::exists(seabass::pathFromUtf8(removedPath)));
         std::cout << "case 6 (releaseAndRemoveFile removes the file and holds nothing) OK\n";
     }
 
@@ -130,9 +131,7 @@ int main()
             } catch (const StickBusyError &e) {
                 threw = true;
                 // The message names the folder readably, as UTF-8.
-                const std::u8string u8 = fs::path(folder).u8string();
-                assert(std::string(e.what()).find(std::string(reinterpret_cast<const char *>(u8.data()), u8.size()))
-                       != std::string::npos);
+                assert(std::string(e.what()).find(seabass::pathToUtf8(fs::path(folder))) != std::string::npos);
             }
             assert(threw);
             first.releaseAndRemoveFile();

@@ -15,6 +15,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -435,7 +436,7 @@ int main()
     // span) is never touched.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackTextOverride text;
         text.title = "Obfuscated Title Much Longer Than Original";  // longer than the 10-byte short_ascii capacity
         text.comment = "Fake";                                      // longer than the 2-char utf16le capacity
@@ -480,7 +481,7 @@ int main()
     // "fields written" with a different name on it.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackTextOverride text;
         text.title = "Short";      // inside the 10-byte capacity
         text.comment = "A";        // inside the 2-code-unit capacity
@@ -497,7 +498,7 @@ int main()
     // is "fits exactly," not "trims trailing spaces on read").
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackTextOverride text;
         text.title = "Hi";
         text.comment = "H";
@@ -524,7 +525,7 @@ int main()
     // anything dirty.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackTextOverride text;
         text.title = "x";
         assert(!writer.overwriteTrackText(999999, text));
@@ -536,7 +537,7 @@ int main()
     // behavior, on their own tables, leaving the track row untouched.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         bool overwroteArtist = writer.overwriteArtistName(5, "Artist Z");
         assert(overwroteArtist);
         bool overwrotePlaylist = writer.overwritePlaylistName(9, "Set 1");
@@ -569,7 +570,7 @@ int main()
         withStraySlot[trackRowStart + 8] = static_cast<char>(0x25);       // short ASCII, 17 characters
         writeFile(pdbPath, withStraySlot);
 
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackExtraTextOverride extra;
         extra.isrc = "ISRC-SCRUBBED";
         extra.texter = "Texter";
@@ -626,7 +627,7 @@ int main()
     // produced once.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackTextOverride text;
         text.comment = "C\xC3\xA9";  // "Cé", two characters, three bytes
         const bool overwrote = writer.overwriteTrackText(100, text);
@@ -646,7 +647,7 @@ int main()
     // the case that stops this guard becoming the next one.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackTextOverride text;
         text.comment = "Ok";  // ASCII, into the utf16le field
         assert(writer.overwriteTrackText(100, text));
@@ -662,7 +663,7 @@ int main()
     // one, with the row changed.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         PdbRowWriter::TrackTextOverride text;
         text.title = "Safe Title";          // fine on its own
         text.comment = "C\xC3\xA9";          // and this one is not
@@ -677,7 +678,7 @@ int main()
     // The same on the other tables, which have their own entry points.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         assert(!writer.overwriteArtistName(5, "Caf\xC3\xA9"));
         assert(!writer.overwritePlaylistName(9, "Caf\xC3\xA9"));
         // Still accepts what it can represent, on the same writer.

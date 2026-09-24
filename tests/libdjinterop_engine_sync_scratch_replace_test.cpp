@@ -19,6 +19,7 @@
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::engine;
@@ -37,7 +38,7 @@ std::vector<Track> makeFixtureTracks(const fs::path &root, int count)
         t.sourceId = "r" + std::to_string(i);
         t.title = "Song " + std::to_string(i);
         t.artist = "Artist " + std::to_string(i);
-        t.filePath = (root / ("song" + std::to_string(i) + ".mp3")).string();
+        t.filePath = seabass::pathToUtf8(root / ("song" + std::to_string(i) + ".mp3"));
         t.bpm = 120.0;
         t.durationSeconds = 200.0;
         tracks.push_back(t);
@@ -72,19 +73,19 @@ int main()
     fs::create_directories(directLibrary.parent_path());
     fs::create_directories(wholeFileLibrary.parent_path());
     auto tracksTemplate = makeFixtureTracks(root, TrackCount);
-    auto r1 = EngineLibraryCreator::create(directLibrary.string(), tracksTemplate, EngineSchemaGeneration::V2);
+    auto r1 = EngineLibraryCreator::create(seabass::pathToUtf8(directLibrary), tracksTemplate, EngineSchemaGeneration::V2);
     assert(r1.errorMessage.empty() && r1.tracksCreated == TrackCount);
-    auto r2 = EngineLibraryCreator::create(wholeFileLibrary.string(), tracksTemplate, EngineSchemaGeneration::V2);
+    auto r2 = EngineLibraryCreator::create(seabass::pathToUtf8(wholeFileLibrary), tracksTemplate, EngineSchemaGeneration::V2);
     assert(r2.errorMessage.empty() && r2.tracksCreated == TrackCount);
 
     // Direct path: exactly what sync_controller.cpp does when the
     // whole-file strategy isn't chosen -- write straight onto the real
     // file, once per item.
     {
-        LibdjinteropEngineReader reader(directLibrary.string());
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(directLibrary));
         auto readBack = seabass::application::ScanLibrary(reader).execute();
         assert(static_cast<int>(readBack.size()) == TrackCount);
-        LibdjinteropEngineCueWriter writer(directLibrary.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(directLibrary));
         for (const auto &t : readBack) {
             int index = std::stoi(t.title.substr(std::string("Song ").size()));
             writer.writeHotCues(t.sourceId, cuesFor(index));
@@ -102,7 +103,7 @@ int main()
         fs::create_directories(scratchDir / "Database2");
         fs::copy_file(realDbFile, scratchDir / "Database2" / "m.db");
 
-        LibdjinteropEngineReader reader(wholeFileLibrary.string());
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(wholeFileLibrary));
         auto readBack = seabass::application::ScanLibrary(reader).execute();
         assert(static_cast<int>(readBack.size()) == TrackCount);
 
@@ -112,7 +113,7 @@ int main()
         // still open elsewhere in the same process (frees it on last
         // close), so this only ever showed up on Windows, which locks it.
         {
-            LibdjinteropEngineCueWriter scratchWriter(scratchDir.string());
+            LibdjinteropEngineCueWriter scratchWriter(seabass::pathToUtf8(scratchDir));
             for (const auto &t : readBack) {
                 int index = std::stoi(t.title.substr(std::string("Song ").size()));
                 scratchWriter.writeHotCues(t.sourceId, cuesFor(index));
@@ -120,16 +121,16 @@ int main()
         }
 
         bool committed = seabass::infrastructure::copyFileDurablyAtomic(
-            (scratchDir / "Database2" / "m.db").string(), realDbFile.string());
+            seabass::pathToUtf8(scratchDir / "Database2" / "m.db"), seabass::pathToUtf8(realDbFile));
         assert(committed);
         fs::remove_all(scratchDir);
     }
 
     // Both libraries must now show identical cue data per track.
     {
-        LibdjinteropEngineReader directReader(directLibrary.string());
+        LibdjinteropEngineReader directReader(seabass::pathToUtf8(directLibrary));
         auto directTracks = seabass::application::ScanLibrary(directReader).execute();
-        LibdjinteropEngineReader wholeFileReader(wholeFileLibrary.string());
+        LibdjinteropEngineReader wholeFileReader(seabass::pathToUtf8(wholeFileLibrary));
         auto wholeFileTracks = seabass::application::ScanLibrary(wholeFileReader).execute();
         assert(directTracks.size() == wholeFileTracks.size());
 

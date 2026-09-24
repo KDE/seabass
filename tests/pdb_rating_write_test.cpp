@@ -18,6 +18,7 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::domain::Track;
@@ -35,7 +36,7 @@ fs::path freshPioneerCopy(const fs::path &scratch)
 {
     fs::remove_all(scratch);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     assert(fs::is_directory(source));
     const fs::path dest = scratch / "PIONEER";
     fs::copy(source, dest, fs::copy_options::recursive);
@@ -74,7 +75,7 @@ int main()
     const fs::path pdb = pioneer / "rekordbox" / "export.pdb";
     assert(fs::exists(pdb));
 
-    KaitaiRekordboxReader reader(pioneer.string());
+    KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneer));
     const auto before = reader.readAll();
     assert(!before.empty());
     const auto beforeById = byId(before);
@@ -93,11 +94,11 @@ int main()
 
     // ---- case 1: a rating lands, and nothing else moves --------------
     {
-        PdbRowWriter writer(pdb.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdb));
         assert(writer.setTrackRating(trackId, 4));
         assert(writer.commit());
 
-        KaitaiRekordboxReader after(pioneer.string());
+        KaitaiRekordboxReader after(seabass::pathToUtf8(pioneer));
         const auto afterTracks = after.readAll();
         assert(afterTracks.size() == before.size());
         const auto afterById = byId(afterTracks);
@@ -119,11 +120,11 @@ int main()
 
     // ---- case 2: zero clears it -------------------------------------
     {
-        PdbRowWriter writer(pdb.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdb));
         assert(writer.setTrackRating(trackId, 0));
         assert(writer.commit());
 
-        KaitaiRekordboxReader after(pioneer.string());
+        KaitaiRekordboxReader after(seabass::pathToUtf8(pioneer));
         const auto afterById = byId(after.readAll());
         // rekordbox stores unrated and zero stars as the same byte, and
         // the reader maps 0 to "no rating". So writing 0 clears a rating
@@ -148,11 +149,11 @@ int main()
         assert(!playedId.empty());
         const auto playedRow = static_cast<uint32_t>(std::stoul(playedId));
         {
-            PdbRowWriter writer(pdb.string());
+            PdbRowWriter writer(seabass::pathToUtf8(pdb));
             assert(writer.setTrackPlayCount(playedRow, 1234));
             assert(writer.commit());
         }
-        KaitaiRekordboxReader after(pioneer.string());
+        KaitaiRekordboxReader after(seabass::pathToUtf8(pioneer));
         const auto afterById = byId(after.readAll());
         assert(afterById.at(playedId).playCount.has_value() && *afterById.at(playedId).playCount == 1234);
         // Nobody else's count, and none of the fields either side of it.
@@ -165,20 +166,20 @@ int main()
         }
         // Clamped to the field rather than wrapped round to a small number.
         {
-            PdbRowWriter writer(pdb.string());
+            PdbRowWriter writer(seabass::pathToUtf8(pdb));
             assert(writer.setTrackPlayCount(playedRow, 70000));
             assert(writer.commit());
         }
-        KaitaiRekordboxReader clamped(pioneer.string());
+        KaitaiRekordboxReader clamped(seabass::pathToUtf8(pioneer));
         assert(*byId(clamped.readAll()).at(playedId).playCount == 65535);
-        PdbRowWriter missing(pdb.string());
+        PdbRowWriter missing(seabass::pathToUtf8(pdb));
         assert(!missing.setTrackPlayCount(4294967295u, 3));  // no such track
         std::cout << "case 2b (a play count lands, clamped to its u2, and no other count moves) OK\n";
     }
 
     // ---- case 3: refusals -------------------------------------------
     {
-        PdbRowWriter writer(pdb.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdb));
         assert(!writer.setTrackRating(4294967295u, 3));  // no such track
 
         bool threw = false;
@@ -231,7 +232,7 @@ int main()
         const std::string wanted = "peak time closer, mixes into the Detroit one";
         for (const auto &id : {emptyCommentId, shortCommentId}) {
             const Track &track = beforeById.at(id);
-            PdbRowWriter writer(pdb.string());
+            PdbRowWriter writer(seabass::pathToUtf8(pdb));
             PdbRowWriter::TrackTextOverride override;
             // All four fields are always written, so the three we do not
             // mean to change are passed back as they are.
@@ -242,7 +243,7 @@ int main()
             assert(writer.overwriteTrackText(static_cast<uint32_t>(std::stoul(id)), override));
             assert(writer.commit());
 
-            KaitaiRekordboxReader after(pioneer.string());
+            KaitaiRekordboxReader after(seabass::pathToUtf8(pioneer));
             const std::string got = byId(after.readAll()).at(id).comment;
             // Truncated, never grown to what was asked for. The span is
             // not the same as the old text's length -- the fixture's one
@@ -277,7 +278,7 @@ int main()
         int genres = 0;
         int labels = 0;
         {
-            PdbRowWriter writer(pdb.string());
+            PdbRowWriter writer(seabass::pathToUtf8(pdb));
             int leftAlone = -1;
             albums = writer.overwriteAllNames(PdbRowWriter::NameTable::Albums,
                                               [](size_t i) { return "Album " + std::to_string(i); }, &leftAlone);
@@ -313,7 +314,7 @@ int main()
         // And the catalog still reads back intact -- a name written at a
         // wrong offset corrupts the row it lands in, which shows up here
         // rather than as a wrong name.
-        KaitaiRekordboxReader reader(pioneer.string());
+        KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneer));
         const auto tracks = reader.readAll();
         assert(tracks.size() > 1000);
 
@@ -425,7 +426,7 @@ int main()
             int leftAlone = -1;
             int renamed = 0;
             {
-                PdbRowWriter writer(pdb.string());
+                PdbRowWriter writer(seabass::pathToUtf8(pdb));
                 renamed = writer.overwriteAllNames(PdbRowWriter::NameTable::Albums,
                                                    [](size_t i) { return "Album " + std::to_string(i); }, &leftAlone);
                 assert(writer.commit());
@@ -451,7 +452,7 @@ int main()
             writeAll(pdb, bytes);
             const std::string victimBefore = bytes.substr(victim, 32);
             {
-                PdbRowWriter writer(pdb.string());
+                PdbRowWriter writer(seabass::pathToUtf8(pdb));
                 assert(!writer.overwriteArtistName(artistId, "Artist 0") && "refused, not written somewhere else");
             }
             assert(readAll(pdb).substr(victim, 32) == victimBefore);
@@ -483,7 +484,7 @@ int main()
             text.filename = "f0.mp3";
             text.filePath = "/Contents/f0.mp3";
             {
-                PdbRowWriter writer(pdb.string());
+                PdbRowWriter writer(seabass::pathToUtf8(pdb));
                 assert(writer.trackExists(trackId) && "the id was read from the row being damaged");
                 assert(!writer.overwriteTrackText(trackId, text) && "the row is refused, so the caller hears of it");
                 writer.commit();  // whatever it would commit, it must not include this row

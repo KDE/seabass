@@ -20,6 +20,7 @@
 #include "infrastructure/rekordbox/little_endian.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::application;
@@ -222,7 +223,7 @@ void extractZip(const fs::path &zipPath, const fs::path &destDir)
             static_cast<void>(inflateRc);
             inflateEnd(&stream);
         }
-        writeFile(destDir / name, content);
+        writeFile(destDir / seabass::pathFromUtf8(name), content);
     }
 }
 
@@ -239,7 +240,7 @@ int main()
     fs::create_directories(engineSource.parent_path());
     writeFile(rekordboxSource / "rekordbox" / "export.pdb", buildMinimalRekordboxPdb());
     {
-        auto db = djinterop::engine::create_database(engineSource.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(engineSource));
         djinterop::track_snapshot snapshot;
         snapshot.title = "Real Engine Title";
         snapshot.relative_path = "Contents/086_Real Artist Name-Real Track Title.mp3";  // same real filename as the rekordbox fixture
@@ -257,7 +258,7 @@ int main()
         options.hardware = "CDJ-3000";
         options.notes = "loop points sometimes drift";
 
-        auto summary = useCase.execute(rekordboxSource.string(), engineSource.string(), outDir.string(), options);
+        auto summary = useCase.execute(seabass::pathToUtf8(rekordboxSource), seabass::pathToUtf8(engineSource), seabass::pathToUtf8(outDir), options);
 
         // The export verifies itself before zipping and refuses to write
         // the file when it finds a leak, so say what it found rather than
@@ -285,7 +286,7 @@ int main()
         // The staging directory is gone -- everything lives in one zip
         // file now, not a loose tree the caller has to zip themselves.
         assert(!fs::exists(outDir));
-        assert(summary.outputZipPath == outDir.string() + ".zip");
+        assert(summary.outputZipPath == seabass::pathToUtf8(outDir) + ".zip");
         assert(fs::exists(summary.outputZipPath));
         assert(summary.finalZipBytes > 0);
         assert(summary.finalZipBytes == fs::file_size(summary.outputZipPath));
@@ -327,7 +328,7 @@ int main()
         // itself is broken.
         std::string rekordboxFilename =
             readRekordboxFilename(extracted / "rekordbox" / "rekordbox" / "export.pdb", 100);
-        auto engineDb = djinterop::engine::load_database((extracted / "engine").string());
+        auto engineDb = djinterop::engine::load_database(seabass::pathToUtf8(extracted / "engine"));
         auto engineTracks = engineDb.tracks();
         assert(engineTracks.size() == 1);
         std::string engineFilename = engineTracks[0].filename();
@@ -353,7 +354,7 @@ int main()
         fs::path outDir = root / "out_rekordbox_only";
         AnonymizeLibrary useCase;
         AnonymizationOptions options;
-        auto summary = useCase.execute(rekordboxSource.string(), std::nullopt, outDir.string(), options);
+        auto summary = useCase.execute(seabass::pathToUtf8(rekordboxSource), std::nullopt, seabass::pathToUtf8(outDir), options);
 
         assert(summary.succeeded());
         assert(summary.rekordboxAttempted);
@@ -371,7 +372,7 @@ int main()
         fs::path outDir = root / "out_bad_rekordbox";
         AnonymizeLibrary useCase;
         AnonymizationOptions options;
-        auto summary = useCase.execute((root / "does_not_exist").string(), engineSource.string(), outDir.string(),
+        auto summary = useCase.execute(seabass::pathToUtf8(root / "does_not_exist"), seabass::pathToUtf8(engineSource), seabass::pathToUtf8(outDir),
                                         options);
 
         assert(!summary.succeeded());
@@ -439,7 +440,7 @@ int main()
         writeFile(outDir / "keep" / "precious.txt", "do not delete");
         AnonymizeLibrary useCase;
         AnonymizationOptions options;
-        auto summary = useCase.execute(rekordboxSource.string(), engineSource.string(), outDir.string(), options);
+        auto summary = useCase.execute(seabass::pathToUtf8(rekordboxSource), seabass::pathToUtf8(engineSource), seabass::pathToUtf8(outDir), options);
         assert(!summary.succeeded());
         assert(!summary.outputError.empty());
         assert(!summary.rekordboxAttempted && !summary.engineAttempted);
@@ -447,16 +448,16 @@ int main()
         assert(!fs::exists(root / "out_existing.zip"));
 
         // Inside the library being read, or swallowing it: refused too.
-        auto inside = useCase.execute(rekordboxSource.string(), std::nullopt, (rekordboxSource / "anon").string(), options);
+        auto inside = useCase.execute(seabass::pathToUtf8(rekordboxSource), std::nullopt, seabass::pathToUtf8(rekordboxSource / "anon"), options);
         assert(!inside.succeeded() && inside.outputError.find("overlaps") != std::string::npos);
         assert(!fs::exists(rekordboxSource / "anon"));
-        auto swallowing = useCase.execute(rekordboxSource.string(), std::nullopt, rekordboxSource.parent_path().string(), options);
+        auto swallowing = useCase.execute(seabass::pathToUtf8(rekordboxSource), std::nullopt, seabass::pathToUtf8(rekordboxSource.parent_path()), options);
         assert(!swallowing.succeeded() && swallowing.outputError.find("overlaps") != std::string::npos);
 
         // An existing but empty directory is fine.
         fs::path emptyDir = root / "out_empty";
         fs::create_directories(emptyDir);
-        auto ok = useCase.execute(rekordboxSource.string(), engineSource.string(), emptyDir.string(), options);
+        auto ok = useCase.execute(seabass::pathToUtf8(rekordboxSource), seabass::pathToUtf8(engineSource), seabass::pathToUtf8(emptyDir), options);
         assert(ok.outputError.empty());
         std::cout << "case: an existing non-empty output directory is refused, an empty one accepted OK\n";
     }

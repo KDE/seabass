@@ -44,7 +44,9 @@
 #include "gui/edit/changes/remove_junk_cue_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
 
@@ -58,11 +60,11 @@ namespace
 
 fs::path freshCopy(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     assert(fs::exists(source / "rekordbox" / "export.pdb"));
     assert(fs::exists(source / "rekordbox" / "exportLibrary.db"));
     const fs::path pioneerRoot = scratch / "PIONEER";
@@ -76,7 +78,7 @@ fs::path freshCopy(const std::string &name)
 // would test the opposite of what this is for.
 std::optional<Track> findMirroredTrackWithJunk(const fs::path &pioneerRoot)
 {
-    const std::string root = pioneerRoot.string();
+    const std::string root = seabass::pathToUtf8(pioneerRoot);
     if (!seabass::infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root)) {
         return std::nullopt;
     }
@@ -105,7 +107,7 @@ std::map<std::string, std::string> snapshot(const fs::path &root)
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
+        const std::string name = seabass::pathToUtf8(entry.path().filename());
         // -shm is rebuilt from the -wal a rollback puts back; that is the
         // rollback working, not the stick changing.
         if (name.size() >= 4 && name.compare(name.size() - 4, 4, "-shm") == 0) {
@@ -124,7 +126,7 @@ std::map<std::string, std::string> snapshot(const fs::path &root)
             continue;
         }
         std::ifstream in(entry.path(), std::ios::binary);
-        files[fs::relative(entry.path(), root).generic_string()] =
+        files[seabass::pathToGenericUtf8(fs::relative(entry.path(), root))] =
             std::string(std::istreambuf_iterator<char>(in), {});
     }
     return files;
@@ -133,7 +135,7 @@ std::map<std::string, std::string> snapshot(const fs::path &root)
 void setMirrorReadOnly(const fs::path &pioneerRoot, bool readOnly)
 {
     const fs::path db = pioneerRoot / "rekordbox" / "exportLibrary.db";
-    for (const fs::path &file : {db, fs::path(db.string() + "-wal"), fs::path(db.string() + "-shm")}) {
+    for (const fs::path &file : {db, fs::path(db).concat("-wal"), fs::path(db).concat("-shm")}) {
         std::error_code ec;
         if (!fs::exists(file, ec)) {
             continue;
@@ -151,7 +153,7 @@ SaveLoopResult removeJunkThroughSave(const fs::path &pioneerRoot, const Track &t
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    const QString root = QString::fromStdString(pioneerRoot.string());
+    const QString root = seabass::gui::pathToQString(pioneerRoot);
     SaveContext ctx(token, noProgress, {}, root, {});
     std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<RemoveJunkCueChange>(root, track)};
     return runSaveLoop(changes, ctx);

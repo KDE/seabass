@@ -15,11 +15,13 @@
 #include <sstream>
 #include <string>
 
+#include "../src/infrastructure/paths/utf8_path.hpp"
+
 namespace fs = std::filesystem;
 
 int main()
 {
-    const fs::path qmlDir = fs::path(SEABASS_SOURCE_DIR) / "src" / "gui" / "qml";
+    const fs::path qmlDir = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "src" / "gui" / "qml";
     int checked = 0;
     bool ok = true;
     for (const auto &entry : fs::recursive_directory_iterator(qmlDir)) {
@@ -36,7 +38,7 @@ int main()
         }
         ++checked;
         if (text.find("onBackupLocationDeclined") == std::string::npos) {
-            std::cerr << entry.path().filename().string()
+            std::cerr << seabass::pathToUtf8(entry.path().filename())
                       << ": hosts an edit session but ignores backupLocationDeclined -- Cancel on the "
                          "low-space question would close the dialog and change nothing\n";
             ok = false;

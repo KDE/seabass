@@ -23,6 +23,7 @@
 
 #include <djinterop/djinterop.hpp>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -44,7 +45,7 @@ void writePdbWithSequence(const fs::path &pioneer, std::uint32_t sequence)
 void setCounter(const fs::path &library, std::int64_t value)
 {
     sqlite3 *db = nullptr;
-    assert(sqlite3_open((library / "Database2" / "m.db").string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
     // No id in the statement: a library libdjinterop created numbers this
     // row 2 and an Engine-written one numbers it 1, which is exactly the
     // assumption this test was written to catch.
@@ -63,13 +64,13 @@ int main()
     const fs::path library = root / "Engine Library";
     const fs::path pioneer = root / "PIONEER";
     fs::create_directories(library);
-    { auto db = djinterop::engine::create_database(library.string()); }
+    { auto db = djinterop::engine::create_database(seabass::pathToUtf8(library)); }
 
     // 1. The two numbers apart: the player will ask.
     {
         writePdbWithSequence(pioneer, 15217);
         setCounter(library, 14204);
-        const auto state = readRekordboxImportState(library.string(), pioneer.string());
+        const auto state = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));
         assert(state.error.empty());
         assert(state.hasEngineLibrary && state.hasRekordboxLibrary);
         assert(state.engineCounter == 14204 && state.librarySequence == 15217);
@@ -80,9 +81,9 @@ int main()
     // 2. Marking it imported is what makes the question stop.
     {
         std::string error;
-        assert(markRekordboxLibraryImported(library.string(), 15217, &error));
+        assert(markRekordboxLibraryImported(seabass::pathToUtf8(library), 15217, &error));
         assert(error.empty());
-        const auto state = readRekordboxImportState(library.string(), pioneer.string());
+        const auto state = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));
         assert(state.engineCounter == 15217);
         assert(!state.playerWillOfferImport());
         std::cout << "case 2 (level counters: nothing is offered) OK\n";
@@ -92,16 +93,16 @@ int main()
     //    is a fact about two libraries, not a setting that stays off.
     {
         writePdbWithSequence(pioneer, 15300);
-        const auto state = readRekordboxImportState(library.string(), pioneer.string());
+        const auto state = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));
         assert(state.playerWillOfferImport());
         std::cout << "case 3 (a rekordbox library that moved on asks again) OK\n";
     }
 
     // 4. A stick with only one of the two libraries has nothing to say.
     {
-        const auto engineOnly = readRekordboxImportState(library.string(), (root / "nowhere").string());
+        const auto engineOnly = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(root / "nowhere"));
         assert(!engineOnly.playerWillOfferImport() && !engineOnly.hasRekordboxLibrary);
-        const auto rekordboxOnly = readRekordboxImportState((root / "nowhere").string(), pioneer.string());
+        const auto rekordboxOnly = readRekordboxImportState(seabass::pathToUtf8(root / "nowhere"), seabass::pathToUtf8(pioneer));
         assert(!rekordboxOnly.playerWillOfferImport() && !rekordboxOnly.hasEngineLibrary);
         std::cout << "case 4 (one library alone is not a finding) OK\n";
     }

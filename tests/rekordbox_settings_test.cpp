@@ -14,6 +14,7 @@
 #include "infrastructure/rekordbox/rekordbox_settings_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_settings_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -58,10 +59,10 @@ int main()
             ofs.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         }
 
-        bool ok = writeDeviceSettingField(dir.string(), "MYSETTING.DAT", "Auto cue level", "-60dB");
+        bool ok = writeDeviceSettingField(seabass::pathToUtf8(dir), "MYSETTING.DAT", "Auto cue level", "-60dB");
         assert(ok);
 
-        auto files = readDeviceSettings(dir.string());
+        auto files = readDeviceSettings(seabass::pathToUtf8(dir));
         assert(files.size() == 1);
         bool found = false;
         for (const auto &[label, value] : files[0].fields) {
@@ -87,8 +88,8 @@ int main()
             ofs.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         }
 
-        assert(!writeDeviceSettingField(dir.string(), "MYSETTING.DAT", "Not a real field", "on"));
-        assert(!writeDeviceSettingField(dir.string(), "MYSETTING.DAT", "Auto cue level", "Not a real option"));
+        assert(!writeDeviceSettingField(seabass::pathToUtf8(dir), "MYSETTING.DAT", "Not a real field", "on"));
+        assert(!writeDeviceSettingField(seabass::pathToUtf8(dir), "MYSETTING.DAT", "Auto cue level", "Not a real option"));
         std::cout << "case 3 (unknown field/option refused) OK\n";
 
         std::filesystem::remove_all(dir);
@@ -150,7 +151,7 @@ int main()
             ofs.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         }
         bool found = false;
-        for (const auto &[label, value] : readDeviceSettings(dir.string())[0].fields) {
+        for (const auto &[label, value] : readDeviceSettings(seabass::pathToUtf8(dir))[0].fields) {
             if (label == "Quantize") {
                 assert(value == "unknown (0x82)");
                 found = true;

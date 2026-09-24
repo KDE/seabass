@@ -36,6 +36,7 @@
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -56,8 +57,8 @@ Track makeTrack(const std::string &id, const std::string &title, const fs::path 
     track.sourceId = id;
     track.title = title;
     track.artist = "An Artist";
-    track.filePath = file.string();
-    track.filename = file.filename().string();
+    track.filePath = seabass::pathToUtf8(file);
+    track.filename = seabass::pathToUtf8(file.filename());
     track.bpm = 128.0;
     track.durationSeconds = 300.0;
     return track;
@@ -81,7 +82,7 @@ bool mentions(const std::vector<std::string> &missing, const std::string &needle
 void markStreaming(const fs::path &stickRoot, const std::string &title, const std::string &source)
 {
     sqlite3 *db = nullptr;
-    assert(sqlite3_open(engineMainDatabasePath(stickRoot).string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(engineMainDatabasePath(stickRoot)).c_str(), &db) == SQLITE_OK);
     const std::string sql = "UPDATE Track SET streamingSource = '" + source + "' WHERE title = '" + title + "'";
     char *error = nullptr;
     const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &error);
@@ -129,7 +130,7 @@ int main()
 
         const std::vector<Track> tracks{makeTrack("1", "One", first), makeTrack("2", "Two", second)};
         const auto created =
-            EngineLibraryCreator::create(engineLibraryPath(root).string(), tracks, EngineSchemaGeneration::V2);
+            EngineLibraryCreator::create(seabass::pathToUtf8(engineLibraryPath(root)), tracks, EngineSchemaGeneration::V2);
         assert(created.errorMessage.empty());
         assert(created.tracksCreated == 2);
 
@@ -163,7 +164,7 @@ int main()
 
         const std::vector<Track> tracks{makeTrack("1", "One", first), makeTrack("2", "Two", second)};
         const auto created =
-            EngineLibraryCreator::create(engineLibraryPath(root).string(), tracks, EngineSchemaGeneration::V2);
+            EngineLibraryCreator::create(seabass::pathToUtf8(engineLibraryPath(root)), tracks, EngineSchemaGeneration::V2);
         assert(created.errorMessage.empty());
 
         fs::remove_all(root / "Contents", ec);
@@ -187,7 +188,7 @@ int main()
 
         const std::vector<Track> tracks{makeTrack("1", "Local", local), makeTrack("2", "Streamed", streamed)};
         const auto created =
-            EngineLibraryCreator::create(engineLibraryPath(root).string(), tracks, EngineSchemaGeneration::V2);
+            EngineLibraryCreator::create(seabass::pathToUtf8(engineLibraryPath(root)), tracks, EngineSchemaGeneration::V2);
         assert(created.errorMessage.empty());
 
         markStreaming(root, "Streamed", "tidal://track/12345");

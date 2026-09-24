@@ -35,6 +35,7 @@
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -53,14 +54,14 @@ std::optional<domain::LibraryFingerprint> fingerprintOf(const fs::path &root)
     bool anyRead = false;
     const fs::path pioneer = root / "PIONEER";
     if (fs::exists(pioneer / "rekordbox" / "export.pdb")) {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneer));
         std::vector<domain::Track> read = ScanLibrary(reader).execute();
         tracks.insert(tracks.end(), read.begin(), read.end());
         anyRead = true;
     }
     const fs::path engine = root / "Engine Library";
     if (fs::exists(engine / "Database2" / "m.db")) {
-        infrastructure::engine::LibdjinteropEngineReader reader(engine.string());
+        infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(engine));
         std::vector<domain::Track> read = ScanLibrary(reader).execute();
         tracks.insert(tracks.end(), read.begin(), read.end());
         anyRead = true;
@@ -77,7 +78,7 @@ std::optional<domain::LibraryFingerprint> fingerprintOf(const fs::path &root)
 // agree with itself no matter what this code did.
 fs::path buildStick(const fs::path &root)
 {
-    const fs::path fixture = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library";
+    const fs::path fixture = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library";
     const fs::path stick = root / "stick";
     fs::create_directories(stick);
     fs::copy(fixture / "rekordbox", stick / "PIONEER", fs::copy_options::recursive);
@@ -124,7 +125,7 @@ void theHeaderDescribesTheArchiveItSitsIn(const fs::path &root)
     assert(filesCopiedWhenAsked > 0 && "the fingerprint was taken before anything had been copied");
     std::cout << "  asked once, after " << filesCopiedWhenAsked << " file(s) were copied\n";
 
-    const StickBackupDescription described = RestoreStickBackup::describe(options.archivePath.string());
+    const StickBackupDescription described = RestoreStickBackup::describe(seabass::pathToUtf8(options.archivePath));
     const auto recorded = domain::LibraryFingerprint::parse(described.libraryFingerprint);
     assert(recorded && "a completed backup of a readable library must record a fingerprint");
 
@@ -170,7 +171,7 @@ void aCancelledRunKeepsThePreviousFingerprint(const fs::path &root)
     options.stickLabel = "FIXTURE";
     options.readLibraryFingerprint = [] { return std::string("v1;1;1;1;0000000000000001"); };
     assert(BackupStick::execute(options).status == BackupOutcomeStatus::Complete);
-    const std::string afterFirst = RestoreStickBackup::describe(options.archivePath.string()).libraryFingerprint;
+    const std::string afterFirst = RestoreStickBackup::describe(seabass::pathToUtf8(options.archivePath)).libraryFingerprint;
     assert(afterFirst == "v1;1;1;1;0000000000000001");
 
     // Second run over the same archive, cancelled, offering a different
@@ -181,7 +182,7 @@ void aCancelledRunKeepsThePreviousFingerprint(const fs::path &root)
     cancel.cancel();
     const BackupStickOutcome second = BackupStick::execute(options);
     assert(second.status != BackupOutcomeStatus::Complete);
-    const std::string afterCancel = RestoreStickBackup::describe(options.archivePath.string()).libraryFingerprint;
+    const std::string afterCancel = RestoreStickBackup::describe(seabass::pathToUtf8(options.archivePath)).libraryFingerprint;
     std::cout << "  after a cancelled update the header still reads: " << afterCancel << "\n";
     assert(afterCancel == afterFirst);
 }

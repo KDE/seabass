@@ -42,6 +42,8 @@
 #include "gui/edit/changes/add_cue_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
 
@@ -62,11 +64,11 @@ struct Target
 
 fs::path freshCopy(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     assert(fs::exists(source / "rekordbox" / "export.pdb"));
     assert(fs::exists(source / "rekordbox" / "exportLibrary.db"));
     const fs::path pioneerRoot = scratch / "PIONEER";
@@ -79,7 +81,7 @@ fs::path freshCopy(const std::string &name)
 // is only attempted for a track with one.
 Target findTarget(const fs::path &pioneerRoot)
 {
-    seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneerRoot.string());
+    seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneerRoot));
     for (const Track &track : reader.readAll()) {
         if (track.filePath.empty()) {
             continue;
@@ -115,12 +117,12 @@ std::map<std::string, std::string> snapshot(const fs::path &pioneerRoot)
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
+        const std::string name = seabass::pathToUtf8(entry.path().filename());
         if (name.size() >= 4 && name.compare(name.size() - 4, 4, "-shm") == 0) {
             continue;
         }
         std::ifstream in(entry.path(), std::ios::binary);
-        files[fs::relative(entry.path(), pioneerRoot).generic_string()] =
+        files[seabass::pathToGenericUtf8(fs::relative(entry.path(), pioneerRoot))] =
             std::string(std::istreambuf_iterator<char>(in), {});
     }
     return files;
@@ -130,7 +132,7 @@ SaveLoopResult addCueThroughSave(const fs::path &pioneerRoot, const Target &targ
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    const QString root = QString::fromStdString(pioneerRoot.string());
+    const QString root = seabass::gui::pathToQString(pioneerRoot);
     // (cancel, progress, status sink, rekordbox path, engine path)
     SaveContext ctx(token, noProgress, {}, root, {});
     std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
@@ -167,7 +169,7 @@ int main()
         const Target target = findTarget(pioneerRoot);
         assert(target.freeSlot != 0);
         const fs::path db = pioneerRoot / "rekordbox" / "exportLibrary.db";
-        const std::vector<fs::path> dbFiles = {db, fs::path(db.string() + "-wal"), fs::path(db.string() + "-shm")};
+        const std::vector<fs::path> dbFiles = {db, fs::path(db).concat("-wal"), fs::path(db).concat("-shm")};
         for (const fs::path &file : dbFiles) {
             std::error_code ec;
             if (fs::exists(file, ec)) {

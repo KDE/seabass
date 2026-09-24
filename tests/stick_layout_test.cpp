@@ -9,6 +9,7 @@
 
 #include "infrastructure/stick_layout.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -29,8 +30,8 @@ int main()
     fs::remove_all(root);
     fs::create_directories(root);
 
-    const std::string pioneer = (root / "PIONEER").string();
-    const std::string engineLib = (root / "Engine Library").string();
+    const std::string pioneer = seabass::pathToUtf8(root / "PIONEER");
+    const std::string engineLib = seabass::pathToUtf8(root / "Engine Library");
 
     // Case 1: nothing on the stick yet -- every catalog is absent, and
     // absent must read as empty rather than as a path a writer would

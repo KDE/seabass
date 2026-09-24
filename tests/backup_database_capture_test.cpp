@@ -18,6 +18,7 @@
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::stick_backup;
@@ -40,7 +41,7 @@ void execSql(sqlite3 *db, const char *sql)
 sqlite3 *openDb(const fs::path &path)
 {
     sqlite3 *db = nullptr;
-    assert(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(path).c_str(), &db) == SQLITE_OK);
     return db;
 }
 
@@ -335,7 +336,7 @@ int main()
         assert(refused.entries.empty() && healthy.updater->newEntryCount() == 0);
         // Two members truncated: the detail names both, not the last.
         {
-            const fs::path journal = fs::path(db.string() + "-journal");
+            const fs::path journal = fs::path(db).concat("-journal");
             {
                 std::ofstream out(journal, std::ios::binary);
                 out << std::string(20'000, 'j');

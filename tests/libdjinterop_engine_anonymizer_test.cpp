@@ -11,6 +11,7 @@
 
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::engine;
@@ -31,7 +32,7 @@ int main()
         // A real, fresh Engine database -- same trust level as the
         // rest of this codebase's Engine-side tests. Tracks 1 and 2
         // share a real artist; track 3 has a different one.
-        auto db = djinterop::engine::create_database(sourceRoot.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(sourceRoot));
 
         djinterop::track_snapshot snapshot;
         snapshot.title = "Real Title 1";
@@ -78,14 +79,14 @@ int main()
         nested.add_track_back(track3);
     }
 
-    auto result = anonymizeEngineLibrary(sourceRoot.string(), destRoot.string());
+    auto result = anonymizeEngineLibrary(seabass::pathToUtf8(sourceRoot), seabass::pathToUtf8(destRoot));
 
     assert(result.errorMessage.empty());
     assert(result.tracksAnonymized == 3);
     assert(result.playlistsRenamed == 2);  // root + nested
     std::cout << "case 1 (anonymizeEngineLibrary: rename counts correct) OK\n";
 
-    auto dbAfter = djinterop::engine::load_database(destRoot.string());
+    auto dbAfter = djinterop::engine::load_database(seabass::pathToUtf8(destRoot));
     assert(dbAfter.track_by_id(track1Id).has_value());
     assert(dbAfter.track_by_id(track2Id).has_value());
     assert(dbAfter.track_by_id(track3Id).has_value());
@@ -149,7 +150,7 @@ int main()
     std::cout << "case 7 (the path keeps its hops out of Engine Library, loses the real folders) OK\n";
 
     // Source untouched -- every edit happens on the destination copy.
-    auto dbSource = djinterop::engine::load_database(sourceRoot.string());
+    auto dbSource = djinterop::engine::load_database(seabass::pathToUtf8(sourceRoot));
     auto sourceTrack1 = *dbSource.track_by_id(track1Id);
     assert(sourceTrack1.title() == std::optional<std::string>("Real Title 1"));
     assert(sourceTrack1.hot_cue_at(0)->label == "Real Drop Cue");

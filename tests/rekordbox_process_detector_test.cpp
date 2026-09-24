@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <cassert>
+#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -29,6 +30,7 @@
 #include <sys/param.h>
 #endif
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 
 using namespace seabass::infrastructure::system;
@@ -46,11 +48,10 @@ namespace
 std::string selfProcessNameForDetector()
 {
 #if defined(_WIN32)
-    char selfExe[MAX_PATH] = {};
-    DWORD n = ::GetModuleFileNameA(nullptr, selfExe, sizeof(selfExe));
-    assert(n > 0 && n < sizeof(selfExe));
-    std::string exePath(selfExe, n);
-    std::string baseName = exePath.substr(exePath.find_last_of("\\/") + 1);
+    wchar_t selfExe[MAX_PATH] = {};
+    DWORD n = ::GetModuleFileNameW(nullptr, selfExe, MAX_PATH);
+    assert(n > 0 && n < MAX_PATH);
+    std::string baseName = seabass::pathToUtf8(std::filesystem::path(std::wstring(selfExe, n)).filename());
     size_t dot = baseName.rfind(".exe");
     if (dot != std::string::npos && dot == baseName.size() - 4) {
         baseName = baseName.substr(0, dot);
