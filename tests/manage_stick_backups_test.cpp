@@ -18,6 +18,7 @@
 #include "application/use_cases/manage_stick_backups.hpp"
 #include "domain/library_fingerprint.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 #include "scratch_path.hpp"
 
@@ -91,7 +92,7 @@ int main()
 
     // ---- deleting while something writes the archive ----
     {
-        seabass::infrastructure::backup::StickWriteLock writer(journal::lockPathFor(main).string());
+        seabass::infrastructure::backup::StickWriteLock writer(seabass::pathToUtf8(journal::lockPathFor(main)));
         const DeleteStickBackupResult refused = ManageStickBackups::remove(main);
         assert(refused.status == DeleteStickBackupResult::Status::Busy);
         assert(!refused.message.empty());

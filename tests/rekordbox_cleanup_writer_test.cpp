@@ -14,6 +14,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cleanup_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -165,7 +166,7 @@ int main()
     // playlist 2 (which already had 101) is untouched.
     {
         writeFile(pdbPath, pristine);
-        RekordboxCleanupWriter writer(scratchRoot.string());
+        RekordboxCleanupWriter writer(seabass::pathToUtf8(scratchRoot));
         writer.removeTrackReplacingWith("100", "101");
 
         auto rb = readBack(pdbPath);
@@ -180,7 +181,7 @@ int main()
     // Not-found cases throw (doomed id, then survivor id).
     {
         writeFile(pdbPath, pristine);
-        RekordboxCleanupWriter writer(scratchRoot.string());
+        RekordboxCleanupWriter writer(seabass::pathToUtf8(scratchRoot));
         bool threw = false;
         try {
             writer.removeTrackReplacingWith("999999", "101");

@@ -11,6 +11,7 @@
 
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 // PdbRowWriter's staleness guard, against the one case that twice defeated
@@ -69,7 +70,7 @@ fs::path freshFixtureCopy(const fs::path &scratch)
     fs::remove_all(scratch);
     fs::create_directories(scratch);
     fs::path source =
-        fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox" / "rekordbox" / "export.pdb";
+        seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox" / "rekordbox" / "export.pdb";
     assert(fs::exists(source));
     fs::path dest = scratch / "export.pdb";
     fs::copy_file(source, dest);
@@ -98,7 +99,7 @@ int main()
         fs::path pdbPath = freshFixtureCopy(scratch);
         const std::string pristine = readFile(pdbPath);
 
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         const bool edited = writer.overwriteTrackText(1, titleOverride("staleness probe control"));
         assert(edited);
         const bool committed = writer.commit();
@@ -111,7 +112,7 @@ int main()
     {
         fs::path pdbPath = freshFixtureCopy(scratch);
 
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         const bool edited = writer.overwriteTrackText(1, titleOverride("staleness probe stale"));
         assert(edited);
 

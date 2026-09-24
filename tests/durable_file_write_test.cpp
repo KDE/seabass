@@ -11,6 +11,7 @@
 
 #include "infrastructure/durable_file_write.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure;
@@ -48,13 +49,13 @@ int main()
         fs::path source = root / "new1.db";
         writeFile(source, "new content, replacing the old");
 
-        bool ok = copyFileDurablyAtomic(source.string(), target.string());
+        bool ok = copyFileDurablyAtomic(seabass::pathToUtf8(source), seabass::pathToUtf8(target));
         assert(ok);
         assert(readFile(target) == "new content, replacing the old");
 
         int strayTempFiles = 0;
         for (const auto &entry : fs::directory_iterator(root)) {
-            if (entry.path().filename().string().find(".tmp-") != std::string::npos) {
+            if (seabass::pathToUtf8(entry.path().filename()).find(".tmp-") != std::string::npos) {
                 strayTempFiles++;
             }
         }
@@ -68,7 +69,7 @@ int main()
         fs::path source = root / "new2.db";
         writeFile(source, "first write");
 
-        bool ok = copyFileDurablyAtomic(source.string(), target.string());
+        bool ok = copyFileDurablyAtomic(seabass::pathToUtf8(source), seabass::pathToUtf8(target));
         assert(ok);
         assert(readFile(target) == "first write");
         std::cout << "case 2 (target didn't exist yet) OK\n";
@@ -79,7 +80,7 @@ int main()
         fs::path target = root / "untouched.db";
         writeFile(target, "must survive");
 
-        bool ok = copyFileDurablyAtomic((root / "does_not_exist.db").string(), target.string());
+        bool ok = copyFileDurablyAtomic(seabass::pathToUtf8(root / "does_not_exist.db"), seabass::pathToUtf8(target));
         assert(!ok);
         assert(readFile(target) == "must survive");
         std::cout << "case 3 (missing source leaves target untouched) OK\n";
@@ -97,11 +98,11 @@ int main()
     {
         fs::path target = root / "recovers_from_stale_temp.db";
         writeFile(target, "old content");
-        fs::path staleTemp = fs::path(target.string() + ".tmp-seabass-write");
+        fs::path staleTemp = fs::path(target).concat(".tmp-seabass-write");
         writeFile(staleTemp, "garbage left over from a previous interrupted write, wrong length too");
         assert(fs::exists(staleTemp));
 
-        bool ok = writeFileDurablyAtomic(target.string(), "correct new content");
+        bool ok = writeFileDurablyAtomic(seabass::pathToUtf8(target), "correct new content");
         assert(ok);
         assert(readFile(target) == "correct new content");
         assert(!fs::exists(staleTemp));  // consumed by the write, not left behind again
@@ -124,7 +125,7 @@ int main()
         writeFile(target, "must survive an impossible write");
         fs::permissions(lockedDir, fs::perms::owner_read | fs::perms::owner_exec);
 
-        bool ok = writeFileDurablyAtomic(target.string(), "this must never land");
+        bool ok = writeFileDurablyAtomic(seabass::pathToUtf8(target), "this must never land");
 
         fs::permissions(lockedDir, fs::perms::owner_all);  // restore so cleanup can remove it below
 
@@ -164,11 +165,11 @@ int main()
     // case to extend.
     {
         const fs::path target = root / "copy-target.db";
-        writeFileDurablyAtomic(target.string(), "the good database");
+        writeFileDurablyAtomic(seabass::pathToUtf8(target), "the good database");
         const fs::path unreadable = root / "a-directory";
         fs::create_directories(unreadable);
 
-        const bool ok = copyFileDurablyAtomic(unreadable.string(), target.string());
+        const bool ok = copyFileDurablyAtomic(seabass::pathToUtf8(unreadable), seabass::pathToUtf8(target));
         assert(!ok && "a source that cannot be read whole must be refused");
         assert(readFile(target) == "the good database" && "and the target must be untouched");
         std::cout << "case 6 (a source that cannot be read whole -> refused, target survives) OK\n";
@@ -179,8 +180,8 @@ int main()
     {
         const fs::path source = root / "copy-source.db";
         const fs::path target = root / "copy-target-2.db";
-        writeFileDurablyAtomic(source.string(), "bytes worth copying");
-        assert(copyFileDurablyAtomic(source.string(), target.string()));
+        writeFileDurablyAtomic(seabass::pathToUtf8(source), "bytes worth copying");
+        assert(copyFileDurablyAtomic(seabass::pathToUtf8(source), seabass::pathToUtf8(target)));
         assert(readFile(target) == "bytes worth copying");
         std::cout << "case 6b (a readable source still copies) OK\n";
     }

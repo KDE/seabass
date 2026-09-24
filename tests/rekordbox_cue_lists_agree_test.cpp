@@ -41,6 +41,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -154,7 +155,7 @@ int main(int argc, char **argv)
 
     // One track whose analysis pair is both present: the write touches
     // both files, so a track missing either proves nothing here.
-    const AnlzPathIndex index(pioneerRoot.string());
+    const AnlzPathIndex index(seabass::pathToUtf8(pioneerRoot));
     uint32_t chosenId = 0;
     std::string chosenPath;
     for (uint32_t id = 1; id < 50000 && chosenId == 0; ++id) {
@@ -162,9 +163,9 @@ int main(int argc, char **argv)
         if (!path) {
             continue;
         }
-        const std::string dat = datAnlzPath(pioneerRoot.string(), *path);
-        const std::string ext = extAnlzPath(pioneerRoot.string(), *path);
-        if (fs::exists(dat) && fs::exists(ext)) {
+        const std::string dat = datAnlzPath(seabass::pathToUtf8(pioneerRoot), *path);
+        const std::string ext = extAnlzPath(seabass::pathToUtf8(pioneerRoot), *path);
+        if (fs::exists(seabass::pathFromUtf8(dat)) && fs::exists(seabass::pathFromUtf8(ext))) {
             chosenId = id;
             chosenPath = *path;
         }
@@ -181,13 +182,13 @@ int main(int argc, char **argv)
     const fs::path root = scratch / "PIONEER";
     fs::create_directories(root / "rekordbox");
     fs::copy_file(exportPdb, root / "rekordbox" / "export.pdb");
-    const fs::path anlzDir = fs::path(datAnlzPath(pioneerRoot.string(), chosenPath)).parent_path();
+    const fs::path anlzDir = seabass::pathFromUtf8(datAnlzPath(seabass::pathToUtf8(pioneerRoot), chosenPath)).parent_path();
     const fs::path anlzTarget = root / "USBANLZ" / anlzDir.parent_path().filename() / anlzDir.filename();
     fs::create_directories(anlzTarget);
     fs::copy(anlzDir, anlzTarget, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
 
-    const fs::path datPath = datAnlzPath(root.string(), chosenPath);
-    const fs::path extPath = extAnlzPath(root.string(), chosenPath);
+    const fs::path datPath = seabass::pathFromUtf8(datAnlzPath(seabass::pathToUtf8(root), chosenPath));
+    const fs::path extPath = seabass::pathFromUtf8(extAnlzPath(seabass::pathToUtf8(root), chosenPath));
     std::cout << "track id " << chosenId << ", analysis at " << anlzTarget << "\n";
 
     // --- a full set of cues, every slot a player can show -------------
@@ -200,7 +201,7 @@ int main(int argc, char **argv)
     memory.positionMs = 4399.0;
     cues.push_back(memory);
 
-    RekordboxCueWriter writer(root.string());
+    RekordboxCueWriter writer(seabass::pathToUtf8(root));
     writer.writeHotCues(std::to_string(chosenId), cues);
 
     const auto modernHot = modernCues(extPath, CueListTypeHot);

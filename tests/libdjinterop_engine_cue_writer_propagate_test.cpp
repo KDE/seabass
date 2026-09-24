@@ -13,6 +13,7 @@
 
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::engine;
@@ -28,7 +29,7 @@ namespace
 fs::path freshRoot(const std::string &caseName)
 {
     fs::path root =
-        seabass::testing::scratchRoot() / "seabass_engine_cue_writer_propagate_test" / caseName / "Engine Library";
+        seabass::testing::scratchRoot() / "seabass_engine_cue_writer_propagate_test" / seabass::pathFromUtf8(caseName) / "Engine Library";
     fs::remove_all(root.parent_path());
     fs::create_directories(root.parent_path());
     return root;
@@ -43,7 +44,7 @@ int main()
     // get from a donor copy elsewhere in its duplicate group.
     {
         fs::path root = freshRoot("case1");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         djinterop::track_snapshot snapshot;
         snapshot.title = "Survivor";
         snapshot.relative_path = "survivor.mp3";
@@ -51,10 +52,10 @@ int main()
         assert(!track.bpm().has_value());
         assert(!track.key().has_value());
 
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.propagateMissingFields(std::to_string(track.id()), 128.0, std::string("Fm"));
 
-        auto dbAfter = djinterop::engine::load_database(root.string());
+        auto dbAfter = djinterop::engine::load_database(seabass::pathToUtf8(root));
         auto after = dbAfter.track_by_id(track.id());
         assert(after.has_value());
         assert(after->bpm().has_value() && *after->bpm() == 128.0);
@@ -66,16 +67,16 @@ int main()
     // that field is written.
     {
         fs::path root = freshRoot("case2");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         djinterop::track_snapshot snapshot;
         snapshot.title = "PartialSurvivor";
         snapshot.relative_path = "partial.mp3";
         auto track = db.create_track(snapshot);
 
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.propagateMissingFields(std::to_string(track.id()), std::nullopt, std::string("Am"));
 
-        auto dbAfter = djinterop::engine::load_database(root.string());
+        auto dbAfter = djinterop::engine::load_database(seabass::pathToUtf8(root));
         auto after = dbAfter.track_by_id(track.id());
         assert(after.has_value());
         assert(!after->bpm().has_value());
@@ -86,16 +87,16 @@ int main()
     // Neither field passed -- no-op, no throw.
     {
         fs::path root = freshRoot("case3");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         djinterop::track_snapshot snapshot;
         snapshot.title = "Untouched";
         snapshot.relative_path = "untouched.mp3";
         auto track = db.create_track(snapshot);
 
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.propagateMissingFields(std::to_string(track.id()), std::nullopt, std::nullopt);
 
-        auto dbAfter = djinterop::engine::load_database(root.string());
+        auto dbAfter = djinterop::engine::load_database(seabass::pathToUtf8(root));
         auto after = dbAfter.track_by_id(track.id());
         assert(after.has_value());
         assert(!after->bpm().has_value());
@@ -106,8 +107,8 @@ int main()
     // Unknown track id throws.
     {
         fs::path root = freshRoot("case4");
-        auto db = djinterop::engine::create_database(root.string());
-        LibdjinteropEngineCueWriter writer(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         bool threw = false;
         try {
             writer.propagateMissingFields("999999", 120.0, std::nullopt);
@@ -121,7 +122,7 @@ int main()
     // setLastPlayedAt: a Clean Up survivor gets its copies' latest play.
     {
         fs::path root = freshRoot("case5");
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
         djinterop::track_snapshot snapshot;
         snapshot.title = "Played";
         snapshot.relative_path = "played.mp3";
@@ -129,10 +130,10 @@ int main()
         assert(!track.last_played_at().has_value());
         const auto when = std::chrono::system_clock::time_point(std::chrono::seconds(1'700'000'000));
 
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.setLastPlayedAt(std::to_string(track.id()), when);
 
-        auto dbAfter = djinterop::engine::load_database(root.string());
+        auto dbAfter = djinterop::engine::load_database(seabass::pathToUtf8(root));
         auto after = dbAfter.track_by_id(track.id());
         assert(after.has_value() && after->last_played_at().has_value());
         assert(std::chrono::duration_cast<std::chrono::seconds>(after->last_played_at()->time_since_epoch()).count()

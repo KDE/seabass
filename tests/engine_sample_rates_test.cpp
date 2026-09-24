@@ -20,6 +20,7 @@
 
 #include <djinterop/djinterop.hpp>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -41,7 +42,7 @@ int main()
     std::int64_t withoutRate = 0;
     std::int64_t noFile = 0;
     {
-        auto db = djinterop::engine::create_database(library.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(library));
         djinterop::track_snapshot known;
         known.title = "Knows Its Rate";
         known.relative_path = "../Contents/knows.mp3";
@@ -62,7 +63,7 @@ int main()
     // 1. The audit finds the rows that cannot say, and asks the file.
     {
         const auto probe = [](const std::string &file) { return file.find("quiet.mp3") != std::string::npos ? 48000.0 : 0.0; };
-        const SampleRateAudit audit = auditSampleRates(library.string(), probe);
+        const SampleRateAudit audit = auditSampleRates(seabass::pathToUtf8(library), probe);
         assert(audit.error.empty());
         assert(audit.tracksChecked == 3);
         assert(audit.missing.size() == 2 && "the one that knows is not a finding");
@@ -75,18 +76,18 @@ int main()
 
         // 2. The repair writes what the file said, leaves the rest, and
         //    the audit then has nothing to say about that track.
-        const SampleRateRepair repair = repairSampleRates(library.string(), audit.missing);
+        const SampleRateRepair repair = repairSampleRates(seabass::pathToUtf8(library), audit.missing);
         assert(repair.error.empty());
         assert(repair.repaired == 1);
         assert(repair.skipped == 1 && "nothing to write is a skip, not a failure");
 
-        auto db = djinterop::engine::load_database(library.string());
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(library));
         auto fixed = db.track_by_id(withoutRate);
         assert(fixed && fixed->sample_rate() && *fixed->sample_rate() == 48000.0);
         auto untouched = db.track_by_id(withRate);
         assert(untouched && *untouched->sample_rate() == 44100.0);
 
-        const SampleRateAudit after = auditSampleRates(library.string(), probe);
+        const SampleRateAudit after = auditSampleRates(seabass::pathToUtf8(library), probe);
         assert(after.missing.size() == 1 && after.missing[0].trackId == noFile);
         assert(after.fixable() == 0);
         std::cout << "case 2 (the file's answer is written, and only that) OK\n";
@@ -96,7 +97,7 @@ int main()
     //    rows are affected before deciding whether to read a thousand
     //    files.
     {
-        const SampleRateAudit audit = auditSampleRates(library.string());
+        const SampleRateAudit audit = auditSampleRates(seabass::pathToUtf8(library));
         assert(audit.missing.size() == 1);
         assert(audit.fixable() == 0);
         std::cout << "case 3 (a count without a probe is still a count) OK\n";
@@ -104,7 +105,7 @@ int main()
 
     // 4. A directory with no Engine library is not a fault.
     {
-        const SampleRateAudit audit = auditSampleRates((root / "Contents").string());
+        const SampleRateAudit audit = auditSampleRates(seabass::pathToUtf8(root / "Contents"));
         assert(audit.error.empty() && audit.tracksChecked == 0 && audit.missing.empty());
         std::cout << "case 4 (no Engine library, nothing to report) OK\n";
     }

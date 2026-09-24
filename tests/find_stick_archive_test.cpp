@@ -25,6 +25,7 @@
 #include "application/find_stick_archive.hpp"
 #include "application/use_cases/backup_stick.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -68,7 +69,7 @@ void aBackupUnderItsOwnNameIsStillFound(const fs::path &root)
     const fs::path named = backUp(stick, dir / "Whaleshark live set.zip", "uuid-one", "WHALESHARK");
 
     const fs::path found = findStickArchive(dir, "uuid-one", "WHALESHARK");
-    std::cout << "  looking for uuid-one, found " << found.filename().string() << "\n";
+    std::cout << "  looking for uuid-one, found " << seabass::pathToUtf8(found.filename()) << "\n";
     assert(found == named);
 }
 
@@ -84,7 +85,7 @@ void theRightStickWhenTwoShareALabel(const fs::path &root)
     const fs::path second = backUp(makeStick(root, "b"), dir / "second.zip", "uuid-b", "SANDISK");
 
     const fs::path found = findStickArchive(dir, "uuid-b", "SANDISK");
-    std::cout << "  two sticks labelled SANDISK, uuid-b found " << found.filename().string() << "\n";
+    std::cout << "  two sticks labelled SANDISK, uuid-b found " << seabass::pathToUtf8(found.filename()) << "\n";
     assert(found == second);
 }
 

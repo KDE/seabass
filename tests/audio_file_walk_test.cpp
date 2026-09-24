@@ -10,6 +10,7 @@
 
 #include "infrastructure/cleanup/audio_file_walk.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::application::CancellationToken;
@@ -29,7 +30,7 @@ void writeFile(const fs::path &p, const std::string &data = "x")
 
 bool found(const seabass::infrastructure::cleanup::AudioFileWalkResult &r, const fs::path &p)
 {
-    const std::string want = p.generic_string();
+    const std::string want = seabass::pathToGenericUtf8(p);
     for (const auto &f : r.files) {
         if (f.filePath == want) {
             return true;
@@ -68,7 +69,7 @@ int main()
         writeFile(root / "Contents" / "Artist" / "cover.jpg", "not audio");
         writeFile(root / "Contents" / "notes.txt", "not audio");
 
-        auto result = walkAudioFiles((root / "Contents").generic_string(), CancellationToken());
+        auto result = walkAudioFiles(seabass::pathToGenericUtf8(root / "Contents"), CancellationToken());
         assert(!result.incomplete);
         assert(result.files.size() == 3);
         assert(found(result, root / "Contents" / "Artist" / "Album" / "01_track.mp3"));
@@ -85,7 +86,7 @@ int main()
     // empty stick -- "nothing here" and "could not look" must not be the
     // same answer when the next step is proposing deletions.
     {
-        auto result = walkAudioFiles((root / "does-not-exist").generic_string(), CancellationToken());
+        auto result = walkAudioFiles(seabass::pathToGenericUtf8(root / "does-not-exist"), CancellationToken());
         assert(result.files.empty());
         assert(result.incomplete);
 
@@ -106,7 +107,7 @@ int main()
         if (ec) {
             std::cout << "case 4 (symlinks) SKIPPED -- cannot create symlinks here\n";
         } else {
-            auto result = walkAudioFiles((root / "Contents").generic_string(), CancellationToken());
+            auto result = walkAudioFiles(seabass::pathToGenericUtf8(root / "Contents"), CancellationToken());
             assert(!found(result, root / "Contents" / "linked.mp3"));
             assert(!found(result, root / "Contents" / "linked-dir" / "elsewhere.mp3"));
             assert(result.files.size() == 3);  // the same three as case 2
@@ -121,7 +122,7 @@ int main()
         cancel.cancel();
         bool threw = false;
         try {
-            walkAudioFiles((root / "Contents").generic_string(), cancel);
+            walkAudioFiles(seabass::pathToGenericUtf8(root / "Contents"), cancel);
         } catch (const seabass::application::OperationCancelled &) {
             threw = true;
         }

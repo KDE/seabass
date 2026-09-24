@@ -16,6 +16,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -31,7 +32,7 @@ fs::path freshStick(const fs::path &scratch)
     fs::remove_all(scratch);
     const fs::path pioneer = scratch / "PIONEER";
     fs::create_directories(pioneer / "rekordbox");
-    fs::copy_file(fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox"
+    fs::copy_file(seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox"
                       / "rekordbox" / "export.pdb",
                   pioneer / "rekordbox" / "export.pdb");
     return pioneer;
@@ -48,9 +49,9 @@ int main()
 {
     const fs::path scratch = seabass::testing::scratchRoot() / "seabass_pdb_deleted_rows_test";
     const fs::path pioneer = freshStick(scratch);
-    const std::string pdb = (pioneer / "rekordbox" / "export.pdb").string();
+    const std::string pdb = seabass::pathToUtf8(pioneer / "rekordbox" / "export.pdb");
 
-    const auto live = KaitaiRekordboxReader(pioneer.string()).readAll();
+    const auto live = KaitaiRekordboxReader(seabass::pathToUtf8(pioneer)).readAll();
     assert(live.size() == 1161 && "the fixture this test was written against");
     std::set<std::string> livePaths;
     for (const auto &track : live) {
@@ -67,7 +68,7 @@ int main()
     //    it. (The num_row_offsets bound is not what this pins: the phantom
     //    slots past it repeat real rows' offsets, so they add rows but no
     //    new paths.)
-    const std::set<std::string> before = asSet(deletedTrackFilePaths(pioneer.string()));
+    const std::set<std::string> before = asSet(deletedTrackFilePaths(seabass::pathToUtf8(pioneer)));
     assert(before.size() == 398);
     for (const auto &path : before) {
         assert(!livePaths.count(path));
@@ -83,7 +84,7 @@ int main()
         assert(writer.removeTrack(static_cast<uint32_t>(std::stoul(victim.sourceId))));
         assert(writer.commit());
     }
-    std::set<std::string> after = asSet(deletedTrackFilePaths(pioneer.string()));
+    std::set<std::string> after = asSet(deletedTrackFilePaths(seabass::pathToUtf8(pioneer)));
     std::set<std::string> expected = before;
     expected.insert(victim.filePath);
     assert(after == expected);
@@ -98,7 +99,7 @@ int main()
         assert(writer.zeroUnusedSpace() > 0);
         assert(writer.commit());
     }
-    assert(!asSet(deletedTrackFilePaths(pioneer.string())).count(victim.filePath));
+    assert(!asSet(deletedTrackFilePaths(seabass::pathToUtf8(pioneer))).count(victim.filePath));
     std::cout << "case 3 (zeroed free space leaves no evidence) OK\n";
 
     fs::remove_all(scratch);

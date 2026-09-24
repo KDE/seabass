@@ -15,6 +15,7 @@
 
 #include "application/use_cases/real_file_sizes.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -33,7 +34,7 @@ fs::path scratchDir()
 
 fs::path fileOfSize(const fs::path &dir, const std::string &name, std::size_t bytes)
 {
-    fs::path path = dir / name;
+    fs::path path = dir / seabass::pathFromUtf8(name);
     std::ofstream out(path, std::ios::binary);
     out << std::string(bytes, 'x');
     out.close();
@@ -45,7 +46,7 @@ domain::Track copyAt(const std::string &sourceId, const fs::path &path, std::uin
     domain::Track t;
     t.sourceId = sourceId;
     t.format = "rekordbox";
-    t.filePath = path.string();
+    t.filePath = seabass::pathToUtf8(path);
     t.fileSizeBytes = claimedSize;
     return t;
 }

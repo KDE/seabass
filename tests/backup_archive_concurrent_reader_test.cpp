@@ -37,6 +37,7 @@
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::application;
@@ -73,7 +74,7 @@ void createEngineDb(const fs::path &path)
 {
     fs::create_directories(path.parent_path());
     sqlite3 *db = nullptr;
-    assert(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(path).c_str(), &db) == SQLITE_OK);
     assert(sqlite3_exec(db, "CREATE TABLE Track(id INTEGER PRIMARY KEY, path TEXT); INSERT INTO Track(path) VALUES('a')",
                         nullptr, nullptr, nullptr)
            == SQLITE_OK);

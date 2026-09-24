@@ -17,6 +17,7 @@
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::engine;
@@ -29,7 +30,7 @@ namespace
 
 fs::path freshRoot(const std::string &caseName)
 {
-    fs::path root = seabass::testing::scratchRoot() / "seabass_engine_loop_cue_test" / caseName / "Engine Library";
+    fs::path root = seabass::testing::scratchRoot() / "seabass_engine_loop_cue_test" / seabass::pathFromUtf8(caseName) / "Engine Library";
     fs::remove_all(root.parent_path());
     fs::create_directories(root.parent_path());
     return root;
@@ -41,7 +42,7 @@ std::vector<Track> oneTrackTemplate(const fs::path &root)
     t.sourceId = "r0";
     t.title = "Loop Song";
     t.artist = "Artist";
-    t.filePath = (root / "song.mp3").string();
+    t.filePath = seabass::pathToUtf8(root / "song.mp3");
     t.bpm = 128.0;
     t.durationSeconds = 300.0;
     return {t};
@@ -75,10 +76,10 @@ int main()
     // round-trip with their own real fields intact.
     {
         fs::path root = freshRoot("case1");
-        auto created = EngineLibraryCreator::create(root.string(), oneTrackTemplate(root), EngineSchemaGeneration::V2);
+        auto created = EngineLibraryCreator::create(seabass::pathToUtf8(root), oneTrackTemplate(root), EngineSchemaGeneration::V2);
         assert(created.errorMessage.empty() && created.tracksCreated == 1);
 
-        LibdjinteropEngineReader reader(root.string());
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(root));
         auto tracks = seabass::application::ScanLibrary(reader).execute();
         const Track *track = findByTitle(tracks, "Loop Song");
         assert(track != nullptr);
@@ -88,10 +89,10 @@ int main()
         hotLoop.isLoop = true;
         hotLoop.loopEndMs = 14000.0;
 
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.writeHotCues(track->sourceId, {hotCue, hotLoop});
 
-        LibdjinteropEngineReader readerAfter(root.string());
+        LibdjinteropEngineReader readerAfter(seabass::pathToUtf8(root));
         auto tracksAfter = seabass::application::ScanLibrary(readerAfter).execute();
         const Track *after = findByTitle(tracksAfter, "Loop Song");
         assert(after != nullptr);
@@ -116,18 +117,18 @@ int main()
     // back) -- the old hot cue must not survive alongside the new loop.
     {
         fs::path root = freshRoot("case2");
-        auto created = EngineLibraryCreator::create(root.string(), oneTrackTemplate(root), EngineSchemaGeneration::V2);
+        auto created = EngineLibraryCreator::create(seabass::pathToUtf8(root), oneTrackTemplate(root), EngineSchemaGeneration::V2);
         assert(created.errorMessage.empty());
 
-        LibdjinteropEngineReader reader(root.string());
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(root));
         auto tracks = seabass::application::ScanLibrary(reader).execute();
         const Track *track = findByTitle(tracks, "Loop Song");
         assert(track != nullptr);
 
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.writeHotCues(track->sourceId, {CuePoint{CuePoint::Kind::Hot, 1, 5000.0, "#ff0000", "drop"}});
 
-        LibdjinteropEngineReader midReader(root.string());
+        LibdjinteropEngineReader midReader(seabass::pathToUtf8(root));
         auto midTracks = seabass::application::ScanLibrary(midReader).execute();
         const Track *mid = findByTitle(midTracks, "Loop Song");
         assert(mid != nullptr);
@@ -138,7 +139,7 @@ int main()
         loop.loopEndMs = 24000.0;
         writer.writeHotCues(mid->sourceId, {loop});
 
-        LibdjinteropEngineReader finalReader(root.string());
+        LibdjinteropEngineReader finalReader(seabass::pathToUtf8(root));
         auto finalTracks = seabass::application::ScanLibrary(finalReader).execute();
         const Track *final_ = findByTitle(finalTracks, "Loop Song");
         assert(final_ != nullptr);
@@ -162,10 +163,10 @@ int main()
     // loop-out is just dropped.
     {
         fs::path root = freshRoot("case3");
-        auto created = EngineLibraryCreator::create(root.string(), oneTrackTemplate(root), EngineSchemaGeneration::V2);
+        auto created = EngineLibraryCreator::create(seabass::pathToUtf8(root), oneTrackTemplate(root), EngineSchemaGeneration::V2);
         assert(created.errorMessage.empty());
 
-        LibdjinteropEngineReader reader(root.string());
+        LibdjinteropEngineReader reader(seabass::pathToUtf8(root));
         auto tracks = seabass::application::ScanLibrary(reader).execute();
         const Track *track = findByTitle(tracks, "Loop Song");
         assert(track != nullptr);
@@ -174,10 +175,10 @@ int main()
         memoryLoop.isLoop = true;
         memoryLoop.loopEndMs = 7000.0;
 
-        LibdjinteropEngineCueWriter writer(root.string());
+        LibdjinteropEngineCueWriter writer(seabass::pathToUtf8(root));
         writer.writeHotCues(track->sourceId, {memoryLoop});
 
-        LibdjinteropEngineReader readerAfter(root.string());
+        LibdjinteropEngineReader readerAfter(seabass::pathToUtf8(root));
         auto tracksAfter = seabass::application::ScanLibrary(readerAfter).execute();
         const Track *after = findByTitle(tracksAfter, "Loop Song");
         assert(after != nullptr);

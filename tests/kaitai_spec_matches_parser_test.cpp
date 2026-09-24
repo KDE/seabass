@@ -55,6 +55,8 @@
 #include <string>
 #include <vector>
 
+#include "../src/infrastructure/paths/utf8_path.hpp"
+
 namespace fs = std::filesystem;
 
 namespace
@@ -176,7 +178,7 @@ Result compare(const fs::path &ksy, const fs::path &headerPath)
         bool found = false;
         const std::set<std::string> accessors = accessorsOf(header, name, found);
         if (!found) {
-            result.problems.push_back(ksy.filename().string() + " describes type '" + name
+            result.problems.push_back(seabass::pathToUtf8(ksy.filename()) + " describes type '" + name
                                       + "' but the generated parser has no class for it");
             continue;
         }
@@ -184,7 +186,7 @@ Result compare(const fs::path &ksy, const fs::path &headerPath)
         for (const std::string &field : spec.fields) {
             ++result.fieldsCompared;
             if (accessors.count(field) == 0) {
-                result.problems.push_back(name + "." + field + " is in " + ksy.filename().string()
+                result.problems.push_back(name + "." + field + " is in " + seabass::pathToUtf8(ksy.filename())
                                           + " but the generated parser does not expose it -- the parser needs "
                                             "regenerating from the spec");
             }
@@ -200,7 +202,7 @@ Result compare(const fs::path &ksy, const fs::path &headerPath)
                 continue;
             }
             result.problems.push_back(name + "." + accessor + " is in the generated parser but not in "
-                                      + ksy.filename().string() + " -- the spec is behind the parser");
+                                      + seabass::pathToUtf8(ksy.filename()) + " -- the spec is behind the parser");
         }
     }
     return result;
@@ -210,7 +212,7 @@ Result compare(const fs::path &ksy, const fs::path &headerPath)
 
 int main()
 {
-    const fs::path root(SEABASS_SOURCE_DIR);
+    const fs::path root = seabass::pathFromUtf8(SEABASS_SOURCE_DIR);
     const fs::path generated = root / "src" / "infrastructure" / "rekordbox" / "generated";
 
     struct Pair
@@ -242,10 +244,10 @@ int main()
             return 1;
         }
         const Result result = compare(pair.ksy, pair.header);
-        std::cout << pair.ksy.filename().string() << ": " << result.typesCompared << " type(s), "
+        std::cout << seabass::pathToUtf8(pair.ksy.filename()) << ": " << result.typesCompared << " type(s), "
                   << result.fieldsCompared << " field(s) compared\n";
         if (result.typesCompared < pair.minTypes || result.fieldsCompared < pair.minFields) {
-            std::cerr << "extracted too little from " << pair.ksy.filename().string() << " to be meaningful: "
+            std::cerr << "extracted too little from " << seabass::pathToUtf8(pair.ksy.filename()) << " to be meaningful: "
                       << result.typesCompared << " type(s), " << result.fieldsCompared << " field(s), expected at "
                       << "least " << pair.minTypes << " and " << pair.minFields << ".\nThe spec or the generated "
                       << "header has changed shape and this test's own reading of them needs fixing. This is NOT "

@@ -25,6 +25,7 @@
 #include "infrastructure/stick_backup/zip64_reader.hpp"
 #include "infrastructure/stick_backup/zip_format.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::application;
@@ -75,7 +76,7 @@ void createEngineDb(const fs::path &path)
 {
     fs::create_directories(path.parent_path());
     sqlite3 *db = nullptr;
-    assert(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(path).c_str(), &db) == SQLITE_OK);
     execSql(db, "CREATE TABLE Track(id INTEGER PRIMARY KEY, path TEXT)");
     execSql(db, "INSERT INTO Track(path) VALUES('Contents/a.mp3'),('Contents/Sub/b.mp3')");
     sqlite3_close(db);
@@ -84,7 +85,7 @@ void createEngineDb(const fs::path &path)
 void touchEngineDb(const fs::path &path)
 {
     sqlite3 *db = nullptr;
-    assert(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    assert(sqlite3_open(seabass::pathToUtf8(path).c_str(), &db) == SQLITE_OK);
     execSql(db, "INSERT INTO Track(path) VALUES('Contents/c.mp3')");
     sqlite3_close(db);
 }
@@ -369,7 +370,7 @@ int main()
         lockFile += ".lock";
         assert(!fs::exists(lockFile));
         // And nothing is held: the path locks again.
-        seabass::infrastructure::backup::StickWriteLock again(lockFile.string());
+        seabass::infrastructure::backup::StickWriteLock again(seabass::pathToUtf8(lockFile));
         std::cout << "case 9 (cancel a first backup and discard: archive, journal and lock file removed) OK\n";
     }
 
@@ -501,7 +502,7 @@ int main()
         fs::permissions(readOnly, fs::perms::owner_read | fs::perms::owner_exec);
 
         BackupStickOptions options = f.options;
-        options.archivePath = (readOnly / "STICK.zip").string();
+        options.archivePath = seabass::pathToUtf8(readOnly / "STICK.zip");
 
         BackupStickOutcome outcome = BackupStick::execute(options);
         fs::permissions(readOnly, originalPerms);
@@ -660,7 +661,7 @@ int main()
     {
         Fixture f("salvage-db-nothing-sidecar");
         const fs::path mainDb = f.stick / "Engine Library" / "Database2" / "m.db";
-        const fs::path journal = fs::path(mainDb.string() + "-journal");
+        const fs::path journal = fs::path(mainDb).concat("-journal");
         writeFile(journal, std::string(8192, 'j'), 1'700'000'100);
         const std::string whole = readFile(mainDb);
         BackupStickOptions options = f.options;

@@ -13,6 +13,7 @@
 #include "infrastructure/local/local_cue_store.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::domain;
@@ -46,7 +47,7 @@ int main()
 
     // Upsert a track with cues, read it back.
     {
-        LocalCueStore store(dbPath.string());
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
         std::vector<Track> tracks = {
             makeTrack("e1", "song.mp3", "Song", "Artist", 200.0, {hotCue}),
             makeTrack("e2", "no-cues.mp3", "Silent", "Nobody", 100.0, {}),  // no cues -> skipped
@@ -66,7 +67,7 @@ int main()
 
     // Re-opening the same database file persists what was written.
     {
-        LocalCueStore store(dbPath.string());
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
         auto readBack = store.readAll();
         assert(readBack.size() == 1);
         std::cout << "case 2 (data persists across store instances) OK\n";
@@ -75,7 +76,7 @@ int main()
     // Upserting a track that matches an existing one (by title+artist)
     // replaces its cues rather than adding a second row.
     {
-        LocalCueStore store(dbPath.string());
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
         CuePoint newCue{CuePoint::Kind::Hot, 2, 5000.0, "#00FF00", "break"};
         std::vector<Track> tracks = {
             makeTrack("e1-rescanned", "song (renamed).mp3", "Song", "Artist", 200.2, {newCue}),
@@ -94,7 +95,7 @@ int main()
     // call freezes its own restorable copy, with an editable description and
     // its own lifecycle (list/read/delete).
     {
-        LocalCueStore store(dbPath.string());
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
         CuePoint cue2{CuePoint::Kind::Hot, 3, 9000.0, "#0000FF", "outro\twith\ttabs and \\backslash\\"};
         std::vector<Track> tracks = {
             makeTrack("e1", "song.mp3", "Song", "Artist", 200.0, {hotCue, cue2}),
@@ -136,7 +137,7 @@ int main()
     // format change can never break an old snapshot, since old snapshots
     // simply keep the version number their real format was.
     {
-        LocalCueStore store(dbPath.string());
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
         std::vector<Track> tracks = {makeTrack("e1", "song.mp3", "Song", "Artist", 200.0, {hotCue})};
         auto id = store.createSnapshot(tracks, "engine", "WHALESHARK2");
 
@@ -156,7 +157,7 @@ int main()
         // const wchar_t* on Windows, which sqlite3_open's const char*
         // parameter refuses -- an error the NDEBUG build never even
         // compiled, so it only surfaced in a Debug build.
-        const std::string dbPathUtf8 = dbPath.string();
+        const std::string dbPathUtf8 = seabass::pathToUtf8(dbPath);
         const int openRc = sqlite3_open(dbPathUtf8.c_str(), &rawDb);
         assert(openRc == SQLITE_OK);
         static_cast<void>(openRc);

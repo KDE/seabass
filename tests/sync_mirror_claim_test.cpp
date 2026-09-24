@@ -63,6 +63,8 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
+#include "gui/qt_path.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -75,11 +77,11 @@ namespace
 
 fs::path freshCopy(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     const fs::path pioneerRoot = scratch / "PIONEER";
     fs::copy(source, pioneerRoot, fs::copy_options::recursive);
     return pioneerRoot;
@@ -90,7 +92,7 @@ fs::path freshCopy(const std::string &name)
 // below stops being a pair.
 std::optional<domain::Track> trackOfKind(const fs::path &pioneerRoot, bool listedByOneLibrary)
 {
-    const std::string root = pioneerRoot.string();
+    const std::string root = seabass::pathToUtf8(pioneerRoot);
     assert(infrastructure::onelibrary::OneLibraryCueWriter::existsFor(root));
     infrastructure::onelibrary::OneLibraryCueWriter mirror(root);
     infrastructure::rekordbox::KaitaiRekordboxReader reader(root);
@@ -107,7 +109,7 @@ std::optional<domain::Track> trackOfKind(const fs::path &pioneerRoot, bool liste
 
 std::string readOperationLog(const fs::path &pioneerRoot)
 {
-    const std::string stickRoot = infrastructure::backup::stickRootForCatalogPath(pioneerRoot.string());
+    const std::string stickRoot = infrastructure::backup::stickRootForCatalogPath(seabass::pathToUtf8(pioneerRoot));
     std::ifstream in(infrastructure::backup::operationLogForStickRoot(stickRoot));
     return std::string(std::istreambuf_iterator<char>(in), {});
 }
@@ -138,23 +140,23 @@ SaveLoopResult syncOnto(const fs::path &pioneerRoot, const domain::Track &target
     plan.match.trackA.format = "engine";
     plan.cuesToApply = {cue};
 
-    auto change = std::make_shared<SyncPlanChange>(QString::fromStdString(pioneerRoot.string()), QString(), plan, 1);
+    auto change = std::make_shared<SyncPlanChange>(seabass::gui::pathToQString(pioneerRoot), QString(), plan, 1);
 
     auto &noProgress = application::NullProgressReporter::instance();
     CancellationToken token;
-    SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneerRoot.string()), {});
+    SaveContext ctx(token, noProgress, {}, seabass::gui::pathToQString(pioneerRoot), {});
     std::vector<std::shared_ptr<PendingChange>> changes = {change};
     return runSaveLoop(changes, ctx);
 }
 
 bool mirrorHasCue(const fs::path &pioneerRoot, const domain::Track &target, const domain::CuePoint &cue)
 {
-    infrastructure::onelibrary::OneLibraryReader reader(pioneerRoot.string());
+    infrastructure::onelibrary::OneLibraryReader reader(seabass::pathToUtf8(pioneerRoot));
     auto tail = [](std::string path) {
         while (!path.empty() && path.back() == ' ') {
             path.pop_back();
         }
-        return fs::path(path).filename().string();
+        return seabass::pathToUtf8(seabass::pathFromUtf8(path).filename());
     };
     for (const auto &t : reader.readAll()) {
         if (tail(t.filePath) != tail(target.filePath)) {
@@ -224,7 +226,7 @@ void anUnlistedTrackIsNotClaimedAsMirrored()
         std::exit(1);
     }
     {
-        infrastructure::onelibrary::OneLibraryCueWriter mirror(root.string());
+        infrastructure::onelibrary::OneLibraryCueWriter mirror(seabass::pathToUtf8(root));
         mirror.removeTrackByPath(listed->filePath);
     }
     // Scoped above so the writer is closed before the save opens its own

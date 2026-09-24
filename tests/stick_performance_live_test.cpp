@@ -29,6 +29,7 @@
 #include "infrastructure/benchmark/stick_performance_probe.hpp"
 #include "infrastructure/benchmark/stick_surface_check.hpp"
 #include "infrastructure/benchmark/stick_write_probe.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -38,7 +39,7 @@ namespace
 
 bool isAudio(const fs::path &p)
 {
-    std::string ext = p.extension().string();
+    std::string ext = seabass::pathToUtf8(p.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
     return ext == ".mp3" || ext == ".flac" || ext == ".wav" || ext == ".aiff" || ext == ".aif" || ext == ".m4a" ||
            ext == ".ogg";
@@ -56,12 +57,12 @@ std::vector<std::string> collect(const fs::path &dir, Accept accept)
     }
     for (auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
          !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (it->is_directory(ec) && it->path().filename().string().rfind('.', 0) == 0) {
+        if (it->is_directory(ec) && seabass::pathToUtf8(it->path().filename()).rfind('.', 0) == 0) {
             it.disable_recursion_pending();
             continue;
         }
         if (it->is_regular_file(ec) && accept(it->path())) {
-            out.push_back(it->path().string());
+            out.push_back(seabass::pathToUtf8(it->path()));
         }
     }
     std::sort(out.begin(), out.end());
@@ -105,7 +106,7 @@ int main()
     std::vector<std::string> databaseFiles;
     for (const auto &candidate : {root / "PIONEER" / "rekordbox" / "export.pdb", root / "Engine Library" / "Database2" / "m.db"}) {
         if (fs::exists(candidate, ec)) {
-            databaseFiles.push_back(candidate.string());
+            databaseFiles.push_back(seabass::pathToUtf8(candidate));
         }
     }
     auto allAudio = collect(root, isAudio);
@@ -147,7 +148,7 @@ int main()
     const char *wearEnv = std::getenv("SEABASS_LIVE_WEAR");
     if (wearEnv != nullptr && std::string(wearEnv) == "1") {
         std::uint64_t lastFiles = 0;
-        auto check = infrastructure::benchmark::StickSurfaceCheck::run(root.string(),
+        auto check = infrastructure::benchmark::StickSurfaceCheck::run(seabass::pathToUtf8(root),
             [&](std::uint64_t bytesDone, std::uint64_t bytesTotal, std::uint64_t filesDone, std::uint64_t filesTotal) {
                 if (filesDone - lastFiles >= 500 || filesDone == filesTotal) {
                     lastFiles = filesDone;
@@ -179,7 +180,7 @@ int main()
         return 0;
     }
     auto freeBefore = fs::space(root, ec).available;
-    auto w = infrastructure::benchmark::StickWriteProbe::run(root.string());
+    auto w = infrastructure::benchmark::StickWriteProbe::run(seabass::pathToUtf8(root));
     auto freeAfter = fs::space(root, ec).available;
     auto e = domain::estimateWriteWorkloads(w);
     std::cout << "\nwrite probe (wrote " << w.bytesWritten / (1024.0 * 1024.0) << " MiB of throwaway files)\n"

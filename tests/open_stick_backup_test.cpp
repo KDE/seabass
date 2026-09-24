@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 #include "application/use_cases/open_stick_backup.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -53,7 +54,7 @@ void writeBackupOf(const fs::path &archivePath, const fs::path &pioneerRoot)
     PosixArchiveFile file(archivePath, PosixArchiveFile::OpenMode::ReadWrite);
     Zip64Writer writer(file, {});
     for (const auto &entry : fs::recursive_directory_iterator(pioneerRoot)) {
-        const std::string name = "PIONEER/" + fs::relative(entry.path(), pioneerRoot).generic_string();
+        const std::string name = "PIONEER/" + seabass::pathToGenericUtf8(fs::relative(entry.path(), pioneerRoot));
         if (entry.is_directory()) {
             writer.addDirectory(name + "/", 1);
             continue;
@@ -78,7 +79,7 @@ void writeBackupOf(const fs::path &archivePath, const fs::path &pioneerRoot)
 
 std::string cueDigest(const fs::path &pioneerRoot)
 {
-    KaitaiRekordboxReader reader(pioneerRoot.string());
+    KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneerRoot));
     std::string out;
     for (const auto &track : reader.readAll()) {
         out += track.sourceId + "{";
@@ -171,8 +172,8 @@ int main(int argc, char **argv)
         std::ifstream in(marker);
         std::getline(in, line);
         std::getline(in, rootLine);
-        assert(line == fs::absolute(archivePath).string());
-        assert(fs::path(rootLine) == fs::weakly_canonical(cache));
+        assert(line == seabass::pathToUtf8(fs::absolute(archivePath)));
+        assert(seabass::pathFromUtf8(rootLine) == fs::weakly_canonical(cache));
         std::cout << "case 3 (cache names its archive) OK\n";
     }
 
@@ -194,7 +195,7 @@ int main(int argc, char **argv)
     {
         const fs::path movedAside = scratch / "moved-away.zip";
         fs::rename(archivePath, movedAside);
-        KaitaiRekordboxReader reader((cache / "PIONEER").string());
+        KaitaiRekordboxReader reader(seabass::pathToUtf8(cache / "PIONEER"));
         const auto tracks = reader.readAll();
         assert(!tracks.empty());
         std::size_t cues = 0;
@@ -243,7 +244,7 @@ int main(int argc, char **argv)
         assert(!failed.error.empty());
         assert(fs::exists(cache / "PIONEER" / "rekordbox" / "export.pdb"));
         assert(fs::exists(cache / seabass::infrastructure::local::BrowsedBackupMarkerName));
-        assert(!fs::exists(fs::path(cache.string() + ".partial")));
+        assert(!fs::exists(fs::path(cache).concat(".partial")));
 
         fs::remove(archivePath);
         fs::rename(movedAside, archivePath);
@@ -282,7 +283,7 @@ int main(int argc, char **argv)
     // survives only as <cache>.old. Opening again must put it back before
     // anything else -- and if that open then fails, it is still there.
     {
-        const fs::path retired = fs::path(cache.string() + ".old");
+        const fs::path retired = fs::path(cache).concat(".old");
         fs::rename(cache, retired);
         assert(!fs::exists(cache) && fs::exists(retired));
         const fs::path movedAside = scratch / "good2.zip";
@@ -307,7 +308,7 @@ int main(int argc, char **argv)
         fs::copy(cache, copied, fs::copy_options::recursive);
         assert(fs::exists(copied / seabass::infrastructure::local::BrowsedBackupMarkerName));
         assert(!seabass::infrastructure::local::isBrowsedBackupRoot(copied));
-        KaitaiRekordboxReader reader((copied / "PIONEER").string());
+        KaitaiRekordboxReader reader(seabass::pathToUtf8(copied / "PIONEER"));
         std::size_t cues = 0;
         for (const auto &track : reader.readAll()) {
             cues += track.cues.size();

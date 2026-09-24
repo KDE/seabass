@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "storageprobe/surface_check.hpp"
 #include "storageprobe/utf8_path.hpp"
 #include "storageprobe/walk_tree.hpp"
@@ -70,7 +71,7 @@ void testFindsEveryFile()
     write(root / "sub" / "b.mp3", "bbbbbb");
     write(root / "sub" / "deeper" / "c.mp3", "cc");
 
-    auto walk = walkTree(root.string());
+    auto walk = walkTree(seabass::pathToUtf8(root));
     assert(walk.files.size() == 3);
     assert(walk.skipped.empty());
 
@@ -103,7 +104,7 @@ void testUnreadableDirectoryCostsThatDirectoryOnly()
     fs::directory_iterator(root / "locked", listEc);
     const bool lockEnforced = static_cast<bool>(listEc);
 
-    auto walk = walkTree(root.string());
+    auto walk = walkTree(seabass::pathToUtf8(root));
     if (!lockEnforced) {
         std::cout << "testUnreadableDirectoryCostsThatDirectoryOnly SKIPPED (this filesystem still let "
                      "the locked directory be listed, so an unreadable directory could not be "
@@ -124,7 +125,7 @@ void testPruning()
     write(root / "keep" / "a.mp3", "aaaa");
     write(root / "skip" / "b.mp3", "bbbb");
 
-    auto walk = walkTree(root.string(), [](const std::string &relative) { return relative != "skip"; });
+    auto walk = walkTree(seabass::pathToUtf8(root), [](const std::string &relative) { return relative != "skip"; });
     assert(walk.files.size() == 1);
     assert(walk.files.front().path.find("keep") != std::string::npos);
     // Pruned on purpose is not the same as could not be opened.

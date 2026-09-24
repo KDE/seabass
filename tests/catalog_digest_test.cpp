@@ -31,6 +31,7 @@
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -42,11 +43,11 @@ namespace
 
 fs::path freshCopy(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     assert(fs::exists(source / "rekordbox" / "exportLibrary.db"));
     const fs::path pioneerRoot = scratch / "PIONEER";
     fs::copy(source, pioneerRoot, fs::copy_options::recursive);
@@ -55,7 +56,7 @@ fs::path freshCopy(const std::string &name)
 
 std::string digestOf(const fs::path &pioneerRoot)
 {
-    infrastructure::onelibrary::OneLibraryReader reader(pioneerRoot.string());
+    infrastructure::onelibrary::OneLibraryReader reader(seabass::pathToUtf8(pioneerRoot));
     return application::catalogDigest(reader.readAll());
 }
 
@@ -72,7 +73,7 @@ std::string bytesOf(const fs::path &pioneerRoot)
 // same set back is a real round trip rather than a no-op on an empty one.
 Track pickTrack(const fs::path &pioneerRoot)
 {
-    infrastructure::onelibrary::OneLibraryReader reader(pioneerRoot.string());
+    infrastructure::onelibrary::OneLibraryReader reader(seabass::pathToUtf8(pioneerRoot));
     for (const Track &track : reader.readAll()) {
         if (!track.filePath.empty() && !track.cues.empty()) {
             return track;
@@ -107,7 +108,7 @@ int main()
         const std::string bytesBefore = bytesOf(root);
 
         {
-            infrastructure::onelibrary::OneLibraryCueWriter writer(root.string());
+            infrastructure::onelibrary::OneLibraryCueWriter writer(seabass::pathToUtf8(root));
             std::vector<CuePoint> changed = track.cues;
             CuePoint extra;
             extra.kind = CuePoint::Kind::Memory;
@@ -119,7 +120,7 @@ int main()
 
         {
             // Back to exactly what was there, which is what an undo does.
-            infrastructure::onelibrary::OneLibraryCueWriter writer(root.string());
+            infrastructure::onelibrary::OneLibraryCueWriter writer(seabass::pathToUtf8(root));
             writer.writeCuesForPath(track.filePath, track.cues);
         }
 
@@ -155,7 +156,7 @@ int main()
         assert(!track.filePath.empty());
         const std::string before = digestOf(root);
         {
-            infrastructure::onelibrary::OneLibraryCueWriter writer(root.string());
+            infrastructure::onelibrary::OneLibraryCueWriter writer(seabass::pathToUtf8(root));
             std::vector<CuePoint> changed = track.cues;
             CuePoint extra;
             extra.kind = CuePoint::Kind::Memory;

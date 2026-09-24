@@ -28,6 +28,8 @@
 #include <string>
 #include <vector>
 
+#include "../src/infrastructure/paths/utf8_path.hpp"
+
 namespace fs = std::filesystem;
 
 namespace
@@ -89,7 +91,7 @@ std::string trimmed(const std::string &line)
 
 int main()
 {
-    const fs::path sourceDir = fs::path(SEABASS_SOURCE_DIR);
+    const fs::path sourceDir = seabass::pathFromUtf8(SEABASS_SOURCE_DIR);
     const fs::path uiRoot = sourceDir / "src" / "gui";
     if (!fs::is_directory(uiRoot)) {
         std::cerr << "FAIL: " << uiRoot << " is not a directory; this test cannot check anything.\n";
@@ -102,7 +104,7 @@ int main()
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::string ext = entry.path().extension().string();
+        const fs::path ext = entry.path().extension();
         if (ext != ".qml" && ext != ".js" && ext != ".cpp" && ext != ".hpp") {
             continue;
         }
@@ -116,7 +118,7 @@ int main()
         while (std::getline(in, line)) {
             ++lineNumber;
             if (!isCommentLine(line) && buildsAFileUrlByHand(line)) {
-                hits.push_back({fs::relative(entry.path(), sourceDir).string(), lineNumber, trimmed(line)});
+                hits.push_back({seabass::pathToGenericUtf8(fs::relative(entry.path(), sourceDir)), lineNumber, trimmed(line)});
             }
         }
     }

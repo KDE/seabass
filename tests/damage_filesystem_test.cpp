@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "cli/damage_filesystem.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -53,8 +54,8 @@ bool haveMkfsFat()
 // changed" is a claim about a populated volume rather than about zeroes.
 bool makeFat32Image(const fs::path &image)
 {
-    const std::string make = "dd if=/dev/zero of=" + image.string()
-        + " bs=1M count=64 status=none && mkfs.fat -F 32 -n DAMAGETEST " + image.string() + " > /dev/null 2>&1";
+    const std::string make = "dd if=/dev/zero of=" + seabass::pathToUtf8(image)
+        + " bs=1M count=64 status=none && mkfs.fat -F 32 -n DAMAGETEST " + seabass::pathToUtf8(image) + " > /dev/null 2>&1";
     if (std::system(make.c_str()) != 0) {
         return false;
     }
@@ -63,8 +64,8 @@ bool makeFat32Image(const fs::path &image)
     // without mtools still runs the real check.
     const std::string copy = "command -v mcopy > /dev/null 2>&1 && "
                              "printf 'a track' > /tmp/.damage_t1 && printf 'another' > /tmp/.damage_t2 && "
-                             "mcopy -i " + image.string() + " /tmp/.damage_t1 ::track1.mp3 > /dev/null 2>&1 && "
-                             "mcopy -i " + image.string() + " /tmp/.damage_t2 ::track2.mp3 > /dev/null 2>&1";
+                             "mcopy -i " + seabass::pathToUtf8(image) + " /tmp/.damage_t1 ::track1.mp3 > /dev/null 2>&1 && "
+                             "mcopy -i " + seabass::pathToUtf8(image) + " /tmp/.damage_t2 ::track2.mp3 > /dev/null 2>&1";
     std::system(copy.c_str());
     std::system("rm -f /tmp/.damage_t1 /tmp/.damage_t2");
     return true;
@@ -88,7 +89,7 @@ int main()
         out.close();
 
         std::string why;
-        assert(!readFat32Geometry(notFat.string(), why) && "a volume with no boot signature is not FAT32");
+        assert(!readFat32Geometry(seabass::pathToUtf8(notFat), why) && "a volume with no boot signature is not FAT32");
         assert(why.find("not a FAT volume") != std::string::npos);
         std::cout << "case 1 (no boot signature is refused): " << why << "\n";
     }
@@ -111,14 +112,14 @@ int main()
         assert(before.size() == 64u * 1024 * 1024);
 
         std::string why;
-        const auto geometry = readFat32Geometry(image.string(), why);
+        const auto geometry = readFat32Geometry(seabass::pathToUtf8(image), why);
         if (!geometry) {
             std::cerr << "a freshly made FAT32 image was not recognised: " << why << "\n";
         }
         assert(geometry && "mkfs.fat -F 32 must be recognised as FAT32");
         assert(geometry->bytesPerSector > 0 && geometry->reservedSectors > 0);
 
-        assert(applyDamage(image.string(), *geometry, why));
+        assert(applyDamage(seabass::pathToUtf8(image), *geometry, why));
         const std::string after = readAll(image);
         assert(after.size() == before.size() && "the image must not change size");
 
@@ -170,11 +171,11 @@ int main()
         // And fsck agrees it is damaged AND can put it right -- the whole
         // reason for choosing this damage rather than any other.
         if (std::system("command -v fsck.fat > /dev/null 2>&1") == 0) {
-            const int dirty = std::system(("fsck.fat -n " + image.string() + " > /dev/null 2>&1").c_str());
+            const int dirty = std::system(("fsck.fat -n " + seabass::pathToUtf8(image) + " > /dev/null 2>&1").c_str());
             assert(dirty != 0 && "fsck must report the damage, or the command damaged nothing fsck can see");
-            const int repaired = std::system(("fsck.fat -a " + image.string() + " > /dev/null 2>&1").c_str());
+            const int repaired = std::system(("fsck.fat -a " + seabass::pathToUtf8(image) + " > /dev/null 2>&1").c_str());
             (void)repaired;
-            const int clean = std::system(("fsck.fat -n " + image.string() + " > /dev/null 2>&1").c_str());
+            const int clean = std::system(("fsck.fat -n " + seabass::pathToUtf8(image) + " > /dev/null 2>&1").c_str());
             assert(clean == 0 && "and must be able to repair it -- that repair is the feature under test");
             std::cout << "case 3 (fsck.fat reports it, then repairs it clean) OK\n";
         } else {

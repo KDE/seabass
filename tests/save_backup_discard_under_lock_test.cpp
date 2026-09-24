@@ -38,8 +38,10 @@
 #include "gui/edit/changes/add_cue_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/stick_space.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "scratch_path.hpp"
 
@@ -62,11 +64,11 @@ struct Target
 // Seabass/backups lands beside it exactly as it does on a real stick.
 fs::path freshStick(const std::string &name)
 {
-    const fs::path scratch = seabass::testing::scratchRoot() / name;
+    const fs::path scratch = seabass::testing::scratchRoot() / seabass::pathFromUtf8(name);
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch);
-    const fs::path source = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
+    const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library" / "rekordbox";
     assert(fs::exists(source / "rekordbox" / "export.pdb"));
     fs::copy(source, scratch / "PIONEER", fs::copy_options::recursive);
     return scratch;
@@ -74,7 +76,7 @@ fs::path freshStick(const std::string &name)
 
 Target findTarget(const fs::path &pioneerRoot)
 {
-    seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneerRoot.string());
+    seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneerRoot));
     for (const Track &track : reader.readAll()) {
         if (track.filePath.empty()) {
             continue;
@@ -128,7 +130,7 @@ std::string stickLog(const fs::path &stickRoot)
 void makeMirrorReadOnly(const fs::path &pioneerRoot, bool readOnly)
 {
     const fs::path db = pioneerRoot / "rekordbox" / "exportLibrary.db";
-    for (const fs::path &file : {db, fs::path(db.string() + "-wal"), fs::path(db.string() + "-shm")}) {
+    for (const fs::path &file : {db, fs::path(db).concat("-wal"), fs::path(db).concat("-shm")}) {
         std::error_code ec;
         if (!fs::exists(file, ec)) {
             continue;
@@ -146,7 +148,7 @@ SaveLoopResult failingSave(const fs::path &pioneerRoot, const Target &target)
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    const QString root = QString::fromStdString(pioneerRoot.string());
+    const QString root = seabass::gui::pathToQString(pioneerRoot);
     SaveContext ctx(token, noProgress, {}, root, {});
     std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
         QStringLiteral("rekordbox"), root, QString::fromStdString(target.sourceId), 1234.0, QStringLiteral("hot"),
@@ -171,7 +173,7 @@ void runCase(const std::string &name, bool holdStickLock)
         std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>> locks;
         if (holdStickLock) {
             locks = seabass::infrastructure::backup::acquireStickLocks(
-                {seabass::infrastructure::backup::backupDirForCatalogPath(pioneerRoot.string())});
+                {seabass::infrastructure::backup::backupDirForCatalogPath(seabass::pathToUtf8(pioneerRoot))});
         }
         result = failingSave(pioneerRoot, target);
     }
@@ -210,7 +212,7 @@ void successfulSave(const fs::path &pioneerRoot, const Target &target, int slot)
 {
     auto &noProgress = seabass::application::NullProgressReporter::instance();
     CancellationToken token;
-    const QString root = QString::fromStdString(pioneerRoot.string());
+    const QString root = seabass::gui::pathToQString(pioneerRoot);
     SaveContext ctx(token, noProgress, {}, root, {});
     std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
         QStringLiteral("rekordbox"), root, QString::fromStdString(target.sourceId), 1000.0 * slot,
@@ -256,10 +258,10 @@ void runReleaseCase()
     {
         std::vector<std::unique_ptr<seabass::infrastructure::backup::StickWriteLock>> locks =
             seabass::infrastructure::backup::acquireStickLocks(
-                {seabass::infrastructure::backup::backupDirForCatalogPath(pioneerRoot.string())});
+                {seabass::infrastructure::backup::backupDirForCatalogPath(seabass::pathToUtf8(pioneerRoot))});
         auto &noProgress = seabass::application::NullProgressReporter::instance();
         CancellationToken token;
-        SaveContext ctx(token, noProgress, {}, QString::fromStdString(pioneerRoot.string()), {});
+        SaveContext ctx(token, noProgress, {}, seabass::gui::pathToQString(pioneerRoot), {});
         released = ctx.releaseAutomaticBackupsIfTight(tight);
     }
 

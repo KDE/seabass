@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 using seabass::infrastructure::audio::QtMultimediaSilenceProbe;
 
@@ -73,7 +74,7 @@ std::string writeWav(const std::string &path, double leadSeconds, double toneSec
         out.push_back(static_cast<char>((sample >> 8) & 0xFF));
     }
 
-    std::ofstream file(path, std::ios::binary);
+    std::ofstream file(seabass::pathFromUtf8(path), std::ios::binary);
     file.write(out.data(), static_cast<std::streamsize>(out.size()));
     return path;
 }

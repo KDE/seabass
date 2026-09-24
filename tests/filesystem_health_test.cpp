@@ -19,6 +19,7 @@
 #include <system_error>
 
 #include "infrastructure/media/filesystem_health.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -41,7 +42,7 @@ int main(int argc, char **argv)
         const fs::path dir = seabass::testing::scratchRoot() / "seabass_filesystem_health";
         fs::create_directories(dir);
         std::ofstream(dir / "probe") << "x";
-        assert(!isMountedReadOnly(dir.string()));
+        assert(!isMountedReadOnly(seabass::pathToUtf8(dir)));
         std::error_code ec;
         fs::remove_all(dir, ec);
         std::cout << "case 1 (a writable directory is not reported read-only) OK\n";
@@ -61,7 +62,7 @@ int main(int argc, char **argv)
     //    repair tool is given. Asked of a path that is really mounted, it
     //    names something; the deepest mount wins, not "/".
     {
-        const std::string device = deviceForMountPoint(fs::temp_directory_path().string());
+        const std::string device = deviceForMountPoint(seabass::pathToUtf8(fs::temp_directory_path()));
         // No assertion on the name itself: a container, a tmpfs and a
         // plain disk all answer differently, and all of them are right.
         std::cout << "case 3 (a mount point names its device: \"" << device << "\") OK\n";
@@ -88,8 +89,8 @@ int main(int argc, char **argv)
         const fs::path inside = fs::temp_directory_path() / "seabass-not-a-mount-point";
         std::error_code ec;
         fs::create_directories(inside, ec);
-        assert(!isMountPointRoot(inside.string()));
-        const FilesystemRepairResult result = repairFilesystem(inside.string());
+        assert(!isMountPointRoot(seabass::pathToUtf8(inside)));
+        const FilesystemRepairResult result = repairFilesystem(seabass::pathToUtf8(inside));
         assert(!result.repaired);
         assert(result.message.find("not a drive of its own") != std::string::npos);
         fs::remove_all(inside, ec);

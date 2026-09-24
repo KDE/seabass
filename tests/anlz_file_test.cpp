@@ -12,6 +12,7 @@
 #include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -68,11 +69,11 @@ int main()
     // out unmodified reproduces it byte-for-byte.
     {
         writeFile(path, minimal);
-        auto file = AnlzFile::readRaw(path.string());
+        auto file = AnlzFile::readRaw(seabass::pathToUtf8(path));
         assert(file.sections.size() == 1);
         assert(file.sections[0].fourcc == 0x54455354);  // "TEST"
 
-        file.writeRaw(path.string());
+        file.writeRaw(seabass::pathToUtf8(path));
         assert(readFile(path) == minimal);
         std::cout << "case 1 (read/write round trip, unmodified -> byte-identical) OK\n";
     }
@@ -81,7 +82,7 @@ int main()
     // correctly, and len_file is recomputed to match the new size.
     {
         writeFile(path, minimal);
-        auto file = AnlzFile::readRaw(path.string());
+        auto file = AnlzFile::readRaw(seabass::pathToUtf8(path));
 
         std::string newSection = "TEST";
         appendU32BE(newSection, 8);
@@ -89,8 +90,8 @@ int main()
         newSection += "abcd";
         file.sections[0] = {0x54455354, newSection};
 
-        file.writeRaw(path.string());
-        auto reread = AnlzFile::readRaw(path.string());
+        file.writeRaw(seabass::pathToUtf8(path));
+        auto reread = AnlzFile::readRaw(seabass::pathToUtf8(path));
         assert(reread.sections[0].rawBytes == newSection);
         assert(readU32BE(readFile(path), 8) == readFile(path).size());  // len_file matches actual size
         std::cout << "case 2 (real edit -> len_file recomputed, re-reads correctly) OK\n";
@@ -101,7 +102,7 @@ int main()
         writeFile(path, "NOPE" + minimal.substr(4));
         bool threw = false;
         try {
-            AnlzFile::readRaw(path.string());
+            AnlzFile::readRaw(seabass::pathToUtf8(path));
         } catch (const std::exception &) {
             threw = true;
         }
@@ -114,14 +115,14 @@ int main()
     // rather than clobber that change with a stale copy.
     {
         writeFile(path, minimal);
-        auto file = AnlzFile::readRaw(path.string());
+        auto file = AnlzFile::readRaw(seabass::pathToUtf8(path));
 
         std::string externallyModified = minimal + std::string(4, '\0');  // different size is enough
         writeFile(path, externallyModified);
 
         bool threw = false;
         try {
-            file.writeRaw(path.string());
+            file.writeRaw(seabass::pathToUtf8(path));
         } catch (const std::exception &) {
             threw = true;
         }
@@ -136,7 +137,7 @@ int main()
     // caught before anything is written to disk.
     {
         writeFile(path, minimal);
-        auto file = AnlzFile::readRaw(path.string());
+        auto file = AnlzFile::readRaw(seabass::pathToUtf8(path));
 
         std::string corrupted = "TEST";
         appendU32BE(corrupted, 8);
@@ -146,7 +147,7 @@ int main()
         std::string before = readFile(path);
         bool threw = false;
         try {
-            file.writeRaw(path.string());
+            file.writeRaw(seabass::pathToUtf8(path));
         } catch (const std::exception &) {
             threw = true;
         }

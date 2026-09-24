@@ -115,7 +115,7 @@ int main(int argc, char **argv)
             QProcess requests;
             requests.start(QStringLiteral("powercfg"), {QStringLiteral("/requests")});
             const bool finished = requests.waitForFinished(10000) && requests.exitStatus() == QProcess::NormalExit;
-            const QString listed = finished ? QString::fromLocal8Bit(requests.readAllStandardOutput()) : QString();
+            const QString listed = finished ? QString::fromLocal8Bit(requests.readAllStandardOutput()) : QString();  // narrow-ok: powercfg console output, not a path
             // Gated on the listing itself, not the exit code: a prompt without
             // the rights to list requests may still exit 0 with a message.
             // A real listing always has its SYSTEM: section.

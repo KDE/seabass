@@ -41,6 +41,7 @@
 #include "infrastructure/stick_backup/zip64_writer.hpp"
 #include "infrastructure/stick_backup/zip_format.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::stick_backup;
@@ -210,7 +211,7 @@ std::string compressibleText(std::size_t size)
 std::map<std::string, std::pair<std::uint64_t, std::uint32_t>> pythonListing(const std::string &python, const fs::path &script,
                                                                            const fs::path &archive)
 {
-    auto [status, output] = run(shellQuote(python) + " " + shellQuote(script.string()) + " " + shellQuote(archive.string()));
+    auto [status, output] = run(shellQuote(python) + " " + shellQuote(seabass::pathToUtf8(script)) + " " + shellQuote(seabass::pathToUtf8(archive)));
     if (status != 0) {
         std::cerr << "python zipfile rejected " << archive << ":\n" << output << "\n";
         assert(false && "python zipfile rejected the archive");
@@ -289,7 +290,7 @@ int main()
 
     const std::string python = locateTool("SEABASS_PYTHON3", configuredPython, {"python3", "python"}, "--version");
     const std::string unzip =
-        locateTool("SEABASS_UNZIP", configuredUnzip, {"unzip"}, "-v " + shellQuote(probeArchive.string()));
+        locateTool("SEABASS_UNZIP", configuredUnzip, {"unzip"}, "-v " + shellQuote(seabass::pathToUtf8(probeArchive)));
     const std::string sevenZip = locateTool("SEABASS_SEVENZIP", configuredSevenZip, {"7z", "7zz", "7za"}, "i");
 
     bool broken = refuseIfConfiguredButMissing("python3", configuredPython, python);
@@ -394,7 +395,7 @@ int main()
     std::cout << "case 2 (python zipfile: 66 000 entries via the zip64 record) OK\n";
 
     if (!unzip.empty()) {
-        auto [status, output] = run(shellQuote(unzip) + " -tqq " + shellQuote(realistic.string()) + " 2>&1");
+        auto [status, output] = run(shellQuote(unzip) + " -tqq " + shellQuote(seabass::pathToUtf8(realistic)) + " 2>&1");
         if (status != 0) {
             std::cerr << output << "\n";
         }
@@ -405,7 +406,7 @@ int main()
     }
 
     if (!sevenZip.empty()) {
-        auto [status, output] = run(shellQuote(sevenZip) + " t " + shellQuote(realistic.string()) + " 2>&1");
+        auto [status, output] = run(shellQuote(sevenZip) + " t " + shellQuote(seabass::pathToUtf8(realistic)) + " 2>&1");
         if (status != 0) {
             std::cerr << output << "\n";
         }

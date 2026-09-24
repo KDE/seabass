@@ -13,6 +13,7 @@
 
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::engine;
@@ -33,7 +34,7 @@ int main()
     // only the doomed copy -- the survivor must take over its spot
     // rather than the playlist silently losing the song.
     {
-        auto db = djinterop::engine::create_database(root.string());
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(root));
 
         djinterop::track_snapshot snapshot;
         snapshot.title = "Keep Me";
@@ -51,12 +52,12 @@ int main()
         auto onlyDoomed = db.create_root_playlist("OnlyDoomed");
         onlyDoomed.add_track_back(doomedTrack);
 
-        LibdjinteropEngineCleanupWriter writer(root.string());
+        LibdjinteropEngineCleanupWriter writer(seabass::pathToUtf8(root));
         writer.removeTrackReplacingWith(std::to_string(doomedTrack.id()), std::to_string(survivorTrack.id()));
 
         // Re-open fresh rather than reusing any in-memory handle -- the
         // point is confirming what's actually on disk now.
-        auto dbAfter = djinterop::engine::load_database(root.string());
+        auto dbAfter = djinterop::engine::load_database(seabass::pathToUtf8(root));
         assert(!dbAfter.track_by_id(doomedTrack.id()).has_value());
         assert(dbAfter.track_by_id(survivorTrack.id()).has_value());
 
@@ -76,7 +77,7 @@ int main()
     // Nested (child) playlists must be handled too, not just root
     // ones -- exercises the recursive walk.
     {
-        auto db = djinterop::engine::load_database(root.string());
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(root));
 
         djinterop::track_snapshot snapshot;
         snapshot.title = "Nested Survivor";
@@ -90,10 +91,10 @@ int main()
         auto childPlaylist = parentPlaylist.create_sub_playlist("Child");
         childPlaylist.add_track_back(doomedTrack);
 
-        LibdjinteropEngineCleanupWriter writer(root.string());
+        LibdjinteropEngineCleanupWriter writer(seabass::pathToUtf8(root));
         writer.removeTrackReplacingWith(std::to_string(doomedTrack.id()), std::to_string(survivorTrack.id()));
 
-        auto dbAfter = djinterop::engine::load_database(root.string());
+        auto dbAfter = djinterop::engine::load_database(seabass::pathToUtf8(root));
         assert(!dbAfter.track_by_id(doomedTrack.id()).has_value());
         for (const auto &r : dbAfter.root_playlists()) {
             if (r.name() != "Parent") {
@@ -110,13 +111,13 @@ int main()
 
     // Not-found cases throw (doomed id, then survivor id).
     {
-        auto db = djinterop::engine::load_database(root.string());
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(root));
         djinterop::track_snapshot snapshot;
         snapshot.title = "Real Track";
         snapshot.relative_path = "real.mp3";
         auto realTrack = db.create_track(snapshot);
 
-        LibdjinteropEngineCleanupWriter writer(root.string());
+        LibdjinteropEngineCleanupWriter writer(seabass::pathToUtf8(root));
         bool threw = false;
         try {
             writer.removeTrackReplacingWith("999999999", std::to_string(realTrack.id()));
@@ -145,7 +146,7 @@ int main()
         fs::path fourth = root.parent_path() / "cleanup_writer_perfdata";
         fs::remove_all(fourth);
         fs::create_directories(fourth);
-        auto db = djinterop::engine::create_database(fourth.string(), djinterop::engine::latest_v2_schema);
+        auto db = djinterop::engine::create_database(seabass::pathToUtf8(fourth), djinterop::engine::latest_v2_schema);
 
         djinterop::track_snapshot doomedSnapshot;
         doomedSnapshot.title = "Doomed";
@@ -157,11 +158,11 @@ int main()
         auto survivor = db.create_track(survivorSnapshot);
         const std::int64_t doomedId = doomed.id();
 
-        LibdjinteropEngineCleanupWriter writer(fourth.string());
+        LibdjinteropEngineCleanupWriter writer(seabass::pathToUtf8(fourth));
         writer.removeTrackReplacingWith(std::to_string(doomedId), std::to_string(survivor.id()));
 
         sqlite3 *raw = nullptr;
-        const std::string dbPath = (fourth / "Database2" / "m.db").string();
+        const std::string dbPath = seabass::pathToUtf8(fourth / "Database2" / "m.db");
         assert(sqlite3_open_v2(dbPath.c_str(), &raw, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
 
         sqlite3_stmt *stmt = nullptr;

@@ -11,6 +11,7 @@
 
 #include "infrastructure/local/duration_cache.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::infrastructure::local::DurationCache;
@@ -23,7 +24,7 @@ std::string writeFile(const fs::path &p, const std::string &data)
     fs::create_directories(p.parent_path());
     std::ofstream out(p, std::ios::binary);
     out << data;
-    return p.string();
+    return seabass::pathToUtf8(p);
 }
 }  // namespace
 
@@ -36,14 +37,14 @@ int main()
 
     // Case 1: an empty cache misses, then round-trips through save/load.
     {
-        DurationCache cache(root.string());
+        DurationCache cache(seabass::pathToUtf8(root));
         assert(!cache.lookup(audio).has_value());
         cache.store(audio, 266.376);
         assert(cache.dirty());
         assert(cache.save());
         assert(fs::exists(root / "Seabass" / "caches" / "durations.jsonl"));
 
-        DurationCache reloaded(root.string());
+        DurationCache reloaded(seabass::pathToUtf8(root));
         auto got = reloaded.lookup(audio);
         assert(got.has_value());
         assert(std::abs(*got - 266.376) < 0.001);
@@ -54,7 +55,7 @@ int main()
     // length here would feed duplicate detection.
     {
         writeFile(root / "Contents" / "a" / "track.mp3", "not really audio, but a real file -- now longer");
-        DurationCache reloaded(root.string());
+        DurationCache reloaded(seabass::pathToUtf8(root));
         assert(!reloaded.lookup(audio).has_value());
         std::cout << "case 2 (size changed -> stale) OK\n";
     }
@@ -63,15 +64,15 @@ int main()
     // different mount point still hits. (Re-store first -- case 2 above
     // deliberately invalidated the entry by changing the file.)
     {
-        DurationCache cache(root.string());
+        DurationCache cache(seabass::pathToUtf8(root));
         cache.store(audio, 311.5);
         assert(cache.save());
 
         fs::path moved = seabass::testing::scratchRoot() / "seabass_duration_cache_test_moved";
         fs::remove_all(moved);
         fs::rename(root, moved);
-        DurationCache movedCache(moved.string());
-        auto got = movedCache.lookup((moved / "Contents" / "a" / "track.mp3").string());
+        DurationCache movedCache(seabass::pathToUtf8(moved));
+        auto got = movedCache.lookup(seabass::pathToUtf8(moved / "Contents" / "a" / "track.mp3"));
         assert(got.has_value());
         assert(std::abs(*got - 311.5) < 0.001);
         std::cout << "case 3 (relative paths survive a different mount point) OK\n";
@@ -81,7 +82,7 @@ int main()
     // Case 4: a path outside the stick root is simply not this stick's
     // business -- no hit, and store() records nothing.
     {
-        DurationCache cache(root.string());
+        DurationCache cache(seabass::pathToUtf8(root));
         cache.store("/somewhere/else/other.mp3", 100.0);
         assert(!cache.dirty());
         assert(!cache.lookup("/somewhere/else/other.mp3").has_value());
@@ -94,7 +95,7 @@ int main()
         std::ofstream out(root / "Seabass" / "caches" / "durations.jsonl", std::ios::app);
         out << "{not json at all\n";
         out.close();
-        DurationCache cache(root.string());
+        DurationCache cache(seabass::pathToUtf8(root));
         assert(cache.size() >= 1);
         std::cout << "case 5 (malformed line doesn't poison the cache) OK\n";
     }
@@ -115,11 +116,11 @@ int main()
             std::cout << "case 6 SKIPPED (no comma-decimal locale installed)\n";
         } else {
             const std::string other = writeFile(root / "Contents" / "b" / "second.mp3", "another file");
-            DurationCache cache(root.string());
+            DurationCache cache(seabass::pathToUtf8(root));
             cache.store(other, 123.456);
             assert(cache.save());
 
-            DurationCache reloaded(root.string());
+            DurationCache reloaded(seabass::pathToUtf8(root));
             auto got = reloaded.lookup(other);
             assert(got.has_value());
             assert(std::abs(*got - 123.456) < 0.001);

@@ -29,9 +29,11 @@
 #include "gui/edit/changes/restore_backups_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass;
@@ -67,7 +69,7 @@ struct ScratchStick
         std::error_code ec;
         fs::remove_all(path, ec);
         if (ec) {
-            std::cerr << "warning: could not remove " << path.string() << ": " << ec.message() << "\n";
+            std::cerr << "warning: could not remove " << seabass::pathToUtf8(path) << ": " << ec.message() << "\n";
         }
     }
     ScratchStick(const ScratchStick &) = delete;
@@ -94,11 +96,11 @@ struct SavedStick
         write(pdb, "pdb-before");
         write(anlz, "anlz-before");
         const fs::path backupDir = stick / "Seabass" / "backups";
-        FilesystemBackupStore store(backupDir.string());
-        pdbRecord = store.backup({pdb.string()}, "consistency-repair").id;
-        anlzRecord = store.backup({anlz.string()}, "consistency-delete-orphan").id;
-        backups = {{QString::fromStdString(backupDir.string()), QString::fromStdString(pdbRecord)},
-                   {QString::fromStdString(backupDir.string()), QString::fromStdString(anlzRecord)}};
+        FilesystemBackupStore store(seabass::pathToUtf8(backupDir));
+        pdbRecord = store.backup({seabass::pathToUtf8(pdb)}, "consistency-repair").id;
+        anlzRecord = store.backup({seabass::pathToUtf8(anlz)}, "consistency-delete-orphan").id;
+        backups = {{seabass::gui::pathToQString(backupDir), QString::fromStdString(pdbRecord)},
+                   {seabass::gui::pathToQString(backupDir), QString::fromStdString(anlzRecord)}};
         write(pdb, "pdb-after");
         write(anlz, "anlz-after");
     }
@@ -108,7 +110,7 @@ SaveLoopResult runUndo(const SavedStick &saved)
 {
     CancellationToken token;
     auto &noProgress = application::NullProgressReporter::instance();
-    SaveContext ctx(token, noProgress, {}, QString::fromStdString(saved.pioneer.string()), {});
+    SaveContext ctx(token, noProgress, {}, seabass::gui::pathToQString(saved.pioneer), {});
     std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<RestoreBackupsChange>(saved.backups)};
     return runSaveLoop(changes, ctx);
 }
@@ -134,7 +136,7 @@ int main()
     {
         const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_restore_backups_missing");
         const SavedStick saved(scratch.path);
-        FilesystemBackupStore store((scratch.path / "Seabass" / "backups").string());
+        FilesystemBackupStore store(seabass::pathToUtf8(scratch.path / "Seabass" / "backups"));
         assert(store.remove(saved.pdbRecord));
 
         const SaveLoopResult result = runUndo(saved);
@@ -156,14 +158,14 @@ int main()
         const SavedStick saved(scratch.path);
         using seabass::infrastructure::cleanup::PendingDeletion;
         using seabass::infrastructure::cleanup::PendingDeletionManifest;
-        PendingDeletionManifest manifest(seabass::infrastructure::paths::stickPendingDeletions(scratch.path).string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(seabass::infrastructure::paths::stickPendingDeletions(scratch.path)));
         PendingDeletion ofThisSave;
         ofThisSave.format = "rekordbox";
-        ofThisSave.filePath = (scratch.path / "Contents" / "copy.mp3").string();
+        ofThisSave.filePath = seabass::pathToUtf8(scratch.path / "Contents" / "copy.mp3");
         ofThisSave.backupId = saved.pdbRecord;
         manifest.append(ofThisSave);
         PendingDeletion ofAnotherSave = ofThisSave;
-        ofAnotherSave.filePath = (scratch.path / "Contents" / "older.mp3").string();
+        ofAnotherSave.filePath = seabass::pathToUtf8(scratch.path / "Contents" / "older.mp3");
         ofAnotherSave.backupId = "20260101T000000-duplicate-file-cleanup";
         manifest.append(ofAnotherSave);
 
@@ -186,10 +188,10 @@ int main()
         using seabass::infrastructure::cleanup::PendingDeletion;
         using seabass::infrastructure::cleanup::PendingDeletionManifest;
         const fs::path manifestPath = seabass::infrastructure::paths::stickPendingDeletions(scratch.path);
-        PendingDeletionManifest manifest(manifestPath.string());
+        PendingDeletionManifest manifest(seabass::pathToUtf8(manifestPath));
         PendingDeletion ofThisSave;
         ofThisSave.format = "rekordbox";
-        ofThisSave.filePath = (scratch.path / "Contents" / "copy.mp3").string();
+        ofThisSave.filePath = seabass::pathToUtf8(scratch.path / "Contents" / "copy.mp3");
         ofThisSave.backupId = saved.pdbRecord;
         manifest.append(ofThisSave);
 

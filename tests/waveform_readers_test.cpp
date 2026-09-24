@@ -37,6 +37,7 @@
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
@@ -136,10 +137,10 @@ struct EngineFixture
         track.sourceId = "1";
         track.title = "One";
         track.artist = "An Artist";
-        track.filePath = (root / "Contents" / "one.mp3").string();
+        track.filePath = seabass::pathToUtf8(root / "Contents" / "one.mp3");
         track.bpm = 128.0;
         track.durationSeconds = 300.0;
-        const auto created = engine::EngineLibraryCreator::create(libraryPath.string(), {track},
+        const auto created = engine::EngineLibraryCreator::create(seabass::pathToUtf8(libraryPath), {track},
                                                                    engine::EngineSchemaGeneration::V2);
         if (!created.errorMessage.empty()) {
             std::cerr << "creator said: " << created.errorMessage << "\n";
@@ -147,7 +148,7 @@ struct EngineFixture
         assert(created.errorMessage.empty());
         assert(created.tracksCreated == 1);
 
-        auto db = djinterop::engine::load_database(libraryPath.string());
+        auto db = djinterop::engine::load_database(seabass::pathToUtf8(libraryPath));
         auto tracks = db.tracks();
         assert(tracks.size() == 1);
         trackId = std::to_string(tracks[0].id());
@@ -179,18 +180,18 @@ int main()
     //
     // None of these may throw, and none may come back with a waveform.
     {
-        assert(engine::readWaveformPreview((scratch / "no-such-library").string(), "1").empty());
-        assert(engine::readTrackAnalysis((scratch / "no-such-library").string(), "1").waveform.empty());
+        assert(engine::readWaveformPreview(seabass::pathToUtf8(scratch / "no-such-library"), "1").empty());
+        assert(engine::readTrackAnalysis(seabass::pathToUtf8(scratch / "no-such-library"), "1").waveform.empty());
 
         EngineFixture fixture(scratch / "engine-empty", {});
         // A real library, but no waveform was ever written.
-        assert(engine::readWaveformPreview(fixture.libraryPath.string(), fixture.trackId).empty());
+        assert(engine::readWaveformPreview(seabass::pathToUtf8(fixture.libraryPath), fixture.trackId).empty());
         // A track id nothing answers to.
-        assert(engine::readWaveformPreview(fixture.libraryPath.string(), "999999").empty());
+        assert(engine::readWaveformPreview(seabass::pathToUtf8(fixture.libraryPath), "999999").empty());
         // And an id that is not a number: std::stoll throws on it, and
         // the display path must not.
-        assert(engine::readWaveformPreview(fixture.libraryPath.string(), "not-a-number").empty());
-        assert(engine::readWaveformPreview(fixture.libraryPath.string(), "").empty());
+        assert(engine::readWaveformPreview(seabass::pathToUtf8(fixture.libraryPath), "not-a-number").empty());
+        assert(engine::readWaveformPreview(seabass::pathToUtf8(fixture.libraryPath), "").empty());
         std::cout << "case 1 (Engine: a missing library, track or waveform is empty, never a throw) OK\n";
     }
 
@@ -208,7 +209,7 @@ int main()
         }
         EngineFixture fixture(scratch / "engine-bands", entries);
 
-        const auto waveform = engine::readWaveformPreview(fixture.libraryPath.string(), fixture.trackId);
+        const auto waveform = engine::readWaveformPreview(seabass::pathToUtf8(fixture.libraryPath), fixture.trackId);
         assert(!waveform.empty());
         for (const auto &column : waveform) {
             assert(inRange(column));
@@ -232,7 +233,7 @@ int main()
         }
         EngineFixture fixture(scratch / "engine-average", entries);
 
-        const auto waveform = engine::readWaveformPreview(fixture.libraryPath.string(), fixture.trackId);
+        const auto waveform = engine::readWaveformPreview(seabass::pathToUtf8(fixture.libraryPath), fixture.trackId);
         const auto averaged = reduce(fixture.stored, true);
         const auto sampled = reduce(fixture.stored, false);
         assert(!same(averaged, sampled) && "this waveform cannot tell averaging from sampling, so nothing below means anything");
@@ -262,7 +263,7 @@ int main()
         EngineFixture fixture(scratch / "engine-short", entries, 44100ULL * 2);
 
         assert(fixture.stored.size() == 1024);
-        const auto waveform = engine::readWaveformPreview(fixture.libraryPath.string(), fixture.trackId);
+        const auto waveform = engine::readWaveformPreview(seabass::pathToUtf8(fixture.libraryPath), fixture.trackId);
         assert(waveform.size() == 512);
         assert(same(waveform, reduce(fixture.stored, true)));
         for (const auto &column : waveform) {
@@ -275,9 +276,9 @@ int main()
     // ---- rekordbox: nothing there ------------------------------------
     {
         const fs::path nothing = scratch / "no-such-stick";
-        assert(rekordbox::readWaveformPreview(nothing.string(), "1").empty());
-        assert(rekordbox::readTrackAnalysis(nothing.string(), "1").beats.empty());
-        assert(rekordbox::readWaveformPreview(nothing.string(), "not-a-number").empty());
+        assert(rekordbox::readWaveformPreview(seabass::pathToUtf8(nothing), "1").empty());
+        assert(rekordbox::readTrackAnalysis(seabass::pathToUtf8(nothing), "1").beats.empty());
+        assert(rekordbox::readWaveformPreview(seabass::pathToUtf8(nothing), "not-a-number").empty());
         assert(rekordbox::readWaveformPreview("", "1").empty());
         std::cout << "case 5 (rekordbox: a missing stick or an unparseable id is empty, never a throw) OK\n";
     }
@@ -291,9 +292,9 @@ int main()
     // mid and high are that height scaled down by the whiteness --
     // low >= mid >= high, always, for every column of every track.
     {
-        const fs::path pioneer = fs::path(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library"
+        const fs::path pioneer = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library"
             / "rekordbox";
-        rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        rekordbox::KaitaiRekordboxReader reader(seabass::pathToUtf8(pioneer));
         const auto tracks = reader.readAll();
         assert(!tracks.empty());
 
@@ -304,7 +305,7 @@ int main()
             if (looked++ >= 30) {
                 break;
             }
-            const auto analysis = rekordbox::readTrackAnalysis(pioneer.string(), track.sourceId);
+            const auto analysis = rekordbox::readTrackAnalysis(seabass::pathToUtf8(pioneer), track.sourceId);
             if (!analysis.beats.empty()) {
                 withBeats++;
             }

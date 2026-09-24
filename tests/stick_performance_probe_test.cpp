@@ -17,6 +17,7 @@
 #include "infrastructure/benchmark/stick_write_probe.hpp"
 #include "infrastructure/local/stick_performance_history.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::benchmark;
@@ -48,19 +49,19 @@ int main()
         for (int i = 0; i < 3; ++i) {
             fs::path p = root / ("audio-" + std::to_string(i) + ".mp3");
             writeFile(p, 256 * 1024);
-            audio.push_back(p.string());
+            audio.push_back(seabass::pathToUtf8(p));
         }
         for (int i = 0; i < 20; ++i) {
             fs::path p = root / "anlz" / std::to_string(i) / "ANLZ0000.DAT";
             writeFile(p, 8 * 1024);
-            small.push_back(p.string());
+            small.push_back(seabass::pathToUtf8(p));
         }
         fs::path db = root / "export.pdb";
         writeFile(db, 64 * 1024);
 
         ProbeOptions options;
         options.randomReads = 40;
-        auto m = StickPerformanceProbe::run(audio, small, {db.string()}, seabass::application::CancellationToken::none(),
+        auto m = StickPerformanceProbe::run(audio, small, {seabass::pathToUtf8(db)}, seabass::application::CancellationToken::none(),
                                             options);
         assert(m.streamingBytesPerSecond > 0.0);
         assert(m.randomReads == 40);
@@ -78,8 +79,8 @@ int main()
     {
         fs::path audio = root / "present.mp3";
         writeFile(audio, 64 * 1024);
-        auto m = StickPerformanceProbe::run({(root / "missing.mp3").string(), audio.string()},
-                                            {(root / "missing.DAT").string()}, {(root / "missing.pdb").string()});
+        auto m = StickPerformanceProbe::run({seabass::pathToUtf8(root / "missing.mp3"), seabass::pathToUtf8(audio)},
+                                            {seabass::pathToUtf8(root / "missing.DAT")}, {seabass::pathToUtf8(root / "missing.pdb")});
         assert(m.streamingBytesPerSecond > 0.0);
         assert(m.smallFilesRead == 0 && m.smallFileOpensPerSecond == 0.0);
         assert(m.catalogBytes == 0);
@@ -93,7 +94,7 @@ int main()
     {
         fs::path tiny = root / "tiny.mp3";
         writeFile(tiny, 4096);
-        auto m = StickPerformanceProbe::run({tiny.string()}, {}, {});
+        auto m = StickPerformanceProbe::run({seabass::pathToUtf8(tiny)}, {}, {});
         assert(m.streamingBytesPerSecond > 0.0);
         assert(m.randomReads == 0);
         std::cout << "case 3 (tiny file streams, no random reads) OK\n";
@@ -111,7 +112,7 @@ int main()
         options.inPlaceUpdates = 10;
         options.inPlaceFileBytes = 256 * 1024;
         options.minimumFreeBytes = 1;
-        auto m = StickWriteProbe::run(stick.string(), seabass::application::CancellationToken::none(), options);
+        auto m = StickWriteProbe::run(seabass::pathToUtf8(stick), seabass::application::CancellationToken::none(), options);
         assert(m.streamingWriteBytesPerSecond > 0.0);
         assert(m.smallFilesWritten == 10);
         assert(m.smallFileWriteMedianMs > 0.0 && m.smallFileWritesPerSecond > 0.0);
@@ -132,7 +133,7 @@ int main()
         cancel.cancel();
         bool thrown = false;
         try {
-            StickWriteProbe::run(stick.string(), cancel);
+            StickWriteProbe::run(seabass::pathToUtf8(stick), cancel);
         } catch (const seabass::application::OperationCancelled &) {
             thrown = true;
         }
@@ -141,7 +142,7 @@ int main()
 
         bool refused = false;
         try {
-            StickWriteProbe::run((root / "does-not-exist").string());
+            StickWriteProbe::run(seabass::pathToUtf8(root / "does-not-exist"));
         } catch (const std::runtime_error &) {
             refused = true;
         }
@@ -163,7 +164,7 @@ int main()
         options.inPlaceFileBytes = 64 * 1024;
         options.minimumFreeBytes = 1;
         ScratchFiles files;
-        auto w = StickWriteProbe::run(stick.string(), seabass::application::CancellationToken::none(), options, &files);
+        auto w = StickWriteProbe::run(seabass::pathToUtf8(stick), seabass::application::CancellationToken::none(), options, &files);
         assert(w.smallFilesWritten == 8);
         assert(files.streamFiles.size() == 2);
         assert(files.smallFiles.size() == 8);
@@ -178,7 +179,7 @@ int main()
         assert(m.streamingBytesPerSecond > 0.0);
         assert(m.randomReads == 20);
         assert(m.smallFilesRead == 8);
-        StickWriteProbe::removeScratch(stick.string());
+        StickWriteProbe::removeScratch(seabass::pathToUtf8(stick));
         assert(!fs::exists(stick / StickWriteProbe::kScratchFolderName));
         std::cout << "case 6 (kept scratch files are readable, then removed) OK\n";
     }
@@ -203,7 +204,7 @@ int main()
         writeFile(stick / ".hidden" / "note.txt", 100);
         int progressCalls = 0;
         std::uint64_t lastTotal = 0;
-        auto check = StickSurfaceCheck::run(stick.string(), [&](std::uint64_t, std::uint64_t total, std::uint64_t, std::uint64_t) {
+        auto check = StickSurfaceCheck::run(seabass::pathToUtf8(stick), [&](std::uint64_t, std::uint64_t total, std::uint64_t, std::uint64_t) {
             ++progressCalls;
             lastTotal = total;
         });
@@ -224,9 +225,9 @@ int main()
             fs::path locked = stick / "Contents" / "locked.mp3";
             writeFile(locked, 4096);
             fs::permissions(locked, fs::perms::none);
-            auto again = StickSurfaceCheck::run(stick.string());
+            auto again = StickSurfaceCheck::run(seabass::pathToUtf8(stick));
             fs::permissions(locked, fs::perms::owner_all);
-            assert(again.unopenable.size() == 1 && again.unopenable[0] == locked.string());
+            assert(again.unopenable.size() == 1 && again.unopenable[0] == seabass::pathToUtf8(locked));
             assert(again.unreadable.empty());
             auto wear = seabass::domain::assessWear(again, seabass::domain::StickPerformanceMeasurement{});
             assert(wear.state == seabass::domain::WearState::Healthy);
@@ -244,7 +245,7 @@ int main()
         seabass::application::CancellationToken cancel;
         cancel.cancel();
         try {
-            StickSurfaceCheck::run(stick.string(), {}, cancel);
+            StickSurfaceCheck::run(seabass::pathToUtf8(stick), {}, cancel);
         } catch (const seabass::application::OperationCancelled &) {
             cancelledThrown = true;
         }

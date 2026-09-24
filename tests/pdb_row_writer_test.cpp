@@ -18,6 +18,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::infrastructure::rekordbox;
@@ -267,7 +268,7 @@ int main()
     // playlist entry untouched, bumps sequence numbers correctly.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         assert(writer.removeTrack(100));
         assert(writer.commit());
 
@@ -288,7 +289,7 @@ int main()
     // playlist_id (and every other row) are untouched.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         bool repointed = writer.repointPlaylistEntry(1, 200, 999);
         assert(repointed);
         assert(writer.commit());
@@ -307,7 +308,7 @@ int main()
     // the other, so the (1,100) entry gets repointed to (1,101).
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         size_t reassignedCount1 = writer.reassignPlaylistMemberships(100, 101);
         assert(reassignedCount1 == 1);
         assert(writer.commit());
@@ -326,7 +327,7 @@ int main()
     // dropped, not repointed (no duplicate (1,100) entries).
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         size_t reassignedCount2 = writer.reassignPlaylistMemberships(200, 100);
         assert(reassignedCount2 == 1);
         assert(writer.commit());
@@ -343,7 +344,7 @@ int main()
     // no-op, returns 0.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         size_t reassignedCount3 = writer.reassignPlaylistMemberships(999999, 100);
         assert(reassignedCount3 == 0);
         assert(!writer.commit());
@@ -354,7 +355,7 @@ int main()
     // Not-found cases return false and never mark anything dirty.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         assert(!writer.removeTrack(999999));
         assert(!writer.repointPlaylistEntry(1, 999999, 1));
         // Nothing was ever successfully edited -- commit() must refuse,
@@ -371,7 +372,7 @@ int main()
     {
         writeFile(pdbPath, pristine);
         {
-            PdbRowWriter writer(pdbPath.string());
+            PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
             assert(writer.removeTrack(100));
             // writer goes out of scope here without commit() ever being called.
         }
@@ -386,7 +387,7 @@ int main()
         writeFile(pdbPath, "too small");
         bool threw = false;
         try {
-            PdbRowWriter writer(pdbPath.string());
+            PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         } catch (const std::exception &) {
             threw = true;
         }
@@ -397,7 +398,7 @@ int main()
         writeFile(pdbPath, garbage);
         threw = false;
         try {
-            PdbRowWriter writer(pdbPath.string());
+            PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         } catch (const std::exception &) {
             threw = true;
         }
@@ -411,7 +412,7 @@ int main()
     // now-stale in-memory copy.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         assert(writer.removeTrack(100));
 
         // Simulate an external modification (different size, so this
@@ -443,7 +444,7 @@ int main()
         writeU32LE(withDonorFields, donorRowStart + TrackArtworkIdOffset, 42);
         writeFile(pdbPath, withDonorFields);
 
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         size_t copiedCount1 = writer.copyTrackFieldsIfMissing(101, 100, true, true, true);
         assert(copiedCount1 == 3);
         assert(writer.commit());
@@ -475,7 +476,7 @@ int main()
         writeU32LE(withDonorFields, donorRowStart + TrackKeyIdOffset, 9);
         writeFile(pdbPath, withDonorFields);
 
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         size_t copiedCount2 = writer.copyTrackFieldsIfMissing(101, 100, true, false, false);
         assert(copiedCount2 == 1);
         assert(writer.commit());
@@ -493,7 +494,7 @@ int main()
     // never marks anything dirty.
     {
         writeFile(pdbPath, pristine);
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         bool threw = false;
         try {
             writer.copyTrackFieldsIfMissing(999999, 100, true, true, true);
@@ -553,7 +554,7 @@ int main()
         const fs::path pdbPath = dir / "export.pdb";
         writeFile(pdbPath, buf);
 
-        PdbRowWriter writer(pdbPath.string());
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
         const int cleared = writer.zeroUnusedSpace();
         assert(cleared > 0);  // it must still clear the genuinely free bytes
         assert(writer.commit());

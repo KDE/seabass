@@ -9,14 +9,16 @@
 #include <stdexcept>
 #include <string>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 namespace seabass::testing
 {
 
 void createEngineInformation(const std::filesystem::path &databaseFile, std::int64_t counter, int rowId)
 {
     sqlite3 *db = nullptr;
-    if (sqlite3_open(databaseFile.string().c_str(), &db) != SQLITE_OK) {
-        throw std::runtime_error("cannot create " + databaseFile.string());
+    if (sqlite3_open(seabass::pathToUtf8(databaseFile).c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("cannot create " + seabass::pathToUtf8(databaseFile));
     }
     const std::string sql = "CREATE TABLE Information (id INTEGER PRIMARY KEY, lastRekordBoxLibraryImportReadCounter "
                             "INTEGER); INSERT INTO Information VALUES ("
@@ -24,14 +26,14 @@ void createEngineInformation(const std::filesystem::path &databaseFile, std::int
     const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
     sqlite3_close(db);
     if (rc != SQLITE_OK) {
-        throw std::runtime_error("cannot write Information in " + databaseFile.string());
+        throw std::runtime_error("cannot write Information in " + seabass::pathToUtf8(databaseFile));
     }
 }
 
 std::int64_t readEngineImportCounter(const std::filesystem::path &databaseFile)
 {
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(databaseFile.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(seabass::pathToUtf8(databaseFile).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return -1;
     }
@@ -50,8 +52,8 @@ std::int64_t readEngineImportCounter(const std::filesystem::path &databaseFile)
 void createEngineArtworkTables(const std::filesystem::path &databaseFile, const std::vector<std::int64_t> &trackIds)
 {
     sqlite3 *db = nullptr;
-    if (sqlite3_open(databaseFile.string().c_str(), &db) != SQLITE_OK) {
-        throw std::runtime_error("cannot create " + databaseFile.string());
+    if (sqlite3_open(seabass::pathToUtf8(databaseFile).c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("cannot create " + seabass::pathToUtf8(databaseFile));
     }
     std::string sql = "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT, albumArt BLOB);"
                       "CREATE TABLE Track (id INTEGER PRIMARY KEY, title TEXT, artist TEXT, albumArtId INTEGER);";
@@ -61,14 +63,14 @@ void createEngineArtworkTables(const std::filesystem::path &databaseFile, const 
     const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
     sqlite3_close(db);
     if (rc != SQLITE_OK) {
-        throw std::runtime_error("cannot write the artwork tables in " + databaseFile.string());
+        throw std::runtime_error("cannot write the artwork tables in " + seabass::pathToUtf8(databaseFile));
     }
 }
 
 std::string engineTrackArtworkHash(const std::filesystem::path &databaseFile, std::int64_t trackId)
 {
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(databaseFile.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(seabass::pathToUtf8(databaseFile).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return {};
     }

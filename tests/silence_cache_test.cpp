@@ -11,6 +11,7 @@
 
 #include "infrastructure/local/silence_cache.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
 using seabass::domain::AudioContentSpan;
@@ -25,7 +26,7 @@ std::string writeFile(const fs::path &p, const std::string &data)
     fs::create_directories(p.parent_path());
     std::ofstream out(p, std::ios::binary);
     out << data;
-    return p.string();
+    return seabass::pathToUtf8(p);
 }
 
 // Counts how often it was actually asked, which is the whole point of
@@ -64,7 +65,7 @@ int main()
     {
         auto inner = std::make_unique<CountingProbe>();
         CountingProbe *counter = inner.get();
-        CachedAudioContentProbe probe(root.string(), std::move(inner));
+        CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::move(inner));
 
         auto first = probe.measure(audio);
         assert(first.has_value());
@@ -88,7 +89,7 @@ int main()
     {
         auto inner = std::make_unique<CountingProbe>();
         CountingProbe *counter = inner.get();
-        CachedAudioContentProbe probe(root.string(), std::move(inner));
+        CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::move(inner));
         assert(probe.size() == 1);
         auto got = probe.measure(audio);
         assert(got.has_value());
@@ -102,9 +103,9 @@ int main()
     // answers from what a build that had one wrote. That is why null
     // inner is allowed rather than refused.
     {
-        CachedAudioContentProbe probe(root.string(), nullptr);
+        CachedAudioContentProbe probe(seabass::pathToUtf8(root), nullptr);
         assert(probe.measure(audio).has_value());
-        assert(!probe.measure((root / "Contents" / "a" / "missing.mp3").string()).has_value());
+        assert(!probe.measure(seabass::pathToUtf8(root / "Contents" / "a" / "missing.mp3")).has_value());
         std::cout << "case 3 (no decoder still reads the cache) OK\n";
     }
 
@@ -117,7 +118,7 @@ int main()
         writeFile(root / "Contents" / "a" / "track.mp3", "re-ripped, and a different length now");
         auto inner = std::make_unique<CountingProbe>();
         CountingProbe *counter = inner.get();
-        CachedAudioContentProbe probe(root.string(), std::move(inner));
+        CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::move(inner));
         assert(probe.measure(audio).has_value());
         assert(counter->calls == 1 && "it was re-measured, not answered from the stale entry");
         std::cout << "case 4 (a changed file is re-measured) OK\n";
@@ -136,7 +137,7 @@ int main()
         auto inner = std::make_unique<CountingProbe>();
         CountingProbe *counter = inner.get();
         counter->answer = false;
-        CachedAudioContentProbe probe(root.string(), std::move(inner));
+        CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::move(inner));
         assert(!probe.measure(audio).has_value());
         assert(!probe.dirty() && "nothing to write down");
         assert(!probe.measure(audio).has_value());
@@ -150,7 +151,7 @@ int main()
         // the failure, which is the half that must NOT be remembered.
         auto retryInner = std::make_unique<CountingProbe>();
         CountingProbe *retryCounter = retryInner.get();
-        CachedAudioContentProbe retry(root.string(), std::move(retryInner));
+        CachedAudioContentProbe retry(seabass::pathToUtf8(root), std::move(retryInner));
         assert(retry.measure(audio).has_value());
         assert(retryCounter->calls == 1);
         assert(retry.decodedCount() == 1 && "a real answer is a real comparison");
@@ -164,7 +165,7 @@ int main()
         const std::string outside = writeFile(seabass::testing::scratchRoot() / "seabass_silence_outside.mp3",
                                                "elsewhere entirely");
         auto inner = std::make_unique<CountingProbe>();
-        CachedAudioContentProbe probe(root.string(), std::move(inner));
+        CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::move(inner));
         assert(probe.measure(outside).has_value());
         assert(!probe.dirty());
         std::cout << "case 6 (a file off the stick is not cached) OK\n";
@@ -184,7 +185,7 @@ int main()
             << "\n";
         out.close();
 
-        CachedAudioContentProbe probe(root.string(), nullptr);
+        CachedAudioContentProbe probe(seabass::pathToUtf8(root), nullptr);
         assert(probe.size() == 1 && "only the one usable line survived");
         std::cout << "case 7 (bad lines are dropped, the cache survives) OK\n";
     }
@@ -195,11 +196,11 @@ int main()
         fs::remove_all(root / "Seabass");
         const std::string audio2 = writeFile(root / "Contents" / "b" / "two.mp3", "another file");
         {
-            CachedAudioContentProbe probe(root.string(), std::make_unique<CountingProbe>());
+            CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::make_unique<CountingProbe>());
             assert(probe.measure(audio2).has_value());
             assert(probe.dirty());
         }  // no save() call
-        CachedAudioContentProbe reloaded(root.string(), nullptr);
+        CachedAudioContentProbe reloaded(seabass::pathToUtf8(root), nullptr);
         assert(reloaded.size() == 1);
         assert(reloaded.measure(audio2).has_value());
         std::cout << "case 8 (the destructor saves) OK\n";
@@ -214,23 +215,23 @@ int main()
         const std::string keep = writeFile(root / "Contents" / "c" / "keep.mp3", "still here");
         const std::string gone = writeFile(root / "Contents" / "c" / "gone.mp3", "not for long");
         {
-            CachedAudioContentProbe probe(root.string(), std::make_unique<CountingProbe>());
+            CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::make_unique<CountingProbe>());
             assert(probe.measure(keep).has_value());
             assert(probe.measure(gone).has_value());
             assert(probe.save());
         }
-        assert(CachedAudioContentProbe(root.string(), nullptr).size() == 2);
+        assert(CachedAudioContentProbe(seabass::pathToUtf8(root), nullptr).size() == 2);
 
-        fs::remove(gone);
+        fs::remove(seabass::pathFromUtf8(gone));
         {
             // A save only rewrites when something was measured, so
             // something has to be.
             const std::string fresh = writeFile(root / "Contents" / "c" / "fresh.mp3", "new arrival");
-            CachedAudioContentProbe probe(root.string(), std::make_unique<CountingProbe>());
+            CachedAudioContentProbe probe(seabass::pathToUtf8(root), std::make_unique<CountingProbe>());
             assert(probe.measure(fresh).has_value());
             assert(probe.save());
         }
-        CachedAudioContentProbe reloaded(root.string(), nullptr);
+        CachedAudioContentProbe reloaded(seabass::pathToUtf8(root), nullptr);
         assert(reloaded.size() == 2 && "keep and fresh survived, gone was dropped");
         assert(reloaded.measure(keep).has_value());
         std::cout << "case 9 (entries for deleted files are pruned) OK\n";
@@ -246,14 +247,14 @@ int main()
     // Found by /code-review, 2026-09-19.
     {
         fs::remove_all(root / "Seabass");
-        const std::string withSlash = root.string() + "/";
+        const std::string withSlash = seabass::pathToUtf8(root) + "/";
         {
             CachedAudioContentProbe probe(withSlash, std::make_unique<CountingProbe>());
             assert(probe.measure(audio).has_value());
             assert(probe.save());
         }
         assert(fs::exists(cacheFile) && "the cache landed under the stick root, not beside the process");
-        CachedAudioContentProbe reloaded(root.string(), nullptr);
+        CachedAudioContentProbe reloaded(seabass::pathToUtf8(root), nullptr);
         assert(reloaded.size() >= 1 && "and a root without the slash reads the same file");
         assert(reloaded.measure(audio).has_value());
         std::cout << "case 10 (a trailing separator does not move the cache) OK\n";
