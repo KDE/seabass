@@ -49,6 +49,7 @@
 #include "gui/app_settings_controller.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/changes/repair_issue_change.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -440,7 +441,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // archive is opened once rather than once per cover.
             result.rescue = std::make_shared<ArtworkRescueSources>(
                 backupDirectory.toStdString(),
-                std::filesystem::path(path.toStdString()).parent_path().string());
+                pathToUtf8(pathFromQString(path).parent_path()));
             result.artwork =
                 infrastructure::engine::auditArtwork(path.toStdString(), artSources, result.rescue->probe());
             // The same pass asks each row for its sample rate, and each
@@ -633,10 +634,8 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     emit analysisStateChanged();
     m_artSources.clear();
     emit artworkChanged();
-    const QString stickRoot = QString::fromStdString(
-        std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
-            .parent_path()
-            .string());
+    const QString stickRoot =
+        pathToQString(pathFromQString(m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).parent_path());
     const bool wasReadOnly = m_stickReadOnly;
     m_stickReadOnly = !stickRoot.isEmpty()
         && infrastructure::media::isMountedReadOnly(stickRoot.toStdString());
@@ -1237,9 +1236,7 @@ void LibraryConsistencyController::repairStickFilesystem()
         return;
     }
     const std::string stickRoot =
-        std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
-            .parent_path()
-            .string();
+        pathToUtf8(pathFromQString(m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).parent_path());
     if (stickRoot.empty()) {
         return;
     }
@@ -1269,9 +1266,7 @@ void LibraryConsistencyController::onFilesystemRepairFinished()
     m_repairingFilesystem = false;
     m_filesystemMessage = thrown.isEmpty() ? QString::fromStdString(result.message) : thrown;
     const std::string stickRoot =
-        std::filesystem::path((m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).toStdString())
-            .parent_path()
-            .string();
+        pathToUtf8(pathFromQString(m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath).parent_path());
     m_stickReadOnly = infrastructure::media::isMountedReadOnly(stickRoot);
     emit stickHealthChanged();
     const bool worked = result.repaired && !m_stickReadOnly;

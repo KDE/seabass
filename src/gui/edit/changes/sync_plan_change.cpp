@@ -13,6 +13,7 @@
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
@@ -62,7 +63,7 @@ struct SyncFormatWriter
             // writeRoot() may be a scratch copy whose parent is a temp
             // directory, and content.path lookups need the real stick.
             oneLibrary = &sharedOneLibraryWriter(ctx, session.writeRoot(),
-                                                  fs::path(catalogPath).parent_path().string());
+                                                  pathToUtf8(pathFromUtf8(catalogPath).parent_path()));
         }
     }
 

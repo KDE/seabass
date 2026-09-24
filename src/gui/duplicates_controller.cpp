@@ -31,6 +31,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "gui/edit/changes/copy_cues_change.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -241,7 +242,7 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
         // for comparing audio or this build has no decoder, which is the
         // behaviour this page has always had.
         auto audioProbe = infrastructure::audio::makeAudioContentProbe(
-            std::filesystem::path(path.toStdString()).parent_path().string());
+            pathToUtf8(pathFromQString(path).parent_path()));
         result.audioComparisonUnavailable = audioProbe == nullptr
             && domain::MatchingPolicy::compareAudioSeconds() > domain::MatchingPolicy::exactMatchSeconds();
         // Cancel has to reach the decoding, which is the slowest thing

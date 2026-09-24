@@ -54,6 +54,7 @@
 #include "infrastructure/rekordbox/rekordbox_cleanup_writer.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "gui/edit/changes/cleanup_group_change.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -510,12 +511,12 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
         return result;
     }
     try {
-        fs::path stickRoot = fs::path(path.toStdString()).parent_path();
+        fs::path stickRoot = pathFromQString(path).parent_path();
         infrastructure::backup::StickWriteLock lock(
             (infrastructure::paths::stickBackupsDir(stickRoot) / ".write.lock"));
         infrastructure::cleanup::PendingDeletionManifest manifest(
-            infrastructure::paths::stickPendingDeletions(stickRoot).string());
-        infrastructure::logging::FileOperationLog log(infrastructure::paths::stickOperationLog(stickRoot).string());
+            pathToUtf8(infrastructure::paths::stickPendingDeletions(stickRoot)));
+        infrastructure::logging::FileOperationLog log(pathToUtf8(infrastructure::paths::stickOperationLog(stickRoot)));
 
         // Every catalog on the stick, not just the one this page is
         // working in. The same audio file routinely lives in rekordbox,
@@ -667,7 +668,7 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         }
 
         auto strays = infrastructure::cleanup::scanStrayFiles(
-            fs::path(path.toStdString()).parent_path().string(), stickCatalogs.catalogs, stickCatalogs.failed, cancel);
+            pathToUtf8(pathFromQString(path).parent_path()), stickCatalogs.catalogs, stickCatalogs.failed, cancel);
 
         result.strays.filesFound = static_cast<int>(strays.filesFound);
         result.strays.bytesFound = static_cast<qulonglong>(strays.bytesFound);
@@ -717,7 +718,7 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         // as it always did. The cache lives on the stick, so a second
         // scan of the same stick decodes nothing.
         auto audioProbe = infrastructure::audio::makeAudioContentProbe(
-            fs::path(path.toStdString()).parent_path().string());
+            pathToUtf8(pathFromQString(path).parent_path()));
         result.audioComparisonUnavailable = audioProbe == nullptr
             && domain::MatchingPolicy::compareAudioSeconds() > domain::MatchingPolicy::exactMatchSeconds();
         // Decoding is the slowest thing in the scan, so Cancel has to
@@ -877,7 +878,7 @@ std::pair<qlonglong, qlonglong> stickSpace(const QString &libraryPath)
         return {0, 0};
     }
     std::error_code ec;
-    const auto info = fs::space(fs::path(libraryPath.toStdString()), ec);
+    const auto info = fs::space(pathFromQString(libraryPath), ec);
     if (ec || info.capacity == 0 || info.capacity == static_cast<std::uintmax_t>(-1)) {
         return {0, 0};
     }
@@ -1291,9 +1292,9 @@ void CleanupController::refreshPendingDeletions()
     if (m_path.isEmpty()) {
         return;
     }
-    fs::path stickRoot = fs::path(m_path.toStdString()).parent_path();
+    fs::path stickRoot = pathFromQString(m_path).parent_path();
     infrastructure::cleanup::PendingDeletionManifest manifest(
-        infrastructure::paths::stickPendingDeletions(stickRoot).string());
+        pathToUtf8(infrastructure::paths::stickPendingDeletions(stickRoot)));
 
     // rekordbox and Engine each accumulate their own separate pending
     // entries (see PendingDeletion::format). This page only ever shows
@@ -1311,7 +1312,7 @@ void CleanupController::refreshPendingDeletions()
         // (deleteSelectedPendingFiles() clears an already-absent entry
         // from the manifest instead of erroring).
         std::error_code ec;
-        entry.fileSizeBytes = fs::file_size(entry.filePath, ec);
+        entry.fileSizeBytes = fs::file_size(pathFromUtf8(entry.filePath), ec);
         if (ec) {
             entry.fileSizeBytes = 0;
         }

@@ -13,6 +13,7 @@
 
 #include "application/path_key.hpp"
 #include "gui/edit/save_context.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
@@ -72,7 +73,7 @@ std::vector<std::string> filesWrittenFor(WriteScope scope, const domain::TrackId
             }
         }
         if (scope.catalogRows) {
-            files.push_back((fs::path(rootPath) / "rekordbox" / "export.pdb").string());
+            files.push_back(pathToUtf8(pathFromUtf8(rootPath) / "rekordbox" / "export.pdb"));
         }
         // Only when this workflow actually mirrors there. Presence of the
         // database is not the test -- Sync leaves it alone even when it
@@ -83,7 +84,7 @@ std::vector<std::string> filesWrittenFor(WriteScope scope, const domain::TrackId
     } else if (format == "engine") {
         // One shared database, whatever the track: the same file every
         // time, deduplicated by the caller.
-        files.push_back((fs::path(rootPath) / "Database2" / "m.db").string());
+        files.push_back(pathToUtf8(pathFromUtf8(rootPath) / "Database2" / "m.db"));
     } else {
         files.push_back(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(rootPath));
     }

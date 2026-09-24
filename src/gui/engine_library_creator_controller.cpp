@@ -13,6 +13,7 @@
 
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 
@@ -48,7 +49,7 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
             LibraryCatalogCache::instance().tracksFor("rekordbox", rekordboxPath.toStdString(), *reporter, cancel);
 
         std::string engineLibraryPath =
-            (fs::path(rekordboxPath.toStdString()).parent_path() / "Engine Library").string();
+            pathToUtf8(pathFromQString(rekordboxPath).parent_path() / "Engine Library");
         // Invalidated before create() runs, not just on success: a
         // partially-failed create() may still have written real files at
         // this exact path, and a stale "engine" entry from a prior

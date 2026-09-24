@@ -17,6 +17,7 @@
 #include "domain/filesystem_compatibility.hpp"
 #include "domain/library_statistics.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "storageprobe/walk_tree.hpp"
@@ -113,7 +114,7 @@ QVariantMap toVariant(const infrastructure::system::StickHardwareInfo &hw,
 std::uint64_t directorySizeBytes(const std::string &dir, const application::CancellationToken &cancel)
 {
     std::error_code ec;
-    if (dir.empty() || !fs::exists(dir, ec) || ec) {
+    if (dir.empty() || !fs::exists(pathFromUtf8(dir), ec) || ec) {
         return 0;
     }
     auto walk = storageprobe::walkTree(dir, {}, [&cancel](std::uint64_t) {
@@ -129,10 +130,10 @@ std::uint64_t directorySizeBytes(const std::string &dir, const application::Canc
 std::string stickRootFromPaths(const QString &rekordboxPath, const QString &enginePath)
 {
     if (!rekordboxPath.isEmpty()) {
-        return fs::path(rekordboxPath.toStdString()).parent_path().string();
+        return pathToUtf8(pathFromQString(rekordboxPath).parent_path());
     }
     if (!enginePath.isEmpty()) {
-        return fs::path(enginePath.toStdString()).parent_path().string();
+        return pathToUtf8(pathFromQString(enginePath).parent_path());
     }
     return "";
 }
@@ -202,7 +203,7 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
             audioBytes += t.fileSizeBytes;
             if (!t.artworkPath.empty() && distinctArtwork.insert(t.artworkPath).second) {
                 std::error_code ec;
-                auto size = fs::file_size(t.artworkPath, ec);
+                auto size = fs::file_size(pathFromUtf8(t.artworkPath), ec);
                 if (!ec) {
                     artworkBytes += size;
                 }

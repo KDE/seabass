@@ -10,6 +10,7 @@
 #include <filesystem>
 
 #include "gui/media_controller.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "infrastructure/system/process_liveness.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
@@ -250,12 +251,12 @@ QString EditSessionRegistry::mountPointForPath(const QString &anyLibraryPath) co
     if (anyLibraryPath.isEmpty()) {
         return {};
     }
-    fs::path p(anyLibraryPath.toStdString());
-    std::string name = p.filename().string();
+    fs::path p = pathFromQString(anyLibraryPath);
+    std::string name = pathToUtf8(p.filename());
     // A catalog folder ("PIONEER", "Engine Library") sits directly under
     // the stick root; anything else is taken to be the root itself.
     if (name == "PIONEER" || name == "Engine Library") {
-        return QString::fromStdString(p.parent_path().string());
+        return pathToQString(p.parent_path());
     }
     return anyLibraryPath;
 }
@@ -274,7 +275,7 @@ QString EditSessionRegistry::libraryIdForPath(const QString &anyLibraryPath)
     }
     // No media controller (tests) or a mount point it never saw: the same
     // filesystem-UUID-else-label+size rule, read straight from the mount.
-    std::string label = fs::path(mountPoint.toStdString()).filename().string();
+    std::string label = pathToUtf8(pathFromQString(mountPoint).filename());
     auto info = infrastructure::system::readStickHardwareInfo(mountPoint.toStdString(), label);
     return QString::fromStdString(info.stickIdentifier);
 }

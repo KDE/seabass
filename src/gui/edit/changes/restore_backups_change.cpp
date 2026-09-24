@@ -16,6 +16,7 @@
 
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::gui
 {
@@ -94,7 +95,7 @@ ChangeOutcome RestoreBackupsChange::apply(SaveContext &ctx)
             ids.insert(backup.id.toStdString());
         }
         const std::string stickRoot = infrastructure::paths::stickRootForCatalogPath(catalogPath.toStdString());
-        const std::string pendingPath = infrastructure::paths::stickPendingDeletions(stickRoot).string();
+        const std::string pendingPath = pathToUtf8(infrastructure::paths::stickPendingDeletions(stickRoot));
         // Rewritten inside this change, so a rollback of it puts the list
         // back along with the catalogs.
         ctx.protectForThisChange(pendingPath);

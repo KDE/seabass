@@ -15,6 +15,7 @@
 #include "gui/onelibrary_cue_writer_adapter.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
@@ -100,7 +101,7 @@ struct RestoreWriterContext
                     // format, whichever way round the sharing argument
                     // goes. See docs/metadata-backup-plan.md.
                     mirror = &sharedOneLibraryWriter(ctx, realRoot,
-                                                      fs::path(realRoot).parent_path().string());
+                                                      pathToUtf8(pathFromUtf8(realRoot).parent_path()));
                 }
             }
         } else if (format == "engine") {
@@ -119,9 +120,9 @@ struct RestoreWriterContext
             // features cannot open two instances against one file.
             auto adapter = std::make_unique<OneLibraryCueWriterAdapter>(
                 realRoot, std::unordered_map<std::string, std::string>{},
-                fs::path(realRoot).parent_path().string());
+                pathToUtf8(pathFromUtf8(realRoot).parent_path()));
             adapter->useSharedWriter(
-                sharedOneLibraryWriter(ctx, realRoot, fs::path(realRoot).parent_path().string()));
+                sharedOneLibraryWriter(ctx, realRoot, pathToUtf8(pathFromUtf8(realRoot).parent_path())));
             writer = std::move(adapter);
         }
     }
@@ -211,7 +212,7 @@ AnnotationOutcome applyAnnotation(SaveContext &ctx, RestoreWriterContext &writer
             // has this database redirected to a scratch copy, that copy
             // is the one that will be committed back.
             const std::string pdbPath =
-                (fs::path(writer.session.writeRoot()) / "rekordbox" / "export.pdb").string();
+                pathToUtf8(pathFromUtf8(writer.session.writeRoot()) / "rekordbox" / "export.pdb");
             infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
             if (!rows.setTrackRating(static_cast<uint32_t>(std::stoul(sourceId)), *stars)) {
                 // The row this proposal was built from is not in the

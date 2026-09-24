@@ -11,6 +11,7 @@
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/library_catalog_mtime.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "infrastructure/stick_layout.hpp"
@@ -28,7 +29,7 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
         return result;
     }
 
-    const fs::path root = fs::path(libraryPath).parent_path();
+    const fs::path root = pathFromUtf8(libraryPath).parent_path();
     const fs::path pioneerRoot = root / "PIONEER";
 
     auto read = [&](const char *format, const std::string &path,
@@ -44,13 +45,13 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
 
     std::error_code ec;
     if (fs::exists(pioneerRoot / "rekordbox" / "export.pdb", ec)) {
-        read("rekordbox", pioneerRoot.string(), result.catalogs.rekordbox);
+        read("rekordbox", pathToUtf8(pioneerRoot), result.catalogs.rekordbox);
     }
     if (fs::exists(infrastructure::engine::engineMainDatabasePath(root), ec)) {
-        read("engine", infrastructure::engine::engineLibraryPath(root).string(), result.catalogs.engine);
+        read("engine", pathToUtf8(infrastructure::engine::engineLibraryPath(root)), result.catalogs.engine);
     }
-    if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneerRoot.string())) {
-        read("onelibrary", pioneerRoot.string(), result.catalogs.oneLibrary);
+    if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(pioneerRoot))) {
+        read("onelibrary", pathToUtf8(pioneerRoot), result.catalogs.oneLibrary);
     }
     return result;
 }
@@ -60,7 +61,7 @@ std::int64_t catalogsLastModified(const std::string &libraryPath)
     if (libraryPath.empty()) {
         return 0;
     }
-    const fs::path root = fs::path(libraryPath).parent_path();
+    const fs::path root = pathFromUtf8(libraryPath).parent_path();
 
     // stick_backup's helper does the hard part, and the hard part is
     // Engine's write-ahead log.
@@ -81,7 +82,7 @@ std::int64_t catalogsLastModified(const std::string &libraryPath)
     // third catalog a DJ's cues can live in, so a cue edit that lands
     // only there still has to date the stick.
     const fs::path oneLibrary = root / "PIONEER" / "rekordbox" / "exportLibrary.db";
-    for (const fs::path &candidate : {oneLibrary, fs::path(oneLibrary.string() + "-wal")}) {
+    for (const fs::path &candidate : {oneLibrary, fs::path(oneLibrary) += "-wal"}) {
         std::error_code ec;
         const fs::file_time_type written = fs::last_write_time(candidate, ec);
         if (ec) {

@@ -61,8 +61,8 @@ private:
     std::string m_format;
     std::string m_catalogPath;
     std::string m_dbFile;
-    std::string m_scratchSubdir;
-    std::string m_scratchFilename;
+    std::filesystem::path m_scratchSubdir;
+    std::filesystem::path m_scratchFilename;
     std::string m_writeRoot;
     std::string m_label;
     std::uintmax_t m_existingBytes = 0;

@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include "gui/edit/save_context.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/rekordbox_settings_writer.hpp"
 
 namespace seabass::gui
@@ -56,7 +57,7 @@ std::vector<BackupTarget> DeviceSettingChange::filesToBackup(SaveContext &ctx) c
 {
     (void)ctx;
     const std::string filePath = m_pioneerRoot.toStdString() + "/" + m_fileName.toStdString();
-    if (!fs::exists(filePath)) {
+    if (!fs::exists(pathFromUtf8(filePath))) {
         return {};  // apply() reports the missing file; do not record one that is not there
     }
     return {{filePath, "device-settings"}};
@@ -65,7 +66,7 @@ std::vector<BackupTarget> DeviceSettingChange::filesToBackup(SaveContext &ctx) c
 ChangeOutcome DeviceSettingChange::apply(SaveContext &ctx)
 {
     std::string filePath = m_pioneerRoot.toStdString() + "/" + m_fileName.toStdString();
-    if (!fs::exists(filePath)) {
+    if (!fs::exists(pathFromUtf8(filePath))) {
         return ChangeOutcome::failure("Settings file not found: " + m_fileName);
     }
     ctx.backupOnce(filePath, "device-settings");

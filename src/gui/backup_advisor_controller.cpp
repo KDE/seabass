@@ -18,6 +18,7 @@
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -107,7 +108,7 @@ void BackupAdvisorController::startNext()
     }
     const Request request = m_queue.front();
     m_queue.erase(m_queue.begin());
-    const fs::path directory(m_backupDirectory.toStdString());
+    const fs::path directory = pathFromQString(m_backupDirectory);
     emit busyChanged();
     m_watcher.setFuture(QtConcurrent::run([request, directory]() {
         namespace stick_backup = infrastructure::stick_backup;
@@ -122,7 +123,7 @@ void BackupAdvisorController::startNext()
         facts.stickIdentifier = hardware.stickIdentifier;
         facts.freeBytes = hardware.freeBytes;
         facts.usedBytes = hardware.totalBytes > hardware.freeBytes ? hardware.totalBytes - hardware.freeBytes : 0;
-        const fs::path root(request.mountPoint.toStdString());
+        const fs::path root = pathFromQString(request.mountPoint);
         if (facts.hasLibrary) {
             facts.fingerprint = readLibraryFingerprint(request.rekordboxPath, request.enginePath);
             facts.catalogModifiedAtUnix = stick_backup::libraryCatalogModifiedAt(root);
@@ -174,7 +175,7 @@ QVariantMap BackupAdvisorController::sourceToVariant(const StickBackupAdvice::So
     map["kind"] = QString::fromUtf8(std::string(application::toString(source.kind)).c_str());
     map["label"] = QString::fromStdString(source.label);
     map["mountPoint"] = QString::fromStdString(source.mountPoint);
-    map["backupPath"] = QString::fromStdString(source.backupPath.string());
+    map["backupPath"] = pathToQString(source.backupPath);
     map["modifiedAt"] = isoTime(source.modifiedAtUnix);
     map["enoughSpace"] = source.enoughSpace;
     map["detail"] = QString::fromStdString(source.detail);
@@ -217,7 +218,7 @@ void BackupAdvisorController::recomputeAdvice()
             // and BackupStick would rewrite that archive from the cache.
             // BackupStick refuses too; this keeps the offer from ever
             // appearing on an empty stick's card.
-            if (infrastructure::local::isBrowsedBackupRoot(std::filesystem::path(other.key().toStdString()))) {
+            if (infrastructure::local::isBrowsedBackupRoot(pathFromQString(other.key()))) {
                 continue;
             }
             StickBackupAdviceInput::PeerStick peer;
@@ -235,7 +236,7 @@ void BackupAdvisorController::recomputeAdvice()
         QVariantMap map;
         map["state"] = QString::fromUtf8(std::string(application::toString(result.state)).c_str());
         map["matchedBy"] = QString::fromUtf8(std::string(application::toString(result.matchedBy)).c_str());
-        map["backupPath"] = QString::fromStdString(result.backupPath.string());
+        map["backupPath"] = pathToQString(result.backupPath);
         map["backupLabel"] = QString::fromStdString(result.backupLabel);
         map["backupCreatedAt"] = isoTime(result.backupCreatedAtUnix);
         map["trackOverlap"] = result.trackOverlap;

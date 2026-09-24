@@ -13,6 +13,7 @@
 #include <system_error>
 
 #include "application/use_cases/anonymize_library.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -144,7 +145,7 @@ void AnonymizeLibraryController::run(const QString &rekordboxPath, const QString
     // directory is the requested path with the suffix taken off -- which
     // keeps the zip exactly where the user pointed, rather than one
     // directory beside it.
-    std::filesystem::path requested(outPath.toStdString());
+    std::filesystem::path requested = pathFromQString(outPath);
     if (requested.extension() == ".zip") {
         requested.replace_extension();
     }
@@ -155,7 +156,7 @@ void AnonymizeLibraryController::run(const QString &rekordboxPath, const QString
     if (requested.has_parent_path()) {
         std::filesystem::create_directories(requested.parent_path(), dirEc);
     }
-    const QString outDir = QString::fromStdString(requested.string());
+    const QString outDir = pathToQString(requested);
     setErrorMessage({});
     m_summaryText.clear();
     m_manifestText.clear();

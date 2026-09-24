@@ -24,6 +24,7 @@
 #include "infrastructure/media/media_factory.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -179,7 +180,7 @@ void RestoreStickBackupController::refreshKnownBackups()
     if (m_listWatcher.isRunning()) {
         return;
     }
-    const fs::path directory(m_defaultBackupDirectory.toStdString());
+    const fs::path directory = pathFromQString(m_defaultBackupDirectory);
     m_listWatcher.setFuture(QtConcurrent::run([directory]() {
         QVariantList backups;
         if (directory.empty()) {
@@ -187,8 +188,8 @@ void RestoreStickBackupController::refreshKnownBackups()
         }
         for (const application::StickBackupDescription &d : application::RestoreStickBackup::describeAll(directory)) {
             QVariantMap map;
-            map["archivePath"] = QString::fromStdString(d.archivePath.string());
-            map["fileName"] = QString::fromStdString(d.archivePath.filename().string());
+            map["archivePath"] = pathToQString(d.archivePath);
+            map["fileName"] = pathToQString(d.archivePath.filename());
             map["error"] = QString::fromStdString(d.error);
             map["label"] = QString::fromStdString(d.stickLabel);
             map["identifier"] = QString::fromStdString(d.stickIdentifier);
@@ -283,8 +284,8 @@ void RestoreStickBackupController::analyze(const QString &targetRoot)
     m_analyzing = true;
     emit busyChanged();
     RestoreOptions options;
-    options.archivePath = fs::path(m_archivePath.toStdString());
-    options.targetRoot = fs::path(targetRoot.toStdString());
+    options.archivePath = pathFromQString(m_archivePath);
+    options.targetRoot = pathFromQString(targetRoot);
     bool targetGiven = !targetRoot.isEmpty();
     m_analyzeWatcher.setFuture(QtConcurrent::run([options, targetGiven, targetRoot]() {
         auto result = std::make_shared<AnalyzeResult>();
@@ -445,8 +446,8 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
     emit progressChanged();
     m_cancel = application::CancellationToken();
     RestoreOptions options;
-    options.archivePath = fs::path(m_archivePath.toStdString());
-    options.targetRoot = fs::path(targetRoot.toStdString());
+    options.archivePath = pathFromQString(m_archivePath);
+    options.targetRoot = pathFromQString(targetRoot);
     m_restoreTarget = targetRoot;
     options.exact = exact;
     options.cancel = m_cancel;
