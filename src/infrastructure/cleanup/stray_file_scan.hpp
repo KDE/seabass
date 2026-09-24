@@ -4,18 +4,23 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "application/path_key.hpp"
 #include "application/ports/track_metadata_probe.hpp"
 #include "application/use_cases/find_unreferenced_files.hpp"
 #include "application/use_cases/unreferenced_tracks.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/cleanup/audio_file_walk.hpp"
+#include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 #include "infrastructure/local/metadata_cache.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -37,6 +42,12 @@ struct StrayFileScanResult
     std::size_t filesFound = 0;   // strays on disk, before probing
     std::uint64_t bytesFound = 0;
     std::size_t unreadable = 0;   // found, but no metadata could be read
+
+    // Unreferenced files left out because this stick's pending-deletion
+    // list already names them: a Clean Up has removed their rows and
+    // scheduled them, and Delete Orphaned Files offers them. Not in
+    // `filesFound` or `tracks`.
+    std::size_t alreadyListedForDeletion = 0;
 
     // At least one directory could not be read, so there may be more
     // files than were seen. Not a safety problem (an unseen file is
@@ -96,6 +107,31 @@ inline StrayFileScanResult scanStrayFiles(const std::string &stickRoot, const ap
     if (!scan.usable) {
         result.refusal = "No catalog on this stick could be read, so nothing can be called unreferenced.";
         return result;
+    }
+
+    // Files a Clean Up already dealt with. Clean Up removes a duplicate's
+    // row from every catalog that lists it and schedules the FILE on the
+    // stick's pending-deletion list, so afterwards that file is exactly
+    // what this scan looks for: audio no catalog references. Offered here
+    // it came straight back as a duplicate of the copy that was kept --
+    // the group just cleaned up reappeared, and the page never counted it
+    // gone (shakedown round 8, W5: "groups 9 -> 9" on Linux and macOS).
+    // Matched the way resolvePendingDeletions() matches the same entries:
+    // absolute paths, through normalizedPathKey().
+    {
+        std::set<std::string> listed;
+        for (const auto &entry : PendingDeletionManifest(paths::stickPendingDeletions(stickRoot).string()).list()) {
+            if (!entry.filePath.empty()) {
+                listed.insert(application::normalizedPathKey(entry.filePath));
+            }
+        }
+        const auto before = scan.unreferenced.size();
+        scan.unreferenced.erase(std::remove_if(scan.unreferenced.begin(), scan.unreferenced.end(),
+                                               [&](const application::AudioFileOnDisk &f) {
+                                                   return listed.count(application::normalizedPathKey(f.filePath)) > 0;
+                                               }),
+                                scan.unreferenced.end());
+        result.alreadyListedForDeletion = before - scan.unreferenced.size();
     }
 
     result.usable = true;
