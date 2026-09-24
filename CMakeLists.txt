@@ -3106,8 +3106,26 @@ endif()
 # Created by a setup fixture rather than once at configure time, because
 # libstdc++'s temp_directory_path() throws when the directory is missing,
 # and deleting it between runs must not turn the whole suite red.
-if(NOT WIN32 AND DEFINED ENV{HOME})
-    set(SEABASS_TEST_TMPDIR "$ENV{HOME}/tmp/seabass-tests" CACHE PATH
+#
+# Under $HOME by default, which is on disk on a developer's machine. Not
+# on CI: KDE's images run the job with HOME=/root and no right to create
+# anything there, so the fixture failed with "Error creating directory
+# /root/tmp/seabass-tests" and took every test with it as a failed
+# dependency -- linux:build-test red on master and Seabass/0.8 alike, and
+# with it every package button, which needs the build stage green. The
+# build tree is on disk there, so the scratch goes into it. An explicit
+# SEABASS_TEST_TMPDIR in the environment wins everywhere.
+if(NOT WIN32)
+    if(DEFINED ENV{SEABASS_TEST_TMPDIR})
+        set(_seabass_test_tmpdir_default "$ENV{SEABASS_TEST_TMPDIR}")
+    elseif(DEFINED ENV{CI})
+        set(_seabass_test_tmpdir_default "${CMAKE_BINARY_DIR}/test-tmp")
+    elseif(DEFINED ENV{HOME})
+        set(_seabass_test_tmpdir_default "$ENV{HOME}/tmp/seabass-tests")
+    endif()
+endif()
+if(_seabass_test_tmpdir_default)
+    set(SEABASS_TEST_TMPDIR "${_seabass_test_tmpdir_default}" CACHE PATH
         "Where tests keep their scratch trees (TMPDIR); on disk, not tmpfs")
     add_test(NAME seabass_test_tmpdir COMMAND ${CMAKE_COMMAND} -E make_directory "${SEABASS_TEST_TMPDIR}")
     set_tests_properties(seabass_test_tmpdir PROPERTIES FIXTURES_SETUP seabass_test_tmpdir)
