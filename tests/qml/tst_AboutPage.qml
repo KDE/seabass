@@ -25,8 +25,45 @@ TestCase {
         AboutPage {}
     }
 
+    // What the page reads on the real UpdateChecker.
+    function fakeChecker(channel) {
+        return {currentVersion: "0.8.8", currentChannel: channel || "dev", currentCommit: "v0.8.8-12-g07338f4"};
+    }
+
     function make(w, h) {
-        return createTemporaryObject(pageComponent, testCase, {width: w, height: h});
+        return createTemporaryObject(pageComponent, testCase, {width: w, height: h, updateChecker: fakeChecker()});
+    }
+
+    // Which Seabass this is, near the top and larger than the text, so it
+    // is found without looking for it; with the channel and commit a bug
+    // report needs, under it.
+    function test_theVersionIsShownProminently() {
+        var page = make(700, 900);
+        waitForRendering(page);
+        var version = findChild(page, "aboutVersion");
+        verify(version !== null && version.visible, "the version is on the page");
+        compare(version.text, "Version 0.8.8");
+        verify(version.font.pointSize > Theme.baseFontPointSize * 1.3,
+               "larger than the body text: " + version.font.pointSize);
+        // Right under the name, ahead of everything the page goes on to
+        // say, and on screen without scrolling.
+        var bottom = version.mapToItem(page, 0, 0).y + version.height;
+        verify(bottom < findChild(page, "aboutIntro").mapToItem(page, 0, 0).y,
+               "above the introduction");
+        verify(bottom <= page.height / 2, "in the top half of the page: " + bottom);
+        compare(findChild(page, "aboutBuild").text, "Development build · v0.8.8-12-g07338f4");
+
+        var stable = createTemporaryObject(pageComponent, testCase,
+            {width: 700, height: 900, updateChecker: {currentVersion: "0.9.0", currentChannel: "stable", currentCommit: ""}});
+        compare(findChild(stable, "aboutBuild").text, "Stable release");
+    }
+
+    // Without an update checker (pushed bare) the page still opens, and
+    // says nothing rather than "Version ".
+    function test_noCheckerNoVersion() {
+        var page = createTemporaryObject(pageComponent, testCase, {width: 700, height: 900});
+        waitForRendering(page);
+        compare(findChild(page, "aboutVersionBlock").visible, false);
     }
 
     function test_links_are_present() {

@@ -832,6 +832,7 @@ ApplicationWindow {
     Component {
         id: aboutPageComponent
         AboutPage {
+            updateChecker: updateCtrl
             onDonationRequested: stackView.push(donationPageComponent)
         }
     }
