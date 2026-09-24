@@ -137,6 +137,23 @@ TestCase {
         tryCompare(dialog, "opened", false);
     }
 
+    // A save over before the dialog has finished opening (nine rows that
+    // all skip take a few milliseconds; the open animates for 220 ms):
+    // the dialog still closes, rather than staying up modal with no way
+    // to dismiss it, which read as a frozen Seabass.
+    function test_writeProgressDialogClosesAfterAnInstantSave() {
+        var session = createTemporaryObject(sessionComponent, testCase);
+        var dialog = createTemporaryObject(writeProgressComponent, testCase, {session: session});
+        session.writing = true;
+        session.writing = false;
+        verify(!dialog.opened, "the open has not finished yet");
+        // Long enough for the enter animation to run: the dialog must
+        // then be closed, not left open.
+        wait(600);
+        tryCompare(dialog, "opened", false);
+        tryCompare(dialog, "visible", false);
+    }
+
     function test_summaryDialogCountsAndReasons() {
         var dialog = createTemporaryObject(summaryComponent, testCase);
         dialog.show({written: 5, total: 31, unit: "tracks", cancelled: true, error: ""});
