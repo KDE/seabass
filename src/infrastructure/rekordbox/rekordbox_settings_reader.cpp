@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/rekordbox_settings_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -38,7 +40,7 @@ std::string decodeField(uint8_t byteValue, const std::vector<SettingsFieldOption
 std::optional<SettingsFile> readOne(const std::string &pioneerRoot, const std::string &fileName,
                                      const std::string &title)
 {
-    std::ifstream ifs(pioneerRoot + "/" + fileName, std::ifstream::binary);
+    std::ifstream ifs(pathFromUtf8(pioneerRoot) / pathFromUtf8(fileName), std::ifstream::binary);
     if (!ifs.is_open()) {
         return std::nullopt;
     }

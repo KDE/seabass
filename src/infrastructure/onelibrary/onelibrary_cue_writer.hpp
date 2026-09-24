@@ -332,6 +332,7 @@ private:
     std::string m_pioneerRoot;
     std::string m_stickRoot;
     std::string m_dbPath;
+    std::filesystem::path m_dbFile;  // m_dbPath, decoded once for the fs:: calls
     std::uintmax_t m_originalFileSize = 0;
     std::filesystem::file_time_type m_originalMtime;
     std::uint32_t m_originalChecksum = 0;

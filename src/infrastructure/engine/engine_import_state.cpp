@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_import_state.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
 
@@ -21,7 +22,7 @@ namespace
 
 fs::path engineDatabase(const std::string &engineLibraryPath)
 {
-    return fs::path(engineLibraryPath) / "Database2" / "m.db";
+    return pathFromUtf8(engineLibraryPath) / "Database2" / "m.db";
 }
 
 // export.pdb's header: four little-endian words in, after the leading
@@ -31,7 +32,7 @@ fs::path engineDatabase(const std::string &engineLibraryPath)
 // question that lives in the first 24 bytes.
 std::optional<std::uint64_t> librarySequenceOf(const std::string &pioneerPath)
 {
-    const fs::path pdb = fs::path(pioneerPath) / "rekordbox" / "export.pdb";
+    const fs::path pdb = pathFromUtf8(pioneerPath) / "rekordbox" / "export.pdb";
     std::ifstream in(pdb, std::ios::binary);
     if (!in) {
         return std::nullopt;
@@ -59,7 +60,7 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
     }
 
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(engineDatabase(engineLibraryPath).string().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
+    if (sqlite3_open_v2(pathToUtf8(engineDatabase(engineLibraryPath)).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
         != SQLITE_OK) {
         state.error = "could not open the Engine database";
         if (handle != nullptr) {
@@ -99,14 +100,14 @@ bool markRekordboxLibraryImported(const std::string &engineLibraryPath, std::uin
                                   const std::string &databaseFileOverride)
 {
     const fs::path database =
-        databaseFileOverride.empty() ? engineDatabase(engineLibraryPath) : fs::path(databaseFileOverride);
+        databaseFileOverride.empty() ? engineDatabase(engineLibraryPath) : pathFromUtf8(databaseFileOverride);
     if (beforeWrite) {
-        beforeWrite(database.string());
+        beforeWrite(pathToUtf8(database));
     }
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(database.string().c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(database).c_str(), &handle, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
         if (error != nullptr) {
-            *error = "could not open " + database.string();
+            *error = "could not open " + pathToUtf8(database);
         }
         if (handle != nullptr) {
             sqlite3_close(handle);

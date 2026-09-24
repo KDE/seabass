@@ -4,6 +4,8 @@
 
 #include "infrastructure/audio/embedded_artwork.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #include <taglib/attachedpictureframe.h>
 #include <taglib/flacfile.h>
 #include <taglib/flacpicture.h>
@@ -15,6 +17,7 @@
 #include <taglib/xiphcomment.h>
 
 #include <algorithm>
+#include <filesystem>
 
 namespace seabass::infrastructure::audio
 {
@@ -86,15 +89,20 @@ std::string readEmbeddedArtwork(const std::string &audioFile)
         return lower.size() >= suffix.size() && lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0;
     };
 
+    // TagLib::FileName is const char* on POSIX and, on Windows, a class
+    // whose const char* constructor reads the ANSI code page; the
+    // fs::path's c_str() is the wchar_t* its other constructor takes.
+    const std::filesystem::path path = pathFromUtf8(audioFile);
+
     if (endsWith(".mp3") || endsWith(".aiff") || endsWith(".aif") || endsWith(".wav")) {
-        TagLib::MPEG::File file(audioFile.c_str(), false);
+        TagLib::MPEG::File file(path.c_str(), false);
         if (file.isValid()) {
             return fromId3(file.ID3v2Tag());
         }
         return {};
     }
     if (endsWith(".flac")) {
-        TagLib::FLAC::File file(audioFile.c_str(), false);
+        TagLib::FLAC::File file(path.c_str(), false);
         if (!file.isValid()) {
             return {};
         }
@@ -105,7 +113,7 @@ std::string readEmbeddedArtwork(const std::string &audioFile)
         return picture;
     }
     if (endsWith(".m4a") || endsWith(".mp4") || endsWith(".m4b")) {
-        TagLib::MP4::File file(audioFile.c_str(), false);
+        TagLib::MP4::File file(path.c_str(), false);
         if (!file.isValid() || file.tag() == nullptr) {
             return {};
         }
@@ -124,7 +132,7 @@ std::string readEmbeddedArtwork(const std::string &audioFile)
     }
     if (endsWith(".ogg") || endsWith(".opus")) {
         TagLib::Ogg::XiphComment comment;
-        TagLib::FLAC::File file(audioFile.c_str(), false);
+        TagLib::FLAC::File file(path.c_str(), false);
         if (file.isValid() && file.hasXiphComment() && file.xiphComment() != nullptr) {
             return fromPictures(file.xiphComment()->pictureList());
         }

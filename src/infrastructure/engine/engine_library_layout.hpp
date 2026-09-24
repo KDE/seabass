@@ -55,14 +55,17 @@ inline bool isSqliteShmFile(std::string_view filename)
 // `-shm`).
 inline std::optional<std::filesystem::path> dbSetMainFile(const std::filesystem::path &path)
 {
-    std::string name = path.filename().string();
-    if (isSqliteDatabaseFile(name)) {
+    // On the path itself, never through a narrow string: "m.db-wal" has
+    // the extension ".db-wal" and the stem "m", so the main file is the
+    // stem with ".db" back on it.
+    const std::filesystem::path extension = path.extension();
+    if (extension == ".db") {
         return path;
     }
-    for (std::string_view suffix : {std::string_view("-wal"), std::string_view("-journal")}) {
-        if (endsWith(name, suffix) && isSqliteDatabaseFile(name.substr(0, name.size() - suffix.size()))) {
-            return path.parent_path() / name.substr(0, name.size() - suffix.size());
-        }
+    if (extension == ".db-wal" || extension == ".db-journal") {
+        std::filesystem::path main = path.stem();
+        main += ".db";
+        return path.parent_path() / main;
     }
     return std::nullopt;
 }

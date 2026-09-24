@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <filesystem>
 #include <stdexcept>
@@ -23,13 +24,14 @@ std::string engineDatabaseFile(const std::string &engineLibraryPath)
 {
     namespace fs = std::filesystem;
     std::error_code ec;
-    fs::path candidate = fs::path(engineLibraryPath) / "Database2" / "m.db";
+    const fs::path root = pathFromUtf8(engineLibraryPath);
+    fs::path candidate = root / "Database2" / "m.db";
     if (fs::exists(candidate, ec)) {
-        return candidate.string();
+        return pathToUtf8(candidate);
     }
-    candidate = fs::path(engineLibraryPath) / "m.db";
+    candidate = root / "m.db";
     if (fs::exists(candidate, ec)) {
-        return candidate.string();
+        return pathToUtf8(candidate);
     }
     return {};
 }

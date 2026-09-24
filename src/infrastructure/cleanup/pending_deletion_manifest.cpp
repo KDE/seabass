@@ -4,6 +4,8 @@
 
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #include "infrastructure/durable_file_write.hpp"
 
 #include <ctime>
@@ -133,7 +135,7 @@ void PendingDeletionManifest::append(PendingDeletion entry)
     // create it -- an unopened stream drops the record of what is waiting
     // to be deleted, which is the one thing this file exists to keep.
     std::error_code dirEc;
-    std::filesystem::create_directories(std::filesystem::path(m_manifestPath).parent_path(), dirEc);
+    std::filesystem::create_directories(pathFromUtf8(m_manifestPath).parent_path(), dirEc);
     // Was a buffered ofstream whose result nobody read, which failed in
     // two ways at once. It said nothing when the line did not arrive: on
     // a full stick, a read-only mount, or with a folder that could not
@@ -219,7 +221,7 @@ bool PendingDeletionManifest::removeForBackups(const std::set<std::string> &back
 bool PendingDeletionManifest::rewrite(const std::string &contents) const
 {
     std::error_code dirEc;
-    std::filesystem::create_directories(std::filesystem::path(m_manifestPath).parent_path(), dirEc);
+    std::filesystem::create_directories(pathFromUtf8(m_manifestPath).parent_path(), dirEc);
     return infrastructure::writeFileDurablyAtomic(m_manifestPath, contents);
 }
 
@@ -237,10 +239,11 @@ std::vector<PendingDeletion> PendingDeletionManifest::list() const
 // entry stayed on disk. An absent file IS empty, and is true.
 bool PendingDeletionManifest::readAll(std::vector<PendingDeletion> &result) const
 {
-    std::ifstream ifs(m_manifestPath);
+    const std::filesystem::path manifest = pathFromUtf8(m_manifestPath);
+    std::ifstream ifs(manifest);
     if (!ifs.is_open()) {
         std::error_code ec;
-        return !std::filesystem::exists(m_manifestPath, ec);
+        return !std::filesystem::exists(manifest, ec);
     }
     std::string line;
     while (std::getline(ifs, line)) {

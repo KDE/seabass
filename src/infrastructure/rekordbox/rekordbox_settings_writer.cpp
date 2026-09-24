@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/rekordbox_settings_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include "infrastructure/durable_file_write.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 
@@ -43,7 +45,7 @@ bool writeDeviceSettingField(const std::string &pioneerRoot, const std::string &
     std::string path = pioneerRoot + "/" + fileName;
     std::vector<uint8_t> data;
     {
-        std::ifstream ifs(path, std::ifstream::binary);
+        std::ifstream ifs(pathFromUtf8(path), std::ifstream::binary);
         if (!ifs.is_open()) {
             return false;
         }

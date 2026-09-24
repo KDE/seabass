@@ -11,6 +11,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::onelibrary
 {
@@ -65,7 +66,7 @@ std::vector<Track> OneLibraryReader::readAll()
         throw std::runtime_error("no OneLibrary (exportLibrary.db) present for this stick");
     }
     std::string dbPath = OneLibraryCueWriter::dbPathFor(m_pioneerRoot);
-    fs::path stickRoot = fs::path(m_pioneerRoot).parent_path();
+    fs::path stickRoot = pathFromUtf8(m_pioneerRoot).parent_path();
 
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
@@ -211,13 +212,12 @@ std::vector<Track> OneLibraryReader::readAll()
             //
             // relPath is a raw OneLibrary column, so it is exactly the
             // kind of foreign data normalizedPathKey() (path_key.cpp) is
-            // documented never to trust: on Windows, operator/ re-encodes
-            // its argument through the current locale's narrow-to-wide
-            // codecvt and throws std::filesystem::filesystem_error on
-            // bytes that are not valid UTF-8. One track with an
+            // documented never to trust: pathFromUtf8() decodes it as the
+            // UTF-8 it is meant to be, and on Windows that decoding can
+            // throw for bytes that are not valid UTF-8. One track with an
             // undecodable path must not take down the whole scan.
             try {
-                track.filePath = (stickRoot / relPath.substr(1)).make_preferred().string();
+                track.filePath = pathToUtf8((stickRoot / pathFromUtf8(relPath.substr(1))).make_preferred());
             } catch (const std::exception &e) {
                 m_progress->warn("content_id=" + track.sourceId + ": file path unreadable (" + e.what() + ")");
             }
@@ -244,10 +244,10 @@ std::vector<Track> OneLibraryReader::readAll()
             // Same undecodable-bytes risk as filePath above, and the same
             // fix: one bad artwork path must not lose the whole track.
             try {
-                fs::path candidate = (stickRoot / imageRelPath.substr(1)).make_preferred();
+                fs::path candidate = (stickRoot / pathFromUtf8(imageRelPath.substr(1))).make_preferred();
                 std::error_code ec;
                 if (fs::exists(candidate, ec)) {
-                    track.artworkPath = candidate.string();
+                    track.artworkPath = pathToUtf8(candidate);
                 }
             } catch (const std::exception &e) {
                 m_progress->warn("content_id=" + track.sourceId + ": artwork path unreadable (" + e.what() + ")");

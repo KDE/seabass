@@ -17,6 +17,7 @@
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::rekordbox
 {
@@ -253,10 +254,10 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
 {
     std::vector<domain::Track> tracks;
 
-    std::string pdbPath = m_pioneerRoot + "/rekordbox/export.pdb";
+    const std::filesystem::path pdbPath = pathFromUtf8(m_pioneerRoot) / "rekordbox" / "export.pdb";
     std::ifstream ifs(pdbPath, std::ifstream::binary);
     if (!ifs.is_open()) {
-        throw std::runtime_error("could not open " + pdbPath);
+        throw std::runtime_error("could not open " + pathToUtf8(pdbPath));
     }
 
     kaitai::kstream ks(&ifs);
@@ -264,7 +265,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
 
     // file_path (e.g. "/Contents/Artist/Album/01_track.mp3") is relative to
     // the stick root, i.e. the PIONEER folder's parent.
-    std::string stickRoot = std::filesystem::path(m_pioneerRoot).parent_path().string();
+    std::string stickRoot = pathToUtf8(pathFromUtf8(m_pioneerRoot).parent_path());
 
     // Artist names live in their own normalized table; track rows only
     // carry an artist_id foreign key into it.
@@ -506,7 +507,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         // trackFilePathOnStick(), which deleted rows share.
                         track.filePath = trackFilePathOnStick(stickRoot, trackFilePath);
                         std::error_code ec;
-                        auto size = std::filesystem::file_size(track.filePath, ec);
+                        auto size = std::filesystem::file_size(pathFromUtf8(track.filePath), ec);
                         track.fileSizeBytes = ec ? 0 : size;
                     }
                     auto artworkIt = artworkPathById.find(rowTrack->artwork_id());
@@ -515,8 +516,8 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         if (artworkRelativePath.front() == '/' || artworkRelativePath.front() == '\\') {
                             artworkRelativePath.erase(0, 1);
                         }
-                        track.artworkPath =
-                            (std::filesystem::path(stickRoot) / artworkRelativePath).make_preferred().string();
+                        track.artworkPath = pathToUtf8(
+                            (pathFromUtf8(stickRoot) / pathFromUtf8(artworkRelativePath)).make_preferred());
                     }
                     track.durationSeconds = rowTrack->duration();
                     track.bpm = rowTrack->tempo() / 100.0;
@@ -568,7 +569,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         // would drag its directory reader in with it.
                         std::error_code ec;
                         const auto written =
-                            std::filesystem::last_write_time(std::filesystem::path(m_pioneerRoot) / extRelative, ec);
+                            std::filesystem::last_write_time(pathFromUtf8(m_pioneerRoot) / pathFromUtf8(extRelative), ec);
                         if (!ec) {
                             const auto asSystem = infrastructure::toSystemClock(written);
                             track.metadataModifiedAt =

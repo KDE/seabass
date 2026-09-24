@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
 #include <filesystem>
@@ -78,10 +79,10 @@ std::string datAnlzPath(const std::string &pioneerRoot, const std::string &analy
 
 std::optional<std::string> findAnlzPathForTrackId(const std::string &pioneerRoot, uint32_t trackId)
 {
-    std::string pdbPath = pioneerRoot + "/rekordbox/export.pdb";
+    const std::filesystem::path pdbPath = pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb";
     std::ifstream ifs(pdbPath, std::ifstream::binary);
     if (!ifs.is_open()) {
-        throw std::runtime_error("could not open " + pdbPath);
+        throw std::runtime_error("could not open " + pathToUtf8(pdbPath));
     }
 
     WorkCounters::instance().noteTrackDatabaseParse();
@@ -127,19 +128,19 @@ std::string trackFilePathOnStick(const std::string &stickRoot, std::string store
     if (!storedPath.empty() && (storedPath.front() == '/' || storedPath.front() == '\\')) {
         storedPath.erase(0, 1);
     }
-    return (std::filesystem::path(stickRoot) / storedPath).make_preferred().string();
+    return pathToUtf8((pathFromUtf8(stickRoot) / pathFromUtf8(storedPath)).make_preferred());
 }
 
 std::vector<std::string> deletedTrackFilePaths(const std::string &pioneerRoot)
 {
-    const std::string pdbPath = pioneerRoot + "/rekordbox/export.pdb";
+    const std::filesystem::path pdbPath = pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb";
     std::ifstream ifs(pdbPath, std::ifstream::binary);
     if (!ifs.is_open()) {
-        throw std::runtime_error("could not open " + pdbPath);
+        throw std::runtime_error("could not open " + pathToUtf8(pdbPath));
     }
     kaitai::kstream ks(&ifs);
     Pdb pdb(false, &ks);
-    const std::string stickRoot = std::filesystem::path(pioneerRoot).parent_path().string();
+    const std::string stickRoot = pathToUtf8(pathFromUtf8(pioneerRoot).parent_path());
 
     std::set<std::string> live;
     std::set<std::string> deleted;

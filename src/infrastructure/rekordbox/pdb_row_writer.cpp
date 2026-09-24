@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
 #include <zlib.h>
@@ -338,7 +339,7 @@ constexpr uint32_t MaxPlausibleNumTables = 64;       // real files have ~20
 
 std::string readWholeFile(const std::string &path)
 {
-    std::ifstream ifs(path, std::ifstream::binary);
+    std::ifstream ifs(pathFromUtf8(path), std::ifstream::binary);
     if (!ifs.is_open()) {
         throw std::runtime_error("could not open " + path);
     }
@@ -714,8 +715,8 @@ PdbRowWriter::PdbRowWriter(std::string pdbPath, Format format)
     : m_format(format), m_pdbPath(std::move(pdbPath)), m_buffer(readWholeFile(m_pdbPath))
 {
     validateLooksLikeRealPdb(m_buffer);
-    m_originalFileSize = fs::file_size(m_pdbPath);
-    m_originalMtime = fs::last_write_time(m_pdbPath);
+    m_originalFileSize = fs::file_size(pathFromUtf8(m_pdbPath));
+    m_originalMtime = fs::last_write_time(pathFromUtf8(m_pdbPath));
     // Checksummed here, before any edit method mutates m_buffer in
     // place -- this is the pristine baseline commit() re-derives a fresh
     // on-disk read against, never m_buffer's later (edited) state.
@@ -1460,8 +1461,8 @@ bool PdbRowWriter::commit()
     // signal; size/mtime stay as an OR alongside it since they're free
     // and catch the common case without reading the whole file again.
     std::error_code statEc;
-    auto currentSize = fs::file_size(m_pdbPath, statEc);
-    auto currentMtime = fs::last_write_time(m_pdbPath, statEc);
+    auto currentSize = fs::file_size(pathFromUtf8(m_pdbPath), statEc);
+    auto currentMtime = fs::last_write_time(pathFromUtf8(m_pdbPath), statEc);
     bool statMismatch = statEc || currentSize != m_originalFileSize || currentMtime != m_originalMtime;
     bool checksumMismatch = true;
     try {

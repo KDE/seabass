@@ -4,6 +4,10 @@
 
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 
+#include "infrastructure/paths/utf8_path.hpp"
+
+#include <filesystem>
+
 #include <taglib/audioproperties.h>
 #include <taglib/fileref.h>
 #include <taglib/mpegproperties.h>
@@ -41,7 +45,11 @@ std::optional<application::FileMetadata> TagLibMetadataProbe::read(const std::st
     // whole file, which on a USB stick costs far more than it buys --
     // and it still cannot turn a headerless VBR length into an exact
     // one, which is what durationIsEstimated exists to flag.
-    TagLib::FileRef file(absoluteFilePath.c_str(), true, TagLib::AudioProperties::Average);
+    // TagLib::FileName is const char* on POSIX and, on Windows, a class
+    // whose const char* constructor reads the ANSI code page; the
+    // fs::path's c_str() is the wchar_t* its other constructor takes.
+    const std::filesystem::path path = pathFromUtf8(absoluteFilePath);
+    TagLib::FileRef file(path.c_str(), true, TagLib::AudioProperties::Average);
     if (file.isNull() || file.file() == nullptr || !file.file()->isValid()) {
         return std::nullopt;
     }

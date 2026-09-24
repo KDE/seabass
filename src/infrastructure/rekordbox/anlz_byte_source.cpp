@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -31,7 +33,7 @@ FilesystemAnlzSource::FilesystemAnlzSource(std::string pioneerRoot) : m_pioneerR
 
 std::optional<std::string> FilesystemAnlzSource::read(const std::string &relativePath)
 {
-    std::ifstream ifs(m_pioneerRoot + "/" + relativePath, std::ifstream::binary);
+    std::ifstream ifs(pathFromUtf8(m_pioneerRoot) / pathFromUtf8(relativePath), std::ifstream::binary);
     if (!ifs.is_open()) {
         return std::nullopt;
     }

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -160,7 +161,7 @@ std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, co
 {
     std::vector<std::string> files{extAnlzPath(pioneerRoot, analyzePath)};
     const std::string dat = datAnlzPath(pioneerRoot, analyzePath);
-    if (std::filesystem::exists(dat)) {
+    if (std::filesystem::exists(pathFromUtf8(dat))) {
         files.push_back(dat);
     }
     return files;
@@ -307,7 +308,7 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
     // written, and a player that reads only .DAT had nothing to read
     // for this track in the first place.
     const std::string datPath = datAnlzPath(m_pioneerRoot, *analyzePath);
-    if (!std::filesystem::exists(datPath)) {
+    if (!std::filesystem::exists(pathFromUtf8(datPath))) {
         return;
     }
     auto datFile = AnlzFile::readRaw(datPath);

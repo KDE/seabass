@@ -21,6 +21,7 @@
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_anlz.h"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -111,7 +112,7 @@ std::string readAnlzPath(const std::string &sectionBytes)
 
 bool isAnalysisFile(const fs::path &path)
 {
-    const std::string ext = path.extension().string();
+    const fs::path ext = path.extension();
     return ext == ".DAT" || ext == ".EXT" || ext == ".2EX";
 }
 
@@ -254,11 +255,11 @@ std::optional<std::string> walkWith(const fs::path &dir, const fs::path &root,
             // Never the absolute path: this text is shown to a
             // contributor and pasted into bug threads, and a native one
             // carries the user's own name.
-            return path.filename().generic_string();
+            return pathToGenericUtf8(path.filename());
         }
         // fs::relative(root, root) is ".", which reads as nothing at all
         // in a sentence about what could not be read.
-        return relative == "." ? std::string("the export root") : relative.generic_string();
+        return relative == "." ? std::string("the export root") : pathToGenericUtf8(relative);
     };
 
     std::error_code ec;
@@ -320,7 +321,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     auto warn = [&result](const std::string &what) { result.warnings.push_back(what); };
 
     std::error_code ec;
-    const fs::path root(exportRoot);
+    const fs::path root = pathFromUtf8(exportRoot);
     if (!fs::is_directory(root, ec)) {
         fail(exportRoot + " is not a directory");
         return result;
@@ -342,9 +343,9 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         std::error_code relEc;
         const fs::path relative = fs::relative(path, root, relEc);
         if (relEc || relative.empty()) {
-            return path.filename().generic_string();
+            return pathToGenericUtf8(path.filename());
         }
-        return relative == "." ? std::string("the export root") : relative.generic_string();
+        return relative == "." ? std::string("the export root") : pathToGenericUtf8(relative);
     };
 
     std::set<std::string> gatesReported;
@@ -356,7 +357,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             // about three times and engine/ twice, and one stat error
             // would otherwise fill the contributor's report with the
             // same line.
-            if (gatesReported.insert(dir.generic_string()).second) {
+            if (gatesReported.insert(pathToGenericUtf8(dir)).second) {
                 fail("could not tell whether " + shownPath(dir) + " is there: " + dirEc.message());
             }
         }
@@ -367,7 +368,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     const fs::path rekordboxRoot = root / "rekordbox";
     const fs::path engineRoot = root / "engine";
     if (auto stopped = walk(root, root, [&](const fs::directory_entry &entry) {
-            const std::string name = entry.path().filename().string();
+            const std::string name = pathToUtf8(entry.path().filename());
             if (name == "MANIFEST.txt" || name == "files.tsv" || name == "rekordbox" || name == "engine"
                 || isHarnessFile(name)) {
                 return;
@@ -379,7 +380,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
 
     if (present(rekordboxRoot)) {
         if (auto stopped = walk(rekordboxRoot, root, [&](const fs::directory_entry &entry) {
-                const std::string name = entry.path().filename().string();
+                const std::string name = pathToUtf8(entry.path().filename());
                 // The catalog itself, the analysis files, and the player
                 // preference files the Device Profile feature needs.
                 if (name == "rekordbox" || name == "USBANLZ" || name == "MYSETTING.DAT" || name == "MYSETTING2.DAT"
@@ -393,7 +394,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         const fs::path catalog = rekordboxRoot / "rekordbox";
         if (present(catalog)) {
             if (auto stopped = walk(catalog, root, [&](const fs::directory_entry &entry) {
-                const std::string name = entry.path().filename().string();
+                const std::string name = pathToUtf8(entry.path().filename());
                 // exportLibrary.db is the Device Library Plus mirror, kept
                 // now that it is scrubbed; its rows are sampled below.
                 if (isKeptRekordboxCatalogFile(name)) {
@@ -423,7 +424,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
 
     if (present(engineRoot)) {
         if (auto stopped = walk(engineRoot, root, [&](const fs::directory_entry &entry) {
-                const std::string name = entry.path().filename().string();
+                const std::string name = pathToUtf8(entry.path().filename());
                 if (name == "Database2") {
                     return;
                 }
@@ -447,12 +448,12 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                     // removed between the listing and the stat, and not
                     // something to throw an export away for.
                     if (kindEc && kindEc != std::errc::no_such_file_or_directory) {
-                        fail("could not tell what engine/Database2/" + entry.path().filename().string()
+                        fail("could not tell what engine/Database2/" + pathToUtf8(entry.path().filename())
                              + " is: " + kindEc.message());
                     }  // filename only: never the local absolute path, see below
                     return;
                 }
-                const std::string name = entry.path().filename().string();
+                const std::string name = pathToUtf8(entry.path().filename());
                 if (!isKeptEngineDatabaseFile(name)) {
                     fail("file that has no anonymizer is present: engine/Database2/" + name);
                 }
@@ -477,7 +478,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             }
             ++result.analysisFilesChecked;
             try {
-                auto file = rekordbox::AnlzFile::readRaw(entry.path().string());
+                auto file = rekordbox::AnlzFile::readRaw(pathToUtf8(entry.path()));
                 for (const auto &section : file.sections) {
                     if (section.fourcc != static_cast<uint32_t>(Anlz::SECTION_TAGS_PATH)) {
                         continue;
@@ -491,14 +492,14 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
                     const std::string directory = slash == std::string::npos ? std::string() : path.substr(0, slash);
                     if (directory != "/Contents" && !directory.empty()) {
                         fail("analysis file still names a real directory: "
-                             + fs::relative(entry.path(), root, ec).string() + " -> " + path);
+                             + pathToGenericUtf8(fs::relative(entry.path(), root, ec)) + " -> " + path);
                     } else if (!looksLikeFilenamePlaceholder(basename)) {
                         fail("analysis file still holds a real filename: "
-                             + fs::relative(entry.path(), root, ec).string() + " -> " + path);
+                             + pathToGenericUtf8(fs::relative(entry.path(), root, ec)) + " -> " + path);
                     }
                 }
             } catch (const std::exception &e) {
-                fail("could not read " + fs::relative(entry.path(), root, ec).string() + ": " + e.what());
+                fail("could not read " + pathToGenericUtf8(fs::relative(entry.path(), root, ec)) + ": " + e.what());
             }
             })) {
             fail(*stopped);
@@ -592,7 +593,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     bool engineWasRead = false;
     if (present(rekordboxRoot)) {
         try {
-            rekordbox::KaitaiRekordboxReader reader(rekordboxRoot.string());
+            rekordbox::KaitaiRekordboxReader reader(pathToUtf8(rekordboxRoot));
             auto tracks = application::ScanLibrary(reader).execute();
             checkTracks(tracks, "rekordbox", result.rekordboxTracksSampled);
             rekordboxWasRead = true;
@@ -602,9 +603,9 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         }
     }
     bool oneLibraryWasRead = false;
-    if (present(rekordboxRoot) && onelibrary::OneLibraryCueWriter::existsFor(rekordboxRoot.string())) {
+    if (present(rekordboxRoot) && onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(rekordboxRoot))) {
         try {
-            onelibrary::OneLibraryReader reader(rekordboxRoot.string());
+            onelibrary::OneLibraryReader reader(pathToUtf8(rekordboxRoot));
             auto tracks = reader.readAll();
             checkTracks(tracks, "OneLibrary", result.oneLibraryTracksSampled);
             oneLibraryWasRead = true;
@@ -615,7 +616,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
     }
     if (present(engineRoot)) {
         try {
-            engine::LibdjinteropEngineReader reader(engineRoot.string());
+            engine::LibdjinteropEngineReader reader(pathToUtf8(engineRoot));
             auto tracks = application::ScanLibrary(reader).execute();
             checkTracks(tracks, "Engine", result.engineTracksSampled);
             engineWasRead = true;
@@ -641,8 +642,8 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
         // backslash path on Windows matched neither, and the test's own
         // "clean copy, beyond the known baseline" case saw the two
         // already-documented leaks as new ones on every Windows run.
-        const std::string relative = fs::relative(entry.path(), root, ec).generic_string();
-        const std::string name = entry.path().filename().string();
+        const std::string relative = pathToGenericUtf8(fs::relative(entry.path(), root, ec));
+        const std::string name = pathToUtf8(entry.path().filename());
         // MANIFEST.txt is prose on purpose -- it is the page explaining to
         // the contributor what was kept and what was replaced, including
         // any hardware and notes they chose to type in themselves. Sweeping

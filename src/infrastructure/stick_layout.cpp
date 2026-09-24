@@ -8,6 +8,7 @@
 #include <system_error>
 
 #include "infrastructure/engine/engine_library_layout.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 
@@ -19,16 +20,16 @@ std::string catalogPathFor(const std::string &format, const std::string &library
     if (libraryPath.empty()) {
         return {};
     }
-    const fs::path root = fs::path(libraryPath).parent_path();
+    const fs::path root = pathFromUtf8(libraryPath).parent_path();
     const fs::path pioneerRoot = root / "PIONEER";
     std::error_code ec;
 
     if (format == "rekordbox") {
-        return fs::exists(pioneerRoot / "rekordbox" / "export.pdb", ec) ? pioneerRoot.string() : std::string();
+        return fs::exists(pioneerRoot / "rekordbox" / "export.pdb", ec) ? pathToUtf8(pioneerRoot) : std::string();
     }
     if (format == "engine") {
         return fs::exists(engine::engineMainDatabasePath(root), ec)
-                   ? engine::engineLibraryPath(root).string()
+                   ? pathToUtf8(engine::engineLibraryPath(root))
                    : std::string();
     }
     if (format == "onelibrary") {
@@ -38,7 +39,7 @@ std::string catalogPathFor(const std::string &format, const std::string &library
         // into every test that links part of the core rather than all
         // of it -- pending_deletion_resolver_test stopped building.
         // Kept identical to OneLibraryCueWriter::dbPathFor().
-        return fs::is_regular_file(pioneerRoot / "rekordbox" / "exportLibrary.db", ec) ? pioneerRoot.string()
+        return fs::is_regular_file(pioneerRoot / "rekordbox" / "exportLibrary.db", ec) ? pathToUtf8(pioneerRoot)
                                                                                        : std::string();
     }
     return {};
