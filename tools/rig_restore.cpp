@@ -47,6 +47,7 @@
 #include "domain/track.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
@@ -95,8 +96,8 @@ int main(int argc, char **argv)
         std::cerr << "usage: rig_restore <archive.zip> <stick root> [--execute]\n";
         return 2;
     }
-    const fs::path archive = argv[1];
-    const fs::path root = argv[2];
+    const fs::path archive = pathFromUtf8(argv[1]);
+    const fs::path root = pathFromUtf8(argv[2]);
     const bool execute = argc == 4;
     bool pass = true;
 
@@ -106,7 +107,7 @@ int main(int argc, char **argv)
             std::cout << "archive unreadable: " << description.error << "\nRIG RESULT: FAIL\n";
             return 1;
         }
-        std::cout << "archive " << archive.filename().string() << ": stick " << description.stickLabel << " ("
+        std::cout << "archive " << pathToUtf8(archive.filename()) << ": stick " << description.stickLabel << " ("
                   << description.stickIdentifier << "), "
                   << infrastructure::stick_backup::toString(description.status) << ", " << description.entries
                   << " entries, " << gib(description.archiveBytes) << "\n";

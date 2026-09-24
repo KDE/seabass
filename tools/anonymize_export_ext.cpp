@@ -31,9 +31,12 @@
 #include <iostream>
 #include <string>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
 namespace fs = std::filesystem;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 using seabass::infrastructure::rekordbox::PdbRowWriter;
 
 int main(int argc, char **argv)
@@ -42,13 +45,13 @@ int main(int argc, char **argv)
         std::cout << "usage: anonymize_export_ext <exportExt.pdb>\n";
         return 2;
     }
-    const fs::path path = argv[1];
+    const fs::path path = pathFromUtf8(argv[1]);
     if (!fs::is_regular_file(path)) {
-        std::cout << "not a file: " << path.string() << "\n";
+        std::cout << "not a file: " << pathToUtf8(path) << "\n";
         return 2;
     }
     try {
-        PdbRowWriter writer(path.string(), PdbRowWriter::Format::ExportExt);
+        PdbRowWriter writer(pathToUtf8(path), PdbRowWriter::Format::ExportExt);
         // Zero-padded, matching the anonymizer's own placeholder() so
         // the two writers of this file cannot be told apart by what they
         // wrote. They disagreed: this produced "Tag 1" and the anonymizer
@@ -70,7 +73,7 @@ int main(int argc, char **argv)
             // Not silently fine: either the file holds no tags, or it was
             // opened as the wrong format, and those look identical from
             // here. Saying so beats writing nothing and reporting success.
-            std::cout << "no tag rows found in " << path.string()
+            std::cout << "no tag rows found in " << pathToUtf8(path)
                       << " -- either it carries none, or it is not an exportExt.pdb\n";
             return 1;
         }
@@ -81,7 +84,7 @@ int main(int argc, char **argv)
         // "rewrote 27 tag name(s)" would read as success while it
         // happened.
         if (leftAlone > 0) {
-            std::cout << "refusing to write " << path.string() << ": " << leftAlone << " of "
+            std::cout << "refusing to write " << pathToUtf8(path) << ": " << leftAlone << " of "
                       << (rewritten + leftAlone) << " tag row(s) could not be rewritten and still hold their real "
                       << "names. The file was left exactly as it was.\n";
             return 1;
@@ -91,7 +94,7 @@ int main(int argc, char **argv)
             return 1;
         }
         std::cout << "rewrote " << rewritten << " tag name(s) and cleared " << zeroed
-                  << " byte(s) of free space in " << path.filename().string() << "\n";
+                  << " byte(s) of free space in " << pathToUtf8(path.filename()) << "\n";
         return 0;
     } catch (const std::exception &e) {
         std::cout << "error: " << e.what() << "\n";

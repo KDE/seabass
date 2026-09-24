@@ -35,6 +35,7 @@
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
@@ -51,8 +52,9 @@ namespace
 
 int backup(const fs::path &root, const fs::path &archive)
 {
-    const bool readOnly = infrastructure::media::isMountedReadOnly(root.string());
-    std::cout << "stick " << root.string() << " is mounted " << (readOnly ? "read-only" : "READ-WRITE") << "\n";
+    const std::string rootUtf8 = pathToUtf8(root);
+    const bool readOnly = infrastructure::media::isMountedReadOnly(rootUtf8);
+    std::cout << "stick " << rootUtf8 << " is mounted " << (readOnly ? "read-only" : "READ-WRITE") << "\n";
     if (!readOnly) {
         std::cout << "a salvage run needs a stick the kernel has already made read-only\nRIG RESULT: FAIL\n";
         return 1;
@@ -61,7 +63,7 @@ int backup(const fs::path &root, const fs::path &archive)
     options.stickRoot = root;
     options.archivePath = archive;
     options.stickLabel = rig::stickLabelFor(root);
-    options.stickIdentifier = infrastructure::system::readStickHardwareInfo(root.string(), options.stickLabel).stickIdentifier;
+    options.stickIdentifier = infrastructure::system::readStickHardwareInfo(rootUtf8, options.stickLabel).stickIdentifier;
     options.sourceReadOnly = readOnly;
     options.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
 
@@ -99,7 +101,8 @@ int backup(const fs::path &root, const fs::path &archive)
     std::size_t silentlyShort = 0;
     for (const sb::ManifestRow &row : manifest ? manifest->rows : std::vector<sb::ManifestRow>{}) {
         std::error_code error;
-        const std::uint64_t onStick = fs::file_size(root / row.path, error);
+        // The manifest key is UTF-8 with forward slashes.
+        const std::uint64_t onStick = fs::file_size(root / pathFromUtf8(row.path), error);
         if (row.kind != sb::ManifestRow::Kind::File || error) {
             continue;
         }
@@ -167,10 +170,10 @@ int main(int argc, char **argv)
     const std::string mode = argv[1];
     try {
         if (mode == "backup") {
-            return backup(argv[2], argv[3]);
+            return backup(pathFromUtf8(argv[2]), pathFromUtf8(argv[3]));
         }
         if (mode == "restore") {
-            return restore(argv[2], argv[3]);
+            return restore(pathFromUtf8(argv[2]), pathFromUtf8(argv[3]));
         }
     } catch (const std::exception &e) {
         std::cout << "error: " << e.what() << "\nRIG RESULT: FAIL\n";

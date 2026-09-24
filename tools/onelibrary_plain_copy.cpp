@@ -29,6 +29,7 @@
 
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 using namespace seabass::infrastructure::onelibrary;
 
@@ -38,7 +39,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: onelibrary_plain_copy <exportLibrary.db> <plain.db>\n";
         return 1;
     }
-    if (std::filesystem::exists(argv[2])) {
+    if (std::filesystem::exists(seabass::pathFromUtf8(argv[2]))) {
         std::cerr << argv[2] << " exists; refusing to write into it\n";
         return 1;
     }

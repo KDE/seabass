@@ -29,9 +29,12 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 namespace ol = seabass::infrastructure::onelibrary;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 using Clock = std::chrono::steady_clock;
 
 int main(int argc, char **argv)
@@ -40,9 +43,9 @@ int main(int argc, char **argv)
         std::cerr << "usage: onelibrary_tx_bench <stick-mount-point> [items]\n";
         return 1;
     }
-    const fs::path stick = argv[1];
+    const fs::path stick = pathFromUtf8(argv[1]);
     const int items = argc > 2 ? std::atoi(argv[2]) : 50;
-    const std::string pioneerRoot = (stick / "PIONEER").string();
+    const std::string pioneerRoot = pathToUtf8(stick / "PIONEER");
     if (!ol::OneLibraryCueWriter::existsFor(pioneerRoot)) {
         std::cerr << "no exportLibrary.db under " << pioneerRoot << "\n";
         return 1;
@@ -52,8 +55,11 @@ int main(int argc, char **argv)
     fs::remove_all(scratch);
     fs::create_directories(scratch);
     const fs::path copy = scratch / "exportLibrary.db";
-    fs::copy_file(ol::OneLibraryCueWriter::dbPathFor(pioneerRoot), copy);
+    fs::copy_file(pathFromUtf8(ol::OneLibraryCueWriter::dbPathFor(pioneerRoot)), copy);
     std::cout << "Working on a copy: " << copy << " (" << (fs::file_size(copy) / 1024) << " KB)\n";
+    // SqlCipherDb hands the string to sqlite3_open_v2, which takes UTF-8
+    // on every platform.
+    const std::string copyUtf8 = pathToUtf8(copy);
 
     const std::string key = ol::deriveOneLibraryKey();
     auto seconds = [](Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); };
@@ -69,7 +75,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < items; ++i) {
         {
             ol::SqlCipherLibrary lib;
-            ol::SqlCipherDb db(lib, copy.string(), /*readOnly=*/false);
+            ol::SqlCipherDb db(lib, copyUtf8, /*readOnly=*/false);
             db.exec("PRAGMA key = '" + key + "';");
             db.exec("BEGIN IMMEDIATE;");
             db.exec("UPDATE content SET path = path WHERE rowid = " + std::to_string(1 + i) + ";");
@@ -77,7 +83,7 @@ int main(int argc, char **argv)
         }
         {
             ol::SqlCipherLibrary verifyLib;
-            ol::SqlCipherDb verifyDb(verifyLib, copy.string(), /*readOnly=*/true);
+            ol::SqlCipherDb verifyDb(verifyLib, copyUtf8, /*readOnly=*/true);
             verifyDb.exec("PRAGMA key = '" + key + "';");
             verifyDb.exec("SELECT count(*) FROM content WHERE rowid = " + std::to_string(1 + i) + ";");
         }
@@ -89,7 +95,7 @@ int main(int argc, char **argv)
     t0 = Clock::now();
     {
         ol::SqlCipherLibrary lib;
-        ol::SqlCipherDb db(lib, copy.string(), /*readOnly=*/false);
+        ol::SqlCipherDb db(lib, copyUtf8, /*readOnly=*/false);
         db.exec("PRAGMA key = '" + key + "';");
         for (int i = 0; i < items; ++i) {
             db.exec("BEGIN IMMEDIATE;");
@@ -99,7 +105,7 @@ int main(int argc, char **argv)
     }
     {
         ol::SqlCipherLibrary verifyLib;
-        ol::SqlCipherDb verifyDb(verifyLib, copy.string(), /*readOnly=*/true);
+        ol::SqlCipherDb verifyDb(verifyLib, copyUtf8, /*readOnly=*/true);
         verifyDb.exec("PRAGMA key = '" + key + "';");
         verifyDb.exec("SELECT count(*) FROM content;");
     }

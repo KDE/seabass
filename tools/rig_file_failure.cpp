@@ -48,10 +48,11 @@
 // should be would fail every later check for a reason that has nothing to
 // do with them.
 
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
+#include <fstream>
 #ifdef _WIN32
 #include <direct.h>
 #else
@@ -66,6 +67,7 @@
 #include "domain/library_consistency.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 namespace fs = std::filesystem;
@@ -82,13 +84,13 @@ std::vector<domain::Track> readTracks(const fs::path &root)
     std::vector<domain::Track> tracks;
     const fs::path pioneer = root / "PIONEER";
     if (fs::exists(pioneer / "rekordbox" / "export.pdb")) {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(pioneer));
         std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
         tracks.insert(tracks.end(), read.begin(), read.end());
     }
     const fs::path engine = root / "Engine Library";
     if (fs::exists(engine / "Database2" / "m.db")) {
-        infrastructure::engine::LibdjinteropEngineReader reader(engine.string());
+        infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(engine));
         std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
         tracks.insert(tracks.end(), read.begin(), read.end());
     }
@@ -110,14 +112,14 @@ bool opens(const fs::path &path)
     if (!fs::is_regular_file(path, ec)) {
         return false;
     }
-    FILE *f = std::fopen(path.string().c_str(), "rb");
-    if (f == nullptr) {
+    // Opened with the path itself: fopen() would take its bytes through
+    // the ANSI code page on Windows.
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
         return false;
     }
     char byte = 0;
-    const bool read = std::fread(&byte, 1, 1, f) == 1;
-    std::fclose(f);
-    return read;
+    return static_cast<bool>(in.read(&byte, 1));
 }
 
 // APPENDED to the whole filename, never replacing its extension:
@@ -137,10 +139,27 @@ constexpr const char *StashSuffix = ".x3-stashed";
 
 // Set while a plant is in the ground, for the signal handler. Raw paths
 // rather than std::string because a handler may only call
-// async-signal-safe things, and that rules out allocating.
-char g_plantedTarget[4096];
-char g_plantedStash[4096];
+// async-signal-safe things, and that rules out allocating. They hold the
+// path's native characters (wchar_t on Windows, so the wide CRT calls
+// below take a Japanese folder name as it is, where the narrow ones would
+// read it in the ANSI code page).
+#ifdef _WIN32
+using PlantChar = wchar_t;
+#else
+using PlantChar = char;
+#endif
+constexpr std::size_t PlantPathCapacity = 4096;
+PlantChar g_plantedTarget[PlantPathCapacity];
+PlantChar g_plantedStash[PlantPathCapacity];
 volatile sig_atomic_t g_planted = 0;
+
+void rememberForSignal(PlantChar *buffer, const fs::path &path)
+{
+    const auto &native = path.native();
+    const std::size_t length = std::min(native.size(), PlantPathCapacity - 1);
+    std::copy_n(native.data(), length, buffer);
+    buffer[length] = 0;
+}
 
 // SIGINT and SIGTERM skip destructors, and a killed check would leave a
 // DIRECTORY where a track's audio should be. That is worse than an
@@ -151,18 +170,20 @@ volatile sig_atomic_t g_planted = 0;
 // rmdir(2) and rename(2) are both async-signal-safe, which is why the
 // plant is an EMPTY directory and the file is moved aside rather than
 // copied: undoing it needs exactly those two calls and no allocation.
-// _rmdir() is the same direct CRT syscall wrapper on Windows -- no
-// allocation, no exceptions -- so it keeps that guarantee there too;
-// std::filesystem::remove() does not belong in a signal handler.
+// _wrmdir() and _wrename() are the same direct CRT syscall wrappers on
+// Windows -- no allocation, no exceptions -- so they keep that guarantee
+// there too; std::filesystem::remove() does not belong in a signal
+// handler.
 extern "C" void restoreOnSignal(int sig)
 {
     if (g_planted) {
 #ifdef _WIN32
-        ::_rmdir(g_plantedTarget);
+        ::_wrmdir(g_plantedTarget);
+        ::_wrename(g_plantedStash, g_plantedTarget);
 #else
         ::rmdir(g_plantedTarget);
-#endif
         ::rename(g_plantedStash, g_plantedTarget);
+#endif
         g_planted = 0;
     }
     ::signal(sig, SIG_DFL);
@@ -189,10 +210,11 @@ void sweepLeftovers(const fs::path &root)
             continue;
         }
         // Drop the appended suffix, which gives the original name back
-        // including its extension.
-        const std::string full = stashed.string();
-        const fs::path original = full.substr(0, full.size() - std::strlen(StashSuffix));
-        std::cout << "  sweeping up after an interrupted run: " << original.filename().string() << "\n";
+        // including its extension: the suffix is the path's last
+        // extension, so "track.mp3.x3-stashed" becomes "track.mp3".
+        fs::path original = stashed;
+        original.replace_extension();
+        std::cout << "  sweeping up after an interrupted run: " << pathToUtf8(original.filename()) << "\n";
         std::error_code undoEc;
         if (fs::is_directory(original, undoEc)) {
             fs::remove(original, undoEc);  // remove, not remove_all: it should be empty
@@ -212,8 +234,8 @@ struct Plant
 
     void arm()
     {
-        std::snprintf(g_plantedTarget, sizeof g_plantedTarget, "%s", target.string().c_str());
-        std::snprintf(g_plantedStash, sizeof g_plantedStash, "%s", stashed.string().c_str());
+        rememberForSignal(g_plantedTarget, target);
+        rememberForSignal(g_plantedStash, stashed);
         g_planted = 1;
         planted = true;
         ::signal(SIGINT, restoreOnSignal);
@@ -231,7 +253,7 @@ struct Plant
         planted = false;
         g_planted = 0;
         if (ec) {
-            std::cout << "  WARNING: could not put " << target.string() << " back: " << ec.message() << "\n";
+            std::cout << "  WARNING: could not put " << pathToUtf8(target) << " back: " << ec.message() << "\n";
         }
     }
 
@@ -246,20 +268,20 @@ int main(int argc, char **argv)
         std::cout << "usage: rig_file_failure <stick root>\nRIG RESULT: FAIL\n";
         return 1;
     }
-    const fs::path root = argv[1];
+    const fs::path root = pathFromUtf8(argv[1]);
     Plant plant;
     bool ok = true;
     try {
         sweepLeftovers(root);
         const std::vector<domain::Track> before = readTracks(root);
-        std::cout << "read " << before.size() << " track(s) from " << root.string() << "\n";
+        std::cout << "read " << before.size() << " track(s) from " << pathToUtf8(root) << "\n";
 
         // A track whose file is really there, so the plant is the only
         // thing that changes. A library with none would make this check
         // meaningless rather than green.
         const domain::Track *victim = nullptr;
         for (const domain::Track &track : before) {
-            if (track.streamingSource.empty() && !track.filePath.empty() && opens(track.filePath)) {
+            if (track.streamingSource.empty() && !track.filePath.empty() && opens(pathFromUtf8(track.filePath))) {
                 victim = &track;
                 break;
             }
@@ -270,9 +292,10 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        plant.target = victim->filePath;
-        plant.stashed = fs::path(victim->filePath + StashSuffix);
-        std::cout << "planting a directory where a file should be:\n  " << plant.target.string() << "\n";
+        plant.target = pathFromUtf8(victim->filePath);
+        plant.stashed = plant.target;
+        plant.stashed += StashSuffix;
+        std::cout << "planting a directory where a file should be:\n  " << pathToUtf8(plant.target) << "\n";
         fs::rename(plant.target, plant.stashed);
         fs::create_directory(plant.target);
         plant.arm();
@@ -298,7 +321,8 @@ int main(int argc, char **argv)
         const std::vector<domain::LibraryConsistencyIssue> issues =
             domain::LibraryConsistencyChecker::check(healthy, broken);
 
-        const std::string planted = plant.target.string();
+        // Compared against Track::filePath, which is UTF-8 by the rule.
+        const std::string planted = pathToUtf8(plant.target);
         bool named = false;
         for (const domain::LibraryConsistencyIssue &issue : issues) {
             for (const domain::Track &track : issue.brokenGroup) {

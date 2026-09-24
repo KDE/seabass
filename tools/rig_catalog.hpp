@@ -25,6 +25,7 @@
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
@@ -47,11 +48,11 @@ namespace seabass::rig
 // convention already expects.
 inline std::string stickLabelFor(const std::filesystem::path &root)
 {
-    std::string label = root.filename().string();
+    std::string label = pathToUtf8(root.filename());
     if (!label.empty()) {
         return label;
     }
-    const std::string rootName = root.root_name().string();
+    const std::string rootName = pathToUtf8(root.root_name());
     if (!rootName.empty() && std::isalpha(static_cast<unsigned char>(rootName.front()))) {
         return std::string(1, static_cast<char>(std::tolower(static_cast<unsigned char>(rootName.front()))));
     }
@@ -69,7 +70,7 @@ inline std::optional<domain::LibraryFingerprint> fingerprintStick(const std::fil
     bool anyRead = false;
     const std::filesystem::path pioneer = root / "PIONEER";
     if (std::filesystem::exists(pioneer / "rekordbox" / "export.pdb")) {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(pioneer));
         std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
         std::cout << "  rekordbox: " << read.size() << " tracks\n";
         tracks.insert(tracks.end(), read.begin(), read.end());
@@ -77,7 +78,7 @@ inline std::optional<domain::LibraryFingerprint> fingerprintStick(const std::fil
     }
     const std::filesystem::path engine = root / "Engine Library";
     if (std::filesystem::exists(engine / "Database2" / "m.db") || std::filesystem::exists(engine / "m.db")) {
-        infrastructure::engine::LibdjinteropEngineReader reader(engine.string());
+        infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(engine));
         std::vector<domain::Track> read = application::ScanLibrary(reader).execute();
         std::cout << "  engine: " << read.size() << " tracks\n";
         tracks.insert(tracks.end(), read.begin(), read.end());
@@ -125,7 +126,9 @@ inline std::size_t checkCatalogFiles(const std::filesystem::path &archive, const
             continue;
         }
         ++checked;
-        const std::filesystem::path onStick = root / row.path;
+        // The manifest key is UTF-8 with forward slashes; root / row.path
+        // would read it in the ANSI code page on Windows.
+        const std::filesystem::path onStick = root / pathFromUtf8(row.path);
         std::ifstream in(onStick, std::ios::binary);
         if (!in) {
             std::cout << "  MISSING " << row.path << "\n";

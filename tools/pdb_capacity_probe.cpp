@@ -33,6 +33,7 @@
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "domain/track.hpp"
 #include <filesystem>
 
@@ -55,7 +56,11 @@ static std::string pdbPath(rekordbox_pdb_t::device_sql_string_t *s)
 
 int main(int argc, char **argv)
 {
-    std::ifstream in(argv[1], std::ios::binary);
+    if (argc < 2) {
+        std::cerr << "usage: pdb_capacity_probe <export.pdb> [<PIONEER dir> [<dump dir>]]\n";
+        return 1;
+    }
+    std::ifstream in(seabass::pathFromUtf8(argv[1]), std::ios::binary);
     std::ostringstream ss;
     ss << in.rdbuf();
     std::string buffer = ss.str();
@@ -180,13 +185,14 @@ int main(int argc, char **argv)
     if (argc > 2) {
         seabass::infrastructure::onelibrary::OneLibraryReader ol(argv[2]);
         const auto tracks = ol.readAll();
-        const std::filesystem::path stickRoot = std::filesystem::path(argv[2]).parent_path();
+        const std::filesystem::path stickRoot = seabass::pathFromUtf8(argv[2]).parent_path();
         std::set<std::string> olPaths;
         for (const auto &t : tracks) {
             if (t.filePath.empty()) {
                 continue;
             }
-            std::string rel = std::filesystem::relative(t.filePath, stickRoot).generic_string();
+            const std::string rel =
+                seabass::pathToGenericUtf8(std::filesystem::relative(seabass::pathFromUtf8(t.filePath), stickRoot));
             olPaths.insert("/" + rel);
         }
         long long onlyInOl = 0, coveredByDeleted = 0;
@@ -215,17 +221,18 @@ int main(int argc, char **argv)
     // by tools/onelibrary_plain_copy.cpp), which is easier to ask several
     // ways in a script than in this tool.
     if (argc > 3) {
-        std::ofstream dump(std::string(argv[3]) + "/pdb-deleted-paths.txt");
+        const std::filesystem::path dumpDir = seabass::pathFromUtf8(argv[3]);
+        std::ofstream dump(dumpDir / "pdb-deleted-paths.txt");
         for (const auto &p : deletedPaths) {
             if (!livePaths.count(p)) {
                 dump << p << "\n";
             }
         }
-        std::ofstream liveDump(std::string(argv[3]) + "/pdb-live-paths.txt");
+        std::ofstream liveDump(dumpDir / "pdb-live-paths.txt");
         for (const auto &p : livePaths) {
             liveDump << p << "\n";
         }
-        std::ofstream missingDump(std::string(argv[3]) + "/onelibrary-only-paths.txt");
+        std::ofstream missingDump(dumpDir / "onelibrary-only-paths.txt");
         for (const auto &p : onlyInOlPaths) {
             missingDump << p << "\n";
         }

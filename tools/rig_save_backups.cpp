@@ -28,6 +28,7 @@
 #include "application/ports/backup_store.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -38,7 +39,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: rig_save_backups <stick root> [--expect-at-least N]\n";
         return 2;
     }
-    const fs::path stickRoot = argv[1];
+    const fs::path stickRoot = pathFromUtf8(argv[1]);
     int expectAtLeast = 0;
     if (argc == 4) {
         if (std::string(argv[2]) != "--expect-at-least") {
@@ -51,8 +52,9 @@ int main(int argc, char **argv)
 
     try {
         const fs::path directory = infrastructure::paths::stickBackupsDir(stickRoot);
-        std::cout << "automatic backups in " << directory.string() << "\n";
-        infrastructure::backup::FilesystemBackupStore store(directory.string());
+        const std::string directoryUtf8 = pathToUtf8(directory);
+        std::cout << "automatic backups in " << directoryUtf8 << "\n";
+        infrastructure::backup::FilesystemBackupStore store(directoryUtf8);
         const std::vector<application::BackupRecord> records = store.list();
 
         std::size_t restorable = 0;

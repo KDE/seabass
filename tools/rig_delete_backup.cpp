@@ -59,6 +59,7 @@
 
 #include "application/use_cases/manage_stick_backups.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 
 namespace fs = std::filesystem;
@@ -101,7 +102,15 @@ struct Listed
 // apart, listed as MISSING every time.
 std::string normalisedKey(const fs::path &path)
 {
-    return path.lexically_normal().string();
+    return pathToUtf8(path.lexically_normal());
+}
+
+// A lock's "I hold it" marker: the lock file's own name plus a suffix.
+fs::path readyMarkerFor(const fs::path &lockPath)
+{
+    fs::path marker = lockPath;
+    marker += ".holding";
+    return marker;
 }
 
 std::map<std::string, Listed> listing(const fs::path &directory)
@@ -129,7 +138,7 @@ std::map<std::string, Listed> listing(const fs::path &directory)
 bool insideDirectoryLexically(const fs::path &file, const fs::path &directory)
 {
     const fs::path relative = file.lexically_normal().lexically_relative(directory.lexically_normal());
-    return !relative.empty() && relative.begin()->string() != "..";
+    return !relative.empty() && *relative.begin() != "..";
 }
 
 // Each call gets its own error_code: sharing one let a failure to
@@ -149,7 +158,7 @@ bool insideDirectory(const fs::path &file, const fs::path &directory)
     // reached that way is named as a reference first: the reference guards
     // run before this one.)
     const fs::path relative = fs::relative(canonicalFile, canonicalDir, relativeEc);
-    return !relativeEc && !relative.empty() && relative.begin()->string() != "..";
+    return !relativeEc && !relative.empty() && *relative.begin() != "..";
 }
 
 // A reference given as a symlink names one folder and resolves into
@@ -192,9 +201,10 @@ bool isAReference(const fs::path &archive)
         }
         // Made absolute before anything is compared: a bare "REF.zip" has
         // no parent at all, and an empty base makes every relative path
-        // look like it sits beside a reference.
+        // look like it sits beside a reference. The variable is read as
+        // UTF-8, like argv.
         std::error_code absoluteEc;
-        const fs::path given = fs::absolute(fs::path(value), absoluteEc);
+        const fs::path given = fs::absolute(pathFromUtf8(value), absoluteEc);
         std::error_code referenceEc;
         const fs::path resolved = fs::weakly_canonical(given, referenceEc);
         if (absoluteEc || referenceEc) {
@@ -228,10 +238,10 @@ bool isAReference(const fs::path &archive)
 int holdLock(const fs::path &archive)
 {
     const fs::path lockPath = infrastructure::stick_backup::journal::lockPathFor(archive);
-    const fs::path readyMarker = lockPath.string() + ".holding";
+    const fs::path readyMarker = readyMarkerFor(lockPath);
     try {
-        infrastructure::backup::StickWriteLock held(lockPath.string());
-        std::ofstream(readyMarker.string()).close();
+        infrastructure::backup::StickWriteLock held(lockPath);
+        std::ofstream(readyMarker).close();
         std::this_thread::sleep_for(std::chrono::seconds(30));
     } catch (const std::exception &) {
         return 2;
@@ -244,7 +254,7 @@ int main(int argc, char **argv)
 {
 #if defined(_WIN32)
     if (argc == 3 && std::string(argv[1]) == "--hold-lock") {
-        return holdLock(argv[2]);
+        return holdLock(pathFromUtf8(argv[2]));
     }
 #endif
     const bool skipReferenceGuard = argc == 4 && std::string(argv[3]) == "--no-reference-guard";
@@ -252,8 +262,8 @@ int main(int argc, char **argv)
         std::cerr << "usage: rig_delete_backup <backup dir> <archive> [--no-reference-guard]\n";
         return 2;
     }
-    const fs::path directory = argv[1];
-    const fs::path archive = argv[2];
+    const fs::path directory = pathFromUtf8(argv[1]);
+    const fs::path archive = pathFromUtf8(argv[2]);
     bool pass = true;
 
     try {
@@ -264,20 +274,20 @@ int main(int argc, char **argv)
             return 1;
         }
         if (!skipReferenceGuard && isAReference(archive)) {
-            std::cout << "refusing: " << archive.string() << " is a reference backup (or sits beside one)"
+            std::cout << "refusing: " << pathToUtf8(archive) << " is a reference backup (or sits beside one)"
                       << "\nRIG RESULT: FAIL\n";
             return 1;
         }
         // After the reference guards, so a reference is named as one
         // rather than reported as merely out of place.
         if (!insideDirectory(archive, directory)) {
-            std::cout << "refusing: " << archive.string() << " is not inside " << directory.string()
+            std::cout << "refusing: " << pathToUtf8(archive) << " is not inside " << pathToUtf8(directory)
                       << "\nRIG RESULT: FAIL\n";
             return 1;
         }
         std::error_code ec;
         if (!fs::is_regular_file(archive, ec)) {
-            std::cout << "no archive at " << archive.string() << "\nRIG RESULT: FAIL\n";
+            std::cout << "no archive at " << pathToUtf8(archive) << "\nRIG RESULT: FAIL\n";
             return 1;
         }
         // A reference is kept read-only; refusing here costs nothing and
@@ -293,7 +303,7 @@ int main(int argc, char **argv)
         const bool writable = ::access(archive.c_str(), W_OK) == 0;
 #endif
         if (!writable) {
-            std::cout << "refusing: " << archive.string() << " is read-only, so it is not this rig's to delete"
+            std::cout << "refusing: " << pathToUtf8(archive) << " is read-only, so it is not this rig's to delete"
                       << "\nRIG RESULT: FAIL\n";
             return 1;
         }
@@ -309,7 +319,7 @@ int main(int argc, char **argv)
             // Refused rather than deleted: this tool removes what Manage
             // Backups shows as a backup, and something it cannot read as
             // one is exactly what it must not remove on the rig's say-so.
-            std::cout << "refusing: not a readable backup at " << archive.string() << "\nRIG RESULT: FAIL\n";
+            std::cout << "refusing: not a readable backup at " << pathToUtf8(archive) << "\nRIG RESULT: FAIL\n";
             return 1;
         }
 
@@ -329,7 +339,7 @@ int main(int argc, char **argv)
         if (helper == 0) {
             close(ready[0]);
             try {
-                infrastructure::backup::StickWriteLock held(lockPath.string());
+                infrastructure::backup::StickWriteLock held(lockPath);
                 const char token = 'L';
                 const ssize_t written = write(ready[1], &token, 1);
                 (void)written;
@@ -407,7 +417,7 @@ int main(int argc, char **argv)
         // holds the archive's write lock instead, so the lock is still
         // contended for real, in a real second process.
         const fs::path lockPath = infrastructure::stick_backup::journal::lockPathFor(archive);
-        const fs::path readyMarker = lockPath.string() + ".holding";
+        const fs::path readyMarker = readyMarkerFor(lockPath);
         std::error_code markerEc;
         // A marker left behind by a killed prior run would look like
         // instant readiness from a helper that never actually started.
