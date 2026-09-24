@@ -136,6 +136,9 @@ private:
 struct MediaTaskResult
 {
     bool success = false;
+    // A mount that Seabass itself performed, as opposed to one that found
+    // the stick already mounted: only these are unmounted on quit.
+    bool mountedHere = false;
     QString errorMessage;
 };
 
