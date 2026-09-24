@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+activeCodePage makes UTF-8 the process's ANSI code page on Windows 10
+1903 and later. Seabass's own code converts every path explicitly
+(src/infrastructure/paths/utf8_path.hpp); this is for the code it links
+and cannot rewrite: libdjinterop opens Engine libraries with stat() and
+_mkdir() on the same string it hands sqlite, and kaitai's rekordbox
+reader opens export.pdb with std::ifstream(std::string). With the ANSI
+code page at UTF-8, those take the UTF-8 paths Seabass gives them. On an
+older Windows the element is ignored and those paths stay ANSI-only.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application>
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

@@ -13,6 +13,13 @@ if(WIN32)
     # Regenerate both, from the repository root, with:
     #   python3 tools/flatten_logo.py
     target_sources(seabass PRIVATE win/app_icon.rc)
+    # UTF-8 as the process ANSI code page (Windows 10 1903+), for the
+    # linked code that takes narrow paths: see win/app.manifest. MSVC's
+    # linker merges a .manifest source into the one CMake generates;
+    # MinGW gets it as an RT_MANIFEST resource through the .rc.
+    if(MSVC)
+        target_sources(seabass PRIVATE win/app.manifest)
+    endif()
 endif()
 if(APPLE)
     # The same icon as an .icns (also written by tools/flatten_logo.py),

@@ -1330,6 +1330,13 @@ add_executable(no_raw_future_reads_test tests/no_raw_future_reads_test.cpp)
 target_compile_definitions(no_raw_future_reads_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_raw_future_reads_test COMMAND no_raw_future_reads_test)
 
+# Source guard: no path crosses between std::string and fs::path through
+# the ANSI code page (src/infrastructure/paths/utf8_path.hpp). Silent on
+# Linux and macOS, a crash or a missing file on Windows.
+add_executable(no_narrow_path_conversions_test tests/no_narrow_path_conversions_test.cpp)
+target_compile_definitions(no_narrow_path_conversions_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME no_narrow_path_conversions_test COMMAND no_narrow_path_conversions_test)
+
 # Runs the real .githooks scripts, so it needs a POSIX shell and a git.
 # Both are a given on the platforms that build this; on Windows they come
 # with Git for Windows, which is already required to clone the submodules.
