@@ -2961,7 +2961,10 @@ set_tests_properties(open_stick_backup_test PROPERTIES LABELS "integration")
 
 add_executable(corpus_test tests/corpus_test.cpp tests/engine_edit_times.cpp)
 target_include_directories(corpus_test PRIVATE src)
-target_link_libraries(corpus_test PRIVATE seabass_core)
+# engine_edit_times.cpp #includes <sqlite3.h> directly, which needs the
+# PUBLIC SQLite::SQLite3 alias on MSVC -- see make_engine_library's
+# comment above for why seabass_core alone isn't enough there.
+target_link_libraries(corpus_test PRIVATE seabass_core SQLite::SQLite3)
 # The matrix cases stage real edits through the real save loop, which
 # lives in seabass_edit and so needs Qt Core. The reader, writer and
 # work-count cases do not, and still run on a machine without Qt -- the
