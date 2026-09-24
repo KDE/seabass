@@ -164,6 +164,8 @@ private:
     bool conflictMatches(const domain::CrossSourceSyncConflict &conflict) const;
     void rebuildRows();
     int rowOfPlan(std::size_t planIndex) const;
+    // Tells the view which rows now carry a lower index; see the .cpp.
+    void announceShiftedIndexes(bool decisions, std::size_t removed);
     int rowOfConflict(std::size_t conflictIndex) const;
 
     std::vector<domain::SyncPlan> m_plans;

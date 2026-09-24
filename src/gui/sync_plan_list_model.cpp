@@ -271,6 +271,7 @@ void SyncPlanListModel::removeConflictAt(int conflictIndex)
     if (row >= 0) {
         endRemoveRows();
     }
+    announceShiftedIndexes(true, removed);
     emit countsChanged();
 }
 
@@ -298,6 +299,7 @@ void SyncPlanListModel::removePlanAt(int index)
     if (row >= 0) {
         endRemoveRows();
     }
+    announceShiftedIndexes(false, removed);
     emit countsChanged();
 }
 
@@ -481,6 +483,24 @@ int SyncPlanListModel::rowOfPlan(std::size_t planIndex) const
         }
     }
     return -1;
+}
+
+// The rows past a removed plan or conflict were re-pointed above, and a
+// delegate reads its index once, as a role: without this, a row on screen
+// kept the index it was created with. Resolving one decision left every
+// decision below it one past the end of the list, and its "Use These Cues"
+// then did nothing at all (resolveConflict refuses an index out of range)
+// -- found in the macOS round 8 manual checks, on the second of two
+// tracks. The same for plans, whose rows go when their change is saved.
+void SyncPlanListModel::announceShiftedIndexes(bool decisions, std::size_t removed)
+{
+    const int role = decisions ? ConflictIndexRole : PlanIndexRole;
+    for (int row = 0; row < static_cast<int>(m_rows.size()); ++row) {
+        const Row &r = m_rows[static_cast<std::size_t>(row)];
+        if (r.decision == decisions && r.index >= removed) {
+            emit dataChanged(index(row), index(row), {role});
+        }
+    }
 }
 
 int SyncPlanListModel::rowOfConflict(std::size_t conflictIndex) const
