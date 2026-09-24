@@ -8,6 +8,7 @@
 #include "gui/sleep_inhibitor.hpp"
 #include "cleanup_controller.hpp"
 
+#include <QDebug>
 #include <QStringList>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -743,6 +744,24 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
             // chosen them and the save fails; better never to offer.
             if (plan.wouldStrandAFormat) {
                 ++result.groupsHeldBackStranding;
+                // Named, not only counted: which group and which format,
+                // so a count that differs between two machines (8 offered
+                // on Windows, 9 on Linux, same stick, round 8) can be
+                // traced to a row one of them did not read.
+                for (const auto &doomed : plan.toRemove) {
+                    for (const auto &row : doomed.catalogRows) {
+                        const bool survivorHasIt =
+                            std::any_of(plan.survivor.catalogRows.begin(), plan.survivor.catalogRows.end(),
+                                        [&row](const domain::CatalogRowRef &s) { return s.format == row.format; });
+                        if (!survivorHasIt) {
+                            qInfo().noquote() << "Clean Up: not offering" << QString::fromStdString(plan.survivor.title)
+                                              << "(" << QString::fromStdString(plan.survivor.artist) << "): copy"
+                                              << QString::fromStdString(doomed.sourceId) << "has a row in"
+                                              << QString::fromStdString(row.format) << "and the survivor"
+                                              << QString::fromStdString(plan.survivor.sourceId) << "has none";
+                        }
+                    }
+                }
                 continue;
             }
             plans.push_back(std::move(plan));
