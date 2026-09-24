@@ -15,6 +15,8 @@
 
 #include <string>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 namespace seabass::infrastructure::media
 {
 
@@ -45,7 +47,7 @@ std::optional<std::string> WindowsRemovableMediaMounter::mount(const std::string
     // ejected volume without it being physically reinserted, unlike
     // udisksctl's mount on Linux, which can genuinely bring an unmounted
     // device back without a reinsertion.
-    if (::GetDriveTypeA(devicePath.c_str()) != DRIVE_REMOVABLE) {
+    if (::GetDriveTypeW(pathFromUtf8(devicePath).c_str()) != DRIVE_REMOVABLE) {
         errorMessage = "Drive " + devicePath +
                         " is not available. If it was just ejected, reinsert the stick -- "
                         "Windows can't remount an ejected drive without that.";
@@ -80,7 +82,7 @@ bool WindowsRemovableMediaMounter::unmount(const std::string &devicePath, std::s
         return false;
     }
 
-    HANDLE handle = ::CreateFileA(volumePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+    HANDLE handle = ::CreateFileW(pathFromUtf8(volumePath).c_str(), GENERIC_READ | GENERIC_WRITE,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errorMessage = "Could not open " + devicePath + " (error " + std::to_string(::GetLastError()) + ").";
@@ -116,7 +118,7 @@ bool WindowsRemovableMediaMounter::release(const std::string &devicePath, std::s
         return false;
     }
 
-    HANDLE handle = ::CreateFileA(volumePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+    HANDLE handle = ::CreateFileW(pathFromUtf8(volumePath).c_str(), GENERIC_READ | GENERIC_WRITE,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errorMessage = "Could not open " + devicePath + " (error " + std::to_string(::GetLastError()) + ").";

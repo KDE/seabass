@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <set>
@@ -32,6 +33,7 @@
 #include <vector>
 
 #include "infrastructure/media/stick_root_scan.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/process/run_command.hpp"
 
 namespace seabass::infrastructure::media
@@ -48,6 +50,20 @@ std::string driveLetterToPath(char letter)
     return std::string(1, letter) + ":\\";
 }
 
+// A wide string from the OS (a volume label, which the user named and
+// which can hold anything) as UTF-8, the encoding every std::string in
+// Seabass carries.
+std::string utf8FromWide(const wchar_t *text)
+{
+    const int length = ::WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    if (length <= 1) {
+        return {};
+    }
+    std::string out(static_cast<std::size_t>(length - 1), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, text, -1, out.data(), length, nullptr, nullptr);
+    return out;
+}
+
 // Returns the physical disk number (0, 1, 2, ...) a mounted drive letter
 // lives on, via IOCTL_STORAGE_GET_DEVICE_NUMBER -- the standard, minimal
 // WinAPI way to answer "which disk is this volume on" without needing to
@@ -56,9 +72,9 @@ std::string driveLetterToPath(char letter)
 // launch, and no text parsing).
 std::optional<int> physicalDiskNumberForDriveLetter(char letter)
 {
-    std::string path = "\\\\.\\" + std::string(1, letter) + ":";
-    HANDLE handle = ::CreateFileA(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0,
-                                   nullptr);
+    const std::string path = "\\\\.\\" + std::string(1, letter) + ":";
+    HANDLE handle = ::CreateFileW(pathFromUtf8(path).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                   OPEN_EXISTING, 0, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         return std::nullopt;
     }
@@ -142,8 +158,8 @@ std::string physicalDrivePath(int number)
 // API only.
 std::string storageSerialNumber(const std::string &devicePath)
 {
-    HANDLE handle = ::CreateFileA(devicePath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                                   0, nullptr);
+    HANDLE handle = ::CreateFileW(pathFromUtf8(devicePath).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                   OPEN_EXISTING, 0, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         return {};
     }
@@ -200,8 +216,9 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
         if (!(driveMask & (1u << i))) {
             continue;
         }
-        std::string rootPath = driveLetterToPath(static_cast<char>('A' + i));
-        if (::GetDriveTypeA(rootPath.c_str()) != DRIVE_REMOVABLE) {
+        const std::string rootPath = driveLetterToPath(static_cast<char>('A' + i));
+        const std::filesystem::path rootDirectory = pathFromUtf8(rootPath);
+        if (::GetDriveTypeW(rootDirectory.c_str()) != DRIVE_REMOVABLE) {
             continue;
         }
 
@@ -226,11 +243,13 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
         // Windows has actually assigned, and it never assigns one to an
         // empty slot in the first place, so there's nothing to filter.
 
-        char volumeName[MAX_PATH + 1] = {};
+        // The wide call: a volume label is the user's own text, and the
+        // narrow one would hand it back through the ANSI code page.
+        wchar_t volumeName[MAX_PATH + 1] = {};
         DWORD volumeSerial = 0;
-        if (::GetVolumeInformationA(rootPath.c_str(), volumeName, sizeof(volumeName), &volumeSerial, nullptr,
+        if (::GetVolumeInformationW(rootDirectory.c_str(), volumeName, MAX_PATH + 1, &volumeSerial, nullptr,
                                      nullptr, nullptr, 0)) {
-            stick.label = volumeName[0] != '\0' ? std::string(volumeName) : rootPath;
+            stick.label = volumeName[0] != L'\0' ? utf8FromWide(volumeName) : rootPath;
             if (volumeSerial != 0) {
                 stick.identity.filesystemUuid = volumeSerialString(volumeSerial);
             }
