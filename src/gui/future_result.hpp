@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <QException>
 #include <QString>
 
 #include <exception>
@@ -27,11 +28,38 @@ namespace seabass::gui
 // On a throw this hands back a default-constructed result -- every
 // caller already tolerates the "no result" case -- and puts the message
 // in `error` for the controller to surface however it normally does.
+//
+// The message is the exception's own, not its wrapper's. QtConcurrent
+// hands anything that is not a QException back as QUnhandledException,
+// which does not override what(), so reading that said "std::exception"
+// -- for every std::runtime_error and std::filesystem_error thrown on a
+// worker thread in the app. A failed filesystem repair, for one,
+// reported "std::exception" as its reason. The original is still inside
+// it, and that is what is described.
+inline QString describeException(const std::exception_ptr &thrown)
+{
+    if (!thrown) {
+        return QStringLiteral("Unknown error");
+    }
+    try {
+        std::rethrow_exception(thrown);
+    } catch (const std::exception &e) {
+        return QString::fromUtf8(e.what());
+    } catch (...) {
+        return QStringLiteral("Unknown error");
+    }
+}
+
 template <typename Watcher>
 auto takeResult(Watcher &watcher, QString *error = nullptr) -> decltype(watcher.result())
 {
     try {
         return watcher.result();
+    } catch (const QUnhandledException &e) {
+        // Before std::exception, which it derives from: see above.
+        if (error != nullptr) {
+            *error = describeException(e.exception());
+        }
     } catch (const std::exception &e) {
         if (error != nullptr) {
             *error = QString::fromUtf8(e.what());
