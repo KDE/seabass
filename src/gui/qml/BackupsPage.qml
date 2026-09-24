@@ -193,10 +193,14 @@ Page {
         severity: SeabassDialog.Warning
         destructive: true
         title: "Delete This Backup?"
-        headline: "This permanently deletes the full backup of "
+        // The file by name, since that is what goes; the stick only when it
+        // is called something else.
+        headline: "This permanently deletes " + Theme.backupTitle(confirmDeleteDialog.backup.fileName || "")
+            + " (" + Theme.humanBytes(confirmDeleteDialog.backup.bytes) + ")"
             + (confirmDeleteDialog.backup.label && confirmDeleteDialog.backup.label.length > 0
-                ? confirmDeleteDialog.backup.label : confirmDeleteDialog.backup.fileName)
-            + " (" + Theme.humanBytes(confirmDeleteDialog.backup.bytes) + ") from this computer."
+               && confirmDeleteDialog.backup.label !== Theme.backupTitle(confirmDeleteDialog.backup.fileName || "")
+                ? ", a full backup of " + confirmDeleteDialog.backup.label : "")
+            + ", from this computer."
         detailText: "The stick itself is not touched. Once deleted, the next backup of that stick copies the whole stick again."
         acceptText: "Delete"
         onAccepted: root.controller.deleteBackup(confirmDeleteDialog.backup.archivePath)
@@ -277,8 +281,11 @@ Page {
                             spacing: 8
                             Label {
                                 objectName: "backupTitle"
-                                text: backupRow.readable && backupRow.modelData.label.length > 0
-                                    ? backupRow.modelData.label : backupRow.modelData.fileName
+                                // The file is what is being picked, so it is the
+                                // title: two backups of one stick (or a copy
+                                // renamed for a new round) share a stick name
+                                // and used to show as two identical rows.
+                                text: Theme.backupTitle(backupRow.modelData.fileName)
                                 font.bold: true
                                 elide: Text.ElideRight
                                 Layout.maximumWidth: Theme.snap(rowContent.width * 0.5)
@@ -288,6 +295,17 @@ Page {
                             // "before the Berlin gig" says which backup,
                             // the label says which stick, and a list of
                             // names alone makes the second unanswerable.
+                            // The stick it came from, when that is not
+                            // already what the file is called.
+                            Label {
+                                objectName: "backupStickLabel"
+                                visible: backupRow.readable && backupRow.modelData.label.length > 0
+                                         && backupRow.modelData.label !== Theme.backupTitle(backupRow.modelData.fileName)
+                                text: "from " + backupRow.modelData.label
+                                color: Theme.textMuted
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: rowContent.width * 0.3
+                            }
                             Label {
                                 objectName: "backupName"
                                 visible: backupRow.readable

@@ -41,6 +41,8 @@ Page {
     // not in the backup folder still needs a row that shows it as chosen.
     readonly property bool archiveIsCustom: (controller.archivePath || "").length > 0
         && !root.knownBackups.some(function(b) { return b.archivePath === controller.archivePath; })
+    // The chosen backup by its file name, like the list above it.
+    readonly property string chosenTitle: Theme.backupTitle(String(controller.archivePath || "").split(/[\\/]/).pop())
     property int selectedIndex: -1
     readonly property var selectedDisk: (root.selectedIndex >= 0 && root.selectedIndex < root.disks.length)
         ? root.disks[root.selectedIndex] : null
@@ -289,7 +291,7 @@ Page {
             Label { text: "Drive"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
             Label { font.family: Theme.dataFamily; text: root.selectedDisk ? root.selectedDisk.mountPoint + "  ·  " + Theme.humanBytes(root.selectedDisk.capacityBytes) : "" }
             Label { text: "From"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
-            Label { Layout.fillWidth: true; elide: Text.ElideMiddle; font.family: Theme.dataFamily; text: (root.info.label || "") + "  ·  " + root.friendlyTimestamp(root.info.createdAt) }
+            Label { Layout.fillWidth: true; elide: Text.ElideMiddle; font.family: Theme.dataFamily; text: root.chosenTitle + "  ·  " + root.friendlyTimestamp(root.info.createdAt) }
             Label { text: "Mode"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
             Label { text: root.exact ? "Exact restore" : "Overlay (keeps other files)" }
         }
@@ -357,7 +359,7 @@ Page {
                             // row instead. Doubles as the accessible name,
                             // which a custom contentItem doesn't provide on
                             // its own.
-                            text: (modelData.label || "").length > 0 ? modelData.label : modelData.fileName
+                            text: Theme.backupTitle(modelData.fileName)
                             onToggled: if (checked) root.chooseArchive(modelData.archivePath)
                             // Layout.leftMargin on the first child, not
                             // x/width on the RowLayout: see FormatUsbPage.qml's
@@ -370,7 +372,10 @@ Page {
                                     Layout.leftMargin: backupRadio.indicator.width + backupRadio.spacing
                                     spacing: 2
                                     Label {
-                                        text: (backupRadio.modelData.label || "").length > 0 ? backupRadio.modelData.label : backupRadio.modelData.fileName
+                                        // The file is what is picked here; see
+                                        // Theme.backupTitle.
+                                        objectName: "backupRadioTitle"
+                                        text: Theme.backupTitle(backupRadio.modelData.fileName)
                                         color: Theme.text
                                     }
                                     Label {
@@ -380,8 +385,11 @@ Page {
                                         font.family: Theme.dataFamily
                                         font.pointSize: Theme.fontTiny
                                         text: backupRadio.unreadable
-                                            ? backupRadio.modelData.fileName + " · " + backupRadio.modelData.error
-                                            : backupRadio.modelData.fileName + " · " + root.friendlyTimestamp(backupRadio.modelData.createdAt)
+                                            ? backupRadio.modelData.error
+                                            : ((backupRadio.modelData.label || "").length > 0
+                                               && backupRadio.modelData.label !== Theme.backupTitle(backupRadio.modelData.fileName)
+                                                   ? "from " + backupRadio.modelData.label + " · " : "")
+                                              + root.friendlyTimestamp(backupRadio.modelData.createdAt)
                                               + " · " + backupRadio.modelData.entries + " entries"
                                     }
                                 }
@@ -420,14 +428,14 @@ Page {
                         // See backupRadio's comment above: non-empty text
                         // is what keeps FluentWinUI3's indicator pinned
                         // left instead of centered.
-                        text: root.archiveReady ? root.info.label : "Chosen file"
+                        text: root.archiveReady ? root.chosenTitle : "Chosen file"
                         contentItem: RowLayout {
                             spacing: 10
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.leftMargin: customRadio.indicator.width + customRadio.spacing
                                 spacing: 2
-                                Label { text: root.archiveReady ? root.info.label : "Chosen file"; color: Theme.text }
+                                Label { text: root.archiveReady ? root.chosenTitle : "Chosen file"; color: Theme.text }
                                 Label {
                                     Layout.fillWidth: true
                                     elide: Text.ElideMiddle

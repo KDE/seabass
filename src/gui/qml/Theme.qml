@@ -107,6 +107,14 @@ QtObject {
     // ---- Number formatting shared by pages that talk about sizes and
     // durations (stick backup, statistics). Binary units, one decimal
     // above bytes: "23.4 GiB". ----
+    // A full stick backup is picked by its file, so that is what a list
+    // calls it: "SHAKEDOWN_8.zip" reads "SHAKEDOWN_8". The stick label in
+    // its manifest is shown beside it only when it differs -- a copy
+    // renamed for a new round keeps the old stick's label inside.
+    function backupTitle(fileName) {
+        return String(fileName || "").replace(/\.zip$/i, "");
+    }
+
     function humanBytes(bytes) {
         if (!bytes || bytes <= 0) return "0 B";
         var units = ["B", "KiB", "MiB", "GiB", "TiB"];
