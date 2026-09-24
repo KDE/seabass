@@ -16,6 +16,7 @@
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
@@ -196,7 +197,7 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
         // open plus schema detection, and a save adding several cues to
         // the same library should pay that once.
         writer = &sharedEngineCueWriter(ctx, pioneerRoot);
-        ctx.backupOnce((fs::path(pioneerRoot) / "Database2" / "m.db").string(), "add-cue");
+        ctx.backupOnce(pathToUtf8(pathFromUtf8(pioneerRoot) / "Database2" / "m.db"), "add-cue");
     }
 
     writer->writeHotCues(id, cues);

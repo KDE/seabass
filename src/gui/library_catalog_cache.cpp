@@ -14,6 +14,7 @@
 #include "infrastructure/file_clock.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 namespace seabass::gui
@@ -30,13 +31,13 @@ namespace fs = std::filesystem;
 fs::path freshnessFile(const std::string &format, const std::string &path)
 {
     if (format == "rekordbox") {
-        return fs::path(path) / "rekordbox" / "export.pdb";
+        return pathFromUtf8(path) / "rekordbox" / "export.pdb";
     }
     if (format == "engine") {
-        return fs::path(path) / "Database2" / "m.db";
+        return pathFromUtf8(path) / "Database2" / "m.db";
     }
     if (format == "onelibrary") {
-        return infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(path);
+        return pathFromUtf8(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(path));
     }
     throw std::invalid_argument("LibraryCatalogCache: unknown format \"" + format + "\"");
 }
@@ -192,9 +193,9 @@ void LibraryCatalogCache::invalidateEveryCatalogOn(const std::string &stickRoot)
     if (stickRoot.empty()) {
         return;
     }
-    const fs::path root(stickRoot);
-    invalidateWithOneLibraryMirror("rekordbox", (root / "PIONEER").string());
-    invalidate("engine", (root / "Engine Library").string());
+    const fs::path root = pathFromUtf8(stickRoot);
+    invalidateWithOneLibraryMirror("rekordbox", pathToUtf8(root / "PIONEER"));
+    invalidate("engine", pathToUtf8(root / "Engine Library"));
 }
 
 void LibraryCatalogCache::invalidateWithOneLibraryMirror(const std::string &format, const std::string &path)

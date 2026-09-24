@@ -19,6 +19,7 @@
 #include "domain/metadata_merge.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 
@@ -162,7 +163,7 @@ MetadataBackupTaskResult runStoreTask(std::vector<domain::Track> tracks, std::ve
     MetadataBackupTaskResult result;
     try {
         MetadataSource source;
-        source.stickRoot = fs::path(libraryPath.toStdString()).parent_path();
+        source.stickRoot = pathFromQString(libraryPath).parent_path();
         source.libraryId = libraryId.toStdString();
         source.stickLabel = stickLabel.toStdString();
         // Read from the files, not from the rows: the merge rule's last
@@ -412,7 +413,7 @@ MetadataBackupController::~MetadataBackupController()
 
 QString MetadataBackupController::storeLocation() const
 {
-    return QString::fromStdString(MetadataStore::defaultDatabasePath().parent_path().string());
+    return pathToQString(MetadataStore::defaultDatabasePath().parent_path());
 }
 
 QString MetadataBackupController::state() const

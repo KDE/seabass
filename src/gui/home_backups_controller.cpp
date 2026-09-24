@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include "application/use_cases/restore_stick_backup.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 
 namespace seabass::gui
@@ -34,7 +35,7 @@ void HomeBackupsController::refresh()
 {
     const int backups = m_backupDirectory.isEmpty()
         ? 0
-        : application::RestoreStickBackup::countArchives(fs::path(m_backupDirectory.toStdString()));
+        : application::RestoreStickBackup::countArchives(pathFromQString(m_backupDirectory));
     const int tracks = infrastructure::local::MetadataStore::storedTrackCountIfPresent();
     if (backups == m_fullBackupCount && tracks == m_metadataTrackCount) {
         return;

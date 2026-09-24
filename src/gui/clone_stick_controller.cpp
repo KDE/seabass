@@ -20,6 +20,7 @@
 #include "infrastructure/engine/engine_restore_check.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -123,7 +124,7 @@ void CloneStickController::configure(const QString &sourceLabel, const QString &
     m_sourceLabel = sourceLabel;
     m_sourceRekordboxPath = sourceRekordboxPath;
     m_sourceEnginePath = sourceEnginePath;
-    m_sourceRoot = anyPath.isEmpty() ? QString() : QString::fromStdString(fs::path(anyPath.toStdString()).parent_path().string());
+    m_sourceRoot = anyPath.isEmpty() ? QString() : pathToQString(pathFromQString(anyPath).parent_path());
     m_targetLabel = targetLabel;
     m_targetRoot = targetMountPoint;
     m_archivePath = archivePathForLabel(backupDirectory, sourceLabel);
@@ -134,10 +135,10 @@ void CloneStickController::configure(const QString &sourceLabel, const QString &
 CloneStickOptions CloneStickController::baseOptions() const
 {
     CloneStickOptions options;
-    options.backup.stickRoot = fs::path(m_sourceRoot.toStdString());
-    options.backup.archivePath = fs::path(m_archivePath.toStdString());
+    options.backup.stickRoot = pathFromQString(m_sourceRoot);
+    options.backup.archivePath = pathFromQString(m_archivePath);
     options.backup.stickLabel = m_sourceLabel.toStdString();
-    options.targetRoot = fs::path(m_targetRoot.toStdString());
+    options.targetRoot = pathFromQString(m_targetRoot);
     return options;
 }
 

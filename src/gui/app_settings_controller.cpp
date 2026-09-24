@@ -10,6 +10,7 @@
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "app_settings_controller.hpp"
+#include "gui/qt_path.hpp"
 
 #include <QDir>
 #include <QStandardPaths>
@@ -19,7 +20,7 @@ namespace seabass::gui
 
 QString AppSettingsController::defaultStickBackupDirectory()
 {
-    return QString::fromStdString(infrastructure::paths::localFullBackupsDir().string());
+    return pathToQString(infrastructure::paths::localFullBackupsDir());
 }
 
 AppSettingsController::AppSettingsController(QObject *parent)
@@ -50,7 +51,7 @@ AppSettingsController::AppSettingsController(QObject *parent)
     if (m_seabassHomeDirectory.isEmpty()) {
         m_seabassHomeDirectory = defaultSeabassHomeDirectory();
     }
-    infrastructure::paths::setLocalRootOverride(m_seabassHomeDirectory.toStdString());
+    infrastructure::paths::setLocalRootOverride(pathFromQString(m_seabassHomeDirectory));
     m_lastPlaylistName = m_settings.value("lastPlaylistName", "").toString();
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     m_experimentalFeaturesEnabled = m_settings.value("experimentalFeaturesEnabled", false).toBool();
@@ -196,12 +197,12 @@ QString AppSettingsController::defaultSeabassHomeDirectory()
     // Asked of the paths module rather than rebuilt here, so the app and
     // everything Qt-free agree on one answer.
     infrastructure::paths::setLocalRootOverride({});
-    return QString::fromStdString(infrastructure::paths::localRoot().string());
+    return pathToQString(infrastructure::paths::localRoot());
 }
 
 QString AppSettingsController::anonymizedExportDirectory() const
 {
-    return QString::fromStdString((std::filesystem::path(m_seabassHomeDirectory.toStdString()) / "testdata").string());
+    return pathToQString(pathFromQString(m_seabassHomeDirectory) / "testdata");
 }
 
 void AppSettingsController::setSeabassHomeDirectory(const QString &value)
@@ -217,7 +218,7 @@ void AppSettingsController::setSeabassHomeDirectory(const QString &value)
     // localRoot(), so a setting that only took effect after a restart
     // would leave the two halves of the app disagreeing about where the
     // user's data lives.
-    infrastructure::paths::setLocalRootOverride(effective.toStdString());
+    infrastructure::paths::setLocalRootOverride(pathFromQString(effective));
     emit seabassHomeDirectoryChanged();
 }
 

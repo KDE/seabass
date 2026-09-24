@@ -14,6 +14,7 @@
 #include "infrastructure/engine/libdjinterop_engine_cleanup_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cleanup_writer.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
@@ -53,7 +54,7 @@ struct RepairWriterContext
             // change in SyncPlanChange for why a private instance is a
             // way to abort a save on a stick with both catalogs.
             oneLibrary = &sharedOneLibraryWriter(ctx, session.writeRoot(),
-                                                  fs::path(root).parent_path().string());
+                                                  pathToUtf8(pathFromUtf8(root).parent_path()));
         }
     }
 

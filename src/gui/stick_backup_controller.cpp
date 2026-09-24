@@ -32,6 +32,7 @@
 #include "infrastructure/media/filesystem_health.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -118,7 +119,7 @@ void StickBackupController::configure(const QString &stickLabel, const QString &
     m_stickLabel = stickLabel;
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
-    m_stickRoot = QString::fromStdString(fs::path(anyPath.toStdString()).parent_path().string());
+    m_stickRoot = pathToQString(pathFromQString(anyPath).parent_path());
     m_backupDirectory = backupDirectory;
     m_archiveAttempt = 1;
     m_nameCollidedWith.clear();
@@ -139,8 +140,8 @@ void StickBackupController::configure(const QString &stickLabel, const QString &
 BackupStickOptions StickBackupController::baseOptions() const
 {
     BackupStickOptions options;
-    options.stickRoot = fs::path(m_stickRoot.toStdString());
-    options.archivePath = fs::path(m_archivePath.toStdString());
+    options.stickRoot = pathFromQString(m_stickRoot);
+    options.archivePath = pathFromQString(m_archivePath);
     options.stickIdentifier = m_stickIdentifier.toStdString();
     options.stickLabel = m_stickLabel.toStdString();
     options.sourceReadOnly = m_stickReadOnly;
@@ -195,7 +196,7 @@ void StickBackupController::refresh()
                 options.archivePath.parent_path(), options.stickIdentifier, label.toStdString());
             if (!found.empty()) {
                 options.archivePath = found;
-                result->adoptedArchivePath = QString::fromStdString(found.string());
+                result->adoptedArchivePath = pathToQString(found);
             }
         }
         result->preview = BackupStick::preview(options);
@@ -544,7 +545,7 @@ void StickBackupController::deleteBackup()
     if (!enterDirectWrite([this] { deleteBackup(); })) {
         return;
     }
-    const fs::path archive(m_archivePath.toStdString());
+    const fs::path archive = pathFromQString(m_archivePath);
     std::error_code archiveError;
     fs::remove(archive, archiveError);
     // The journal goes too: left behind, the next backup would try to
@@ -573,7 +574,7 @@ void StickBackupController::verify()
     setActivity(QStringLiteral("verify"));
     resetProgress();
     m_cancel = application::CancellationToken();
-    fs::path archive(m_archivePath.toStdString());
+    fs::path archive = pathFromQString(m_archivePath);
     application::CancellationToken cancel = m_cancel;
     QPointer<StickBackupController> self(this);
     auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>();
@@ -602,7 +603,7 @@ void StickBackupController::verify()
 
 QVariantMap StickBackupController::compactionPreflight()
 {
-    application::CompactionPreflight pre = CompactStickBackup::preflight(fs::path(m_archivePath.toStdString()));
+    application::CompactionPreflight pre = CompactStickBackup::preflight(pathFromQString(m_archivePath));
     QVariantMap map;
     map["error"] = QString::fromStdString(pre.error);
     map["archiveBytes"] = static_cast<qlonglong>(pre.archiveBytes);
@@ -632,7 +633,7 @@ void StickBackupController::compact()
     resetProgress();
     m_cancel = application::CancellationToken();
     CompactStickBackupOptions options;
-    options.archivePath = fs::path(m_archivePath.toStdString());
+    options.archivePath = pathFromQString(m_archivePath);
     options.cancel = m_cancel;
     QPointer<StickBackupController> self(this);
     auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>();
@@ -681,14 +682,14 @@ void StickBackupController::replaceCollidingBackup()
     // like a backup of neither stick.
     const QString colliding = archivePathForLabel(m_backupDirectory, m_stickLabel, 1);
     std::error_code ec;
-    fs::remove(fs::path(colliding.toStdString()), ec);
+    fs::remove(pathFromQString(colliding), ec);
     if (ec) {
         setErrorMessage(QStringLiteral("Could not remove ") + colliding + QStringLiteral(": ")
                         + QString::fromStdString(ec.message()));
         emit actionFeedback(m_errorMessage, true);
         return;
     }
-    fs::remove(fs::path((colliding + QStringLiteral(".journal")).toStdString()), ec);
+    fs::remove(pathFromQString(colliding + QStringLiteral(".journal")), ec);
 
     m_nameCollidedWith.clear();
     m_archiveAttempt = 1;
@@ -700,7 +701,7 @@ void StickBackupController::replaceCollidingBackup()
 void StickBackupController::openChangelog()
 {
     QString error;
-    const QString path = writeChangelogFile(fs::path(m_archivePath.toStdString()), &error);
+    const QString path = writeChangelogFile(pathFromQString(m_archivePath), &error);
     if (path.isEmpty()) {
         emit actionFeedback(error, true);
         return;
@@ -885,8 +886,8 @@ bool StickBackupController::renameArchiveTo(const QString &target)
     if (target.isEmpty() || target == m_archivePath) {
         return true;
     }
-    const fs::path from(m_archivePath.toStdString());
-    const fs::path to(target.toStdString());
+    const fs::path from = pathFromQString(m_archivePath);
+    const fs::path to = pathFromQString(target);
     std::error_code ec;
     if (!fs::exists(from, ec)) {
         // Nothing written yet: the next backup simply creates it under
@@ -909,8 +910,8 @@ bool StickBackupController::renameArchiveTo(const QString &target)
     }
     // The journal only exists after an interrupted run; missing is fine.
     std::error_code journalEc;
-    fs::rename(fs::path((m_archivePath + QStringLiteral(".journal")).toStdString()),
-                fs::path((target + QStringLiteral(".journal")).toStdString()), journalEc);
+    fs::rename(pathFromQString(m_archivePath + QStringLiteral(".journal")),
+                pathFromQString(target + QStringLiteral(".journal")), journalEc);
     m_archivePath = target;
     emit configuredChanged();
     return true;

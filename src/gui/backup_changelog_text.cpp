@@ -11,6 +11,7 @@
 #include <QStandardPaths>
 #include <QTextStream>
 
+#include "gui/qt_path.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
@@ -94,7 +95,7 @@ QString writeChangelogFile(const fs::path &archivePath, QString *error)
     if (directory.isEmpty()) {
         return fail(QStringLiteral("Nowhere to write the file to."));
     }
-    const QString name = QFileInfo(QString::fromStdString(archivePath.filename().string())).completeBaseName();
+    const QString name = QFileInfo(pathToQString(archivePath.filename())).completeBaseName();
     const QString path = QDir(directory).filePath(name + QStringLiteral("-history.txt"));
 
     QFile out(path);
@@ -105,7 +106,7 @@ QString writeChangelogFile(const fs::path &archivePath, QString *error)
 
     text << "Backup history\n";
     text << "==============\n\n";
-    text << "Archive:  " << QString::fromStdString(archivePath.string()) << "\n";
+    text << "Archive:  " << pathToQString(archivePath) << "\n";
     text << "Stick:    " << QString::fromStdString(manifest->stickLabel) << "\n";
     if (!manifest->userName.empty()) {
         text << "Name:     " << QString::fromStdString(manifest->userName) << "\n";

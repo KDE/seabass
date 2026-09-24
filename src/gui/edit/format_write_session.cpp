@@ -11,6 +11,7 @@
 #include "infrastructure/bulk_write_strategy.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::gui
 {
@@ -20,12 +21,12 @@ namespace fs = std::filesystem;
 std::string FormatWriteSession::databaseFileFor(const std::string &format, const std::string &catalogPath)
 {
     if (format == "engine") {
-        return (fs::path(catalogPath) / "Database2" / "m.db").generic_string();
+        return pathToGenericUtf8(pathFromUtf8(catalogPath) / "Database2" / "m.db");
     }
     if (format == "onelibrary") {
         return infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(catalogPath);
     }
-    return (fs::path(catalogPath) / "rekordbox" / "export.pdb").generic_string();
+    return pathToGenericUtf8(pathFromUtf8(catalogPath) / "rekordbox" / "export.pdb");
 }
 
 FormatWriteSession::FormatWriteSession(std::string format, std::string catalogPath, int itemCountHint,
@@ -53,12 +54,12 @@ FormatWriteSession::FormatWriteSession(std::string format, std::string catalogPa
     m_ctx.backupOnce(m_dbFile, m_label);
 
     std::error_code sizeEc;
-    m_existingBytes = fs::file_size(m_dbFile, sizeEc);
+    m_existingBytes = fs::file_size(pathFromUtf8(m_dbFile), sizeEc);
     infrastructure::BulkWriteStrategyInputs inputs;
     inputs.itemCount = itemCountHint;
     inputs.existingFileBytes = sizeEc ? 0 : m_existingBytes;
     bool useWholeFile = !sizeEc && infrastructure::shouldUseWholeFileReplace(inputs)
-        && infrastructure::hasRoomForWholeFileReplace(fs::path(m_dbFile).parent_path(), m_existingBytes);
+        && infrastructure::hasRoomForWholeFileReplace(pathFromUtf8(m_dbFile).parent_path(), m_existingBytes);
 
     if (useWholeFile) {
         fs::path scratchDir = fs::temp_directory_path()
@@ -66,17 +67,17 @@ FormatWriteSession::FormatWriteSession(std::string format, std::string catalogPa
                + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::error_code cleanupEc;
         fs::remove_all(scratchDir, cleanupEc);
-        fs::create_directories(scratchDir / m_scratchSubdir);
-        fs::copy_file(m_dbFile, scratchDir / m_scratchSubdir / m_scratchFilename);
+        const fs::path scratchFile = scratchDir / m_scratchSubdir / m_scratchFilename;
+        fs::create_directories(scratchFile.parent_path());
+        fs::copy_file(pathFromUtf8(m_dbFile), scratchFile);
         m_scratch.emplace(scratchDir);
-        m_writeRoot = scratchDir.string();
+        m_writeRoot = pathToUtf8(scratchDir);
         // From here on this save writes the scratch copy, so that is what a
         // failed change has to put back -- starting with this change.
-        const std::string scratchFile = (scratchDir / m_scratchSubdir / m_scratchFilename).string();
-        m_ctx.redirectWrites(m_dbFile, scratchFile);
-        m_ctx.protectForThisChange(scratchFile);
+        m_ctx.redirectWrites(m_dbFile, pathToUtf8(scratchFile));
+        m_ctx.protectForThisChange(pathToUtf8(scratchFile));
         m_ctx.log().record(m_label + ": applying up to " + std::to_string(itemCountHint) + " " + m_format
-                           + " update(s) to a local scratch copy first (" + m_scratchFilename + " is "
+                           + " update(s) to a local scratch copy first (" + pathToUtf8(m_scratchFilename) + " is "
                            + std::to_string(m_existingBytes) + " bytes)");
     }
 
@@ -101,7 +102,7 @@ void FormatWriteSession::commit(bool ok)
         return;
     }
     fs::path scratchFile = m_scratch->path / m_scratchSubdir / m_scratchFilename;
-    if (!infrastructure::copyFileDurablyAtomic(scratchFile.string(), m_dbFile)) {
+    if (!infrastructure::copyFileDurablyAtomic(pathToUtf8(scratchFile), m_dbFile)) {
         m_ctx.log().record(m_label + ": FAILED to commit the " + m_format + " scratch copy back onto the stick");
         throw std::runtime_error(m_label + ": failed to commit the scratch-built " + m_format
                                  + " database back onto the stick");

@@ -22,6 +22,7 @@
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/stick_layout.hpp"
 
@@ -148,7 +149,7 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
     const QString &any = m_rekordboxPath.isEmpty() ? m_enginePath : m_rekordboxPath;
     if (!any.isEmpty()) {
         const std::filesystem::path root =
-            infrastructure::backup::stickRootForCatalogPath(any.toStdString());
+            pathFromUtf8(infrastructure::backup::stickRootForCatalogPath(any.toStdString()));
         m_stickSpaceWatcher.setFuture(QtConcurrent::run(
             infrastructure::backup::measureStickSpace, root));
     }
@@ -222,7 +223,7 @@ bool LibraryEditSession::editsBrowsedBackup() const
             continue;
         }
         if (infrastructure::local::isBrowsedBackupRoot(
-                infrastructure::backup::stickRootForCatalogPath(libraryPath.toStdString()))) {
+                pathFromUtf8(infrastructure::backup::stickRootForCatalogPath(libraryPath.toStdString())))) {
             return true;
         }
     }

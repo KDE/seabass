@@ -26,6 +26,7 @@
 #include <filesystem>
 
 #include "application/path_key.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/logging/file_operation_log.hpp"
@@ -93,7 +94,7 @@ infrastructure::backup::FilesystemBackupStore &SaveContext::archiveStore()
 
 std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
 {
-    return releaseAutomaticBackupsIfTight(infrastructure::backup::measureStickSpace(stickRoot()));
+    return releaseAutomaticBackupsIfTight(infrastructure::backup::measureStickSpace(pathFromUtf8(stickRoot())));
 }
 
 std::uint64_t SaveContext::releaseAutomaticBackupsIfTight(const infrastructure::backup::StickSpace &space)
@@ -152,13 +153,14 @@ std::vector<std::string> SaveContext::walSidecarsOf(const std::string &file)
     // The same definition of "the database's set" Full Stick Backup
     // uses: the main file plus whichever of -wal / -journal exist.
     std::vector<std::string> sidecars;
-    if (fs::path(file).extension() != ".db") {
+    const fs::path filePath = pathFromUtf8(file);
+    if (filePath.extension() != ".db") {
         return sidecars;
     }
-    for (const fs::path &member : infrastructure::stick_backup::dbSetMembers(fs::path(file))) {
+    for (const fs::path &member : infrastructure::stick_backup::dbSetMembers(filePath)) {
         std::error_code ec;
-        if (member != fs::path(file) && fs::is_regular_file(member, ec) && fs::file_size(member, ec) > 0 && !ec) {
-            sidecars.push_back(member.string());
+        if (member != filePath && fs::is_regular_file(member, ec) && fs::file_size(member, ec) > 0 && !ec) {
+            sidecars.push_back(pathToUtf8(member));
         }
     }
     return sidecars;
@@ -213,7 +215,7 @@ void SaveContext::backupAllNow(const std::vector<BackupTarget> &targets)
                 record = archiveStore().backup(files, label);
                 madeHere.push_back(record.id);
                 m_recordByLabel[label] = record.id;
-                m_backups.push_back({QString::fromStdString(fs::path(record.path).parent_path().string()),
+                m_backups.push_back({pathToQString(pathFromUtf8(record.path).parent_path()),
                                      QString::fromStdString(record.id)});
             } else {
                 record = archiveStore().addToArchive(existing->second, files);
@@ -358,12 +360,12 @@ bool SaveContext::backupOnce(const std::string &file, const std::string &label)
     if (existing == m_recordByLabel.end()) {
         record = archiveStore().backup({file}, label);
         m_recordByLabel[label] = record.id;
-        m_backups.push_back({QString::fromStdString(fs::path(record.path).parent_path().string()),
+        m_backups.push_back({pathToQString(pathFromUtf8(record.path).parent_path()),
                              QString::fromStdString(record.id)});
     } else {
         record = archiveStore().addToArchive(existing->second, {file});
     }
-    log().record(label + ": backed up " + fs::path(file).filename().string() + " -> " + record.path);
+    log().record(label + ": backed up " + pathToUtf8(pathFromUtf8(file).filename()) + " -> " + record.path);
     m_backedUp[application::normalizedPathKey(file)] = record.id;
     return true;
 }
@@ -380,11 +382,11 @@ namespace
 bool sameBytes(const std::string &a, const std::string &b)
 {
     std::error_code ec;
-    if (fs::file_size(a, ec) != fs::file_size(b, ec) || ec) {
+    if (fs::file_size(pathFromUtf8(a), ec) != fs::file_size(pathFromUtf8(b), ec) || ec) {
         return false;
     }
-    std::ifstream left(a, std::ios::binary);
-    std::ifstream right(b, std::ios::binary);
+    std::ifstream left(pathFromUtf8(a), std::ios::binary);
+    std::ifstream right(pathFromUtf8(b), std::ios::binary);
     // "I could not read them" is not "they are the same". Neither
     // stream was checked, so if either would not open -- a sharing
     // violation on Windows, a path this filesystem will not resolve --
@@ -434,7 +436,7 @@ void SaveContext::protectForThisChange(const std::string &file)
     // A SQLite database is its sidecars too. Absent ones are recorded as
     // absent, so one the change created is removed again.
     std::vector<std::string> members{target};
-    if (fs::path(target).extension() == ".db") {
+    if (pathFromUtf8(target).extension() == ".db") {
         members.push_back(target + "-wal");
         members.push_back(target + "-journal");
     }
@@ -443,8 +445,9 @@ void SaveContext::protectForThisChange(const std::string &file)
             continue;
         }
         Checkpoint checkpoint{member, {}};
+        const fs::path memberPath = pathFromUtf8(member);
         std::error_code ec;
-        if (fs::is_regular_file(member, ec)) {
+        if (fs::is_regular_file(memberPath, ec)) {
             if (!m_checkpointDir) {
                 fs::path dir = fs::temp_directory_path()
                     / ("seabass-change-checkpoint-"
@@ -455,19 +458,20 @@ void SaveContext::protectForThisChange(const std::string &file)
             // Refused up front with the numbers, rather than as a bare "no
             // space left" halfway through a copy. Either way the change
             // fails before it has written anything.
-            const std::uintmax_t size = fs::file_size(member);
+            const std::uintmax_t size = fs::file_size(memberPath);
             const std::uintmax_t available = fs::space(m_checkpointDir->path).available;
             if (available < size) {
-                throw std::runtime_error("not enough temporary space to protect " + fs::path(member).filename().string()
+                throw std::runtime_error("not enough temporary space to protect " + pathToUtf8(memberPath.filename())
                                          + " before writing it: needs " + std::to_string(size / (1024 * 1024))
-                                         + " MB in " + m_checkpointDir->path.parent_path().string() + ", "
+                                         + " MB in " + pathToUtf8(m_checkpointDir->path.parent_path()) + ", "
                                          + std::to_string(available / (1024 * 1024)) + " MB free");
             }
             // A counter, not m_checkpoints.size(): see the member's own
             // comment. The vector shrinks under redirectWrites() and the
             // names must not be reissued when it does.
-            checkpoint.copy = (m_checkpointDir->path / std::to_string(m_nextCheckpointName++)).string();
-            fs::copy_file(member, checkpoint.copy, fs::copy_options::overwrite_existing);
+            const fs::path copy = m_checkpointDir->path / std::to_string(m_nextCheckpointName++);
+            checkpoint.copy = pathToUtf8(copy);
+            fs::copy_file(memberPath, copy, fs::copy_options::overwrite_existing);
         }
         m_checkpoints.push_back(std::move(checkpoint));
     }
@@ -489,7 +493,7 @@ void SaveContext::redirectWrites(const std::string &liveFile, const std::string 
     // weight -- a whole database held in temp beside the scratch copy and
     // that copy's own checkpoint.
     std::vector<std::string> live{liveFile};
-    if (fs::path(liveFile).extension() == ".db") {
+    if (pathFromUtf8(liveFile).extension() == ".db") {
         live.push_back(liveFile + "-wal");
         live.push_back(liveFile + "-journal");
     }
@@ -504,7 +508,7 @@ void SaveContext::redirectWrites(const std::string &liveFile, const std::string 
             }
             std::error_code ec;
             if (!checkpoint.copy.empty()) {
-                fs::remove(checkpoint.copy, ec);
+                fs::remove(pathFromUtf8(checkpoint.copy), ec);
             }
             return true;
         });
@@ -565,7 +569,7 @@ std::optional<QString> SaveContext::rollBackChange()
                 // the guard this replaced short-circuited and never even
                 // reached the remove. Prefixing only the remove would
                 // have left the bug exactly where it was.
-                const fs::path original = infrastructure::longPathSafe(it->original);
+                const fs::path original = infrastructure::longPathSafe(pathFromUtf8(it->original));
                 // "Is it there" can fail without being a no: EIO on a
                 // dying stick, a sharing violation on Windows, a parent
                 // directory that cannot be searched. fs::exists() answers
@@ -583,7 +587,7 @@ std::optional<QString> SaveContext::rollBackChange()
                 }
                 if (stillThere) {
                     std::string failure;
-                    if (!infrastructure::removeEntry(it->original, failure)) {
+                    if (!infrastructure::removeEntry(pathFromUtf8(it->original), failure)) {
                         throw std::runtime_error("could not remove " + it->original + ": " + failure);
                     }
                     ++putBack;
@@ -592,7 +596,7 @@ std::optional<QString> SaveContext::rollBackChange()
             }
             // Byte for byte, not by mtime: FAT keeps two-second mtimes, so
             // a same-size rewrite inside that window looks untouched.
-            if (fs::exists(it->original, ec) && sameBytes(it->copy, it->original)) {
+            if (fs::exists(pathFromUtf8(it->original), ec) && sameBytes(it->copy, it->original)) {
                 continue;
             }
             if (!infrastructure::copyFileDurablyAtomic(it->copy, it->original)) {
@@ -612,7 +616,8 @@ std::optional<QString> SaveContext::rollBackChange()
         if (checkpoint.original.size() > suffix.size()
             && checkpoint.original.compare(checkpoint.original.size() - suffix.size(), suffix.size(), suffix) == 0) {
             std::error_code ec;
-            fs::remove(checkpoint.original.substr(0, checkpoint.original.size() - suffix.size()) + "-shm", ec);
+            const std::string base = checkpoint.original.substr(0, checkpoint.original.size() - suffix.size());
+            fs::remove(pathFromUtf8(base + "-shm"), ec);
         }
     }
 
@@ -638,7 +643,7 @@ std::optional<QString> SaveContext::rollBackChange()
             // what someone may still want back.
             std::vector<std::string> moved;
             for (const char *suffix : {"-wal", "-shm", "-journal"}) {
-                const fs::path side = fs::path(database.path + suffix);
+                const fs::path side = pathFromUtf8(database.path + suffix);
                 std::error_code ec;
                 if (!fs::exists(side, ec) || ec) {
                     continue;
@@ -648,7 +653,7 @@ std::optional<QString> SaveContext::rollBackChange()
                 fs::remove(stale, ec);
                 fs::rename(side, stale, ec);
                 if (!ec) {
-                    moved.push_back(side.filename().string());
+                    moved.push_back(pathToUtf8(side.filename()));
                 }
             }
             if (!moved.empty() && hasStick()) {
@@ -657,7 +662,7 @@ std::optional<QString> SaveContext::rollBackChange()
                     list += (list.empty() ? "" : ", ") + name;
                 }
                 log().record("save: moved " + list + " aside as .seabass-stale -- the rollback could not put "
-                             + fs::path(database.path).filename().string()
+                             + pathToUtf8(pathFromUtf8(database.path).filename())
                              + " back in step with them, and SQLite would replay them into the wrong generation "
                                "on the next open. The backup taken before this save holds the state to go back to.");
             }
@@ -675,10 +680,10 @@ std::optional<QString> SaveContext::rollBackChange()
         }
         if (!left) {
             log().record("save: after the rollback, could not tell whether "
-                         + fs::path(database.path).filename().string()
+                         + pathToUtf8(pathFromUtf8(database.path).filename())
                          + " still has a write-ahead log beside it");
         } else if (*left > 0) {
-            log().record("save: after the rollback " + fs::path(database.path).filename().string()
+            log().record("save: after the rollback " + pathToUtf8(pathFromUtf8(database.path).filename())
                          + " kept " + std::to_string(*left)
                          + " bytes in its write-ahead log; the rows of the changes that did apply are not in it "
                            "until something folds them");

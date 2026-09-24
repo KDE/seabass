@@ -38,6 +38,7 @@
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -50,7 +51,7 @@ namespace
 
 std::chrono::system_clock::time_point fileMtime(const std::string &path)
 {
-    return infrastructure::toSystemClock(std::filesystem::last_write_time(path));
+    return infrastructure::toSystemClock(std::filesystem::last_write_time(pathFromUtf8(path)));
 }
 
 // Builds SyncTaskResult::playlistNames/playlistTrackCounts from the union
@@ -118,7 +119,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
 
         if (hasRekordbox) {
             rekordboxTracks = catalogCache.tracksFor("rekordbox", rekordboxPath.toStdString(), *reporter, cancel);
-            rekordboxMtime = fileMtime((fs::path(rekordboxPath.toStdString()) / "rekordbox" / "export.pdb").string());
+            rekordboxMtime = fileMtime(pathToUtf8(pathFromQString(rekordboxPath) / "rekordbox" / "export.pdb"));
             hasOneLibrary = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxPath.toStdString());
         }
         if (hasEngine) {
@@ -129,7 +130,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             engineTracks.erase(std::remove_if(engineTracks.begin(), engineTracks.end(),
                                                [](const domain::Track &t) { return !t.streamingSource.empty(); }),
                                 engineTracks.end());
-            engineMtime = fileMtime((fs::path(enginePath.toStdString()) / "Database2" / "m.db").string());
+            engineMtime = fileMtime(pathToUtf8(pathFromQString(enginePath) / "Database2" / "m.db"));
         }
         if (hasOneLibrary) {
             oneLibraryTracks = catalogCache.tracksFor("onelibrary", rekordboxPath.toStdString(), *reporter, cancel);

@@ -19,6 +19,7 @@
 #include "gui/future_result.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/local/metadata_store.hpp"
@@ -46,13 +47,13 @@ namespace fs = std::filesystem;
 // uses to find the catalogs in the first place.
 QString catalogPathForFormat(const QString &libraryPath, const std::string &format)
 {
-    const fs::path stickRoot = fs::path(libraryPath.toStdString()).parent_path();
+    const fs::path stickRoot = pathFromQString(libraryPath).parent_path();
     if (format == "engine") {
-        return QString::fromStdString(infrastructure::engine::engineLibraryPath(stickRoot).string());
+        return pathToQString(infrastructure::engine::engineLibraryPath(stickRoot));
     }
     // rekordbox and onelibrary are two formats of one library, both
     // under PIONEER.
-    return QString::fromStdString((stickRoot / "PIONEER").string());
+    return pathToQString(stickRoot / "PIONEER");
 }
 
 // Runs entirely on a background thread -- no access to the controller.

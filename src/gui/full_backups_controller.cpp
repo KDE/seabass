@@ -16,6 +16,7 @@
 #include <string>
 
 #include "gui/future_result.hpp"
+#include "gui/qt_path.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
 
@@ -34,7 +35,7 @@ QString canonical(const QString &path)
     if (path.isEmpty()) {
         return {};
     }
-    return QString::fromStdString(infrastructure::local::canonicalOrAbsolute(fs::path(path.toStdString())).string());
+    return pathToQString(infrastructure::local::canonicalOrAbsolute(pathFromQString(path)));
 }
 
 }  // namespace
@@ -106,15 +107,15 @@ void FullBackupsController::refresh()
         m_refreshAgain = true;
         return;
     }
-    const fs::path directory(m_backupDirectory.toStdString());
-    const fs::path current(m_currentArchivePath.toStdString());
+    const fs::path directory = pathFromQString(m_backupDirectory);
+    const fs::path current = pathFromQString(m_currentArchivePath);
     m_listWatcher.setFuture(QtConcurrent::run([directory, current]() {
         QVariantList backups;
         for (const application::ManagedStickBackup &backup : application::ManageStickBackups::list(directory, current)) {
             const application::StickBackupDescription &d = backup.description;
             QVariantMap map;
-            map["archivePath"] = canonical(QString::fromStdString(d.archivePath.string()));
-            map["fileName"] = QString::fromStdString(d.archivePath.filename().string());
+            map["archivePath"] = canonical(pathToQString(d.archivePath));
+            map["fileName"] = pathToQString(d.archivePath.filename());
             map["error"] = QString::fromStdString(d.error);
             map["label"] = QString::fromStdString(d.stickLabel);
             map["identifier"] = QString::fromStdString(d.stickIdentifier);
@@ -131,7 +132,7 @@ void FullBackupsController::refresh()
             if (!d.error.empty()) {
                 // describe() leaves the size unset for an unreadable file;
                 // it still takes up space, and that is worth saying.
-                map["bytes"] = static_cast<qlonglong>(QFileInfo(QString::fromStdString(d.archivePath.string())).size());
+                map["bytes"] = static_cast<qlonglong>(QFileInfo(pathToQString(d.archivePath)).size());
             }
             backups.push_back(map);
         }
@@ -165,7 +166,7 @@ void FullBackupsController::openChangelog(const QString &archivePath)
         return;
     }
     QString error;
-    const QString path = writeChangelogFile(fs::path(canonical(archivePath).toStdString()), &error);
+    const QString path = writeChangelogFile(pathFromQString(canonical(archivePath)), &error);
     if (path.isEmpty()) {
         // setMessages is this page's only way to speak; an error here is
         // never fatal, so it reads as a note rather than a failure state.
@@ -189,7 +190,7 @@ void FullBackupsController::deleteBackup(const QString &archivePath)
     }
     setMessages({}, {});
     m_deletingPath = path;
-    const fs::path archive(path.toStdString());
+    const fs::path archive = pathFromQString(path);
     m_deleteWatcher.setFuture(QtConcurrent::run([archive]() { return application::ManageStickBackups::remove(archive); }));
     emit busyChanged();
 }
@@ -217,7 +218,7 @@ QString FullBackupsController::browsedArchiveFor(const QString &libraryRoot) con
     if (libraryRoot.isEmpty()) {
         return {};
     }
-    const auto archive = infrastructure::local::browsedBackupArchive(fs::path(libraryRoot.toStdString()));
+    const auto archive = infrastructure::local::browsedBackupArchive(pathFromQString(libraryRoot));
     return archive ? canonical(QString::fromStdString(archive->string())) : QString();
 }
 

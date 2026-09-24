@@ -30,6 +30,7 @@
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "infrastructure/rekordbox/rekordbox_cleanup_writer.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
+#include "gui/qt_path.hpp"
 
 namespace seabass::gui
 {
@@ -80,7 +81,7 @@ CleanupFormatContext makeContext(const QString &format, const QString &path, Sav
         std::string effectivePath = writeRoot.value_or(engineLibraryPath);
         ctx.cueWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(effectivePath);
         ctx.cleanupWriter = std::make_unique<infrastructure::engine::LibdjinteropEngineCleanupWriter>(effectivePath);
-        std::string engineDbFile = (fs::path(engineLibraryPath) / "Database2" / "m.db").string();
+        std::string engineDbFile = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
     } else {
         // onelibrary. `path` here is the PIONEER root, same as the
         // rekordbox branch -- OneLibrary lives alongside export.pdb.
@@ -92,7 +93,7 @@ CleanupFormatContext makeContext(const QString &format, const QString &path, Sav
         // right now.
         std::string pioneerRoot = path.toStdString();
         std::string effectivePath = writeRoot.value_or(pioneerRoot);
-        std::string realStickRoot = fs::path(pioneerRoot).parent_path().string();
+        std::string realStickRoot = pathToUtf8(pathFromUtf8(pioneerRoot).parent_path());
         auto adapter =
             std::make_unique<OneLibraryCueWriterAdapter>(effectivePath, oneLibrarySourceIdToPath, realStickRoot);
         // Through the save's one writer for this database, like
@@ -128,7 +129,7 @@ struct CleanupWriterContext
                          const std::unordered_map<std::string, std::string> &oneLibrarySourceIdToPath)
         : session(sharedFormatWriteSession(ctx, format.toStdString(), path.toStdString(), itemCountHint,
                                             "duplicate-file-cleanup")),
-          manifest(infrastructure::paths::stickPendingDeletions(fs::path(path.toStdString()).parent_path()).string())
+          manifest(pathToUtf8(infrastructure::paths::stickPendingDeletions(pathFromQString(path).parent_path())))
     {
         std::optional<std::string> writeRoot;
         if (session.usesScratch()) {
@@ -136,7 +137,7 @@ struct CleanupWriterContext
         }
         context = makeContext(format, path, ctx, oneLibrarySourceIdToPath, writeRoot);
         effectiveRoot = session.writeRoot();
-        realStickRootForOneLib = fs::path(path.toStdString()).parent_path().string();
+        realStickRootForOneLib = pathToUtf8(pathFromQString(path).parent_path());
         // Named in every pending-deletion entry, so the review page can
         // point at the backup that still holds the removed row.
         dbBackupId = ctx.backupIdOf(session.databaseFile());
@@ -405,11 +406,11 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
     // The manifest is appended to, never backed up; a failed change's lines
     // come out again with the rest of it.
     ctx.protectForThisChange(
-        infrastructure::paths::stickPendingDeletions(fs::path(m_path.toStdString()).parent_path()).string());
+        pathToUtf8(infrastructure::paths::stickPendingDeletions(pathFromQString(m_path).parent_path())));
 
     if (!writesToCatalog(plan)) {
         infrastructure::cleanup::PendingDeletionManifest manifest(
-            infrastructure::paths::stickPendingDeletions(fs::path(m_path.toStdString()).parent_path()).string());
+            pathToUtf8(infrastructure::paths::stickPendingDeletions(pathFromQString(m_path).parent_path())));
         recordStrayFilesForDeletion(manifest, plan, m_format.toStdString(), ctx.log());
         return ChangeOutcome::success();
     }

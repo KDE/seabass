@@ -8,6 +8,7 @@
 
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/embedded_artwork.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #endif
 
 #include <algorithm>
@@ -25,7 +26,7 @@ std::vector<fs::path> stickBackupArchives(const std::string &backupDirectory)
         return archives;
     }
     std::error_code ec;
-    for (const fs::directory_entry &entry : fs::directory_iterator(backupDirectory, ec)) {
+    for (const fs::directory_entry &entry : fs::directory_iterator(pathFromUtf8(backupDirectory), ec)) {
         if (!entry.is_regular_file(ec)) {
             continue;
         }
@@ -52,8 +53,8 @@ ArtworkRescueSources::ArtworkRescueSources(const std::string &backupDirectory, c
     : m_impl(std::make_shared<Impl>(stickBackupArchives(backupDirectory)))
 {
     std::error_code ec;
-    const fs::path resolved = fs::weakly_canonical(fs::path(stickRoot), ec);
-    m_stickRoot = (ec ? fs::path(stickRoot) : resolved).string();
+    const fs::path resolved = fs::weakly_canonical(pathFromUtf8(stickRoot), ec);
+    m_stickRoot = pathToUtf8(ec ? pathFromUtf8(stickRoot) : resolved);
 }
 
 std::string ArtworkRescueSources::archivePathFor(const std::string &trackFile) const
