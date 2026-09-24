@@ -4,6 +4,7 @@
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import SeabassGui
 
 // Everything an edit page needs from edit mode, in one item placed over
@@ -201,6 +202,43 @@ Item {
             return;
         }
         leaveFn();
+    }
+
+    // The last save to this stick never finished: the stick was pulled
+    // mid-save, or Seabass stopped (#48). Said on every editing page, with
+    // the undo that repairs it, because the page that made the save is
+    // not necessarily the one open when the stick comes back -- and the
+    // half-written stick is exactly when an undo is wanted.
+    Rectangle {
+        id: interruptedBanner
+        objectName: "interruptedSaveBanner"
+        visible: !!host.session && host.session.interruptedSave === true && host.session.writing !== true
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.margins: 24
+        width: Math.min(parent.width - 48, Theme.scaled(560))
+        height: bannerRow.implicitHeight + 2 * Theme.rowSpacing
+        color: Theme.surface
+        border.color: Theme.warnIcon
+        radius: 4
+        RowLayout {
+            id: bannerRow
+            anchors.fill: parent
+            anchors.margins: Theme.rowSpacing
+            spacing: Theme.rowSpacing
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "The last save to this stick did not finish. Undo Last Save puts back everything it had "
+                    + "written, from the backup it made first."
+            }
+            Button {
+                objectName: "undoInterruptedSaveButton"
+                text: "Undo Last Save"
+                highlighted: true
+                onClicked: host.session.undoLastSave()
+            }
+        }
     }
 
     SaveOverlayButton {

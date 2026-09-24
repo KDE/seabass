@@ -1,25 +1,30 @@
 # Written by corpus_test. Delete this file to re-record after a
 # deliberate change to the data set itself.
+# Changed 2026-09-24 for issue #48, deliberately: every save now notes
+# its backup records on the stick before its first catalog write
+# (Seabass/backups/.save-in-progress), so a save a pulled stick leaves
+# unfinished can still be undone from a session opened afterwards. One
+# more durable write per save: every durableWritesPerSave gained exactly 1.
 engine.cues 123
 engine.opensPerBatch 1
 engine.tracks 103
 engine.tracksWithAlbum 92
 engine.tracksWithCues 99
 engine.writeRefusals 0
-matrix.addCue.durableWritesPerSave 4
+matrix.addCue.durableWritesPerSave 5
 matrix.addCue.pdbParses 1
-matrix.cleanup.durableWritesPerSave 6
+matrix.cleanup.durableWritesPerSave 7
 matrix.cleanup.pdbParses 2
-matrix.copyCues.durableWritesPerSave 4
-matrix.deleteOrphan.durableWritesPerSave 2
-matrix.deviceSetting.durableWritesPerSave 3
-matrix.mergeCues.durableWritesPerSave 4
-matrix.repair.durableWritesPerSave 5
+matrix.copyCues.durableWritesPerSave 5
+matrix.deleteOrphan.durableWritesPerSave 3
+matrix.deviceSetting.durableWritesPerSave 4
+matrix.mergeCues.durableWritesPerSave 5
+matrix.repair.durableWritesPerSave 6
 matrix.repair.pdbParses 1
-matrix.strayCue.durableWritesPerSave 12
+matrix.strayCue.durableWritesPerSave 13
 matrix.strayCue.encryptedOpensPerSave 1
 matrix.strayCue.pdbParsesPerSave 1
-matrix.sync.durableWritesPerSave 2
+matrix.sync.durableWritesPerSave 3
 matrix.sync.engineOpens 1
 onelibrary.tracks 100
 rekordbox.cues 131

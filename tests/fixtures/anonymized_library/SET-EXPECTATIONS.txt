@@ -14,23 +14,28 @@
 # fixture's 1564 tracks had nothing but that phantom, so the numbers here
 # were a record of the bug: engine.cues 1688 -> 219, engine.tracksWithCues
 # 1561 -> 125. What is left is the cues someone really placed.
+# Changed 2026-09-24 for issue #48, deliberately: every save now notes
+# its backup records on the stick before its first catalog write
+# (Seabass/backups/.save-in-progress), so a save a pulled stick leaves
+# unfinished can still be undone from a session opened afterwards. One
+# more durable write per save: every durableWritesPerSave gained exactly 1.
 engine.cues 219
 engine.opensPerBatch 1
 engine.tracks 1564
 engine.tracksWithAlbum 1563
 engine.tracksWithCues 125
 engine.writeRefusals 0
-matrix.addCue.durableWritesPerSave 4
+matrix.addCue.durableWritesPerSave 5
 matrix.addCue.pdbParses 1
-matrix.cleanup.durableWritesPerSave 6
+matrix.cleanup.durableWritesPerSave 7
 matrix.cleanup.pdbParses 2
-matrix.copyCues.durableWritesPerSave 4
-matrix.deleteOrphan.durableWritesPerSave 2
-matrix.deviceSetting.durableWritesPerSave 3
-matrix.mergeCues.durableWritesPerSave 4
-matrix.repair.durableWritesPerSave 5
+matrix.copyCues.durableWritesPerSave 5
+matrix.deleteOrphan.durableWritesPerSave 3
+matrix.deviceSetting.durableWritesPerSave 4
+matrix.mergeCues.durableWritesPerSave 5
+matrix.repair.durableWritesPerSave 6
 matrix.repair.pdbParses 1
-matrix.strayCue.durableWritesPerSave 7
+matrix.strayCue.durableWritesPerSave 8
 matrix.strayCue.encryptedOpensPerSave 1
 matrix.strayCue.pdbParsesPerSave 1
 # Changed 2026-09-18, third time, deliberately: a cue in the same slot at
@@ -39,7 +44,7 @@ matrix.strayCue.pdbParsesPerSave 1
 # -- which takes the first five plans carrying a hot cue -- now takes a
 # different five: one of them writes onto Engine (engineOpens 0 -> 1) and
 # the set needs two fewer whole-file writes (14 -> 12).
-matrix.sync.durableWritesPerSave 12
+matrix.sync.durableWritesPerSave 13
 matrix.sync.engineOpens 1
 onelibrary.tracks 1644
 rekordbox.cues 317

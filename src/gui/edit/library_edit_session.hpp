@@ -60,6 +60,9 @@ class LibraryEditSession : public QObject
     Q_PROPERTY(int writeTotal READ writeTotal NOTIFY writeProgressChanged)
     Q_PROPERTY(bool cancelRequested READ cancelRequested NOTIFY writeProgressChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
+    // The last save to this stick never finished (pulled mid-save, or
+    // Seabass stopped): Undo Last Save puts back what it had written.
+    Q_PROPERTY(bool interruptedSave READ interruptedSave NOTIFY canUndoChanged)
     Q_PROPERTY(bool stickPresent READ stickPresent NOTIFY stickPresenceChanged)
     Q_PROPERTY(QString stickIdentityStrength READ stickIdentityStrength NOTIFY stickPresenceChanged)
     // {written, total, unit, cancelled, error} of the last save.
@@ -106,6 +109,7 @@ public:
     int writeTotal() const { return m_writeTotal; }
     bool cancelRequested() const { return m_cancelRequested; }
     bool canUndo() const { return !m_lastBackups.empty(); }
+    bool interruptedSave() const { return m_interruptedSave; }
     bool stickPresent() const { return m_stickPresent; }
     QString stickIdentityStrength() const { return m_stickIdentityStrength; }
     QVariantMap lastSummary() const { return m_lastSummary; }
@@ -203,6 +207,13 @@ private:
     QFutureWatcher<infrastructure::backup::StickSpace> m_stickSpaceWatcher;
     std::vector<std::shared_ptr<PendingChange>> m_changes;
     std::vector<UndoableBackup> m_lastBackups;
+    // m_lastBackups belong to a save that did not finish; see
+    // adoptInterruptedSave() and undoLastSave().
+    bool m_interruptedSave = false;
+    // Offers Undo for a save a pulled stick left unfinished, found by the
+    // note the save leaves in the stick's backups folder.
+    void adoptInterruptedSave();
+    std::string stickBackupDir() const;
     QFutureWatcher<SaveLoopResult> m_watcher;
     application::CancellationToken m_writeCancel;
     QString m_writeLabel;
