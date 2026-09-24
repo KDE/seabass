@@ -23,6 +23,7 @@
 #include "gui/write_guard.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
+#include "infrastructure/stick_layout.hpp"
 
 namespace seabass::gui
 {
@@ -104,6 +105,27 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
     }
     if (!enginePath.isEmpty()) {
         m_enginePath = enginePath;
+    }
+    // Both catalogs, whichever page opened the session. A page that edits
+    // one catalog names only that one -- Clean Up, Add Cue and Settings
+    // pass just their own path -- but a save's closing step belongs to both:
+    // after export.pdb moves, Engine's record of the rekordbox import is
+    // brought level (see keepImportLevel in save_loop.cpp), and that step
+    // needs the Engine path. Without it, a save from Clean Up opened
+    // straight from the stick list left Engine behind, and the next time
+    // the stick went into a Denon player it offered to import the
+    // rekordbox library over the Engine one -- issue #42's symptom, back
+    // by a second route, found by shakedown round 8 (W5) on Linux and
+    // macOS alike. Whether it happened depended on which page the user
+    // had happened to open first.
+    //
+    // catalogPathFor() only answers for a catalog that is really on this
+    // stick, so a stick carrying one format still gets a one-format session.
+    if (m_enginePath.isEmpty() && !m_rekordboxPath.isEmpty()) {
+        m_enginePath = QString::fromStdString(infrastructure::catalogPathFor("engine", m_rekordboxPath.toStdString()));
+    }
+    if (m_rekordboxPath.isEmpty() && !m_enginePath.isEmpty()) {
+        m_rekordboxPath = QString::fromStdString(infrastructure::catalogPathFor("rekordbox", m_enginePath.toStdString()));
     }
 
     // Measured once here rather than per save: this is where the stick
