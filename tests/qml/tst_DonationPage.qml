@@ -139,4 +139,40 @@ TestCase {
         verify(portraitInPage.x > titleInPage.x,
                "with the text to its left, not under it");
     }
+
+    // The letter flows around the portrait: it starts beside it, not
+    // under it. The heading used to be a row as tall as the photo holding
+    // a two-line byline, so the first paragraph began below the photo and
+    // left a hole beside it. And no line beside the photo runs under it.
+    function test_theLetterFlowsAroundThePortrait() {
+        var widths = [880, 520];
+        for (var w = 0; w < widths.length; ++w) {
+            var page = createTemporaryObject(pageComponent, testCase, {width: widths[w]});
+            waitForRendering(page);
+            var portrait = findChild(page, "supportPortrait");
+            var portraitBox = portrait.mapToItem(page, 0, 0);
+            var names = ["supportTitle", "supportByline", "supportKindWords", "supportCosts"];
+            var besideSeen = false;
+            for (var n = 0; n < names.length; ++n) {
+                var label = findChild(page, names[n]);
+                if (label.linesBeside === 0) continue;
+                besideSeen = true;
+                // Justified lines fill their width, so a line's right end
+                // is the width it was given: left of the portrait.
+                verify(label.mapToItem(page, label.widestLineBeside, 0).x < portraitBox.x,
+                       names[n] + " runs under the portrait at width " + widths[w]);
+            }
+            verify(besideSeen, "text sits beside the portrait at width " + widths[w]);
+            var kind = findChild(page, "supportKindWords");
+            if (widths[w] === 880) {
+                verify(kind.mapToItem(page, 0, 0).y < portraitBox.y + portrait.height,
+                       "the letter starts beside the portrait, not under it");
+            }
+            if (screenshotDir && screenshotDir.length > 0 && widths[w] !== 880) {
+                findChild(page, "supportHeartbeat").stop();
+                waitForRendering(page);
+                grabImage(page).save(screenshotDir + "/donation-page-narrow.png");
+            }
+        }
+    }
 }
