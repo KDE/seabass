@@ -408,6 +408,80 @@ unchanged_catalogs() {  # stick -- against the baseline taken after the restores
     return $bad
 }
 
+# B0: both sticks cleaned of what an exact restore leaves on purpose.
+#
+# B1 and B3 restore each stick exactly, which removes every file the
+# reference does not hold -- except two kinds it is right to leave alone
+# on a user's stick and wrong to leave on a test stick:
+#
+# - Folders an operating system keeps on any volume it mounts:
+#   .fseventsd, .Spotlight-V100, .Trashes and .TemporaryItems from macOS,
+#   System Volume Information and $RECYCLE.BIN from Windows, and macOS's
+#   top-level .DS_Store and ._* files. A test stick travels between the
+#   three platforms' rigs and collects all of them.
+# - Seabass/, the app's own state on the stick: backups, the duration
+#   cache and lock files. An exact restore skips lock folders deliberately
+#   (a lock may be live), and everything under Seabass/ is left from
+#   whatever last opened the stick -- a save, an undo, or just the app
+#   browsing it, which writes the duration cache.
+#
+# None of it changes the library, and every read check would still pass
+# over it. It is removed because a round is meant to start from the
+# reference and nothing else, and because what was in Seabass/ said
+# somebody had been using the sticks: on 2026-09-24 both carried a
+# duration cache written three hours before a round was due.
+#
+# So this also refuses while a Seabass app is running. The rig starts its
+# own instances later, from the build under test; one already running at
+# this point is somebody else's, and it can open the sticks mid-round --
+# writing caches, taking locks -- which does not fail anything loudly, it
+# just makes the round's results about two users of one stick.
+#
+# An operating-system folder the running OS recreates at once, or will not
+# let go of (Windows keeps System Volume Information), is reported and not
+# failed: nothing on this machine can keep it off a mounted volume. Seabass/
+# still there afterwards is a FAIL.
+seabass_app_running() {
+    if rig_is_windows; then
+        tasklist //FI "IMAGENAME eq seabass.exe" 2>/dev/null | grep -qi seabass.exe
+    else
+        pgrep -xi seabass >/dev/null 2>&1
+    fi
+}
+
+clean_sticks() {
+    if seabass_app_running; then
+        echo "a Seabass app is running; a round needs the test sticks to itself. Quit it and run again."
+        return 1
+    fi
+    local ok=0 stick name
+    for stick in "$A" "$B"; do
+        echo "== $stick"
+        for name in .fseventsd .Spotlight-V100 .Trashes .TemporaryItems "System Volume Information" '$RECYCLE.BIN' \
+                    .DS_Store Seabass; do
+            [ -e "$stick/$name" ] || continue
+            rm -rf -- "$stick/$name" 2>/dev/null
+            if [ -e "$stick/$name" ]; then
+                if [ "$name" = Seabass ]; then
+                    echo "  could NOT remove $name"
+                    ok=1
+                else
+                    echo "  $name is still there: the operating system holds or recreates it"
+                fi
+            else
+                echo "  removed $name"
+            fi
+        done
+        # AppleDouble files at the top level. Deeper ones are files the
+        # reference does not hold, and B1/B3 remove those.
+        for name in "$stick"/._*; do
+            [ -e "$name" ] || continue
+            rm -f -- "$name" && echo "  removed $(basename "$name")"
+        done
+    done
+    return $ok
+}
+
 references_unchanged() {
     local ok=0
     for ref in "$refA" "$refB"; do
@@ -1197,6 +1271,7 @@ if ! rig_is_windows && [ -x "$build/rig_fs_repair" ]; then
 fi
 
 # ---- restores onto the test sticks -----------------------------------
+check B0-clean-sticks clean_sticks || { echo "the test sticks could not be cleaned; stopping"; exit 1; }
 check B1-restore-A "$build/rig_restore" "$refA" "$A" --execute || { echo "stick A is not at its reference; stopping"; exit 1; }
 check B3-restore-B "$build/rig_restore" "$refB" "$B" --execute || { echo "stick B is not at its reference; stopping"; exit 1; }
 { catalogs "$A"; catalogs "$B"; } > "$out/catalog-baseline.txt"
