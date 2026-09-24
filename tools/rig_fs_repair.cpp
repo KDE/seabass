@@ -40,9 +40,12 @@
 #include <vector>
 
 #include "infrastructure/media/filesystem_health.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/process/run_command.hpp"
 
 namespace fs = std::filesystem;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 using seabass::infrastructure::media::isMountedReadOnly;
 using seabass::infrastructure::media::isMountPointRoot;
 using seabass::infrastructure::media::repairFilesystem;
@@ -143,7 +146,7 @@ bool makeImage(const fs::path &image)
     // -fs MS-DOS makes FAT32 at this size, and a raw image is what can be
     // edited byte for byte afterwards.
     const auto made = runCommand({"hdiutil", "create", "-size", "64m", "-fs", "MS-DOS", "-volname", "RIGFS",
-                                  "-layout", "NONE", "-type", "UDIF", "-ov", image.string()});
+                                  "-layout", "NONE", "-type", "UDIF", "-ov", pathToUtf8(image)});
     if (made.exitCode != 0) {
         return false;
     }
@@ -156,7 +159,8 @@ bool makeImage(const fs::path &image)
     // and the attach that followed said "No such file or directory" about
     // a file one suffix away.
     std::error_code ec;
-    const fs::path withSuffix = image.string() + ".dmg";
+    fs::path withSuffix = image;
+    withSuffix += ".dmg";
     if (!fs::exists(image, ec) && fs::exists(withSuffix, ec)) {
         fs::rename(withSuffix, image, ec);
         if (ec) {
@@ -173,7 +177,7 @@ Attached attach(const fs::path &image, bool readOnly)
     if (readOnly) {
         command.push_back("-readonly");
     }
-    command.push_back(image.string());
+    command.push_back(pathToUtf8(image));
     const auto attached = runCommand(command);
     if (attached.exitCode != 0) {
         std::cout << attached.output << "\n";
@@ -212,7 +216,7 @@ bool makeImage(const fs::path &image)
             return false;
         }
     }
-    const auto formatted = runCommand({"mkfs.vfat", "-F", "32", "-n", "RIGFS", image.string()});
+    const auto formatted = runCommand({"mkfs.vfat", "-F", "32", "-n", "RIGFS", pathToUtf8(image)});
     if (formatted.exitCode != 0) {
         std::cout << formatted.output << "\n";
     }
@@ -225,7 +229,7 @@ Attached attach(const fs::path &image, bool readOnly)
     // udisks2 sets the loop device up for this user, which is what keeps
     // the whole check root-free -- and it is the same service the repair
     // itself goes through.
-    const auto looped = runCommand({"udisksctl", "loop-setup", "-f", image.string(), "--no-user-interaction"});
+    const auto looped = runCommand({"udisksctl", "loop-setup", "-f", pathToUtf8(image), "--no-user-interaction"});
     if (looped.exitCode != 0) {
         std::cout << looped.output << "\n";
         return result;
@@ -284,7 +288,7 @@ int main(int argc, char **argv)
         return 1;
     }
     for (int i = 0; i < 8; ++i) {
-        std::ofstream out(fs::path(attached.mountPoint) / ("track-" + std::to_string(i) + ".bin"), std::ios::binary);
+        std::ofstream out(pathFromUtf8(attached.mountPoint) / ("track-" + std::to_string(i) + ".bin"), std::ios::binary);
         out << std::string(64 * 1024, static_cast<char>('a' + i));
     }
     detach(attached);
@@ -328,7 +332,7 @@ int main(int argc, char **argv)
 
     int found = 0;
     for (int i = 0; i < 8; ++i) {
-        std::ifstream in(fs::path(attached.mountPoint) / ("track-" + std::to_string(i) + ".bin"), std::ios::binary);
+        std::ifstream in(pathFromUtf8(attached.mountPoint) / ("track-" + std::to_string(i) + ".bin"), std::ios::binary);
         if (in && in.seekg(0, std::ios::end).tellg() == 64 * 1024) {
             found++;
         }

@@ -41,9 +41,9 @@
 #include "application/use_cases/advise_stick_backup.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/library_catalog_mtime.hpp"
 #include "infrastructure/stick_backup/sqlite_db_set.hpp"
-#include "infrastructure/stick_backup/stick_tree_walker.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "rig_catalog.hpp"
 
@@ -83,7 +83,7 @@ Facts gather(const fs::path &root, const std::vector<application::StickBackupDes
     Facts facts;
     facts.root = root;
     facts.label = rig::stickLabelFor(root);
-    const auto hardware = infrastructure::system::readStickHardwareInfo(root.string(), facts.label);
+    const auto hardware = infrastructure::system::readStickHardwareInfo(pathToUtf8(root), facts.label);
     facts.identifier = hardware.stickIdentifier;
     facts.freeBytes = hardware.freeBytes;
     facts.usedBytes = hardware.totalBytes > hardware.freeBytes ? hardware.totalBytes - hardware.freeBytes : 0;
@@ -103,10 +103,10 @@ Facts gather(const fs::path &root, const std::vector<application::StickBackupDes
         }
     }
     if (facts.hasLibrary) {
-        databasePaths.insert(sb::pathToUtf8(infrastructure::engine::engineMainDatabasePath(fs::path())));
+        databasePaths.insert(pathToGenericUtf8(infrastructure::engine::engineMainDatabasePath(fs::path())));
     }
     for (const std::string &path : databasePaths) {
-        if (const auto fingerprint = sb::fingerprintDbSet(root / sb::pathFromUtf8(path))) {
+        if (const auto fingerprint = sb::fingerprintDbSet(root / pathFromUtf8(path))) {
             facts.databaseFingerprints[path] = fingerprint->toHex();
         }
     }
@@ -150,7 +150,7 @@ int main(int argc, char **argv)
                      "[--expect LABEL=STATE[,update=PEER|none][,clone=PEER|none][,diverged]]...\n";
         return 2;
     }
-    const fs::path backupDir = argv[1];
+    const fs::path backupDir = pathFromUtf8(argv[1]);
     std::vector<fs::path> roots;
     std::vector<Expectation> expectations;
     for (int i = 2; i < argc; ++i) {
@@ -163,14 +163,14 @@ int main(int argc, char **argv)
             }
             expectations.push_back(*e);
         } else {
-            roots.push_back(arg);
+            roots.push_back(pathFromUtf8(arg));
         }
     }
     bool pass = true;
 
     try {
         const auto backups = application::RestoreStickBackup::describeAll(backupDir);
-        std::cout << "backups in " << backupDir.string() << ": " << backups.size() << "\n";
+        std::cout << "backups in " << pathToUtf8(backupDir) << ": " << backups.size() << "\n";
         std::cout << "reading sticks:\n";
         std::vector<Facts> sticks;
         for (const fs::path &root : roots) {
@@ -194,7 +194,7 @@ int main(int argc, char **argv)
                     continue;
                 }
                 StickBackupAdviceInput::PeerStick peer;
-                peer.mountPoint = other.root.string();
+                peer.mountPoint = pathToUtf8(other.root);
                 peer.label = other.label;
                 peer.stickIdentifier = other.identifier;
                 peer.fingerprint = other.fingerprint;

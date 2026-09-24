@@ -56,7 +56,7 @@
 #include "application/use_cases/clone_stick.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
-#include "infrastructure/stick_backup/stick_tree_walker.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "rig_catalog.hpp"
@@ -104,7 +104,7 @@ TreeSnapshot snapshot(const fs::path &root)
         // process's ANSI code page, which throws for a real file or folder
         // name outside it -- found against a stray real library, not a
         // synthetic one. UTF-8 has no such gap.
-        tree[infrastructure::stick_backup::pathToUtf8(relative)] = {size, static_cast<std::int64_t>(mtime)};
+        tree[pathToGenericUtf8(relative)] = {size, static_cast<std::int64_t>(mtime)};
     }
     return tree;
 }
@@ -121,9 +121,9 @@ int main(int argc, char **argv)
     if (argc < 4 || argc > 6) {
         return usage();
     }
-    const fs::path source = argv[1];
-    const fs::path target = argv[2];
-    const fs::path backupDir = argv[3];
+    const fs::path source = pathFromUtf8(argv[1]);
+    const fs::path target = pathFromUtf8(argv[2]);
+    const fs::path backupDir = pathFromUtf8(argv[3]);
     bool exact = false;
     bool expectTooSmall = false;
     int cancelAtPercent = 0;
@@ -145,15 +145,15 @@ int main(int argc, char **argv)
         application::CloneStickOptions options;
         options.backup.stickRoot = source;
         options.backup.stickLabel = rig::stickLabelFor(source);
-        options.backup.archivePath = backupDir / (options.backup.stickLabel + ".zip");
+        options.backup.archivePath = backupDir / pathFromUtf8(options.backup.stickLabel + ".zip");
         options.backup.stickIdentifier =
-            infrastructure::system::readStickHardwareInfo(source.string(), options.backup.stickLabel).stickIdentifier;
+            infrastructure::system::readStickHardwareInfo(pathToUtf8(source), options.backup.stickLabel).stickIdentifier;
         options.backup.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
         options.targetRoot = target;
         options.exact = exact;
         options.libraryCheck = infrastructure::engine::checkRestoredEngineLibrary;
-        std::cout << "clone " << source.string() << " -> " << target.string() << " via "
-                  << options.backup.archivePath.string() << (exact ? " (exact)" : " (overlay)") << "\n";
+        std::cout << "clone " << pathToUtf8(source) << " -> " << pathToUtf8(target) << " via "
+                  << pathToUtf8(options.backup.archivePath) << (exact ? " (exact)" : " (overlay)") << "\n";
 
         const application::CloneStickPreview preview = application::CloneStick::preview(options);
         if (!preview.error.empty()) {

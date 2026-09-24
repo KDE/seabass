@@ -54,6 +54,7 @@
 #include "application/use_cases/format_usb_stick.hpp"
 #include "domain/usb_filesystem.hpp"
 #include "infrastructure/media/media_factory.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -97,7 +98,8 @@ bool isReferenceDirectory(const fs::path &mountPoint)
             continue;
         }
         std::error_code ec;
-        const fs::path reference = fs::path(raw).parent_path();
+        // The variable is read as UTF-8, like argv.
+        const fs::path reference = pathFromUtf8(raw).parent_path();
         if (!reference.empty() && fs::equivalent(reference, mountPoint, ec)) {
             return true;
         }
@@ -122,17 +124,17 @@ const application::DetectedStick *stickAt(const std::vector<application::Detecte
             continue;
         }
         std::error_code ec;
-        if (!fs::equivalent(fs::path(stick.mountPoint), mountPoint, ec)) {
+        if (!fs::equivalent(pathFromUtf8(stick.mountPoint), mountPoint, ec)) {
             continue;
         }
         if (found != nullptr) {
-            why = "more than one detected drive is mounted at " + mountPoint.string();
+            why = "more than one detected drive is mounted at " + pathToUtf8(mountPoint);
             return nullptr;
         }
         found = &stick;
     }
     if (found == nullptr) {
-        why = "no detected removable drive is mounted at " + mountPoint.string();
+        why = "no detected removable drive is mounted at " + pathToUtf8(mountPoint);
     }
     return found;
 }
@@ -159,7 +161,7 @@ std::vector<std::string> contentsOf(const fs::path &root)
     std::vector<std::string> names;
     std::error_code ec;
     for (const auto &entry : fs::directory_iterator(root, ec)) {
-        const std::string name = entry.path().filename().string();
+        const std::string name = pathToUtf8(entry.path().filename());
         if (name == "System Volume Information" || name == ".Spotlight-V100" || name == ".fseventsd"
             || name == ".Trashes" || name == "lost+found" || name == ".metadata_never_index") {
             continue;
@@ -178,7 +180,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: rig_format <mount point> <fat32|exfat> <label> [--execute]\n";
         return 2;
     }
-    const fs::path mountPoint = argv[1];
+    const fs::path mountPoint = pathFromUtf8(argv[1]);
     const std::string filesystemText = argv[2];
     const std::string label = argv[3];
     const bool execute = (argc == 5 && std::string(argv[4]) == "--execute");
@@ -288,7 +290,7 @@ int main(int argc, char **argv)
             std::cout << "a library survived the format, which means it did not happen\n";
             pass = false;
         }
-        const std::vector<std::string> left = contentsOf(formatted->mountPoint);
+        const std::vector<std::string> left = contentsOf(pathFromUtf8(formatted->mountPoint));
         if (!left.empty()) {
             std::cout << left.size() << " entries survived the format:";
             for (const auto &name : left) {

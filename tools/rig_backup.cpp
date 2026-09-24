@@ -55,6 +55,7 @@
 #endif
 
 #include "application/use_cases/backup_stick.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "rig_catalog.hpp"
@@ -153,8 +154,8 @@ int main(int argc, char **argv)
     if (argc < 3) {
         return usage();
     }
-    const fs::path root = argv[1];
-    const fs::path archive = argv[2];
+    const fs::path root = pathFromUtf8(argv[1]);
+    const fs::path archive = pathFromUtf8(argv[2]);
     std::optional<Expected> expected;
     bool expectRefused = false;
     int cancelAtPercent = 0;
@@ -183,8 +184,10 @@ int main(int argc, char **argv)
         options.stickRoot = root;
         options.archivePath = archive;
         options.stickLabel = rig::stickLabelFor(root);
-        options.stickIdentifier = infrastructure::system::readStickHardwareInfo(root.string(), options.stickLabel).stickIdentifier;
-        std::cout << "stick " << options.stickLabel << " (" << options.stickIdentifier << ") -> " << archive.string() << "\n";
+        options.stickIdentifier =
+            infrastructure::system::readStickHardwareInfo(pathToUtf8(root), options.stickLabel).stickIdentifier;
+        std::cout << "stick " << options.stickLabel << " (" << options.stickIdentifier << ") -> " << pathToUtf8(archive)
+                  << "\n";
 
         // The app refuses before it starts when DJ software is running; the
         // probe inside the run only covers software that starts later.

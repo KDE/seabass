@@ -36,9 +36,12 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/zip_archive_writer.hpp"
 
 namespace fs = std::filesystem;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 
 namespace
 {
@@ -120,8 +123,8 @@ int main(int argc, char **argv)
         std::cerr << "usage: extract_testdata <stick-mount-point> <destination-dir> [set-name] [--zip]\n";
         return 1;
     }
-    const fs::path stick = positional[0];
-    const fs::path destinationRoot = positional[1];
+    const fs::path stick = pathFromUtf8(positional[0]);
+    const fs::path destinationRoot = pathFromUtf8(positional[1]);
     std::error_code ec;
 
     if (!fs::is_directory(stick, ec)) {
@@ -135,11 +138,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    std::string setName = positional.size() > 2 ? positional[2] : stick.filename().string();
+    std::string setName = positional.size() > 2 ? positional[2] : pathToUtf8(stick.filename());
     if (setName.empty()) {
         setName = "stick";
     }
-    const fs::path destination = destinationRoot / (setName + "-" + nowStamp());
+    const fs::path destination = destinationRoot / pathFromUtf8(setName + "-" + nowStamp());
     if (fs::exists(destination, ec)) {
         std::cerr << destination << " already exists -- refusing to write into it\n";
         return 1;
@@ -183,7 +186,7 @@ int main(int argc, char **argv)
         std::ofstream note(destination / "SET.txt");
         note << "Seabass local test data set\n"
              << "===========================\n\n"
-             << "Source stick: " << stick.string() << "\n"
+             << "Source stick: " << pathToUtf8(stick) << "\n"
              << "Extracted:    " << nowStamp() << "\n\n"
              << "rekordbox databases and analysis files: " << rekordbox.files << " files, "
              << humanSize(rekordbox.bytes) << "\n"
@@ -212,15 +215,15 @@ int main(int argc, char **argv)
         try {
             seabass::infrastructure::writeZipArchive(destination, zipPath);
         } catch (const std::exception &e) {
-            std::cerr << "could not write " << zipPath.string() << ": " << e.what() << "\n"
-                      << "the extracted directory is still at " << destination.string() << "\n";
+            std::cerr << "could not write " << pathToUtf8(zipPath) << ": " << e.what() << "\n"
+                      << "the extracted directory is still at " << pathToUtf8(destination) << "\n";
             return 1;
         }
         fs::remove_all(destination, ec);
         written = zipPath;
     }
 
-    std::cout << "Wrote " << written.string() << "\n"
+    std::cout << "Wrote " << pathToUtf8(written) << "\n"
               << "  rekordbox: " << rekordbox.files << " files, " << humanSize(rekordbox.bytes) << "\n"
               << "  Engine:    " << engine.files << " files, " << humanSize(engine.bytes) << "\n"
               << "  settings:  " << settings.files << " files, " << humanSize(settings.bytes) << "\n"

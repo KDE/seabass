@@ -40,9 +40,12 @@
 
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 using seabass::infrastructure::engine::LibdjinteropEngineCueWriter;
 
 namespace
@@ -163,7 +166,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: engine_write_bench <stick-mount-point> [items]\n";
         return 1;
     }
-    const fs::path stick = argv[1];
+    const fs::path stick = pathFromUtf8(argv[1]);
     const int items = argc > 2 ? std::atoi(argv[2]) : 50;
     const fs::path realEngine = stick / "Engine Library";
     if (!fs::is_directory(realEngine)) {
@@ -186,7 +189,11 @@ int main(int argc, char **argv)
     }
     std::cout << "Engine Library copy: " << (bytes / 1048576) << " MB\n";
 
-    auto ids = firstTrackIds((onRam / "Engine Library").string(), items);
+    // libdjinterop and the cue writer take the library path as a UTF-8
+    // string (it goes to sqlite3_open_v2).
+    const std::string onStickUtf8 = pathToUtf8(onStick / "Engine Library");
+    const std::string onRamUtf8 = pathToUtf8(onRam / "Engine Library");
+    auto ids = firstTrackIds(onRamUtf8, items);
     std::cout << "tracks written per run: " << ids.size() << "\n\n";
     if (ids.empty()) {
         std::cerr << "no tracks in this Engine Library\n";
@@ -196,12 +203,9 @@ int main(int argc, char **argv)
     std::cout << "== One Engine cue write ==\n";
     const int n = static_cast<int>(ids.size());
     int failedStick = 0, failedRam = 0, failedHeld = 0;
-    row("1. today, reopen per item, on the stick",
-        timeReopenPerItem((onStick / "Engine Library").string(), ids, failedStick), n);
-    row("2. today, reopen per item, on a ramdisk",
-        timeReopenPerItem((onRam / "Engine Library").string(), ids, failedRam), n);
-    row("3. proposed, one handle + one update",
-        timeHeldHandle((onRam / "Engine Library").string(), ids, failedHeld), n);
+    row("1. today, reopen per item, on the stick", timeReopenPerItem(onStickUtf8, ids, failedStick), n);
+    row("2. today, reopen per item, on a ramdisk", timeReopenPerItem(onRamUtf8, ids, failedRam), n);
+    row("3. proposed, one handle + one update", timeHeldHandle(onRamUtf8, ids, failedHeld), n);
     std::cout << "\n  tracks the write refused: " << failedStick << " reopening, " << failedHeld
               << " via snapshot+update (of " << n << ")\n";
     if (failedHeld > failedStick) {

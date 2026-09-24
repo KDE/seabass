@@ -18,6 +18,8 @@
 #include <fstream>
 #include <string>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 inline void rigPart(const std::string &id, bool passed)
 {
     const char *path = std::getenv("RIG_PARTS");
@@ -25,6 +27,8 @@ inline void rigPart(const std::string &id, bool passed)
         return;
     }
     const char *suffix = std::getenv("RIG_PART_SUFFIX");
-    std::ofstream out(path, std::ios::app);
+    // The environment is read as UTF-8, like argv: rig-shakedown.sh sets
+    // RIG_PARTS to a path of its own making.
+    std::ofstream out(seabass::pathFromUtf8(path), std::ios::app);
     out << id << (suffix != nullptr ? suffix : "") << "\t" << (passed ? "PASS" : "FAIL") << "\n";
 }

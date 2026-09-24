@@ -46,6 +46,7 @@
 #include <string>
 
 #include "infrastructure/engine/engine_import_state.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -64,8 +65,8 @@ struct Recorded
 
 infrastructure::engine::RekordboxImportState readState(const fs::path &root)
 {
-    return infrastructure::engine::readRekordboxImportState((root / "Engine Library").string(),
-                                                            (root / "PIONEER").string());
+    return infrastructure::engine::readRekordboxImportState(pathToUtf8(root / "Engine Library"),
+                                                            pathToUtf8(root / "PIONEER"));
 }
 
 void describe(const infrastructure::engine::RekordboxImportState &state)
@@ -121,9 +122,9 @@ int main(int argc, char **argv)
                   << "       rig_import_prompt <stick root> --compare <file> [--identical]\n";
         return 2;
     }
-    const fs::path root = argv[1];
+    const fs::path root = pathFromUtf8(argv[1]);
     const std::string mode = argv[2];
-    const fs::path file = argv[3];
+    const fs::path file = pathFromUtf8(argv[3]);
     bool identical = false;
     for (int i = 4; i < argc; ++i) {
         const std::string flag = argv[i];

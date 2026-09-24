@@ -61,12 +61,15 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
 
 namespace fs = std::filesystem;
 namespace rb = seabass::infrastructure::rekordbox;
 namespace ol = seabass::infrastructure::onelibrary;
+using seabass::pathFromUtf8;
+using seabass::pathToUtf8;
 using Pdb = rekordbox_pdb_t;
 using Clock = std::chrono::steady_clock;
 
@@ -84,6 +87,14 @@ std::string readWholeFile(const fs::path &path)
     std::ostringstream buffer;
     buffer << in.rdbuf();
     return buffer.str();
+}
+
+// The same path with ".tmp" appended to its name.
+fs::path tmpBeside(const fs::path &path)
+{
+    fs::path tmp = path;
+    tmp += ".tmp";
+    return tmp;
 }
 
 // A plain write with no fsync: what options 2 and 3 do per file, leaving
@@ -188,13 +199,13 @@ struct IndexedTrack
 
 // One pass over export.pdb collecting every track's analyze_path -- the
 // proposed replacement for calling findAnlzPathForTrackId() per item.
-std::vector<IndexedTrack> buildAnlzIndex(const std::string &pioneerRoot)
+std::vector<IndexedTrack> buildAnlzIndex(const fs::path &pioneerRoot)
 {
     std::vector<IndexedTrack> out;
-    std::string pdbPath = pioneerRoot + "/rekordbox/export.pdb";
+    const fs::path pdbPath = pioneerRoot / "rekordbox" / "export.pdb";
     std::ifstream ifs(pdbPath, std::ifstream::binary);
     if (!ifs.is_open()) {
-        throw std::runtime_error("could not open " + pdbPath);
+        throw std::runtime_error("could not open " + pathToUtf8(pdbPath));
     }
     kaitai::kstream ks(&ifs);
     Pdb pdb(false, &ks);
@@ -258,8 +269,10 @@ int main(int argc, char **argv)
         std::cerr << "usage: stick_write_bench <stick-mount-point> [count ...]\n";
         return 1;
     }
-    const fs::path stick = argv[1];
-    const std::string pioneerRoot = (stick / "PIONEER").string();
+    const fs::path stick = pathFromUtf8(argv[1]);
+    const fs::path pioneer = stick / "PIONEER";
+    // What the readers and lookups take: UTF-8, by the rule in utf8_path.hpp.
+    const std::string pioneerRoot = pathToUtf8(pioneer);
     std::string device;
     std::vector<int> counts;
     for (int i = 2; i < argc; ++i) {
@@ -275,7 +288,7 @@ int main(int argc, char **argv)
     }
     const int maxCount = *std::max_element(counts.begin(), counts.end());
 
-    if (!fs::is_directory(pioneerRoot)) {
+    if (!fs::is_directory(pioneer)) {
         std::cerr << "no PIONEER folder at " << pioneerRoot << "\n";
         return 1;
     }
@@ -299,7 +312,7 @@ int main(int argc, char **argv)
     std::cout << "\n== Part A: per-item overhead, read-only ==\n";
 
     auto t0 = Clock::now();
-    auto index = buildAnlzIndex(pioneerRoot);
+    auto index = buildAnlzIndex(pioneer);
     double indexSeconds = secondsSince(t0);
     std::cout << "  export.pdb tracks indexed: " << index.size() << "\n";
     printRow("build the whole id->path index once", indexSeconds, 0, 0, -1);
@@ -319,14 +332,17 @@ int main(int argc, char **argv)
     double crcSeconds = 0.0;
     std::uint64_t oneLibBytes = 0;
     if (hasOneLibrary) {
-        const fs::path dbPath = ol::OneLibraryCueWriter::dbPathFor(pioneerRoot);
+        // dbPathFor() answers in UTF-8, which is what SqlCipherDb hands
+        // sqlite3_open_v2; the fs::path is for the filesystem calls.
+        const std::string dbPathUtf8 = ol::OneLibraryCueWriter::dbPathFor(pioneerRoot);
+        const fs::path dbPath = pathFromUtf8(dbPathUtf8);
         oneLibBytes = fs::file_size(dbPath);
         const std::string key = ol::deriveOneLibraryKey();
 
         t0 = Clock::now();
         for (int i = 0; i < lookupSamples; ++i) {
             ol::SqlCipherLibrary lib;
-            ol::SqlCipherDb db(lib, dbPath.string(), /*readOnly=*/true);
+            ol::SqlCipherDb db(lib, dbPathUtf8, /*readOnly=*/true);
             db.exec("PRAGMA key = '" + key + "';");
             db.exec("SELECT count(*) FROM sqlite_master;");
         }
@@ -335,7 +351,7 @@ int main(int argc, char **argv)
         t0 = Clock::now();
         {
             ol::SqlCipherLibrary lib;
-            ol::SqlCipherDb db(lib, dbPath.string(), /*readOnly=*/true);
+            ol::SqlCipherDb db(lib, dbPathUtf8, /*readOnly=*/true);
             db.exec("PRAGMA key = '" + key + "';");
             for (int i = 0; i < lookupSamples; ++i) {
                 db.exec("SELECT count(*) FROM sqlite_master;");
@@ -366,7 +382,7 @@ int main(int argc, char **argv)
         if (static_cast<int>(items.size()) >= maxCount) {
             break;
         }
-        fs::path ext = rb::extAnlzPath(pioneerRoot, entry.analyzePath);
+        fs::path ext = pathFromUtf8(rb::extAnlzPath(pioneerRoot, entry.analyzePath));
         std::error_code ec;
         if (!fs::is_regular_file(ext, ec)) {
             continue;
@@ -393,7 +409,7 @@ int main(int argc, char **argv)
     {
         const int warm = std::min<int>(40, static_cast<int>(items.size()));
         for (int i = 0; i < warm; ++i) {
-            seabass::infrastructure::writeFileDurablyAtomic((scratch / "targets" / ("w" + std::to_string(i) + ".EXT")).string(),
+            seabass::infrastructure::writeFileDurablyAtomic(pathToUtf8(scratch / "targets" / ("w" + std::to_string(i) + ".EXT")),
                                                             items[i].before);
         }
         for (int i = 0; i < warm; ++i) {
@@ -434,8 +450,8 @@ int main(int argc, char **argv)
         // durable atomic rewrite: two fsyncs plus a directory fsync each.
         auto option1 = [&]() {
             for (int i = 0; i < count; ++i) {
-                seabass::infrastructure::writeFileDurablyAtomic(backupOf(i).string(), items[i].before);
-                seabass::infrastructure::writeFileDurablyAtomic(targetOf(i).string(), items[i].after);
+                seabass::infrastructure::writeFileDurablyAtomic(pathToUtf8(backupOf(i)), items[i].before);
+                seabass::infrastructure::writeFileDurablyAtomic(pathToUtf8(targetOf(i)), items[i].after);
             }
         };
 
@@ -443,10 +459,10 @@ int main(int argc, char **argv)
         // filesystem sync at the end.
         auto option2 = [&]() {
             for (int i = 0; i < count; ++i) {
-                fs::path bt = backupOf(i).string() + ".tmp";
+                const fs::path bt = tmpBeside(backupOf(i));
                 writePlain(bt, items[i].before);
                 fs::rename(bt, backupOf(i));
-                fs::path tt = targetOf(i).string() + ".tmp";
+                const fs::path tt = tmpBeside(targetOf(i));
                 writePlain(tt, items[i].after);
                 fs::rename(tt, targetOf(i));
             }
@@ -460,18 +476,18 @@ int main(int argc, char **argv)
                 writePlain(localScratch / (std::to_string(i) + ".EXT"), items[i].after);
             }
             for (int i = 0; i < count; ++i) {
-                writePlain(backupOf(i).string() + ".tmp", items[i].before);
+                writePlain(tmpBeside(backupOf(i)), items[i].before);
             }
             syncFilesystemAt(stick);
             for (int i = 0; i < count; ++i) {
-                fs::rename(backupOf(i).string() + ".tmp", backupOf(i));
+                fs::rename(tmpBeside(backupOf(i)), backupOf(i));
             }
             for (int i = 0; i < count; ++i) {
-                writePlain(targetOf(i).string() + ".tmp", readWholeFile(localScratch / (std::to_string(i) + ".EXT")));
+                writePlain(tmpBeside(targetOf(i)), readWholeFile(localScratch / (std::to_string(i) + ".EXT")));
             }
             syncFilesystemAt(stick);
             for (int i = 0; i < count; ++i) {
-                fs::rename(targetOf(i).string() + ".tmp", targetOf(i));
+                fs::rename(tmpBeside(targetOf(i)), targetOf(i));
             }
             syncFilesystemAt(stick);
         };

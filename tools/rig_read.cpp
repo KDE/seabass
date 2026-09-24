@@ -44,9 +44,10 @@
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 #include "rig_parts.hpp"
-#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -115,7 +116,7 @@ int main(int argc, char **argv)
     // for telling "this catalog has no row" from "it names the file
     // differently".
     if (argc == 4 && std::string(argv[2]) == "--find") {
-        const fs::path root = argv[1];
+        const fs::path root = pathFromUtf8(argv[1]);
         const std::string needle = argv[3];
         const auto list = [&](const std::string &name, application::LibraryReader &reader) {
             std::size_t found = 0;
@@ -132,16 +133,16 @@ int main(int argc, char **argv)
         try {
             const fs::path pioneer = root / "PIONEER";
             if (fs::exists(pioneer / "rekordbox" / "export.pdb")) {
-                infrastructure::rekordbox::KaitaiRekordboxReader rekordbox(pioneer.string());
+                infrastructure::rekordbox::KaitaiRekordboxReader rekordbox(pathToUtf8(pioneer));
                 list("rekordbox", rekordbox);
-                if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer.string())) {
-                    infrastructure::onelibrary::OneLibraryReader oneLibrary(pioneer.string());
+                if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pathToUtf8(pioneer))) {
+                    infrastructure::onelibrary::OneLibraryReader oneLibrary(pathToUtf8(pioneer));
                     list("onelibrary", oneLibrary);
                 }
             }
             const fs::path engine = root / "Engine Library";
             if (fs::exists(engine / "Database2" / "m.db")) {
-                infrastructure::engine::LibdjinteropEngineReader engineReader(engine.string());
+                infrastructure::engine::LibdjinteropEngineReader engineReader(pathToUtf8(engine));
                 list("engine", engineReader);
             }
         } catch (const std::exception &e) {
@@ -154,7 +155,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: rig_read <stick root> [<archive.zip>]\n       rig_read <stick root> --find TEXT\n";
         return 2;
     }
-    const fs::path root = argv[1];
+    const fs::path root = pathFromUtf8(argv[1]);
     // One verdict per test rather than one for the lot: the board records
     // a row for each, and a scan that throws must not take the counts it
     // knows nothing about down with it.
@@ -191,15 +192,15 @@ int main(int argc, char **argv)
         };
         std::cout << "reading catalogs:\n";
         if (fs::exists(pioneer / "rekordbox" / "export.pdb")) {
-            infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+            infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(pioneer));
             read("rekordbox", reader);
         }
         if (fs::exists(pioneer / "rekordbox" / "exportLibrary.db")) {
-            infrastructure::onelibrary::OneLibraryReader reader(pioneer.string());
+            infrastructure::onelibrary::OneLibraryReader reader(pathToUtf8(pioneer));
             read("onelibrary", reader);
         }
         if (fs::exists(engine / "Database2" / "m.db") || fs::exists(engine / "m.db")) {
-            infrastructure::engine::LibdjinteropEngineReader reader(engine.string());
+            infrastructure::engine::LibdjinteropEngineReader reader(pathToUtf8(engine));
             read("engine", reader);
         }
         if (catalogs.empty()) {
@@ -237,7 +238,8 @@ int main(int argc, char **argv)
         }) && scansOk;
 
         if (argc == 3) {
-            const application::StickBackupDescription description = application::RestoreStickBackup::describe(argv[2]);
+            const fs::path archive = pathFromUtf8(argv[2]);
+            const application::StickBackupDescription description = application::RestoreStickBackup::describe(archive);
             const auto expected = domain::LibraryFingerprint::parse(description.libraryFingerprint);
             std::vector<domain::Track> fingerprinted;
             for (const Catalog &catalog : catalogs) {
@@ -246,7 +248,7 @@ int main(int argc, char **argv)
                 }
             }
             const domain::LibraryFingerprint live = domain::fingerprintLibrary(fingerprinted);
-            std::cout << "fingerprint against " << fs::path(argv[2]).filename().string() << ":\n";
+            std::cout << "fingerprint against " << pathToUtf8(archive.filename()) << ":\n";
             if (!expected) {
                 std::cout << "  the backup recorded no fingerprint\n";
                 browseOk = false;

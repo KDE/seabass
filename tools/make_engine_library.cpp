@@ -42,8 +42,8 @@
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
-#include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -113,7 +113,7 @@ int rebasePathsFor(const fs::path &stagedLibrary, const fs::path &finalLibrary)
         dbFile = stagedLibrary / "m.db";
     }
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(dbFile.string().c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(dbFile).c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return -1;
     }
@@ -130,14 +130,15 @@ int rebasePathsFor(const fs::path &stagedLibrary, const fs::path &finalLibrary)
             continue;
         }
         // operator/ with an absolute right-hand side yields that path, so
-        // a row the creator could not make relative is handled too.
-        const fs::path absolute = fs::weakly_canonical(stagedLibrary / fs::path(stored));
+        // a row the creator could not make relative is handled too. The
+        // column is UTF-8, as everything SQLite stores is.
+        const fs::path absolute = fs::weakly_canonical(stagedLibrary / pathFromUtf8(stored));
         std::error_code ec;
         const fs::path rebased = fs::relative(absolute, finalLibrary, ec);
         if (ec || rebased.empty()) {
             continue;
         }
-        const std::string next = rebased.generic_string();
+        const std::string next = pathToGenericUtf8(rebased);
         if (next != stored) {
             updates.emplace_back(id, next);
         }
@@ -188,7 +189,7 @@ bool everyTrackResolves(const fs::path &stagedLibrary, const fs::path &finalLibr
         dbFile = stagedLibrary / "m.db";
     }
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(dbFile.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(pathToUtf8(dbFile).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return false;
     }
@@ -220,11 +221,9 @@ bool everyTrackResolves(const fs::path &stagedLibrary, const fs::path &finalLibr
         // byte (an umlaut, a stroke through an o) comes out corrupted,
         // and fs::exists() below then compares that mangled path against
         // the real file and reports it "missing" though it is sitting
-        // right there. pathFromUtf8() goes through the wide-string
-        // constructor instead, which is unambiguous either way.
-        const fs::path withinStick =
-            (fs::path("Engine Library") / seabass::infrastructure::stick_backup::pathFromUtf8(stored))
-                .lexically_normal();
+        // right there. pathFromUtf8() reads the bytes as UTF-8 instead,
+        // which is unambiguous either way.
+        const fs::path withinStick = (fs::path("Engine Library") / pathFromUtf8(stored)).lexically_normal();
         const bool onTheStick = withinStick.empty() || *withinStick.begin() != "..";
         if (!onTheStick) {
             if (escaping == 0) {
@@ -257,7 +256,7 @@ bool everyTrackResolves(const fs::path &stagedLibrary, const fs::path &finalLibr
 // output so a candidate library can be checked without opening it by hand.
 bool informationRowIsWhereEngineExpects(const fs::path &engineLibrary)
 {
-    const std::string dbPath = (engineLibrary / "Database2" / "m.db").string();
+    const std::string dbPath = pathToUtf8(engineLibrary / "Database2" / "m.db");
     sqlite3 *db = nullptr;
     if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
@@ -301,8 +300,8 @@ int main(int argc, char **argv)
         std::cerr << "usage: make_engine_library <stick root> <output dir> [1|2|3]\n";
         return 2;
     }
-    const fs::path root = argv[1];
-    const fs::path out = argv[2];
+    const fs::path root = pathFromUtf8(argv[1]);
+    const fs::path out = pathFromUtf8(argv[2]);
     bool ok = true;
     const EngineSchemaGeneration generation = argc == 4 ? generationFrom(argv[3], ok) : EngineSchemaGeneration::V3;
     if (!ok) {
@@ -318,7 +317,7 @@ int main(int argc, char **argv)
             return 1;
         }
         std::cout << "reading rekordbox export on " << root << "\n";
-        infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer.string());
+        infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(pioneer));
         const std::vector<domain::Track> tracks = application::ScanLibrary(reader).execute();
         std::cout << "  " << tracks.size() << " tracks\n";
 
@@ -328,9 +327,9 @@ int main(int argc, char **argv)
                   << ") in " << out << "\n";
         PrintingReporter reporter;
         application::CancellationToken cancel;
-        const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, pioneer.string());
+        const auto rekordbox = infrastructure::engine::readRekordboxImportState({}, pathToUtf8(pioneer));
         const auto result = infrastructure::engine::EngineLibraryCreator::create(
-            out.string(), tracks, generation, reporter, cancel,
+            pathToUtf8(out), tracks, generation, reporter, cancel,
             rekordbox.hasRekordboxLibrary ? std::optional<std::uint64_t>(rekordbox.librarySequence) : std::nullopt);
         if (!result.errorMessage.empty()) {
             std::cout << "error: " << result.errorMessage << "\n";
@@ -339,7 +338,7 @@ int main(int argc, char **argv)
         }
         // Issue #42: made from this export, so imported from it. Read
         // back from what was written, not taken from the flag.
-        const auto created = infrastructure::engine::readRekordboxImportState(out.string(), pioneer.string());
+        const auto created = infrastructure::engine::readRekordboxImportState(pathToUtf8(out), pathToUtf8(pioneer));
         std::cout << "  rekordbox import counter " << created.engineCounter << ", export.pdb sequence "
                   << created.librarySequence
                   << (created.playerWillOfferImport() ? " -- a player WILL offer to import over this library"
@@ -368,7 +367,7 @@ int main(int argc, char **argv)
         std::cout << "reading it back\n";
         const bool informationOk = informationRowIsWhereEngineExpects(out);
         const bool filesResolve = everyTrackResolves(out, finalLibrary, root);
-        infrastructure::engine::LibdjinteropEngineReader engineReader(out.string());
+        infrastructure::engine::LibdjinteropEngineReader engineReader(pathToUtf8(out));
         const std::vector<domain::Track> readBack = application::ScanLibrary(engineReader).execute();
         size_t cued = 0;
         for (const domain::Track &track : readBack) {

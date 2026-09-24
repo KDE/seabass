@@ -34,6 +34,7 @@
 #include "application/use_cases/backup_stick.hpp"
 #include "application/use_cases/compact_stick_backup.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -70,7 +71,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: rig_compact <archive.zip>\n";
         return 2;
     }
-    const fs::path archive = argv[1];
+    const fs::path archive = pathFromUtf8(argv[1]);
     bool pass = true;
 
     try {

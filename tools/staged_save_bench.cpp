@@ -37,6 +37,8 @@
 #include "gui/edit/changes/remove_junk_cue_change.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/edit/save_loop.hpp"
+#include "gui/qt_path.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
@@ -77,7 +79,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: staged_save_bench <stick-mount-point> [item-count]\n";
         return 1;
     }
-    const fs::path stick = argv[1];
+    const fs::path stick = pathFromUtf8(argv[1]);
     const int items = argc > 2 ? std::atoi(argv[2]) : 50;
 
     std::error_code ec;
@@ -101,7 +103,8 @@ int main(int argc, char **argv)
     }
     std::cout << "  copied in " << secondsSince(copyStart) << " s\n" << std::flush;
 
-    infrastructure::rekordbox::KaitaiRekordboxReader reader(root.string());
+    const std::string rootUtf8 = pathToUtf8(root);
+    infrastructure::rekordbox::KaitaiRekordboxReader reader(rootUtf8);
     auto tracks = application::ScanLibrary(reader).execute();
     std::cout << "  " << tracks.size() << " tracks in the scratch catalog\n" << std::flush;
 
@@ -114,8 +117,8 @@ int main(int argc, char **argv)
         // Indexed, so building the workload does not dominate the run.
         // Timed anyway and reported, because an unindexed writer here is
         // exactly the shape the code had before this round.
-        infrastructure::rekordbox::AnlzPathIndex plantIndex(root.string());
-        infrastructure::rekordbox::RekordboxCueWriter writer(root.string(), &plantIndex);
+        infrastructure::rekordbox::AnlzPathIndex plantIndex(rootUtf8);
+        infrastructure::rekordbox::RekordboxCueWriter writer(rootUtf8, &plantIndex);
         for (const auto &track : tracks) {
             if (static_cast<int>(targets.size()) >= items) {
                 break;
@@ -149,14 +152,13 @@ int main(int argc, char **argv)
     // app runs, against files on the stick.
     std::vector<std::shared_ptr<gui::PendingChange>> changes;
     for (const auto &track : targets) {
-        changes.push_back(
-            std::make_shared<gui::RemoveJunkCueChange>(QString::fromStdString(root.string()), track));
+        changes.push_back(std::make_shared<gui::RemoveJunkCueChange>(gui::pathToQString(root), track));
     }
 
     infrastructure::WorkCounters::instance().reset();
     application::CancellationToken cancel;
-    gui::SaveContext ctx(cancel, application::NullProgressReporter::instance(), nullptr,
-                         QString::fromStdString(root.string()), QString());
+    gui::SaveContext ctx(cancel, application::NullProgressReporter::instance(), nullptr, gui::pathToQString(root),
+                         QString());
 
     std::cout << "Saving " << changes.size() << " staged removals...\n" << std::flush;
     auto saveStart = std::chrono::steady_clock::now();
@@ -182,7 +184,7 @@ int main(int argc, char **argv)
     for (const auto &track : targets) {
         touched.insert(track.sourceId);
     }
-    infrastructure::rekordbox::KaitaiRekordboxReader rereader(root.string());
+    infrastructure::rekordbox::KaitaiRekordboxReader rereader(rootUtf8);
     auto after = application::ScanLibrary(rereader).execute();
     int strayLeft = 0;
     for (const auto &track : after) {
