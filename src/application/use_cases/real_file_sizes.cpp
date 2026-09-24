@@ -9,6 +9,7 @@
 #include <map>
 
 #include "application/path_key.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::application
 {
@@ -59,7 +60,7 @@ MeasuredFileSizes measureRealFileSizes(std::vector<domain::DuplicateCleanupPlan>
             auto known = sizeByPath.find(key);
             if (known == sizeByPath.end()) {
                 std::error_code ec;
-                const std::uintmax_t size = fs::file_size(doomed.filePath, ec);
+                const std::uintmax_t size = fs::file_size(pathFromUtf8(doomed.filePath), ec);
                 if (ec) {
                     // Named by a catalog, absent from the stick. Removing
                     // its row frees nothing, so it contributes nothing.

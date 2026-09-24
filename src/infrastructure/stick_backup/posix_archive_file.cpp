@@ -8,6 +8,8 @@
 #include <cstring>
 #include <string>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -31,9 +33,9 @@ namespace
 [[noreturn]] void throwIo(const std::string &what, const std::filesystem::path &path)
 {
 #if defined(_WIN32)
-    throw ArchiveIoError(what + " " + path.string() + " (error " + std::to_string(GetLastError()) + ")");
+    throw ArchiveIoError(what + " " + seabass::pathToUtf8(path) + " (error " + std::to_string(GetLastError()) + ")");
 #else
-    throw ArchiveIoError(what + " " + path.string() + ": " + std::strerror(errno));
+    throw ArchiveIoError(what + " " + seabass::pathToUtf8(path) + ": " + std::strerror(errno));
 #endif
 }
 
@@ -85,7 +87,7 @@ PosixArchiveFile::~PosixArchiveFile()
 void PosixArchiveFile::append(std::span<const std::byte> bytes)
 {
     if (m_mode == OpenMode::ReadOnly) {
-        throw ArchiveIoError("append on read-only archive " + m_path.string());
+        throw ArchiveIoError("append on read-only archive " + seabass::pathToUtf8(m_path));
     }
     // Same guard as the POSIX build below: never write into a hole. If
     // something shortened the file behind us, a write at the length we
@@ -96,7 +98,7 @@ void PosixArchiveFile::append(std::span<const std::byte> bytes)
         throwIo("could not stat", m_path);
     }
     if (static_cast<std::uint64_t>(current.QuadPart) < m_size) {
-        throw ArchiveIoError("archive " + m_path.string() + " shrank underneath us: expected at least "
+        throw ArchiveIoError("archive " + seabass::pathToUtf8(m_path) + " shrank underneath us: expected at least "
                              + std::to_string(m_size) + " bytes, found " + std::to_string(current.QuadPart)
                              + " -- something else wrote to it while a backup was running");
     }
@@ -122,7 +124,7 @@ void PosixArchiveFile::append(std::span<const std::byte> bytes)
 void PosixArchiveFile::readAt(std::uint64_t offset, std::span<std::byte> out) const
 {
     if (offset + out.size() > m_size) {
-        throw ArchiveIoError("read past end of " + m_path.string());
+        throw ArchiveIoError("read past end of " + seabass::pathToUtf8(m_path));
     }
     char *p = reinterpret_cast<char *>(out.data());
     std::size_t remaining = out.size();
@@ -144,7 +146,7 @@ void PosixArchiveFile::readAt(std::uint64_t offset, std::span<std::byte> out) co
 void PosixArchiveFile::truncate(std::uint64_t newSize)
 {
     if (m_mode == OpenMode::ReadOnly) {
-        throw ArchiveIoError("truncate on read-only archive " + m_path.string());
+        throw ArchiveIoError("truncate on read-only archive " + seabass::pathToUtf8(m_path));
     }
     LARGE_INTEGER pos{};
     pos.QuadPart = static_cast<LONGLONG>(newSize);
@@ -215,7 +217,7 @@ PosixArchiveFile::~PosixArchiveFile()
 void PosixArchiveFile::append(std::span<const std::byte> bytes)
 {
     if (m_mode == OpenMode::ReadOnly) {
-        throw ArchiveIoError("append on read-only archive " + m_path.string());
+        throw ArchiveIoError("append on read-only archive " + seabass::pathToUtf8(m_path));
     }
     // Appending means writing at the length we believe the file has. If
     // something else shortened it behind our back, that write lands past
@@ -229,7 +231,7 @@ void PosixArchiveFile::append(std::span<const std::byte> bytes)
         throwIo("could not stat", m_path);
     }
     if (static_cast<std::uint64_t>(before.st_size) < m_size) {
-        throw ArchiveIoError("archive " + m_path.string() + " shrank underneath us: expected at least "
+        throw ArchiveIoError("archive " + seabass::pathToUtf8(m_path) + " shrank underneath us: expected at least "
                              + std::to_string(m_size) + " bytes, found " + std::to_string(before.st_size)
                              + " -- something else wrote to it while a backup was running");
     }
@@ -254,7 +256,7 @@ void PosixArchiveFile::append(std::span<const std::byte> bytes)
 void PosixArchiveFile::readAt(std::uint64_t offset, std::span<std::byte> out) const
 {
     if (offset + out.size() > m_size) {
-        throw ArchiveIoError("read past end of " + m_path.string());
+        throw ArchiveIoError("read past end of " + seabass::pathToUtf8(m_path));
     }
     char *p = reinterpret_cast<char *>(out.data());
     std::size_t remaining = out.size();
@@ -275,7 +277,7 @@ void PosixArchiveFile::readAt(std::uint64_t offset, std::span<std::byte> out) co
 void PosixArchiveFile::truncate(std::uint64_t newSize)
 {
     if (m_mode == OpenMode::ReadOnly) {
-        throw ArchiveIoError("truncate on read-only archive " + m_path.string());
+        throw ArchiveIoError("truncate on read-only archive " + seabass::pathToUtf8(m_path));
     }
     if (::ftruncate(m_fd, static_cast<off_t>(newSize)) != 0) {
         throwIo("truncate failed on", m_path);

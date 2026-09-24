@@ -12,6 +12,7 @@
 
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 // The on-stick names every write path shares, and the one way to take
 // the per-stick write lock for a set of directories. Qt-free so the CLI
@@ -30,7 +31,7 @@ inline std::string stickRootForCatalogPath(const std::string &catalogPath)
 
 inline std::string backupDirForStickRoot(const std::string &stickRoot)
 {
-    return paths::stickBackupsDir(stickRoot).string();
+    return pathToUtf8(paths::stickBackupsDir(pathFromUtf8(stickRoot)));
 }
 
 inline std::string backupDirForCatalogPath(const std::string &catalogPath)
@@ -40,12 +41,12 @@ inline std::string backupDirForCatalogPath(const std::string &catalogPath)
 
 inline std::string operationLogForStickRoot(const std::string &stickRoot)
 {
-    return paths::stickOperationLog(stickRoot).string();
+    return pathToUtf8(paths::stickOperationLog(pathFromUtf8(stickRoot)));
 }
 
 inline std::string writeLockPathForBackupDir(const std::string &backupDir)
 {
-    return (std::filesystem::path(backupDir) / WriteLockName).string();
+    return pathToUtf8(pathFromUtf8(backupDir) / WriteLockName);
 }
 
 // Acquires one StickWriteLock per distinct directory (sorted first so two
@@ -61,7 +62,7 @@ inline std::vector<std::unique_ptr<StickWriteLock>> acquireStickLocks(std::vecto
     std::vector<std::unique_ptr<StickWriteLock>> locks;
     locks.reserve(backupDirs.size());
     for (const auto &dir : backupDirs) {
-        locks.push_back(std::make_unique<StickWriteLock>(writeLockPathForBackupDir(dir)));
+        locks.push_back(std::make_unique<StickWriteLock>(pathFromUtf8(writeLockPathForBackupDir(dir))));
     }
     return locks;
 }

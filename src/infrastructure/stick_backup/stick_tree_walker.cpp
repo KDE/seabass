@@ -15,6 +15,7 @@
 #include "infrastructure/file_clock.hpp"
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::stick_backup
 {
@@ -86,13 +87,12 @@ fs::file_time_type fromUnixSeconds(std::int64_t secondsSinceEpoch)
 
 std::string pathToUtf8(const fs::path &path)
 {
-    std::u8string u8 = path.generic_u8string();
-    return std::string(reinterpret_cast<const char *>(u8.data()), u8.size());
+    return seabass::pathToGenericUtf8(path);
 }
 
 fs::path pathFromUtf8(std::string_view utf8)
 {
-    return fs::path(std::u8string(reinterpret_cast<const char8_t *>(utf8.data()), utf8.size()));
+    return seabass::pathFromUtf8(utf8);
 }
 
 TreeWalk walkStickTree(const fs::path &root, application::CancellationToken cancel)
@@ -124,7 +124,7 @@ TreeWalk walkStickTree(const fs::path &root, application::CancellationToken canc
     {
         auto reader = std::make_unique<DirectoryReader>(rootNormalized, ec);
         if (ec) {
-            walk.skipped.push_back(root.string() + ": " + ec.message());
+            walk.skipped.push_back(seabass::pathToUtf8(root) + ": " + ec.message());
             return walk;
         }
         stack.push_back({std::move(reader), std::string()});

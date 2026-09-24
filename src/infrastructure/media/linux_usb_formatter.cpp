@@ -6,6 +6,7 @@
 
 #include <filesystem>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/process/run_command.hpp"
 
 namespace seabass::infrastructure::media
@@ -24,7 +25,7 @@ std::string blockObjectPath(const std::string &wholeDiskPath)
     // ("/dev/sdb" <-> "/org/freedesktop/UDisks2/block_devices/sdb") via
     // `gdbus introspect` on this dev machine rather than assumed from
     // documentation alone.
-    return "/org/freedesktop/UDisks2/block_devices/" + fs::path(wholeDiskPath).filename().string();
+    return "/org/freedesktop/UDisks2/block_devices/" + pathToUtf8(pathFromUtf8(wholeDiskPath).filename());
 }
 
 // Wraps a string as a quoted GVariant text-format string literal --

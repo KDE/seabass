@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 namespace seabass::infrastructure::backup
 {
 
@@ -18,7 +20,9 @@ constexpr std::uint64_t OneGigabyte = 1024ull * 1024ull * 1024ull;
 
 bool isAnalysisFile(const fs::path &path)
 {
-    std::string ext = path.extension().string();
+    // Compared as a path against ASCII literals; a non-ASCII extension is
+    // simply neither, so only ASCII letters need folding.
+    std::string ext = pathToGenericUtf8(path.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::toupper(c); });
     // Both, and the .DAT is not optional any more.
     //

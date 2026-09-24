@@ -15,6 +15,7 @@
 
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/flat_json.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::local
 {
@@ -116,7 +117,7 @@ DurationCache::DurationCache(std::string stickRoot) : m_stickRoot(normalizeSepar
     while (!m_stickRoot.empty() && m_stickRoot.back() == '/') {
         m_stickRoot.pop_back();
     }
-    m_cachePath = paths::stickDurationCache(m_stickRoot).string();
+    m_cachePath = paths::stickDurationCache(pathFromUtf8(m_stickRoot));
 
     std::ifstream in(m_cachePath, std::ios::binary);
     if (!in) {
@@ -215,8 +216,8 @@ bool DurationCache::save()
     // does not create parents, so without this every save fails silently
     // on a stick Seabass has not written to before.
     std::error_code dirEc;
-    std::filesystem::create_directories(std::filesystem::path(m_cachePath).parent_path(), dirEc);
-    if (!writeFileDurablyAtomic(m_cachePath, out)) {
+    std::filesystem::create_directories(m_cachePath.parent_path(), dirEc);
+    if (!writeFileDurablyAtomic(pathToUtf8(m_cachePath), out)) {
         return false;
     }
     m_dirty = false;

@@ -14,6 +14,7 @@
 
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/flat_json.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 
 namespace seabass::infrastructure::local
@@ -118,7 +119,7 @@ CachedAudioContentProbe::CachedAudioContentProbe(std::string stickRoot,
     // be, not against the stick. On Linux a library directly under "/"
     // goes the other way and leaves an empty root, putting the cache in
     // the process's working directory.
-    m_cachePath = paths::stickSilenceCache(m_stickRoot).string();
+    m_cachePath = paths::stickSilenceCache(pathFromUtf8(m_stickRoot));
     // Stripped only for relativeKey()'s prefix arithmetic below, which
     // is what actually needs a separator-free root.
     while (m_stickRoot.size() > 1 && m_stickRoot.back() == '/') {
@@ -247,7 +248,7 @@ bool CachedAudioContentProbe::save()
     for (auto it = m_entries.begin(); it != m_entries.end();) {
         std::error_code existsEc;
         const bool present = std::filesystem::exists(
-            std::filesystem::path(m_stickRoot) / it->first, existsEc);
+            pathFromUtf8(m_stickRoot) / pathFromUtf8(it->first), existsEc);
         // A stat that ERRORS is not a missing file: an unreadable
         // directory or a stick pulled mid-save would otherwise empty the
         // cache. Only a clean "no" drops a row.
@@ -270,8 +271,8 @@ bool CachedAudioContentProbe::save()
     // writeFileDurablyAtomic() does not create parents -- without this
     // every save fails silently on a stick Seabass has not written to.
     std::error_code dirEc;
-    std::filesystem::create_directories(std::filesystem::path(m_cachePath).parent_path(), dirEc);
-    if (!writeFileDurablyAtomic(m_cachePath, out)) {
+    std::filesystem::create_directories(m_cachePath.parent_path(), dirEc);
+    if (!writeFileDurablyAtomic(pathToUtf8(m_cachePath), out)) {
         return false;
     }
     m_dirty = false;

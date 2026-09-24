@@ -6,6 +6,7 @@
 
 #include "cli/console.hpp"
 #include "infrastructure/media/media_factory.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 #include <array>
 #include <cstdint>
@@ -51,7 +52,7 @@ std::optional<application::DetectedStick> findDetected(const std::string &device
 
 std::optional<Fat32Geometry> readFat32Geometry(const std::string &devicePath, std::string &why)
 {
-    std::ifstream in(devicePath, std::ios::binary);
+    std::ifstream in(seabass::pathFromUtf8(devicePath), std::ios::binary);
     if (!in) {
         why = "cannot open " + devicePath + " for reading (run as a user who may read the raw device)";
         return std::nullopt;
@@ -94,7 +95,7 @@ std::optional<Fat32Geometry> readFat32Geometry(const std::string &devicePath, st
 // same damage. Nothing outside these eight bytes is written.
 bool applyDamage(const std::string &devicePath, const Fat32Geometry &g, std::string &why)
 {
-    std::fstream file(devicePath, std::ios::binary | std::ios::in | std::ios::out);
+    std::fstream file(seabass::pathFromUtf8(devicePath), std::ios::binary | std::ios::in | std::ios::out);
     if (!file) {
         why = "cannot open " + devicePath + " for writing";
         return false;
@@ -199,13 +200,14 @@ int runDamageFilesystemCommand(const std::string &deviceArg, bool confirmedOnCom
     std::vector<std::string> topLevel;
     if (stick->mounted && !stick->mountPoint.empty()) {
         std::error_code ec;
-        const auto space = fs::space(stick->mountPoint, ec);
+        const fs::path mountPoint = seabass::pathFromUtf8(stick->mountPoint);
+        const auto space = fs::space(mountPoint, ec);
         if (!ec) {
             capacity = space.capacity;
             free = space.available;
         }
-        for (const auto &entry : fs::directory_iterator(stick->mountPoint, ec)) {
-            topLevel.push_back(entry.path().filename().string());
+        for (const auto &entry : fs::directory_iterator(mountPoint, ec)) {
+            topLevel.push_back(seabass::pathToUtf8(entry.path().filename()));
             if (topLevel.size() >= 12) {
                 topLevel.push_back("...");
                 break;

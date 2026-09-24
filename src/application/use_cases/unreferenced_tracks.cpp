@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 namespace seabass::application
 {
 
@@ -23,7 +25,7 @@ std::string fileNameOf(const std::string &path)
 {
     std::string slashed = path;
     std::replace(slashed.begin(), slashed.end(), '\\', '/');
-    return fs::path(slashed).filename().string();
+    return pathToUtf8(pathFromUtf8(slashed).filename());
 }
 
 }  // namespace

@@ -130,7 +130,7 @@ private:
     std::string recordedPathFor(const std::filesystem::path &source) const;
     std::filesystem::path resolveRecordedPath(const std::string &recorded) const;
 
-    std::string m_baseDirectory;
+    std::filesystem::path m_baseDirectory;
     std::string m_lastRestoreError;
     std::optional<std::string> m_lastPreRestoreId;
 

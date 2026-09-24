@@ -18,6 +18,7 @@
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/archive_journal.hpp"
 #include "infrastructure/stick_backup/archive_recovery.hpp"
 #include "infrastructure/stick_backup/archive_stats.hpp"
@@ -308,14 +309,14 @@ RunPlan planRun(const BackupStickOptions &options, const OpenedArchive &opened)
         if (entry.isDirectory || !engine::isSqliteDatabaseFile(entry.relativePath)) {
             continue;
         }
-        fs::path mainDb = options.stickRoot / pathFromUtf8(entry.relativePath);
+        fs::path mainDb = options.stickRoot / seabass::pathFromUtf8(entry.relativePath);
         std::optional<DbSetFingerprint> fingerprint = fingerprintDbSet(mainDb);
         if (!fingerprint) {
             continue;  // not SQLite after all: an ordinary file
         }
         std::vector<std::string> members;
         for (const fs::path &member : dbSetMembers(mainDb)) {
-            members.push_back(entry.relativePath + member.filename().string().substr(mainDb.filename().string().size()));
+            members.push_back(entry.relativePath + pathToGenericUtf8(member.filename()).substr(pathToGenericUtf8(mainDb.filename()).size()));
         }
         bool carried = true;
         auto row = opened.rowsByPath.find(entry.relativePath);
@@ -823,7 +824,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
             break;
         }
         progress.currentFile = file->relativePath;
-        fs::path fullPath = options.stickRoot / pathFromUtf8(file->relativePath);
+        fs::path fullPath = options.stickRoot / seabass::pathFromUtf8(file->relativePath);
         infrastructure::stick_backup::FileEntrySource source(fullPath);
         // A stick that stops giving bytes part-way through a file. The
         // hook is unset in every real run, so this is the plain source.

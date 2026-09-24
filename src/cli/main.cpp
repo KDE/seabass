@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -783,8 +784,8 @@ std::string humanSize(std::uint64_t bytes)
 // (the rekordbox and Engine folders on one stick share the same parent).
 std::string backupDirFor(const ResolvedLibraryPaths &resolved)
 {
-    fs::path anyPath = resolved.enginePath ? *resolved.enginePath : *resolved.rekordboxPath;
-    return seabass::infrastructure::paths::stickBackupsDir(anyPath.parent_path()).string();
+    const fs::path anyPath = seabass::pathFromUtf8(resolved.enginePath ? *resolved.enginePath : *resolved.rekordboxPath);
+    return seabass::pathToUtf8(seabass::infrastructure::paths::stickBackupsDir(anyPath.parent_path()));
 }
 
 // The GUI's per-library edit lock (docs/edit-mode-and-cancel.md): a
@@ -795,9 +796,9 @@ std::string backupDirFor(const ResolvedLibraryPaths &resolved)
 bool refuseIfLockedByGui(const std::string &catalogPath, bool force)
 {
     namespace local = seabass::infrastructure::local;
-    fs::path stickRoot = fs::path(catalogPath).parent_path();
-    auto info = seabass::infrastructure::system::readStickHardwareInfo(stickRoot.string(),
-                                                                       stickRoot.filename().string());
+    fs::path stickRoot = seabass::pathFromUtf8(catalogPath).parent_path();
+    auto info = seabass::infrastructure::system::readStickHardwareInfo(seabass::pathToUtf8(stickRoot),
+                                                                       seabass::pathToUtf8(stickRoot.filename()));
     if (info.stickIdentifier.empty()) {
         return false;
     }
@@ -811,11 +812,11 @@ bool refuseIfLockedByGui(const std::string &catalogPath, bool force)
         holder = "Seabass on " + probe.holder->hostname + " (process " + std::to_string(probe.holder->pid) + ")";
     }
     if (force) {
-        Console::warn("the library under " + stickRoot.string() + " is being edited by " + holder +
+        Console::warn("the library under " + seabass::pathToUtf8(stickRoot) + " is being edited by " + holder +
                       "; writing anyway because of --force");
         return false;
     }
-    Console::error("the library under " + stickRoot.string() + " is being edited by " + holder +
+    Console::error("the library under " + seabass::pathToUtf8(stickRoot) + " is being edited by " + holder +
                    ". Save or discard those changes there first, or pass --force to write anyway.");
     return true;
 }
@@ -933,13 +934,13 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
 
     try {
         if (hasRekordbox) {
-            rekordboxDbFile = (fs::path(*resolved.rekordboxPath) / "rekordbox" / "export.pdb").string();
+            rekordboxDbFile = seabass::pathToUtf8(seabass::pathFromUtf8(*resolved.rekordboxPath) / "rekordbox" / "export.pdb");
             rekordboxTracks = scanPath(
                 std::make_unique<seabass::infrastructure::rekordbox::KaitaiRekordboxReader>(*resolved.rekordboxPath),
                 *resolved.rekordboxPath);
         }
         if (hasEngine) {
-            engineDbFile = (fs::path(*resolved.enginePath) / "Database2" / "m.db").string();
+            engineDbFile = seabass::pathToUtf8(seabass::pathFromUtf8(*resolved.enginePath) / "Database2" / "m.db");
             engineTracks = scanPath(
                 std::make_unique<seabass::infrastructure::engine::LibdjinteropEngineReader>(*resolved.enginePath),
                 *resolved.enginePath);
@@ -1141,21 +1142,21 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         // A store and a log per stick root, created only where there is a
         // catalog to write. rekordbox and OneLibrary share both.
         const std::string engineRootDir =
-            hasEngine ? fs::path(*resolved.enginePath).parent_path().string() : std::string();
+            hasEngine ? seabass::pathToUtf8(seabass::pathFromUtf8(*resolved.enginePath).parent_path()) : std::string();
         const std::string rekordboxRootDir =
-            hasRekordbox ? fs::path(*resolved.rekordboxPath).parent_path().string() : std::string();
+            hasRekordbox ? seabass::pathToUtf8(seabass::pathFromUtf8(*resolved.rekordboxPath).parent_path()) : std::string();
 
         std::optional<seabass::infrastructure::backup::FilesystemBackupStore> engineBackupStoreOpt;
         std::optional<seabass::infrastructure::logging::FileOperationLog> engineLogOpt;
         if (hasEngine) {
-            engineBackupStoreOpt.emplace(seabass::infrastructure::paths::stickBackupsDir(fs::path(engineRootDir)).string());
-            engineLogOpt.emplace(seabass::infrastructure::paths::stickOperationLog(fs::path(engineRootDir)).string());
+            engineBackupStoreOpt.emplace(seabass::pathToUtf8(seabass::infrastructure::paths::stickBackupsDir(seabass::pathFromUtf8(engineRootDir))));
+            engineLogOpt.emplace(seabass::pathToUtf8(seabass::infrastructure::paths::stickOperationLog(seabass::pathFromUtf8(engineRootDir))));
         }
         std::optional<seabass::infrastructure::backup::FilesystemBackupStore> rekordboxBackupStoreOpt;
         std::optional<seabass::infrastructure::logging::FileOperationLog> rekordboxLogOpt;
         if (hasRekordbox) {
-            rekordboxBackupStoreOpt.emplace(seabass::infrastructure::paths::stickBackupsDir(fs::path(rekordboxRootDir)).string());
-            rekordboxLogOpt.emplace(seabass::infrastructure::paths::stickOperationLog(fs::path(rekordboxRootDir)).string());
+            rekordboxBackupStoreOpt.emplace(seabass::pathToUtf8(seabass::infrastructure::paths::stickBackupsDir(seabass::pathFromUtf8(rekordboxRootDir))));
+            rekordboxLogOpt.emplace(seabass::pathToUtf8(seabass::infrastructure::paths::stickOperationLog(seabass::pathFromUtf8(rekordboxRootDir))));
         }
 
         // Everything this sync will overwrite, resolved before a single
@@ -1353,7 +1354,7 @@ int runExportXmlCommand(bool wantRekordbox, bool wantEngine, const std::optional
     seabass::application::ExportRekordboxXml useCase;
     const auto result = useCase.execute(rows, options);
 
-    std::ofstream out(*outFile, std::ios::binary);
+    std::ofstream out(seabass::pathFromUtf8(*outFile), std::ios::binary);
     if (!out) {
         Console::error("could not open " + *outFile + " for writing");
         return 1;
@@ -1731,10 +1732,10 @@ int main(int argc, char **argv)
             };
 
             seabass::infrastructure::rekordbox::RekordboxCueWriter writer(target.path);
-            fs::path stickRoot = fs::path(target.path).parent_path();
+            fs::path stickRoot = seabass::pathFromUtf8(target.path).parent_path();
             seabass::infrastructure::backup::FilesystemBackupStore backupStore(
-                seabass::infrastructure::paths::stickBackupsDir(stickRoot).string());
-            seabass::infrastructure::logging::FileOperationLog log(seabass::infrastructure::paths::stickOperationLog(stickRoot).string());
+                seabass::pathToUtf8(seabass::infrastructure::paths::stickBackupsDir(stickRoot)));
+            seabass::infrastructure::logging::FileOperationLog log(seabass::pathToUtf8(seabass::infrastructure::paths::stickOperationLog(stickRoot)));
             std::string pioneerRoot = target.path;
             auto filesToBackUpFor = [pioneerRoot](const std::string &trackSourceId) -> std::vector<std::string> {
                 auto analyzePath = seabass::infrastructure::rekordbox::findAnlzPathForTrackId(
@@ -1763,11 +1764,11 @@ int main(int argc, char **argv)
             };
 
             seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(target.path);
-            fs::path stickRoot = fs::path(target.path).parent_path();
+            fs::path stickRoot = seabass::pathFromUtf8(target.path).parent_path();
             seabass::infrastructure::backup::FilesystemBackupStore backupStore(
-                seabass::infrastructure::paths::stickBackupsDir(stickRoot).string());
-            seabass::infrastructure::logging::FileOperationLog log(seabass::infrastructure::paths::stickOperationLog(stickRoot).string());
-            std::string engineDbFile = (fs::path(target.path) / "Database2" / "m.db").string();
+                seabass::pathToUtf8(seabass::infrastructure::paths::stickBackupsDir(stickRoot)));
+            seabass::infrastructure::logging::FileOperationLog log(seabass::pathToUtf8(seabass::infrastructure::paths::stickOperationLog(stickRoot)));
+            std::string engineDbFile = seabass::pathToUtf8(seabass::pathFromUtf8(target.path) / "Database2" / "m.db");
             auto filesToBackUpFor = [engineDbFile](const std::string &) -> std::vector<std::string> {
                 return {engineDbFile};
             };

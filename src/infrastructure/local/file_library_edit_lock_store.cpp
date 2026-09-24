@@ -28,6 +28,7 @@
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/app_data_directory.hpp"
 #include "infrastructure/local/flat_json.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/system/process_liveness.hpp"
 
 namespace seabass::infrastructure::local
@@ -113,7 +114,7 @@ fs::path FileLibraryEditLockStore::defaultDirectory()
 
 fs::path FileLibraryEditLockStore::pathFor(const std::string &libraryId) const
 {
-    return m_directory / (application::StickIdentity::sanitizeForFileName(libraryId) + CookieExtension);
+    return m_directory / pathFromUtf8(application::StickIdentity::sanitizeForFileName(libraryId) + CookieExtension);
 }
 
 std::string FileLibraryEditLockStore::serialize(const LibraryEditLock &lock)
@@ -203,7 +204,7 @@ EditLockProbe FileLibraryEditLockStore::probe(const std::string &libraryId, cons
 bool FileLibraryEditLockStore::createExclusive(const fs::path &path, const std::string &body) const
 {
 #if defined(_WIN32)
-    HANDLE handle = ::CreateFileA(path.string().c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+    HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
                                   FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         return false;
@@ -285,7 +286,7 @@ void FileLibraryEditLockStore::heartbeat(const std::string &libraryId, const std
     }
     lock->heartbeatUnix = m_clock();
     // Atomic replace: a reader never sees a torn heartbeat rewrite.
-    writeFileDurablyAtomic(path.string(), serialize(*lock));
+    writeFileDurablyAtomic(pathToUtf8(path), serialize(*lock));
 }
 
 void FileLibraryEditLockStore::release(const std::string &libraryId, const std::string &instanceId)

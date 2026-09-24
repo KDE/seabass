@@ -48,9 +48,15 @@ TreeWalk walkStickTree(const std::filesystem::path &root, application::Cancellat
 std::int64_t toUnixSeconds(std::filesystem::file_time_type time);
 std::filesystem::file_time_type fromUnixSeconds(std::int64_t seconds);
 
-// Archive names are UTF-8 with forward slashes on every platform;
-// std::filesystem::path::generic_string() is not UTF-8 on Windows, so
-// every conversion between the two goes through here.
+// Archive names are UTF-8 with forward slashes on every platform. These
+// are the names this namespace has always used for what is now
+// seabass::pathToGenericUtf8 and seabass::pathFromUtf8
+// (src/infrastructure/paths/utf8_path.hpp), kept so an archive key is
+// still spelled the same everywhere it is built. pathToUtf8 here is the
+// generic form on purpose: its callers build archive entries and
+// manifest keys, never something an OS call takes back. A translation
+// unit that also sees the seabass:: ones through a using-directive has
+// to qualify, or use pathToGenericUtf8.
 std::string pathToUtf8(const std::filesystem::path &path);
 std::filesystem::path pathFromUtf8(std::string_view utf8);
 

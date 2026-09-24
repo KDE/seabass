@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include "infrastructure/media/stick_root_scan.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::infrastructure::media
 {
@@ -204,7 +205,7 @@ std::vector<DetectedStick> LinuxRemovableMediaLocator::detect()
 
         auto fsLabel = udevProperty(dev.get(), "ID_FS_LABEL");
         auto model = udevProperty(dev.get(), "ID_MODEL");
-        stick.label = fsLabel ? *fsLabel : (model ? *model : fs::path(devnode).filename().string());
+        stick.label = fsLabel ? *fsLabel : (model ? *model : pathToUtf8(pathFromUtf8(devnode).filename()));
 
         // ID_DRIVE_FLASH_SD is set by udev's own built-in rules (the same
         // property udisks2/gnome-disks key their own SD-card icon off of,
