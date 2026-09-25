@@ -5,6 +5,7 @@
 #include "media_controller.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 
+#include "application/path_key.hpp"
 #include "application/stick_path_match.hpp"
 
 #include <QCoreApplication>
@@ -543,7 +544,10 @@ std::string MediaController::folderLabelFor(const std::filesystem::path &dir, co
 
 void MediaController::closeFolder(const QString &path)
 {
-    if (!m_openedFolder || m_openedFolder->mountPoint != path.toStdString()) {
+    // Compared as paths: the folder is kept by its native canonical path
+    // and a page hands back the forward-slash one, so on Windows the
+    // strings never matched and Close Folder did nothing.
+    if (!m_openedFolder || !application::samePath(m_openedFolder->mountPoint, localPathFromUrl(path).toStdString())) {
         return;
     }
     // Unsaved edits are the page's business, not this controller's: the

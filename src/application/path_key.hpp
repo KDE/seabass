@@ -72,4 +72,19 @@ std::string normalizedPathKey(const std::string &path);
 // are the same entry.
 std::string composedPathSpelling(const std::string &path);
 
+// Whether two path strings name the same place, by normalizedPathKey.
+//
+// For every check in the app that holds one path and is handed another:
+// the two can be spelled differently while naming one directory. Every
+// QString path is forward-slash (src/gui/qt_path.hpp) while a mount point
+// or a canonical path kept as std::string is native, so on Windows "E:\"
+// meets "E:/" and "C:\Music\Set" meets "C:/Music/Set/". A plain ==
+// there says "different", and round 9 of the shakedown found Close Folder
+// doing nothing on Windows because of exactly that. The separators are
+// folded on every platform, so this is tested on Linux with the Windows
+// spellings.
+//
+// An empty path is the same as nothing, not as another empty path.
+bool samePath(const std::string &a, const std::string &b);
+
 }  // namespace seabass::application

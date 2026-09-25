@@ -62,6 +62,21 @@ void makeStickShapedFolder(const fs::path &root, bool rekordbox, bool engine)
     }
 }
 
+// A path as Windows spells it natively, every separator a backslash:
+// what a stored native path looks like there next to the forward-slash
+// QString a page holds. normalizedPathKey folds '\\' on every platform,
+// so the comparison the controller makes can be exercised here.
+std::string windowsSpelling(const std::string &path)
+{
+    std::string out = path;
+    for (size_t i = 1; i < out.size(); ++i) {
+        if (out[i] == '/') {
+            out[i] = '\\';
+        }
+    }
+    return out;
+}
+
 int rowForMountPoint(const DetectedStickListModel &model, const std::string &mountPoint)
 {
     for (int row = 0; row < model.rowCount(); ++row) {
@@ -421,6 +436,30 @@ int main(int argc, char **argv)
         assert(plain >= 0);
         assert(!model->data(model->index(plain), DetectedStickListModel::HasOneLibraryRole).toBool());
         std::cout << "case 12 (hasOneLibrary follows exportLibrary.db) OK\n";
+    }
+
+    // Closing a folder by another spelling of its path. The folder is kept
+    // by its native canonical path; a page hands back the forward-slash
+    // one, which on Windows differs by every separator, and round 9 of the
+    // shakedown found Close Folder silently doing nothing there. The
+    // backslash spelling below is that Windows mismatch reproduced on this
+    // platform: MediaController compares through application::samePath,
+    // which folds both separators everywhere.
+    {
+        const std::string native = pathToUtf8(rbOnly);
+        const QString backslashed = QString::fromStdString(windowsSpelling(native));
+        MediaController controller;
+        assert(controller.openFolder(pathToQString(rbOnly)).isEmpty());
+        assert(rowForMountPoint(*controller.sticksModel(), native) >= 0);
+        controller.closeFolder(QStringLiteral("/somewhere/else"));
+        assert(rowForMountPoint(*controller.sticksModel(), native) >= 0);
+        controller.closeFolder(backslashed);
+        assert(rowForMountPoint(*controller.sticksModel(), native) < 0);
+
+        assert(controller.openFolder(pathToQString(rbOnly)).isEmpty());
+        controller.closeFolder(pathToQString(rbOnly) + QStringLiteral("/"));
+        assert(rowForMountPoint(*controller.sticksModel(), native) < 0);
+        std::cout << "case 13 (a folder closes by any spelling of its path) OK\n";
     }
 
     fs::remove_all(scratch);
