@@ -65,7 +65,8 @@ inline QString metadataCueSummary(const std::vector<domain::CuePoint> &cues)
 }
 
 // The cues as WaveformView draws them: one map per cue, in the shape
-// every other track list in Seabass hands it.
+// every other track list in Seabass hands it. The one conversion for all
+// three metadata lists, the store's own browse list included.
 inline QVariantList metadataCueList(const std::vector<domain::CuePoint> &cues)
 {
     QVariantList list;
@@ -75,6 +76,7 @@ inline QVariantList metadataCueList(const std::vector<domain::CuePoint> &cues)
             cue.kind == domain::CuePoint::Kind::Hot ? QStringLiteral("hot") : QStringLiteral("memory");
         entry[QStringLiteral("hotCueNumber")] = cue.hotCueNumber;
         entry[QStringLiteral("positionMs")] = cue.positionMs;
+        entry[QStringLiteral("positionText")] = metadataDurationText(cue.positionMs / 1000.0);
         entry[QStringLiteral("isLoop")] = cue.isLoop;
         entry[QStringLiteral("loopEndMs")] = cue.loopEndMs;
         entry[QStringLiteral("color")] = QString::fromStdString(cue.color);

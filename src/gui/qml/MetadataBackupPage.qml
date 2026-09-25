@@ -791,6 +791,10 @@ Page {
                 required property bool stagedForDeletion
                 required property real durationMs
 
+                // The open row's cues and their tooltip, read from the
+                // store once when it opens; null while it is closed.
+                readonly property var openCues: trackRow.expanded ? controller.cueDetailFor(trackRow.trackId) : null
+
                 // And the ones it does, marked required here so the
                 // model fills them.
                 required index
@@ -821,16 +825,17 @@ Page {
                 // waveform, and the placeholder says so on hover. The cues
                 // are fetched for the open row only, like the tooltip below.
                 showWaveform: true
-                waveformCues: trackRow.expanded ? controller.cuesFor(trackRow.trackId) : []
+                waveformCues: trackRow.openCues ? trackRow.openCues.cues : []
                 waveformDurationMs: trackRow.durationMs
                 waveformMissingText: "Waveform not part of backup"
                 // Fetched for the row the pointer is over, or the one
                 // that is open, and for no others. The list is paged
                 // precisely so that showing twenty rows costs twenty
                 // rows, and pulling every cue of every row to fill
-                // tooltips nobody opens would undo that.
-                cueTooltip: (trackRow.hovered || trackRow.expanded) && trackRow.cueCount > 0
-                    ? controller.cueSummaryFor(trackRow.trackId) : ""
+                // tooltips nobody opens would undo that. The open row has
+                // it already, from the read its waveform made.
+                cueTooltip: trackRow.openCues ? trackRow.openCues.summary
+                    : (trackRow.hovered && trackRow.cueCount > 0 ? controller.cueSummaryFor(trackRow.trackId) : "")
                 playlistNames: trackRow.expanded && trackRow.playlistCount > 0
                     ? controller.playlistsFor(trackRow.trackId).join(", ") : ""
                 detailNote: trackRow.stagedForDeletion

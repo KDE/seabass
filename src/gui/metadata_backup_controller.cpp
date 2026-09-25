@@ -906,51 +906,29 @@ void MetadataBackupController::loadMore()
     }
 }
 
-QVariantList MetadataBackupController::cuesFor(qint64 trackId)
+QVariantMap MetadataBackupController::cueDetailFor(qint64 trackId)
 {
-    QVariantList cues;
     auto *db = store();
     if (!db) {
-        return cues;
+        return {};
     }
-    for (const auto &cue : db->cuesFor(trackId)) {
-        QVariantMap entry;
-        entry["kind"] = cue.kind == domain::CuePoint::Kind::Hot ? "hot" : "memory";
-        entry["hotCueNumber"] = cue.hotCueNumber;
-        entry["positionMs"] = cue.positionMs;
-        entry["positionText"] = metadataDurationText(cue.positionMs / 1000.0);
-        entry["color"] = QString::fromStdString(cue.color);
-        entry["comment"] = QString::fromStdString(cue.comment);
-        entry["isLoop"] = cue.isLoop;
-        entry["loopEndMs"] = cue.loopEndMs;
-        cues.append(entry);
-    }
-    return cues;
+    // One read, both shapes: the open row wants the cues for its waveform
+    // and every cue on a line for its tooltip, and asking twice read the
+    // same rows from the store twice.
+    const auto cues = db->cuesFor(trackId);
+    return {
+        {QStringLiteral("cues"), metadataCueList(cues)},
+        {QStringLiteral("summary"), metadataCueSummary(cues)},
+    };
 }
 
 QString MetadataBackupController::cueSummaryFor(qint64 trackId)
 {
-    const QVariantList cues = cuesFor(trackId);
-    if (cues.isEmpty()) {
+    auto *db = store();
+    if (!db) {
         return {};
     }
-    QStringList lines;
-    for (const QVariant &entry : cues) {
-        const QVariantMap cue = entry.toMap();
-        QString line = cue["kind"].toString() == QStringLiteral("hot")
-            ? QStringLiteral("Hot cue %1").arg(cue["hotCueNumber"].toInt())
-            : QStringLiteral("Memory cue");
-        line += QStringLiteral(" at ") + cue["positionText"].toString();
-        if (cue["isLoop"].toBool()) {
-            line += QStringLiteral(" (loop)");
-        }
-        const QString comment = cue["comment"].toString();
-        if (!comment.isEmpty()) {
-            line += QStringLiteral(": ") + comment;
-        }
-        lines << line;
-    }
-    return lines.join(QLatin1Char('\n'));
+    return metadataCueSummary(db->cuesFor(trackId));
 }
 
 QVariantMap MetadataBackupController::waveformSourceAt(int row) const
