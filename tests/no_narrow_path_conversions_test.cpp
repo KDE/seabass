@@ -91,6 +91,19 @@ const std::vector<Rule> &rules()
         // Qt's "local 8-bit" is the ANSI code page on Windows.
         {"toLocal8Bit/fromLocal8Bit is the ANSI code page on Windows; paths are UTF-8",
          std::regex(R"((toLocal8Bit|fromLocal8Bit)\s*\()")},
+        // The implicit crossings. A std::string handed straight to a
+        // std::filesystem call or a stream is an implicit path(std::string),
+        // which a scan cannot tell from a path variable by name; but a
+        // .toStdString(), a .c_str() or a std::string(...) inside the call
+        // is a narrow string for certain. (A path's own c_str() into
+        // fs::exists() is not wrong on Windows, only pointless: pass the
+        // path.) Only the call's own argument list counts, up to its first
+        // nested parenthesis: past a ")" the text is the next operand
+        // (`std::ofstream(p) << std::string(...)`), not the path.
+        {"a std::string inside a std::filesystem call is an implicit path(std::string); pass a path from pathFromUtf8()",
+         std::regex(R"(\b(fs|std::filesystem)::[a-z_]+\s*\([^;()]*(\.toStdString\(\)|\.c_str\(\)|std::string\s*\())")},
+        {"a stream opened with .c_str() or std::string(...) reads ANSI on Windows; open it with the path",
+         std::regex(R"((ifstream|ofstream|fstream)\s*\w*\s*[({][^;()]*(\.c_str\(\)|std::string\s*\())")},
     };
     return all;
 }
