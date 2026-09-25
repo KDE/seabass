@@ -4,6 +4,7 @@
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtTest
 import SeabassGui
 import "PixelScale.js" as PixelScale
@@ -131,7 +132,9 @@ TestCase {
         };
     }
 
-    function test_restorePageTitleAndFinishedOverlayAreReadable() {
+    // The restore page's unstyled labels that measure under 3:1, named
+    // with their ratios; empty when all of them read.
+    function unreadableOnTheRestorePage(screenshotName) {
         const page = createTemporaryObject(restoreComponent, testCase, {
             controller: fakeRestoreController(),
             appSettingsController: {toLocalFileUrl: function(p) { return "file://" + p; },
@@ -140,6 +143,9 @@ TestCase {
         verify(page !== null);
         waitForRendering(page);
         const image = grabImage(page);
+        if (screenshotName && screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/" + screenshotName);
+        }
         const overlay = findChild(page, "restoreOverlay");
         verify(overlay.visible);
         const cases = [
@@ -158,17 +164,76 @@ TestCase {
                 unreadable.push(cases[i][0] + " at " + ratio.toFixed(2) + ":1");
             }
         }
-        compare(unreadable.join("; "), "", "under 3:1");
+        return unreadable.join("; ");
     }
 
-    function test_busyOverlayLabelIsReadable() {
+    function busyLabelContrast() {
         const holder = createTemporaryObject(busyComponent, testCase);
         verify(holder !== null);
         waitForRendering(holder);
         const image = grabImage(holder);
         const label = findText(holder.overlay, function(t) { return t === "Scanning the stick"; });
         verify(label !== null);
-        const ratio = inkContrast(image, holder, label);
+        return inkContrast(image, holder, label);
+    }
+
+    function test_restorePageTitleAndFinishedOverlayAreReadable() {
+        compare(unreadableOnTheRestorePage(), "", "under 3:1");
+    }
+
+    function test_busyOverlayLabelIsReadable() {
+        const ratio = busyLabelContrast();
         verify(ratio >= 3.0, "the busy overlay's label reads at " + ratio.toFixed(2) + ":1, under 3:1");
+    }
+
+    // Preferences flips useSystemTheme while the app runs, and Theme
+    // repaints at once. The style's ink has to follow in the same moment:
+    // it used to take Kelp's colour scheme once at startup and keep it, so
+    // "Match System Theme" on a light Plasma session drew Kelp's
+    // near-white on the light Theme until the next start. Toggled through
+    // the real AppSettingsController, the one Preferences writes to, with
+    // Theme fed what Main.qml's Bindings feed it.
+    //
+    // Which session: under KDE's style the ink comes from KDE's colour
+    // scheme, and the lane's sandbox has no kdeglobals, so the system
+    // scheme is KDE's default, Breeze Light: the light session the bug
+    // needs, and Theme gets Material's light colours to match. Under any
+    // other style the ink is the platform palette, which follows the
+    // same system colour scheme Material.System does, so Theme gets
+    // exactly what Main.qml would give it there.
+    AppSettingsController { id: appSettings }
+    Item { id: lightSession; Material.theme: Material.Light }
+    Item { id: platformSession; Material.theme: Material.System }
+
+    function chooseSystemTheme(on) {
+        const session = kdeDesktopStyle ? lightSession : platformSession;
+        appSettings.useSystemTheme = on;
+        Theme.useSystemTheme = on;
+        Theme.materialBackground = session.Material.background;
+        Theme.materialForeground = session.Material.foreground;
+        Theme.materialDivider = session.Material.dividerColor;
+    }
+
+    function cleanup() {
+        appSettings.useSystemTheme = false;
+        Theme.useSystemTheme = false;
+        Theme.materialBackground = "#121212";
+        Theme.materialForeground = "#e0e0e0";
+        Theme.materialDivider = "#33ffffff";
+    }
+
+    function test_themeToggleKeepsTheInkReadableBothWays() {
+        chooseSystemTheme(true);
+        if (kdeDesktopStyle) {
+            verify(Theme.isLightBackground, "the light Plasma session is standing in");
+        }
+        compare(unreadableOnTheRestorePage("ink-contrast-system-light.png"), "", "system theme on a light session, under 3:1");
+        const busyLight = busyLabelContrast();
+        verify(busyLight >= 3.0, "system theme: the busy label reads at " + busyLight.toFixed(2) + ":1");
+        chooseSystemTheme(false);
+        verify(!Theme.isLightBackground, "Kelp again");
+        compare(unreadableOnTheRestorePage("ink-contrast-kelp-again.png"), "", "back to Kelp, under 3:1");
+        const busyKelp = busyLabelContrast();
+        verify(busyKelp >= 3.0, "back to Kelp: the busy label reads at " + busyKelp.toFixed(2) + ":1");
     }
 }

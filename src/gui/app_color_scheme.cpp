@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QSaveFile>
 #include <QVariant>
@@ -16,17 +17,21 @@ namespace seabass::gui
 namespace
 {
 
-// Theme.qml's Kelp values, as "r,g,b": background #14181c, surface
-// #1a1f24, border #333a40, text #e8ecef, accent #3daee9, and textMuted,
-// which Theme mixes as background + 0.55 * (text - background).
-constexpr const char *Background = "20,24,28";
-constexpr const char *Surface = "26,31,36";
-constexpr const char *Raised = "44,50,56";  // kelpBorderSubtle: a button stands off the surface
-constexpr const char *Text = "232,236,239";
-constexpr const char *TextMuted = "137,141,144";
-constexpr const char *Accent = "61,174,233";
+[[maybe_unused]] QString rgb(KelpRgb c)
+{
+    return QStringLiteral("%1,%2,%3").arg(c.r).arg(c.g).arg(c.b);
+}
 
-[[maybe_unused]] QString colorSet(const char *name, const char *background, const char *alternate, const char *foreground)
+// Theme mixes textMuted as background + 0.55 * (text - background).
+[[maybe_unused]] QString mutedText()
+{
+    const auto mix = [](int from, int to) { return static_cast<int>(from + 0.55 * (to - from) + 0.5); };
+    return rgb({mix(kelp::Background.r, kelp::Text.r), mix(kelp::Background.g, kelp::Text.g),
+                mix(kelp::Background.b, kelp::Text.b)});
+}
+
+[[maybe_unused]] QString colorSet(const char *name, const QString &background, const QString &alternate,
+                                  const QString &foreground)
 {
     return QStringLiteral("[Colors:%1]\n"
                           "BackgroundAlternate=%2\n"
@@ -41,24 +46,54 @@ constexpr const char *Accent = "61,174,233";
                           "ForegroundNormal=%6\n"
                           "ForegroundPositive=39,174,96\n"
                           "ForegroundVisited=155,89,182\n\n")
-        .arg(QString::fromLatin1(name), QString::fromLatin1(alternate), QString::fromLatin1(background),
-             QString::fromLatin1(Accent), QString::fromLatin1(TextMuted), QString::fromLatin1(foreground));
+        .arg(QString::fromLatin1(name), alternate, background, rgb(kelp::Accent), mutedText(), foreground);
 }
 
 [[maybe_unused]] QString kelpColorScheme()
 {
     QString scheme;
     scheme += QStringLiteral("[General]\nColorScheme=SeabassKelp\nName=Seabass Kelp\n\n");
-    scheme += colorSet("Window", Background, Surface, Text);
-    scheme += colorSet("View", Surface, Background, Text);
-    scheme += colorSet("Header", Surface, Background, Text);
-    scheme += colorSet("Button", Raised, Surface, Text);
-    scheme += colorSet("Tooltip", Raised, Surface, Text);
-    scheme += colorSet("Complementary", Background, Surface, Text);
+    const QString background = rgb(kelp::Background);
+    const QString surface = rgb(kelp::Surface);
+    const QString raised = rgb(kelp::BorderSubtle);  // a button stands off the surface
+    const QString text = rgb(kelp::Text);
+    scheme += colorSet("Window", background, surface, text);
+    scheme += colorSet("View", surface, background, text);
+    scheme += colorSet("Header", surface, background, text);
+    scheme += colorSet("Button", raised, surface, text);
+    scheme += colorSet("Tooltip", raised, surface, text);
+    scheme += colorSet("Complementary", background, surface, text);
     // Selected rows and the highlighted button: Current, with white on it.
-    scheme += colorSet("Selection", Accent, "30,87,116", "252,252,252");
+    scheme += colorSet("Selection", rgb(kelp::Accent), QStringLiteral("30,87,116"), QStringLiteral("252,252,252"));
     return scheme;
 }
+
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS)
+// The directory the scheme file goes into, as the first caller named it,
+// and the path this file set the property to: a property holding any
+// other path is someone else's, and stays.
+QString &schemeDirectory()
+{
+    static QString directory;
+    return directory;
+}
+
+QString &schemePathSetHere()
+{
+    static QString path;
+    return path;
+}
+
+// What KColorSchemeManager's setPalette() amounts to for KDE's style: it
+// re-reads every colour set when the application's palette changes.
+// Sent rather than provoked with setPalette(), which ignores a palette
+// equal to the current one, and this app's QPalette does not change.
+void announceSchemeChange()
+{
+    QEvent event(QEvent::ApplicationPaletteChange);
+    QCoreApplication::sendEvent(qApp, &event);
+}
+#endif
 
 }  // namespace
 
@@ -69,22 +104,36 @@ QString applyAppColorScheme(bool useSystemTheme, const QString &directory)
     Q_UNUSED(directory);
     return {};
 #else
-    if (useSystemTheme || QCoreApplication::instance() == nullptr || directory.isEmpty()) {
+    if (QCoreApplication::instance() == nullptr) {
         return {};
+    }
+    if (!directory.isEmpty()) {
+        schemeDirectory() = directory;
     }
     const char *property = "KDE_COLOR_SCHEME_PATH";
-    if (!qApp->property(property).toString().isEmpty()) {
+    const QString current = qApp->property(property).toString();
+    if (!current.isEmpty() && current != schemePathSetHere()) {
         return {};
     }
-    if (!QDir().mkpath(directory)) {
+    if (useSystemTheme) {
+        if (!current.isEmpty()) {
+            qApp->setProperty(property, QVariant());
+            announceSchemeChange();
+        }
         return {};
     }
-    const QString path = QDir(directory).filePath(QStringLiteral("SeabassKelp.colors"));
+    if (!current.isEmpty()) {
+        return current;
+    }
+    if (schemeDirectory().isEmpty() || !QDir().mkpath(schemeDirectory())) {
+        return {};
+    }
+    const QString path = QDir(schemeDirectory()).filePath(QStringLiteral("SeabassKelp.colors"));
     const QByteArray contents = kelpColorScheme().toUtf8();
     QFile existing(path);
-    const bool current = existing.open(QIODevice::ReadOnly) && existing.readAll() == contents;
+    const bool upToDate = existing.open(QIODevice::ReadOnly) && existing.readAll() == contents;
     existing.close();
-    if (!current) {
+    if (!upToDate) {
         // Whole or not at all: a half-written scheme would be read as a
         // scheme, with every colour it lost falling back to a default.
         QSaveFile out(path);
@@ -92,7 +141,9 @@ QString applyAppColorScheme(bool useSystemTheme, const QString &directory)
             return {};
         }
     }
+    schemePathSetHere() = path;
     qApp->setProperty(property, path);
+    announceSchemeChange();
     return path;
 #endif
 }

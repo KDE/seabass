@@ -6,6 +6,7 @@
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
 #endif
+#include "gui/app_color_scheme.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -65,6 +66,10 @@ void AppSettingsController::setUseSystemTheme(bool value)
     }
     m_useSystemTheme = value;
     m_settings.setValue("useSystemTheme", value);
+    // KDE's style follows now, not at the next start: Theme repaints on
+    // the signal below, and a style still inking Kelp's near-white over
+    // a light system Theme is unreadable. See gui/app_color_scheme.hpp.
+    applyAppColorScheme(value);
     emit useSystemThemeChanged();
 }
 

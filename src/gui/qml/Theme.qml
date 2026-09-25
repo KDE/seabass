@@ -39,13 +39,16 @@ QtObject {
     property color materialDivider: "#33ffffff"
 
     // ---- "Kelp" -- this app's own always-dark palette ----
-    readonly property color kelpBackground: "#14181c"
-    readonly property color kelpSurface: "#1a1f24"
-    readonly property color kelpBorder: "#333a40"
-    readonly property color kelpBorderSubtle: "#2c3238"
-    readonly property color kelpText: "#e8ecef"
-    readonly property color kelpAccent: "#3daee9"
-    readonly property color kelpPrimary: "#123a52"
+    // Its values live in C++ (gui/app_color_scheme.hpp), because the
+    // colour scheme handed to KDE's style is written from the same ones:
+    // one list, so the style's ink and these grounds cannot drift apart.
+    readonly property color kelpBackground: KelpPalette.background
+    readonly property color kelpSurface: KelpPalette.surface
+    readonly property color kelpBorder: KelpPalette.border
+    readonly property color kelpBorderSubtle: KelpPalette.borderSubtle
+    readonly property color kelpText: KelpPalette.text
+    readonly property color kelpAccent: KelpPalette.accent
+    readonly property color kelpPrimary: KelpPalette.primary
 
     // ---- Resolved semantic surface roles -- read only these ----
     readonly property color background: useSystemTheme ? materialBackground : kelpBackground
