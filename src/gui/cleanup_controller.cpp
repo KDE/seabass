@@ -41,6 +41,7 @@
 #include "gui/onelibrary_cue_writer_adapter.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/write_guard.hpp"
+#include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/cleanup/pending_deletion_applier.hpp"
 #include "infrastructure/cleanup/pending_deletion_manifest.hpp"
@@ -513,8 +514,11 @@ PendingDeletionApplyResult runDeletePendingTask(QString format, QString path,
     }
     try {
         fs::path stickRoot = pathFromQString(path).parent_path();
-        infrastructure::backup::StickWriteLock lock(
-            (infrastructure::paths::stickBackupsDir(stickRoot) / ".write.lock"));
+        // The same lock file every other writer takes (stick_locks.hpp),
+        // not a spelling of its own: a CLI sync or a save from another
+        // Seabass instance must contend with this deletion.
+        infrastructure::backup::StickWriteLock lock(pathFromUtf8(infrastructure::backup::writeLockPathForBackupDir(
+            infrastructure::backup::backupDirForStickRoot(pathToUtf8(stickRoot)))));
         infrastructure::cleanup::PendingDeletionManifest manifest(
             pathToUtf8(infrastructure::paths::stickPendingDeletions(stickRoot)));
         infrastructure::logging::FileOperationLog log(pathToUtf8(infrastructure::paths::stickOperationLog(stickRoot)));
