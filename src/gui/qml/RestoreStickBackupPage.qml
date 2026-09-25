@@ -50,8 +50,11 @@ Page {
     // not in the backup folder still needs a row that shows it as chosen.
     readonly property bool archiveIsCustom: (controller.archivePath || "").length > 0
         && !root.knownBackups.some(function(b) { return b.archivePath === controller.archivePath; })
-    // The chosen backup by its file name, like the list above it.
-    readonly property string chosenTitle: Theme.backupTitle(String(controller.archivePath || "").split(/[\\/]/).pop())
+    // The chosen backup's file, and the title the list above gives it.
+    // The file name in full (with .zip) wherever the page says what a
+    // restore is made from: that is the thing on disk to look for.
+    readonly property string chosenFileName: String(controller.archivePath || "").split(/[\\/]/).pop()
+    readonly property string chosenTitle: Theme.backupTitle(root.chosenFileName)
     property int selectedIndex: -1
     readonly property var selectedDisk: (root.selectedIndex >= 0 && root.selectedIndex < root.disks.length)
         ? root.disks[root.selectedIndex] : null
@@ -314,7 +317,7 @@ Page {
             Label { text: "Drive"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
             Label { font.family: Theme.dataFamily; text: root.selectedDisk ? root.selectedDisk.mountPoint + "  ·  " + Theme.humanBytes(root.selectedDisk.capacityBytes) : "" }
             Label { text: "From"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
-            Label { Layout.fillWidth: true; elide: Text.ElideMiddle; font.family: Theme.dataFamily; text: root.chosenTitle + "  ·  " + root.friendlyTimestamp(root.info.createdAt) }
+            Label { Layout.fillWidth: true; elide: Text.ElideMiddle; font.family: Theme.dataFamily; text: root.chosenFileName + "  ·  " + root.friendlyTimestamp(root.info.createdAt) }
             Label { text: "Mode"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
             Label { text: root.exact ? "Exact restore" : "Overlay (keeps other files)" }
         }
@@ -594,9 +597,20 @@ Page {
                     anchors.fill: parent
                     spacing: 6
                     GridLayout {
+                        Layout.fillWidth: true
                         columns: 2
                         columnSpacing: 16
                         rowSpacing: 6
+                        // Which file, by name, where the decision is made:
+                        // the list above can be scrolled out of view.
+                        Label { text: "From"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
+                        Label {
+                            objectName: "previewArchiveLabel"
+                            Layout.fillWidth: true
+                            elide: Text.ElideMiddle
+                            font.family: Theme.dataFamily
+                            text: root.chosenFileName + "  ·  " + root.friendlyTimestamp(root.info.createdAt)
+                        }
                         Label { text: "Restore"; color: Theme.textMuted; font.pointSize: Theme.fontSmall }
                         Label {
                             objectName: "previewLabel"
@@ -703,6 +717,17 @@ Page {
         title: root.restoring
             ? "Restoring onto " + (root.selectedDisk ? (root.selectedDisk.label.length > 0 ? root.selectedDisk.label : "the drive") : "the drive")
             : (root.hasResult ? "Restore finished" : "Restore stopped")
+
+        // Which backup this is, by its file, while it runs and in the
+        // report after: the form that named it is covered.
+        Label {
+            objectName: "overlayArchiveLabel"
+            Layout.fillWidth: true
+            elide: Text.ElideMiddle
+            font.family: Theme.dataFamily
+            color: Theme.textMuted
+            text: "From " + root.chosenFileName
+        }
 
         StickWriteWarning {
             Layout.fillWidth: true

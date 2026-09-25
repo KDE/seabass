@@ -516,6 +516,39 @@ TestCase {
         compare(findChild(inFolder, "customBackupRadio").visible, false);
     }
 
+    // The list titles a backup by its file already; the places that say
+    // what a restore is made from name the file in full, .zip and all,
+    // since the list can be scrolled away by then: the What will happen
+    // block, and the overlay the restore runs on.
+    function test_backupFileNameIsShownForAKnownBackup() {
+        const backups = [makeBackup({}),
+                         makeBackup({archivePath: "/home/u/Seabass Backups/WHALESHARK2 (before Berlin).zip",
+                                     fileName: "WHALESHARK2 (before Berlin).zip", createdAt: "2026-08-01T10:00:00"})];
+        const page = makePage([makeDisk({})], {archivePath: "/home/u/Seabass Backups/WHALESHARK2 (before Berlin).zip",
+                                               knownBackups: backups});
+        compare(page.archiveIsCustom, false);
+        const summary = findChild(page, "previewArchiveLabel");
+        verify(summary !== null, "the What will happen block must name the file");
+        verify(summary.visible);
+        verify(summary.text.indexOf("WHALESHARK2 (before Berlin).zip") === 0, summary.text);
+        compare(summary.font.family, Theme.dataFamily);
+
+        const running = makePage([makeDisk({})], {archivePath: "/home/u/Seabass Backups/WHALESHARK2 (before Berlin).zip",
+                                                  knownBackups: backups, busy: true, restoring: true, phase: "writing"});
+        const onOverlay = findChild(findChild(running, "restoreOverlay"), "overlayArchiveLabel");
+        verify(onOverlay !== null && onOverlay.visible);
+        compare(onOverlay.text, "From WHALESHARK2 (before Berlin).zip");
+    }
+
+    function test_backupFileNameIsShownForACustomFile() {
+        const page = makePage([makeDisk({})], {archivePath: "/elsewhere/Old Stick 2025.zip", knownBackups: [makeBackup({})]});
+        compare(page.archiveIsCustom, true);
+        const summary = findChild(page, "previewArchiveLabel");
+        verify(summary !== null && summary.visible);
+        verify(summary.text.indexOf("Old Stick 2025.zip") === 0, summary.text);
+        compare(summary.font.family, Theme.dataFamily);
+    }
+
     // The stick list hands over a device path for a stick it could not
     // preselect by mount point: mounted on open, or selected if it turns
     // out to be mounted already.
