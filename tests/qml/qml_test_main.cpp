@@ -1265,6 +1265,11 @@ void seedMetadataStoreForTests()
         // from the platform palette: true only under KDE's own style.
         engine->rootContext()->setContextProperty(QStringLiteral("kdeDesktopStyle"),
                                                   QQuickStyle::name() == QStringLiteral("org.kde.desktop"));
+        // Whether unstyled text takes its ink from Material's theme, the
+        // style macOS runs (gui/controls_style.hpp): the ink then follows
+        // whichever Material.theme the nearest item up the tree sets.
+        engine->rootContext()->setContextProperty(QStringLiteral("materialStyle"),
+                                                  QQuickStyle::name() == QStringLiteral("Material"));
         // Whether this run is entitled to a working shader. The suite is
         // registered on a real display with Qt6 ShaderTools present, and
         // sets SEABASS_SHADER_EXPECTED=1 to say so; a test that asks the
