@@ -66,7 +66,9 @@ class AppstreamReleaseTest(unittest.TestCase):
 
     def test_the_header_comment_survives(self):
         text = self.run_tool("9.9.9", "stable", "2030-01-02")
+        # REUSE-IgnoreStart: a string about a header, not a header of this file
         self.assertIn("SPDX-License-Identifier: CC0-1.0", text)
+        # REUSE-IgnoreEnd
 
     def test_a_bad_version_is_refused(self):
         result = subprocess.run([sys.executable, str(TOOL), str(self.file), "9.9", "stable"], capture_output=True)
