@@ -414,6 +414,32 @@ public:
         return result;
     }
 
+    // A backup folder that takes a while to list: `count` files named
+    // *.zip that are not archives. Each is opened and refused, which is
+    // the same walk a folder of real backups gets, only cheaper to make;
+    // 20000 of them list in about half a second here. Recreated on every
+    // call, so a count from an earlier run never lingers.
+    Q_INVOKABLE QString slowBackupFolder(int count)
+    {
+        namespace fs = std::filesystem;
+        const fs::path folder = seabass::testing::scratchRoot() / "seabass_slow_backup_folder";
+        std::error_code ec;
+        fs::remove_all(folder, ec);
+        fs::create_directories(folder, ec);
+        if (ec) {
+            return {};
+        }
+        for (int i = 0; i < count; ++i) {
+            std::ofstream(folder / ("backup-" + std::to_string(i) + ".zip")) << "x";
+        }
+        return seabass::gui::pathToQString(folder);
+    }
+    Q_INVOKABLE void removeSlowBackupFolder()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(seabass::testing::scratchRoot() / "seabass_slow_backup_folder", ec);
+    }
+
     // Starts a format and leaves the page while it runs, which destroys
     // the controller mid-format. The controller holds the library's edit
     // lock as a member, so its destructor must wait for the format:

@@ -129,7 +129,12 @@ RestoreStickBackupController::~RestoreStickBackupController()
     m_cancel.cancel();
     awaitQuietly(m_restoreWatcher);
     awaitQuietly(m_analyzeWatcher);
-    awaitQuietly(m_listWatcher);
+    // Not the backup listing: it only reads the folder and captures
+    // nothing of this object, so it runs out on its own and its result is
+    // dropped with the watcher (no finished() reaches a controller that is
+    // gone). Waiting for it froze the window for as long as the listing
+    // had left when the page was left mid-scan -- FullBackupsController
+    // learned the same.
     awaitQuietly(m_mountWatcher);
 }
 
