@@ -186,7 +186,10 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
 
     // Widened as UTF-8, not byte by byte: a mount point is usually "E:\",
     // but a volume mounted into an NTFS folder can be named anything.
-    std::wstring root = pathFromUtf8(mountPoint).wstring();
+    // make_preferred() because a page hands its mount point back
+    // forward-slash ("E:/", gui/qt_path.hpp), which the check below would
+    // otherwise have turned into "E:/\".
+    std::wstring root = pathFromUtf8(mountPoint).make_preferred().wstring();
     if (!root.empty() && root.back() != L'\\') {
         root += L'\\';
     }
