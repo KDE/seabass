@@ -336,6 +336,31 @@ TestCase {
         controllerFixture.removeSlowBackupFolder();
     }
 
+    // A listing is in progress until its result has reached the page, not
+    // until the worker thread is done. A missing folder lists in far less
+    // than a millisecond, so the worker is done long before its result is
+    // handled; the UI thread is held here without turning the event loop,
+    // the way a busy frame holds it, to make that window certain rather
+    // than lucky. "Not listing" in it hid the overlay while the old list
+    // was still on screen, and said the listing had ended in the very
+    // busyChanged that announced it (the flake the test above caught).
+    function test_listingLastsUntilItsResultLands() {
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        controller.backupDirectory = "/nonexistent/Backups";
+        tryVerify(function() { return !controller.listing; }, 5000, "the first listing lands");
+        let changes = 0;
+        controller.backupsChanged.connect(function() { changes++; });
+        controller.refresh();
+        const until = Date.now() + 200;
+        while (Date.now() < until) {
+            // Hold the UI thread; the worker finishes meanwhile.
+        }
+        verify(controller.listing, "still listing: the result has not been handled yet");
+        compare(changes, 0);
+        tryVerify(function() { return !controller.listing; }, 5000, "and done once it has");
+        compare(changes, 1);
+    }
+
     function test_emptyFolder() {
         var page = makePage(makeController({backups: [], totalBytes: 0}));
         compare(findChild(page, "emptyLabel").visible, true);

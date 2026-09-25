@@ -50,7 +50,11 @@ public:
     void setOpenArchivePaths(const QStringList &paths);
     QVariantList backups() const { return m_backups; }
     qlonglong totalBytes() const { return m_totalBytes; }
-    bool listing() const { return m_listWatcher.isRunning(); }
+    // From refresh() until its result is handled, not while the worker
+    // thread runs: a listing of an empty or missing folder finishes before
+    // refresh() has announced it, and isRunning() then reported "not
+    // listing" in the very busyChanged that says it started.
+    bool listing() const { return m_listing; }
     bool deleting() const { return m_deleteWatcher.isRunning(); }
     QString errorMessage() const { return m_errorMessage; }
     QString statusMessage() const { return m_statusMessage; }
@@ -88,6 +92,7 @@ private:
     QString m_statusMessage;
     QString m_deletingPath;
     bool m_refreshAgain = false;
+    bool m_listing = false;
     QFutureWatcher<QVariantList> m_listWatcher;
     QFutureWatcher<application::DeleteStickBackupResult> m_deleteWatcher;
 };
