@@ -1098,6 +1098,11 @@ void seedMetadataStoreForTests()
         // every one of those the same way.
         engine->rootContext()->setContextProperty(QStringLiteral("controlsStyleForced"),
                                                   QQuickStyle::name() != QStringLiteral("Basic"));
+        // Whether unstyled text takes its ink from KDE's colour scheme
+        // (KDE_COLOR_SCHEME_PATH, gui/app_color_scheme.hpp) rather than
+        // from the platform palette: true only under KDE's own style.
+        engine->rootContext()->setContextProperty(QStringLiteral("kdeDesktopStyle"),
+                                                  QQuickStyle::name() == QStringLiteral("org.kde.desktop"));
         // Whether this run is entitled to a working shader. The suite is
         // registered on a real display with Qt6 ShaderTools present, and
         // sets SEABASS_SHADER_EXPECTED=1 to say so; a test that asks the
