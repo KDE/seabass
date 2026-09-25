@@ -408,6 +408,10 @@ install(TARGETS seabass
 # window icon, installed under the reverse-DNS name the .desktop file uses.
 if(UNIX AND NOT APPLE)
     install(FILES org.kde.seabass.desktop DESTINATION share/applications)
+    # AppStream: what software centres (Discover, GNOME Software) and
+    # Flathub show about the app, and what AppImage tooling reads for its
+    # name and summary. Its id and launchable match the desktop file.
+    install(FILES org.kde.seabass.metainfo.xml DESTINATION share/metainfo)
     install(FILES qml/icons/seabass_soundbass.svg
         DESTINATION share/icons/hicolor/scalable/apps
         RENAME org.kde.seabass.svg)

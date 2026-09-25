@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+SPDX-License-Identifier: CC0-1.0
+-->
+<component type="desktop-application">
+  <id>org.kde.seabass</id>
+  <launchable type="desktop-id">org.kde.seabass.desktop</launchable>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-only OR GPL-3.0-only</project_license>
+  <name>Seabass</name>
+  <summary>Keep the rekordbox and Engine DJ libraries on a USB stick in step</summary>
+  <developer id="org.kde">
+    <name>Sebastian Kügler</name>
+  </developer>
+  <description>
+    <p>
+      Seabass is a toolbox for DJ USB sticks. A stick prepared for both Pioneer and Denon
+      gear carries two or three independent copies of the same library, and they do not
+      talk to each other: set a hot cue in one and the others never hear about it. Seabass
+      treats those copies as one library written several times, and keeps them honest.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Browse the library on a stick, with waveforms, hot cues and playback</li>
+      <li>Sync cue points between rekordbox and Engine DJ</li>
+      <li>Full backups of a stick, and restoring them onto any drive</li>
+      <li>Back up cues, ratings and other metadata, and restore them later</li>
+      <li>Find and clean up duplicate tracks, resolving conflicting cues by hand</li>
+      <li>Library health checks that find and repair missing files</li>
+      <li>Statistics about a library and health checks for the stick itself</li>
+    </ul>
+    <p>
+      Seabass works on the library already on your stick. It makes no network request
+      unless you switch on the update check.
+    </p>
+  </description>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+  </categories>
+  <keywords>
+    <keyword>DJ</keyword>
+    <keyword>rekordbox</keyword>
+    <keyword>Engine DJ</keyword>
+    <keyword>USB stick</keyword>
+    <keyword>cue points</keyword>
+  </keywords>
+  <url type="homepage">https://vizzzion.org/seabass/</url>
+  <url type="bugtracker">https://github.com/sebasje/seabass/issues</url>
+  <url type="donation">https://www.patreon.com/cw/SebastianKugler</url>
+  <url type="vcs-browser">https://invent.kde.org/multimedia/seabass</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>The main window with a USB stick and what can be done with it</caption>
+      <image>https://vizzzion.org/seabass/screenshots/hub-redacted.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Browsing a library, with a track playing and its hot cues</caption>
+      <image>https://vizzzion.org/seabass/screenshots/browse-library.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Duplicate tracks and how much space consolidating them frees</caption>
+      <image>https://vizzzion.org/seabass/screenshots/duplicates.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Library health, with the rows that can be repaired</caption>
+      <image>https://vizzzion.org/seabass/screenshots/library-health.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Backups of a stick, each with a note and a Restore action</caption>
+      <image>https://vizzzion.org/seabass/screenshots/backups.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>seabass</binary>
+  </provides>
+  <releases>
+    <release version="0.7.10" type="development" date="2026-09-25">
+      <description>
+        <p>The second alpha of Seabass 0.8.</p>
+      </description>
+    </release>
+  </releases>
+</component>
