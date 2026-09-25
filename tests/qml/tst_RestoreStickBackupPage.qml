@@ -711,6 +711,89 @@ TestCase {
         }
     }
 
+    // Any refresh of the drive list, not only Close's: mounting or
+    // unplugging a drive while the form is open lists the drives again,
+    // possibly in another order. The selection used to be a row number,
+    // so a reorder quietly moved it (and the preview, and the Restore
+    // button's target) onto another drive.
+    function pageWithBChosen() {
+        const a = makeDisk({label: "A", mountPoint: "/media/A", devicePath: "/dev/sdb1"});
+        const b = makeDisk({label: "B", mountPoint: "/media/B", devicePath: "/dev/sdc1"});
+        const controller = createTemporaryObject(liveDisksControllerComponent, testCase, {disks: [a, b]});
+        const page = createTemporaryObject(pageComponent, testCase,
+                                           {controller: controller, appSettingsController: fakeAppSettings()});
+        const radioB = findChild(page, "driveRadio_1");
+        radioB.checked = true;
+        radioB.toggled();
+        compare(page.selectedDisk.label, "B", "the user picks B");
+        return {page: page, controller: controller, a: a, b: b,
+                c: makeDisk({label: "C", mountPoint: "/media/C", devicePath: "/dev/sdd1"})};
+    }
+
+    function test_aReorderingRefreshKeepsTheChosenDrive() {
+        const run = pageWithBChosen();
+        const analyzed = run.controller.analyzeCalls.length;
+        run.controller.disks = [run.c, run.a, run.b];
+        compare(run.page.selectedDisk.label, "B", "still the drive the user chose");
+        compare(run.page.selectedIndex, 2, "at its new row");
+        compare(findChild(run.page, "driveRadio_2").checked, true);
+        compare(findChild(run.page, "driveRadio_1").checked, false);
+        compare(run.controller.analyzeCalls.length, analyzed, "B itself did not change: its preview stands");
+        compare(findChild(run.page, "chosenDriveGoneLabel").visible, false);
+        // The restore goes to B, looked up when it is confirmed.
+        findChild(run.page, "confirmDialog").accepted();
+        compare(run.controller.lastRestore.mountPoint, "/media/B");
+    }
+
+    // B changed under the same identity (a refresh found it with a
+    // library it did not have): kept, and its preview taken again.
+    function test_aRefreshThatChangesTheChosenDriveAnalysesItAgain() {
+        const run = pageWithBChosen();
+        const analyzed = run.controller.analyzeCalls.length;
+        const changed = makeDisk({label: "B", mountPoint: "/media/B", devicePath: "/dev/sdc1", hasDjLibrary: true});
+        run.controller.disks = [run.a, changed];
+        compare(run.page.selectedDisk.label, "B");
+        compare(run.controller.analyzeCalls.length, analyzed + 1);
+        compare(run.controller.analyzeCalls[analyzed], "/media/B");
+    }
+
+    function test_aRefreshThatDropsTheChosenDriveSelectsNothing() {
+        const run = pageWithBChosen();
+        const analyzed = run.controller.analyzeCalls.length;
+        run.controller.disks = [run.c, run.a];
+        compare(run.page.selectedIndex, -1, "no drive in B's place");
+        compare(run.page.selectedDisk, null);
+        compare(run.controller.analyzeCalls[analyzed], "", "the stale preview is dropped");
+        compare(findChild(run.page, "openConfirmButton").enabled, false);
+        const note = findChild(run.page, "chosenDriveGoneLabel");
+        compare(note.visible, true);
+        compare(note.text, "The drive you chose is no longer connected. Choose a drive.");
+        // A later refresh does not pick one either; only the user does.
+        run.controller.disks = [run.c, run.a, makeDisk({label: "D", mountPoint: "/media/D", devicePath: "/dev/sde1"})];
+        compare(run.page.selectedIndex, -1);
+        compare(note.visible, true);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(run.page).save(screenshotDir + "/restore-page-chosen-drive-unplugged.png");
+        }
+        const radioA = findChild(run.page, "driveRadio_1");
+        radioA.checked = true;
+        radioA.toggled();
+        compare(run.page.selectedDisk.label, "A");
+        compare(note.visible, false, "picking a drive answers the note");
+    }
+
+    // The drive is unplugged while the confirmation is open: nothing is
+    // written, and the form says why.
+    function test_confirmingAfterTheChosenDriveWentRestoresNothing() {
+        const run = pageWithBChosen();
+        // C now sits in B's old row.
+        run.controller.disks = [run.a, run.c];
+        findChild(run.page, "confirmDialog").accepted();
+        compare(run.controller.lastRestore, null, "no restore onto any drive");
+        compare(findChild(run.page, "restoreOverlay").visible, false);
+        compare(findChild(run.page, "chosenDriveGoneLabel").visible, true);
+    }
+
     // The stick list hands over a device path for a stick it could not
     // preselect by mount point: mounted on open, or selected if it turns
     // out to be mounted already.
