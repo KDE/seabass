@@ -70,6 +70,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/SelectableText.qml
     qml/common/MessagePopup.qml
     qml/common/HealthCheckCard.qml
+    qml/common/HealthCheckPage.qml
     qml/common/HomeIcon.qml
     qml/common/HeartIcon.qml
     qml/common/SeabassIcon.qml
@@ -113,6 +114,10 @@ set(SEABASS_GUI_QML_FILES
     qml/PendingDeletionsPage.qml
     qml/JunkCuePage.qml
     qml/LibraryConsistencyPage.qml
+    qml/CuesAtZeroPage.qml
+    qml/ImportPromptPage.qml
+    qml/SampleRatesPage.qml
+    qml/OneLibraryLeftoversPage.qml
     qml/LibraryHealthHubPage.qml
     qml/StickStatisticsPage.qml
     qml/StickPerformancePage.qml

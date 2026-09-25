@@ -17,9 +17,12 @@ import SeabassGui
 // stat-ing a few thousand files -- so each card says what it is waiting
 // for, and the ones that finish early report early.
 //
-// Detail lives behind each card, not on it. The old single page put every
-// broken row and every stray cue in one scroll, which answered "what
-// exactly is wrong with row 412" well and "is my library alright" badly.
+// Detail lives behind each card, not on it, and a card's review opens a
+// page for that check alone. The old single page put every broken row
+// and every stray cue in one scroll, which answered "what exactly is
+// wrong with row 412" well and "is my library alright" badly; and the
+// detail page after it still held every check's repair at once, so every
+// card opened the same long page.
 Page {
     id: root
     required property string stickLabel
@@ -27,8 +30,9 @@ Page {
     required property string enginePath
     required property var playbackController
 
-    // Opens the detailed view, scrolled to the section that matters for
-    // the card the user pressed.
+    // Opens the page of the check behind the card the user pressed: its
+    // findings and its repair, and no other check's. Main maps the
+    // section to the page.
     signal detailRequested(string section)
 
     // "Back up before you let anything near this stick." A filesystem
@@ -47,7 +51,7 @@ Page {
     LibraryConsistencyController {
         id: healthController
     }
-    // Handed to the detail page so it shows this scan instead of running
+    // Handed to each check's page so it shows this scan instead of running
     // its own. Named apart from the id: a property and an id of the same
     // name collide, and the binding would refer to itself.
     readonly property var consistencyController: healthController

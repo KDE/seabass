@@ -7,53 +7,23 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// Finds catalog rows whose backing audio file is missing (e.g. left
-// behind by Clean Up before it knew to also clean up OneLibrary, see
-// LibraryConsistencyController's class comment) and repairs or flags
-// them. Scans every present catalog progressively, one after another,
-// combining all their results into one list rather than making you
-// switch between them one at a time.
-Page {
+// Library Health's "Tracks and their files" check: catalog rows whose
+// backing audio file is missing (e.g. left behind by Clean Up before it
+// knew to also clean up OneLibrary, see LibraryConsistencyController's
+// class comment), and what repairs or flags them. Every present catalog's
+// rows are in the one list rather than one catalog at a time.
+//
+// Only this check. The stray cues, the import prompt, sample rates and
+// OneLibrary's leftovers each have a page of their own now (see
+// HealthCheckPage for why they were split apart); this is the one of
+// them that is still called LibraryConsistencyPage, because it is what
+// the page was first built for.
+HealthCheckPage {
     id: root
-    required property string stickLabel
-    required property string rekordboxPath
-    required property string enginePath
     required property var playbackController
 
-    // The hub has usually just scanned this library, and a scan reads
-    // three catalogs and stats a few thousand files -- minutes on a full
-    // stick. When it hands its controller over, this page shows those
-    // results instead of asking the user to wait through the same work a
-    // second time. Opened directly (no hub), it scans for itself.
-    // The hub can be torn down before this page, taking its controller with
-    // it (a stick pulled and its changes discarded does exactly that). So
-    // this is an object-typed property, which turns null when that happens,
-    // and consistencyController then falls back to ownController. Bindings
-    // re-read in between, while it is null, so every read below goes
-    // through ?. -- before, each one logged "Cannot read property ... of
-    // null", hundreds of lines per pull.
-    property QtObject sharedController: null
-    readonly property QtObject consistencyController: root.sharedController !== null
-        ? root.sharedController : ownController
+    checkTitle: "Tracks and Their Files"
 
-    LibraryConsistencyController {
-        id: ownController
-    }
-
-    // Edit mode for this library: session, floating Save, leave guard.
-    EditSessionHost {
-        id: editHost
-        // Cancel on the low-space question leaves, as Back does -- see
-        // EditSessionHost's backupLocationDeclined for why it must.
-        onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
-        feature: "library-health"
-        anchors.fill: parent
-        libraryId: typeof EditSessionRegistry !== "undefined"
-            ? EditSessionRegistry.libraryIdForPath(root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath) : ""
-        stickLabel: root.stickLabel
-        rekordboxPath: root.rekordboxPath
-        enginePath: root.enginePath
-    }
     // Backs "Resolve..." on a Conflict row: reuses the exact same manual
     // two-track-merge feature Browse Library's own "Merge with..."
     // picker uses. A Conflict issue already names both tracks (the
@@ -61,15 +31,6 @@ Page {
     // step needed here, just planManualMerge() and the same review UI.
     CleanupController {
         id: mergeController
-    }
-
-    function formatLabel(format) {
-        if (format === "engine") return "Engine OS";
-        if (format === "onelibrary") return "OneLibrary";
-        return "DeviceLibrary";
-    }
-    function pathForFormat(format) {
-        return format === "engine" ? root.enginePath : root.rekordboxPath;
     }
 
     // "3 hot cue(s), 1 memory cue(s)" -- same shape as
@@ -151,61 +112,6 @@ Page {
             : "The copy being kept is not in " + names.length + " " + plural + " this row was in: " + listed;
     }
 
-    function rescan() {
-        consistencyController?.scan(root.rekordboxPath, root.enginePath);
-    }
-
-    // Only when there is nothing to show yet: a shared controller arrives
-    // already holding this library's results, and re-running the scan
-    // would throw them away and make the user wait again.
-    Component.onCompleted: {
-        if (root.sharedController === null || root.sharedController === undefined) {
-            rescan();
-        }
-    }
-
-    header: ToolBar {
-        // Every side zeroed so the header's inset is Theme.pageMargin
-        // and nothing else. `padding` alone does not do it: styles set
-        // horizontalPadding or leftPadding of their own on top of it,
-        // 4px under Breeze and 6 under the default style, and that is
-        // exactly how far right of the body the breadcrumb used to sit.
-        leftPadding: 0
-        rightPadding: 0
-        topPadding: 0
-        bottomPadding: Theme.headerBottomPadding
-        // Opaque background override, see AppSettingsPage.qml's header
-        // for why (KDE's Breeze style bleeds the window behind Seabass
-        // through an unstyled ToolBar).
-        background: Rectangle { color: Theme.surface }
-
-        RowLayout {
-            anchors.fill: parent
-            anchors.margins: Theme.pageMargin
-            spacing: 12
-            BackBreadcrumb {
-                stack: root.StackView.view
-                middleLabel: root.stickLabel
-                title: "Library Health"
-                backEnabled: !consistencyController?.writing
-                onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
-                onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())
-            }
-            Item { Layout.fillWidth: true }
-            RowLayout {
-                visible: consistencyController?.busy ?? false
-                spacing: 8
-                BusyIndicator { running: true; implicitWidth: 20; implicitHeight: 20 }
-                Label {
-                    text: consistencyController?.scanningFormat.length > 0
-                        ? "Scanning " + root.formatLabel(consistencyController?.scanningFormat) + "..."
-                        : "Scanning..."
-                    color: Theme.textMuted
-                }
-            }
-        }
-    }
-
     MessageDialog {
         id: confirmRepairAllDialog
         severity: SeabassDialog.Question
@@ -242,43 +148,6 @@ Page {
         onAccepted: if (pendingIndex >= 0) consistencyController?.deleteOrphan(pendingIndex)
     }
 
-    MessageDialog {
-        id: confirmRemoveJunkCueDialog
-        property int pendingIndex: -1
-        severity: SeabassDialog.Question
-        title: "Stage removing this cue?"
-        headline: "Removes this cue sitting at 0:00 from the track."
-        detailText: "Backed up first."
-        acceptText: "Stage Removal"
-        onAccepted: if (pendingIndex >= 0) consistencyController?.removeJunkCue(pendingIndex)
-    }
-
-    MessageDialog {
-        id: confirmRemoveAllJunkCuesDialog
-        severity: SeabassDialog.Warning
-        destructive: true
-        // Not junkCueRepeater.count: that Repeater lives inside the
-        // ListView footer, whose ids are scoped to the footer
-        // component, so from out here it is a ReferenceError and this
-        // title never binds. The model is the shared thing both can see.
-        title: "Stage removing all " + consistencyController?.junkCues.count + " cue(s) that look accidental?"
-        headline: "This stages removing every cue at 0:00 currently listed, across every catalog on "
-            + "this stick. Once you press Save that is a real write, not just dismissing them from view."
-        detailText: "Everything is backed up first, but make sure this is really what you want."
-        acceptText: "Stage Removal"
-        onAccepted: consistencyController?.removeAllJunkCues()
-    }
-
-    MessageDialog {
-        id: confirmIgnoreAllJunkCuesDialog
-        severity: SeabassDialog.Question
-        title: "Ignore all cues at 0:00"
-        headline: "Dismisses every cue at 0:00 currently listed, just for this view."
-        detailText: "Nothing is written, they'll show up again the next time you scan."
-        acceptText: "Ignore All"
-        onAccepted: consistencyController?.ignoreAllJunkCues()
-    }
-
     // Step 2 of resolving a Conflict row manually: review the plan
     // (survivor, cues to merge, playlist note) before applying, exactly
     // the same DuplicateCleanupPlanner output and apply() path Browse
@@ -289,8 +158,9 @@ Page {
         id: conflictResolvePopup
         modal: true
         focus: true
-        x: Theme.snap((root.width - width) / 2)
-        y: Theme.snap((root.height - height) / 2)
+        // Centred in the page body, which sits centred in the page.
+        x: Theme.snap((parent.width - width) / 2)
+        y: Theme.snap((parent.height - height) / 2)
         width: 520
 
         property string trackALabel: ""
@@ -405,756 +275,369 @@ Page {
         }
     }
 
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 16
-        spacing: 8
-
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: Theme.rowSpacing
         Label {
-            visible: consistencyController?.errorMessage.length > 0
-            text: consistencyController?.errorMessage ?? ""
-            color: Theme.danger
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
+            objectName: "missingFilesSummary"
+            text: issueListView.count === 0
+                ? "Every row on this stick has its file."
+                : "I found " + issueListView.count + " row(s) with a missing file, across every catalog on this stick"
         }
+        Item { Layout.fillWidth: true }
         Label {
-            visible: consistencyController?.statusMessage.length > 0
-            text: consistencyController?.statusMessage ?? ""
-            color: Theme.good
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
+            objectName: "stagedIssuesNote"
+            // This check's own staged work, not the page's total: the
+            // note sat beside the repair buttons and counted staged
+            // cue removals too, so removing 29 stray cues put "29
+            // staged" next to a button about missing files.
+            visible: consistencyController?.stagedIssueCount > 0
+            text: consistencyController?.stagedIssueCount + " staged, not saved yet"
+            color: Theme.warnText
         }
-
-        Label {
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            color: Theme.textMuted
-            // The sixth check only exists on a stick with OneLibrary, so
-            // the count follows it rather than promising one it skips.
-            text: (consistencyController?.cleanupLeftoversChecked
-                   || consistencyController?.cleanupLeftoverError.length > 0
-                   ? "Six checks on this stick: catalog rows whose audio file is missing, cues sitting at 0:00, "
-                     + "whether a player will offer to overwrite the Engine library with the rekordbox one, Engine "
-                     + "tracks that do not say what sample rate they are, duplicates Clean Up left in OneLibrary, "
-                     + "and cover art a player cannot show. "
-                   : "Five checks on this stick: catalog rows whose audio file is missing, cues sitting at 0:00, "
-                     + "whether a player will offer to overwrite the Engine library with the rekordbox one, Engine "
-                     + "tracks that do not say what sample rate they are, and cover art a player cannot show. ")
-                + "Nothing is written until you press Save."
+        Button {
+            text: "Stage All Safe Repairs"
+            // What it has left to stage, not what the check found:
+            // once every safe repair is staged there is nothing
+            // behind this button, and it should not look pressable.
+            enabled: !consistencyController?.busy && !consistencyController?.writing
+                && consistencyController?.unstagedRepairableCount > 0 && !consistencyController?.stickReadOnly
+            ToolTip.visible: hovered
+            ToolTip.text: consistencyController?.stickReadOnly
+                ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
+                : consistencyController?.unstagedRepairableCount === 0 && consistencyController?.repairableCount > 0
+                ? "Every safe repair is staged already. Press Save to write them."
+                : "Repair every entry with an exact healthy match. Conflicts are left for you."
+            onClicked: confirmRepairAllDialog.open()
         }
+    }
 
-        Subtitle { text: "Missing files" }
+    // One scroll area for the issue rows. A real ListView (not a bare
+    // ScrollView wrapping a plain ColumnLayout, which was tried here first
+    // and produced a scrollbar thumb that rendered stuck near the top-left
+    // instead of docked to the right edge) -- the same proven
+    // ListView+BigScrollBar pairing every other page in this app uses.
+    ListView {
+        // Room to scroll the last row clear of the Save overlay (bottom right).
+        bottomMargin: 80
+        id: issueListView
+        // Not draggable when everything already fits.
+        interactive: contentHeight > height
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        clip: true
+        model: consistencyController?.issues
+        // A little more breathing room between findings than the
+        // tight 4px this used to be -- each row can expand into a
+        // whole track-detail view (waveform, cues), so they read as
+        // more distinct "cards" than a plain dense list's rows do.
+        spacing: 10
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            Label {
-                text: issueListView.count === 0
-                    ? "Every row on this stick has its file."
-                    : "I found " + issueListView.count + " row(s) with a missing file, across every catalog on this stick"
-            }
-            Item { Layout.fillWidth: true }
-            Label {
-                objectName: "stagedIssuesNote"
-                // This check's own staged work, not the page's total: the
-                // note sat beside the repair buttons and counted staged
-                // cue removals too, so removing 29 stray cues put "29
-                // staged" next to a button about missing files.
-                visible: consistencyController?.stagedIssueCount > 0
-                text: consistencyController?.stagedIssueCount + " staged, not saved yet"
-                color: Theme.warnText
-            }
-            Button {
-                text: "Undo Last Save"
-                visible: consistencyController?.canUndo ?? false
-                enabled: !consistencyController?.busy && !consistencyController?.writing
-                onClicked: consistencyController?.undoLastOperation()
-            }
-            Button {
-                text: "Stage All Safe Repairs"
-                // What it has left to stage, not what the check found:
-                // once every safe repair is staged there is nothing
-                // behind this button, and it should not look pressable.
-                enabled: !consistencyController?.busy && !consistencyController?.writing
-                    && consistencyController?.unstagedRepairableCount > 0 && !consistencyController?.stickReadOnly
-                ToolTip.visible: hovered
-                ToolTip.text: consistencyController?.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController?.unstagedRepairableCount === 0 && consistencyController?.repairableCount > 0
-                    ? "Every safe repair is staged already. Press Save to write them."
-                    : "Repair every entry with an exact healthy match. Conflicts are left for you."
-                onClicked: confirmRepairAllDialog.open()
-            }
-        }
+        ScrollBar.vertical: BigScrollBar {}
 
-        Subtitle {
-            objectName: "importPromptSubtitle"
-            Layout.topMargin: 12
-            text: "The player's import prompt"
-        }
+        delegate: Column {
+            id: issueDelegate
+            width: ListView.view.width
+            spacing: 4
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            Label {
-                objectName: "importPromptSummary"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: consistencyController?.playerWillOfferImport
-                    ? "A player will ask whether to update the Engine library from the rekordbox library on this "
-                      + "stick, warning that existing playlist and track metadata will be overwritten. Accepting "
-                      + "replaces the Engine side, cues and cover art included."
-                    : "A player will leave the Engine library alone: it already knows the rekordbox library "
-                      + "beside it."
-            }
-            Label {
-                objectName: "stagedImportMarkNote"
-                visible: consistencyController?.importMarkStaged ?? false
-                text: "staged, not saved yet"
-                color: Theme.warnText
-            }
-            Button {
-                objectName: "markImportedButton"
-                visible: consistencyController?.playerWillOfferImport || (consistencyController?.importMarkStaged ?? false)
-                text: consistencyController?.importMarkStaged ? "Unstage" : "Mark As Already Imported"
-                enabled: !consistencyController?.busy && !consistencyController?.writing
-                    && !consistencyController?.stickReadOnly
-                ToolTip.visible: hovered
-                ToolTip.text: consistencyController?.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController?.importMarkStaged
-                    ? "Take this back out of the changes to save"
-                    : "Writes the rekordbox library's own sequence number into the Engine library, which is what "
-                      + "the player compares. Nothing else changes, and importing stays available on the player "
-                      + "if you ever do want it."
-                onClicked: consistencyController?.importMarkStaged
-                    ? consistencyController?.unstageRekordboxImportMark()
-                    : consistencyController?.markRekordboxImported()
-            }
-        }
+            required property int index
+            required property string kind
+            required property string format
+            required property var survivor
+            required property var brokenTracks
+            required property bool cueMergeNeeded
+            required property bool staged
+            required property string stagedDescription
 
-        Subtitle {
-            objectName: "sampleRateSubtitle"
-            Layout.topMargin: 12
-            text: "Sample rates"
-        }
+            property bool expanded: false
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            Label {
-                objectName: "sampleRateSummary"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: consistencyController?.sampleRateMissingCount === 0
-                    ? "Every Engine track says what sample rate it is."
-                    : consistencyController?.sampleRateMissingCount + " Engine track(s) do not say what sample rate "
-                      + "they are, so every cue on them is placed by a guess. "
-                      + (consistencyController?.sampleRateFixableCount > 0
-                          ? consistencyController?.sampleRateFixableCount
-                            + " of their files can say, and Seabass can write it in."
-                          : "None of their files could be read to find out.")
-            }
-            Label {
-                objectName: "stagedSampleRatesNote"
-                visible: consistencyController?.sampleRateFillStaged ?? false
-                text: "staged, not saved yet"
-                color: Theme.warnText
-            }
-            Button {
-                objectName: "fillSampleRatesButton"
-                visible: consistencyController?.sampleRateFixableCount > 0
-                    || (consistencyController?.sampleRateFillStaged ?? false)
-                text: consistencyController?.sampleRateFillStaged ? "Unstage" : "Fill In From The Files"
-                enabled: !consistencyController?.busy && !consistencyController?.writing
-                    && !consistencyController?.stickReadOnly
-                ToolTip.visible: hovered
-                ToolTip.text: consistencyController?.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController?.sampleRateFillStaged
-                    ? "Take this back out of the changes to save"
-                    : "Stage writing each track's real sample rate, read from the file itself. Save writes it."
-                onClicked: consistencyController?.sampleRateFillStaged
-                    ? consistencyController?.unstageSampleRateFill()
-                    : consistencyController?.fillSampleRates()
-            }
-        }
-
-        // #8: shown only once the check has run (a stick with OneLibrary).
-        Subtitle {
-            objectName: "cleanupLeftoverSubtitle"
-            visible: consistencyController?.cleanupLeftoversChecked
-                || consistencyController?.cleanupLeftoverError.length > 0
-            Layout.topMargin: Theme.sectionSpacing
-            text: "Duplicates left in OneLibrary"
-        }
-
-        RowLayout {
-            visible: consistencyController?.cleanupLeftoversChecked
-                || consistencyController?.cleanupLeftoverError.length > 0
-            Layout.fillWidth: true
-            spacing: Theme.rowSpacing
-            Label {
-                objectName: "cleanupLeftoverSummary"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: consistencyController?.cleanupLeftoverError.length > 0
-                    ? consistencyController?.cleanupLeftoverError
-                    : consistencyController?.cleanupLeftoverCount === 0
-                    ? "Every duplicate Clean Up removed from the rekordbox library is gone from OneLibrary too."
-                    : consistencyController?.cleanupLeftoverCount + " duplicate(s) Clean Up removed from the "
-                      + "rekordbox library are still in OneLibrary. "
-                      + (consistencyController?.cleanupLeftoverFixableCount > 0
-                          ? consistencyController?.cleanupLeftoverFixableCount + " can be removed, their playlist "
-                            + "entries moved onto the copy Clean Up kept."
-                          : "None of them can be matched to the copy Clean Up kept.")
-            }
-            Label {
-                objectName: "stagedCleanupLeftoversNote"
-                visible: consistencyController?.cleanupLeftoverFixStaged ?? false
-                text: "staged, not saved yet"
-                color: Theme.warnText
-            }
-            Button {
-                objectName: "finishCleanupButton"
-                visible: consistencyController?.cleanupLeftoverFixableCount > 0
-                    || (consistencyController?.cleanupLeftoverFixStaged ?? false)
-                text: consistencyController?.cleanupLeftoverFixStaged ? "Unstage" : "Finish The Clean Up"
-                enabled: !consistencyController?.busy && !consistencyController?.writing
-                    && !consistencyController?.stickReadOnly
-                ToolTip.visible: hovered
-                ToolTip.text: consistencyController?.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController?.cleanupLeftoverFixStaged
-                    ? "Take this back out of the changes to save"
-                    : "Stage removing these from OneLibrary and moving their playlist entries onto the copy "
-                      + "Clean Up kept. Save writes it."
-                onClicked: consistencyController?.cleanupLeftoverFixStaged
-                    ? consistencyController?.unstageCleanupLeftoverFix()
-                    : consistencyController?.finishCleanupLeftovers()
-            }
-        }
-
-        // The few left alone, each with why: a decision the DJ may want
-        // to make by hand, so it is named rather than counted.
-        Repeater {
-            objectName: "cleanupLeftoverHeldBack"
-            model: consistencyController?.cleanupLeftoversHeldBack
-            delegate: Label {
-                required property var modelData
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.textMuted
-                text: "\u201c" + modelData.title + "\u201d" + (modelData.artist.length > 0 ? ", " + modelData.artist : "")
-                    + ": left alone. " + modelData.reason
-            }
-        }
-
-        Subtitle {
-            Layout.topMargin: 12
-            text: "Cues at 0:00"
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            Label {
-                // Two checks feed this list now: a cue at the very
-                // start of a track, and one of a crowd of hot cues in
-                // its first two seconds (#41). Naming only the first
-                // would describe a row at 1.2 s as being at 0:00.
-                text: consistencyController?.junkCues.count === 0
-                    ? "No cues look accidental."
-                    : "I found " + consistencyController?.junkCues.count
-                      + " cue(s) that look accidental rather than placed"
-            }
-            Item { Layout.fillWidth: true }
-            Label {
-                objectName: "stagedJunkCuesNote"
-                visible: consistencyController?.stagedJunkCueCount > 0
-                text: consistencyController?.stagedJunkCueCount + " staged, not saved yet"
-                color: Theme.warnText
-            }
-            Button {
-                visible: consistencyController?.junkCues.count > 0
-                text: "Remove All"
-                enabled: !consistencyController?.busy && !consistencyController?.stickReadOnly
-                    && consistencyController?.unstagedJunkCueCount > 0
-                ToolTip.visible: hovered
-                // It stages; it does not remove. The row buttons
-                // beside it and the confirmation this opens both
-                // said so already -- this one promised an
-                // immediate permanent delete, which is the wrong
-                // thing to tell someone in both directions: they
-                // either avoid a reversible action thinking it is
-                // final, or click it and believe the cues are
-                // already gone.
-                ToolTip.text: consistencyController?.stickReadOnly
-                    ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
-                    : consistencyController?.unstagedJunkCueCount === 0
-                    ? "Every one of them is staged already. Press Save to write it."
-                    : "Stage removing every cue at 0:00 listed, in all catalogs. Save writes it."
-                onClicked: confirmRemoveAllJunkCuesDialog.open()
-            }
-            Button {
-                visible: consistencyController?.junkCues.count > 0
-                text: "Ignore All"
-                enabled: !consistencyController?.busy
-                ToolTip.visible: hovered
-                ToolTip.text: "Hide these from this view only. Nothing on the stick changes."
-                onClicked: confirmIgnoreAllJunkCuesDialog.open()
-            }
-        }
-
-        // One continuous scroll area for both the missing-file issues and
-        // the 0:00-memory-cue rows below, rather than two separately
-        // height-capped lists. A real ListView (not a bare ScrollView
-        // wrapping a plain ColumnLayout, which was tried here first and
-        // produced a scrollbar thumb that rendered stuck near the top-
-        // left instead of docked to the right edge) -- the junk-cue
-        // section lives in footer: instead, still inside the same
-        // Flickable content flow, so it scrolls together with the issue
-        // rows above it and shares the one BigScrollBar, the same proven
-        // ListView+BigScrollBar pairing every other page in this app uses.
-        ListView {
-            // Room to scroll the last row clear of the Save overlay (bottom right).
-            bottomMargin: 80
-            id: issueListView
-            // Not draggable when everything already fits.
-            interactive: contentHeight > height
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            model: consistencyController?.issues
-            // A little more breathing room between findings than the
-            // tight 4px this used to be -- each row can expand into a
-            // whole track-detail view (waveform, cues), so they read as
-            // more distinct "cards" than a plain dense list's rows do.
-            spacing: 10
-
-            ScrollBar.vertical: BigScrollBar {}
-
-            delegate: Column {
-                id: issueDelegate
-                width: ListView.view.width
-                spacing: 4
-
-                required property int index
-                required property string kind
-                required property string format
-                required property var survivor
-                required property var brokenTracks
-                required property bool cueMergeNeeded
-                required property bool staged
-                required property string stagedDescription
-
-                property bool expanded: false
-
-                readonly property color kindColor: kind === "repairable" ? Theme.good
-                    : (kind === "conflict" ? Theme.conflictText : Theme.danger)
-                readonly property string kindLabel: kind === "repairable" ? "REPAIRABLE"
-                    : (kind === "conflict" ? "CONFLICT" : "MISSING")
-                // Survivor first (when there is one), then every broken
-                // copy -- what the expanded detail view below iterates,
-                // and how "isSurvivor" (the only one enabled for Play,
-                // since the others' files are known missing) is decided.
-                readonly property var detailTracks: {
-                    var list = [];
-                    if (issueDelegate.survivor && issueDelegate.survivor.sourceId) {
-                        list.push(issueDelegate.survivor);
-                    }
-                    for (var i = 0; i < issueDelegate.brokenTracks.length; i++) {
-                        list.push(issueDelegate.brokenTracks[i]);
-                    }
-                    return list;
+            readonly property color kindColor: kind === "repairable" ? Theme.good
+                : (kind === "conflict" ? Theme.conflictText : Theme.danger)
+            readonly property string kindLabel: kind === "repairable" ? "REPAIRABLE"
+                : (kind === "conflict" ? "CONFLICT" : "MISSING")
+            // Survivor first (when there is one), then every broken
+            // copy -- what the expanded detail view below iterates,
+            // and how "isSurvivor" (the only one enabled for Play,
+            // since the others' files are known missing) is decided.
+            readonly property var detailTracks: {
+                var list = [];
+                if (issueDelegate.survivor && issueDelegate.survivor.sourceId) {
+                    list.push(issueDelegate.survivor);
                 }
+                for (var i = 0; i < issueDelegate.brokenTracks.length; i++) {
+                    list.push(issueDelegate.brokenTracks[i]);
+                }
+                return list;
+            }
 
-                ItemDelegate {
-                width: parent.width
-                hoverEnabled: true
-                onClicked: issueDelegate.expanded = !issueDelegate.expanded
+            ItemDelegate {
+            width: parent.width
+            hoverEnabled: true
+            onClicked: issueDelegate.expanded = !issueDelegate.expanded
 
-                contentItem: ColumnLayout {
-                    spacing: 2
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-                        // Fixed-width slot around the badge itself (which
-                        // stays its own natural, compact pill size) rather
-                        // than resizing StatusBadge -- "REPAIRABLE" is
-                        // noticeably wider than "MISSING", so without this
-                        // every row's format-badge/title after it started
-                        // at a different X depending on which kind the row
-                        // was, reading as misaligned down the list.
-                        Item {
-                            Layout.preferredWidth: 96
-                            Layout.preferredHeight: kindBadge.implicitHeight
-                            StatusBadge {
-                                id: kindBadge
-                                anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                label: issueDelegate.kindLabel
-                                badgeColor: issueDelegate.kindColor
-                                tooltipText: {
-                                if (issueDelegate.kind === "repairable") {
-                                    var t = "Matches existing copy \"" + issueDelegate.survivor.title + " - "
-                                        + issueDelegate.survivor.artist + "\".";
-                                    if (issueDelegate.cueMergeNeeded) {
-                                        t += " Its cues will be merged onto that copy first.";
-                                    }
-                                    return t;
-                                }
-                                if (issueDelegate.kind === "conflict") {
-                                    var brokenSummary = issueDelegate.brokenTracks.length > 0
-                                        ? root.cueSummary(issueDelegate.brokenTracks[0]) : "no cues";
-                                    return "Matches existing copy \"" + issueDelegate.survivor.title + " - "
-                                        + issueDelegate.survivor.artist + "\", but they have genuinely different cues: "
-                                        + "kept copy has " + root.cueSummary(issueDelegate.survivor) + "; broken row had "
-                                        + brokenSummary + ". Not auto-repaired: use Resolve above to review and merge "
-                                        + "them manually.";
-                                }
-                                return issueDelegate.format === "onelibrary"
-                                    ? "No copy found anywhere in OneLibrary. Re-add via Rekordbox or Engine's own "
-                                      + "software, or delete this orphaned entry."
-                                    : "No copy found anywhere in this catalog. Re-add the track via "
-                                      + (issueDelegate.format === "engine" ? "Engine" : "Rekordbox") + "'s own software.";
-                                }
-                            }
-                        }
-                        // Plain text, no logo -- same "original mark, not
-                        // a reproduction" convention this app already
-                        // applies to every other catalog badge/glyph.
-                        Rectangle {
-                            radius: 3
-                            color: Theme.groupBackground
-                            border.color: Theme.borderSubtle
-                            implicitWidth: formatLabelText.implicitWidth + 8
-                            implicitHeight: formatLabelText.implicitHeight + 4
-                            Label {
-                                id: formatLabelText
-                                anchors.centerIn: parent
-                                text: root.formatLabel(issueDelegate.format)
-                                font.pointSize: Theme.fontTiny
-                                font.bold: true
-                                color: Theme.textMuted
-                            }
-                        }
-                        Label {
-                            // One issue can fold in several broken copies
-                            // of the very same song (see
-                            // domain::LibraryConsistencyChecker::check()'s
-                            // own brokenGroup, one per DuplicateGroup, not
-                            // one per row) -- joining every brokenTracks
-                            // name here would repeat the identical title
-                            // once per copy. Show it once: the survivor's
-                            // identity when there is one (that's the copy
-                            // that's staying), otherwise the first broken
-                            // copy's, with a count appended whenever more
-                            // than one broken row shares this issue.
-                            text: {
-                                var rep = (issueDelegate.survivor && issueDelegate.survivor.sourceId)
-                                    ? issueDelegate.survivor : issueDelegate.brokenTracks[0];
-                                var label = rep.title + " - " + rep.artist;
-                                if (issueDelegate.brokenTracks.length > 1) {
-                                    label += " (" + issueDelegate.brokenTracks.length + " broken copies)";
-                                }
-                                return label;
-                            }
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
+            contentItem: ColumnLayout {
+                spacing: 2
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    // Fixed-width slot around the badge itself (which
+                    // stays its own natural, compact pill size) rather
+                    // than resizing StatusBadge -- "REPAIRABLE" is
+                    // noticeably wider than "MISSING", so without this
+                    // every row's format-badge/title after it started
+                    // at a different X depending on which kind the row
+                    // was, reading as misaligned down the list.
+                    Item {
+                        Layout.preferredWidth: 96
+                        Layout.preferredHeight: kindBadge.implicitHeight
                         StatusBadge {
-                            visible: issueDelegate.staged
-                            label: "Staged"
-                            badgeColor: Theme.warnText
-                            tooltipText: issueDelegate.stagedDescription + "\n\nNot on the stick yet: press Save."
-                        }
-                        Button {
-                            visible: issueDelegate.staged
-                            text: "Unstage"
-                            enabled: !consistencyController?.busy && !consistencyController?.writing
-                            onClicked: consistencyController?.unstageIssue(issueDelegate.index)
-                        }
-                        Button {
-                            visible: issueDelegate.kind === "repairable" && !issueDelegate.staged
-                            text: "Repair"
-                            enabled: !consistencyController?.busy && !consistencyController?.writing
-                            onClicked: {
-                                confirmRepairOneDialog.pendingIndex = issueDelegate.index;
-                                confirmRepairOneDialog.open();
+                            id: kindBadge
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            label: issueDelegate.kindLabel
+                            badgeColor: issueDelegate.kindColor
+                            tooltipText: {
+                            if (issueDelegate.kind === "repairable") {
+                                var t = "Matches existing copy \"" + issueDelegate.survivor.title + " - "
+                                    + issueDelegate.survivor.artist + "\".";
+                                if (issueDelegate.cueMergeNeeded) {
+                                    t += " Its cues will be merged onto that copy first.";
+                                }
+                                return t;
+                            }
+                            if (issueDelegate.kind === "conflict") {
+                                var brokenSummary = issueDelegate.brokenTracks.length > 0
+                                    ? root.cueSummary(issueDelegate.brokenTracks[0]) : "no cues";
+                                return "Matches existing copy \"" + issueDelegate.survivor.title + " - "
+                                    + issueDelegate.survivor.artist + "\", but they have genuinely different cues: "
+                                    + "kept copy has " + root.cueSummary(issueDelegate.survivor) + "; broken row had "
+                                    + brokenSummary + ". Not auto-repaired: use Resolve above to review and merge "
+                                    + "them manually.";
+                            }
+                            return issueDelegate.format === "onelibrary"
+                                ? "No copy found anywhere in OneLibrary. Re-add via Rekordbox or Engine's own "
+                                  + "software, or delete this orphaned entry."
+                                : "No copy found anywhere in this catalog. Re-add the track via "
+                                  + (issueDelegate.format === "engine" ? "Engine" : "Rekordbox") + "'s own software.";
                             }
                         }
-                        Button {
-                            visible: issueDelegate.kind === "conflict"
-                            text: "Resolve..."
-                            enabled: !consistencyController?.busy && issueDelegate.format !== "onelibrary"
-                            ToolTip.visible: hovered
-                            ToolTip.text: issueDelegate.format === "onelibrary"
-                                ? "Manual merging isn't supported on OneLibrary yet"
-                                : "Review and merge these two tracks manually"
-                            onClicked: conflictResolvePopup.showFor(issueDelegate.format,
-                                root.pathForFormat(issueDelegate.format), issueDelegate.survivor,
-                                issueDelegate.brokenTracks[0])
-                        }
-                        Button {
-                            visible: issueDelegate.kind === "missing" && issueDelegate.format === "onelibrary" && !issueDelegate.staged
-                            text: "Delete Orphaned Entry"
-                            enabled: !consistencyController?.busy && !consistencyController?.writing
-                            onClicked: {
-                                confirmDeleteOrphanDialog.pendingIndex = issueDelegate.index;
-                                confirmDeleteOrphanDialog.open();
-                            }
-                        }
-                        SeabassIcon {
-                            iconName: issueDelegate.expanded ? "arrow-down" : "arrow-right"
-                            size: Theme.iconSizeSmall * 0.75
+                    }
+                    // Plain text, no logo -- same "original mark, not
+                    // a reproduction" convention this app already
+                    // applies to every other catalog badge/glyph.
+                    Rectangle {
+                        radius: 3
+                        color: Theme.groupBackground
+                        border.color: Theme.borderSubtle
+                        implicitWidth: formatLabelText.implicitWidth + 8
+                        implicitHeight: formatLabelText.implicitHeight + 4
+                        Label {
+                            id: formatLabelText
+                            anchors.centerIn: parent
+                            text: root.formatLabel(issueDelegate.format)
+                            font.pointSize: Theme.fontTiny
+                            font.bold: true
                             color: Theme.textMuted
                         }
                     }
-                }
-                }
-
-                // Same detail idiom Sync Cue Points uses for its own
-                // matched pairs: one frame per copy, a waveform with cue
-                // markers (falling back to a plain text summary via
-                // CueFallbackNotice when duration is unknown, e.g. the
-                // "In My Head" survivor whose duration failed to read --
-                // see domain::LibraryConsistencyChecker's own duration-0
-                // handling), and a Play button. Only the survivor is ever
-                // playable here -- every other copy's file is, by
-                // definition, the reason this row exists.
-                Rectangle {
-                    width: parent.width
-                    visible: issueDelegate.expanded
-                    height: issueDelegate.expanded ? detailColumn.implicitHeight + 16 : 0
-                    color: Theme.groupBackground
-                    border.color: Theme.borderSubtle
-                    radius: 4
-
-                    ColumnLayout {
-                        id: detailColumn
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 8
-
-                        // Where the hole is. "This track's file is gone"
-                        // is not the question a DJ has in front of a
-                        // deck; "which set am I about to play with a gap
-                        // in it" is, and the memberships were already
-                        // being read off this very track list to build
-                        // the playlist picker.
-                        //
-                        // Hidden entirely when nothing is known, which is
-                        // an ordinary answer: Track::playlists is
-                        // populated where the reader supports it, and an
-                        // empty list must never be shown as "in no
-                        // playlist".
-                        Label {
-                            objectName: "playlistImpactLabel"
-                            Layout.fillWidth: true
-                            visible: text.length > 0
-                            text: root.playlistsKnown(issueDelegate.brokenTracks, issueDelegate.survivor)
-                                ? root.playlistSentence(issueDelegate.kind, issueDelegate.brokenTracks,
-                                                        issueDelegate.survivor)
-                                : ""
-                            wrapMode: Text.WordWrap
-                            font.pointSize: Theme.fontSmall
-                            color: issueDelegate.kind === "missing" ? Theme.warnText : Theme.textMuted
-                        }
-
-                        Repeater {
-                            model: issueDelegate.detailTracks
-                            delegate: Frame {
-                                id: trackFrame
-                                Layout.fillWidth: true
-                                required property var modelData
-                                required property int index
-                                readonly property bool isSurvivor: index === 0
-                                    && issueDelegate.survivor && issueDelegate.survivor.sourceId === modelData.sourceId
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    spacing: 4
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 8
-                                        // Same 40x40 thumbnail convention Browse Library
-                                        // uses for its own track rows (see ScanPage.qml).
-                                        Rectangle {
-                                            Layout.preferredWidth: Theme.iconSizeNormal
-                                            Layout.preferredHeight: Theme.iconSizeNormal
-                                            color: Theme.surface
-                                            Image {
-                                                anchors.fill: parent
-                                                visible: trackFrame.modelData.artworkPath.length > 0
-                                                source: trackFrame.modelData.artworkPath
-                                                fillMode: Image.PreserveAspectCrop
-                                            }
-                                        }
-                                        Label {
-                                            text: (trackFrame.isSurvivor ? "Kept copy: " : "Broken copy: ")
-                                                + trackFrame.modelData.title + " - " + trackFrame.modelData.artist
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
-                                        Button {
-                                            text: "Play"
-                                            icon.source: Theme.iconUrl("media-playback-start")
-                                            icon.color: enabled ? Theme.text : Theme.textMuted
-                                            enabled: trackFrame.isSurvivor && trackFrame.modelData.filePath.length > 0
-                                            ToolTip.visible: hovered
-                                            ToolTip.text: trackFrame.isSurvivor
-                                                ? "Play this copy of the track"
-                                                : "No local file: this copy's file is missing"
-                                            onClicked: root.playbackController.load(issueDelegate.format,
-                                                root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId,
-                                                trackFrame.modelData.filePath, trackFrame.modelData.title,
-                                                trackFrame.modelData.artist, trackFrame.modelData.artworkPath,
-                                                trackFrame.modelData.cues)
-                                        }
-                                    }
-                                    WaveformView {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 40
-                                        // Best-effort, on demand -- same PlaybackController
-                                        // read Play already uses, only actually returns
-                                        // data when this format's own waveform-overview
-                                        // blob exists for this specific track (empty for
-                                        // a track Engine/rekordbox never analyzed, not a
-                                        // bug, see the class's own read-only contract).
-                                        waveformData: root.playbackController.waveformFor(issueDelegate.format,
-                                            root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
-                                        format: issueDelegate.format
-                                        cueData: modelData.cues
-                                        trackDurationMs: modelData.durationMs
-                                    }
-                                    CueFallbackNotice {
-                                        cues: modelData.cues
-                                        durationMs: modelData.durationMs
-                                    }
-                                }
+                    Label {
+                        // One issue can fold in several broken copies
+                        // of the very same song (see
+                        // domain::LibraryConsistencyChecker::check()'s
+                        // own brokenGroup, one per DuplicateGroup, not
+                        // one per row) -- joining every brokenTracks
+                        // name here would repeat the identical title
+                        // once per copy. Show it once: the survivor's
+                        // identity when there is one (that's the copy
+                        // that's staying), otherwise the first broken
+                        // copy's, with a count appended whenever more
+                        // than one broken row shares this issue.
+                        text: {
+                            var rep = (issueDelegate.survivor && issueDelegate.survivor.sourceId)
+                                ? issueDelegate.survivor : issueDelegate.brokenTracks[0];
+                            var label = rep.title + " - " + rep.artist;
+                            if (issueDelegate.brokenTracks.length > 1) {
+                                label += " (" + issueDelegate.brokenTracks.length + " broken copies)";
                             }
+                            return label;
                         }
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    StatusBadge {
+                        visible: issueDelegate.staged
+                        label: "Staged"
+                        badgeColor: Theme.warnText
+                        tooltipText: issueDelegate.stagedDescription + "\n\nNot on the stick yet: press Save."
+                    }
+                    Button {
+                        visible: issueDelegate.staged
+                        text: "Unstage"
+                        enabled: !consistencyController?.busy && !consistencyController?.writing
+                        onClicked: consistencyController?.unstageIssue(issueDelegate.index)
+                    }
+                    Button {
+                        visible: issueDelegate.kind === "repairable" && !issueDelegate.staged
+                        text: "Repair"
+                        enabled: !consistencyController?.busy && !consistencyController?.writing
+                        onClicked: {
+                            confirmRepairOneDialog.pendingIndex = issueDelegate.index;
+                            confirmRepairOneDialog.open();
+                        }
+                    }
+                    Button {
+                        visible: issueDelegate.kind === "conflict"
+                        text: "Resolve..."
+                        enabled: !consistencyController?.busy && issueDelegate.format !== "onelibrary"
+                        ToolTip.visible: hovered
+                        ToolTip.text: issueDelegate.format === "onelibrary"
+                            ? "Manual merging isn't supported on OneLibrary yet"
+                            : "Review and merge these two tracks manually"
+                        onClicked: conflictResolvePopup.showFor(issueDelegate.format,
+                            root.pathForFormat(issueDelegate.format), issueDelegate.survivor,
+                            issueDelegate.brokenTracks[0])
+                    }
+                    Button {
+                        visible: issueDelegate.kind === "missing" && issueDelegate.format === "onelibrary" && !issueDelegate.staged
+                        text: "Delete Orphaned Entry"
+                        enabled: !consistencyController?.busy && !consistencyController?.writing
+                        onClicked: {
+                            confirmDeleteOrphanDialog.pendingIndex = issueDelegate.index;
+                            confirmDeleteOrphanDialog.open();
+                        }
+                    }
+                    SeabassIcon {
+                        iconName: issueDelegate.expanded ? "arrow-down" : "arrow-right"
+                        size: Theme.iconSizeSmall * 0.75
+                        color: Theme.textMuted
                     }
                 }
             }
+            }
 
-            // The 0:00-memory-cue section lives in the footer rather than
-            // a second ListView/model, still inside this same Flickable's
-            // content flow so it scrolls together with the issue rows
-            // above and shares the one BigScrollBar. A memory cue at
-            // 0:00 doesn't mean the track's file is missing (this check
-            // is entirely independent of the model above), it's almost
-            // always an accidental leftover from analysis or import, see
-            // domain::JunkCueFinder's own doc comment for why hot cues at
-            // 0:00 are deliberately left out of this check.
-            footer: ColumnLayout {
-                id: junkCueFooter
-                width: ListView.view.width
-                // Matches issueListView's own spacing bump above, same
-                // reasoning.
-                spacing: 10
+            // Same detail idiom Sync Cue Points uses for its own
+            // matched pairs: one frame per copy, a waveform with cue
+            // markers (falling back to a plain text summary via
+            // CueFallbackNotice when duration is unknown, e.g. the
+            // "In My Head" survivor whose duration failed to read --
+            // see domain::LibraryConsistencyChecker's own duration-0
+            // handling), and a Play button. Only the survivor is ever
+            // playable here -- every other copy's file is, by
+            // definition, the reason this row exists.
+            Rectangle {
+                width: parent.width
+                visible: issueDelegate.expanded
+                height: issueDelegate.expanded ? detailColumn.implicitHeight + 16 : 0
+                color: Theme.groupBackground
+                border.color: Theme.borderSubtle
+                radius: 4
 
-                Repeater {
-                    id: junkCueRepeater
-                    model: consistencyController?.junkCues
-                    // Was a bare format-badge + title/artist line with no
-                    // way to see or hear the cue in question at all --
-                    // the same shared track delegate the missing-file
-                    // detail view and Sync/Duplicates use elsewhere, so
-                    // this row shows a real waveform with the 0:00 memory
-                    // cue about to be removed, and a Play button that
-                    // simply didn't exist here before.
-                    delegate: ColumnLayout {
-                        id: junkDelegate
+                ColumnLayout {
+                    id: detailColumn
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 8
+
+                    // Where the hole is. "This track's file is gone"
+                    // is not the question a DJ has in front of a
+                    // deck; "which set am I about to play with a gap
+                    // in it" is, and the memberships were already
+                    // being read off this very track list to build
+                    // the playlist picker.
+                    //
+                    // Hidden entirely when nothing is known, which is
+                    // an ordinary answer: Track::playlists is
+                    // populated where the reader supports it, and an
+                    // empty list must never be shown as "in no
+                    // playlist".
+                    Label {
+                        objectName: "playlistImpactLabel"
                         Layout.fillWidth: true
-                        spacing: 4
+                        visible: text.length > 0
+                        text: root.playlistsKnown(issueDelegate.brokenTracks, issueDelegate.survivor)
+                            ? root.playlistSentence(issueDelegate.kind, issueDelegate.brokenTracks,
+                                                    issueDelegate.survivor)
+                            : ""
+                        wrapMode: Text.WordWrap
+                        font.pointSize: Theme.fontSmall
+                        color: issueDelegate.kind === "missing" ? Theme.warnText : Theme.textMuted
+                    }
 
-                        required property int index
-                        required property var track
-                        required property bool staged
-                        required property string reason
-                        required property real positionMs
-
-                        // Why this row is here, in its own words. One
-                        // sentence for the whole section cannot cover
-                        // both a cue at 0:00 and one of three pads
-                        // inside two seconds, and every row here is an
-                        // offer to delete somebody's cue.
-                        Label {
-                            objectName: "junkCueReason"
-                            visible: junkDelegate.reason.length > 0
-                            text: junkDelegate.reason
-                            wrapMode: Text.WordWrap
+                    Repeater {
+                        model: issueDelegate.detailTracks
+                        delegate: Frame {
+                            id: trackFrame
                             Layout.fillWidth: true
-                            font.pointSize: Theme.fontSmall
-                            color: Theme.textMuted
-                        }
+                            required property var modelData
+                            required property int index
+                            readonly property bool isSurvivor: index === 0
+                                && issueDelegate.survivor && issueDelegate.survivor.sourceId === modelData.sourceId
 
-                        TrackWaveformCard {
-                            Layout.fillWidth: true
-                            track: junkDelegate.track
-                            formatLabelText: root.formatLabel(junkDelegate.track.side)
-                            // Highlights the memory cue at 0:00 -- the one
-                            // this row is actually about -- and dims every
-                            // other cue the track happens to have, so it's
-                            // unambiguous which one Remove kills. See
-                            // WaveformView's own doc comment on this
-                            // property.
-                            // The cue this row is about, which is not
-                            // always 0. A clustered hot cue sits a
-                            // second or so in, and highlighting 0:00
-                            // while Remove takes away a cue at 1.188 s
-                            // is the opposite of unambiguous.
-                            highlightCuePositionMs: junkDelegate.positionMs
-                            actionButtonText: junkDelegate.staged ? "Unstage" : "Remove"
-                            actionButtonTooltip: junkDelegate.staged
-                                ? "Staged for removal, not on the stick yet: press Save. Click to take it back out."
-                                : "Stage removing this cue at 0:00 from the track; Save writes it. Backed up first."
-                            actionButtonEnabled: !consistencyController?.busy && !consistencyController?.writing
-                            onActionTriggered: {
-                                if (junkDelegate.staged) {
-                                    consistencyController?.unstageJunkCue(junkDelegate.index);
-                                } else {
-                                    confirmRemoveJunkCueDialog.pendingIndex = junkDelegate.index;
-                                    confirmRemoveJunkCueDialog.open();
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 4
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    // Same 40x40 thumbnail convention Browse Library
+                                    // uses for its own track rows (see ScanPage.qml).
+                                    Rectangle {
+                                        Layout.preferredWidth: Theme.iconSizeNormal
+                                        Layout.preferredHeight: Theme.iconSizeNormal
+                                        color: Theme.surface
+                                        Image {
+                                            anchors.fill: parent
+                                            visible: trackFrame.modelData.artworkPath.length > 0
+                                            source: trackFrame.modelData.artworkPath
+                                            fillMode: Image.PreserveAspectCrop
+                                        }
+                                    }
+                                    Label {
+                                        text: (trackFrame.isSurvivor ? "Kept copy: " : "Broken copy: ")
+                                            + trackFrame.modelData.title + " - " + trackFrame.modelData.artist
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+                                    Button {
+                                        text: "Play"
+                                        icon.source: Theme.iconUrl("media-playback-start")
+                                        icon.color: enabled ? Theme.text : Theme.textMuted
+                                        enabled: trackFrame.isSurvivor && trackFrame.modelData.filePath.length > 0
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: trackFrame.isSurvivor
+                                            ? "Play this copy of the track"
+                                            : "No local file: this copy's file is missing"
+                                        onClicked: root.playbackController.load(issueDelegate.format,
+                                            root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId,
+                                            trackFrame.modelData.filePath, trackFrame.modelData.title,
+                                            trackFrame.modelData.artist, trackFrame.modelData.artworkPath,
+                                            trackFrame.modelData.cues)
+                                    }
                                 }
-                            }
-                            playbackController: root.playbackController
-                            playbackPath: root.pathForFormat(junkDelegate.track.side)
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Item { Layout.fillWidth: true }
-                            Button {
-                                text: "Ignore"
-                                enabled: !consistencyController?.busy
-                                ToolTip.visible: hovered
-                                ToolTip.text: "Dismiss this one, just for this view. Nothing on the stick changes"
-                                onClicked: consistencyController?.ignoreJunkCue(junkDelegate.index)
+                                WaveformView {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 40
+                                    // Best-effort, on demand -- same PlaybackController
+                                    // read Play already uses, only actually returns
+                                    // data when this format's own waveform-overview
+                                    // blob exists for this specific track (empty for
+                                    // a track Engine/rekordbox never analyzed, not a
+                                    // bug, see the class's own read-only contract).
+                                    waveformData: root.playbackController.waveformFor(issueDelegate.format,
+                                        root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
+                                    format: issueDelegate.format
+                                    cueData: modelData.cues
+                                    trackDurationMs: modelData.durationMs
+                                }
+                                CueFallbackNotice {
+                                    cues: modelData.cues
+                                    durationMs: modelData.durationMs
+                                }
                             }
                         }
                     }
                 }
-
             }
         }
-    }
-
-    // A cancelled scan takes the user back to where they came from.
-    Connections {
-        target: consistencyController
-        function onScanCancelled() { root.StackView.view.pop(); }
-    }
-
-    BusyOverlay {
-        anchors.fill: parent
-        busy: consistencyController?.busy ?? false
-        current: consistencyController?.scanCurrent ?? 0
-        total: consistencyController?.scanTotal ?? 0
-        label: (consistencyController?.scanningFormat.length > 0
-                ? "Scanning " + root.formatLabel(consistencyController?.scanningFormat) + "..." : "Scanning...")
-        cancellable: consistencyController?.scanCancellable ?? false
-        onCancelRequested: consistencyController?.cancelScan()
     }
 }
