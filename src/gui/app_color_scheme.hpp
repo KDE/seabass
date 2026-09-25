@@ -80,7 +80,7 @@ public:
 // writes Kelp as a scheme file into `directory` and points that property
 // at it, so the style's own ink, grounds and buttons are Kelp's too.
 // The Windows build does the same job with styleHints()->setColorScheme
-// in main.cpp; this is its Linux counterpart.
+// (gui/style_color_scheme.hpp); this is its Linux counterpart.
 //
 // Live, not only at startup: Preferences flips useSystemTheme while the
 // app runs, and Theme repaints at once. With useSystemTheme on, this

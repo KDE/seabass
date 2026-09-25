@@ -218,6 +218,8 @@ set(SEABASS_GUI_SOURCES
     app_settings_controller.cpp
     app_color_scheme.hpp
     app_color_scheme.cpp
+    style_color_scheme.hpp
+    style_color_scheme.cpp
     controls_style.hpp
     controls_style.cpp
     interface_font.hpp

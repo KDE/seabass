@@ -8,10 +8,10 @@
 #include <QQuickWindow>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QStyleHints>
 #include <QThreadPool>
 
 #include "gui/app_color_scheme.hpp"
+#include "gui/style_color_scheme.hpp"
 #include "gui/controls_style.hpp"
 #include "gui/interface_font.hpp"
 #include "gui/seabass_settings.hpp"
@@ -172,7 +172,6 @@ int main(int argc, char **argv)
     // a real family where it did not.
     app.setFont(seabass::gui::interfaceFont());
 
-#ifdef Q_OS_WIN
     // FluentWinUI3 (opted into above) draws native Windows 11 controls and
     // deliberately ignores the Material attached properties, so Main.qml's
     // `Material.theme: ... : Material.Dark` -- the binding that gives the
@@ -183,19 +182,12 @@ int main(int argc, char **argv)
     //
     // Qt 6.8+ exposes the colour scheme as a settable style hint, which is
     // what makes a native-looking style honour the app's own preference
-    // rather than the OS setting. Only forced when useSystemTheme is off:
-    // leaving it unset (Qt::ColorScheme::Unknown) is exactly what "follow
-    // the system" means, so the true branch needs no code.
-    //
-    // Read once at startup, deliberately matching the palette env vars
-    // above -- toggling this in Settings needs an app restart to take
-    // effect here. Doing it live would mean reaching a C++ hook out of
-    // AppSettingsController, which is a QML_ELEMENT instantiated by
-    // Main.qml rather than something main() holds a handle to.
-    if (!useSystemTheme) {
-        app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
-    }
-#endif
+    // rather than the OS setting: Dark while Kelp is in force, Unknown
+    // ("follow the system") under Match System Theme. Not only here:
+    // AppSettingsController makes the same call when Preferences flips the
+    // setting, so the controls change with Theme rather than at the next
+    // start. Windows only; see gui/style_color_scheme.hpp.
+    seabass::gui::applyStyleColorScheme(useSystemTheme);
 
 #if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS)
     // The Linux counterpart of the colour-scheme hint above: KDE's style
