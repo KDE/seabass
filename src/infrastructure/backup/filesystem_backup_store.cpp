@@ -120,15 +120,32 @@ struct Manifest
     int version = 0;
     std::vector<std::pair<std::string, std::string>> entries;
     std::optional<BackupOrigin> origin;
+    // False when the manifest is there and could not be read to its end.
+    // Everything above is then a guess, the origin worst of all: with no
+    // ORIGIN line it reads as Automatic, which is what prune() and
+    // releaseAutomaticBackups() delete.
+    bool readable = true;
 };
 
 // A manifest with no version line is not one of ours: version stays 0 and
 // restore() refuses it.
+//
+// What sits at the path has to be a regular file before a stream is
+// asked: libc++ (macOS) opens a directory and then reports its failed
+// read as an ordinary end of file, and a stream cannot say otherwise
+// afterwards. A stream that stopped short of its end, or broke, is
+// unreadable too.
 Manifest readManifest(const fs::path &dir)
 {
     Manifest manifest;
+    std::error_code ec;
+    if (!fs::is_regular_file(dir / ManifestFileName, ec)) {
+        manifest.readable = false;
+        return manifest;
+    }
     std::ifstream in(dir / ManifestFileName);
     if (!in.is_open()) {
+        manifest.readable = false;
         return manifest;
     }
     std::string line;
@@ -147,6 +164,7 @@ Manifest readManifest(const fs::path &dir)
             manifest.entries.emplace_back(std::move(key), std::move(value));
         }
     }
+    manifest.readable = !in.bad() && (!in.fail() || in.eof());
     return manifest;
 }
 
@@ -681,6 +699,16 @@ std::vector<BackupRecord> FilesystemBackupStore::list()
         record.description = readWholeFile(entry.path() / DescriptionFileName);
         record.sizeBytes = directorySize(entry.path());
         const Manifest manifest = readManifest(entry.path());
+        // A manifest that is there and cannot be read says nothing about
+        // whose record this is. Listed, it would count as Automatic and be
+        // among the first things prune() and releaseAutomaticBackups()
+        // delete, a backup the user made included. Left out it is never
+        // chosen for deletion, and sweepDeadRecords() leaves it alone
+        // too, since its manifest is there; restore() refuses it either
+        // way, so a listed entry would offer nothing it could do.
+        if (!manifest.readable) {
+            continue;
+        }
         record.origin = manifest.origin.value_or(BackupOrigin::Automatic);
         for (const auto &[onDisk, originalPath] : manifest.entries) {
             record.filePaths.push_back(pathToUtf8(resolveRecordedPath(originalPath)));

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <istream>
 #include <set>
 #include <string>
 #include <vector>
@@ -88,6 +89,12 @@ public:
     // the list being complete (the stray-file scan, which offers what is
     // not on it) asks here rather than through list().
     [[nodiscard]] bool readAll(std::vector<PendingDeletion> &entries) const;
+
+    // readAll()'s parse and its verdict on the stream, apart from the
+    // file: false when the stream stopped anywhere but a clean end.
+    // Separate so that verdict can be tested with a stream that fails on
+    // read, which a file on this machine's filesystem may not produce.
+    [[nodiscard]] static bool readFrom(std::istream &in, std::vector<PendingDeletion> &entries);
 
 private:
     // Replaces the whole file, durably and atomically. False means the

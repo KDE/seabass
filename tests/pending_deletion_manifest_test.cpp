@@ -7,8 +7,11 @@
 #include <filesystem>
 #include <iostream>
 #include <iterator>
+#include <sstream>
+#include <streambuf>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #if !defined(_WIN32)
 #include <unistd.h>
@@ -21,6 +24,31 @@
 
 using namespace seabass::infrastructure::cleanup;
 namespace fs = std::filesystem;
+
+namespace
+{
+
+// Hands out `good` and then fails the read the way a dying medium does:
+// the filebuf gives up, and istream turns that into badbit.
+class BreaksAfter : public std::streambuf
+{
+public:
+    explicit BreaksAfter(std::string good) : m_good(std::move(good))
+    {
+        setg(m_good.data(), m_good.data(), m_good.data() + m_good.size());
+    }
+
+protected:
+    int_type underflow() override
+    {
+        throw std::runtime_error("read failed");
+    }
+
+private:
+    std::string m_good;
+};
+
+}  // namespace
 
 int main()
 {
@@ -263,6 +291,66 @@ int main()
         std::cout << "case 7 (a manifest that cannot be read is not an empty one) OK\n";
     }
 #endif
+
+    // Something at the manifest path that opens and reads as empty, but
+    // is not a list file. macOS does this with a directory: libc++ opens
+    // it and reports its EISDIR read as an ordinary end of file, so the
+    // stream looks exactly like a clean empty file's (round 9 on the Mac,
+    // stray_file_scan_test case 8). libstdc++ refuses a directory at
+    // open, so the same shape is made here with a character device,
+    // which every platform's stream opens and reads as empty. Either
+    // way it is not a list that says "nothing pending".
+    {
+        const fs::path deviceManifest = root / "device-pending.jsonl";
+        const fs::path directoryManifest = root / "directory-pending.jsonl";
+        fs::create_directories(directoryManifest);
+        std::vector<PendingDeletion> entries;
+        assert(!PendingDeletionManifest(seabass::pathToUtf8(directoryManifest)).readAll(entries)
+               && "a directory at the manifest path is not an empty list");
+#if !defined(_WIN32)
+        fs::create_symlink("/dev/null", deviceManifest);
+        {
+            std::ifstream opens(deviceManifest);
+            assert(opens.is_open() && "the precondition: this path opens like a file");
+        }
+        entries.clear();
+        assert(!PendingDeletionManifest(seabass::pathToUtf8(deviceManifest)).readAll(entries)
+               && "a path that opens and reads empty but is no regular file is not an empty list");
+        assert(entries.empty());
+        PendingDeletionManifest onDevice(seabass::pathToUtf8(deviceManifest));
+        assert(!onDevice.removeProcessed({"/Volumes/STICK/Contents/gone.mp3"})
+               && "and no rewrite takes it for a list with nothing to remove");
+        fs::remove(deviceManifest);
+#endif
+        fs::remove_all(directoryManifest);
+        std::cout << "case 8 (a manifest path that is not a regular file is unreadable, not empty) OK\n";
+    }
+
+    // The verdict on the stream itself, apart from any file. A read that
+    // breaks part-way hands back a prefix and must say so; a stream that
+    // stopped without reaching the end is not a finished one; a stream
+    // that ran to its end is.
+    {
+        const std::string twoLines = "{\"filePath\":\"/a.mp3\"}\n{\"filePath\":\"/b.mp3\"}\n";
+        std::vector<PendingDeletion> entries;
+        std::istringstream clean(twoLines);
+        assert(PendingDeletionManifest::readFrom(clean, entries) && "a stream read to its end is complete");
+        assert(entries.size() == 2);
+
+        entries.clear();
+        BreaksAfter breaking(twoLines);
+        std::istream broken(&breaking);
+        assert(!PendingDeletionManifest::readFrom(broken, entries) && "a read that broke is not a complete list");
+        assert(entries.size() == 2 && "(the prefix it did read is still handed back)");
+
+        entries.clear();
+        std::istringstream stopped(twoLines);
+        stopped.setstate(std::ios::failbit);
+        assert(!PendingDeletionManifest::readFrom(stopped, entries)
+               && "a stream that failed short of its end is not an empty list");
+        assert(entries.empty());
+        std::cout << "case 9 (the stream verdict: broken or stopped short is unreadable) OK\n";
+    }
 
     std::cout << "all cases passed\n";
     return 0;
