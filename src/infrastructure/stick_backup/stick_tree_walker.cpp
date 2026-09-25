@@ -85,14 +85,9 @@ fs::file_time_type fromUnixSeconds(std::int64_t secondsSinceEpoch)
     return toFileClock(sys);
 }
 
-std::string pathToUtf8(const fs::path &path)
+std::string archiveNameOf(const fs::path &path)
 {
     return seabass::pathToGenericUtf8(path);
-}
-
-fs::path pathFromUtf8(std::string_view utf8)
-{
-    return seabass::pathFromUtf8(utf8);
 }
 
 TreeWalk walkStickTree(const fs::path &root, application::CancellationToken cancel)
@@ -158,7 +153,7 @@ TreeWalk walkStickTree(const fs::path &root, application::CancellationToken canc
         // prefix -- it is only directory listing that does not, which is
         // what DirectoryReader is for.
         const fs::path full = longPathSafe(childPath);
-        const std::string relative = prefix + pathToUtf8(childPath.filename());
+        const std::string relative = prefix + archiveNameOf(childPath.filename());
 
         std::error_code statusEc;
         fs::file_status linkStatus = fs::symlink_status(full, statusEc);

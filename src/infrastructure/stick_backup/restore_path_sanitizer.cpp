@@ -9,6 +9,7 @@
 #include <cctype>
 #include <vector>
 
+#include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 namespace seabass::infrastructure::stick_backup
@@ -110,7 +111,7 @@ std::optional<std::filesystem::path> sanitizeEntryName(std::string_view entryNam
         if (!checkSegment(segment, os, reason)) {
             return std::nullopt;
         }
-        result /= pathFromUtf8(segment);
+        result /= seabass::pathFromUtf8(segment);
         if (slash == std::string_view::npos) {
             break;
         }

@@ -48,16 +48,15 @@ TreeWalk walkStickTree(const std::filesystem::path &root, application::Cancellat
 std::int64_t toUnixSeconds(std::filesystem::file_time_type time);
 std::filesystem::file_time_type fromUnixSeconds(std::int64_t seconds);
 
-// Archive names are UTF-8 with forward slashes on every platform. These
-// are the names this namespace has always used for what is now
-// seabass::pathToGenericUtf8 and seabass::pathFromUtf8
-// (src/infrastructure/paths/utf8_path.hpp), kept so an archive key is
-// still spelled the same everywhere it is built. pathToUtf8 here is the
-// generic form on purpose: its callers build archive entries and
-// manifest keys, never something an OS call takes back. A translation
-// unit that also sees the seabass:: ones through a using-directive has
-// to qualify, or use pathToGenericUtf8.
-std::string pathToUtf8(const std::filesystem::path &path);
-std::filesystem::path pathFromUtf8(std::string_view utf8);
+// A path as an archive entry name or a manifest key: UTF-8 with forward
+// slashes on every platform, so a key written on Windows matches one
+// read on a Mac. This is the one definition of that spelling; every
+// archive entry and every manifest key goes through it. It is
+// deliberately not called pathToUtf8: that name, tree-wide, means the
+// native form (src/infrastructure/paths/utf8_path.hpp), and a same-named
+// function that answered with slashes would hide it inside this
+// namespace. The way back is seabass::pathFromUtf8, which reads either
+// separator.
+std::string archiveNameOf(const std::filesystem::path &path);
 
 }  // namespace seabass::infrastructure::stick_backup

@@ -142,10 +142,10 @@ void BackupAdvisorController::startNext()
             }
         }
         if (facts.hasLibrary) {
-            databasePaths.insert(stick_backup::pathToUtf8(infrastructure::engine::engineMainDatabasePath(fs::path())));
+            databasePaths.insert(stick_backup::archiveNameOf(infrastructure::engine::engineMainDatabasePath(fs::path())));
         }
         for (const std::string &path : databasePaths) {
-            if (const auto fingerprint = stick_backup::fingerprintDbSet(root / stick_backup::pathFromUtf8(path))) {
+            if (const auto fingerprint = stick_backup::fingerprintDbSet(root / pathFromUtf8(path))) {
                 facts.databaseFingerprints[path] = fingerprint->toHex();
             }
         }

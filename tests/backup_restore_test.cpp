@@ -34,6 +34,7 @@
 
 using namespace seabass::application;
 using namespace seabass::infrastructure::stick_backup;
+using seabass::pathFromUtf8;
 using seabass::infrastructure::hashing::Sha256;
 using seabass::infrastructure::removeTreeDeepestFirst;
 namespace fs = std::filesystem;
