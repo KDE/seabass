@@ -231,6 +231,21 @@ tools/macos-universal-dmg.sh \
 tools/macos-verify-dmg.sh seabass-<version>_<channel>_macos.dmg <stick or folder>
 ```
 
+The Linux AppImage has its own proof, in a container with no SQLCipher or
+SQLite of its own, so a copy on this machine cannot stand in for a missing
+bundle:
+
+```sh
+tools/linux-verify-appimage.sh seabass-<version>_<channel>_linux.AppImage
+```
+
+It reads the encrypted OneLibrary fixture and compares the digest, checks
+that libsqlcipher came from inside the AppImage, deletes the bundled copy
+to show the read then fails for that reason, and checks the runtime needs
+no libfuse2. The first AppImage CI ever built failed it: SQLCipher's own
+`sqlite3_*` calls bound to the plain SQLite also loaded, and the first
+encrypted library crashed (fixed by `RTLD_DEEPBIND` in `sqlcipher_dyn.cpp`).
+
 Three things the merge is not allowed to get wrong, each of which it
 checks rather than assumes:
 
