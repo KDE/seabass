@@ -800,26 +800,17 @@ Page {
             visible: !root.restoring
             spacing: Theme.rowSpacing
             Item { Layout.fillWidth: true }
-            // Back to the form, as it was: to pick another backup or drive
-            // and try again. Named for that when there is a report to
-            // dismiss; beside "Done" a plain "Close" did not say which
-            // of the two leaves the page. A restore that stopped without
-            // a report has nothing to go back from, so there it stays
-            // "Close".
+            // One way out, and it is the one a full backup ends with too:
+            // back to the form, as it was, to pick another backup or drive
+            // or leave. StickBackupPage finishes in place and leaves the
+            // way back to the header's breadcrumb; this does the same. A
+            // "Done" beside it that popped the page was a second answer
+            // to the same question, and the two read as synonyms.
             Button {
                 objectName: "closeReportButton"
-                text: root.hasResult ? "Restore Another" : "Close"
-                flat: true
-                onClicked: root.reportDismissed = true
-            }
-            // Where the restore was asked for -- Home or the stick's
-            // Backups page -- which reassesses the stick on its way in.
-            Button {
-                objectName: "doneButton"
-                visible: root.hasResult
-                text: "Done"
+                text: "Close"
                 highlighted: true
-                onClicked: root.StackView.view ? root.StackView.view.pop() : (root.reportDismissed = true)
+                onClicked: root.reportDismissed = true
             }
         }
     }

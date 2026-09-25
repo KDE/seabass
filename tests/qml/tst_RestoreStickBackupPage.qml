@@ -375,7 +375,6 @@ TestCase {
         compare(findChild(overlay, "cancelRestoreButton").visible, true);
         // No way out of the overlay while it writes, other than Cancel.
         compare(findChild(overlay, "closeReportButton").visible, false);
-        compare(findChild(overlay, "doneButton").visible, false);
         // The card sits inside the window, whatever the page scrolled to.
         var card = findChild(overlay, "transferOverlayCard");
         var topLeft = card.mapToItem(page, 0, 0);
@@ -397,7 +396,7 @@ TestCase {
         compare(overlay.visible, true);
         compare(overlay.title, "Restore finished");
         verify(findChild(overlay, "restoreResultFrame") !== null);
-        compare(findChild(overlay, "doneButton").visible, true);
+        compare(findChild(overlay, "closeReportButton").visible, true);
         findChild(overlay, "closeReportButton").clicked();
         compare(overlay.visible, false);
     }
@@ -412,7 +411,6 @@ TestCase {
         compare(overlay.visible, true);
         compare(overlay.title, "Restore stopped");
         compare(findChild(overlay, "restoreFailedLabel").text, "The drive was removed.");
-        compare(findChild(overlay, "doneButton").visible, false);
         findChild(overlay, "closeReportButton").clicked();
         compare(overlay.visible, false);
     }
@@ -547,6 +545,42 @@ TestCase {
         verify(summary !== null && summary.visible);
         verify(summary.text.indexOf("Old Stick 2025.zip") === 0, summary.text);
         compare(summary.font.family, Theme.dataFamily);
+    }
+
+    // A finished restore has one way off its overlay, not two that read as
+    // synonyms ("Close" beside "Done"). Counted over every visible button
+    // on the overlay outside the report itself (whose Start Over, Show
+    // details and Check Library Health are about the report).
+    function test_aFinishedRestoreOffersOneWayOut() {
+        const page = makePage([makeDisk({})], {
+            result: {filesWritten: 14, filesUnchanged: 1147, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
+                     writeErrors: [], warnings: [], missingTracks: [], databaseChecked: true},
+            statusMessage: "Restored 14 files.",
+        });
+        const overlay = findChild(page, "restoreOverlay");
+        compare(overlay.visible, true);
+        const report = findChild(overlay, "restoreResultFrame");
+        function insideReport(item) {
+            for (let p = item; p; p = p.parent) {
+                if (p === report) return true;
+            }
+            return false;
+        }
+        const buttons = [];
+        function collect(item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i];
+                if (child instanceof Button && child.visible && !insideReport(child)) {
+                    buttons.push(child);
+                }
+                collect(child);
+            }
+        }
+        collect(overlay);
+        compare(buttons.length, 1, buttons.map(function(b) { return b.text; }).join(", "));
+        compare(buttons[0].objectName, "closeReportButton");
+        buttons[0].clicked();
+        compare(overlay.visible, false);
     }
 
     // The stick list hands over a device path for a stick it could not
