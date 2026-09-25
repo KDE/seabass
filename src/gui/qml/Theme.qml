@@ -60,6 +60,10 @@ QtObject {
     // Our own brand colors ("Current"/"Abyss") -- deliberately fixed
     // regardless of useSystemTheme, unlike the structural colors above.
     readonly property color accent: kelpAccent
+    // Ink for text and marks drawn ON the accent (a selection, a highlighted
+    // menu entry, a check mark). The accent is a light blue, so near-white
+    // ink on it reads at 2.4:1; this dark ink reads at 6.8:1.
+    readonly property color accentInk: "#0b1f2a"
     readonly property color primary: kelpPrimary
 
     // Interactive/row-shading states -- always a solid, opaque blend of
