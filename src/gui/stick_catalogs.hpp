@@ -89,6 +89,13 @@ std::int64_t catalogsLastModified(const std::string &libraryPath);
 // path for ITS OWN format. Handing an Engine reader the PIONEER folder
 // points it at a database that is not there. Same derivation
 // readAllStickCatalogs() uses to find the catalogs in the first place.
+//
+// Forward slashes on every platform (pathToGenericUtf8), not the native
+// form: every caller turns the answer into a QString, and a QString path
+// is forward-slash everywhere (gui/qt_path.hpp). It reaches a
+// RestoreMetadataChange, a waveform read and the keys they are looked up
+// by, and "E:\\Music\\PIONEER" beside the page's "E:/Music/PIONEER" is
+// two spellings of one catalog.
 std::string catalogPathForFormat(const std::string &libraryPath, const std::string &format);
 
 

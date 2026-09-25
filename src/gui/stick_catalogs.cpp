@@ -59,12 +59,14 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
 std::string catalogPathForFormat(const std::string &libraryPath, const std::string &format)
 {
     const fs::path stickRoot = pathFromUtf8(libraryPath).parent_path();
+    // Generic, not native: see the header. Every caller makes a QString
+    // of this.
     if (format == "engine") {
-        return pathToUtf8(infrastructure::engine::engineLibraryPath(stickRoot));
+        return pathToGenericUtf8(infrastructure::engine::engineLibraryPath(stickRoot));
     }
     // rekordbox and onelibrary are two formats of one library, both
     // under PIONEER.
-    return pathToUtf8(stickRoot / "PIONEER");
+    return pathToGenericUtf8(stickRoot / "PIONEER");
 }
 
 std::int64_t catalogsLastModified(const std::string &libraryPath)

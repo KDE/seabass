@@ -19,6 +19,7 @@
 #include "gui/future_result.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 
@@ -33,7 +34,7 @@ namespace
 
 QString catalogPathForFormat(const QString &libraryPath, const std::string &format)
 {
-    return QString::fromStdString(gui::catalogPathForFormat(libraryPath.toStdString(), format));
+    return qtPathFromUtf8(gui::catalogPathForFormat(libraryPath.toStdString(), format));
 }
 
 // Runs entirely on a background thread -- no access to the controller.
