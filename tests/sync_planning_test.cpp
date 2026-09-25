@@ -409,6 +409,22 @@ int main()
         std::cout << "case (a colour difference is not a disagreement) OK\n";
     }
 
+    // Nor is a colour on one side only: rekordbox colours hot cue 1, the
+    // OneLibrary export left it bare. Colour is decoration, so the pair is
+    // consistent, not a plan and not a choice. This listed whole libraries
+    // as conflicts on Sync Cue Points.
+    {
+        SyncMatch m{makeTrack("r1", "song.mp3", 200.0,
+                              {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", ""}}),
+                    makeTrack("e1", "song.mp3", 200.0,
+                              {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", ""}})};
+        auto plan = SyncPlanner::plan(m, now, now);
+        assert(plan.kind == SyncPlan::Kind::AlreadyConsistent);
+        assert(plan.direction == SyncPlan::Direction::None);
+        assert(!plan.hotCuesNeedChoice);
+        std::cout << "case (a colour on one side only is not a disagreement either) OK\n";
+    }
+
     // But it is not thrown away either. A cue written onto a side that
     // already had a colour for it keeps that colour: the format the cue
     // came from may simply have no way to say (an Engine memory cue never

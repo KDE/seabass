@@ -215,28 +215,21 @@ bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b
         // a label permanently reappear as "needs sync" after a ToRekordbox
         // apply, since no writer could ever make the comment fields agree.
         //
-        // Two shades of the same cue are the same cue. Comparing color
-        // outright made a cue in the right slot at the right position,
-        // differing only in shade, count as a set that disagrees: a
-        // conflict to resolve, an offer to write, a row that never
-        // settled. Color is extra information about a cue, not what the
-        // cue IS.
+        // Colour takes no part, in any form. It is decoration, and every
+        // player keeps and draws it its own way: a shade, a palette index,
+        // or none at all, as on Engine's main cue. What makes two cues the
+        // same cue is the slot, the kind and the position.
         //
-        // One shade is different in kind from the others, though, and
-        // that is no shade at all. A side with no color for a hot cue is
-        // a side that has not been told one, so the two sets are not
-        // equal and the sync that follows carries the color across. Two
-        // real colors that disagree is a DJ recoloring on one side, and
-        // it stays where it was put rather than starting an argument
-        // nothing can settle.
+        // Comparing it made a cue in the right slot at the right place a
+        // disagreement: a conflict to resolve, an offer to write, a row
+        // that never settled. That included a colour on one side and none
+        // on the other, which listed whole libraries (every hot cue a
+        // OneLibrary export left bare) on Sync Cue Points as conflicts.
         //
-        // Memory cues are exempt from even that: Engine's single main cue
-        // has no color at all, so "one side has none" is its permanent
-        // state and would be a mismatch that no writer could ever fix.
+        // Colours are still carried, just never compared: a cue written
+        // for any other reason keeps or takes its colour
+        // (keepExistingColours, and RekordboxCueWriter encoding a new one).
         if (x.kind != y.kind || x.hotCueNumber != y.hotCueNumber) {
-            return false;
-        }
-        if (x.kind == CuePoint::Kind::Hot && x.color.empty() != y.color.empty()) {
             return false;
         }
         if (std::abs(x.positionMs - y.positionMs) > PositionToleranceMs) {

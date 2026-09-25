@@ -67,9 +67,12 @@ int main()
         assert(!cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Memory, 1, 1000.0, "#FF0000", "drop"}}));
         assert(!cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 2, 1000.0, "#FF0000", "drop"}}));
         assert(cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#00FF00", "drop"}}));
-        // Except no colour at all, which is not a shade but a side that
-        // has not been told one: unequal, so the sync carries it across.
-        assert(!cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", "drop"}}));
+        // No colour at all is no different: colour is decoration, kept by
+        // each player its own way, and a hot cue coloured on one side and
+        // bare on the other is the same cue. (It once counted, and listed
+        // every hot cue a OneLibrary export left bare as a conflict.)
+        assert(cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", "drop"}}));
+        assert(cueSetsEqual({CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "", "drop"}}, {base}) && "either way round");
         assert(cueSetsEqual({base}, {CuePoint{CuePoint::Kind::Hot, 1, 1000.0, "#FF0000", "break"}}));
 
         CuePoint memoryBase{CuePoint::Kind::Memory, 0, 7000.0, "#FF0000", ""};
