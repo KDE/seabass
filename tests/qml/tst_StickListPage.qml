@@ -856,4 +856,91 @@ TestCase {
         id: spyComponent
         SignalSpy {}
     }
+
+    // What StickListPage reads on the real UpdateChecker.
+    function fakeUpdateChecker(overrides) {
+        const c = {
+            updateAvailable: false, runningWithdrawn: false, runningWithdrawnReason: "",
+            latestVersion: "", latestChannel: "", latestNote: "", latestNoteLevel: "",
+            currentVersion: "0.7.9", currentChannel: "alpha", currentCommit: "",
+            downloadPage: "https://vizzzion.org/seabass/get-it.html", message: "",
+        };
+        for (const key in (overrides || {})) {
+            c[key] = overrides[key];
+        }
+        return c;
+    }
+
+    function test_theBannerTakesNoRoomWhileThereIsNothingToSay() {
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker()});
+        const banner = findByName(page, "updateBanner");
+        verify(banner !== null, "the banner must exist on the page");
+        verify(!banner.visible, "nothing new, nothing withdrawn: no banner");
+        compare(banner.implicitHeight, 0, "an invisible banner must not hold its space in the column");
+        // And with no checker at all (a page built without one).
+        const bare = makePage([], {});
+        verify(!findByName(bare, "updateBanner").visible);
+    }
+
+    function test_aNewReleaseIsAnnouncedUnderTheTitle() {
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({
+            updateAvailable: true, latestVersion: "0.8.0", latestChannel: "stable",
+            latestNote: "Important: this version fixes a bug that could lose hot cues.", latestNoteLevel: "warning",
+        })});
+        const banner = findByName(page, "updateBanner");
+        verify(banner.visible, "a newer release shows the banner");
+        const title = findByName(page, "updateBannerTitle");
+        const note = findByName(page, "updateBannerNote");
+        const link = findByName(page, "updateBannerLink");
+        compare(title.text, "Seabass 0.8.0 has been released!");
+        verify(note.visible, "the website's note is shown");
+        compare(note.text, "Important: this version fixes a bug that could lose hot cues.");
+        verify(link.text.indexOf("Download the new version from ") === 0, "link line: " + link.text);
+        verify(link.text.indexOf("<a href=\"https://vizzzion.org/seabass/get-it.html\">vizzzion.org/seabass</a>") > 0,
+               "the website is a link to the download page: " + link.text);
+        // Below the title row, above the rest of the page.
+        const name = findByName(page, "brandName");
+        const namePos = name.mapToItem(page, 0, name.height);
+        const bannerPos = banner.mapToItem(page, 0, 0);
+        verify(bannerPos.y >= namePos.y, "the banner sits under the title, not beside it");
+        const list = findByName(page, "stickList");
+        verify(list.mapToItem(page, 0, 0).y >= bannerPos.y + banner.height, "the stick list follows the banner");
+        // The green of "good news", not the danger colours.
+        compare(banner.border.color, Theme.good);
+        saveScreenshot(page, "sticklist-update-banner");
+    }
+
+    function test_theBannerLeavesOutTheNoteWhenThereIsNone() {
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({
+            updateAvailable: true, latestVersion: "0.7.10", latestChannel: "alpha",
+        })});
+        const note = findByName(page, "updateBannerNote");
+        verify(!note.visible, "no note, no empty line for one");
+        compare(findByName(page, "updateBannerTitle").text, "Seabass 0.7.10 has been released!");
+    }
+
+    function test_aWithdrawnBuildGetsTheLouderBanner() {
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({
+            runningWithdrawn: true, runningWithdrawnReason: "Cue sync could drop memory cues.",
+        })});
+        const banner = findByName(page, "updateBanner");
+        verify(banner.visible);
+        compare(banner.border.color, Theme.dangerBorder);
+        compare(findByName(page, "updateBannerTitle").text, "Seabass 0.7.9 has been withdrawn.");
+        compare(findByName(page, "updateBannerNote").text, "Cue sync could drop memory cues.");
+        verify(findByName(page, "updateBannerLink").text.indexOf("There is no newer release yet.") === 0);
+    }
+
+    function test_theNoteCannotInjectMarkup() {
+        // The note is the website's text inside a StyledText label. It
+        // is ours, but a stray angle bracket must still read as one.
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({
+            updateAvailable: true, latestVersion: "0.8.0", latestChannel: "stable",
+            latestNote: "Fixes cues < 1 s & loops.",
+        })});
+        const note = findByName(page, "updateBannerNote");
+        compare(note.text, "Fixes cues < 1 s & loops.");
+        compare(note.textFormat, Text.PlainText, "the note is plain text, so the website cannot format the home page");
+    }
+
 }

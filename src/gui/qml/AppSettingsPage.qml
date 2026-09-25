@@ -21,6 +21,26 @@ Page {
     // pixel count that only looks right at today's default font size.
     readonly property real settingIndent: Theme.scaled(20)
 
+    // What the ten taps on the version line did. The checkbox it talks
+    // about has just appeared below.
+    Dialog {
+        id: testingRevealedDialog
+        objectName: "testingRevealedDialog"
+        anchors.centerIn: Overlay.overlay
+        // Explicit, for the reason StickListPage's dialogs give: content
+        // sized from the dialog must not size the dialog.
+        width: 460
+        modal: true
+        title: "Alpha and beta versions"
+        standardButtons: Dialog.Ok
+        Label {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Seabass will now also tell you about alpha and beta versions. "
+                + "A checkbox in the Updates section lets you turn that off again."
+        }
+    }
+
     signal anonymizeLibraryRequested()
 
     // A named group of settings: "Appearance", "Music", "Data
@@ -463,6 +483,7 @@ Page {
 
                 Subtitle { text: "This version" }
                 Label {
+                    objectName: "currentVersionLabel"
                     Layout.leftMargin: root.settingIndent
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
@@ -472,6 +493,18 @@ Page {
                           + " (" + root.updateChecker.currentChannel + ")"
                           + (root.updateChecker.currentCommit.length > 0
                              ? ", built from " + root.updateChecker.currentCommit : "")
+                    // The hidden way in for people who know: ten taps here
+                    // within five seconds and Seabass starts telling them
+                    // about alphas and betas too. Nothing on the screen
+                    // says so, on purpose (UpdateChecker::versionTapped).
+                    TapHandler {
+                        enabled: root.updateChecker !== null
+                        onTapped: {
+                            if (root.updateChecker.versionTapped()) {
+                                testingRevealedDialog.open();
+                            }
+                        }
+                    }
                 }
 
                 CheckBox {
@@ -494,6 +527,25 @@ Page {
                     font.pointSize: Theme.fontSmall
                     text: "It downloads one small file from vizzzion.org and compares version "
                         + "numbers here. No account, no identifier, nothing about your library."
+                }
+
+                // Which releases count. A stable Seabass hears about stable
+                // releases only, unless this is on. Not shown until it has
+                // been switched on once, by running an alpha or beta or by
+                // the tap sequence above; from then on it stays, so it can
+                // be switched off again (see UpdateChecker::includeTesting).
+                CheckBox {
+                    Layout.leftMargin: root.settingIndent
+                    objectName: "includeTestingUpdates"
+                    visible: root.updateChecker !== null && root.updateChecker.testingOptionRevealed
+                    text: "Also tell me about alpha and beta versions"
+                    enabled: root.updateChecker !== null && !root.updateChecker.runningPreRelease
+                    checked: root.updateChecker !== null && root.updateChecker.includeTesting
+                    onToggled: root.updateChecker.includeTesting = checked
+                    ToolTip.visible: hovered
+                    ToolTip.text: root.updateChecker !== null && root.updateChecker.runningPreRelease
+                        ? "This is a " + root.updateChecker.currentChannel + " version, so it hears about every release."
+                        : "Off, a stable Seabass hears about stable releases only."
                 }
 
                 RowLayout {

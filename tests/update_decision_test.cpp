@@ -84,6 +84,88 @@ private Q_SLOTS:
         }
     }
 
+    void aTestBuildTakesTheNextTestBuild()
+    {
+        const QVector<ReleaseInfo> feed{make(QStringLiteral("0.8.0"), QStringLiteral("stable")),
+                                        make(QStringLiteral("0.8.9"), QStringLiteral("testing"), false,
+                                             QStringLiteral("alpha"))};
+        // A beta is offered the next alpha: the number decides.
+        const auto update = chooseUpdate(QStringLiteral("0.7.11"), QStringLiteral("beta"), feed);
+        QVERIFY(update.has_value());
+        QCOMPARE(update->version, QStringLiteral("0.8.9"));
+        QVERIFY(isPreReleaseChannel(QStringLiteral("alpha")));
+        QVERIFY(isPreReleaseChannel(QStringLiteral("beta")));
+        QVERIFY(!isPreReleaseChannel(QStringLiteral("stable")));
+        QVERIFY(!isPreReleaseChannel(QStringLiteral("dev")));
+    }
+
+    void aStableBuildThatRanTestingBeforeHearsAboutTheNextOne()
+    {
+        const QVector<ReleaseInfo> feed{make(QStringLiteral("0.8.9"), QStringLiteral("testing"), false,
+                                             QStringLiteral("alpha")),
+                                        make(QStringLiteral("0.8.0"), QStringLiteral("stable"))};
+        // 0.7.11 beta became 0.8.0 stable; the person who ran the beta is
+        // now on 0.8.0 and wants to hear about 0.8.9 alpha. That memory is
+        // includeTesting, kept by the machine rather than the build.
+        const auto remembered = chooseUpdate(QStringLiteral("0.8.0"), QStringLiteral("stable"), feed, true);
+        QVERIFY(remembered.has_value());
+        QCOMPARE(remembered->version, QStringLiteral("0.8.9"));
+        // Somebody who only ever ran stable releases is not told.
+        QVERIFY(!chooseUpdate(QStringLiteral("0.8.0"), QStringLiteral("stable"), feed, false).has_value());
+        QCOMPARE(channelsFor(QStringLiteral("stable"), false), QVector<QString>{QStringLiteral("stable")});
+        QCOMPARE(channelsFor(QStringLiteral("stable"), true),
+                 (QVector<QString>{QStringLiteral("stable"), QStringLiteral("testing")}));
+        // The gates still hold for it: an untested test build is not
+        // offered, and nor is a development build anything at all.
+        QVector<ReleaseInfo> untested = feed;
+        untested[0].released = false;
+        QVERIFY(!chooseUpdate(QStringLiteral("0.8.0"), QStringLiteral("stable"), untested, true).has_value());
+        QVERIFY(channelsFor(QStringLiteral("dev"), true).isEmpty());
+    }
+
+    void tenQuickTapsRevealTesting()
+    {
+        TapSequence taps;
+        qint64 now = 1'000'000;
+        for (int i = 1; i < TapSequence::TapsNeeded; ++i) {
+            QVERIFY2(!taps.tap(now), qPrintable(QStringLiteral("tap %1 must not be enough").arg(i)));
+            now += 300;  // nine taps in 2.7 s
+        }
+        QVERIFY(taps.tap(now));
+        // Completing it starts over: the next tap is a first tap again.
+        QVERIFY(!taps.tap(now + 100));
+    }
+
+    void slowTapsNeverGetThere()
+    {
+        TapSequence taps;
+        qint64 now = 1'000'000;
+        // 600 ms apart, so the tenth tap is 5.4 s after the first, which
+        // has been forgotten by then, and the count never reaches ten.
+        for (int i = 0; i < 30; ++i) {
+            QVERIFY(!taps.tap(now));
+            now += 600;
+        }
+        // Speed up and it completes. The last slow tap was 600 ms ago;
+        // with it, the eight before it inside the window and this one
+        // that is nine. One more right after makes ten.
+        now += 100;
+        QVERIFY(!taps.tap(now));
+        QVERIFY(taps.tap(now + 100));
+    }
+
+    void aTapFromTheFutureIsNotCounted()
+    {
+        // A clock that jumps backwards must not leave a phantom tap that
+        // completes a sequence years later.
+        TapSequence taps;
+        QVERIFY(!taps.tap(9'000'000));
+        for (int i = 0; i < TapSequence::TapsNeeded - 1; ++i) {
+            QVERIFY(!taps.tap(1'000'000 + i * 10));
+        }
+        QVERIFY(taps.tap(1'000'000 + 100));
+    }
+
     void aWithdrawnReleaseIsNeverOffered()
     {
         const QVector<ReleaseInfo> feed{make(QStringLiteral("0.3.0"), QStringLiteral("stable"), true),
