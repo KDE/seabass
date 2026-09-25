@@ -312,6 +312,7 @@ Page {
             spacing: Theme.tightSpacing
 
             Label {
+                objectName: "matchSummary"
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Theme.textMuted
@@ -329,8 +330,15 @@ Page {
                     }
                     let line = "Matched " + controller.stickTrackCount + " tracks on the stick against "
                              + controller.storedTrackCount + " in the store.";
+                    // The match is of the whole stick and the whole store;
+                    // the tracks left alone are counted over the pickers'
+                    // selection, like everything the page says about the
+                    // restore. So once a picker narrows, the sentence says
+                    // which of the two it is counting.
                     if (controller.conflictsLeftAlone > 0) {
-                        line += " " + controller.conflictsLeftAlone
+                        const narrowed = controller.selectedSourceKey.length > 0
+                            || controller.selectedPlaylist.length > 0;
+                        line += (narrowed ? " In this selection, " : " ") + controller.conflictsLeftAlone
                              + (controller.conflictsLeftAlone === 1
                                  ? " track has cues of its own that the stored copy did not beat; it is"
                                  : " tracks have cues of their own that the stored copy did not beat; they are")

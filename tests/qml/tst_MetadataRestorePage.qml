@@ -196,6 +196,31 @@ TestCase {
         compare(picker.currentIndex, 0);
     }
 
+    // The line under the pickers counts the stick and the store whole, and
+    // the tracks left alone within the pickers' selection, which is what a
+    // restore covers. Once a picker narrows, it says so: "1 track is left
+    // alone" beside "Matched 5 tracks" read as one track of the five.
+    function test_theMatchLineSaysWhichCountIsOfTheSelection() {
+        const page = make();
+        tryVerify(() => !page.controller.busy, 5000);
+        verify(metadataRestoreFixture.fillWithConflictsLeftAlone(page.controller));
+        waitForRendering(page);
+        const line = findChild(page, "matchSummary");
+        verify(line !== null);
+        compare(line.text, "Matched 5 tracks on the stick against 5 in the store. 2 tracks have cues of their "
+                + "own that the stored copy did not beat; they are left alone.");
+
+        findChild(page, "sourcePicker").activated(pickerIndex(page.sourceModel, "USB Stick RV2"));
+        compare(line.text, "Matched 5 tracks on the stick against 5 in the store. In this selection, 1 track "
+                + "has cues of its own that the stored copy did not beat; it is left alone.");
+
+        findChild(page, "sourcePicker").activated(0);
+        const playlists = findChild(page, "playlistPicker");
+        playlists.playlistPicked(pickerIndex(playlists.model, "Warm Up"), {name: "Warm Up", count: 3});
+        compare(line.text, "Matched 5 tracks on the stick against 5 in the store.",
+                "Warm Up has no track left alone, so nothing is said about any");
+    }
+
     function test_thePlaylistPickerNarrowsTheRestoreToOnePlaylist() {
         const page = makeFilled();
         const list = findChild(page, "proposalList");
