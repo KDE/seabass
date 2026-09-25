@@ -794,8 +794,29 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         placedIn.clear();
     };
 
-    progress.filesTotal = plan.files.size() - plan.unchanged;
-    progress.bytesTotal = plan.bytesToWrite;
+    // Measured against the whole backup (see RestoreProgress): what is
+    // already on the target counts as done from the start, so a restore
+    // run again after an interruption picks the bar up where it was.
+    progress.filesTotal = plan.files.size();
+    progress.bytesTotal = plan.totalBytes;
+    progress.filesAlreadyPresent = plan.unchanged;
+    progress.bytesAlreadyPresent = plan.totalBytes - plan.bytesToWrite;
+    progress.filesDone = progress.filesAlreadyPresent;
+    progress.bytesDone = progress.bytesAlreadyPresent;
+    // Every file this run deals with moves the bar, whatever became of
+    // it: one written, one that failed, and one deliberately left alone
+    // are each a file the restore is past. Counting only the written ones
+    // left the bar short of its total on any run with a problem in it.
+    std::size_t filesPassed = progress.filesAlreadyPresent;
+    std::uint64_t bytesPassed = progress.bytesAlreadyPresent;
+    auto passFile = [&](const PlannedEntry &file) {
+        ++filesPassed;
+        bytesPassed += file.size;
+        progress.filesDone = filesPassed;
+        progress.bytesDone = bytesPassed;
+        reporter.tick(progress.filesDone);
+        report(RestoreProgress::Phase::Writing);
+    };
     report(RestoreProgress::Phase::Writing);
     reporter.start("Restoring files", progress.filesTotal);
     for (const PlannedEntry &file : plan.files) {
@@ -847,6 +868,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
             // number the page reads aloud as "already up to date" is
             // only ever about files that really are.
             ++summary.filesHeldBack;
+            passFile(file);
             continue;
         }
         if (row != nullptr && row->salvagedFromSize != 0) {
@@ -859,6 +881,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
                 // put on the target for this entry, and the file that is
                 // there is the better one.
                 ++summary.filesUnchanged;
+                passFile(file);
                 continue;
             }
         }
@@ -887,11 +910,8 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
         } else {
             ++summary.filesWritten;
             summary.bytesWritten += opened.reader->entries()[file.index].size;
-            progress.bytesDone = bytesBefore + opened.reader->entries()[file.index].size;
         }
-        progress.filesDone = summary.filesWritten + summary.writeErrors.size();
-        reporter.tick(progress.filesDone);
-        report(RestoreProgress::Phase::Writing);
+        passFile(file);
     }
     reporter.finish();
     // Before anything below can remove an extra or report a result: the

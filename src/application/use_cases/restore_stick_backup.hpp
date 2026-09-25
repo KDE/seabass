@@ -29,10 +29,23 @@ struct RestoreProgress
         Checking,  // opening the restored database
     };
     Phase phase = Phase::Analyzing;
+    // Against the whole backup, not against what is left to write: a
+    // restore run again onto a drive that already holds part of the
+    // backup starts its bar where the last run got to, not at zero.
+    // filesDone/bytesDone start at the *AlreadyPresent figures below and
+    // advance past every file this run deals with (written, failed, or
+    // deliberately left alone), so they reach the totals.
     std::size_t filesDone = 0;
     std::size_t filesTotal = 0;
     std::uint64_t bytesDone = 0;
     std::uint64_t bytesTotal = 0;
+    // The part of the totals that was already on the target, unchanged,
+    // when this run started. A rate or an ETA is about the work this run
+    // does, so it measures from here: counted as transferred, these bytes
+    // would make the first second of a resumed restore look like
+    // gigabytes a second.
+    std::size_t filesAlreadyPresent = 0;
+    std::uint64_t bytesAlreadyPresent = 0;
     std::string currentFile;
 };
 
