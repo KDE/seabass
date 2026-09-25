@@ -91,15 +91,19 @@ const char *libraryNotFoundHint()
            "(brew install sqlcipher)?";
 }
 #else
-// Distros disagree on the installed soname (Debian/Ubuntu's libsqlcipher1
-// package ships "libsqlcipher.so.1"; other packagings use ".so.0"; the
-// unversioned "libsqlcipher.so" symlink only exists if the *-dev package
-// is installed) -- try each in turn rather than hard-coding one. A system
-// upgraded across Debian releases can hold libsqlcipher0 (3.x) beside
-// libsqlcipher1 (4.x), which is why a too-old one does not end the search.
+// Distros disagree on the installed soname (Debian's libsqlcipher1 package
+// ships "libsqlcipher.so.1", Ubuntu 26.04's libsqlcipher2 "libsqlcipher.so.2";
+// other packagings, and the AppImage, use ".so.0"; the unversioned
+// "libsqlcipher.so" symlink only exists if the *-dev package is installed)
+// -- try each in turn rather than hard-coding one. A system upgraded across
+// Debian releases can hold libsqlcipher0 (3.x) beside a 4.x one, which is
+// why a too-old one does not end the search. The dev symlink is what CI's
+// images have, so a soname missing from this list passes every test there
+// and fails on a user's machine: 0.7.11's Linux tarball could not read a
+// OneLibrary on a stock Ubuntu 26.04 for exactly that reason.
 std::vector<const char *> candidateNames()
 {
-    return {"libsqlcipher.so.0", "libsqlcipher.so.1", "libsqlcipher.so"};
+    return {"libsqlcipher.so.0", "libsqlcipher.so.1", "libsqlcipher.so.2", "libsqlcipher.so"};
 }
 // RTLD_DEEPBIND: SQLCipher's calls to its own sqlite3_* functions must
 // reach its own code. Seabass also links plain SQLite, which exports
@@ -130,8 +134,8 @@ void unloadLibrary(void *mod)
 }
 const char *libraryNotFoundHint()
 {
-    return "could not load libsqlcipher (tried libsqlcipher.so.0/.so.1/.so): is the libsqlcipher1 "
-           "(or equivalent) package installed?";
+    return "could not load libsqlcipher (tried libsqlcipher.so.0/.so.1/.so.2/.so): is your distribution's "
+           "SQLCipher runtime package installed (libsqlcipher2 on Ubuntu 26.04, libsqlcipher1 on Debian 13)?";
 }
 #endif
 
