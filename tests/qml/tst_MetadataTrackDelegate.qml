@@ -104,11 +104,13 @@ TestCase {
     }
 
     // No waveform to draw: the cues still go on a flat line, and hovering
-    // the line says why there is nothing else. The words are the brief's,
-    // exactly.
-    function test_aMissingWaveformSaysItIsNotPartOfTheBackup() {
+    // the line says why there is nothing else, in the words the page
+    // passes. Why is the page's to say: on the store's own list the backup
+    // holds none, on a stick's list the stick has none.
+    function test_aMissingWaveformSaysWhatThePageSays() {
         const row = createTemporaryObject(rowComponent, testCase, {
             index: 0, showWaveform: true, expanded: true, waveformDurationMs: 240000,
+            waveformMissingText: "Waveform not part of backup",
             waveformCues: [{kind: "hot", hotCueNumber: 2, positionMs: 200000, isLoop: false, loopEndMs: 0,
                             color: "#e03c3c", comment: ""}],
         });
@@ -132,5 +134,18 @@ TestCase {
         waveform.waveformData = [{low: 0.4, mid: 0.5, high: 0.2}];
         mouseMove(waveform, waveform.width * 0.1, waveform.height / 2);
         compare(area.explainMissing, false);
+    }
+
+    // A row whose page says nothing claims nothing: the delegate has no
+    // reason of its own to give. It used to say "Waveform not part of
+    // backup" on every row, which on a stick's list is not true.
+    function test_aMissingWaveformHasNoReasonByDefault() {
+        const row = createTemporaryObject(rowComponent, testCase, {
+            index: 0, showWaveform: true, expanded: true, waveformDurationMs: 240000,
+        });
+        tryVerify(() => findChild(row, "rowWaveform") !== null, 2000);
+        const waveform = findChild(row, "rowWaveform");
+        compare(waveform.missingText, "");
+        compare(findChild(waveform, "waveformMouseArea").explainMissing, false);
     }
 }

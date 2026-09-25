@@ -110,11 +110,16 @@ Rectangle {
     // read of it ONLY while the row is expanded: the WaveformView itself
     // is not even built for a collapsed row. Where there is none, the
     // cues are still drawn on a flat line, and hovering it says why.
+    //
+    // Why is the page's to say, so there is no default: on the store's own
+    // list the backup holds no waveform, while on a stick's list the stick
+    // has none (never analysed, listed only by OneLibrary). Empty says
+    // nothing rather than something untrue.
     property bool showWaveform: false
     property var waveformData: []
     property var waveformCues: []
     property real waveformDurationMs: 0
-    property string waveformMissingText: "Waveform not part of backup"
+    property string waveformMissingText: ""
 
     property alias actionItems: actionRow.data
     // Page-specific content under the expanded half's facts, lined up with

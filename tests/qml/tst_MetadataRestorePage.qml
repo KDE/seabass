@@ -306,13 +306,16 @@ TestCase {
         verify(findChild(row, "rowWaveform") === null, "closed again, the waveform goes");
     }
 
-    function test_aRowWithoutAWaveformSaysItIsNotPartOfTheBackup() {
+    // Every row here is a track on the stick, and the waveform is read from
+    // the stick: a missing one is the stick's (never analysed, listed only
+    // by OneLibrary), not the backup's, and the placeholder says so.
+    function test_aRowWithoutAWaveformSaysTheStickHasNone() {
         const page = makeFilled();  // no player: nothing to read a waveform with
         const row = openRow(page, 0);
         const waveform = findChild(row, "rowWaveform");
         verify(waveform !== null, "the placeholder is there all the same, with the cues on it");
         compare(waveform.hasWaveform, false);
-        compare(waveform.missingText, "Waveform not part of backup");
+        compare(waveform.missingText, "No waveform on the stick for this track");
         compare(waveform.cueData.length, 3);
     }
 
