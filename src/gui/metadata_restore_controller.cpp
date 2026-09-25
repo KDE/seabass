@@ -85,15 +85,12 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
             domain::planMetadataRestore(stickTracks, storedTracks, catalogsLastModified(libraryPath.toStdString()));
 
         // Tracks whose cues genuinely differ from the stored ones,
-        // whichever side the rule then chose. The page says how many
-        // there were and how many it left alone, and both numbers come
-        // from this one pass.
+        // whichever side the rule then chose. How many of those the stick
+        // kept is not counted here: the page says it of the pickers'
+        // selection, so refreshScope() counts it over the scope.
         for (auto &proposal : result.proposals) {
             if (proposal.cuesConflict) {
                 result.conflictCount++;
-                if (!proposal.cuesOffered) {
-                    result.conflictsLeftAlone++;
-                }
             }
             // storedId is the row id as text, which is how the store
             // spells it on a domain::Track; stoll is safe on anything

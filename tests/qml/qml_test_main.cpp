@@ -626,13 +626,18 @@ public:
         }
     }
 
-    Q_INVOKABLE bool fill(QObject *controller) { return fillWith(controller, false); }
+    Q_INVOKABLE bool fill(QObject *controller) { return fillWith(controller, false, false); }
 
     // fill(), plus a sixth proposal from a stick the store recorded
     // neither an id nor a label for.
-    Q_INVOKABLE bool fillWithAnUnnamedStick(QObject *controller) { return fillWith(controller, true); }
+    Q_INVOKABLE bool fillWithAnUnnamedStick(QObject *controller) { return fillWith(controller, true, false); }
 
-    bool fillWith(QObject *controller, bool unnamedStick)
+    // fill(), with Rej (the second NO NAME) and Sisters (RV2) each a
+    // conflict the stick's own cues won: offered for their rating, their
+    // cues left alone.
+    Q_INVOKABLE bool fillWithConflictsLeftAlone(QObject *controller) { return fillWith(controller, false, true); }
+
+    bool fillWith(QObject *controller, bool unnamedStick, bool conflictsLeftAlone)
     {
         auto *restore = qobject_cast<seabass::gui::MetadataRestoreController *>(controller);
         if (restore == nullptr) {
@@ -686,6 +691,16 @@ public:
                                              hot(4, 192, "#39d353")}));
         result.proposals.push_back(proposal("Sisters", "Recondite", 402, "uuid-rv2", "RV2", {"Closing"},
                                             {hot(1, 12, "#e03c3c")}));
+        if (conflictsLeftAlone) {
+            for (const std::size_t index : {std::size_t{2}, std::size_t{4}}) {
+                auto &p = result.proposals[index];
+                p.cuesConflict = true;
+                p.cuesOffered = false;
+                p.cuesFillAGap = false;
+                p.ratingOffered = true;
+                p.rating = 4;
+            }
+        }
         if (unnamedStick) {
             result.proposals.push_back(proposal("Nameless", "Nobody", 300, "", "", {"Warm Up"},
                                                 {hot(1, 10, "#e03c3c")}));

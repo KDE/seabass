@@ -36,7 +36,6 @@ struct MetadataRestoreTaskResult
     int stickTrackCount = 0;
     int storedTrackCount = 0;
     int conflictCount = 0;  // tracks whose cues differ, whichever side the merge rule then chose
-    int conflictsLeftAlone = 0;  // and how many of those the stick kept
     QString errorMessage;
     bool cancelled = false;
 };
