@@ -22,6 +22,10 @@ Frame {
     property string statusMessage: ""
     property bool busy: false
     property string startOverTooltip: ""
+    // Off where whatever holds the report has its own way out that does
+    // the same job (the restore overlay's Close); two exits side by side
+    // read as two different answers.
+    property bool startOverVisible: true
     signal startOverRequested()
     // A referenced track missing after the write is not, by itself,
     // evidence this restore/clone did anything wrong: the same database
@@ -46,6 +50,7 @@ Frame {
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "startOverButton"
+                visible: resultFrame.startOverVisible
                 text: "Start Over"
                 flat: true
                 enabled: !resultFrame.busy
