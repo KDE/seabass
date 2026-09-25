@@ -300,6 +300,12 @@ ApplicationWindow {
     Binding { target: Theme; property: "materialForeground"; value: window.Material.foreground }
     Binding { target: Theme; property: "materialDivider"; value: window.Material.dividerColor }
 
+    // And Theme's colours back out as the window's palette, which is the
+    // ink of every Label nobody gave a colour under Basic or Fusion (the
+    // styles this app gets on any Linux desktop but Plasma). See
+    // common/ThemePalette.qml.
+    ThemePalette { target: window }
+
     // Same one-way push for the screen's device pixel ratio, which
     // Theme.snap() needs to round a length to a whole *device* pixel.
     // Screen is an attached property of an Item or Window, so a QtObject

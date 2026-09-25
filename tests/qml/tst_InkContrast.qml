@@ -214,9 +214,9 @@ TestCase {
     // where the app says Material.System (which is what System resolves to
     // on a light Mac): otherwise the case follows the machine's desktop,
     // and on a dark one the "light session" is dark and passes for the
-    // wrong reason. Under any other style the ink is the platform palette,
-    // which follows the same system colour scheme Material.System does, so
-    // the window keeps Main.qml's binding exactly.
+    // wrong reason. Under Basic and Fusion the ink is the window's
+    // palette, which Main.qml's ThemePalette fills from Theme, so the
+    // window keeps Main.qml's bindings exactly, that one included.
     AppSettingsController { id: appSettings }
     Item { id: lightSession; Material.theme: Material.Light }
     Item {
@@ -224,6 +224,13 @@ TestCase {
         anchors.fill: parent
         readonly property int systemTheme: materialStyle ? Material.Light : Material.System
         Material.theme: appSettings.useSystemTheme ? systemTheme : Material.Dark
+        // Main.qml's palette, from the same component: under Basic (this
+        // lane) and Fusion an unstyled Label's ink is palette.windowText,
+        // and without it that is the style's own light palette whatever
+        // Theme paints. CI's container measured it at 1.12:1 on Kelp; on
+        // Plasma the platform theme hands the window Kelp's colours, which
+        // is why no run on a Plasma desktop ever saw it.
+        ThemePalette { target: appWindow }
     }
 
     function chooseSystemTheme(on) {
