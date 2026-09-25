@@ -101,7 +101,7 @@ void FullBackupsController::refresh()
     if (m_backupDirectory.isEmpty()) {
         return;
     }
-    if (m_listWatcher.isRunning()) {
+    if (m_listing) {
         // The folder or the current stick changed mid-listing: list again
         // once this one lands rather than showing a stale answer.
         m_refreshAgain = true;
@@ -138,6 +138,7 @@ void FullBackupsController::refresh()
         }
         return backups;
     }));
+    m_listing = true;
     emit busyChanged();
 }
 
@@ -152,6 +153,7 @@ void FullBackupsController::onListFinished()
     if (!thrown.isEmpty()) {
         setMessages(QStringLiteral("Could not list the backup folder: ") + thrown, m_statusMessage);
     }
+    m_listing = false;
     emit backupsChanged();
     emit busyChanged();
     if (m_refreshAgain) {
