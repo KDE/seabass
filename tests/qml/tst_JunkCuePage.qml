@@ -172,6 +172,27 @@ TestCase {
                 "an unreadable stick is not a stick without stray cues");
     }
 
+    // A playlist the failed scan did not list is not a playlist the
+    // library lacks: the catalog that holds it may be the one that could
+    // not be read. The pick stays, and the page does not turn round and
+    // rescan the whole library on a stick that just failed.
+    function test_aFailedScanKeepsThePickedPlaylist() {
+        const page = createTemporaryObject(pageComponent, testCase);
+        const overlay = findChild(page, "junkCueBusyOverlay");
+        tryVerify(() => !overlay.visible, 30000, "the first scan ends");
+        let scansStarted = 0;
+        overlay.visibleChanged.connect(() => { if (overlay.visible) scansStarted++; });
+
+        page.selectedPlaylistName = "Only On The Unreadable Catalog";
+        page.rescan();
+        tryVerify(() => !overlay.visible, 30000, "the playlist's scan ends");
+        verify(page.scanFailed, "precondition: the scan failed, it was not stopped");
+        compare(page.scanStopped, false);
+        wait(200);  // past the Qt.callLater that checks for a missing playlist
+        compare(page.selectedPlaylistName, "Only On The Unreadable Catalog", "the user's pick survives a failed scan");
+        compare(scansStarted, 1, "no whole-library rescan after the failure");
+    }
+
     // Leaving while the scan runs destroys the page and its controller
     // under a task still reading the stick. Nothing may reach the page
     // afterwards, and the next page on the same stick scans as normal.
