@@ -135,7 +135,7 @@ TestCase {
     // The restore page's unstyled labels that measure under 3:1, named
     // with their ratios; empty when all of them read.
     function unreadableOnTheRestorePage(screenshotName) {
-        const page = createTemporaryObject(restoreComponent, testCase, {
+        const page = createTemporaryObject(restoreComponent, appWindow, {
             controller: fakeRestoreController(),
             appSettingsController: {toLocalFileUrl: function(p) { return "file://" + p; },
                                     localPathFromUrl: function(u) { return u.replace(/^file:\/\//, ""); }},
@@ -168,7 +168,7 @@ TestCase {
     }
 
     function busyLabelContrast() {
-        const holder = createTemporaryObject(busyComponent, testCase);
+        const holder = createTemporaryObject(busyComponent, appWindow);
         verify(holder !== null);
         waitForRendering(holder);
         const image = grabImage(holder);
@@ -194,19 +194,40 @@ TestCase {
     // the real AppSettingsController, the one Preferences writes to, with
     // Theme fed what Main.qml's Bindings feed it.
     //
+    // The pages are made inside `appWindow`, which carries Main.qml's own
+    // Material.theme binding, because that is where the app's pages sit:
+    // under Material (the macOS style) an unstyled Label's ink is the
+    // Material theme of the nearest item up the tree that sets one. They
+    // used to be made directly in the TestCase, which sets none, so their
+    // ink was the harness's global default, Material Dark (the screenshot
+    // mode's QT_QUICK_CONTROLS_MATERIAL_THEME), while Theme went light
+    // from a separate item: 1.10:1 on the Mac in round 9, for a
+    // combination the app cannot produce. Main.qml's window sets
+    // Material.theme for everything under it, popups included, and feeds
+    // Theme from the same window.
+    //
     // Which session: under KDE's style the ink comes from KDE's colour
     // scheme, and the lane's sandbox has no kdeglobals, so the system
     // scheme is KDE's default, Breeze Light: the light session the bug
-    // needs, and Theme gets Material's light colours to match. Under any
-    // other style the ink is the platform palette, which follows the
-    // same system colour scheme Material.System does, so Theme gets
-    // exactly what Main.qml would give it there.
+    // needs, and Theme gets Material's light colours to match. Under
+    // Material the light session is stood in the same way, Material.Light
+    // where the app says Material.System (which is what System resolves to
+    // on a light Mac): otherwise the case follows the machine's desktop,
+    // and on a dark one the "light session" is dark and passes for the
+    // wrong reason. Under any other style the ink is the platform palette,
+    // which follows the same system colour scheme Material.System does, so
+    // the window keeps Main.qml's binding exactly.
     AppSettingsController { id: appSettings }
     Item { id: lightSession; Material.theme: Material.Light }
-    Item { id: platformSession; Material.theme: Material.System }
+    Item {
+        id: appWindow
+        anchors.fill: parent
+        readonly property int systemTheme: materialStyle ? Material.Light : Material.System
+        Material.theme: appSettings.useSystemTheme ? systemTheme : Material.Dark
+    }
 
     function chooseSystemTheme(on) {
-        const session = kdeDesktopStyle ? lightSession : platformSession;
+        const session = kdeDesktopStyle ? lightSession : appWindow;
         appSettings.useSystemTheme = on;
         Theme.useSystemTheme = on;
         Theme.materialBackground = session.Material.background;
@@ -224,8 +245,8 @@ TestCase {
 
     function test_themeToggleKeepsTheInkReadableBothWays() {
         chooseSystemTheme(true);
-        if (kdeDesktopStyle) {
-            verify(Theme.isLightBackground, "the light Plasma session is standing in");
+        if (kdeDesktopStyle || materialStyle) {
+            verify(Theme.isLightBackground, "the light session is standing in");
         }
         compare(unreadableOnTheRestorePage("ink-contrast-system-light.png"), "", "system theme on a light session, under 3:1");
         const busyLight = busyLabelContrast();
