@@ -315,8 +315,22 @@ TestCase {
         return list.length > 0 ? list[list.length - 1] : null;
     }
 
+    // Waits until the dialog has finished opening, not merely until it is
+    // visible. Under KDE's style a dialog has an enter transition, and
+    // `opened` (with the dialog's onOpened, which re-marks the default and
+    // puts focus back on it) only comes at its end. A key sent before then
+    // lands on the footer's initial focus and is undone a moment later:
+    // measured, a Right pressed during the transition had moved focus to
+    // Keep Failed Backup, and once the dialog had opened focus and the
+    // highlight were back on Delete Backup. Whether a test saw the key or
+    // the undo depended on how busy the machine was.
+    function waitUntilOpened(dialog) {
+        tryVerify(function() { return dialog.opened; }, 5000, "the dialog must finish opening");
+    }
+
     function pressReturnOn(dialog) {
         tryVerify(function() { return dialog.visible; });
+        waitUntilOpened(dialog);
         tryVerify(function() {
             var target = defaultButtonOf(dialog);
             return target !== null && target.activeFocus;
@@ -352,8 +366,10 @@ TestCase {
         dialog.detail = "x";
         dialog.open();
         tryVerify(function() { return dialog.visible; });
+        waitUntilOpened(dialog);
         var keep = findChild(page, "keepFailedBackupButton");
-        tryVerify(function() { return findChild(page, "deleteFailedBackupButton").activeFocus; }, 5000);
+        tryVerify(function() { return defaultButtonOf(dialog) === findChild(page, "deleteFailedBackupButton")
+                                      && findChild(page, "deleteFailedBackupButton").activeFocus; }, 5000);
         keyClick(Qt.Key_Right);
         tryVerify(function() { return keep.activeFocus; }, 5000, "Right must reach Keep Failed Backup");
         compare(keep.highlighted, true, "and the highlight must follow it");
@@ -430,7 +446,8 @@ TestCase {
         tryVerify(function() { return dialog.visible; });
         var del = findChild(page, "deleteFailedBackupButton");
         var keep = findChild(page, "keepFailedBackupButton");
-        tryVerify(function() { return del.activeFocus; }, 5000);
+        waitUntilOpened(dialog);
+        tryVerify(function() { return del.highlighted && del.activeFocus; }, 5000);
         keyClick(Qt.Key_Right);
         tryVerify(function() { return keep.activeFocus; }, 5000, "Right must move the focus");
         compare(keep.highlighted, true, "and the highlight must come with it");
