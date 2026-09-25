@@ -8,6 +8,7 @@
 #endif
 #include "gui/app_color_scheme.hpp"
 #include "gui/local_file_url.hpp"
+#include "gui/style_color_scheme.hpp"
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "app_settings_controller.hpp"
@@ -66,10 +67,14 @@ void AppSettingsController::setUseSystemTheme(bool value)
     }
     m_useSystemTheme = value;
     m_settings.setValue("useSystemTheme", value);
-    // KDE's style follows now, not at the next start: Theme repaints on
-    // the signal below, and a style still inking Kelp's near-white over
-    // a light system Theme is unreadable. See gui/app_color_scheme.hpp.
+    // The controls' style follows now, not at the next start: Theme
+    // repaints on the signal below, and a style still inking Kelp's
+    // near-white over a light system Theme is unreadable (KDE's style on
+    // Linux, gui/app_color_scheme.hpp), as is FluentWinUI3 still forced
+    // dark under it (Windows, gui/style_color_scheme.hpp). Each does
+    // nothing on the other's platform.
     applyAppColorScheme(value);
+    applyStyleColorScheme(value);
     emit useSystemThemeChanged();
 }
 

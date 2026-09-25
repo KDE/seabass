@@ -2008,6 +2008,16 @@ if(TARGET seabass_edit)
             ENVIRONMENT "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
     endif()
 
+    # The Windows controls' colour scheme: the choice is pure and checked
+    # on every platform; the styleHints() call only exists on Windows.
+    add_executable(style_color_scheme_test
+        src/gui/style_color_scheme.cpp
+        tests/style_color_scheme_test.cpp
+    )
+    target_include_directories(style_color_scheme_test PRIVATE src)
+    target_link_libraries(style_color_scheme_test PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME style_color_scheme_test COMMAND style_color_scheme_test)
+
     add_executable(update_decision_test
         src/gui/update_decision.cpp
         tests/update_decision_test.cpp
