@@ -109,7 +109,6 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()
             }
-            ExperimentalBadge {}
             Item { Layout.fillWidth: true }
             BusyIndicator { running: root.controller.previewing === true; visible: running; implicitWidth: 20; implicitHeight: 20 }
         }

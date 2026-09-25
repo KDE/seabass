@@ -843,11 +843,7 @@ Page {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
-                        RowLayout {
-                            spacing: Theme.tightSpacing
-                            Label { text: "Restore Onto " + root.stickLabel; font.bold: true }
-                            ExperimentalBadge {}
-                        }
+                        Label { text: "Restore Onto " + root.stickLabel; font.bold: true }
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap

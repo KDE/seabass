@@ -102,6 +102,13 @@ TestCase {
         compare(findChild(page, "restoreSection").visible, true);
     }
 
+    // No EXPERIMENTAL pill anywhere on the page: the restore section
+    // wore one after both halves had graduated.
+    function test_carriesNoExperimentalBadge() {
+        const page = makePage({}, false);
+        compare(findChild(page, "experimentalBadge"), null);
+    }
+
     function calls(page) {
         return page.controller.calls.join(",");
     }

@@ -13,7 +13,8 @@ works, and the `SEABASS_EXPERIMENTAL` CMake option for the build-time
 opt-in-mechanism switch.
 
 New non-trivial features default to this list. Move an entry to "Graduated
-to stable" (and drop `experimental: true` from its `ActionCard`) once it's
+to stable" (and drop `experimental: true` from its `ActionCard` and the
+`ExperimentalBadge` from its page) once it's
 seen real, successful use — most importantly, an actual write/apply path
 exercised live against real hardware, not just a read-only scan. A
 graduated entry keeps whatever checks it still owes, written as "Still
@@ -107,7 +108,7 @@ real Denon hardware.
 - **Stick Restore and Update** (added 2026-09-05, as the restore half of
   Full Stick Backup and Restore; graduated 2026-09-17) — restores a full
   stick backup onto the same stick or a fresh one, and brings a stick up
-  to date from its backup or another mounted stick. Gated surfaces: the
+  to date from its backup or another mounted stick. Once-gated surfaces: the
   "Restore a Stick Backup" tool button on `StickListPage.qml`'s header
   (top-level, like Format USB Stick, because the target is often a blank
   replacement drive), the restore/clone card on each stick, and "Update
@@ -139,6 +140,10 @@ real Denon hardware.
   backup-folder section graduated with it) and keeps it current
   incrementally, in the ZIP64/STORE format with a manifest and a
   crash-safe append-only update protocol (`docs/stick-backup-plan.md`).
+  The pages kept their EXPERIMENTAL pill after the setting stopped
+  gating them (the Restore section of `StickBackupPage.qml`, the headers
+  of `RestoreStickBackupPage.qml` and `CloneStickPage.qml`) until
+  2026-09-25; the QML tests now check each of them carries none.
 
 - **Library Health** (added 2026-08-29, graduated 2026-08-30) —
   cross-catalog consistency scan/repair, plus the 0:00-junk-memory-cue

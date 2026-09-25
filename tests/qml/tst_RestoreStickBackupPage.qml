@@ -145,6 +145,14 @@ TestCase {
             statusMessage: "Restored 1 files, but with problems."})).save(screenshotDir + "/restore-page-result-missing-tracks.png");
     }
 
+    // Restoring graduated from experimental on 2026-09-17; the header
+    // still carried the EXPERIMENTAL pill afterwards.
+    function test_carriesNoExperimentalBadge() {
+        const page = makePage([makeDisk({})], {});
+        verify(page !== null);
+        compare(findChild(page, "experimentalBadge"), null);
+    }
+
     function test_preselectsFirstUsableDriveAndAnalyzesIt() {
         var unmounted = makeDisk({label: "OLD", mountPoint: "", mounted: false, usable: false});
         var blank = makeDisk({label: "NEW", mountPoint: "", hasNoFilesystem: true, usable: false});
