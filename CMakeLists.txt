@@ -1336,6 +1336,15 @@ if(UNIX AND NOT APPLE)
     else()
         message(STATUS "appstreamcli not found: the AppStream metadata is not validated by ctest")
     endif()
+    # What tools/release.sh does to that file before every tag.
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME appstream_release_test
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/appstream_release_test.py)
+        if(SEABASS_APPSTREAMCLI)
+            set_tests_properties(appstream_release_test PROPERTIES
+                ENVIRONMENT "SEABASS_APPSTREAMCLI=${SEABASS_APPSTREAMCLI}")
+        endif()
+    endif()
     if(SEABASS_DESKTOP_FILE_VALIDATE)
         add_test(NAME desktop_file_test
             COMMAND ${SEABASS_DESKTOP_FILE_VALIDATE}
