@@ -4,6 +4,7 @@
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import QtTest
 import SeabassGui
 
@@ -191,7 +192,7 @@ TestCase {
         compare(findByObjectName(card, "checkTitle").text, "Tracks and their files");
         verify(findByObjectName(card, "checkSummary").text.length > 0);
         // No action offered when there is nothing to act on.
-        compare(findByObjectName(card, "checkAction").parent.visible, false);
+        compare(findByObjectName(card, "checkAction").visible, false);
     }
 
     // #38. A finding with no action and no tally is a shape nothing else
@@ -211,7 +212,7 @@ TestCase {
         compare(card.hasTally, false);
         // And nothing offers to do the work.
         compare(card.actionLabel, "");
-        compare(findByObjectName(card, "checkAction").parent.visible, false);
+        compare(findByObjectName(card, "checkAction").visible, false);
     }
 
     // The other half: the page must not say "every track is analysed"
@@ -260,6 +261,77 @@ TestCase {
         verify(reason.text.indexOf("cannot add rows") >= 0);
     }
 
+    // The action sits on the card's right-hand side, beside the text,
+    // rather than in a row of its own under it. It used to take a whole
+    // line at the bottom of every card that had one, left-aligned, so a
+    // page of findings read as a column of buttons interleaved with the
+    // prose. Checked at widths from a narrow window to a wide one, and
+    // on every shape a card takes: with a tally, without, blocked with a
+    // reason, and passing with no action at all.
+    function test_theActionSitsOnTheRightOfTheText_data() {
+        const shapes = [
+            {shape: "tally", props: {title: "Cover art", summary: "29 of 1271 Engine tracks have cover art no "
+                + "player can show. 27 of them can be rebuilt from the rekordbox art on this stick.",
+                ok: false, fixableCount: 27, foundCount: 29, actionLabel: "Review cover art"}},
+            {shape: "noTally", props: {title: "The stick itself", summary: "The stick's filesystem is marked "
+                + "as needing a check, so the system mounted it read-only.",
+                ok: false, failed: true, actionLabel: "Check and Repair"}},
+            {shape: "blocked", props: {title: "Cues at 0:00", summary: "27 cues sit at 0:00.",
+                ok: false, fixableCount: 27, foundCount: 27, actionLabel: "Review these cues",
+                actionEnabled: false, actionDisabledReason: "The stick is read-only."}},
+            {shape: "clean", props: {title: "Tracks and their files", summary: "Every track in every "
+                + "catalog on this stick points at a file that is really there.", ok: true}},
+        ];
+        const rows = [];
+        const widths = [380, 640, 900];
+        for (let w = 0; w < widths.length; ++w) {
+            for (let s = 0; s < shapes.length; ++s) {
+                rows.push({tag: shapes[s].shape + "@" + widths[w], width: widths[w], props: shapes[s].props});
+            }
+        }
+        return rows;
+    }
+
+    function test_theActionSitsOnTheRightOfTheText(row) {
+        const card = createTemporaryObject(cardComponent, testCase, row.props);
+        card.width = row.width;
+        waitForRendering(card);
+        const title = findByObjectName(card, "checkTitle");
+        const summary = findByObjectName(card, "checkSummary");
+        const action = findByObjectName(card, "checkAction");
+        const tx = title.mapToItem(card, 0, 0).x;
+        // One left line for everything that is text.
+        compare(summary.mapToItem(card, 0, 0).x, tx, "summary and title share a left edge");
+        const reason = findByObjectName(card, "checkActionReason");
+        if (reason.visible) {
+            compare(reason.mapToItem(card, 0, 0).x, tx, "the reason is on the text's left line too");
+        }
+        // The card's own right inset: the tally or the tick sits against
+        // it, and so must the action, so every card shares a right edge.
+        const marker = card.hasTally ? findByObjectName(card, "checkTally")
+                                     : findByObjectName(card, "checkPassedMark");
+        const inner = card.width - card.contentInset;
+        if (marker.visible) {
+            fuzzyCompare(marker.mapToItem(card, marker.width, 0).x, inner, 0.5,
+                         "the tally or tick ends on the card's right inset");
+        }
+        if (row.props.actionLabel === undefined) {
+            compare(action.visible, false, "nothing to act on, no action");
+            return;
+        }
+        verify(action.visible, "the action is shown");
+        const a = action.mapToItem(card, 0, 0);
+        fuzzyCompare(a.x + action.width, inner, 0.5, "the action ends on the card's right inset");
+        // Beside the text, not under it: it starts right of where the
+        // summary ends, and its top is above the summary's bottom.
+        const s = summary.mapToItem(card, 0, 0);
+        verify(a.x >= s.x + summary.width,
+               "action at x=" + a.x + " overlaps the summary ending at " + (s.x + summary.width));
+        verify(a.y < s.y + summary.height,
+               "action at y=" + a.y + " sits below the summary ending at " + (s.y + summary.height));
+        verify(a.x > card.width / 2, "the action is on the right-hand side, x=" + a.x);
+    }
+
     function test_screenshotOfTheCardStates() {
         if (!screenshotDir || screenshotDir.length === 0) {
             skip("SEABASS_SCREENSHOT_DIR not set");
@@ -304,6 +376,44 @@ TestCase {
             card.width = 640;
             waitForRendering(card);
             grabImage(card).save(screenshotDir + "/" + states[i].name + ".png");
+        }
+        // Every state stacked, the way the hub shows them, at a narrow, a
+        // middling and a wide width: whether the cards agree with each
+        // other (one left line, one right edge) is only visible with
+        // them side by side.
+        // The window widened too: an item wider than it is clipped.
+        const wasHeight = testCase.height;
+        const wasWidth = testCase.width;
+        testCase.height = 1500;
+        const widths = [380, 640, 900];
+        for (let w = 0; w < widths.length; ++w) {
+            testCase.width = Math.max(wasWidth, widths[w]);
+            const stack = createTemporaryObject(stackComponent, testCase, {width: widths[w]});
+            for (let i = 0; i < states.length; ++i) {
+                const props = Object.assign({}, states[i].props);
+                cardComponent.createObject(stack.column, props);
+            }
+            waitForRendering(stack);
+            grabImage(stack).save(screenshotDir + "/health-cards-stack-" + widths[w] + ".png");
+        }
+        testCase.height = wasHeight;
+        testCase.width = wasWidth;
+    }
+
+    Component {
+        id: stackComponent
+        Rectangle {
+            color: Theme.background
+            implicitHeight: stackColumn.implicitHeight + 2 * Theme.pageMargin
+            height: implicitHeight
+            readonly property alias column: stackColumn
+            ColumnLayout {
+                id: stackColumn
+                x: Theme.pageMargin
+                y: Theme.pageMargin
+                width: parent.width - 2 * Theme.pageMargin
+                spacing: Theme.sectionSpacing
+            }
         }
     }
     // The whole page, not one card at a time. The card screenshots above
