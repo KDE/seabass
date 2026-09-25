@@ -643,7 +643,9 @@ linux:package:
     - cmake --build build-rel --target seabass seabass-cli
     - name="seabass-${SEABASS_VERSION}_${SEABASS_CHANNEL}_linux"
     - mkdir -p "stage/$name/bin" package-out
-    - cp build-rel/seabass build-rel/seabass-cli "stage/$name/bin/"
+    # The app links to src/gui/seabass since the GUI became its own target
+    # (the macOS bundle lives there too); the CLI stays at the top.
+    - cp build-rel/src/gui/seabass build-rel/seabass-cli "stage/$name/bin/"
     - cp README.md LICENSES/* "stage/$name/" 2>/dev/null || true
     - |
       cat > "stage/$name/README-package.txt" <<EOF
