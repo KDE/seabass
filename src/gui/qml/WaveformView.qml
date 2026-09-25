@@ -38,6 +38,13 @@ Canvas {
     // killed rather than just one more full-strength marker among
     // several.
     property real highlightCuePositionMs: -1
+    // What hovering the flat placeholder line says when there is no
+    // waveform to draw, for a caller that knows why. Empty (the default)
+    // keeps today's behaviour. The metadata pages set it: a metadata
+    // backup stores no waveforms, and a row that shows cues without one
+    // says so rather than looking broken.
+    property string missingText: ""
+    readonly property bool hasWaveform: root.waveformData && root.waveformData.length > 0
 
     signal seekRequested(real ratio)
     // Fires on every plain click alongside seekRequested -- callers that
@@ -242,8 +249,11 @@ Canvas {
 
     MouseArea {
         id: cueMouseArea
+        objectName: "waveformMouseArea"
         anchors.fill: parent
-        enabled: root.trackDurationMs > 0
+        // Also on without a length when there is a placeholder to explain:
+        // the explanation is a hover, and a disabled area never hovers.
+        enabled: root.trackDurationMs > 0 || (!root.hasWaveform && root.missingText.length > 0)
         hoverEnabled: true
         preventStealing: root.cueEditable
 
@@ -262,10 +272,15 @@ Canvas {
         // Takes priority over a cue tooltip since it explains why there's
         // nothing to hover in the first place.
         readonly property bool noWaveformYet: root.format === "engine" && (!root.waveformData || root.waveformData.length === 0)
-        ToolTip.visible: containsMouse && pressX < 0 && (noWaveformYet || root.hoveredCueText.length > 0)
+        // A cue under the pointer still names itself: the placeholder is
+        // there to show where the cues are, so hovering one must say which.
+        readonly property bool explainMissing: !root.hasWaveform && root.missingText.length > 0
+            && root.hoveredCueText.length === 0
+        ToolTip.visible: containsMouse && pressX < 0
+            && (noWaveformYet || explainMissing || root.hoveredCueText.length > 0)
         ToolTip.text: noWaveformYet
             ? "No waveform yet: Engine OS generates this the first time the track is loaded on the hardware."
-            : root.hoveredCueText
+            : (explainMissing ? root.missingText : root.hoveredCueText)
 
         onPositionChanged: (mouse) => {
             if (pressX >= 0) {

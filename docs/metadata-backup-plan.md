@@ -230,6 +230,55 @@ them through `runSaveLoop`, which backs up first. Nothing here invents a
 write path, and nothing here reaches the stick without the user pressing
 Save.
 
+## Restoring one stick's backup, or one playlist
+
+The restore page has the backup page's two pickers, in the same place and
+the same order: which stick's backup to restore from, and which playlist.
+They narrow **the restore**, not only the list:
+
+- The stick picker keys on the stick the store last saw each track on,
+  by its library id (`MetadataStore::stickSourcesByTrackId()`), falling
+  back to the label for a row that recorded none. Two sticks called NO
+  NAME are two entries.
+- A track is in a playlist when the backup recorded it there **or** the
+  stick in front of you lists it there (`restorePlaylistsOf()`): a
+  rebuilt stick may have lost its playlists along with its cues, and a
+  playlist created after the backup is still a playlist the DJ can see.
+- Select All stages what the two pickers include, and nothing else.
+  Narrowing them unstages whatever staged track falls outside, and the
+  page says how many. So the save writes exactly the in-scope tracks that
+  are ticked, and every count the page shows (the toolbar's "N of M",
+  the comments DeviceLibrary cannot take, the conflicts left alone) is a
+  count of that set.
+- The search is different on purpose: it narrows what is shown within
+  the scope, and Select All still covers what it hides, because a search
+  box is forgotten the moment it is cleared while the pickers stay on
+  screen saying what the restore is for.
+
+All of "in scope" is decided by `domain::proposalInRestoreScope()`, so the
+list, the counts and the staging cannot disagree about it
+(`tests/metadata_restore_test.cpp` cases 15 and 16,
+`tests/metadata_restore_proposal_model_test.cpp` case 5).
+
+## Waveforms on the rows
+
+An opened row on either page shows the track's waveform with its cue
+positions on it, which answers "where are these cues" better than a list
+of timestamps. The store holds no waveform and must not start to (see
+"What would make this wrong"), so the picture comes from a stick's own
+analysis through `PlaybackController::waveformFor()`: the stick being
+backed up on the backup page, the stick being restored to on the restore
+page. The store's own browse list has no stick behind it. Wherever there
+is no waveform, the cues are drawn on a flat line and hovering it says
+"Waveform not part of backup".
+
+Read for the opened row only: the `WaveformView` is not even built for a
+collapsed one, and `tst_MetadataRestorePage.qml` fails if opening the page
+reads a single waveform. Measured there on the committed anonymized
+library, which folds to 3,015 stick tracks and 2,753 proposals: the list
+opens in 74 to 200 ms, and opening one row, reading its ANLZ waveform off
+the stick, takes 38 to 107 ms (xvfb, software GL, a Debug build).
+
 ## Browse
 
 "A lightweight way to browse it": one page, one list, a search field over

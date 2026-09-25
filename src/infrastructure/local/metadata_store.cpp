@@ -1217,6 +1217,18 @@ std::map<std::int64_t, std::string> MetadataStore::stickLabelsByTrackId()
     return labels;
 }
 
+std::map<std::int64_t, MetadataStore::StickSource> MetadataStore::stickSourcesByTrackId()
+{
+    std::map<std::int64_t, StickSource> sources;
+    Stmt stmt(m_db,
+              "SELECT id, coalesce(library_id, ''), coalesce(stick_label, '') FROM tracks "
+              "WHERE coalesce(library_id, '') <> '' OR coalesce(stick_label, '') <> ''");
+    while (stmt.step()) {
+        sources.emplace(stmt.columnInt64(0), StickSource{stmt.columnText(1), stmt.columnText(2)});
+    }
+    return sources;
+}
+
 std::vector<Track> MetadataStore::readAll()
 {
     std::vector<Track> tracks;

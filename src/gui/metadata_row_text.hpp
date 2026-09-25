@@ -7,6 +7,8 @@
 #include <QLatin1Char>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include <vector>
 
@@ -60,6 +62,45 @@ inline QString metadataCueSummary(const std::vector<domain::CuePoint> &cues)
         lines << line;
     }
     return lines.join(QLatin1Char('\n'));
+}
+
+// The cues as WaveformView draws them: one map per cue, in the shape
+// every other track list in Seabass hands it.
+inline QVariantList metadataCueList(const std::vector<domain::CuePoint> &cues)
+{
+    QVariantList list;
+    for (const auto &cue : cues) {
+        QVariantMap entry;
+        entry[QStringLiteral("kind")] =
+            cue.kind == domain::CuePoint::Kind::Hot ? QStringLiteral("hot") : QStringLiteral("memory");
+        entry[QStringLiteral("hotCueNumber")] = cue.hotCueNumber;
+        entry[QStringLiteral("positionMs")] = cue.positionMs;
+        entry[QStringLiteral("isLoop")] = cue.isLoop;
+        entry[QStringLiteral("loopEndMs")] = cue.loopEndMs;
+        entry[QStringLiteral("color")] = QString::fromStdString(cue.color);
+        entry[QStringLiteral("comment")] = QString::fromStdString(cue.comment);
+        list << entry;
+    }
+    return list;
+}
+
+// The catalog row a stick track's waveform can be read from, or null.
+//
+// A metadata backup holds no waveforms (docs/metadata-backup-plan.md),
+// so a row on either metadata page can only show one the stick itself
+// carries. rekordbox first, because its preview is an ANLZ file read on
+// its own; Engine's needs its database opened. OneLibrary has no
+// waveform reader at all, and a track only it lists has none to show.
+inline const domain::CatalogRowRef *waveformCatalogRow(const domain::Track &track)
+{
+    for (const char *format : {"rekordbox", "engine"}) {
+        for (const auto &row : track.catalogRows) {
+            if (row.format == format && !row.sourceId.empty()) {
+                return &row;
+            }
+        }
+    }
+    return nullptr;
 }
 
 }  // namespace seabass::gui

@@ -4,6 +4,9 @@
 
 #include "domain/metadata_restore.hpp"
 
+#include <algorithm>
+#include <tuple>
+
 #include "domain/junk_cue.hpp"
 
 #include "domain/metadata_merge.hpp"
@@ -36,6 +39,12 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
         proposal.stickTrack = *stick;
         proposal.storedId = stored->sourceId;
         proposal.artworkPath = stored->artworkPath;
+        for (const auto &member : stored->playlists) {
+            if (std::find(proposal.storedPlaylists.begin(), proposal.storedPlaylists.end(), member.name)
+                == proposal.storedPlaylists.end()) {
+                proposal.storedPlaylists.push_back(member.name);
+            }
+        }
 
         // The store is the incoming side here and the stick the existing
         // one, the mirror image of what MetadataStore::store() does with
@@ -82,6 +91,77 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
         }
     }
     return proposals;
+}
+
+std::string restoreSourceKey(const MetadataRestoreProposal &proposal)
+{
+    if (!proposal.storedFromLibraryId.empty()) {
+        return "id:" + proposal.storedFromLibraryId;
+    }
+    if (!proposal.storedFrom.empty()) {
+        return "label:" + proposal.storedFrom;
+    }
+    return {};
+}
+
+std::vector<std::string> restorePlaylistsOf(const MetadataRestoreProposal &proposal)
+{
+    std::vector<std::string> names = proposal.storedPlaylists;
+    for (const auto &member : proposal.stickTrack.playlists) {
+        if (std::find(names.begin(), names.end(), member.name) == names.end()) {
+            names.push_back(member.name);
+        }
+    }
+    return names;
+}
+
+bool proposalInRestoreScope(const MetadataRestoreProposal &proposal, const MetadataRestoreScope &scope)
+{
+    if (!scope.sourceKey.empty() && restoreSourceKey(proposal) != scope.sourceKey) {
+        return false;
+    }
+    if (!scope.playlist.empty()) {
+        const auto names = restorePlaylistsOf(proposal);
+        if (std::find(names.begin(), names.end(), scope.playlist) == names.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<MetadataRestoreSource> restoreSources(const std::vector<MetadataRestoreProposal> &proposals)
+{
+    std::vector<MetadataRestoreSource> sources;
+    for (const auto &proposal : proposals) {
+        const std::string key = restoreSourceKey(proposal);
+        auto found = std::find_if(sources.begin(), sources.end(),
+                                  [&key](const MetadataRestoreSource &source) { return source.key == key; });
+        if (found == sources.end()) {
+            sources.push_back({key, proposal.storedFrom, 0});
+            found = sources.end() - 1;
+        }
+        found->proposalCount++;
+    }
+    std::sort(sources.begin(), sources.end(), [](const MetadataRestoreSource &a, const MetadataRestoreSource &b) {
+        return std::tie(a.label, a.key) < std::tie(b.label, b.key);
+    });
+    return sources;
+}
+
+std::map<std::string, int> restorePlaylistCounts(const std::vector<MetadataRestoreProposal> &proposals,
+                                                 const std::string &sourceKey)
+{
+    std::map<std::string, int> counts;
+    const MetadataRestoreScope scope{sourceKey, {}};
+    for (const auto &proposal : proposals) {
+        if (!proposalInRestoreScope(proposal, scope)) {
+            continue;
+        }
+        for (const auto &name : restorePlaylistsOf(proposal)) {
+            counts[name]++;
+        }
+    }
+    return counts;
 }
 
 }  // namespace seabass::domain

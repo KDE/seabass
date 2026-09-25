@@ -175,6 +175,17 @@ public:
     // Keeping it out of there is what stops it being used for one.
     std::map<std::int64_t, std::string> stickLabelsByTrackId();
 
+    // The same, with the stick's identity beside its label: what Restore
+    // Metadata's stick picker keys on, because two sticks both called NO
+    // NAME are two sticks. Same rule as above, and for the same reason
+    // not on domain::Track. A row that recorded neither is left out.
+    struct StickSource
+    {
+        std::string libraryId;
+        std::string stickLabel;
+    };
+    std::map<std::int64_t, StickSource> stickSourcesByTrackId();
+
     // Total bytes of copied cover art, for the page that has to say what
     // this feature costs on disk.
     std::uint64_t artworkBytesOnDisk() const;

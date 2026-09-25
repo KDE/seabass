@@ -137,6 +137,9 @@ QHash<int, QByteArray> RestoreProposalListModel::roleNames() const
         {ArtworkUrlRole, "artworkUrl"},
         {RestoreSummaryRole, "restoreSummary"},
         {StagedRole, "staged"},
+        {CuesRole, "cues"},
+        {DurationMsRole, "durationMs"},
+        {PlaylistNamesRole, "playlistNames"},
     };
 }
 
@@ -195,6 +198,17 @@ QVariant RestoreProposalListModel::data(const QModelIndex &index, int role) cons
     }
     case StagedRole:
         return !m_stagedChanges[static_cast<std::size_t>(source)].isEmpty();
+    case CuesRole:
+        return metadataCueList(proposal.cuesOffered ? proposal.cues : proposal.stickTrack.cues);
+    case DurationMsRole:
+        return proposal.stickTrack.durationSeconds * 1000.0;
+    case PlaylistNamesRole: {
+        QStringList names;
+        for (const auto &name : domain::restorePlaylistsOf(proposal)) {
+            names << QString::fromStdString(name);
+        }
+        return names.join(QStringLiteral(", "));
+    }
     default:
         return {};
     }
@@ -216,6 +230,9 @@ void RestoreProposalListModel::rebuildVisible()
     m_visible.reserve(m_proposals.size());
     const QString needle = m_filter.trimmed().toLower();
     for (std::size_t i = 0; i < m_proposals.size(); ++i) {
+        if (!domain::proposalInRestoreScope(m_proposals[i], m_scope)) {
+            continue;
+        }
         if (needle.isEmpty()) {
             m_visible.push_back(static_cast<int>(i));
             continue;
@@ -242,6 +259,58 @@ void RestoreProposalListModel::setFilter(const QString &text)
     m_filter = text;
     rebuildVisible();
     endResetModel();
+}
+
+void RestoreProposalListModel::setScope(domain::MetadataRestoreScope scope)
+{
+    if (scope.sourceKey == m_scope.sourceKey && scope.playlist == m_scope.playlist) {
+        return;
+    }
+    beginResetModel();
+    m_scope = std::move(scope);
+    rebuildVisible();
+    endResetModel();
+}
+
+bool RestoreProposalListModel::inScope(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
+        return false;
+    }
+    return domain::proposalInRestoreScope(m_proposals[static_cast<std::size_t>(index)], m_scope);
+}
+
+int RestoreProposalListModel::scopedCount() const
+{
+    int count = 0;
+    for (const auto &proposal : m_proposals) {
+        if (domain::proposalInRestoreScope(proposal, m_scope)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+std::vector<int> RestoreProposalListModel::unstagedInScope() const
+{
+    std::vector<int> indices;
+    for (std::size_t i = 0; i < m_proposals.size(); ++i) {
+        if (m_stagedChanges[i].isEmpty() && domain::proposalInRestoreScope(m_proposals[i], m_scope)) {
+            indices.push_back(static_cast<int>(i));
+        }
+    }
+    return indices;
+}
+
+std::vector<int> RestoreProposalListModel::stagedOutsideScope() const
+{
+    std::vector<int> indices;
+    for (std::size_t i = 0; i < m_proposals.size(); ++i) {
+        if (!m_stagedChanges[i].isEmpty() && !domain::proposalInRestoreScope(m_proposals[i], m_scope)) {
+            indices.push_back(static_cast<int>(i));
+        }
+    }
+    return indices;
 }
 
 int RestoreProposalListModel::sourceIndexOfRow(int row) const

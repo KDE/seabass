@@ -22,6 +22,13 @@ Page {
     required property string enginePath
     required property string libraryId
 
+    // Both optional, so the QML tests can build the page without the app
+    // behind it. Without a player there are no waveforms to read, and
+    // every opened row shows the placeholder; without settings the
+    // playlist picker simply does not remember.
+    property var playbackController: null
+    property var appSettingsController: null
+
     readonly property bool hasStick: root.rekordboxPath.length > 0 || root.enginePath.length > 0
     readonly property string libraryPath: root.rekordboxPath.length > 0 ? root.rekordboxPath : root.enginePath
 
@@ -43,6 +50,73 @@ Page {
 
     MetadataRestoreController {
         id: controller
+    }
+
+    // The waveform of the track on list row `row`, from the stick in front
+    // of you: a metadata backup holds none. Only ever called for the row
+    // that is open (see the delegate's waveformData binding), and the
+    // player caches what it has read.
+    function waveformFor(row) {
+        if (!root.playbackController) {
+            return [];
+        }
+        const source = controller.waveformSourceAt(row);
+        if (!source || !source.format) {
+            return [];
+        }
+        return root.playbackController.waveformFor(source.format, source.libraryPath, source.sourceId);
+    }
+
+    // ---- the stick picker's model --------------------------------------
+    //
+    // Index 0 is every stick, and each stick the proposals were backed up
+    // from follows. A label two sticks share says how many tracks each
+    // offers, which is the difference a person can actually see.
+    readonly property var sourceModel: {
+        const list = [{ name: "Every stick in the backup", key: "" }];
+        const sticks = controller.sourceSticks;
+        const seen = {};
+        for (let i = 0; i < sticks.length; i++) {
+            seen[sticks[i].label] = (seen[sticks[i].label] || 0) + 1;
+        }
+        for (let i = 0; i < sticks.length; i++) {
+            const stick = sticks[i];
+            let name = stick.label.length > 0 ? "USB Stick " + stick.label : "A stick with no name";
+            if (seen[stick.label] > 1) {
+                name += " (" + stick.count + (stick.count === 1 ? " track)" : " tracks)");
+            }
+            list.push({ name: name, key: stick.key });
+        }
+        return list;
+    }
+
+    readonly property int currentSourceIndex: {
+        for (let i = 1; i < root.sourceModel.length; i++) {
+            if (root.sourceModel[i].key === controller.selectedSourceKey) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    // The page opens on the playlist last picked on any page with a
+    // picker, when these proposals have it: the same rule the backup page
+    // follows, so working through a library playlist by playlist carries
+    // from backing up to putting back.
+    property bool rememberedPlaylistApplied: false
+    function applyRememberedPlaylist() {
+        if (root.rememberedPlaylistApplied || !controller.hasScanned || !root.appSettingsController) {
+            return;
+        }
+        root.rememberedPlaylistApplied = true;
+        const wanted = root.appSettingsController.lastPlaylistName;
+        if (wanted.length > 0 && controller.playlistNames.indexOf(wanted) >= 0) {
+            controller.setPlaylist(wanted);
+        }
+    }
+    Connections {
+        target: controller
+        function onAnalysisChanged() { root.applyRememberedPlaylist(); }
     }
 
     EditSessionHost {
@@ -114,19 +188,100 @@ Page {
         anchors.margins: Theme.pageMargin
         spacing: Theme.sectionSpacing
 
+        Label {
+            objectName: "pageIntro"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.text
+            font.pointSize: Theme.fontNormal
+            text: "Restore metadata from your local backup to the USB stick " + root.stickLabel + ". "
+                + "Nothing is written until you press Restore."
+        }
+
+        // ---- what the restore is for ----------------------------------
+        //
+        // The backup page's two pickers, in the same order and the same
+        // place: which stick's backup, and which playlist. Here they bound
+        // the restore itself, not only the list below: Select All stages
+        // what they include, and narrowing them unstages what falls
+        // outside. So "restore this one playlist" is what the save does.
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.rowSpacing
+
             Label {
-                objectName: "pageIntro"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.text
+                text: "Restore metadata from:"
+                color: Theme.textMuted
                 font.pointSize: Theme.fontNormal
-                text: "Restore metadata from your local backup to the USB stick " + root.stickLabel + ". "
-                    + "Nothing is written until you press Restore."
             }
+
+            ComboBox {
+                id: sourcePicker
+                objectName: "sourcePicker"
+                Layout.preferredWidth: Theme.snap(Math.max(180, Math.min(300, root.width * 0.3)))
+                enabled: !controller.busy && !editHost.writing && controller.hasScanned
+                model: root.sourceModel
+                textRole: "name"
+                // Derived from the controller, and put back after every
+                // pick, for the reason the backup page's picker gives: a
+                // combo holding its own index can show a scope the list is
+                // not actually in.
+                currentIndex: root.currentSourceIndex
+                onActivated: index => {
+                    const entry = root.sourceModel[index];
+                    if (entry) {
+                        controller.setSourceStick(entry.key);
+                    }
+                    sourcePicker.currentIndex = Qt.binding(() => root.currentSourceIndex);
+                }
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: "Restore only what was backed up from one stick. The backup remembers the "
+                    + "stick each track was last backed up from."
+            }
+
+            Label {
+                text: "Playlist:"
+                color: Theme.textMuted
+                font.pointSize: Theme.fontNormal
+            }
+
+            PlaylistPickerCombo {
+                objectName: "playlistPicker"
+                Layout.preferredWidth: Theme.snap(Math.max(160, Math.min(260, root.width * 0.26)))
+                enabled: !controller.busy && !editHost.writing && controller.hasScanned
+                model: {
+                    const list = [{ name: "All tracks", count: controller.sourceProposalCount }];
+                    for (let i = 0; i < controller.playlistNames.length; i++) {
+                        const name = controller.playlistNames[i];
+                        list.push({ name: name, count: controller.playlistTrackCounts[name] });
+                    }
+                    return list;
+                }
+                currentIndex: {
+                    if (controller.selectedPlaylist.length === 0) {
+                        return 0;
+                    }
+                    const found = controller.playlistNames.indexOf(controller.selectedPlaylist);
+                    return found >= 0 ? found + 1 : 0;
+                }
+                onPlaylistPicked: (index, modelData) => {
+                    const name = index === 0 ? "" : modelData.name;
+                    controller.setPlaylist(name);
+                    if (root.appSettingsController) {
+                        root.appSettingsController.lastPlaylistName = name;
+                    }
+                }
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: "Restore one playlist instead of the whole stick. A track counts as in it when "
+                    + "the backup or this stick lists it there."
+            }
+
+            Item { Layout.fillWidth: true }
+
             InfoButton {
+                objectName: "restoreInfoButton"
                 explanationTitle: "Putting stored metadata back"
                 summaryText: "What this computer has backed up, offered to the tracks on "
                     + root.stickLabel + " that would gain something from it."
@@ -168,7 +323,7 @@ Page {
                         return "The metadata store is empty. Run a Metadata Backup on a stick that still "
                              + "has your cues, and they can be put back here afterwards.";
                     }
-                    var line = "Matched " + controller.stickTrackCount + " tracks on the stick against "
+                    let line = "Matched " + controller.stickTrackCount + " tracks on the stick against "
                              + controller.storedTrackCount + " in the store.";
                     if (controller.conflictsLeftAlone > 0) {
                         line += " " + controller.conflictsLeftAlone
@@ -214,7 +369,7 @@ Page {
             color: Theme.warnText
             font.pointSize: Theme.fontSmall
             text: {
-                var n = controller.commentsRekordboxCannotTake;
+                const n = controller.commentsRekordboxCannotTake;
                 return (n === 1 ? "One track's comment cannot be put back: it is"
                                 : n + " tracks' comments cannot be put back: they are")
                      + " catalogued only in DeviceLibrary, which stores a comment in a fixed space "
@@ -240,11 +395,24 @@ Page {
             Layout.fillWidth: true
             placeholder: "Search title, artist or filename"
             selectionEnabled: proposalList.count > 0 && !controller.busy && !editHost.writing
-            selectAllTooltip: "Stage every track on the list for restoring"
-            summary: controller.stagedCount > 0
-                ? controller.stagedCount + " of " + controller.proposalCount + " staged"
-                : controller.proposalCount + (controller.proposalCount === 1 ? " track" : " tracks")
-                  + " to restore"
+            // Everything the stick and playlist pickers include, and
+            // nothing they leave out: the pickers say what this restore
+            // is for. The search does not narrow it (see stageAll()).
+            selectAllTooltip: "Stage every track the stick and playlist pickers include, "
+                + "including any the search is hiding"
+            // Counted over the pickers' selection, which is what a
+            // restore covers: "3 of 1,200 staged" on a page narrowed to a
+            // playlist of forty would be a number about something else.
+            summary: {
+                const scoped = controller.scopedProposalCount;
+                if (controller.stagedCount > 0) {
+                    return controller.stagedCount + " of " + scoped + " staged";
+                }
+                if (controller.visibleProposalCount !== scoped) {
+                    return controller.visibleProposalCount + " of " + scoped + " shown";
+                }
+                return scoped + (scoped === 1 ? " track" : " tracks") + " to restore";
+            }
             onSearchChanged: text => controller.search(text)
             onSelectAllRequested: controller.stageAll()
             onSelectNoneRequested: controller.unstageAll()
@@ -272,6 +440,8 @@ Page {
                 required property bool staged
                 required property string storedId
                 required property string restoreSummary
+                required property var cues
+                required property real durationMs
 
                 // And the ones it does, marked required here so the
                 // model fills them.
@@ -286,6 +456,7 @@ Page {
                 required comment
                 required cueCount
                 required artworkUrl
+                required playlistNames
 
                 // Ticking a row IS staging it. There is no second
                 // selection to keep in step with this one, and so no way
@@ -301,6 +472,13 @@ Page {
                 // of a rating or a comment alone.
                 titleTooltip: proposalRow.restoreSummary
                 expanded: root.expandedKey === proposalRow.storedId + "\n" + proposalRow.relativePath
+                // The cues this restore would leave on the track, on the
+                // stick's own waveform where it has one. Read only for the
+                // open row: a collapsed one never asks.
+                showWaveform: true
+                waveformCues: proposalRow.cues
+                waveformDurationMs: proposalRow.durationMs
+                waveformData: proposalRow.expanded ? root.waveformFor(proposalRow.index) : []
                 // What this row's badge is counting is not what is on
                 // the track but what a restore would leave on it, and
                 // the two are different numbers whenever it replaces
@@ -335,9 +513,17 @@ Page {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 color: Theme.textMuted
-                text: controller.storedTrackCount === 0
-                    ? "Nothing is stored yet, so there is nothing to put back."
-                    : "Every track on this stick already has everything the store holds for it."
+                text: {
+                    if (controller.storedTrackCount === 0) {
+                        return "Nothing is stored yet, so there is nothing to put back.";
+                    }
+                    if (controller.proposalCount === 0) {
+                        return "Every track on this stick already has everything the store holds for it.";
+                    }
+                    return controller.scopedProposalCount === 0
+                        ? "Nothing from this stick or playlist is left to put back."
+                        : "No track to restore matches that search.";
+                }
             }
         }
 

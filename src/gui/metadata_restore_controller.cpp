@@ -19,9 +19,7 @@
 #include "gui/future_result.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
-#include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
-#include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 
 namespace seabass::gui
@@ -33,27 +31,9 @@ using infrastructure::local::MetadataStore;
 namespace
 {
 
-namespace fs = std::filesystem;
-
-// The catalog directory for one format on the stick that `libraryPath`
-// belongs to.
-//
-// The page hands the controller a single path -- whichever catalog the
-// stick list happened to open -- but a proposal carries the rows of
-// every catalog that lists the track, and each row's change has to be
-// given the path for ITS OWN format. Handing an Engine change the
-// PIONEER folder points the Engine writer, and its backup, at a
-// database that is not there. Same derivation readAllStickCatalogs()
-// uses to find the catalogs in the first place.
 QString catalogPathForFormat(const QString &libraryPath, const std::string &format)
 {
-    const fs::path stickRoot = pathFromQString(libraryPath).parent_path();
-    if (format == "engine") {
-        return pathToQString(infrastructure::engine::engineLibraryPath(stickRoot));
-    }
-    // rekordbox and onelibrary are two formats of one library, both
-    // under PIONEER.
-    return pathToQString(stickRoot / "PIONEER");
+    return QString::fromStdString(gui::catalogPathForFormat(libraryPath.toStdString(), format));
 }
 
 // Runs entirely on a background thread -- no access to the controller.
@@ -61,6 +41,7 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
                                        application::CancellationToken cancel)
 {
     MetadataRestoreTaskResult result;
+    result.libraryPath = libraryPath;
     try {
         const auto read = readAllStickCatalogs(libraryPath.toStdString(), *reporter, cancel);
         if (read.catalogs.present().empty()) {
@@ -83,10 +64,10 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
         reporter->start("Reading the metadata store", 0);
         MetadataStore store;
         const auto storedTracks = store.readAll();
-        // For display only, and fetched here rather than carried on
-        // domain::Track so nothing in the matching or merging can reach
-        // for it.
-        const auto stickLabels = store.stickLabelsByTrackId();
+        // For display and for the stick picker only, and fetched here
+        // rather than carried on domain::Track so nothing in the matching
+        // or merging can reach for it.
+        const auto stickSources = store.stickSourcesByTrackId();
         reporter->finish();
         result.storedTrackCount = static_cast<int>(storedTracks.size());
 
@@ -117,13 +98,15 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
             // spells it on a domain::Track; stoll is safe on anything
             // readAll() produced and guarded for anything that was not.
             try {
-                const auto found = stickLabels.find(std::stoll(proposal.storedId));
-                if (found != stickLabels.end()) {
-                    proposal.storedFrom = found->second;
+                const auto found = stickSources.find(std::stoll(proposal.storedId));
+                if (found != stickSources.end()) {
+                    proposal.storedFrom = found->second.stickLabel;
+                    proposal.storedFromLibraryId = found->second.libraryId;
                 }
             } catch (const std::exception &) {
                 // No label, so the row simply does not say where it came
-                // from. Not worth failing a scan over.
+                // from, and the stick picker files it under no stick.
+                // Not worth failing a scan over.
             }
         }
     } catch (const application::OperationCancelled &) {
@@ -194,17 +177,93 @@ void MetadataRestoreController::onScanFinished()
     if (result.cancelled) {
         return;
     }
-    m_model.setProposals(result.proposals);
+    applyScanResult(std::move(result));
+}
+
+void MetadataRestoreController::applyScanResult(MetadataRestoreTaskResult result)
+{
+    if (!result.libraryPath.isEmpty()) {
+        m_libraryPath = result.libraryPath;
+    }
+    // A scan that found something supersedes one that failed before it.
+    setErrorMessage({});
+    m_model.setProposals(std::move(result.proposals));
     m_stickTrackCount = result.stickTrackCount;
     m_storedTrackCount = result.storedTrackCount;
     m_conflictCount = result.conflictCount;
-    m_conflictsLeftAlone = result.conflictsLeftAlone;
-    // A comment can only be written where a format can grow one, and
-    // export.pdb cannot (tests/pdb_rating_write_test.cpp). A track that
-    // rekordbox alone catalogues therefore gets its rating back and not
-    // its comment, and the page has to say so.
+    m_hasScanned = true;
+    // A scope picked before this scan keeps applying when what it names
+    // is still there, and falls back to everything when it is not: a
+    // playlist this stick no longer has would otherwise narrow the list
+    // to nothing with no picker entry to explain why.
+    domain::MetadataRestoreScope scope = m_model.scope();
+    const auto &proposals = m_model.proposals();
+    if (!scope.sourceKey.empty()
+        && std::none_of(proposals.begin(), proposals.end(), [&scope](const MetadataRestoreProposal &proposal) {
+               return domain::restoreSourceKey(proposal) == scope.sourceKey;
+           })) {
+        scope.sourceKey.clear();
+    }
+    if (!scope.playlist.empty() && domain::restorePlaylistCounts(proposals, scope.sourceKey).count(scope.playlist) == 0) {
+        scope.playlist.clear();
+    }
+    m_model.setScope(scope);
+    refreshScope();
+    emit analysisChanged();
+}
+
+void MetadataRestoreController::refreshScope()
+{
+    const auto &proposals = m_model.proposals();
+    const auto &scope = m_model.scope();
+
+    m_sourceSticks.clear();
+    const auto sources = domain::restoreSources(proposals);
+    for (const auto &source : sources) {
+        QVariantMap entry;
+        entry[QStringLiteral("key")] = QString::fromStdString(source.key);
+        entry[QStringLiteral("label")] = QString::fromStdString(source.label);
+        entry[QStringLiteral("count")] = source.proposalCount;
+        m_sourceSticks << entry;
+    }
+
+    m_sourceProposalCount = 0;
+    const domain::MetadataRestoreScope wholeSource{scope.sourceKey, {}};
+    for (const auto &proposal : proposals) {
+        if (domain::proposalInRestoreScope(proposal, wholeSource)) {
+            m_sourceProposalCount++;
+        }
+    }
+
+    m_playlistNames.clear();
+    m_playlistTrackCounts.clear();
+    auto playlists = domain::restorePlaylistCounts(proposals, scope.sourceKey);
+    // The picked playlist stays listed after a restore has emptied it,
+    // at 0, so the picker still shows what the list is narrowed to.
+    if (!scope.playlist.empty()) {
+        playlists.emplace(scope.playlist, 0);
+    }
+    for (const auto &[name, count] : playlists) {
+        m_playlistNames << QString::fromStdString(name);
+        m_playlistTrackCounts.insert(QString::fromStdString(name), count);
+    }
+
+    // Counted over the scope, like everything else the page says about
+    // the restore: a warning about comments that cannot go back is about
+    // this restore, and a track outside the scope is not in it.
+    m_conflictsLeftAlone = 0;
     m_commentsRekordboxCannotTake = 0;
-    for (const auto &proposal : result.proposals) {
+    for (const auto &proposal : proposals) {
+        if (!domain::proposalInRestoreScope(proposal, scope)) {
+            continue;
+        }
+        if (proposal.cuesConflict && !proposal.cuesOffered) {
+            m_conflictsLeftAlone++;
+        }
+        // A comment can only be written where a format can grow one, and
+        // export.pdb cannot (tests/pdb_rating_write_test.cpp). A track
+        // that rekordbox alone catalogues therefore gets its rating back
+        // and not its comment, and the page has to say so.
         if (!proposal.commentOffered) {
             continue;
         }
@@ -226,8 +285,69 @@ void MetadataRestoreController::onScanFinished()
             m_commentsRekordboxCannotTake++;
         }
     }
-    m_hasScanned = true;
+}
+
+void MetadataRestoreController::setSourceStick(const QString &key)
+{
+    domain::MetadataRestoreScope scope = m_model.scope();
+    scope.sourceKey = key.toStdString();
+    // A playlist belongs to the stick it was picked under only as far as
+    // that stick's proposals are in it; one the new stick has nothing in
+    // would narrow its list to nothing.
+    if (!scope.playlist.empty()
+        && domain::restorePlaylistCounts(m_model.proposals(), scope.sourceKey).count(scope.playlist) == 0) {
+        scope.playlist.clear();
+    }
+    applyScope(std::move(scope));
+}
+
+void MetadataRestoreController::setPlaylist(const QString &name)
+{
+    domain::MetadataRestoreScope scope = m_model.scope();
+    scope.playlist = name.toStdString();
+    applyScope(std::move(scope));
+}
+
+void MetadataRestoreController::applyScope(domain::MetadataRestoreScope scope)
+{
+    const auto &current = m_model.scope();
+    if (scope.sourceKey == current.sourceKey && scope.playlist == current.playlist) {
+        return;
+    }
+    m_model.setScope(std::move(scope));
+    // What the new scope leaves out is not part of this restore any
+    // more, so it comes off the save rather than being written by it
+    // out of sight.
+    const auto outside = m_model.stagedOutsideScope();
+    for (const int index : outside) {
+        unstageAt(index);
+    }
+    refreshScope();
     emit analysisChanged();
+    if (!outside.empty()) {
+        const int n = static_cast<int>(outside.size());
+        emit actionFeedback(n == 1 ? QStringLiteral("1 staged track is outside this selection and was unstaged.")
+                                   : QStringLiteral("%1 staged tracks are outside this selection and were unstaged.")
+                                         .arg(n),
+                            false);
+    }
+}
+
+QVariantMap MetadataRestoreController::waveformSourceAt(int row) const
+{
+    const int index = m_model.sourceIndexOfRow(row);
+    if (index < 0 || m_libraryPath.isEmpty()) {
+        return {};
+    }
+    const auto *catalogRow = waveformCatalogRow(m_model.proposals()[static_cast<std::size_t>(index)].stickTrack);
+    if (catalogRow == nullptr) {
+        return {};
+    }
+    return {
+        {QStringLiteral("format"), QString::fromStdString(catalogRow->format)},
+        {QStringLiteral("libraryPath"), catalogPathForFormat(m_libraryPath, catalogRow->format)},
+        {QStringLiteral("sourceId"), QString::fromStdString(catalogRow->sourceId)},
+    };
 }
 
 void MetadataRestoreController::attachSession()
@@ -261,6 +381,7 @@ void MetadataRestoreController::attachSession()
             return;
         }
         m_model.removeAt(index);
+        refreshScope();
         emit analysisChanged();
     });
 }
@@ -304,6 +425,12 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
     }
     const MetadataRestoreProposal &proposal = proposals[static_cast<std::size_t>(index)];
     if (m_model.isStaged(index)) {
+        return;
+    }
+    // Only what the stick and playlist pickers include. Every caller
+    // passes an in-scope index today; this is what keeps the next one
+    // from staging a track the page says it is not restoring.
+    if (!m_model.inScope(index)) {
         return;
     }
     if (!proposal.offersAnything()) {
@@ -364,29 +491,21 @@ void MetadataRestoreController::stageAll()
         emit actionFeedback(QStringLiteral("A save is running. Stage more once it has finished."), true);
         return;
     }
-    const int count = proposalCount();
     // The real number about to be staged, which is what decides whether
-    // the save copies a catalog to local scratch first. Counted before
-    // staging anything, because staging removes nothing from the list
-    // but does change what a later pass would count.
-    int toStage = 0;
-    for (int i = 0; i < count; ++i) {
-        if (!m_model.isStaged(i)) {
-            toStage++;
-        }
-    }
-    if (toStage == 0) {
+    // the save copies a catalog to local scratch first. Taken before
+    // staging anything, because staging changes what a later pass would
+    // count. In scope only: the stick and playlist pickers say what this
+    // restore is for, and Select All must not reach past them.
+    const std::vector<int> toStage = m_model.unstagedInScope();
+    if (toStage.empty()) {
         return;
     }
 
     // No confirmation afterwards: the toolbar already says how many are
     // staged, and a popup for what the button's own name promised is one
     // more thing to dismiss.
-    for (int i = 0; i < count; ++i) {
-        if (m_model.isStaged(i)) {
-            continue;
-        }
-        stageOne(i, toStage);
+    for (const int index : toStage) {
+        stageOne(index, static_cast<int>(toStage.size()));
         if (m_session && !m_session->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
         }

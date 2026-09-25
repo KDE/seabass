@@ -12,6 +12,8 @@
 #include <QCoreApplication>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include <cassert>
 #include <iostream>
@@ -160,6 +162,92 @@ int main(int argc, char **argv)
         model.removeAt(1);
         assert(!summaryAtRow(model, 0).contains(QStringLiteral("other track")));
         std::cout << "case 4 (each row says what a restore writes, where, and to how many) OK\n";
+    }
+
+    // ---- case 5: the scope bounds what Select All stages, not only the view
+    //
+    // The stick and playlist pickers say what a restore is for, so what
+    // they leave out is neither shown nor staged by Select All, and a
+    // staged row they leave out is handed back to be unstaged. The search
+    // narrows the view within the scope and nothing more.
+    {
+        MetadataRestoreProposal fromA1 = proposal("20", "A1.mp3", {"rekordbox"});
+        fromA1.storedFromLibraryId = "stick-a";
+        fromA1.storedPlaylists = {"Warm Up"};
+        MetadataRestoreProposal fromA2 = proposal("21", "A2.mp3", {"engine"});
+        fromA2.storedFromLibraryId = "stick-a";
+        fromA2.stickTrack.playlists = {seabass::domain::PlaylistMembership{"Closing", 1}};
+        MetadataRestoreProposal fromB = proposal("22", "B1.mp3", {"rekordbox"});
+        fromB.storedFromLibraryId = "stick-b";
+        fromB.storedPlaylists = {"Warm Up"};
+        for (auto *p : {&fromA1, &fromA2, &fromB}) {
+            p->cuesOffered = true;
+            p->cues.resize(2);
+        }
+
+        RestoreProposalListModel model;
+        model.setProposals({fromA1, fromA2, fromB});
+        model.setStagedChanges(2, {QStringLiteral("metadata-restore:rekordbox:b")});
+        assert(model.scopedCount() == 3 && model.unstagedInScope() == (std::vector<int>{0, 1}));
+
+        model.setScope({"id:stick-a", {}});
+        assert(model.rowCount() == 2 && model.scopedCount() == 2);
+        assert(model.unstagedInScope() == (std::vector<int>{0, 1}) && "Select All stages stick A's two");
+        assert(model.stagedOutsideScope() == (std::vector<int>{2}) && "and B's staged row has to come off");
+        assert(!model.inScope(2));
+
+        // One playlist inside that stick. "Warm Up" is on A1 by the
+        // backup's record; A2 is only in "Closing", on the stick's own.
+        model.setScope({"id:stick-a", "Warm Up"});
+        assert(model.rowCount() == 1 && model.scopedCount() == 1);
+        assert(model.unstagedInScope() == (std::vector<int>{0}));
+        model.setScope({"id:stick-a", "Closing"});
+        assert(model.unstagedInScope() == (std::vector<int>{1}) && "the stick's playlists count too");
+
+        // The search narrows the view inside the scope, never the scope:
+        // Select All still stages what the search hides.
+        model.setScope({{}, "Warm Up"});
+        model.setFilter(QStringLiteral("B1"));
+        assert(model.rowCount() == 1 && model.scopedCount() == 2);
+        assert(model.unstagedInScope() == (std::vector<int>{0}) && "A1 is in scope although the search hides it");
+        assert(model.stagedOutsideScope().empty() && "B1 is staged and in scope");
+        assert(model.data(model.index(0), RestoreProposalListModel::TitleRole).toString() == QStringLiteral("B1.mp3"));
+        std::cout << "case 5 (the scope bounds what Select All stages, the search only what is shown) OK\n";
+    }
+
+    // ---- case 6: a row hands the waveform what it needs, and only that
+    {
+        MetadataRestoreProposal offered = proposal("30", "Offered.mp3", {"rekordbox"});
+        offered.stickTrack.durationSeconds = 200.0;
+        offered.cuesOffered = true;
+        seabass::domain::CuePoint hot;
+        hot.kind = seabass::domain::CuePoint::Kind::Hot;
+        hot.hotCueNumber = 3;
+        hot.positionMs = 64'000.0;
+        offered.cues = {hot};
+        offered.stickTrack.cues = {};
+        offered.storedPlaylists = {"Warm Up"};
+        offered.stickTrack.playlists = {seabass::domain::PlaylistMembership{"Closing", 2}};
+        MetadataRestoreProposal notOffered = proposal("31", "Kept.mp3", {"rekordbox"});
+        notOffered.ratingOffered = true;
+        notOffered.rating = 3;
+        seabass::domain::CuePoint memory;
+        memory.positionMs = 1'000.0;
+        notOffered.stickTrack.cues = {memory, memory};
+
+        RestoreProposalListModel model;
+        model.setProposals({offered, notOffered});
+        const QVariantList cues = model.data(model.index(0), RestoreProposalListModel::CuesRole).toList();
+        assert(cues.size() == 1 && "the cues the restore would write");
+        assert(cues[0].toMap()[QStringLiteral("positionMs")].toDouble() == 64'000.0);
+        assert(cues[0].toMap()[QStringLiteral("kind")].toString() == QStringLiteral("hot"));
+        assert(cues[0].toMap()[QStringLiteral("hotCueNumber")].toInt() == 3);
+        assert(model.data(model.index(0), RestoreProposalListModel::DurationMsRole).toDouble() == 200'000.0);
+        assert(model.data(model.index(1), RestoreProposalListModel::CuesRole).toList().size() == 2
+               && "cues not on offer: the track keeps its own, so those are what it shows");
+        assert(model.data(model.index(0), RestoreProposalListModel::PlaylistNamesRole).toString()
+               == QStringLiteral("Warm Up, Closing"));
+        std::cout << "case 6 (a row hands the waveform the cues the restore would leave) OK\n";
     }
 
     std::cout << "metadata_restore_proposal_model_test: all cases passed\n";

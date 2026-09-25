@@ -434,6 +434,70 @@ TestCase {
         compare(bodyX, Theme.pageMargin, "and that edge is Theme.pageMargin");
     }
 
+    // ---- the waveform on an opened row -------------------------------------
+
+    // The store holds no waveforms, so an opened stored row draws its cues
+    // on the placeholder line, and hovering the line says why.
+    function test_aStoredRowShowsItsCuesWithoutAWaveform() {
+        const page = makeShowingTheStore();
+        const list = findChild(page, "storedTrackList");
+        verify(list.count > 0, "the harness seeds two stored tracks, so this list is never empty");
+        const row = list.itemAtIndex(0);
+        verify(findChild(row, "rowWaveform") === null, "a closed row builds no waveform");
+        row.expandToggled();
+        waitForRendering(page);
+        const waveform = findChild(row, "rowWaveform");
+        verify(waveform !== null, "an opened row shows where its cues are");
+        compare(waveform.hasWaveform, false, "and nothing more: the backup has no waveform");
+        compare(waveform.missingText, "Waveform not part of backup");
+        compare(waveform.cueData.length, row.cueCount, "every stored cue, from the store");
+        verify(waveform.trackDurationMs > 0, "placed against the stored length");
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/MetadataBackupPage-stored-open.png");
+        }
+    }
+
+    // A stick's row reads the stick's own analysis, for the row that is
+    // open and no other. Against a stick-shaped copy of the committed
+    // anonymized library, so the read is a real ANLZ file.
+    function test_aStickRowReadsItsWaveformFromTheStickWhenOpened() {
+        const fixture = Qt.resolvedUrl("../fixtures/anonymized_library").toString().replace(/^file:\/\//, "");
+        verify(metadataRestoreFixture.prepareFromLibrary(fixture) > 1000, "the fixture copy must be made");
+        const stick = metadataRestoreFixture.stickRoot();
+        const reads = [];
+        const player = {
+            waveformFor: function (format, path, id) {
+                reads.push(format);
+                return realPlayer.waveformFor(format, path, id);
+            }
+        };
+        const page = make({
+            stickLabel: "FIXTURE",
+            rekordboxPath: stick + "/PIONEER",
+            enginePath: stick + "/Engine Library",
+            playbackController: player,
+        });
+        const list = findChild(page, "proposalList");
+        tryVerify(() => !page.busy && list.visible && list.count > 0, 60000, "the stick must be read");
+        waitForRendering(page);
+        compare(reads.length, 0, "a list of " + list.count + " closed rows reads no waveform");
+
+        const row = list.itemAtIndex(0);
+        row.expandToggled();
+        waitForRendering(page);
+        compare(reads.length, 1, "one read, for the one open row");
+        const waveform = findChild(row, "rowWaveform");
+        verify(waveform !== null);
+        verify(waveform.hasWaveform, "the fixture's analysis has this track's waveform");
+        compare(waveform.cueData.length, row.cueCount, "with the stick's cues on it");
+        if (screenshotDir) {
+            grabImage(page).save(screenshotDir + "/MetadataBackupPage-fixture-open.png");
+        }
+    }
+
+    PlaybackController { id: realPlayer }
+
     function test_screenshot() {
         if (!screenshotDir) {
             skip("SEABASS_SCREENSHOT_DIR not set");

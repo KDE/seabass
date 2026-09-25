@@ -11,6 +11,12 @@
 
 using seabass::domain::CuePoint;
 using seabass::domain::MetadataRestoreProposal;
+using seabass::domain::MetadataRestoreScope;
+using seabass::domain::PlaylistMembership;
+using seabass::domain::proposalInRestoreScope;
+using seabass::domain::restorePlaylistCounts;
+using seabass::domain::restoreSourceKey;
+using seabass::domain::restoreSources;
 using seabass::domain::planMetadataRestore;
 using seabass::domain::Track;
 
@@ -364,6 +370,109 @@ int main()
         assert(second->cues.size() == 1 && "only the one that is really a cue");
         assert(second->cues.front().positionMs == 45'000.0);
         std::cout << "case 13 (stray cues are not restored, and a stick holding only strays counts as empty) OK\n";
+    }
+
+    // ---- case 14: the backup's playlists travel onto the proposal -----
+    //
+    // What the restore page's playlist picker narrows on. The stored
+    // side's record, because a stick that lost its cues after a rebuild
+    // may have lost its playlists with them.
+    {
+        Track stick = stickTrack("Neonlicht");
+        Track stored = storedTrack("Neonlicht");
+        stored.cues = {hotCue(1, 12'000.0)};
+        stored.playlists = {PlaylistMembership{"Techno/Peak Time", 3}, PlaylistMembership{"Warm Up", 1},
+                            PlaylistMembership{"Warm Up", 7}};
+        const auto proposals = planMetadataRestore({stick}, {stored}, StickWrittenLongAgo);
+        const MetadataRestoreProposal *proposal = find(proposals, "Neonlicht");
+        assert(proposal != nullptr);
+        assert(proposal->storedPlaylists.size() == 2 && "one entry per playlist, however often it lists the track");
+        assert(proposal->storedPlaylists[0] == "Techno/Peak Time");
+        assert(proposal->storedPlaylists[1] == "Warm Up");
+        std::cout << "case 14 (the backup's playlists travel onto the proposal) OK\n";
+    }
+
+    // ---- case 15: scoping a restore to one stick's backup ---------------
+    //
+    // Keyed on the stick's identity, not its label: two sticks both called
+    // NO NAME are the ordinary case, and a restore narrowed to one of them
+    // must not take the other's tracks along.
+    {
+        const auto from = [](const std::string &title, const std::string &libraryId, const std::string &label) {
+            MetadataRestoreProposal proposal;
+            proposal.stickTrack = stickTrack(title);
+            proposal.storedFrom = label;
+            proposal.storedFromLibraryId = libraryId;
+            proposal.cuesOffered = true;
+            return proposal;
+        };
+        const std::vector<MetadataRestoreProposal> proposals = {
+            from("A", "uuid-1", "NO NAME"), from("B", "uuid-2", "NO NAME"), from("C", "uuid-1", "NO NAME"),
+            from("D", "", "RV2"),           from("E", "", ""),
+        };
+        assert(restoreSourceKey(proposals[0]) != restoreSourceKey(proposals[1])
+               && "two sticks sharing a label are two sticks");
+        assert(restoreSourceKey(proposals[3]) == "label:RV2" && "the label stands in when no id was recorded");
+        assert(restoreSourceKey(proposals[4]).empty());
+        const MetadataRestoreScope first{restoreSourceKey(proposals[0]), {}};
+        int inFirst = 0;
+        for (const auto &proposal : proposals) {
+            inFirst += proposalInRestoreScope(proposal, first) ? 1 : 0;
+        }
+        assert(inFirst == 2 && "A and C, and not B from the other NO NAME");
+        assert(proposalInRestoreScope(proposals[1], MetadataRestoreScope{}) && "no scope keeps everything");
+
+        const auto sources = restoreSources(proposals);
+        assert(sources.size() == 4);
+        // Sorted by label, then key: "" first, the two NO NAMEs by id, RV2.
+        assert(sources[0].label.empty() && sources[0].proposalCount == 1);
+        assert(sources[1].label == "NO NAME" && sources[1].key == "id:uuid-1" && sources[1].proposalCount == 2);
+        assert(sources[2].label == "NO NAME" && sources[2].key == "id:uuid-2" && sources[2].proposalCount == 1);
+        assert(sources[3].label == "RV2" && sources[3].proposalCount == 1);
+        std::cout << "case 15 (a restore scoped to one stick's backup, keyed on the stick not its label) OK\n";
+    }
+
+    // ---- case 16: scoping a restore to one playlist ----------------------
+    //
+    // A track is in a playlist when the backup recorded it there or the
+    // stick lists it there. The counts are of proposals, per stick.
+    {
+        const auto proposal = [](const std::string &title, const std::string &libraryId,
+                                 std::vector<std::string> storedPlaylists, std::vector<std::string> stickPlaylists) {
+            MetadataRestoreProposal p;
+            p.stickTrack = stickTrack(title);
+            for (const auto &name : stickPlaylists) {
+                p.stickTrack.playlists.push_back(PlaylistMembership{name, 1});
+            }
+            p.storedPlaylists = std::move(storedPlaylists);
+            p.storedFromLibraryId = libraryId;
+            p.cuesOffered = true;
+            return p;
+        };
+        const std::vector<MetadataRestoreProposal> proposals = {
+            proposal("Stored only", "uuid-1", {"Warm Up"}, {}),
+            proposal("Stick only", "uuid-1", {}, {"Warm Up"}),
+            proposal("Both", "uuid-2", {"Warm Up"}, {"Warm Up", "Closing"}),
+            proposal("Neither", "uuid-2", {"Closing"}, {}),
+        };
+        const MetadataRestoreScope warmUp{{}, "Warm Up"};
+        assert(proposalInRestoreScope(proposals[0], warmUp) && "the backup's record counts");
+        assert(proposalInRestoreScope(proposals[1], warmUp) && "and so does the stick's own");
+        assert(proposalInRestoreScope(proposals[2], warmUp));
+        assert(!proposalInRestoreScope(proposals[3], warmUp));
+        // Both narrowings at once: one stick's backup AND one playlist.
+        const MetadataRestoreScope both{"id:uuid-2", "Warm Up"};
+        assert(!proposalInRestoreScope(proposals[0], both) && "right playlist, wrong stick");
+        assert(proposalInRestoreScope(proposals[2], both));
+        assert(!proposalInRestoreScope(proposals[3], both) && "right stick, wrong playlist");
+
+        const auto all = restorePlaylistCounts(proposals, "");
+        assert(all.size() == 2);
+        assert(all.at("Warm Up") == 3 && "counted once per proposal, whichever side lists it");
+        assert(all.at("Closing") == 2 && "a track both sides list there is one track");
+        const auto second = restorePlaylistCounts(proposals, "id:uuid-2");
+        assert(second.at("Warm Up") == 1 && second.at("Closing") == 2 && "counted within the picked stick");
+        std::cout << "case 16 (a restore scoped to one playlist, as the backup or the stick lists it) OK\n";
     }
 
     std::cout << "all metadata_restore_test cases passed\n";

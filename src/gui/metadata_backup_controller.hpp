@@ -56,6 +56,7 @@ public:
         StickLabelRole,
         UpdatedAtRole,
         StagedForDeletionRole,
+        DurationMsRole,
     };
 
     explicit StoredTrackListModel(QObject *parent = nullptr);
@@ -347,6 +348,13 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE QVariantList cuesFor(qint64 trackId);
     Q_INVOKABLE QStringList playlistsFor(qint64 trackId);
+    // Where the waveform of the stick track on proposal row `row` can be
+    // read: {format, libraryPath, sourceId} for
+    // PlaybackController::waveformFor, or an empty map. Empty on the
+    // store's own list always: a metadata backup holds no waveforms, so
+    // only a stick's analysis can supply one. Called by a row when it is
+    // opened, never for the whole list.
+    Q_INVOKABLE QVariantMap waveformSourceAt(int row) const;
     // Every cue on one line each, for the hover tooltip on a browse
     // row's cue badge. Called on hover rather than per row: the browse
     // list is paged precisely so that showing twenty rows costs twenty
