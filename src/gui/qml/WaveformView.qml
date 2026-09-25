@@ -45,6 +45,39 @@ Canvas {
     // says so rather than looking broken.
     property string missingText: ""
     readonly property bool hasWaveform: root.waveformData && root.waveformData.length > 0
+    // Place the cues even when the track's length is unknown, against a
+    // span taken from the cues themselves (the last cue or loop end plus
+    // a tenth, and never under minimumCueSpanMs). Off by default: pages
+    // that show CueFallbackNotice rely on no markers being drawn without
+    // a length. The metadata pages turn it on, because a row there exists
+    // to show where the cues are, and a metadata row often has no length.
+    // Positions are then relative to each other only, and the hover says
+    // each cue's time and that the length is unknown rather than
+    // implying the line is the whole track.
+    property bool placeCuesWithoutLength: false
+    readonly property real minimumCueSpanMs: 30000
+    readonly property real cueSpanMs: {
+        if (root.trackDurationMs > 0) {
+            return root.trackDurationMs;
+        }
+        if (!root.placeCuesWithoutLength || !root.cueData || root.cueData.length === 0) {
+            return 0;
+        }
+        let last = 0;
+        for (let i = 0; i < root.cueData.length; i++) {
+            const cue = root.cueData[i];
+            const end = cue.isLoop === true && cue.loopEndMs > cue.positionMs ? cue.loopEndMs : cue.positionMs;
+            last = Math.max(last, end);
+        }
+        return Math.max(root.minimumCueSpanMs, last * 1.1);
+    }
+    readonly property bool lengthUnknown: root.trackDurationMs <= 0 && root.cueSpanMs > 0
+
+    function timeText(ms) {
+        const seconds = Math.floor(Math.max(0, ms) / 1000);
+        const rest = seconds % 60;
+        return Math.floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;
+    }
 
     signal seekRequested(real ratio)
     // Fires on every plain click alongside seekRequested -- callers that
@@ -61,6 +94,7 @@ Canvas {
     onCueDataChanged: requestPaint()
     onProgressChanged: requestPaint()
     onTrackDurationMsChanged: requestPaint()
+    onCueSpanMsChanged: requestPaint()
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
     onHighlightCuePositionMsChanged: requestPaint()
@@ -70,16 +104,17 @@ Canvas {
     // visual footprint), a plain cue's narrow line gets a wider forgiving
     // band since it has no area of its own to hover.
     function cueTextAt(mouseX) {
-        if (!cueData || trackDurationMs <= 0) {
+        const span = root.cueSpanMs;
+        if (!cueData || span <= 0) {
             return "";
         }
         for (var i = 0; i < cueData.length; i++) {
             var cue = cueData[i];
-            var x = (cue.positionMs / trackDurationMs) * width;
+            var x = (cue.positionMs / span) * width;
             var title = "";
             var hit = false;
             if (cue.isLoop && cue.loopEndMs > cue.positionMs) {
-                var xEnd = (cue.loopEndMs / trackDurationMs) * width;
+                var xEnd = (cue.loopEndMs / span) * width;
                 hit = mouseX >= x - 3 && mouseX <= xEnd + 3;
                 title = cue.kind === "hot" ? "Hot loop " + cue.hotCueNumber : "Loop";
             } else {
@@ -87,6 +122,11 @@ Canvas {
                 title = cue.kind === "hot" ? "Hot cue " + cue.hotCueNumber : "Memory cue";
             }
             if (hit) {
+                // Without a length the marker's place says only where it
+                // is among the other cues, so the time is said outright.
+                if (root.lengthUnknown) {
+                    title += " at " + root.timeText(cue.positionMs);
+                }
                 return (cue.comment && cue.comment.length > 0) ? title + ": “" + cue.comment + "”" : title;
             }
         }
@@ -127,14 +167,15 @@ Canvas {
             }
         }
 
-        if (cueData && trackDurationMs > 0) {
+        const span = root.cueSpanMs;
+        if (cueData && span > 0) {
             for (var j = 0; j < cueData.length; j++) {
                 var cue = cueData[j];
-                var x = (cue.positionMs / trackDurationMs) * w;
+                var x = (cue.positionMs / span) * w;
                 var color = (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#")
                     ? cue.color : "#ffcc00";
                 var isLoop = cue.isLoop === true && cue.loopEndMs > cue.positionMs;
-                var xEnd = isLoop ? (cue.loopEndMs / trackDurationMs) * w : x;
+                var xEnd = isLoop ? (cue.loopEndMs / span) * w : x;
 
                 // See highlightCuePositionMs's own doc comment. A small
                 // tolerance (not exact equality) since the caller passes
@@ -253,7 +294,8 @@ Canvas {
         anchors.fill: parent
         // Also on without a length when there is a placeholder to explain:
         // the explanation is a hover, and a disabled area never hovers.
-        enabled: root.trackDurationMs > 0 || (!root.hasWaveform && root.missingText.length > 0)
+        enabled: root.trackDurationMs > 0 || root.lengthUnknown
+            || (!root.hasWaveform && root.missingText.length > 0)
         hoverEnabled: true
         preventStealing: root.cueEditable
 
@@ -276,11 +318,17 @@ Canvas {
         // there to show where the cues are, so hovering one must say which.
         readonly property bool explainMissing: !root.hasWaveform && root.missingText.length > 0
             && root.hoveredCueText.length === 0
+        // Away from a cue on a line with no length behind it, the hover
+        // says so: the line is the cues' own span, not the track.
+        readonly property bool explainLength: root.lengthUnknown && root.hoveredCueText.length === 0
+        readonly property string lengthText: "Track length unknown: cues are spaced by their times, up to the last one."
         ToolTip.visible: containsMouse && pressX < 0
-            && (noWaveformYet || explainMissing || root.hoveredCueText.length > 0)
-        ToolTip.text: noWaveformYet
+            && (noWaveformYet || explainMissing || explainLength || root.hoveredCueText.length > 0)
+        readonly property string toolTipText: noWaveformYet
             ? "No waveform yet: Engine OS generates this the first time the track is loaded on the hardware."
-            : (explainMissing ? root.missingText : root.hoveredCueText)
+            : (explainMissing ? (explainLength ? root.missingText + ". " + lengthText : root.missingText)
+                              : (explainLength ? lengthText : root.hoveredCueText))
+        ToolTip.text: toolTipText
 
         onPositionChanged: (mouse) => {
             if (pressX >= 0) {
@@ -295,7 +343,10 @@ Canvas {
             dragX = mouse.x;
         }
         onReleased: (mouse) => {
-            if (dragging) {
+            if (root.trackDurationMs <= 0) {
+                // Nothing to seek to or place a cue at: an x on a line
+                // without a length is not a time.
+            } else if (dragging) {
                 var a = Math.min(pressX, dragX) / width;
                 var b = Math.max(pressX, dragX) / width;
                 root.loopRangeSelected(a * root.trackDurationMs, b * root.trackDurationMs);

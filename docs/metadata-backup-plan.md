@@ -279,6 +279,11 @@ is no waveform, the cues are drawn on a flat line and hovering it says
 why: "Waveform not part of backup" on the store's own rows, and "No
 waveform on the stick for this track" on a stick's rows, where the
 missing one is the stick's (never analysed, listed only by OneLibrary).
+A row without a track length still shows its cues: they are placed
+against the span they cover (the last cue or loop end plus a tenth, at
+least 30 s), and since that line is not the track, hovering a cue says
+its time and hovering the line says the length is unknown
+(`WaveformView.placeCuesWithoutLength`, which only these rows turn on).
 
 Read for the opened row only: the `WaveformView` is not even built for a
 collapsed one, and `tst_MetadataRestorePage.qml` fails if opening the page

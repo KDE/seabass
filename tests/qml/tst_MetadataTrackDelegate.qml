@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "PixelScale.js" as PixelScale
 
 // The row both metadata pages share.
 TestCase {
@@ -134,6 +135,67 @@ TestCase {
         waveform.waveformData = [{low: 0.4, mid: 0.5, high: 0.2}];
         mouseMove(waveform, waveform.width * 0.1, waveform.height / 2);
         compare(area.explainMissing, false);
+    }
+
+    // A metadata row often has no length (the stick never analysed the
+    // track, or the row came only from the store). Its cues are what the
+    // row is for, so they are drawn all the same, against the span the
+    // cues themselves cover; the hover then says each cue's time, and away
+    // from a cue that the length is unknown, rather than letting the line
+    // pass for the whole track. It used to be a flat line and no cues.
+    function test_cuesAreDrawnWithoutATrackLength() {
+        const cues = [
+            {kind: "hot", hotCueNumber: 1, positionMs: 60000, isLoop: false, loopEndMs: 0, color: "#e03c3c", comment: ""},
+            {kind: "hot", hotCueNumber: 2, positionMs: 180000, isLoop: false, loopEndMs: 0, color: "#2ec4f0", comment: ""},
+        ];
+        const row = createTemporaryObject(rowComponent, testCase, {
+            index: 0, showWaveform: true, expanded: true, waveformDurationMs: 0,
+            waveformMissingText: "No waveform on the stick for this track", waveformCues: cues,
+        });
+        tryVerify(() => findChild(row, "rowWaveform") !== null, 2000);
+        const waveform = findChild(row, "rowWaveform");
+        compare(waveform.trackDurationMs, 0);
+        // The last cue plus a tenth: what the markers are placed against.
+        const span = 198000;
+        // Inside each hot cue's numbered square, drawn from its line to the
+        // right along the top edge. The canvas paints on its own schedule,
+        // so the grab is retried until it has, or the wait runs out.
+        const expected = [{r: 0xe0, g: 0x3c, b: 0x3c}, {r: 0x2e, g: 0xc4, b: 0xf0}];
+        // Grabbed through the row: a grab of the canvas item alone comes
+        // back without what it painted.
+        const drawn = function() {
+            const image = grabImage(row);
+            let all = true;
+            for (let i = 0; i < cues.length; i++) {
+                const x = cues[i].positionMs / span * waveform.width;
+                const at = waveform.mapToItem(row, x + 7, 2);
+                const p = PixelScale.pixel(image, row, at.x, at.y);
+                const want = expected[i];
+                const match = Math.abs(p.r * 255 - want.r) < 40 && Math.abs(p.g * 255 - want.g) < 40
+                    && Math.abs(p.b * 255 - want.b) < 40;
+                all = all && match;
+            }
+            return all;
+        };
+        tryVerify(drawn, 3000, "both hot cues are drawn");
+        compare(waveform.lengthUnknown, true, "no length, and cues placed");
+        compare(waveform.cueSpanMs, span);
+
+        const area = findChild(waveform, "waveformMouseArea");
+        verify(area.enabled, "the cues can be hovered");
+        mouseMove(waveform, 180000 / span * waveform.width, waveform.height / 2);
+        tryVerify(() => waveform.hoveredCueText.length > 0, 1000);
+        compare(waveform.hoveredCueText, "Hot cue 2 at 3:00", "the cue says its time, the line cannot");
+        mouseMove(waveform, waveform.width * 0.1, waveform.height / 2);
+        tryVerify(() => waveform.hoveredCueText.length === 0, 1000);
+        compare(area.explainLength, true);
+        compare(area.toolTipText, "No waveform on the stick for this track. "
+                + "Track length unknown: cues are spaced by their times, up to the last one.");
+
+        // With a length, nothing changes: the cues sit against the track.
+        waveform.trackDurationMs = 240000;
+        compare(waveform.cueSpanMs, 240000);
+        compare(waveform.lengthUnknown, false);
     }
 
     // A row whose page says nothing claims nothing: the delegate has no
