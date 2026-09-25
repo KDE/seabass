@@ -113,7 +113,7 @@ HealthCheckPage {
     ListView {
         id: junkCueListView
         objectName: "junkCueList"
-        bottomMargin: 80
+        bottomMargin: root.saveClearance
         // Not draggable when everything already fits.
         interactive: contentHeight > height
         Layout.fillWidth: true

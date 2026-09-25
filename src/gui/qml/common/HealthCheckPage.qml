@@ -37,6 +37,13 @@ Page {
     property string checkTitle: ""
     // What the floating save button says; see EditSessionHost.
     property alias saveLabel: editHost.saveLabel
+    // How much room the floating Save button takes out of the bottom of
+    // the page, as EditSessionHost measures it: a list's bottomMargin, so
+    // its last row can scroll clear of the button.
+    readonly property alias saveClearance: editHost.saveClearance
+    // The edit-session registry. The app's singleton unless a test hands
+    // in a fake, as tst_EditSessionHost does; read when the page is built.
+    property alias editSessionRegistry: editHost.registry
 
     // The hub can be torn down before the page, taking its controller with
     // it (a stick pulled and its changes discarded does exactly that). So
@@ -180,10 +187,14 @@ Page {
         }
     }
 
-    // A cancelled scan takes the user back to where they came from.
+    // A cancelled scan takes the user back to where they came from --
+    // through the leave guard, like Back. A scan can start with changes
+    // already staged (closing Resolve... rescans), and popping straight
+    // past the guard carried them onto the hub, which has no guard of its
+    // own, so nothing was left to save or discard them.
     Connections {
         target: consistencyController
-        function onScanCancelled() { root.StackView.view.pop(); }
+        function onScanCancelled() { editHost.requestLeave(() => root.StackView.view.pop()); }
     }
 
     BusyOverlay {
