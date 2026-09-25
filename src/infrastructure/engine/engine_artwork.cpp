@@ -166,7 +166,7 @@ std::string imageOnStickFor(std::string_view reference, const std::string &stick
 }
 
 ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources,
-                          const ArtworkSourceProbe &hasOtherSource)
+                          const ArtworkSourceProbe &hasOtherSource, const application::CancellationToken &cancel)
 {
     ArtworkAudit audit;
     const fs::path db = databaseFile(engineLibraryPath);
@@ -231,6 +231,13 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     };
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
+        // Per row: the page this runs for may be gone, and whoever left it
+        // waits for this to stop before the stick is anyone else's.
+        if (cancel.cancelled()) {
+            sqlite3_finalize(stmt);
+            sqlite3_close(handle);
+            throw application::OperationCancelled();
+        }
         ArtworkEntry entry;
         entry.trackId = sqlite3_column_int64(stmt, 0);
         if (const unsigned char *title = sqlite3_column_text(stmt, 1)) {

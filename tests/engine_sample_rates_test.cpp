@@ -78,6 +78,28 @@ int main()
         assert(audit.missing[1].sampleRateFromFile == 0.0);
         std::cout << "case 1 (rows with no sample rate are found, and the file is asked) OK\n";
 
+        // 1b. A stop lands at the next track: the probe stops the audit on
+        //     the first file it is asked about, and the audit throws rather
+        //     than report the tracks it got through as the library.
+        {
+            seabass::application::CancellationToken cancel;
+            int checkedAfterStop = 0;
+            const auto stopping = [&cancel](const std::string &) {
+                cancel.cancel();
+                return 48000.0;
+            };
+            bool stopped = false;
+            try {
+                const SampleRateAudit partial = auditSampleRates(seabass::pathToUtf8(library), stopping, cancel);
+                checkedAfterStop = partial.tracksChecked;
+            } catch (const seabass::application::OperationCancelled &) {
+                stopped = true;
+            }
+            assert(stopped && "a cancelled audit says so, it is not an error and not a count");
+            (void)checkedAfterStop;
+            std::cout << "case 1b (a stop lands at the next track) OK\n";
+        }
+
         // 2. The repair writes what the file said, leaves the rest, and
         //    the audit then has nothing to say about that track.
         const SampleRateRepair repair = repairSampleRates(seabass::pathToUtf8(library), audit.missing);

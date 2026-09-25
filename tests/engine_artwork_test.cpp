@@ -523,6 +523,43 @@ int main(int argc, char **argv)
         std::cout << "case 11 (a track's own tags are the last source, and a hash-less row is fixed from them too) OK\n";
     }
 
+    // 12. A stop lands at the next row, not after the table: the page the
+    //     audit runs for waits for it before it may leave. The probe stops
+    //     the audit on the first faulty row it is asked about; the other
+    //     two are never probed, and the audit throws rather than hand back
+    //     a partial count as if it were the whole library.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_cancel");
+        sqlite3 *db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (7, NULL);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'One', 'A', 7);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (2, 'Two', 'B', 7);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (3, 'Three', 'C', 7);");
+        sqlite3_close(db);
+
+        seabass::application::CancellationToken cancel;
+        int probed = 0;
+        const auto probe = [&cancel, &probed](const ArtworkEntry &) {
+            ++probed;
+            cancel.cancel();
+            return false;
+        };
+        bool stopped = false;
+        try {
+            (void)auditArtwork(pathToUtf8(fixture.library), {}, probe, cancel);
+        } catch (const seabass::application::OperationCancelled &) {
+            stopped = true;
+        }
+        assert(stopped && "a cancelled audit says so, it does not return a partial count");
+        assert(probed == 1 && "no row is read after the stop");
+
+        // And the database is closed on the way out: a write can have it.
+        db = fixture.open();
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (4, 'Four', 'D', 7);");
+        sqlite3_close(db);
+        std::cout << "case 12 (a stop lands at the next row, and the database is let go) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }

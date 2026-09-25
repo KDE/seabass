@@ -72,6 +72,22 @@ TestCase {
         compare(page.stickAwayExpected, false);
     }
 
+    // Nor can the page be left while the repair runs: it cannot be
+    // stopped, the controller would wait for it with the window frozen,
+    // and the page is where it says how it went. Same synchronous window
+    // as above.
+    function test_backWaitsForTheFilesystemRepair() {
+        const page = createTemporaryObject(pageComponent, testCase);
+        tryCompare(page.consistencyController, "busy", false);
+        const home = findChild(page, "homeCrumb");
+        verify(home !== null, "the breadcrumb is on the page");
+        compare(home.enabled, true);
+        page.consistencyController.repairStickFilesystem();
+        compare(home.enabled, false, "Back is disabled while the stick is being repaired");
+        tryCompare(page.consistencyController, "repairingFilesystem", false);
+        compare(home.enabled, true);
+    }
+
     SignalSpy {
         id: repairFinishedSpy
         signalName: "filesystemRepairFinished"

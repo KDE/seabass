@@ -12,6 +12,8 @@
 #include <string_view>
 #include <vector>
 
+#include "application/ports/cancellation_token.hpp"
+
 namespace seabass::infrastructure::engine
 {
 
@@ -108,8 +110,14 @@ std::string artworkSourceKey(const std::string &trackFile);
 using ArtworkSourceProbe = std::function<bool(const ArtworkEntry &)>;
 using ArtworkSourceReader = std::function<std::string(const ArtworkEntry &)>;
 
+//
+// `cancel` is checked before every row, so a stop lands within one row's
+// work (a stat or two, or one probe of the other sources) rather than
+// after the whole table: throws application::OperationCancelled, with the
+// database already closed.
 ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSourceByTrackFile &sources = {},
-                          const ArtworkSourceProbe &hasOtherSource = {});
+                          const ArtworkSourceProbe &hasOtherSource = {},
+                          const application::CancellationToken &cancel = application::CancellationToken::none());
 
 // How Engine spells a hash as a file name under Artwork/: base64url,
 // unpadded. Exposed for the test, which checks it against the encoding

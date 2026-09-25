@@ -393,6 +393,12 @@ Page {
                 stickLabel: root.stickLabel
                 middleLabel: root.hubLabel
                 title: "Library Health"
+                // The filesystem repair unmounts, checks and remounts the
+                // stick and cannot be stopped: the page stays until it has
+                // said how it went (the controller would wait for it
+                // anyway, with the window frozen).
+                backEnabled: !healthController.repairingFilesystem
+                backDisabledTooltip: "Wait for the filesystem check to finish before leaving this page"
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()
             }
