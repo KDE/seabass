@@ -1322,6 +1322,29 @@ add_executable(no_em_dashes_test tests/no_em_dashes_test.cpp)
 target_compile_definitions(no_em_dashes_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_em_dashes_test COMMAND no_em_dashes_test)
 
+# The desktop file and the AppStream metadata, checked by the tools that
+# consume them, so a mistake fails here rather than in a software centre
+# or in linuxdeploy on CI. --no-net: the screenshots are on the website,
+# and the suite must not need a network. Linux only, like the files.
+if(UNIX AND NOT APPLE)
+    find_program(SEABASS_APPSTREAMCLI appstreamcli)
+    find_program(SEABASS_DESKTOP_FILE_VALIDATE desktop-file-validate)
+    if(SEABASS_APPSTREAMCLI)
+        add_test(NAME appstream_metainfo_test
+            COMMAND ${SEABASS_APPSTREAMCLI} validate --pedantic --no-net
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/org.kde.seabass.metainfo.xml)
+    else()
+        message(STATUS "appstreamcli not found: the AppStream metadata is not validated by ctest")
+    endif()
+    if(SEABASS_DESKTOP_FILE_VALIDATE)
+        add_test(NAME desktop_file_test
+            COMMAND ${SEABASS_DESKTOP_FILE_VALIDATE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/org.kde.seabass.desktop)
+    else()
+        message(STATUS "desktop-file-validate not found: the desktop file is not validated by ctest")
+    endif()
+endif()
+
 # The vendored crate-digger specs and the parser generated from them have
 # to describe the same thing: nothing forces two vendored files to agree,
 # and a spec updated without regenerating the parser fails silently.
