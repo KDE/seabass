@@ -385,7 +385,12 @@ TestCase {
 
     function test_neverWiderThanItsRow(data) {
         SystemFontMetrics.generalPointSizeOverride = data.pointSize;
-        compare(Theme.baseFontPointSize, data.pointSize, "the precondition: the font size took");
+        // Theme never goes below the platform's smallest readable size
+        // (13 on macOS, where the 10pt rows laid out at 13 and failed
+        // this line in round 9). The row must then hold at that size; the
+        // override is only refused where the platform would refuse it too.
+        compare(Theme.baseFontPointSize, Math.max(Theme.smallestReadablePointSize, data.pointSize),
+                "the precondition: the font size took");
         const holder = createTemporaryObject(fourComponent, testCase, {crumbWidth: data.width});
         waitForRendering(holder);
         const crumb = holder.crumb;
