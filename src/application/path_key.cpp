@@ -352,4 +352,12 @@ std::string composedPathSpelling(const std::string &path)
     return composeUtf8(path);
 }
 
+bool samePath(const std::string &a, const std::string &b)
+{
+    if (a.empty() || b.empty()) {
+        return false;
+    }
+    return normalizedPathKey(a) == normalizedPathKey(b);
+}
+
 }  // namespace seabass::application

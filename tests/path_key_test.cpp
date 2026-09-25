@@ -168,6 +168,31 @@ int main()
     assert(seabass::application::composedPathSpelling(invalid) == invalid);
     std::cout << "  (composed spellings compose, and nothing else changes)\n";
 
+    // samePath(): a path the app kept native meets the forward-slash one
+    // a page hands back. These are the Windows spellings, and they fold
+    // on every platform, so Linux tests them.
+    {
+        using seabass::application::samePath;
+        // A drive root as the Windows locator reports it, and as a page has it.
+        assert(samePath("E:\\", "E:/"));
+        assert(samePath("E:\\", "E:"));
+        assert(samePath("e:\\", "E:/"));
+        // A folder opened by canonical path, closed by its row's path.
+        assert(samePath("C:\\Users\\dj\\Music\\Set", "C:/Users/dj/Music/Set"));
+        assert(samePath("C:\\Users\\dj\\Music\\Set", "C:/Users/dj/Music/Set/"));
+        assert(samePath("/media/dj/RV2", "/media/dj/RV2/"));
+        assert(samePath("/media/dj/./RV2", "/media/dj/RV2"));
+        // ...and still tells different places apart.
+        assert(!samePath("E:\\", "F:/"));
+        assert(!samePath("/media/dj/RV2", "/media/dj/RV22"));
+        assert(!samePath("C:\\Music\\Set", "C:/Music/Set2"));
+        // Nothing is not a path, not even the same nothing.
+        assert(!samePath("", ""));
+        assert(!samePath("", "/"));
+
+        std::cout << "  (native and forward-slash spellings of one path agree)\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }
