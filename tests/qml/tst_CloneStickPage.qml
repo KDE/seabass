@@ -115,6 +115,13 @@ TestCase {
                                  statusMessage: "SPARE now holds MAIN's library: 5 files written, 1156 already up to date."}), "clone-page-result");
     }
 
+    // Create / update a backup stick graduated from experimental on
+    // 2026-09-17 (docs/experimental-features.md); the header still
+    // carried the EXPERIMENTAL pill afterwards.
+    function test_carriesNoExperimentalBadge() {
+        compare(findChild(makePage(), "experimentalBadge"), null);
+    }
+
     function test_configuresTheControllerOnOpen() {
         var page = makePage();
         compare(page.controller.calls[0],

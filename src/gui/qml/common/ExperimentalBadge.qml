@@ -10,6 +10,10 @@ import SeabassGui
 // docs/experimental-features.md for what earns one and how a feature
 // loses it again.
 Rectangle {
+    // Found by name in the tests: a page that has graduated must not
+    // carry one (tst_StickBackupPage, tst_RestoreStickBackupPage,
+    // tst_CloneStickPage).
+    objectName: "experimentalBadge"
     radius: 3
     color: Theme.warnBg
     border.color: Theme.warnBorder
