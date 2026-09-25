@@ -106,8 +106,8 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
                 }
             } catch (const std::exception &) {
                 // No label, so the row simply does not say where it came
-                // from, and the stick picker files it under no stick.
-                // Not worth failing a scan over.
+                // from, and the stick picker files it under "A stick with
+                // no name". Not worth failing a scan over.
             }
         }
     } catch (const application::OperationCancelled &) {
