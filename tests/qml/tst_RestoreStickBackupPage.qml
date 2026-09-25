@@ -837,15 +837,44 @@ TestCase {
     }
 
     // The drive is unplugged while the confirmation is open: nothing is
-    // written, and the form says why.
+    // written, and the page says so out loud. The typed confirmation used
+    // to just vanish, with only the note down in the drive section.
     function test_confirmingAfterTheChosenDriveWentRestoresNothing() {
         const run = pageWithBChosen();
+        const popup = findChild(run.page, "messagePopup");
+        compare(popup.visible, false);
         // C now sits in B's old row.
         run.controller.disks = [run.a, run.c];
         findChild(run.page, "confirmDialog").accepted();
         compare(run.controller.lastRestore, null, "no restore onto any drive");
         compare(findChild(run.page, "restoreOverlay").visible, false);
         compare(findChild(run.page, "chosenDriveGoneLabel").visible, true);
+        compare(run.page.selectedIndex, -1);
+        tryCompare(popup, "opened", true);
+        compare(popup.headline, "The drive you chose was disconnected before the restore started. Nothing was written.");
+        if (screenshotDir && screenshotDir.length > 0) {
+            // The window, not the page: the popup sits in its overlay.
+            grabImage(run.page.Window.window.contentItem).save(screenshotDir + "/restore-page-confirmed-drive-gone.png");
+        }
+        popup.close();
+        tryCompare(popup, "opened", false);
+    }
+
+    // The target is the chosen drive, found by what it is: the row it
+    // sits in when the confirmation is accepted does not matter. Every
+    // refresh already moves the selection with the drive, so the row is
+    // made stale by hand here; the confirmation used to drop the restore
+    // silently whenever the two disagreed.
+    function test_confirmingRestoresOntoTheChosenDriveWhateverItsRow() {
+        const run = pageWithBChosen();
+        run.controller.disks = [run.c, run.a, run.b];
+        compare(run.page.selectedIndex, 2);
+        run.page.selectedIndex = 1;
+        findChild(run.page, "confirmDialog").accepted();
+        verify(run.controller.lastRestore !== null, "the confirmed restore goes ahead");
+        compare(run.controller.lastRestore.mountPoint, "/media/B");
+        compare(run.page.selectedIndex, 2, "and the selection is back on B");
+        compare(findChild(run.page, "messagePopup").visible, false);
     }
 
     // The stick list hands over a device path for a stick it could not

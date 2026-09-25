@@ -255,7 +255,7 @@ Page {
         root.reconcileDriveChoice(force);
     }
 
-    MessagePopup { id: messagePopup }
+    MessagePopup { id: messagePopup; objectName: "messagePopup" }
     // Another instance is editing one of the libraries this operation
     // would write; "Remove Lock" re-runs the refused action.
     LockedLibraryDialog {
@@ -387,12 +387,19 @@ Page {
             // overlay too -- the form's own error line is out of view.
             // The target is looked up now, by the chosen drive's identity,
             // not taken from a row that may have changed hands since the
-            // dialog opened.
+            // dialog opened: wherever the drive sits now, it is the one
+            // the user confirmed. Gone, nothing is written, and the user
+            // is told so rather than the confirmation just vanishing.
             const index = root.indexOfDrive(root.chosenDrive);
-            if (index < 0 || index !== root.selectedIndex) {
-                root.reconcileDriveChoice(false);
+            if (index < 0) {
+                if (root.chosenDrive !== null) {
+                    root.applySelection(-1);
+                }
+                root.chosenDriveGone = true;
+                messagePopup.show("The drive you chose was disconnected before the restore started. Nothing was written.", true);
                 return;
             }
+            root.selectedIndex = index;
             root.restoreStarted = true;
             root.reportDismissed = false;
             root.controller.restore(root.disks[index].mountPoint, root.exact);
