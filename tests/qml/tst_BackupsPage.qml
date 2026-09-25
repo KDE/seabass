@@ -302,21 +302,38 @@ TestCase {
     }
 
     // The real controller drives it: on while its listing runs, off after.
+    //
+    // Recorded, not sampled: every change of the overlay's visibility is
+    // pushed as it happens, so the test sees "shown" however briefly it
+    // was shown. And the folder is one that takes a while to list (20000
+    // unreadable *.zip files, about half a second here), so the listing is
+    // still running when the controller announces it: a missing folder
+    // lists in no time, and under load it was sometimes already over by
+    // then, so the overlay was never shown at all and the test failed for
+    // the machine rather than the page.
     function test_scanningOverlayFollowsTheRealController() {
+        const folder = controllerFixture.slowBackupFolder(20000);
+        verify(folder.length > 0, "could not make the slow folder");
         const controller = createTemporaryObject(realControllerComponent, testCase);
-        const seen = [];
-        let overlay = null;
-        controller.busyChanged.connect(function() { seen.push(overlay !== null ? overlay.visible : controller.listing); });
-        const page = makePage(controller, {backupDirectory: "/nonexistent/Backups"});
-        overlay = findChild(page, "scanOverlay");
-        // The page's own first listing, started and finished.
-        tryVerify(function() { return seen.length === 2; }, 5000);
+        const page = makePage(controller, {backupDirectory: folder});
+        const overlay = findChild(page, "scanOverlay");
+        // The page's own first listing, to the end: `backups` is only
+        // replaced once the result has been taken, unlike `listing`, which
+        // reads false as soon as the worker is done.
+        tryVerify(function() { return controller.backups.length === 20000 && !controller.listing; }, 30000);
         compare(overlay.visible, false);
-        seen.length = 0;
+
+        const shown = [];
+        let announced = 0;
+        overlay.visibleChanged.connect(function() { shown.push(overlay.visible); });
+        controller.busyChanged.connect(function() { announced += 1; });
+        const started = Date.now();
         controller.refresh();
-        tryVerify(function() { return seen.length === 2; }, 5000);
-        compare(seen[0], true, "shown while listing");
-        compare(seen[1], false, "hidden after");
+        tryVerify(function() { return announced === 2; }, 30000);
+        const listingMs = Date.now() - started;
+        compare(JSON.stringify(shown), JSON.stringify([true, false]),
+                "shown while listing and hidden after (listing took " + listingMs + " ms)");
+        controllerFixture.removeSlowBackupFolder();
     }
 
     function test_emptyFolder() {
