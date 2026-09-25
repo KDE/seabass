@@ -42,6 +42,68 @@ TestCase {
         }
     }
 
+    // Four segments at an exact width, outside any layout, so the tests
+    // below can say precisely how much the row is short by.
+    Component {
+        id: fourComponent
+        Item {
+            id: holder
+            property alias crumb: crumb
+            property var fakeStack: ({depth: 3})
+            property string stick: "LONG-STICK-NAME-FOR-TESTING"
+            property string middle: "Housekeeping Extended"
+            property string pageTitle: "Clean Up Duplicates Everywhere"
+            property real crumbWidth: crumb.implicitWidth
+            width: testCase.width
+            height: 80
+            BackBreadcrumb {
+                id: crumb
+                x: 16
+                width: holder.crumbWidth
+                stack: holder.fakeStack
+                stickLabel: holder.stick
+                middleLabel: holder.middle
+                title: holder.pageTitle
+            }
+        }
+    }
+
+    function byName(item, name) {
+        if (item.objectName === name) {
+            return item;
+        }
+        for (let i = 0; i < item.children.length; ++i) {
+            const found = byName(item.children[i], name);
+            if (found) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    // The separators actually drawn: a dangling one reads as a bug.
+    function visibleSeparators(item) {
+        let n = 0;
+        function walk(it) {
+            for (let i = 0; i < it.children.length; ++i) {
+                const child = it.children[i];
+                if (child.visible && child.text === "›") {
+                    ++n;
+                }
+                walk(child);
+            }
+        }
+        walk(item);
+        return n;
+    }
+
+    // Whether a segment is showing its whole text. The link form keeps
+    // its Label inside the Crumb's Loader.
+    function truncated(segment) {
+        return segment.truncated !== undefined ? segment.truncated
+            : segment.contentItem.item.truncated;
+    }
+
     // The middle segment's Label, whichever of the two forms it is in.
     // Both forms put the name in a Label -- the clickable one inside an
     // AbstractButton -- so the walk keeps the deepest match, and
@@ -187,6 +249,115 @@ TestCase {
         // screenshot below is what backs the visual claim; look at it.
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(header).save(screenshotDir + "/breadcrumb.png");
+        }
+    }
+
+    // Home > stick > hub > page, with the page under a hub: the stick is
+    // context (Home is the stick list, so its click could only go Home),
+    // the hub is the one link back.
+    function test_fourSegmentsStickIsContextHubIsALink() {
+        const holder = createTemporaryObject(fourComponent, testCase);
+        waitForRendering(holder);
+        const stick = byName(holder, "stickSegment");
+        verify(stick !== null && stick.visible, "the stick segment is not shown");
+        compare(stick.text, "LONG-STICK-NAME-FOR-TESTING");
+        verify(stick.clicked === undefined, "the stick segment must not be a button");
+        const link = byName(holder, "middleLink");
+        verify(link.visible, "under a hub, the hub segment must be a link");
+        compare(link.text, "Housekeeping Extended");
+        verify(!byName(holder, "middleSegment").visible,
+               "the hub must not also be drawn as context");
+        compare(visibleSeparators(holder), 3);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(holder).save(screenshotDir + "/breadcrumb-four.png");
+        }
+    }
+
+    // Still context at any depth: the stick is never a level of its own.
+    function test_stickIsContextEvenDeepInTheStack() {
+        const holder = createTemporaryObject(fourComponent, testCase,
+                                             {fakeStack: {depth: 5}});
+        waitForRendering(holder);
+        verify(byName(holder, "stickSegment").visible);
+        verify(byName(holder, "middleLink").visible);
+    }
+
+    // A page one below Home that has a stick and a middle segment: both
+    // are context, since both would only lead Home.
+    function test_oneBelowHomeNeitherIsALink() {
+        const holder = createTemporaryObject(fourComponent, testCase,
+                                             {fakeStack: {depth: 2}});
+        waitForRendering(holder);
+        verify(byName(holder, "stickSegment").visible);
+        verify(!byName(holder, "middleLink").visible);
+        verify(byName(holder, "middleSegment").visible);
+    }
+
+    // Existing callers: the stick passed as middleLabel, and nothing at all.
+    function test_fewerSegmentsLeaveNoDanglingSeparator() {
+        const holder = createTemporaryObject(fourComponent, testCase,
+                                             {stick: "", fakeStack: {depth: 2}});
+        waitForRendering(holder);
+        verify(!byName(holder, "stickSegment").visible);
+        compare(visibleSeparators(holder), 2);
+        holder.middle = "";
+        waitForRendering(holder);
+        verify(!byName(holder, "middleSegment").visible);
+        verify(!byName(holder, "middleLink").visible);
+        compare(visibleSeparators(holder), 1);
+        // And the stick alone, without a hub: "Home > STICK > page".
+        holder.stick = "STICK";
+        waitForRendering(holder);
+        verify(byName(holder, "stickSegment").visible);
+        compare(visibleSeparators(holder), 2);
+    }
+
+    // Who gives way, in order. Each step takes the row short by half of
+    // one more segment's slack: the stick goes first, then the hub, then
+    // the page's own name, and each earlier one is at its floor by the
+    // time the next one starts.
+    //
+    // A RowLayout on its own shares any shortfall among all of them, so
+    // the "stick" step used to elide all three at once.
+    function test_elisionOrder_data() {
+        return [
+            {tag: "room", step: 0, stick: false, middle: false, title: false},
+            {tag: "stick", step: 1, stick: true, middle: false, title: false},
+            {tag: "hub", step: 2, stick: true, middle: true, title: false},
+            {tag: "title", step: 3, stick: true, middle: true, title: true},
+        ];
+    }
+
+    function test_elisionOrder(data) {
+        const holder = createTemporaryObject(fourComponent, testCase);
+        waitForRendering(holder);
+        const crumb = holder.crumb;
+        const stickSlack = crumb.stickNatural - crumb.stickFloor;
+        const middleSlack = crumb.middleNatural - crumb.middleFloor;
+        const titleSlack = crumb.titleNatural - crumb.titleFloor;
+        verify(stickSlack > 20 && middleSlack > 20 && titleSlack > 20,
+               "the fixture's names are too short to test the order");
+        const short = [0,
+                       stickSlack / 2,
+                       stickSlack + middleSlack / 2,
+                       stickSlack + middleSlack + titleSlack / 2][data.step];
+        holder.crumbWidth = crumb.implicitWidth - short;
+        waitForRendering(holder);
+        const stick = byName(holder, "stickSegment");
+        const middle = byName(holder, "middleLink");
+        const title = byName(holder, "titleSegment");
+        compare(truncated(stick), data.stick, "stick");
+        compare(truncated(middle), data.middle, "hub");
+        compare(truncated(title), data.title, "title");
+        if (data.middle) {
+            // The stick was spent down to its floor before the hub began.
+            fuzzyCompare(stick.width, crumb.stickFloor, 1);
+        }
+        if (data.title) {
+            fuzzyCompare(middle.width, crumb.middleFloor, 1);
+        }
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(holder).save(screenshotDir + "/breadcrumb-elide-" + data.tag + ".png");
         }
     }
 }
