@@ -5,6 +5,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QCoreApplication>
 #include <QTemporaryDir>
 #include <filesystem>
@@ -32,6 +33,10 @@
 #include "application/use_cases/collapse_catalog_rows.hpp"
 #include "domain/metadata_restore.hpp"
 #include "gui/format_usb_controller.hpp"
+#include "gui/library_catalog_cache.hpp"
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/onelibrary/onelibrary_key.hpp"
+#include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "gui/library_consistency_controller.hpp"
 #include <QSettings>
 #include <QString>
@@ -439,6 +444,150 @@ public:
     {
         std::error_code ec;
         std::filesystem::remove_all(seabass::testing::scratchRoot() / "seabass_slow_backup_folder", ec);
+    }
+
+    // Scans a stick copy with a real LibraryConsistencyController and stops
+    // it once per entry of `offsetsMs`: that long after the `format` leg
+    // has started (the Engine leg's catalog read, then its audits), either
+    // with cancelScan() or by destroying the controller, which is what
+    // leaving the page does. Timed in C++ because QML's destroy() is
+    // deferred to the event loop, and what Back costs is the `delete`.
+    //
+    // One map per stop: {offsetMs, stopMs, wasRunning, formatAtStop,
+    // tasksAfter, outlivedMs}. stopMs is how long the stop took to be over (cancel:
+    // until busy went false; destroy: the delete itself). tasksAfter is how
+    // many scan tasks were still running once it was: a destroy must leave
+    // none. wasRunning says the scan had not finished on its own before the
+    // stop, without which the sample measures nothing. outlivedMs is how
+    // long a task went on once the controller was gone.
+    Q_INVOKABLE QVariantList stopScanAt(const QString &stickRoot, const QString &format, const QVariantList &offsetsMs,
+                                        bool destroy)
+    {
+        QVariantList samples;
+        for (const QVariant &offset : offsetsMs) {
+            // Every sample reads the stick, not the catalog cache the one
+            // before it filled: a cached leg is over before a stop lands.
+            seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(stickRoot.toStdString());
+            auto controller = std::make_unique<seabass::gui::LibraryConsistencyController>();
+            controller->scan(stickRoot + QStringLiteral("/PIONEER"), stickRoot + QStringLiteral("/Engine Library"));
+            QElapsedTimer clock;
+            clock.start();
+            // "engine:audits" is the Engine leg once its catalog has been
+            // read, which is where the audits run: the reader has ticked
+            // its last track.
+            const bool afterRead = format.endsWith(QStringLiteral(":audits"));
+            const QString leg = afterRead ? format.section(QLatin1Char(':'), 0, 0) : format;
+            const auto reached = [&]() {
+                return controller->scanningFormat() == leg
+                    && (!afterRead || (controller->scanTotal() > 0 && controller->scanCurrent() >= controller->scanTotal()));
+            };
+            while (controller->busy() && !reached() && clock.elapsed() < 120000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+            }
+            clock.restart();
+            while (controller->busy() && clock.elapsed() < offset.toInt()) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            }
+            QVariantMap sample;
+            sample[QStringLiteral("offsetMs")] = offset.toInt();
+            sample[QStringLiteral("wasRunning")] = controller->busy();
+            sample[QStringLiteral("formatAtStop")] = controller->scanningFormat();
+            clock.restart();
+            if (destroy) {
+                controller.reset();
+            } else {
+                controller->cancelScan();
+                while (controller->busy() && clock.elapsed() < 120000) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+                }
+            }
+            sample[QStringLiteral("stopMs")] = static_cast<double>(clock.nsecsElapsed()) / 1e6;
+            sample[QStringLiteral("tasksAfter")] = seabass::gui::LibraryConsistencyController::runningScanTasksForTesting();
+            controller.reset();
+            // Whatever a stop left running must not be counted against the
+            // next sample; how long it went on is outlivedMs.
+            clock.restart();
+            while (seabass::gui::LibraryConsistencyController::runningScanTasksForTesting() > 0
+                   && clock.elapsed() < 120000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+            }
+            sample[QStringLiteral("outlivedMs")] = static_cast<double>(clock.nsecsElapsed()) / 1e6;
+            samples << sample;
+        }
+        return samples;
+    }
+
+    // How long opening this stick's OneLibrary takes to its first row:
+    // SQLCipher derives the key there, inside one library call that no
+    // token can interrupt. A stop landing just before it waits it out, so
+    // the lifetime tests judge a stop against this, measured at the time.
+    Q_INVOKABLE double oneLibraryOpenMs(const QString &stickRoot)
+    {
+        namespace onelibrary = seabass::infrastructure::onelibrary;
+        const std::string pioneer = (stickRoot + QStringLiteral("/PIONEER")).toStdString();
+        QElapsedTimer clock;
+        clock.start();
+        try {
+            onelibrary::SqlCipherLibrary lib;
+            onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), /*readOnly=*/true);
+            db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+            onelibrary::SqlCipherStatement first(db, "SELECT count(*) FROM playlist");
+            first.step();
+        } catch (const std::exception &) {
+            return -1.0;
+        }
+        return static_cast<double>(clock.nsecsElapsed()) / 1e6;
+    }
+
+    // How long the whole scan of a stick copy takes, uninterrupted: what a
+    // destructor that waited without a stop landing would cost Back.
+    Q_INVOKABLE double fullScanMs(const QString &stickRoot)
+    {
+        seabass::gui::LibraryConsistencyController controller;
+        QElapsedTimer clock;
+        clock.start();
+        controller.scan(stickRoot + QStringLiteral("/PIONEER"), stickRoot + QStringLiteral("/Engine Library"));
+        while (controller.busy() && clock.elapsed() < 180000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        }
+        return static_cast<double>(clock.nsecsElapsed()) / 1e6;
+    }
+
+    // Starts a filesystem repair and destroys the controller while it
+    // runs. The repair unmounts and remounts the stick and cannot be
+    // stopped, so the destructor must wait for it. The stand-in takes half
+    // a second and marks when it is done. Empty when the destructor
+    // waited, otherwise what went wrong.
+    Q_INVOKABLE QString leaveThePageMidRepair()
+    {
+        auto finished = std::make_shared<std::atomic<bool>>(false);
+        seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting(
+            [finished](const std::string &) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                finished->store(true);
+                return seabass::infrastructure::media::FilesystemRepairResult{};
+            });
+        QString verdict;
+        {
+            auto controller = std::make_unique<seabass::gui::LibraryConsistencyController>();
+            // A stick that is not there: the scan ends at once with an
+            // error, and the repair it leaves possible is the stand-in.
+            controller->scan(QStringLiteral("/nonexistent/seabass-repair-test/PIONEER"), QString());
+            QElapsedTimer clock;
+            clock.start();
+            while (controller->busy() && clock.elapsed() < 30000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            }
+            controller->repairStickFilesystem();
+            if (!controller->repairingFilesystem()) {
+                verdict = QStringLiteral("the repair never started");
+            }
+        }
+        if (verdict.isEmpty() && !finished->load()) {
+            verdict = QStringLiteral("the controller was destroyed while its filesystem repair was still running");
+        }
+        seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
+        return verdict;
     }
 
     // Starts a format and leaves the page while it runs, which destroys

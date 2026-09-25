@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "application/ports/cancellation_token.hpp"
+
 namespace seabass::infrastructure::engine
 {
 
@@ -50,7 +52,11 @@ struct SampleRateAudit
 // reading it means TagLib, which this layer does not link.
 using SampleRateProbe = std::function<double(const std::string &audioFile)>;
 
-SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const SampleRateProbe &probe = {});
+// `cancel` is checked before every track, and a stop throws
+// application::OperationCancelled rather than coming back as an error or
+// as a partial count.
+SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const SampleRateProbe &probe = {},
+                                 const application::CancellationToken &cancel = application::CancellationToken::none());
 
 struct SampleRateRepair
 {

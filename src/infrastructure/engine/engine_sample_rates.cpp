@@ -61,7 +61,8 @@ int SampleRateAudit::fixable() const
         std::count_if(missing.begin(), missing.end(), [](const SampleRateEntry &e) { return e.sampleRateFromFile > 0.0; }));
 }
 
-SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const SampleRateProbe &probe)
+SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const SampleRateProbe &probe,
+                                 const application::CancellationToken &cancel)
 {
     SampleRateAudit audit;
     std::error_code ec;
@@ -74,6 +75,7 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
         // answers every read with "SQL logic error".
         auto db = djinterop::engine::load_database(engineLibraryPath);
         for (djinterop::track track : db.tracks()) {
+            cancel.throwIfCancelled();
             audit.tracksChecked++;
             bool unreadable = false;
             if (rateOf(track, unreadable) || unreadable) {
@@ -99,6 +101,8 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
             }
             audit.missing.push_back(std::move(entry));
         }
+    } catch (const application::OperationCancelled &) {
+        throw;  // a stop, not an unreadable library
     } catch (const std::exception &e) {
         audit.error = std::string("could not read the Engine library: ") + e.what();
     }

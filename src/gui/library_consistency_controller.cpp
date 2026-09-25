@@ -7,6 +7,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <map>
@@ -375,6 +376,14 @@ void tallyPlaylists(const std::vector<domain::Track> &tracks, LibraryConsistency
     }
 }
 
+// How many runScanTask calls are running right now, in any controller.
+// Read by the tests that check leaving a page leaves no scan behind.
+std::atomic_int &runningScanTasks()
+{
+    static std::atomic_int running{0};
+    return running;
+}
+
 // Runs entirely on a background thread (see LibraryConsistencyController::
 // scanNextPendingFormat()) - no access to the controller itself. Scans
 // exactly one format; the controller chains one of these per present
@@ -389,9 +398,15 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                                           infrastructure::engine::ArtworkSourceByTrackFile artSources,
                                           QString backupDirectory)
 {
+    runningScanTasks().fetch_add(1);
+    struct Running
+    {
+        ~Running() { runningScanTasks().fetch_sub(1); }
+    } running;
     LibraryConsistencyScanResult result;
     try {
         auto tracks = scanTracks(format, path, reporter, cancel);
+        cancel.throwIfCancelled();
 
         tallyPlaylists(tracks, result);
 
@@ -405,10 +420,18 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // decoded audio would tie together is reported, not repaired.
             try {
                 const auto rekordboxTracks = scanTracks(QStringLiteral("rekordbox"), path, reporter, cancel);
-                result.cleanupLeftovers = domain::CleanupLeftoverFinder::find(
-                    tracks, rekordboxTracks,
-                    infrastructure::rekordbox::deletedTrackFilePaths(path.toStdString()),
-                    application::normalizedPathKey);
+                const auto deleted = infrastructure::rekordbox::deletedTrackFilePaths(path.toStdString());
+                cancel.throwIfCancelled();
+                // The token rides in on the key: spelling every path of
+                // both catalogs is most of the finder's time (0.2 s of a
+                // Debug build on the committed fixture), and a stop there
+                // must not wait for all of it.
+                const auto keyOrStop = [&cancel](const std::string &file) {
+                    cancel.throwIfCancelled();
+                    return application::normalizedPathKey(file);
+                };
+                result.cleanupLeftovers =
+                    domain::CleanupLeftoverFinder::find(tracks, rekordboxTracks, deleted, keyOrStop);
                 result.cleanupLeftoversChecked = true;
             } catch (const application::OperationCancelled &) {
                 throw;
@@ -439,11 +462,16 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // The rescue sources outlive the scan: the repair that
             // follows asks the same object for the bytes, so a backup
             // archive is opened once rather than once per cover.
+            //
+            // Each audit checks the token per row, and the scan checks it
+            // between them: the controller's destructor waits for this
+            // task, so how quickly a stop lands is how quickly Back leaves.
             result.rescue = std::make_shared<ArtworkRescueSources>(
                 backupDirectory.toStdString(),
                 pathToUtf8(pathFromQString(path).parent_path()));
-            result.artwork =
-                infrastructure::engine::auditArtwork(path.toStdString(), artSources, result.rescue->probe());
+            result.artwork = infrastructure::engine::auditArtwork(path.toStdString(), artSources,
+                                                                  result.rescue->probe(), cancel);
+            cancel.throwIfCancelled();
             // The same pass asks each row for its sample rate, and each
             // file whose row cannot say. Reading a header costs about
             // 0.07 ms (see TagLibMetadataProbe), so a library where
@@ -452,6 +480,7 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
             // #38: one count query against Track, no file reads, so it
             // costs nothing next to the two audits around it.
             result.analysisState = infrastructure::engine::auditAnalysisState(path.toStdString());
+            cancel.throwIfCancelled();
             result.sampleRates = infrastructure::engine::auditSampleRates(
                 path.toStdString(), [](const std::string &audioFile) -> double {
 #ifdef SEABASS_HAVE_TAGLIB
@@ -462,7 +491,9 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
                     (void)audioFile;
                     return 0.0;
 #endif
-                });
+                },
+                cancel);
+            cancel.throwIfCancelled();
         }
 
         if (!playlistName.isEmpty()) {
@@ -545,20 +576,37 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
                             .toString();
 }
 
-// Leaving a page mid-scan destroys its controller, and with it the
-// watcher, so the result has nowhere to arrive: it is dropped with the
-// task, never applied to a page that has gone. The task itself holds only
-// copies (paths, the token, the reporter, whose connections to this
-// object Qt cuts here), so it can finish on its own. Cancelling just
-// stops it reading the stick for nobody at the next point it checks.
+// Leaving a page destroys its controller, and nothing this controller
+// started may outlive it.
 //
-// Deliberately not awaited, unlike the controllers that hold a lock or
-// write: the Engine leg's audits do not check the token, so waiting here
-// would freeze Back for as long as they run, which is the freeze this
-// page's overlay exists to avoid.
+// A scan is stopped and waited for. Left running, it kept the Engine
+// database and export.pdb open for a page that had gone: an eject
+// straight after met "device busy", a save on another page met a
+// database still being read, and coming back started a second scan
+// alongside the first. Every leg checks the token at row grain (the
+// catalog readers, each Engine audit, the Clean Up leftover check), so
+// the wait is the time to the next row, not the rest of the scan. The one
+// step it cannot cut short is OneLibrary's key derivation on open, a
+// single SQLCipher call of about 0.13 s. tst_ScanLifetime measures it.
+//
+// The filesystem repair is this controller's one write of its own (the
+// fixes it stages are written by the edit session, which outlives it).
+// It unmounts, checks and remounts the stick, and cannot be cancelled,
+// so it is waited for to the end: abandoned, the stick would come back
+// with nobody here to read how it went or to rescan it. The page that
+// starts it keeps Back disabled while it runs, so this wait is for the
+// window closing under it.
 LibraryConsistencyController::~LibraryConsistencyController()
 {
     m_scanCancel.cancel();
+    m_pendingScanFormats.clear();
+    awaitQuietly(m_watcher);
+    awaitQuietly(m_repairWatcher);
+}
+
+int LibraryConsistencyController::runningScanTasksForTesting()
+{
+    return runningScanTasks().load();
 }
 
 std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()

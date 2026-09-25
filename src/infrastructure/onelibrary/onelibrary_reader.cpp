@@ -118,6 +118,10 @@ std::vector<Track> OneLibraryReader::readAll()
     {
         SqlCipherStatement stmt(db, "SELECT content_id, playlist_id, sequenceNo FROM playlist_content");
         while (stmt.step()) {
+            // The two passes before the track loop check the token too:
+            // together they are as long as the loop on a library with
+            // many cues, and a stop must not wait them out.
+            m_cancel.throwIfCancelled();
             int64_t contentId = stmt.columnInt64(0);
             std::string path = playlistPath(stmt.columnInt64(1), playlistTree);
             if (path.empty()) {
@@ -136,6 +140,7 @@ std::vector<Track> OneLibraryReader::readAll()
         SqlCipherStatement stmt(db, "SELECT content_id, kind, inUsec, cueComment, isActiveLoop, outUsec FROM cue "
                                     "ORDER BY content_id");
         while (stmt.step()) {
+            m_cancel.throwIfCancelled();
             int64_t contentId = stmt.columnInt64(0);
             int64_t kind = stmt.columnInt64(1);
             CuePoint cue;

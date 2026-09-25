@@ -342,9 +342,12 @@ class LibraryConsistencyController : public QObject
 
 public:
     explicit LibraryConsistencyController(QObject *parent = nullptr);
-    // Stops a scan still running: its page is gone, so nothing is left to
-    // show the result on. See the definition for why it does not wait.
+    // Stops a scan still running and waits for it, and waits for a
+    // filesystem repair to finish: nothing started here outlives the page.
+    // See the definition.
     ~LibraryConsistencyController() override;
+    // Scan tasks running right now, across every controller.
+    static int runningScanTasksForTesting();
 
     LibraryConsistencyIssueListModel *issuesModel() { return &m_model; }
     JunkCueIssueListModel *junkCuesModel() { return &m_junkCueModel; }
