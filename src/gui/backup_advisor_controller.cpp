@@ -174,7 +174,7 @@ QVariantMap BackupAdvisorController::sourceToVariant(const StickBackupAdvice::So
     QVariantMap map;
     map["kind"] = QString::fromUtf8(std::string(application::toString(source.kind)).c_str());
     map["label"] = QString::fromStdString(source.label);
-    map["mountPoint"] = QString::fromStdString(source.mountPoint);
+    map["mountPoint"] = qtPathFromUtf8(source.mountPoint);
     map["backupPath"] = pathToQString(source.backupPath);
     map["modifiedAt"] = isoTime(source.modifiedAtUnix);
     map["enoughSpace"] = source.enoughSpace;
@@ -182,7 +182,7 @@ QVariantMap BackupAdvisorController::sourceToVariant(const StickBackupAdvice::So
     QString rekordboxPath;
     QString enginePath;
     if (source.kind == StickBackupAdvice::SourceRef::Kind::Stick) {
-        const auto known = m_known.find(QString::fromStdString(source.mountPoint));
+        const auto known = m_known.find(qtPathFromUtf8(source.mountPoint));
         if (known != m_known.end()) {
             rekordboxPath = known->rekordboxPath;
             enginePath = known->enginePath;

@@ -84,7 +84,7 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
     case LabelRole:
         return QString::fromStdString(stick.label);
     case MountPointRole:
-        return QString::fromStdString(stick.mountPoint);
+        return qtPathFromUtf8(stick.mountPoint);
     case DevicePathRole:
         return QString::fromStdString(stick.devicePath);
     case MountedRole:
@@ -94,9 +94,9 @@ QVariant DetectedStickListModel::data(const QModelIndex &index, int role) const
     case HasEngineRole:
         return stick.enginePath.has_value();
     case RekordboxPathRole:
-        return stick.rekordboxPath ? QString::fromStdString(*stick.rekordboxPath) : QString();
+        return stick.rekordboxPath ? qtPathFromUtf8(*stick.rekordboxPath) : QString();
     case EnginePathRole:
-        return stick.enginePath ? QString::fromStdString(*stick.enginePath) : QString();
+        return stick.enginePath ? qtPathFromUtf8(*stick.enginePath) : QString();
     case IsSdCardRole:
         return stick.isSdCard;
     case IsFolderRole:
@@ -421,7 +421,7 @@ void MediaController::detect()
     }
     for (const application::StickIdentity &identity : diff.appeared) {
         emit stickAppeared(QString::fromStdString(identity.libraryId()),
-                           QString::fromStdString(mountPointFor(identity)));
+                           qtPathFromUtf8(mountPointFor(identity)));
         auto awaited = application::findAwaited(m_awaitedIdentities, identity);
         if (!awaited) {
             continue;
