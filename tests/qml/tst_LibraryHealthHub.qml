@@ -114,6 +114,47 @@ TestCase {
         compare(card.visible, false, "and stays hidden until the check has run");
     }
 
+    SignalSpy {
+        id: detailSpy
+        signalName: "detailRequested"
+    }
+
+    // Every card that offers a review asks for its OWN check's page. They
+    // all used to open one shared page with every check's repair on it, so
+    // a press on "Review sample rates" landed on a list of missing files;
+    // a section repeated between two cards would put that back for them.
+    // Main maps each of these to a page (healthCheckPage()).
+    function test_eachCardAsksForItsOwnChecksPage() {
+        var page = createTemporaryObject(pageComponent, testCase);
+        tryCompare(page.consistencyController, "busy", false);
+        detailSpy.clear();
+        detailSpy.target = page;
+        var expected = [
+            {card: "brokenFilesCard", section: "broken"},
+            {card: "junkCuesCard", section: "junkcues"},
+            {card: "importPromptCard", section: "import"},
+            {card: "sampleRateCard", section: "samplerates"},
+            {card: "coverArtCard", section: "artwork"},
+            {card: "cleanupLeftoverCard", section: "cleanupleftovers"},
+        ];
+        var seen = {};
+        for (var i = 0; i < expected.length; ++i) {
+            var card = findByObjectName(page, expected[i].card);
+            verify(card !== null, expected[i].card + " exists");
+            card.actionRequested();
+            compare(detailSpy.count, i + 1, expected[i].card + " asks for a page");
+            var section = detailSpy.signalArguments[i][0];
+            compare(section, expected[i].section, expected[i].card);
+            verify(seen[section] === undefined, section + " is asked for by one card only");
+            seen[section] = true;
+        }
+        // The two cards that open no page: the filesystem card's action
+        // is its own dialog, and track analysis only reports.
+        detailSpy.clear();
+        findByObjectName(page, "analysisStateCard").actionRequested();
+        compare(detailSpy.count, 0, "a report-only check has no page to open");
+    }
+
     function test_aCleanCheckStillGetsACard() {
         // "Nothing wrong here" is a result. A page that only lists problems
         // cannot distinguish a clean library from a check that never ran.

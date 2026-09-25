@@ -6,13 +6,17 @@ import QtQuick
 import QtTest
 import SeabassGui
 
-// Library Health's findings page, driven by a stand-in controller: what
-// is staged is said beside the buttons that staged it.
+// Library Health's "Tracks and their files" page, driven by a stand-in
+// controller: what is staged is said beside the buttons that staged it,
+// and nothing from any other check is on it.
 //
-// It used to show one number for the page -- so staging 29 stray cue
-// removals put "29 staged, not saved yet" next to "Stage All Safe
-// Repairs", a button about missing files, and nothing at all next to the
-// cue buttons that had just done the staging.
+// It used to be the page for every check at once. One number for the
+// page put "29 staged, not saved yet" beside "Stage All Safe Repairs"
+// after staging 29 stray cue removals; and every card on the hub opened
+// the same long page, so "Review sample rates" landed on a list of
+// missing files. The other checks' tests moved with them, to
+// tst_CuesAtZeroPage, tst_ImportPromptPage, tst_SampleRatesPage and
+// tst_OneLibraryLeftoversPage.
 TestCase {
     id: testCase
     name: "LibraryConsistencyPage"
@@ -67,8 +71,11 @@ TestCase {
             property var junkCues: ListModel {}
             property var playlistNames: []
             property var playlistTrackCounts: ({})
-            function scan(a, b, c) {}
+            property int scanCalls: 0
+            property int undoCalls: 0
+            function scan(a, b, c) { scanCalls++; }
             function cancelScan() {}
+            function undoLastOperation() { undoCalls++; }
         }
     }
 
@@ -81,28 +88,6 @@ TestCase {
             rekordboxPath: "/nonexistent/TESTSTICK/PIONEER"
             enginePath: "/nonexistent/TESTSTICK/Engine Library"
             playbackController: realPlayback
-        }
-    }
-
-    function findLabelContaining(item, needle) {
-        if (item.text !== undefined && typeof item.text === "string" && item.text.indexOf(needle) >= 0) {
-            return item;
-        }
-        for (const child of item.children) {
-            const found = findLabelContaining(child, needle);
-            if (found !== null) {
-                return found;
-            }
-        }
-        return null;
-    }
-
-    function collectHighlights(item, out) {
-        if (item.highlightCuePositionMs !== undefined) {
-            out.push(item.highlightCuePositionMs);
-        }
-        for (const child of item.children) {
-            collectHighlights(child, out);
         }
     }
 
@@ -132,29 +117,22 @@ TestCase {
         compare(page.consistencyController.busy, false);
     }
 
-    function test_eachChecksStagedWorkIsCountedBesideItsOwnButtons() {
+    function test_onlyThisChecksStagedWorkIsCountedHere() {
         var controller = createTemporaryObject(controllerComponent, testCase);
         var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
         verify(page !== null, "the page must instantiate");
         var missing = findChild(page, "stagedIssuesNote");
-        var cues = findChild(page, "stagedJunkCuesNote");
-        verify(missing !== null && cues !== null, "both checks must have a staged note");
+        verify(missing !== null, "the check must have a staged note");
         compare(missing.visible, false, "nothing staged, nothing said");
-        compare(cues.visible, false);
 
-        // Stray cues staged: the cue section says so, the missing-files
-        // section stays quiet.
+        // Stray cues staged elsewhere: this page stays quiet about them.
         controller.stagedJunkCueCount = 29;
-        compare(cues.visible, true);
-        compare(cues.text, "29 staged, not saved yet");
         compare(missing.visible, false, "a staged cue removal is not staged repair work");
 
-        // And the other way round.
         controller.stagedJunkCueCount = 0;
         controller.stagedIssueCount = 4;
         compare(missing.visible, true);
         compare(missing.text, "4 staged, not saved yet");
-        compare(cues.visible, false);
 
         // The page outlives the stand-in otherwise, and spends teardown
         // reading properties off a destroyed object.
@@ -162,35 +140,117 @@ TestCase {
         wait(0);
     }
 
+    // The page is this check and nothing else: none of the other checks'
+    // summaries, buttons or rows are on it, and the breadcrumb names it
+    // under Library Health.
+    function test_thePageHoldsThisCheckOnly() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        controller.sampleRateMissingCount = 3;
+        controller.sampleRateFixableCount = 3;
+        controller.playerWillOfferImport = true;
+        controller.cleanupLeftoversChecked = true;
+        controller.cleanupLeftoverCount = 2;
+        controller.junkCues.append({track: {title: "A track", artist: "An artist", filePath: "/nowhere/a.mp3",
+                                            durationMs: 0, cues: [], side: "engine", sourceId: "1",
+                                            artworkPath: ""},
+                                    staged: false, format: "engine", positionMs: 0,
+                                    reason: "at the very start of the track"});
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null, "the page must instantiate");
+        verify(findChild(page, "missingFilesSummary") !== null, "its own check is here");
+        for (const other of ["sampleRateSummary", "fillSampleRatesButton", "importPromptSummary",
+                             "markImportedButton", "cleanupLeftoverSummary", "finishCleanupButton",
+                             "stagedJunkCuesNote", "cuesAtZeroSummary"]) {
+            compare(findChild(page, other), null, other + " belongs to another check's page");
+        }
+        var reasons = [];
+        collectReasons(page, reasons);
+        compare(reasons.length, 0, "no stray-cue rows on the missing-files page");
+        compare(findButton(page, "Remove All"), null);
+
+        var crumb = findCrumb(page.header);
+        verify(crumb !== null, "the header has a breadcrumb");
+        compare(crumb.title, "Tracks and Their Files");
+        compare(crumb.middleLabel, "Library Health", "one level up is the hub");
+
+        // Handed the hub's controller, it shows that scan rather than
+        // making the user wait through the same one again.
+        compare(controller.scanCalls, 0, "a shared controller is not scanned again");
+
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/LibraryConsistencyPage-missing-files.png");
+        }
+        page.destroy();
+        wait(0);
+    }
+
+    // Undo Last Save is the session's undo, and it sits on every check's
+    // page: it used to be beside the missing-file repairs, the only place
+    // it could be found when every check shared one page.
+    function test_undoLastSaveIsOfferedOnceThereIsOne() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        var undo = findChild(page, "undoLastSaveButton");
+        verify(undo !== null);
+        compare(undo.visible, false, "nothing saved, nothing to undo");
+        controller.canUndo = true;
+        compare(undo.visible, true);
+        undo.clicked();
+        compare(controller.undoCalls, 1);
+        page.destroy();
+        wait(0);
+    }
+
+    // The header's text and the body share one left line.
+    function test_theBreadcrumbLinesUpWithTheBody() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        waitForRendering(page);
+        var home = findChild(page.header, "homeCrumb");
+        var body = findChild(page, "healthCheckBody");
+        verify(home !== null && body !== null);
+        compare(home.contentItem.mapToItem(page, 0, 0).x, body.mapToItem(page, 0, 0).x,
+                "breadcrumb and body must share a left edge");
+        compare(body.mapToItem(page, 0, 0).x, Theme.pageMargin);
+        page.destroy();
+        wait(0);
+    }
+
+    function findCrumb(item) {
+        if (item === null || item === undefined) {
+            return null;
+        }
+        if (item.middleClickable !== undefined && item.title !== undefined) {
+            return item;
+        }
+        var kids = item.children ? item.children : [];
+        for (var i = 0; i < kids.length; ++i) {
+            var found = findCrumb(kids[i]);
+            if (found !== null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
     // A "do all of it" button with everything already staged has nothing
     // behind it. It used to stay live, because it asked what the check
-    // found rather than what it had left to do.
-    function test_theAllButtonsGoQuietOnceEverythingIsStaged() {
+    // found rather than what it had left to do. (The stray cues' own
+    // Remove All is covered in tst_CuesAtZeroPage.)
+    function test_theAllButtonGoesQuietOnceEverythingIsStaged() {
         var controller = createTemporaryObject(controllerComponent, testCase);
-        // The delegate needs its roles; the buttons under test do not
-        // care what is in them.
-        var row = {track: {title: "A track", artist: "An artist", filePath: "/nowhere/a.mp3",
-                           durationMs: 0, cues: [], side: "engine", sourceId: "1", artworkPath: ""},
-                   staged: false, format: "engine", positionMs: 0,
-                   reason: "at the very start of the track"};
-        controller.junkCues.append(row);
-        controller.junkCues.append(row);
         controller.repairableCount = 3;
         controller.unstagedRepairableCount = 3;
-        controller.unstagedJunkCueCount = 2;
         var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
         verify(page !== null, "the page must instantiate");
 
         var repairAll = findButton(page, "Stage All Safe Repairs");
-        var removeAll = findButton(page, "Remove All");
-        verify(repairAll !== null && removeAll !== null, "both do-all buttons must be there");
+        verify(repairAll !== null, "the do-all button must be there");
         compare(repairAll.enabled, true, "with repairs waiting it is live");
-        compare(removeAll.enabled, true, "with cues waiting it is live");
 
         controller.unstagedRepairableCount = 0;
-        controller.unstagedJunkCueCount = 0;
         compare(repairAll.enabled, false, "everything staged: nothing left to press it for");
-        compare(removeAll.enabled, false);
         page.destroy();
         wait(0);
     }
@@ -215,9 +275,6 @@ TestCase {
         return null;
     }
 
-    // Sample rates: a row without one means every cue on that track is
-    // placed by a guess, and the file itself can say what it really is.
-    // The button stages, like every other fix on this page.
     // Which playlists end up short a track. The data was already in
     // hand -- the same track list the playlist picker is built from --
     // and was being dropped at the GUI boundary, so a missing file told
@@ -268,176 +325,6 @@ TestCase {
         const twoCopies = [{playlists: [{name: "Warmup", position: 2}]},
                            {playlists: [{name: "Warmup", position: 9}]}];
         compare(page.playlistsLeftShort("missing", twoCopies, null).length, 1);
-
-        page.destroy();
-        wait(0);
-    }
-
-    // Two checks feed the accidental-cue list now: a cue at the very
-    // start of a track, and one of a crowd of hot cues inside its first
-    // two seconds (#41). Every row is an offer to delete somebody's
-    // cue, so each says why it is there, and the waveform highlights
-    // the cue that Remove would actually take.
-    //
-    // Highlighting 0:00 while removing a cue at 1.188 s is the exact
-    // opposite of the "unambiguous which one Remove kills" the row was
-    // built for, and it is what this section did the moment a second
-    // check started feeding it.
-    function test_eachAccidentalCueRowSaysWhyAndPointsAtItself() {
-        const controller = createTemporaryObject(controllerComponent, testCase);
-        const track = {title: "Too Little Too Late", artist: "Joris Voorn", filePath: "/nowhere/a.mp3",
-                       durationMs: 300000, cues: [], side: "rekordbox", sourceId: "1", artworkPath: ""};
-        controller.junkCues.append({track: track, staged: false, format: "rekordbox", positionMs: 0,
-                                    reason: "at the very start of the track"});
-        controller.junkCues.append({track: track, staged: false, format: "rekordbox", positionMs: 1188,
-                                    reason: "one of 3 hot cues in the first two seconds, which is not a "
-                                            + "pattern anyone plays"});
-        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
-        verify(page !== null, "the page must instantiate");
-
-        // The section headline can no longer claim every row is at 0:00.
-        const headline = findLabelContaining(page, "look accidental");
-        verify(headline !== null, "the section says what it found without naming only one of the two checks");
-        verify(headline.text.indexOf("0:00") < 0, "and does not describe a cue at 1.188 s as being at 0:00");
-
-        // Both rows carry their own reason, and the two differ.
-        const reasons = [];
-        collectReasons(page, reasons);
-        compare(reasons.length, 2, "one reason per row");
-        verify(reasons[0] !== reasons[1], "the two checks do not describe their rows the same way");
-        verify(reasons[1].indexOf("first two seconds") >= 0, reasons[1]);
-
-        // And each row's waveform points at its own cue. The second row
-        // removes a cue at 1.188 s; a highlight left at 0 would mark a
-        // different cue than the button takes.
-        // Counted by value rather than by position: the card passes the
-        // property down to the waveform inside it, so each row
-        // contributes it more than once and the exact depth is not what
-        // this is about.
-        const highlights = [];
-        collectHighlights(page, highlights);
-        verify(highlights.indexOf(1188) >= 0,
-               "the clustered row points at its own cue, not at 0:00: " + JSON.stringify(highlights));
-        verify(highlights.indexOf(0) >= 0, "and the row that really is at the start still points at 0");
-        for (const value of highlights) {
-            verify(value === 0 || value === 1188, "no row highlights a cue no row is about: " + value);
-        }
-
-        page.destroy();
-        wait(0);
-    }
-
-    function test_theSampleRateFixStagesAndSaysSo() {
-        var controller = createTemporaryObject(controllerComponent, testCase);
-        controller.sampleRateMissingCount = 43;
-        controller.sampleRateFixableCount = 40;
-        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
-        verify(page !== null, "the page must instantiate");
-
-        var summary = findChild(page, "sampleRateSummary");
-        verify(summary !== null, "the check must say what it found");
-        verify(summary.text.indexOf("43") >= 0 && summary.text.indexOf("40") >= 0,
-               "both numbers belong in the sentence: " + summary.text);
-
-        var button = findChild(page, "fillSampleRatesButton");
-        var note = findChild(page, "stagedSampleRatesNote");
-        verify(button !== null && note !== null);
-        compare(button.visible, true, "there is something to fix");
-        compare(note.visible, false, "and nothing staged yet");
-
-        button.clicked();
-        compare(controller.sampleRateFillStaged, true, "the button stages");
-        compare(note.visible, true, "and the page says so where the button is");
-        compare(button.text, "Unstage", "the same button takes it back");
-        button.clicked();
-        compare(controller.sampleRateFillStaged, false);
-
-        page.destroy();
-        wait(0);
-    }
-
-    // #8. Hidden on a stick the check did not run on; once it has, the
-    // numbers are said, the fix stages and unstages from one button, and
-    // every leftover it leaves alone is named with its reason.
-    function test_cleanUpLeftoversAreSaidStagedAndTheRestNamed() {
-        var controller = createTemporaryObject(controllerComponent, testCase);
-        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
-        verify(page !== null, "the page must instantiate");
-        var subtitle = findChild(page, "cleanupLeftoverSubtitle");
-        var summary = findChild(page, "cleanupLeftoverSummary");
-        var button = findChild(page, "finishCleanupButton");
-        var note = findChild(page, "stagedCleanupLeftoversNote");
-        verify(subtitle !== null && summary !== null && button !== null && note !== null);
-        compare(subtitle.visible, false, "not checked: not shown");
-
-        controller.cleanupLeftoversChecked = true;
-        controller.cleanupLeftoverCount = 284;
-        controller.cleanupLeftoverFixableCount = 281;
-        controller.cleanupLeftoversHeldBack = [
-            {title: "Reflection", artist: "Someone", reason: "The rekordbox library has more than one copy of it."}
-        ];
-        compare(subtitle.visible, true);
-        verify(summary.text.indexOf("284") >= 0 && summary.text.indexOf("281") >= 0,
-               "both numbers belong in the sentence: " + summary.text);
-        verify(summary.text.indexOf("\u2014") < 0 && summary.text.indexOf("--") < 0, "no dashes on screen");
-
-        var heldBack = findChild(page, "cleanupLeftoverHeldBack");
-        verify(heldBack !== null);
-        compare(heldBack.count, 1, "the one left alone is named");
-        verify(heldBack.itemAt(0).text.indexOf("Reflection") >= 0
-               && heldBack.itemAt(0).text.indexOf("more than one copy") >= 0, heldBack.itemAt(0).text);
-
-        // Looked at, not only asserted: saved when SEABASS_SCREENSHOT_DIR
-        // is set.
-        if (screenshotDir) {
-            page.width = 900;
-            page.height = 2200;
-            waitForRendering(page);
-            wait(100);
-            grabImage(page).save(screenshotDir + "/LibraryConsistencyPage-cleanup-leftovers.png");
-        }
-
-        compare(button.visible, true);
-        compare(note.visible, false);
-        button.clicked();
-        compare(controller.cleanupLeftoverFixStaged, true, "the button stages");
-        compare(note.visible, true, "and the page says so where the button is");
-        compare(button.text, "Unstage");
-        button.clicked();
-        compare(controller.cleanupLeftoverFixStaged, false);
-
-        page.destroy();
-        wait(0);
-    }
-
-    // The player's import prompt: the one check here that is about what a
-    // Denon player will do next time the stick is in it, and the only one
-    // whose "fix" is telling another program something rather than
-    // changing what is on the stick.
-    function test_theImportPromptIsSaidAndCanBeStagedAway() {
-        var controller = createTemporaryObject(controllerComponent, testCase);
-        var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
-        var summary = findChild(page, "importPromptSummary");
-        var button = findChild(page, "markImportedButton");
-        var note = findChild(page, "stagedImportMarkNote");
-        verify(summary !== null && button !== null && note !== null);
-
-        // Nothing to say when the player will leave the library alone.
-        verify(summary.text.indexOf("leave the Engine library alone") >= 0, summary.text);
-        compare(button.visible, false, "and nothing to offer");
-
-        controller.playerWillOfferImport = true;
-        verify(summary.text.indexOf("overwritten") >= 0,
-               "what accepting the prompt costs belongs in the sentence: " + summary.text);
-        compare(button.visible, true);
-        compare(note.visible, false);
-
-        button.clicked();
-        compare(controller.importMarkStaged, true, "the button stages");
-        compare(note.visible, true, "and says so beside itself");
-        compare(button.text, "Unstage");
-        button.clicked();
-        compare(controller.importMarkStaged, false);
 
         page.destroy();
         wait(0);

@@ -609,24 +609,66 @@ ApplicationWindow {
         CoverArtPage {}
     }
 
+    Component {
+        id: cuesAtZeroPageComponent
+        CuesAtZeroPage {
+            playbackController: playbackCtrl
+        }
+    }
+
+    Component {
+        id: importPromptPageComponent
+        ImportPromptPage {}
+    }
+
+    Component {
+        id: sampleRatesPageComponent
+        SampleRatesPage {}
+    }
+
+    Component {
+        id: oneLibraryLeftoversPageComponent
+        OneLibraryLeftoversPage {}
+    }
+
     // Library Health opens on its hub: every check run once, each
-    // reporting in a sentence. The detailed row-by-row view is pushed from
-    // there, and is handed the hub's own controller so it shows the scan
-    // that just ran rather than repeating it.
+    // reporting in a sentence. Each card's check has a page of its own,
+    // pushed from there and handed the hub's own controller so it shows
+    // the scan that just ran rather than repeating it.
+    //
+    // One page per check, never one for all of them: they used to share
+    // LibraryConsistencyPage, so "Review sample rates" opened a page whose
+    // first thing was a list of missing files.
+    function healthCheckPage(section) {
+        switch (section) {
+        case "broken": return libraryConsistencyPageComponent;
+        case "junkcues": return cuesAtZeroPageComponent;
+        case "import": return importPromptPageComponent;
+        case "samplerates": return sampleRatesPageComponent;
+        case "artwork": return coverArtPageComponent;
+        case "cleanupleftovers": return oneLibraryLeftoversPageComponent;
+        }
+        console.warn("Library Health: no page for the check \"" + section + "\"");
+        return null;
+    }
+
     Component {
         id: libraryHealthHubPageComponent
         LibraryHealthHubPage {
             id: healthHub
             playbackController: playbackCtrl
-            // Cover art has its own page: one library-wide fault with one
-            // action, rather than a row among the per-track findings.
-            onDetailRequested: (section) => stackView.push(
-                section === "artwork" ? coverArtPageComponent : libraryConsistencyPageComponent, {
+            onDetailRequested: (section) => {
+                const page = window.healthCheckPage(section);
+                if (page === null) {
+                    return;
+                }
+                stackView.push(page, {
                     stickLabel: healthHub.stickLabel,
                     rekordboxPath: healthHub.rekordboxPath,
                     enginePath: healthHub.enginePath,
                     sharedController: healthHub.consistencyController,
-                })
+                });
+            }
             // "Back up before repairing": straight to this stick's own
             // Backups page. No device path to hand over from here, which
             // only hides the card that restores onto a blank drive.
