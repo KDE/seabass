@@ -72,6 +72,13 @@ Canvas {
         return Math.max(root.minimumCueSpanMs, last * 1.1);
     }
     readonly property bool lengthUnknown: root.trackDurationMs <= 0 && root.cueSpanMs > 0
+    // The bars are the whole track, but the cues on a line with no length
+    // are placed against their own span, which is not the track: drawn
+    // together the markers would land at the wrong place in the music. A
+    // waveform carries no length of its own (only its columns), so there
+    // is nothing to scale the cues by either. Those rows draw the flat
+    // line, the same as a row without a waveform, and the cues on it.
+    readonly property bool drawsBars: root.hasWaveform && !root.lengthUnknown
 
     function timeText(ms) {
         const seconds = Math.floor(Math.max(0, ms) / 1000);
@@ -139,7 +146,7 @@ Canvas {
         var w = width, h = height;
         var wf = waveformData;
 
-        if (!wf || wf.length === 0) {
+        if (!root.drawsBars) {
             ctx.fillStyle = String(Theme.textMuted);
             ctx.fillRect(0, h / 2 - 1, w, 2);
         } else {

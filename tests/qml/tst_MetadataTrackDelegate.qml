@@ -198,6 +198,56 @@ TestCase {
         compare(waveform.lengthUnknown, false);
     }
 
+    // A row with the stick's waveform but no length: the bars are the whole
+    // track and the cues are placed against their own span, so drawing both
+    // put every marker at the wrong place in the music. Such a row draws the
+    // flat line and the cues on it, and no bars. The waveform carries no
+    // length of its own to scale the cues by.
+    function test_aWaveformWithoutALengthIsNotDrawnUnderSpanPlacedCues() {
+        const cues = [
+            {kind: "hot", hotCueNumber: 1, positionMs: 60000, isLoop: false, loopEndMs: 0, color: "#e03c3c", comment: ""},
+        ];
+        // Full-height, pure blue bass columns: any bar covers the top rows.
+        const columns = [];
+        for (let i = 0; i < 100; i++) {
+            columns.push({low: 1, mid: 0, high: 0});
+        }
+        const row = createTemporaryObject(rowComponent, testCase, {
+            index: 0, showWaveform: true, expanded: true, waveformDurationMs: 0,
+            waveformCues: cues, waveformData: columns,
+        });
+        tryVerify(() => findChild(row, "rowWaveform") !== null, 2000);
+        const waveform = findChild(row, "rowWaveform");
+        compare(waveform.hasWaveform, true);
+        compare(waveform.lengthUnknown, true);
+        const span = 66000;
+        compare(waveform.cueSpanMs, span);
+        const cueDrawn = function(image) {
+            const at = waveform.mapToItem(row, 60000 / span * waveform.width + 7, 2);
+            const p = PixelScale.pixel(image, row, at.x, at.y);
+            return Math.abs(p.r * 255 - 0xe0) < 40 && Math.abs(p.g * 255 - 0x3c) < 40
+                && Math.abs(p.b * 255 - 0x3c) < 40;
+        };
+        const barAt = function(image) {
+            // Far from the cue, a quarter of the way down: only a bar
+            // paints there, the flat line sits in the middle.
+            const at = waveform.mapToItem(row, waveform.width * 0.2, waveform.height * 0.25);
+            const p = PixelScale.pixel(image, row, at.x, at.y);
+            // Blue bass bars, drawn part-transparent over the row: blue
+            // well above red, which the grey ground never is.
+            return (p.b - p.r) * 255 > 60;
+        };
+        let image = null;
+        tryVerify(() => { image = grabImage(row); return cueDrawn(image); }, 3000, "the cue is drawn");
+        verify(!barAt(image), "no bar is drawn under cues placed against their own span");
+        compare(waveform.drawsBars, false);
+
+        // With a length the bars and the cues agree, and both are drawn.
+        waveform.trackDurationMs = 240000;
+        compare(waveform.drawsBars, true);
+        tryVerify(() => barAt(grabImage(row)), 3000, "with a length the bars are drawn");
+    }
+
     // A row whose page says nothing claims nothing: the delegate has no
     // reason of its own to give. It used to say "Waveform not part of
     // backup" on every row, which on a stick's list is not true.
