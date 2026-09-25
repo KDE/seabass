@@ -4,6 +4,10 @@
 
 #pragma once
 
+#include <QObject>
+#include <QQmlEngine>
+#include <QString>
+
 namespace seabass::gui
 {
 
@@ -27,5 +31,44 @@ namespace seabass::gui
 // nothing, on a fresh profile, under the native style the shipped app
 // replaces before it draws anything.
 void applyDefaultControlsStyle();
+
+// Whether a Label nobody gave a colour takes its ink from the palette
+// under `styleName`, the resolved Qt Quick Controls style, and nothing of
+// the app's reaches that palette unless the app puts it there.
+//
+// Basic and Fusion: the styles a Linux desktop other than Plasma gives
+// this app (Fusion when nothing is asked for, Basic where a style is
+// pinned). Their palette is Basic's fixed light one or the platform's,
+// which is Qt's light one anywhere but Plasma, whatever Theme paints.
+// Not KDE's style (its ink is KDE's colour scheme, which
+// applyAppColorScheme() makes Kelp), not Material (Material.theme, set
+// in Main.qml), not FluentWinUI3 (the colour scheme hint,
+// applyStyleColorScheme()): each of those already follows Theme, and
+// their other palette roles are their own look.
+//
+// Pure, so the choice is testable apart from the style in force.
+inline bool styleInksFromPalette(const QString &styleName)
+{
+    return styleName == QLatin1String("Basic") || styleName == QLatin1String("Fusion");
+}
+
+// The style in force, for QML: common/ThemePalette.qml gives the window
+// Theme's colours as its palette when inksFromPalette is true.
+class ControlsStyle : public QObject
+{
+    Q_OBJECT
+    QML_ELEMENT
+    QML_SINGLETON
+    Q_PROPERTY(QString name READ name CONSTANT)
+    Q_PROPERTY(bool inksFromPalette READ inksFromPalette CONSTANT)
+
+public:
+    explicit ControlsStyle(QObject *parent = nullptr) : QObject(parent) {}
+
+    // QQuickStyle::name(): read when QML first asks, by which time
+    // QtQuick.Controls is imported and the style resolved.
+    QString name() const;
+    bool inksFromPalette() const { return styleInksFromPalette(name()); }
+};
 
 }  // namespace seabass::gui

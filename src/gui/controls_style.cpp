@@ -14,6 +14,7 @@
 // qputenv". The Windows arm has the same shape and simply is not
 // compiled on any machine that has built this so far.
 #include <QByteArray>
+#include <QQuickStyle>
 #include <QtGlobal>
 
 namespace seabass::gui
@@ -41,6 +42,11 @@ void applyDefaultControlsStyle()
         qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.desktop");
     }
 #endif
+}
+
+QString ControlsStyle::name() const
+{
+    return QQuickStyle::name();
 }
 
 }  // namespace seabass::gui

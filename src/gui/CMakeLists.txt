@@ -83,6 +83,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/StatusBadge.qml
     qml/common/Subtitle.qml
     qml/common/TableHeaderLabel.qml
+    qml/common/ThemePalette.qml
     qml/common/ExperimentalBadge.qml
     qml/common/TransferProgressFrame.qml
     qml/common/TypedConfirmDialog.qml
