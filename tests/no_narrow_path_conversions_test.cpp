@@ -68,9 +68,10 @@ const std::vector<Rule> &rules()
     static const std::vector<Rule> all = {
         // path::string() / generic_string(): narrow through the code page.
         // u8string() and generic_u8string() do not match: the dot is in
-        // front of the "u8".
+        // front of the "u8". Through a pointer or an optional too:
+        // archive->string() slipped past a dot-only pattern twice.
         {"path::string() narrows through the ANSI code page on Windows; use pathToUtf8()",
-         std::regex(R"(\.(generic_)?string\(\))")},
+         std::regex(R"((\.|->)(generic_)?string\(\))")},
         // A path built from a QString's UTF-8 bytes, read as ANSI.
         {"fs::path(qstring.toStdString()) reads UTF-8 as ANSI on Windows; use pathFromQString()",
          std::regex(R"(path\s*\(\s*[^()]*\.toStdString\(\))")},

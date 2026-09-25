@@ -584,7 +584,7 @@ void MediaController::releaseBrowsedBackup(const std::string &folderPath)
     // An open handle otherwise stays held until quit, and on Windows
     // blocks replacing that archive with a newer generation.
     if (auto archive = infrastructure::local::browsedBackupArchive(pathFromUtf8(folderPath))) {
-        infrastructure::rekordbox::forgetArchiveSource(archive->string());
+        infrastructure::rekordbox::forgetArchiveSource(pathToUtf8(*archive));
     }
 }
 

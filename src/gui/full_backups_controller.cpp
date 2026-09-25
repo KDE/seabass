@@ -221,7 +221,7 @@ QString FullBackupsController::browsedArchiveFor(const QString &libraryRoot) con
         return {};
     }
     const auto archive = infrastructure::local::browsedBackupArchive(pathFromQString(libraryRoot));
-    return archive ? canonical(QString::fromStdString(archive->string())) : QString();
+    return archive ? canonical(pathToQString(*archive)) : QString();
 }
 
 bool FullBackupsController::isOpen(const QString &archivePath) const
