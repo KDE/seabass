@@ -13,6 +13,7 @@
 using seabass::domain::CuePoint;
 using seabass::domain::MetadataRestoreProposal;
 using seabass::domain::MetadataRestoreScope;
+using seabass::domain::MetadataRestoreSource;
 using seabass::domain::PlaylistMembership;
 using seabass::domain::proposalInRestoreScope;
 using seabass::domain::resolveRestoreSources;
@@ -523,7 +524,7 @@ int main()
                 from("A", "uuid-rv2", "RV2"), from("B", "", "RV2"), from("C", "uuid-rv2", "RV2"),
                 from("D", "", "LONELY"), from("E", "", ""),
             };
-            resolveRestoreSources(proposals);
+            resolveRestoreSources(proposals, {{"RV2", {"uuid-rv2"}}});
             assert(restoreSourceKey(proposals[1]) == restoreSourceKey(proposals[0])
                    && "an unstamped row joins the one stick recorded under its label");
             const auto sources = restoreSources(proposals);
@@ -547,7 +548,7 @@ int main()
                 from("A", "uuid-1", "NO NAME"), from("B", "uuid-2", "NO NAME"), from("C", "", "NO NAME"),
                 from("D", "", "NO NAME"),
             };
-            resolveRestoreSources(proposals);
+            resolveRestoreSources(proposals, {{"NO NAME", {"uuid-1", "uuid-2"}}});
             assert(restoreSourceKey(proposals[0]) != restoreSourceKey(proposals[1]) && "two sticks stay two");
             assert(restoreSourceKey(proposals[2]) == "label:NO NAME" && "not guessed onto either stick");
             const auto sources = restoreSources(proposals);
@@ -565,6 +566,50 @@ int main()
             assert(inScopeOf(proposals, "label:NO NAME") == 2);
         }
         std::cout << "case 17 (a stick whose rows are only partly stamped with its id is one stick) OK\n";
+    }
+
+    // ---- case 18: the sticks under a label come from the store --------
+    //
+    // Which recorded sticks share an unstamped row's label is a fact about
+    // the store, not about this scan's proposals. Stick B, also NO NAME,
+    // has nothing to offer this stick, so none of its rows are proposals;
+    // it is still a stick the unstamped rows may have come from. Counted
+    // from the proposals, A looked like the only NO NAME, and B's older
+    // rows were filed, and restored, as A's.
+    //
+    // And that mark is decided once, at resolution: a save that lands A's
+    // rows leaves only the unstamped ones, and recounting from those found
+    // no recorded id under the label and dropped it.
+    {
+        const auto from = [](const std::string &title, const std::string &libraryId, const std::string &label) {
+            MetadataRestoreProposal proposal;
+            proposal.stickTrack = stickTrack(title);
+            proposal.storedFrom = label;
+            proposal.storedFromLibraryId = libraryId;
+            proposal.cuesOffered = true;
+            return proposal;
+        };
+        std::vector<MetadataRestoreProposal> proposals = {
+            from("A1", "uuid-a", "NO NAME"), from("A2", "uuid-a", "NO NAME"), from("Old", "", "NO NAME"),
+        };
+        resolveRestoreSources(proposals, {{"NO NAME", {"uuid-a", "uuid-b"}}});
+        assert(restoreSourceKey(proposals[2]) == "label:NO NAME" && "not filed under A while B shares the label");
+        assert(proposals[2].sourceIdNotRecorded);
+        auto sources = restoreSources(proposals);
+        assert(sources.size() == 2);
+        const auto unrecorded = [](const std::vector<MetadataRestoreSource> &list) {
+            return std::count_if(list.begin(), list.end(), [](const auto &source) {
+                return source.key == "label:NO NAME" && source.idNotRecorded;
+            });
+        };
+        assert(unrecorded(sources) == 1 && "the unstamped rows say which stick is not recorded");
+
+        // A's rows land and leave the list; the mark stays.
+        proposals.erase(proposals.begin(), proposals.begin() + 2);
+        sources = restoreSources(proposals);
+        assert(sources.size() == 1);
+        assert(unrecorded(sources) == 1 && "still not recorded after the recorded stick's rows landed");
+        std::cout << "case 18 (which sticks share a label is the store's, and the mark outlives a save) OK\n";
     }
 
     std::cout << "all metadata_restore_test cases passed\n";

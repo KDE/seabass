@@ -64,6 +64,11 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
         // rather than carried on domain::Track so nothing in the matching
         // or merging can reach for it.
         const auto stickSources = store.stickSourcesByTrackId();
+        for (const auto &[trackId, source] : stickSources) {
+            if (!source.stickLabel.empty() && !source.libraryId.empty()) {
+                result.recordedIdsByLabel[source.stickLabel].insert(source.libraryId);
+            }
+        }
         reporter->finish();
         result.storedTrackCount = static_cast<int>(storedTracks.size());
 
@@ -210,8 +215,8 @@ void MetadataRestoreController::applyScanResult(MetadataRestoreTaskResult result
     // A scan that found something supersedes one that failed before it.
     setErrorMessage({});
     // Once, over the whole set: which stick an unstamped row belongs to
-    // depends on every other row carrying its label.
-    domain::resolveRestoreSources(result.proposals);
+    // depends on every stick the store recorded under its label.
+    domain::resolveRestoreSources(result.proposals, result.recordedIdsByLabel);
     m_model.setProposals(std::move(result.proposals));
     m_stickTrackCount = result.stickTrackCount;
     m_storedTrackCount = result.storedTrackCount;
