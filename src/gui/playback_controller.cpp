@@ -22,6 +22,7 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
+#include <utility>
 
 namespace seabass::gui
 {
@@ -405,6 +406,22 @@ void PlaybackController::seek(qint64 positionMs)
 {
     m_player.setPosition(positionMs);
     emit seeked(positionMs);
+}
+
+bool PlaybackController::jumpToHotCue(int number)
+{
+    if (!m_hasTrack) {
+        return false;
+    }
+    for (const QVariant &value : std::as_const(m_cues)) {
+        const QVariantMap cue = value.toMap();
+        if (cue.value(QStringLiteral("kind")).toString() == QLatin1String("hot") &&
+            cue.value(QStringLiteral("hotCueNumber")).toInt() == number) {
+            seek(static_cast<qint64>(cue.value(QStringLiteral("positionMs")).toDouble()));
+            return true;
+        }
+    }
+    return false;
 }
 
 void PlaybackController::stop()

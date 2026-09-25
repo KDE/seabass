@@ -176,6 +176,12 @@ public:
     // Where there is no grid a beat is taken as 625 ms, which makes four
     // of them two and a half seconds.
     Q_INVOKABLE void skipBeats(int beats);
+    // Seeks to hot cue `number` of the loaded track, numbered as the
+    // players and every page here number them: 1 to 8, Engine's 0-based
+    // slots already shifted by its reader. Playing or paused stays as it
+    // was, like pressing a hot cue pad. Returns whether that cue exists;
+    // a track without it, or no track, is left where it is.
+    Q_INVOKABLE bool jumpToHotCue(int number);
 
     Q_INVOKABLE void togglePlay();
     Q_INVOKABLE void play();

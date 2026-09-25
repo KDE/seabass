@@ -101,6 +101,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/LockedLibraryDialog.qml
     qml/common/StickRemovedDialog.qml
     qml/common/EditSessionHost.qml
+    qml/common/HotCueShortcuts.qml
     qml/Theme.qml
     qml/FormatLabels.qml
     qml/CamelotWheelPosition.qml
