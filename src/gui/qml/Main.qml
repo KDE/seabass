@@ -679,6 +679,7 @@ ApplicationWindow {
                 enginePath: healthHub.enginePath,
                 mountPoint: mountPoint,
                 backupAdvisor: backupAdvisorCtrl,
+                hubLabel: "Library Health",
             })
         }
     }
@@ -692,6 +693,7 @@ ApplicationWindow {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
+                hubLabel: "Library Statistics",
             })
         }
     }
@@ -827,6 +829,7 @@ ApplicationWindow {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
+                hubLabel: "Restore a Stick Backup",
             })
         }
     }

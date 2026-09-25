@@ -26,6 +26,10 @@ import SeabassGui
 Page {
     id: root
     required property string stickLabel
+    // The page this was opened from when that is not Home (Restore a Stick Backup), for
+    // the breadcrumb. From Home it is empty and the stick is all there is
+    // between the house and this page.
+    property string hubLabel: ""
     required property string rekordboxPath
     required property string enginePath
     required property var playbackController
@@ -386,7 +390,8 @@ Page {
             spacing: Theme.rowSpacing
             BackBreadcrumb {
                 stack: root.StackView.view
-                middleLabel: root.stickLabel
+                stickLabel: root.stickLabel
+                middleLabel: root.hubLabel
                 title: "Library Health"
                 onHomeRequested: root.StackView.view.pop(null)
                 onBackRequested: root.StackView.view.pop()

@@ -27,6 +27,10 @@ import SeabassGui
 Page {
     id: root
     required property string stickLabel
+    // The page this was opened from when that is not Home (Library Statistics), for
+    // the breadcrumb. From Home it is empty and the stick is all there is
+    // between the house and this page.
+    property string hubLabel: ""
     required property string rekordboxPath
     required property string enginePath
     required property var appSettingsController
@@ -427,7 +431,8 @@ Page {
             anchors.margins: Theme.pageMargin
             BackBreadcrumb {
                 stack: root.StackView.view
-                middleLabel: root.stickLabel
+                stickLabel: root.stickLabel
+                middleLabel: root.hubLabel
                 title: "Sync Cue Points"
                 backEnabled: !syncController.writing
                 onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
