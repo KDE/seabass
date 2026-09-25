@@ -83,7 +83,7 @@ Page {
     function activated() {
         if (root.shownBefore && root.backupAdvisor !== null && typeof root.backupAdvisor.reassessAll === "function") {
             root.backupAdvisor.reassessAll();
-            root.reassessPending = root.advisorBusy;
+            root.reassessPending = root.thisStickPending;
         }
         root.shownBefore = true;
         root.refreshLocks();
@@ -91,20 +91,23 @@ Page {
 
     // The cards below are decided from the advisor's reading of the
     // existing backups. Until it has one for this stick, or while the
-    // reassessment this page asked for on coming back is still running,
-    // what they say is missing or stale (a backup just deleted still
-    // "up to date"), so the page says it is scanning, the way Match
-    // Duplicate Cues does. Not for the advisor merely being busy with
-    // other sticks: this stick's advice stands meanwhile.
-    readonly property bool advisorBusy: root.backupAdvisor !== null && root.backupAdvisor !== undefined
-        && root.backupAdvisor.busy === true
+    // reassessment this page asked for on coming back is still running
+    // for this stick, what they say is missing or stale (a backup just
+    // deleted still "up to date"), so the page says it is scanning, the
+    // way Match Duplicate Cues does. Asked per stick, not of the advisor's
+    // busy: reassessAll() queues every known stick, and busy stays true
+    // until the slowest of them has been read, while this stick's advice
+    // may have landed first and stands meanwhile.
+    readonly property bool thisStickPending: root.backupAdvisor !== null && root.backupAdvisor !== undefined
+        && root.mountPoint.length > 0 && root.backupAdvisor.pending !== undefined && root.backupAdvisor.pending !== null
+        && root.backupAdvisor.pending.indexOf(root.mountPoint) >= 0
     property bool reassessPending: false
-    onAdvisorBusyChanged: {
-        if (!root.advisorBusy) {
+    onThisStickPendingChanged: {
+        if (!root.thisStickPending) {
             root.reassessPending = false;
         }
     }
-    readonly property bool scanningBackups: root.advisorBusy && root.mountPoint.length > 0
+    readonly property bool scanningBackups: root.thisStickPending
         && (root.advice === null || root.reassessPending)
 
     readonly property bool hasRekordbox: rekordboxPath.length > 0

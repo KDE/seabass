@@ -47,6 +47,11 @@ class BackupAdvisorController : public QObject
     // page without another lookup.
     Q_PROPERTY(QVariantMap advice READ advice NOTIFY adviceChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    // The mount points whose advice is being gathered right now or is
+    // queued to be: the running one first, then the queue in order. A
+    // page about one stick waits on its own entry here, not on busy,
+    // which stays true until the slowest other stick has been read.
+    Q_PROPERTY(QStringList pending READ pending NOTIFY pendingChanged)
 
 public:
     explicit BackupAdvisorController(QObject *parent = nullptr);
@@ -60,6 +65,7 @@ public:
     // page waiting on the advice (BackupsHubPage's scanning overlay) must
     // not see that moment as "done".
     bool busy() const { return m_watcher.isRunning() || !m_queue.empty(); }
+    QStringList pending() const;
 
     // Queues a fact-gathering pass for this stick; the result lands in
     // advice[mountPoint] and refreshes every other stick's advice too.
@@ -74,6 +80,7 @@ signals:
     void backupDirectoryChanged();
     void adviceChanged();
     void busyChanged();
+    void pendingChanged();
 
 private:
     struct Request
@@ -110,6 +117,7 @@ private:
     QMap<QString, StickFacts> m_facts;  // by mountPoint, once gathered
     std::vector<application::StickBackupDescription> m_backups;  // as of the last gathering pass
     std::vector<Request> m_queue;
+    QString m_running;  // the mount point the watcher is reading, empty when idle
     QFutureWatcher<std::shared_ptr<Result>> m_watcher;
 };
 
