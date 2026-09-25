@@ -188,6 +188,9 @@ struct StrayFileSummary
     // side of the app has no business deciding it.
     QStringList catalogsConsulted;
     bool walkIncomplete = false;
+    // The stick's pending-deletion list could not be read: files Clean Up
+    // already scheduled may be among the count. Implies walkIncomplete.
+    bool pendingDeletionsUnreadable = false;
     bool probeAvailable = false;
     bool usable = false;
     QString refusal;  // shown instead of a count when !usable
@@ -328,8 +331,8 @@ class CleanupController : public QObject
     Q_PROPERTY(int includedVisibleCount READ includedVisibleCount NOTIFY includedChanged)
     // The stray-file half of the last scan, for the page's own account
     // of what it looked at: {filesFound, bytesHuman, unreadable,
-    // catalogsConsulted, walkIncomplete, probeAvailable, usable,
-    // refusal}. A map rather than eight properties because it is one
+    // catalogsConsulted, walkIncomplete, pendingDeletionsUnreadable,
+    // probeAvailable, usable, refusal}. A map rather than nine properties because it is one
     // paragraph of text on one page, and every field of it is only ever
     // read together with the others.
     Q_PROPERTY(QVariantMap unreferencedFiles READ unreferencedFiles NOTIFY plansChanged)

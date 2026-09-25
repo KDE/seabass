@@ -675,6 +675,7 @@ CleanupTaskResult runRescanTask(QString format, QString path, QString playlistNa
         result.strays.bytesFound = static_cast<qulonglong>(strays.bytesFound);
         result.strays.unreadable = static_cast<int>(strays.unreadable);
         result.strays.walkIncomplete = strays.walkIncomplete;
+        result.strays.pendingDeletionsUnreadable = strays.pendingDeletionsUnreadable;
         result.strays.probeAvailable = strays.metadataProbeAvailable;
         result.strays.usable = strays.usable;
         result.strays.refusal = QString::fromStdString(strays.refusal);
@@ -1080,6 +1081,7 @@ QVariantMap CleanupController::unreferencedFiles() const
     m["unreadable"] = m_strays.unreadable;
     m["catalogsConsulted"] = m_strays.catalogsConsulted;
     m["walkIncomplete"] = m_strays.walkIncomplete;
+    m["pendingDeletionsUnreadable"] = m_strays.pendingDeletionsUnreadable;
     m["probeAvailable"] = m_strays.probeAvailable;
     m["usable"] = m_strays.usable;
     m["refusal"] = m_strays.refusal;

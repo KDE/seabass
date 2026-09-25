@@ -30,7 +30,8 @@ TestCase {
         var info = {
             filesFound: 632, bytesHuman: "8.1 GB", unreadable: 0,
             catalogsConsulted: ["rekordbox", "engine", "onelibrary"],
-            walkIncomplete: false, probeAvailable: true, usable: true, refusal: "",
+            walkIncomplete: false, pendingDeletionsUnreadable: false,
+            probeAvailable: true, usable: true, refusal: "",
         };
         for (var key in overrides) {
             info[key] = overrides[key];
@@ -98,6 +99,16 @@ TestCase {
     function test_incomplete_walk_qualifies_the_total() {
         var notice = make(found({walkIncomplete: true}));
         verify(notice.text.indexOf("there may be more than this") >= 0);
+    }
+
+    // The pending-deletion list is what keeps files Clean Up already
+    // scheduled from being offered again. When it could not be read the
+    // notice says that, the specific reason, rather than the general
+    // "part of the stick could not be read" that would also be true.
+    function test_unreadable_pending_list_names_the_reason() {
+        const notice = make(found({walkIncomplete: true, pendingDeletionsUnreadable: true}));
+        verify(notice.text.indexOf("already scheduled for deletion could not be read") >= 0);
+        verify(notice.text.indexOf("there may be more than this") < 0);
     }
 
     function test_screenshot() {

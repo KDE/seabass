@@ -255,6 +255,25 @@ int main()
         std::cout << "case 7 (a file already waiting for deletion is not offered as a stray again) OK\n";
     }
 
+    // The pending-deletion list there but unreadable is not an empty list.
+    // An empty answer would re-offer every file Clean Up already scheduled,
+    // with a confident count; instead the scan says it is incomplete, and
+    // says which part. A directory where the file should be cannot be
+    // read on any platform.
+    {
+        const fs::path manifestPath = infrastructure::paths::stickPendingDeletions(root);
+        fs::remove(manifestPath);
+        fs::create_directories(manifestPath);
+        auto unreadable = infrastructure::cleanup::scanStrayFiles(seabass::pathToUtf8(root), catalogs, {},
+                                                                   application::CancellationToken::none());
+        assert(unreadable.usable);
+        assert(unreadable.walkIncomplete && "an unreadable list makes the scan incomplete");
+        assert(unreadable.pendingDeletionsUnreadable && "and says which part could not be read");
+        assert(unreadable.alreadyListedForDeletion == 0);
+        fs::remove_all(manifestPath);
+        std::cout << "case 8 (an unreadable pending-deletion list is reported, not taken as empty) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "all stray_file_scan_test cases passed\n";
     return 0;

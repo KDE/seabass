@@ -18,6 +18,7 @@ import SeabassGui
 //
 // `info` is CleanupController.unreferencedFiles verbatim: {filesFound,
 // bytesHuman, unreadable, catalogsConsulted, walkIncomplete,
+// pendingDeletionsUnreadable,
 // probeAvailable, usable, refusal}.
 Label {
     id: root
@@ -63,7 +64,14 @@ Label {
             s += " " + info.unreadable + " of them could not be read at all and are left alone.";
         // Not a safety problem -- a file the walk never saw is never
         // proposed -- but the total must not pass as the whole truth.
-        if (info.walkIncomplete)
+        // The list of files a Clean Up already scheduled is what keeps
+        // those from being offered again as strays. Unreadable, it is
+        // the more specific of the two incompleteness reasons, and the
+        // one the DJ can act on (Delete Orphaned Files shows that list).
+        if (info.pendingDeletionsUnreadable)
+            s += " The list of files already scheduled for deletion could not be read, "
+                + "so some of these may be waiting for deletion already.";
+        else if (info.walkIncomplete)
             s += " Part of the stick could not be read, so there may be more than this.";
         return s;
     }
