@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "domain/track.hpp"
+#include "gui/qt_path.hpp"
+#include "gui/stick_catalogs.hpp"
 
 namespace seabass::gui
 {
@@ -103,6 +105,33 @@ inline const domain::CatalogRowRef *waveformCatalogRow(const domain::Track &trac
         }
     }
     return nullptr;
+}
+
+// catalogPathForFormat(), as the QString path a page and a change hold.
+inline QString catalogQtPathForFormat(const QString &libraryPath, const std::string &format)
+{
+    return qtPathFromUtf8(catalogPathForFormat(libraryPath.toStdString(), format));
+}
+
+// Where the waveform of `stickTrack` can be read, on the stick whose
+// catalog `libraryPath` is: {format, libraryPath, sourceId} for
+// PlaybackController::waveformFor, at the path for that row's own format,
+// or an empty map when no catalog row has one to offer. What both
+// metadata pages' waveformSourceAt() answer, for the row a page opened.
+inline QVariantMap metadataWaveformSource(const domain::Track &stickTrack, const QString &libraryPath)
+{
+    if (libraryPath.isEmpty()) {
+        return {};
+    }
+    const auto *catalogRow = waveformCatalogRow(stickTrack);
+    if (catalogRow == nullptr) {
+        return {};
+    }
+    return {
+        {QStringLiteral("format"), QString::fromStdString(catalogRow->format)},
+        {QStringLiteral("libraryPath"), catalogQtPathForFormat(libraryPath, catalogRow->format)},
+        {QStringLiteral("sourceId"), QString::fromStdString(catalogRow->sourceId)},
+    };
 }
 
 }  // namespace seabass::gui

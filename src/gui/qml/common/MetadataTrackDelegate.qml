@@ -121,6 +121,18 @@ Rectangle {
     property real waveformDurationMs: 0
     property string waveformMissingText: ""
 
+    // The waveform a page's controller says this row's stick track has:
+    // `source` is a waveformSourceAt() answer ({format, libraryPath,
+    // sourceId}, or empty), `player` the PlaybackController that reads and
+    // caches it, null in a test without one. Both metadata pages bind
+    // waveformData to this for the open row only.
+    function stickWaveform(player, source) {
+        if (!player || !source || !source.format) {
+            return [];
+        }
+        return player.waveformFor(source.format, source.libraryPath, source.sourceId);
+    }
+
     property alias actionItems: actionRow.data
     // Page-specific content under the expanded half's facts, lined up with
     // the title like they are. Only shown while expanded.

@@ -19,7 +19,6 @@
 #include "gui/future_result.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
-#include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 
@@ -31,11 +30,6 @@ using infrastructure::local::MetadataStore;
 
 namespace
 {
-
-QString catalogPathForFormat(const QString &libraryPath, const std::string &format)
-{
-    return qtPathFromUtf8(gui::catalogPathForFormat(libraryPath.toStdString(), format));
-}
 
 // Runs entirely on a background thread -- no access to the controller.
 MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtProgressReporter> reporter,
@@ -334,18 +328,10 @@ void MetadataRestoreController::applyScope(domain::MetadataRestoreScope scope)
 QVariantMap MetadataRestoreController::waveformSourceAt(int row) const
 {
     const int index = m_model.sourceIndexOfRow(row);
-    if (index < 0 || m_libraryPath.isEmpty()) {
+    if (index < 0) {
         return {};
     }
-    const auto *catalogRow = waveformCatalogRow(m_model.proposals()[static_cast<std::size_t>(index)].stickTrack);
-    if (catalogRow == nullptr) {
-        return {};
-    }
-    return {
-        {QStringLiteral("format"), QString::fromStdString(catalogRow->format)},
-        {QStringLiteral("libraryPath"), catalogPathForFormat(m_libraryPath, catalogRow->format)},
-        {QStringLiteral("sourceId"), QString::fromStdString(catalogRow->sourceId)},
-    };
+    return metadataWaveformSource(m_model.proposals()[static_cast<std::size_t>(index)].stickTrack, m_libraryPath);
 }
 
 void MetadataRestoreController::attachSession()
@@ -459,7 +445,7 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
             continue;
         }
         auto change = std::make_unique<RestoreMetadataChange>(
-            QString::fromStdString(row.format), catalogPathForFormat(m_libraryPath, row.format),
+            QString::fromStdString(row.format), catalogQtPathForFormat(m_libraryPath, row.format),
             QString::fromStdString(row.sourceId), proposal, itemCountHint);
         const QString changeId = change->id();
         if (!m_session->stage(std::move(change))) {
