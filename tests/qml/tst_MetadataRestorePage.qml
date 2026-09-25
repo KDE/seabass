@@ -372,7 +372,8 @@ TestCase {
     // without a stall, because nothing about a waveform is paid for until
     // a row is opened; and opening one reads a real analysis file.
     function test_theRealScaleListOpensWithoutAStall() {
-        const fixture = Qt.resolvedUrl("../fixtures/anonymized_library").toString().replace(/^file:\/\//, "");
+        const fixture = decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+            .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
         const prepared = metadataRestoreFixture.prepareFromLibrary(fixture);
         verify(prepared > 1000, "the fixture must offer the whole library back, got " + prepared);
 
@@ -414,7 +415,8 @@ TestCase {
     // track, recounting the whole list each time, which is quadratic on
     // the UI thread. Timings are logged, never asserted.
     function test_bulkOperationsUpdateThePageOnce() {
-        const fixture = Qt.resolvedUrl("../fixtures/anonymized_library").toString().replace(/^file:\/\//, "");
+        const fixture = decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+            .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
         const prepared = metadataRestoreFixture.prepareFromLibrary(fixture);
         verify(prepared > 1000, "the fixture must offer the whole library back, got " + prepared);
         const stick = metadataRestoreFixture.stickRoot();

@@ -471,7 +471,8 @@ TestCase {
     // open and no other. Against a stick-shaped copy of the committed
     // anonymized library, so the read is a real ANLZ file.
     function test_aStickRowReadsItsWaveformFromTheStickWhenOpened() {
-        const fixture = Qt.resolvedUrl("../fixtures/anonymized_library").toString().replace(/^file:\/\//, "");
+        const fixture = decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+            .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
         verify(metadataRestoreFixture.prepareFromLibrary(fixture) > 1000, "the fixture copy must be made");
         const stick = metadataRestoreFixture.stickRoot();
         const reads = [];
