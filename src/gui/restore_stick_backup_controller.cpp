@@ -44,7 +44,10 @@ QVariantMap diskToVariant(const DetectedStick &disk)
 {
     QVariantMap map;
     map["label"] = QString::fromStdString(disk.label);
-    map["mountPoint"] = QString::fromStdString(disk.mountPoint);
+    // Forward-slash, like every QString path (gui/qt_path.hpp): the page
+    // preselects a drive by the stick list's mount point, and on Windows
+    // the native "E:\" never equalled the list's "E:/".
+    map["mountPoint"] = qtPathFromUtf8(disk.mountPoint);
     map["devicePath"] = QString::fromStdString(disk.devicePath);
     map["wholeDiskPath"] = QString::fromStdString(disk.wholeDiskPath);
     map["capacityBytes"] = static_cast<qlonglong>(disk.capacityBytes);
@@ -55,8 +58,8 @@ QVariantMap diskToVariant(const DetectedStick &disk)
     // missing" straight to Library Health for this same stick, rather
     // than only naming the problem -- see RestoreStickBackupPage.qml's
     // onRepairLibraryRequested.
-    map["rekordboxPath"] = disk.rekordboxPath ? QString::fromStdString(*disk.rekordboxPath) : QString();
-    map["enginePath"] = disk.enginePath ? QString::fromStdString(*disk.enginePath) : QString();
+    map["rekordboxPath"] = disk.rekordboxPath ? qtPathFromUtf8(*disk.rekordboxPath) : QString();
+    map["enginePath"] = disk.enginePath ? qtPathFromUtf8(*disk.enginePath) : QString();
     map["usable"] = disk.mounted && !disk.hasNoFilesystem && !disk.mountPoint.empty();
     QVariantList rootEntries;
     for (const auto &entry : disk.rootEntries) {
@@ -248,7 +251,7 @@ void RestoreStickBackupController::mount(const QString &devicePath)
         auto mounter = infrastructure::media::createRemovableMediaMounter();
         std::string error;
         if (const std::optional<std::string> mountPoint = mounter->mount(devicePath.toStdString(), error)) {
-            result->mountPoint = QString::fromStdString(*mountPoint);
+            result->mountPoint = qtPathFromUtf8(*mountPoint);  // the spelling diskToVariant gives
         } else {
             result->error = QString::fromStdString(error);
         }
