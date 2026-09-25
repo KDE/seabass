@@ -261,6 +261,40 @@ TestCase {
         compare(spy.signalArguments[0][0], "/home/u/Backups/MAIN.zip");
     }
 
+    // While the folder is being read the page shows the same overlay as
+    // Match Duplicate Cues, and takes it away once the list has landed.
+    function test_scanningOverlayWhileListing() {
+        const page = makePage(makeController({backups: [], totalBytes: 0, listing: true}));
+        const overlay = findChild(page, "scanOverlay");
+        verify(overlay !== null);
+        compare(overlay.visible, true);
+        compare(overlay.label, "Scanning existing backups...");
+        compare(findChild(page, "emptyLabel").visible, false, "not \"no backups\" before the folder was read");
+        wait(500);  // the sweeping bar starts off to the left of its track
+        saveScreenshot(page, "manage-backups-scanning");
+        page.controller = makeController({listing: false});
+        compare(overlay.visible, false);
+        compare(findChild(page, "backupsList").count, 3);
+    }
+
+    // The real controller drives it: on while its listing runs, off after.
+    function test_scanningOverlayFollowsTheRealController() {
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        const seen = [];
+        let overlay = null;
+        controller.busyChanged.connect(function() { seen.push(overlay !== null ? overlay.visible : controller.listing); });
+        const page = makePage(controller, {backupDirectory: "/nonexistent/Backups"});
+        overlay = findChild(page, "scanOverlay");
+        // The page's own first listing, started and finished.
+        tryVerify(function() { return seen.length === 2; }, 5000);
+        compare(overlay.visible, false);
+        seen.length = 0;
+        controller.refresh();
+        tryVerify(function() { return seen.length === 2; }, 5000);
+        compare(seen[0], true, "shown while listing");
+        compare(seen[1], false, "hidden after");
+    }
+
     function test_emptyFolder() {
         var page = makePage(makeController({backups: [], totalBytes: 0}));
         compare(findChild(page, "emptyLabel").visible, true);

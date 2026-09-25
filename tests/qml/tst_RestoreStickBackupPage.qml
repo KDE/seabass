@@ -164,6 +164,22 @@ TestCase {
         compare(findChild(page, "experimentalBadge"), null);
     }
 
+    // While the backup folder is read the page shows the same overlay as
+    // Match Duplicate Cues, and takes it away once the list has landed.
+    function test_scanningOverlayWhileListingBackups() {
+        const page = makePage([makeDisk({})], {listingBackups: true});
+        const overlay = findChild(page, "scanOverlay");
+        verify(overlay !== null);
+        compare(overlay.visible, true);
+        compare(overlay.label, "Scanning existing backups...");
+        if (screenshotDir && screenshotDir.length > 0) {
+            wait(500);  // the sweeping bar starts off to the left of its track
+            grabImage(page).save(screenshotDir + "/restore-page-scanning.png");
+        }
+        page.controller = makeFakeController([makeDisk({})], {listingBackups: false});
+        compare(overlay.visible, false);
+    }
+
     // Leaving the page while its backup folder is still being listed
     // destroys the controller mid-listing. That must not hold the window
     // until the listing is done (it did: the destructor waited for it, 0.5

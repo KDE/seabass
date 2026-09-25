@@ -320,6 +320,17 @@ Page {
         }
     }
 
+    // The backup folder is read in the background (every archive's
+    // manifest); until it lands step 1 has nothing to offer, so the page
+    // says so the way Match Duplicate Cues does. Covers the content only:
+    // Back stays usable, and leaving mid-scan simply drops the listing.
+    BusyOverlay {
+        objectName: "scanOverlay"
+        anchors.fill: parent
+        busy: root.controller.listingBackups === true
+        label: "Scanning existing backups..."
+    }
+
     PageScrollView {
         anchors.fill: parent
         anchors.margins: 16
