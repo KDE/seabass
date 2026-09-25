@@ -363,7 +363,7 @@ Page {
                                     spacing: 12
                                     Repeater {
                                         model: groupDelegate.modelData.items
-                                        delegate: CheckBox {
+                                        delegate: SeabassCheckBox {
                                             required property string modelData
                                             text: modelData
                                             checked: !!root.selectedHardware[modelData]

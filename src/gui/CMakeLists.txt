@@ -76,6 +76,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/SeabassIcon.qml
     qml/common/IconLabel.qml
     qml/common/PageTitle.qml
+    qml/common/SeabassCheckBox.qml
     qml/common/SeabassDialog.qml
     qml/common/SpaceReclaimBar.qml
     qml/common/UnreferencedFilesNotice.qml

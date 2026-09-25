@@ -767,7 +767,7 @@ Page {
                             + ((root.info.unreadableEntries || 0) * 2 > (root.info.entries || 1)
                                ? " and this restore will be refused." : "; the rest can still be restored.")
                     }
-                    CheckBox {
+                    SeabassCheckBox {
                         objectName: "exactCheckBox"
                         text: "Exact restore: also remove files and folders that aren't in the backup"
                         checked: root.exact

@@ -191,7 +191,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: Theme.rowSpacing
 
-            CheckBox {
+            SeabassCheckBox {
                 id: selectBox
                 objectName: "selectCheckBox"
                 visible: delegate.selectable || delegate.reserveSelectionSpace

@@ -285,7 +285,7 @@ Page {
                                 + " onto " + root.targetName + "; " + Theme.humanBytes(root.preview.targetFreeBytes || 0) + " free"
                                 + (root.preview.enoughTargetSpace === false ? ": not enough space." : ".")
                         }
-                        CheckBox {
+                        SeabassCheckBox {
                             id: exactCheckBox
                             objectName: "exactCheckBox"
                             text: "Exact copy: also remove files on " + root.targetName + " that " + root.sourceLabel + " doesn't have"

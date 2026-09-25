@@ -202,7 +202,7 @@ Page {
 
                 contentItem: RowLayout {
                     spacing: 8
-                    CheckBox {
+                    SeabassCheckBox {
                         checked: pendingDelegate.included
                         onToggled: cleanupController.setPendingDeletionIncluded(pendingDelegate.index, checked)
                         ToolTip.visible: hovered
