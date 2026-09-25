@@ -100,6 +100,22 @@ Rectangle {
     // on a row that is not an offer (the store's own browse list).
     property string storesSummary: ""
 
+    // ---- the waveform, with the cues on it -----------------------------
+    // Shown at the top of the expanded half, because the question a row
+    // is opened to answer is usually "where are these cues", and a list
+    // of timestamps answers it worse than the track does.
+    //
+    // A metadata backup holds no waveforms, so the picture can only come
+    // from a stick's own analysis, and a page binds waveformData to a
+    // read of it ONLY while the row is expanded: the WaveformView itself
+    // is not even built for a collapsed row. Where there is none, the
+    // cues are still drawn on a flat line, and hovering it says why.
+    property bool showWaveform: false
+    property var waveformData: []
+    property var waveformCues: []
+    property real waveformDurationMs: 0
+    property string waveformMissingText: "Waveform not part of backup"
+
     property alias actionItems: actionRow.data
     // Page-specific content under the expanded half's facts, lined up with
     // the title like they are. Only shown while expanded.
@@ -289,6 +305,23 @@ Rectangle {
         }
 
         // ---- the expanded half -------------------------------------
+        Loader {
+            id: waveformLoader
+            objectName: "waveformLoader"
+            Layout.fillWidth: true
+            Layout.leftMargin: delegate.contentInset
+            Layout.preferredHeight: active ? Theme.scaled(44) : 0
+            visible: active
+            active: delegate.expanded && delegate.showWaveform
+            sourceComponent: WaveformView {
+                objectName: "rowWaveform"
+                waveformData: delegate.waveformData
+                cueData: delegate.waveformCues
+                trackDurationMs: delegate.waveformDurationMs
+                missingText: delegate.waveformMissingText
+            }
+        }
+
         //
         // A two-column grid rather than a stack of prefixed sentences.
         // "Comment: ..." and "Playlists: ..." read as prose when what

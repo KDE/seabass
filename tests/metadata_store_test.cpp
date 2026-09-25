@@ -200,6 +200,13 @@ int main()
         assert(!rows[1].rating.has_value());
         // Both tracks point at the same image file.
         assert(rows[0].artworkPath == rows[1].artworkPath);
+        // Where each row was last seen, with the stick's identity beside
+        // its label: what Restore Metadata's stick picker keys on.
+        const auto sources = metadata.stickSourcesByTrackId();
+        assert(sources.size() == 2);
+        for (const auto &[id, source] : sources) {
+            assert(source.libraryId == "library-abc" && source.stickLabel == "RV2");
+        }
         std::cout << "case 1 (first backup, cover art shared) OK\n";
 
         // readAll() has to hand the cover over too, not just browse().

@@ -207,6 +207,7 @@ QHash<int, QByteArray> StoredTrackListModel::roleNames() const
         {ArtworkUrlRole, "artworkUrl"},   {StickLabelRole, "stickLabel"},
         {UpdatedAtRole, "updatedAt"},
         {StagedForDeletionRole, "stagedForDeletion"},
+        {DurationMsRole, "durationMs"},
     };
 }
 
@@ -251,6 +252,8 @@ QVariant StoredTrackListModel::data(const QModelIndex &index, int role) const
         return QString::fromStdString(row.updatedAt);
     case StagedForDeletionRole:
         return m_stagedForDeletion.contains(static_cast<qint64>(row.id));
+    case DurationMsRole:
+        return row.durationSeconds * 1000.0;
     default:
         return {};
     }
@@ -948,6 +951,27 @@ QString MetadataBackupController::cueSummaryFor(qint64 trackId)
         lines << line;
     }
     return lines.join(QLatin1Char('\n'));
+}
+
+QVariantMap MetadataBackupController::waveformSourceAt(int row) const
+{
+    if (m_browsingStore || m_sourceLibraryPath.isEmpty()) {
+        return {};
+    }
+    const int index = m_proposalModel.sourceIndexOfRow(row);
+    if (index < 0) {
+        return {};
+    }
+    const auto *catalogRow = waveformCatalogRow(m_proposalModel.proposals()[static_cast<std::size_t>(index)].stickTrack);
+    if (catalogRow == nullptr) {
+        return {};
+    }
+    return {
+        {QStringLiteral("format"), QString::fromStdString(catalogRow->format)},
+        {QStringLiteral("libraryPath"),
+         QString::fromStdString(catalogPathForFormat(m_sourceLibraryPath.toStdString(), catalogRow->format))},
+        {QStringLiteral("sourceId"), QString::fromStdString(catalogRow->sourceId)},
+    };
 }
 
 QStringList MetadataBackupController::playlistsFor(qint64 trackId)

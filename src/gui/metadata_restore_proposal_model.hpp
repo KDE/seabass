@@ -51,6 +51,14 @@ public:
         ArtworkUrlRole,    // the cover the store copied, as a file:// URL
         RestoreSummaryRole,  // what a restore writes to this track, and to how many tracks
         StagedRole,
+        // The cues the track would carry after the restore, as WaveformView
+        // draws them: the offered set, or the stick's own when the cues
+        // are not on offer.
+        CuesRole,
+        DurationMsRole,
+        // The playlists the row counts as in for the playlist picker,
+        // joined for the opened-up detail.
+        PlaylistNamesRole,
     };
 
     explicit RestoreProposalListModel(QObject *parent = nullptr);
@@ -92,6 +100,21 @@ public:
     int rowOfSourceIndex(int sourceIndex) const;
     int totalCount() const { return static_cast<int>(m_proposals.size()); }
 
+    // ---- the scope ---------------------------------------------------
+    // Which stick's backup and which playlist the restore is narrowed to.
+    // Unlike the search it bounds what a restore writes, not only what the
+    // list shows: the controller stages only in-scope proposals, and on
+    // a scope change unstages the ones that fell outside it. The search
+    // narrows the view within the scope.
+    void setScope(domain::MetadataRestoreScope scope);
+    const domain::MetadataRestoreScope &scope() const { return m_scope; }
+    bool inScope(int index) const;
+    int scopedCount() const;
+    // In scope and not yet staged, in list order: what Select All stages.
+    std::vector<int> unstagedInScope() const;
+    // Staged and out of scope: what a scope change has to unstage.
+    std::vector<int> stagedOutsideScope() const;
+
 private:
     void rebuildVisible();
     void recountCopies();
@@ -104,6 +127,7 @@ private:
     // Indices into m_proposals, in order, for the rows this model shows.
     std::vector<int> m_visible;
     QString m_filter;
+    domain::MetadataRestoreScope m_scope;
 };
 
 }  // namespace seabass::gui

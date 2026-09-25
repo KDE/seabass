@@ -26,6 +26,10 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/sync_controller.hpp"
+#include "gui/metadata_restore_controller.hpp"
+#include "gui/stick_catalogs.hpp"
+#include "application/use_cases/collapse_catalog_rows.hpp"
+#include "domain/metadata_restore.hpp"
 #include "gui/format_usb_controller.hpp"
 #include "gui/library_consistency_controller.hpp"
 #include <QSettings>
@@ -567,6 +571,210 @@ public:
     }
 };
 
+// Fills Restore Metadata's own controller without a stick or a store,
+// through the one door a finished scan uses (applyScanResult), so
+// tst_MetadataRestorePage.qml can drive the stick and playlist pickers,
+// open rows, and photograph them.
+//
+// fill() is a handful of hand-made proposals from two sticks that share
+// the label NO NAME and one called RV2, in three playlists: enough to
+// show that the pickers narrow by stick identity and by playlist.
+//
+// prepareFromLibrary() + applyPrepared() is the real-scale case: every
+// track of a stick-shaped copy of tests/fixtures/anonymized_library, as
+// the store would offer them back to a stick that lost its cues. Split in
+// two so a test can time the list opening without timing the catalog
+// read in front of it.
+class MetadataRestoreFixture : public QObject
+{
+    Q_OBJECT
+public:
+    using QObject::QObject;
+
+    ~MetadataRestoreFixture() override
+    {
+        std::error_code ec;
+        if (!m_root.empty()) {
+            std::filesystem::remove_all(m_root, ec);
+        }
+    }
+
+    Q_INVOKABLE bool fill(QObject *controller)
+    {
+        auto *restore = qobject_cast<seabass::gui::MetadataRestoreController *>(controller);
+        if (restore == nullptr) {
+            return false;
+        }
+        using namespace seabass::domain;
+        const auto hot = [](int pad, double seconds, const char *color) {
+            CuePoint cue;
+            cue.kind = CuePoint::Kind::Hot;
+            cue.hotCueNumber = pad;
+            cue.positionMs = seconds * 1000.0;
+            cue.color = color;
+            return cue;
+        };
+        int nextId = 500;
+        const auto proposal = [&nextId](const char *title, const char *artist, double seconds, const char *libraryId,
+                                        const char *label, std::vector<std::string> playlists,
+                                        std::vector<CuePoint> cues) {
+            MetadataRestoreProposal p;
+            p.stickTrack.format = "rekordbox";
+            p.stickTrack.sourceId = std::to_string(nextId);
+            p.stickTrack.title = title;
+            p.stickTrack.artist = artist;
+            p.stickTrack.filename = std::string(title) + ".mp3";
+            p.stickTrack.filePath = std::string("/nonexistent/TESTSTICK/Contents/") + title + ".mp3";
+            p.stickTrack.durationSeconds = seconds;
+            CatalogRowRef row;
+            row.format = "rekordbox";
+            row.sourceId = std::to_string(nextId++);
+            p.stickTrack.catalogRows.push_back(row);
+            p.storedId = std::to_string(nextId);
+            p.storedFrom = label;
+            p.storedFromLibraryId = libraryId;
+            p.storedPlaylists = std::move(playlists);
+            p.cues = std::move(cues);
+            p.cuesOffered = true;
+            p.cuesFillAGap = true;
+            return p;
+        };
+        seabass::gui::MetadataRestoreTaskResult result;
+        result.libraryPath = QStringLiteral("/nonexistent/TESTSTICK/PIONEER");
+        result.proposals.push_back(proposal("Flaschenpost", "Kollektiv Turmstrasse", 432, "uuid-one", "NO NAME",
+                                            {"Warm Up"},
+                                            {hot(1, 8, "#e03c3c"), hot(2, 120, "#ff9b1a"), hot(3, 200, "#ffe13b")}));
+        result.proposals.push_back(proposal("Diary of a Lost Girl", "Roman Fl\u00fcgel", 418, "uuid-one", "NO NAME",
+                                            {"Warm Up", "Closing"}, {hot(1, 16, "#e03c3c"), hot(2, 290, "#2ec4f0")}));
+        result.proposals.push_back(proposal("Rej", "\u00c2me", 521, "uuid-two", "NO NAME", {"Peak Time"},
+                                            {hot(1, 20, "#e03c3c"), hot(2, 150, "#ff9b1a"), hot(4, 430, "#2ec4f0")}));
+        result.proposals.push_back(proposal("Bloom", "Nils Hoffmann", 389, "uuid-rv2", "RV2", {"Warm Up"},
+                                            {hot(1, 4, "#e03c3c"), hot(2, 64, "#ff9b1a"), hot(3, 128, "#ffe13b"),
+                                             hot(4, 192, "#39d353")}));
+        result.proposals.push_back(proposal("Sisters", "Recondite", 402, "uuid-rv2", "RV2", {"Closing"},
+                                            {hot(1, 12, "#e03c3c")}));
+        result.stickTrackCount = 5;
+        result.storedTrackCount = 5;
+        restore->applyScanResult(std::move(result));
+        return true;
+    }
+
+    // Marks the proposal at `index` staged without an edit session, the
+    // way a real stage leaves it, so a test can watch a scope change take
+    // it off again. The change id names nothing a session holds.
+    Q_INVOKABLE void markStaged(QObject *controller, int index)
+    {
+        auto *restore = qobject_cast<seabass::gui::MetadataRestoreController *>(controller);
+        if (restore == nullptr) {
+            return;
+        }
+        restore->proposals()->setStagedChanges(index, {QStringLiteral("fixture:%1").arg(index)});
+        emit restore->analysisChanged();
+    }
+
+    // The proposal count, or -1 when the copy or the read failed.
+    Q_INVOKABLE int prepareFromLibrary(const QString &fixtureRoot)
+    {
+        namespace fs = std::filesystem;
+        using namespace seabass;
+        std::error_code ec;
+        m_root = testing::scratchRoot()
+            / ("seabass_qml_metadata_restore_" + std::to_string(QCoreApplication::applicationPid()));
+        fs::remove_all(m_root, ec);
+        const fs::path stick = m_root / "FIXTURE";
+        const fs::path from = gui::pathFromQString(fixtureRoot);
+        fs::create_directories(stick, ec);
+        // A copy, never the fixture itself: nothing here writes, but the
+        // readers are handed a stick, and a stick is somewhere a later
+        // change could decide to put a lock file.
+        fs::copy(from / "rekordbox", stick / "PIONEER", fs::copy_options::recursive, ec);
+        if (ec) {
+            return -1;
+        }
+        fs::copy(from / "engine", stick / "Engine Library", fs::copy_options::recursive, ec);
+        if (ec) {
+            return -1;
+        }
+        const std::string pioneer = pathToUtf8(stick / "PIONEER");
+        const auto read = gui::readAllStickCatalogs(pioneer, application::NullProgressReporter::instance(),
+                                                     application::CancellationToken::none());
+        std::vector<domain::Track> rows;
+        for (const auto *catalog : {&read.catalogs.rekordbox, &read.catalogs.oneLibrary, &read.catalogs.engine}) {
+            if (*catalog) {
+                rows.insert(rows.end(), (*catalog)->begin(), (*catalog)->end());
+            }
+        }
+        std::vector<domain::Track> stickTracks = application::collapseCatalogRows(rows);
+        // The store's side: every track as it was, cues and all, with at
+        // least one cue so every track has something to offer back, and
+        // the stick's side with its cues gone -- the stick a re-export
+        // left behind, which is the case this page exists for.
+        std::vector<domain::Track> stored;
+        stored.reserve(stickTracks.size());
+        for (std::size_t i = 0; i < stickTracks.size(); ++i) {
+            domain::Track copy = stickTracks[i];
+            copy.format = "metadata-store";
+            copy.sourceId = std::to_string(i + 1);
+            copy.filePath.clear();
+            copy.catalogRows.clear();
+            // The fixture ships without its cover images; a path to one
+            // would only fill the log with failed image loads.
+            copy.artworkPath.clear();
+            copy.metadataModifiedAt = 1'800'000'000;
+            if (copy.cues.empty()) {
+                domain::CuePoint cue;
+                cue.kind = domain::CuePoint::Kind::Hot;
+                cue.hotCueNumber = 1;
+                cue.positionMs = 30'000.0;
+                copy.cues.push_back(cue);
+            }
+            stored.push_back(std::move(copy));
+            stickTracks[i].cues.clear();
+            for (auto &row : stickTracks[i].catalogRows) {
+                row.cues.clear();
+            }
+        }
+        m_prepared = gui::MetadataRestoreTaskResult();
+        m_prepared.proposals = domain::planMetadataRestore(stickTracks, stored, 1'700'000'000);
+        for (std::size_t i = 0; i < m_prepared.proposals.size(); ++i) {
+            m_prepared.proposals[i].storedFrom = i % 2 == 0 ? "RV2" : "A4";
+            m_prepared.proposals[i].storedFromLibraryId = i % 2 == 0 ? "uuid-rv2" : "uuid-a4";
+        }
+        m_prepared.libraryPath = QString::fromStdString(pioneer);
+        m_prepared.stickTrackCount = static_cast<int>(stickTracks.size());
+        m_preparedStickTracks = m_prepared.stickTrackCount;
+        m_prepared.storedTrackCount = static_cast<int>(stored.size());
+        return static_cast<int>(m_prepared.proposals.size());
+    }
+
+    // How many tracks the stick side of the last prepare had, after the
+    // catalogs were folded into files.
+    Q_INVOKABLE int preparedStickTrackCount() const { return m_preparedStickTracks; }
+
+    // The stick-shaped copy prepareFromLibrary() made, for a page that
+    // scans a stick itself (Metadata Backup). Empty before it ran.
+    Q_INVOKABLE QString stickRoot() const
+    {
+        return m_root.empty() ? QString() : seabass::gui::pathToQString(m_root / "FIXTURE");
+    }
+
+    Q_INVOKABLE bool applyPrepared(QObject *controller)
+    {
+        auto *restore = qobject_cast<seabass::gui::MetadataRestoreController *>(controller);
+        if (restore == nullptr) {
+            return false;
+        }
+        restore->applyScanResult(std::move(m_prepared));
+        m_prepared = {};
+        return true;
+    }
+
+private:
+    std::filesystem::path m_root;
+    seabass::gui::MetadataRestoreTaskResult m_prepared;
+    int m_preparedStickTracks = 0;
+};
+
 class Setup : public QObject
 {
     Q_OBJECT
@@ -908,6 +1116,8 @@ void seedMetadataStoreForTests()
         }
         engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
         engine->rootContext()->setContextProperty(QStringLiteral("syncPageFixture"), new SyncPageFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("metadataRestoreFixture"),
+                                                  new MetadataRestoreFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("artworkFixture"), new ArtworkFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("stickFixture"), new StickFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("controllerFixture"), new ControllerFixture(engine));

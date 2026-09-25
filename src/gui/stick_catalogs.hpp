@@ -79,5 +79,17 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
 // whole difficulty here, and one place should know about it.
 std::int64_t catalogsLastModified(const std::string &libraryPath);
 
+// The catalog directory for one format on the stick that `libraryPath`
+// belongs to: ".../PIONEER" for rekordbox and OneLibrary (two formats of
+// one library), Engine's library directory for Engine.
+//
+// A page hands a controller a single path, whichever catalog the stick
+// list happened to open, while a folded track carries rows of every
+// catalog that lists it, and each row has to be read or written at the
+// path for ITS OWN format. Handing an Engine reader the PIONEER folder
+// points it at a database that is not there. Same derivation
+// readAllStickCatalogs() uses to find the catalogs in the first place.
+std::string catalogPathForFormat(const std::string &libraryPath, const std::string &format);
+
 
 }  // namespace seabass::gui

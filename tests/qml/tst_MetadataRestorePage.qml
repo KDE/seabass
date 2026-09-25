@@ -87,6 +87,241 @@ TestCase {
         verify(clear.visible, "and shown once there is something to clear");
     }
 
+    // ---- the stick and playlist pickers ---------------------------------
+    //
+    // The backup page's filters, on this page too: which stick's backup
+    // and which playlist, in that order, above the list and its toolbar.
+    // They bound the restore, not only the list, so the counts on the page
+    // are counts of what they include and a narrowing takes off whatever
+    // staged tracks it leaves out.
+
+    // A page filled through the controller's scan-result door, with five
+    // proposals: two from one NO NAME stick, one from another NO NAME
+    // stick, two from RV2, across the playlists Warm Up, Closing and Peak
+    // Time (see MetadataRestoreFixture::fill).
+    function makeFilled(extra) {
+        const page = make(extra);
+        // The page has already tried the nonexistent stick it was handed
+        // and failed; a scan result that does arrive clears that.
+        tryVerify(() => !page.controller.busy, 5000);
+        verify(metadataRestoreFixture.fill(page.controller), "the fixture must fill the controller");
+        compare(page.controller.errorMessage, "", "a result that arrives supersedes an earlier failure");
+        waitForRendering(page);
+        compare(findChild(page, "proposalList").count, 5, "all five proposals listed");
+        return page;
+    }
+
+    function pickerIndex(model, name) {
+        for (let i = 0; i < model.length; i++) {
+            if (model[i].name === name) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    function test_theFiltersAreTheBackupPagesInTheSameOrder() {
+        const page = make();
+        const source = findChild(page, "sourcePicker");
+        const playlist = findChild(page, "playlistPicker");
+        const toolbar = findChild(page, "proposalToolbar");
+        verify(source !== null, "the stick picker must exist");
+        verify(playlist !== null, "the playlist picker must exist");
+        verify(toolbar !== null && findChild(toolbar, "searchField") !== null, "and the search");
+        const s = source.mapToItem(page, 0, 0);
+        const p = playlist.mapToItem(page, 0, 0);
+        const t = toolbar.mapToItem(page, 0, 0);
+        compare(s.y, p.y, "the two pickers share a row");
+        verify(s.x < p.x, "stick first, then playlist, as on the backup page");
+        verify(p.y < t.y, "and both above the list's own toolbar");
+        verify(findChild(page, "restoreInfoButton") !== null, "the help sits at the end of that row");
+    }
+
+    function test_theStickPickerNarrowsTheRestoreToOneSticksBackup() {
+        const page = makeFilled();
+        const list = findChild(page, "proposalList");
+        const picker = findChild(page, "sourcePicker");
+        const model = page.sourceModel;
+        compare(model.length, 4, "every stick, then the three sticks the proposals came from");
+        compare(model[0].name, "Every stick in the backup");
+        // Two sticks called NO NAME are two entries, told apart by what
+        // each offers; RV2 is unambiguous and says nothing extra.
+        verify(pickerIndex(model, "USB Stick NO NAME (2 tracks)") > 0);
+        verify(pickerIndex(model, "USB Stick NO NAME (1 track)") > 0);
+        const rv2 = pickerIndex(model, "USB Stick RV2");
+        verify(rv2 > 0);
+
+        picker.activated(rv2);
+        compare(list.count, 2, "only what was backed up from RV2");
+        compare(page.controller.scopedProposalCount, 2);
+        compare(picker.currentIndex, rv2, "and the picker shows it");
+        compare(findChild(page, "listSummary").text, "2 tracks to restore",
+                "the count is of the restore, not of the whole backup");
+
+        picker.activated(pickerIndex(model, "USB Stick NO NAME (1 track)"));
+        compare(list.count, 1, "the other NO NAME is a different stick");
+
+        picker.activated(0);
+        compare(list.count, 5, "and every stick again");
+    }
+
+    function test_thePlaylistPickerNarrowsTheRestoreToOnePlaylist() {
+        const page = makeFilled();
+        const list = findChild(page, "proposalList");
+        const playlists = findChild(page, "playlistPicker");
+        compare(playlists.model[0].name, "All tracks");
+        compare(playlists.model[0].count, 5);
+        const names = playlists.model.map(entry => entry.name + " " + entry.count);
+        compare(names.join(", "), "All tracks 5, Closing 2, Peak Time 1, Warm Up 3");
+
+        playlists.playlistPicked(pickerIndex(playlists.model, "Warm Up"), {name: "Warm Up", count: 3});
+        compare(list.count, 3);
+        compare(playlists.currentIndex, pickerIndex(playlists.model, "Warm Up"));
+
+        // Both at once: RV2's tracks in Warm Up. The playlist list follows
+        // the stick, and its counts are of that stick's proposals.
+        findChild(page, "sourcePicker").activated(pickerIndex(page.sourceModel, "USB Stick RV2"));
+        compare(list.count, 1, "RV2's one track in Warm Up");
+        compare(page.controller.selectedPlaylist, "Warm Up", "the playlist survives a stick it is on");
+        compare(findChild(page, "playlistPicker").model.map(entry => entry.name + " " + entry.count).join(", "),
+                "All tracks 2, Closing 1, Warm Up 1");
+
+        // A stick that has nothing in the playlist drops it rather than
+        // narrowing to an empty list with nothing on screen to say why.
+        findChild(page, "sourcePicker").activated(pickerIndex(page.sourceModel, "USB Stick NO NAME (1 track)"));
+        compare(page.controller.selectedPlaylist, "", "Peak Time's stick has no Warm Up");
+        compare(list.count, 1);
+    }
+
+    // The heart of it: a narrowing is a narrowing of the RESTORE. A staged
+    // track the new scope leaves out comes off the save, and the page says
+    // so, instead of being written out of sight by a save that the page
+    // presents as covering one playlist.
+    function test_narrowingUnstagesWhatFallsOutside() {
+        const page = makeFilled();
+        const controller = page.controller;
+        // Flaschenpost (NO NAME, Warm Up) and Sisters (RV2, Closing).
+        metadataRestoreFixture.markStaged(controller, 0);
+        metadataRestoreFixture.markStaged(controller, 4);
+        compare(controller.stagedCount, 2);
+        compare(findChild(page, "listSummary").text, "2 of 5 staged");
+
+        const feedback = [];
+        const listen = (message, isError) => feedback.push(message);
+        controller.actionFeedback.connect(listen);
+        try {
+            const playlists = findChild(page, "playlistPicker");
+            playlists.playlistPicked(pickerIndex(playlists.model, "Warm Up"), {name: "Warm Up", count: 3});
+        } finally {
+            controller.actionFeedback.disconnect(listen);
+        }
+        compare(controller.stagedCount, 1, "Sisters is not in Warm Up, so it is not restored");
+        compare(controller.stagedChangeCount, 1, "and nothing of it is left staged");
+        compare(findChild(page, "listSummary").text, "1 of 3 staged", "counted over the playlist");
+        compare(feedback.length, 1, "and the page is told");
+        compare(feedback[0], "1 staged track is outside this selection and was unstaged.");
+        compare(controller.allStaged, false);
+    }
+
+    // The search narrows what is shown within the pickers' selection, and
+    // the count says which of the two it is showing.
+    function test_theSearchNarrowsTheViewWithinTheSelection() {
+        const page = makeFilled();
+        const playlists = findChild(page, "playlistPicker");
+        playlists.playlistPicked(pickerIndex(playlists.model, "Warm Up"), {name: "Warm Up", count: 3});
+        findChild(page, "proposalToolbar").searchText = "Bloom";
+        compare(findChild(page, "proposalList").count, 1);
+        compare(page.controller.scopedProposalCount, 3, "the search does not change what is being restored");
+        compare(findChild(page, "listSummary").text, "1 of 3 shown");
+    }
+
+    // ---- the waveform on an opened row -------------------------------------
+
+    function openRow(page, row) {
+        const list = findChild(page, "proposalList");
+        const item = list.itemAtIndex(row);
+        verify(item !== null, "row " + row + " must be built");
+        item.expandToggled();
+        waitForRendering(page);
+        return item;
+    }
+
+    // Read from the stick for the row that is open, and for no other.
+    // Opening the page reads nothing, however many rows it lists.
+    function test_aRowReadsItsWaveformOnlyWhenOpened() {
+        const asked = [];
+        const player = {
+            waveformFor: function (format, path, id) {
+                asked.push(format + " " + path + " " + id);
+                return [{low: 0.5, mid: 0.4, high: 0.3}, {low: 0.9, mid: 0.2, high: 0.1}];
+            }
+        };
+        const page = makeFilled({playbackController: player});
+        compare(asked.length, 0, "a list of closed rows reads no waveform");
+        verify(findChild(page, "rowWaveform") === null, "and builds none");
+
+        const row = openRow(page, 1);
+        compare(asked.length, 1, "one read, for the one open row");
+        compare(asked[0], "rekordbox /nonexistent/TESTSTICK/PIONEER 501",
+                "from the stick's own catalog, at that format's path");
+        const waveform = findChild(row, "rowWaveform");
+        verify(waveform !== null);
+        compare(waveform.waveformData.length, 2);
+        compare(waveform.cueData.length, 2, "with the cues this restore would put on the track");
+        compare(waveform.trackDurationMs, 418000);
+
+        row.expandToggled();
+        waitForRendering(page);
+        verify(findChild(row, "rowWaveform") === null, "closed again, the waveform goes");
+    }
+
+    function test_aRowWithoutAWaveformSaysItIsNotPartOfTheBackup() {
+        const page = makeFilled();  // no player: nothing to read a waveform with
+        const row = openRow(page, 0);
+        const waveform = findChild(row, "rowWaveform");
+        verify(waveform !== null, "the placeholder is there all the same, with the cues on it");
+        compare(waveform.hasWaveform, false);
+        compare(waveform.missingText, "Waveform not part of backup");
+        compare(waveform.cueData.length, 3);
+    }
+
+    // The real-scale case: every track of the committed anonymized library
+    // offered back to a stick that lost its cues. The list must open
+    // without a stall, because nothing about a waveform is paid for until
+    // a row is opened; and opening one reads a real analysis file.
+    function test_theRealScaleListOpensWithoutAStall() {
+        const fixture = Qt.resolvedUrl("../fixtures/anonymized_library").toString().replace(/^file:\/\//, "");
+        const prepared = metadataRestoreFixture.prepareFromLibrary(fixture);
+        verify(prepared > 1000, "the fixture must offer the whole library back, got " + prepared);
+
+        const page = make({playbackController: realPlayer});
+        const list = findChild(page, "proposalList");
+        const started = Date.now();
+        verify(metadataRestoreFixture.applyPrepared(page.controller));
+        waitForRendering(page);
+        const opened = Date.now() - started;
+        compare(list.count, prepared, "every proposal listed");
+        console.log("  " + prepared + " proposals over " + metadataRestoreFixture.preparedStickTrackCount()
+                    + " stick tracks: list opened in " + opened + " ms");
+        // Generous on purpose: a loaded CI runner is slow. What it guards
+        // is the shape, a waveform read per row would cost seconds here.
+        verify(opened < 3000, "the list took " + opened + " ms to open");
+
+        const openStarted = Date.now();
+        const row = openRow(page, 0);
+        const openedRow = Date.now() - openStarted;
+        const waveform = findChild(row, "rowWaveform");
+        verify(waveform !== null);
+        console.log("  opening one row, with its waveform read from the stick: " + openedRow + " ms");
+        verify(waveform.hasWaveform, "the fixture's analysis file has a waveform to show");
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/MetadataRestorePage-fixture-open.png");
+        }
+    }
+
+    PlaybackController { id: realPlayer }
+
     function test_headerTextLinesUpWithTheBody() {
         var page = make();
         var crumbText = null;
@@ -166,5 +401,20 @@ TestCase {
         wait(100);
         var image = grabImage(page);
         image.save(screenshotDir + "/MetadataRestorePage.png");
+    }
+
+    // The pickers narrowed, and a row open with its cues on the placeholder
+    // line: the states a default screenshot cannot show.
+    function test_screenshot_narrowedAndOpen() {
+        if (!screenshotDir) {
+            skip("SEABASS_SCREENSHOT_DIR not set");
+        }
+        const page = makeFilled();
+        const playlists = findChild(page, "playlistPicker");
+        playlists.playlistPicked(pickerIndex(playlists.model, "Warm Up"), {name: "Warm Up", count: 3});
+        metadataRestoreFixture.markStaged(page.controller, 0);
+        openRow(page, 1);
+        wait(100);
+        grabImage(page).save(screenshotDir + "/MetadataRestorePage-narrowed-open.png");
     }
 }

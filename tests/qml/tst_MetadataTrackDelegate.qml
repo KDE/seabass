@@ -73,4 +73,64 @@ TestCase {
         });
         compare(findChild(stored, "storesSummaryValue").visible, false);
     }
+
+    // The waveform, with the cues on it, in the opened-up half only. Not
+    // built for a collapsed row at all: a list of fourteen hundred rows
+    // must not construct fourteen hundred canvases to show none of them.
+    function test_theWaveformIsBuiltOnlyForAnOpenRow() {
+        const cues = [{kind: "hot", hotCueNumber: 1, positionMs: 30000, isLoop: false, loopEndMs: 0,
+                       color: "#e03c3c", comment: ""}];
+        const row = createTemporaryObject(rowComponent, testCase, {
+            index: 0, showWaveform: true, waveformCues: cues, waveformDurationMs: 240000,
+            waveformData: [{low: 0.4, mid: 0.5, high: 0.2}, {low: 0.8, mid: 0.3, high: 0.1}],
+        });
+        verify(row !== null);
+        compare(findChild(row, "waveformLoader").active, false, "collapsed: nothing built");
+        verify(findChild(row, "rowWaveform") === null, "and no waveform to find");
+
+        row.expanded = true;
+        tryVerify(() => findChild(row, "rowWaveform") !== null, 2000, "opened: the waveform is built");
+        const waveform = findChild(row, "rowWaveform");
+        compare(waveform.cueData.length, 1, "with the row's cues on it");
+        compare(waveform.trackDurationMs, 240000, "placed against the track's length");
+        compare(waveform.waveformData.length, 2);
+        waitForRendering(row);
+        verify(waveform.width > 0 && waveform.height > 0,
+               "and it has room to draw: " + waveform.width + "x" + waveform.height);
+
+        // A page that never asked for one gets none, open or not.
+        const plain = createTemporaryObject(rowComponent, testCase, {index: 1, expanded: true});
+        compare(findChild(plain, "waveformLoader").active, false);
+    }
+
+    // No waveform to draw: the cues still go on a flat line, and hovering
+    // the line says why there is nothing else. The words are the brief's,
+    // exactly.
+    function test_aMissingWaveformSaysItIsNotPartOfTheBackup() {
+        const row = createTemporaryObject(rowComponent, testCase, {
+            index: 0, showWaveform: true, expanded: true, waveformDurationMs: 240000,
+            waveformCues: [{kind: "hot", hotCueNumber: 2, positionMs: 200000, isLoop: false, loopEndMs: 0,
+                            color: "#e03c3c", comment: ""}],
+        });
+        tryVerify(() => findChild(row, "rowWaveform") !== null, 2000);
+        const waveform = findChild(row, "rowWaveform");
+        compare(waveform.missingText, "Waveform not part of backup");
+        compare(waveform.hasWaveform, false);
+        const area = findChild(waveform, "waveformMouseArea");
+        verify(area !== null);
+        // Well away from the one cue, at 200 of 240 seconds.
+        mouseMove(waveform, waveform.width * 0.1, waveform.height / 2);
+        tryVerify(() => area.containsMouse, 1000);
+        compare(area.explainMissing, true, "hovering the placeholder explains it");
+        // Over the cue, the cue names itself instead.
+        mouseMove(waveform, waveform.width * 200000 / 240000, waveform.height / 2);
+        tryVerify(() => waveform.hoveredCueText.length > 0, 1000);
+        compare(waveform.hoveredCueText, "Hot cue 2");
+        compare(area.explainMissing, false);
+
+        // With a waveform there is nothing to explain.
+        waveform.waveformData = [{low: 0.4, mid: 0.5, high: 0.2}];
+        mouseMove(waveform, waveform.width * 0.1, waveform.height / 2);
+        compare(area.explainMissing, false);
+    }
 }

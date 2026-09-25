@@ -56,6 +56,8 @@ public:
         // opened-up detail. See storesSummaryOf().
         StoresSummaryRole,  // "new", "4 cues", "rating" -- what this row would change
         StagedRole,
+        CuesRole,        // the stick's cues, as WaveformView draws them
+        DurationMsRole,
     };
 
     explicit BackupProposalListModel(QObject *parent = nullptr);

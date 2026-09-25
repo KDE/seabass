@@ -101,6 +101,8 @@ QHash<int, QByteArray> BackupProposalListModel::roleNames() const
         {ChangeSummaryRole, "changeSummary"},
         {StoresSummaryRole, "storesSummary"},
         {StagedRole, "staged"},
+        {CuesRole, "cues"},
+        {DurationMsRole, "durationMs"},
     };
 }
 
@@ -201,6 +203,10 @@ QVariant BackupProposalListModel::data(const QModelIndex &index, int role) const
         return changeSummaryOf(proposal);
     case StagedRole:
         return bool(m_staged[static_cast<std::size_t>(source)]);
+    case CuesRole:
+        return metadataCueList(proposal.stickTrack.cues);
+    case DurationMsRole:
+        return proposal.stickTrack.durationSeconds * 1000.0;
     default:
         return {};
     }

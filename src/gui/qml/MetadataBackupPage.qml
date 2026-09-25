@@ -39,6 +39,9 @@ Page {
     // offers the stick the page was opened on and the store, which is
     // exactly what it offered before there was a picker at all.
     property var mediaController: null
+    // For an opened row's waveform. Optional for the same reason: without
+    // it every opened row shows the placeholder.
+    property var playbackController: null
 
     readonly property bool hasStick: root.rekordboxPath.length > 0 || root.enginePath.length > 0
     // requestLeave() refuses while a scan is running and says so, which
@@ -58,6 +61,22 @@ Page {
     property string expandedProposalPath: ""
 
     signal metadataRestoreRequested()
+
+    // The waveform of the stick track on proposal row `row`. A metadata
+    // backup stores none, so it comes from the stick's own analysis or
+    // not at all. Only ever called for the row that is open (see the
+    // delegate's waveformData binding), and the player caches what it has
+    // read.
+    function waveformFor(row) {
+        if (!root.playbackController) {
+            return [];
+        }
+        const source = controller.waveformSourceAt(row);
+        if (!source || !source.format) {
+            return [];
+        }
+        return root.playbackController.waveformFor(source.format, source.libraryPath, source.sourceId);
+    }
 
     function formatBytes(bytes) {
         if (bytes <= 0) return "0 MB";
@@ -660,6 +679,8 @@ Page {
                 required property string changeSummary
                 required property string storesSummary
                 required property bool staged
+                required property var cues
+                required property real durationMs
 
                 // And the ones it does, marked required here so the
                 // model fills them.
@@ -683,6 +704,12 @@ Page {
                 cueTooltip: proposalRow.cueSummary
                 storesSummary: proposalRow.storesSummary
                 expanded: root.expandedProposalPath === proposalRow.relativePath
+                // The stick's cues on the stick's own waveform, read only
+                // for the open row.
+                showWaveform: true
+                waveformCues: proposalRow.cues
+                waveformDurationMs: proposalRow.durationMs
+                waveformData: proposalRow.expanded ? root.waveformFor(proposalRow.index) : []
                 // What the badge counts is not what is on the track but
                 // what a backup would change about it, and on a track
                 // the store already partly holds those are different
@@ -761,6 +788,7 @@ Page {
                 required property string updatedAt
                 required property string stickLabel
                 required property bool stagedForDeletion
+                required property real durationMs
 
                 // And the ones it does, marked required here so the
                 // model fills them.
@@ -788,6 +816,12 @@ Page {
                 storedAt: trackRow.updatedAt.substring(0, 10)
                 markedForRemoval: trackRow.stagedForDeletion
                 expanded: root.expandedTrackId === trackRow.trackId
+                // The stored cues on a flat line: the backup holds no
+                // waveform, and the placeholder says so on hover. The cues
+                // are fetched for the open row only, like the tooltip below.
+                showWaveform: true
+                waveformCues: trackRow.expanded ? controller.cuesFor(trackRow.trackId) : []
+                waveformDurationMs: trackRow.durationMs
                 // Fetched for the row the pointer is over, or the one
                 // that is open, and for no others. The list is paged
                 // precisely so that showing twenty rows costs twenty

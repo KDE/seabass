@@ -854,6 +854,8 @@ ApplicationWindow {
             // For the source picker: every stick with a library on it,
             // plus the store itself.
             mediaController: mediaCtrl
+            // For the opened row's waveform, read from the stick.
+            playbackController: playbackCtrl
             // The link in the page's first line. Pushed with this same
             // stick, because "restore to any stick" starts with the one
             // you are already looking at.
@@ -868,7 +870,13 @@ ApplicationWindow {
 
     Component {
         id: metadataRestorePageComponent
-        MetadataRestorePage {}
+        MetadataRestorePage {
+            // For the opened row's waveform, read from the stick: the
+            // backup holds none.
+            playbackController: playbackCtrl
+            // So the playlist picker opens on the last playlist picked.
+            appSettingsController: appSettingsCtrl
+        }
     }
 
     Component {
