@@ -109,7 +109,6 @@ void BackupAdvisorController::startNext()
     const Request request = m_queue.front();
     m_queue.erase(m_queue.begin());
     const fs::path directory = pathFromQString(m_backupDirectory);
-    emit busyChanged();
     m_watcher.setFuture(QtConcurrent::run([request, directory]() {
         namespace stick_backup = infrastructure::stick_backup;
         auto result = std::make_shared<Result>();
@@ -151,6 +150,10 @@ void BackupAdvisorController::startNext()
         }
         return result;
     }));
+    // After the watcher has the future: announced before it, a reader
+    // asking busy() on the signal was told "not running" and never heard
+    // otherwise until the pass had finished.
+    emit busyChanged();
 }
 
 void BackupAdvisorController::onFinished()

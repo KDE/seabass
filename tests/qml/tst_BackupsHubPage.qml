@@ -30,6 +30,22 @@ TestCase {
         SignalSpy {}
     }
 
+    // An advisor whose busy and advice notify, unlike a plain object.
+    Component {
+        id: fakeAdvisorComponent
+        QtObject {
+            property var advice: ({})
+            property bool busy: false
+            property int reassessCalls: 0
+            function reassessAll() { reassessCalls += 1; busy = true; }
+        }
+    }
+
+    Component {
+        id: realAdvisorComponent
+        BackupAdvisorController {}
+    }
+
     function noSource() {
         return {kind: "none", label: "", mountPoint: "", backupPath: "", modifiedAt: "", enoughSpace: true, detail: "",
                 rekordboxPath: "", enginePath: ""};
@@ -186,6 +202,70 @@ TestCase {
         compare(restore.count, 1);
         compare(restore.signalArguments[0][0], "/media/MAIN");
         compare(restore.signalArguments[0][2], "/b/MAIN.zip");
+    }
+
+    function upToDateAdvice() {
+        const advice = {};
+        advice["/media/MAIN"] = {state: "current", detail: "", cloneSource: noSource(), updateSource: noSource(),
+                                 diverged: false};
+        return advice;
+    }
+
+    // Opened before the advisor has read this stick's backups: the cards
+    // cannot be decided yet, so the page says it is scanning, as Match
+    // Duplicate Cues does, until the advice lands.
+    function test_scanningOverlayUntilThisSticksAdviceLands() {
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase, {busy: true, advice: {}});
+        const page = makePage({}, {backupAdvisor: advisor});
+        const overlay = findChild(page, "scanOverlay");
+        verify(overlay !== null);
+        compare(overlay.visible, true);
+        compare(overlay.label, "Scanning existing backups...");
+        wait(500);  // the sweeping bar starts off to the left of its track
+        saveScreenshot(page, "backups-hub-scanning");
+        advisor.advice = upToDateAdvice();
+        advisor.busy = false;
+        compare(overlay.visible, false);
+        compare(findChild(page, "fullStickBackupCard").cardSubtitle, "Full stick backup is up to date");
+    }
+
+    // The advisor busy with another stick does not hide this one's cards.
+    function test_noOverlayWhileOnlyOtherSticksAreRead() {
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase, {busy: true, advice: upToDateAdvice()});
+        const page = makePage({}, {backupAdvisor: advisor});
+        compare(findChild(page, "scanOverlay").visible, false);
+    }
+
+    // Coming back (from Manage Backups, say) re-reads the backups; the
+    // advice still held is stale until that lands, so the overlay is up
+    // for exactly that long.
+    function test_scanningOverlayWhileReassessingOnReturn() {
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase, {busy: false, advice: upToDateAdvice()});
+        const page = makePage({}, {backupAdvisor: advisor});
+        const overlay = findChild(page, "scanOverlay");
+        page.activated();
+        compare(advisor.reassessCalls, 0, "the first activation does not reassess");
+        compare(overlay.visible, false);
+        page.activated();
+        compare(advisor.reassessCalls, 1);
+        compare(overlay.visible, true);
+        advisor.busy = false;
+        compare(overlay.visible, false);
+        advisor.busy = true;
+        compare(overlay.visible, false, "a later pass for another stick is not this page's wait");
+    }
+
+    // The real advisor says it is busy when it says anything: it used to
+    // announce the change before the pass was running, so a page asking on
+    // the signal heard "not busy" and never heard otherwise.
+    function test_realAdvisorAnnouncesBusyOnceItIs() {
+        const advisor = createTemporaryObject(realAdvisorComponent, testCase);
+        const seen = [];
+        advisor.busyChanged.connect(function() { seen.push(advisor.busy); });
+        advisor.assess("GHOST", "/nonexistent/seabass-hub-test/GHOST", "", "");
+        tryVerify(function() { return seen.length >= 2 && !advisor.busy; }, 10000);
+        compare(seen[0], true);
+        compare(seen[seen.length - 1], false);
     }
 
     // Every card on this hub graduated from experimental on 2026-09-17, so

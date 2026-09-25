@@ -77,13 +77,35 @@ Page {
     // here passes through it, and doing it again would re-read every stick
     // alongside whatever is clicked next.
     property bool shownBefore: false
-    StackView.onActivated: {
+    StackView.onActivated: root.activated()
+    // Its own function so the tests can come back to the page without a
+    // StackView around it.
+    function activated() {
         if (root.shownBefore && root.backupAdvisor !== null && typeof root.backupAdvisor.reassessAll === "function") {
             root.backupAdvisor.reassessAll();
+            root.reassessPending = root.advisorBusy;
         }
         root.shownBefore = true;
         root.refreshLocks();
     }
+
+    // The cards below are decided from the advisor's reading of the
+    // existing backups. Until it has one for this stick, or while the
+    // reassessment this page asked for on coming back is still running,
+    // what they say is missing or stale (a backup just deleted still
+    // "up to date"), so the page says it is scanning, the way Match
+    // Duplicate Cues does. Not for the advisor merely being busy with
+    // other sticks: this stick's advice stands meanwhile.
+    readonly property bool advisorBusy: root.backupAdvisor !== null && root.backupAdvisor !== undefined
+        && root.backupAdvisor.busy === true
+    property bool reassessPending: false
+    onAdvisorBusyChanged: {
+        if (!root.advisorBusy) {
+            root.reassessPending = false;
+        }
+    }
+    readonly property bool scanningBackups: root.advisorBusy && root.mountPoint.length > 0
+        && (root.advice === null || root.reassessPending)
 
     readonly property bool hasRekordbox: rekordboxPath.length > 0
     readonly property bool hasEngine: enginePath.length > 0
@@ -203,5 +225,12 @@ Page {
             onClicked: root.manageBackupsRequested(root.stickLabel, root.currentArchivePath)
         }
         Item { Layout.fillHeight: true }
+    }
+
+    BusyOverlay {
+        objectName: "scanOverlay"
+        anchors.fill: parent
+        busy: root.scanningBackups
+        label: "Scanning existing backups..."
     }
 }

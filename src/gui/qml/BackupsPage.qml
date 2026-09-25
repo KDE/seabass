@@ -179,8 +179,9 @@ Page {
                 onBackRequested: root.StackView.view.pop()
             }
             Item { Layout.fillWidth: true }
+            // A delete only; the listing has the overlay below.
             BusyIndicator {
-                visible: root.controller.listing === true || root.controller.deleting === true
+                visible: root.controller.deleting === true
                 running: visible
                 implicitWidth: 24
                 implicitHeight: 24
@@ -433,5 +434,16 @@ Page {
                 color: Theme.textMuted
             }
         }
+    }
+
+    // The folder is read in the background (every archive's manifest,
+    // which on a slow disk takes a while); until it lands the list is
+    // empty or stale, so the page says what it is doing the way Match
+    // Duplicate Cues does rather than a spinner in the corner.
+    BusyOverlay {
+        objectName: "scanOverlay"
+        anchors.fill: parent
+        busy: root.controller.listing === true
+        label: "Scanning existing backups..."
     }
 }

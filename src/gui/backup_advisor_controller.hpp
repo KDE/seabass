@@ -55,7 +55,11 @@ public:
     QString backupDirectory() const { return m_backupDirectory; }
     void setBackupDirectory(const QString &directory);
     QVariantMap advice() const { return m_advice; }
-    bool busy() const { return m_watcher.isRunning(); }
+    // Until the queue has drained, not merely while one stick is being
+    // read: between two sticks the watcher is idle for a moment, and a
+    // page waiting on the advice (BackupsHubPage's scanning overlay) must
+    // not see that moment as "done".
+    bool busy() const { return m_watcher.isRunning() || !m_queue.empty(); }
 
     // Queues a fact-gathering pass for this stick; the result lands in
     // advice[mountPoint] and refreshes every other stick's advice too.
