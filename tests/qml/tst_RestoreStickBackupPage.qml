@@ -24,6 +24,17 @@ TestCase {
         RestoreStickBackupPage { width: 880; height: 880 }
     }
 
+    Component {
+        id: realControllerComponent
+        RestoreStickBackupController {}
+    }
+    // Holds the controller by a QObject property, which Qt nulls once the
+    // object is really gone (destroy() only schedules it).
+    QtObject {
+        id: holder
+        property QtObject controller: null
+    }
+
     function makeDisk(overrides) {
         var disk = {
             label: "STICK",
@@ -151,6 +162,37 @@ TestCase {
         const page = makePage([makeDisk({})], {});
         verify(page !== null);
         compare(findChild(page, "experimentalBadge"), null);
+    }
+
+    // Leaving the page while its backup folder is still being listed
+    // destroys the controller mid-listing. That must not hold the window
+    // until the listing is done (it did: the destructor waited for it, 0.5
+    // s on a warm folder of four 1 GB backups, 5 s and more cold), and the
+    // result that lands later must reach nothing.
+    function test_leavingMidListingDoesNotWaitForIt() {
+        const folder = controllerFixture.slowBackupFolder(20000);
+        verify(folder.length > 0, "could not make the slow folder");
+        // How long the listing takes here, run to the end.
+        const whole = createTemporaryObject(realControllerComponent, testCase);
+        const started = Date.now();
+        whole.defaultBackupDirectory = folder;
+        verify(whole.listingBackups);
+        tryVerify(function() { return !whole.listingBackups && whole.knownBackups.length === 20000; }, 30000);
+        const listingMs = Date.now() - started;
+        verify(listingMs >= 200, "the folder lists in " + listingMs + " ms, too fast to tell a wait from none");
+
+        holder.controller = realControllerComponent.createObject(null);
+        holder.controller.defaultBackupDirectory = folder;
+        verify(holder.controller.listingBackups);
+        const left = Date.now();
+        holder.controller.destroy();
+        tryVerify(function() { return holder.controller === null; }, 30000);
+        const stalledMs = Date.now() - left;
+        verify(stalledMs < listingMs / 2, "destroying the controller took " + stalledMs
+               + " ms against a " + listingMs + " ms listing: it waited for the listing");
+        // Let the orphaned listing run out before its folder goes.
+        wait(listingMs);
+        controllerFixture.removeSlowBackupFolder();
     }
 
     function test_preselectsFirstUsableDriveAndAnalyzesIt() {
