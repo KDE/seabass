@@ -35,7 +35,9 @@
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
+#include "infrastructure/work_counters.hpp"
 
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
@@ -326,6 +328,47 @@ int main()
         assert(withWaveform > 0 && "no track in the fixture has a PWAV tag any more");
         std::cout << "case 6 (rekordbox: " << withWaveform << " of " << looked
                   << " fixture tracks unpack to a height and a whiteness, " << withBeats << " with a grid) OK\n";
+    }
+
+    // ---- rekordbox: an index answers what the database did ----------
+    //
+    // A list of previews hands the reader one AnlzPathIndex instead of
+    // letting it parse export.pdb per track (the UI thread's cost: about
+    // 20 ms a row on this fixture). The index must change nothing but
+    // the cost: every track reads the same analysis either way, and with
+    // the index the database is parsed by nobody but the index.
+    {
+        const fs::path pioneer = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library"
+            / "rekordbox";
+        const std::string root = seabass::pathToUtf8(pioneer);
+        rekordbox::KaitaiRekordboxReader reader(root);
+        const auto tracks = reader.readAll();
+        const rekordbox::AnlzPathIndex index(root);
+
+        auto &counters = seabass::infrastructure::WorkCounters::instance();
+        size_t compared = 0;
+        size_t withWaveform = 0;
+        std::uint64_t parsesWithIndex = 0;
+        for (const auto &track : tracks) {
+            if (compared >= 30) {
+                break;
+            }
+            const auto direct = rekordbox::readTrackAnalysis(root, track.sourceId);
+            const auto before = counters.snapshot().trackDatabaseParses;
+            const auto indexed = rekordbox::readTrackAnalysis(root, track.sourceId, nullptr, &index);
+            parsesWithIndex += counters.snapshot().trackDatabaseParses - before;
+            assert(same(direct.waveform, indexed.waveform));
+            assert(direct.beats.size() == indexed.beats.size());
+            withWaveform += direct.waveform.empty() ? 0 : 1;
+            compared++;
+        }
+        assert(compared == 30);
+        assert(withWaveform > 0 && "compared nothing but empty previews");
+        assert(parsesWithIndex == 0 && "a reader handed an index parsed export.pdb anyway");
+        // And an id the database does not hold is still empty, not a throw.
+        assert(rekordbox::readTrackAnalysis(root, "999999", nullptr, &index).waveform.empty());
+        std::cout << "case 7 (rekordbox: " << compared << " tracks read the same through an index, "
+                  << withWaveform << " with a preview, no export.pdb parse) OK\n";
     }
 
     fs::remove_all(scratch, ec);

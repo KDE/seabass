@@ -14,6 +14,7 @@
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/work_counters.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "gui/controls_style.hpp"
@@ -212,6 +213,96 @@ private:
         return ok ? seabass::gui::pathToQString(library) : QString();
     }
 
+    QStringList m_roots;
+};
+
+// A whole stick built from the committed real-scale library: PIONEER and
+// "Engine Library" side by side, as a page is handed them. A copy for the
+// reason ArtworkFixture gives (a page opens an edit session on the stick,
+// which writes beside it), and a fresh one per call on purpose: the
+// catalog cache is keyed on the path, so a scan of a new copy really
+// reads the library rather than answering from memory, and takes long
+// enough to be seen running.
+//
+// Plus the two questions the stray-cue tests ask of the rekordbox side:
+// which track ids it holds, and how many times export.pdb has been parsed
+// end to end so far in this process (see WorkCounters).
+class StickFixture : public QObject
+{
+    Q_OBJECT
+public:
+    using QObject::QObject;
+
+    ~StickFixture() override
+    {
+        std::error_code ec;
+        for (const QString &root : m_roots) {
+            std::filesystem::remove_all(seabass::pathFromUtf8(root.toStdString()), ec);
+        }
+    }
+
+    // The stick's root, or empty on failure (which the test then fails
+    // on, rather than skipping).
+    Q_INVOKABLE QString stickCopy(const QString &fixtureRoot)
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path root = seabass::testing::scratchRoot()
+            / ("seabass_qml_stick_" + std::to_string(QCoreApplication::applicationPid()) + "_"
+               + std::to_string(m_roots.size()));
+        fs::remove_all(root, ec);
+        fs::create_directories(root, ec);
+        const fs::path from = seabass::pathFromUtf8(fixtureRoot.toStdString());
+        fs::copy(from / "rekordbox", root / "PIONEER", fs::copy_options::recursive, ec);
+        if (ec) {
+            return {};
+        }
+        fs::copy(from / "engine", root / "Engine Library", fs::copy_options::recursive, ec);
+        if (ec) {
+            return {};
+        }
+        m_roots.append(QString::fromStdString(seabass::pathToUtf8(root)));
+        return m_roots.last();
+    }
+
+    Q_INVOKABLE QStringList rekordboxTrackIds(const QString &pioneerRoot, int count)
+    {
+        QStringList ids;
+        try {
+            seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneerRoot.toStdString());
+            for (const auto &track : reader.readAll()) {
+                if (ids.size() >= count) {
+                    break;
+                }
+                ids << QString::fromStdString(track.sourceId);
+            }
+        } catch (const std::exception &) {
+            ids.clear();
+        }
+        return ids;
+    }
+
+    // Moves a file's modification time a minute on, which is what any
+    // rewrite of it does, without changing a byte.
+    Q_INVOKABLE bool touch(const QString &file)
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path path = seabass::pathFromUtf8(file.toStdString());
+        const auto modified = fs::last_write_time(path, ec);
+        if (ec) {
+            return false;
+        }
+        fs::last_write_time(path, modified + std::chrono::minutes(1), ec);
+        return !ec;
+    }
+
+    Q_INVOKABLE double trackDatabaseParses() const
+    {
+        return static_cast<double>(seabass::infrastructure::WorkCounters::instance().snapshot().trackDatabaseParses);
+    }
+
+private:
     QStringList m_roots;
 };
 
@@ -818,6 +909,7 @@ void seedMetadataStoreForTests()
         engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
         engine->rootContext()->setContextProperty(QStringLiteral("syncPageFixture"), new SyncPageFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("artworkFixture"), new ArtworkFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("stickFixture"), new StickFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("controllerFixture"), new ControllerFixture(engine));
     }
 };

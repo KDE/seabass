@@ -19,6 +19,8 @@
 #include "mpris_service.hpp"
 #endif
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
 
 namespace seabass::gui
@@ -29,11 +31,16 @@ namespace
 
 // The track's analysis -- waveform and beat grid -- from one read of the
 // library. See domain::TrackAnalysis for why one.
-domain::TrackAnalysis readAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId)
+//
+// `pathIndex` is export.pdb's analysis paths for a rekordbox library,
+// or null to look the one track up in the database itself.
+domain::TrackAnalysis readAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId,
+                                   const infrastructure::rekordbox::AnlzPathIndex *pathIndex = nullptr)
 {
     try {
         if (format == "rekordbox") {
-            return infrastructure::rekordbox::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString());
+            return infrastructure::rekordbox::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
+                                                                nullptr, pathIndex);
         }
         if (format == "engine") {
             return infrastructure::engine::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString());
@@ -65,9 +72,10 @@ QVariantList toVariantList(const std::vector<domain::WaveformColumn> &points)
     return waveform;
 }
 
-QVariantList readWaveform(const QString &format, const QString &libraryPath, const QString &sourceId)
+QVariantList readWaveform(const QString &format, const QString &libraryPath, const QString &sourceId,
+                          const infrastructure::rekordbox::AnlzPathIndex *pathIndex)
 {
-    return toVariantList(readAnalysis(format, libraryPath, sourceId).waveform);
+    return toVariantList(readAnalysis(format, libraryPath, sourceId, pathIndex).waveform);
 }
 
 }  // namespace
@@ -142,7 +150,8 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
     } else {
-        const domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId);
+        const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
+        const domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId, index.get());
         m_waveform = toVariantList(analysis.waveform);
         const std::vector<domain::Beat> &beats = analysis.beats;
         m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
@@ -166,9 +175,52 @@ QVariantList PlaybackController::waveformFor(const QString &format, const QStrin
     if (const QVariantList *cached = m_waveformCache.object(key)) {
         return *cached;
     }
-    QVariantList waveform = readWaveform(format, libraryPath, sourceId);
+    const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
+    QVariantList waveform = readWaveform(format, libraryPath, sourceId, index.get());
     m_waveformCache.insert(key, new QVariantList(waveform));
     return waveform;
+}
+
+// Rebuilt whenever export.pdb's size or modification time differs from
+// the one the index was built from, which covers every rewrite that
+// changes either. What it cannot see is a rewrite in place that keeps
+// the size inside one tick of the filesystem's clock (two seconds on
+// FAT32). That is acceptable here and nowhere else: this only picks
+// which analysis file a preview is drawn from, the waveform cache above
+// keeps a drawn preview for longer than that anyway, and no write ever
+// asks this index anything (writers build their own, see AnlzPathIndex).
+//
+// Null when export.pdb cannot be read or parsed: readAnalysis() then
+// looks the one track up itself, which fails the same way and leaves
+// that waveform empty, as it always did.
+std::shared_ptr<const infrastructure::rekordbox::AnlzPathIndex>
+PlaybackController::anlzIndexFor(const QString &pioneerRoot) const
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path pdb = pathFromUtf8(pioneerRoot.toStdString()) / "rekordbox" / "export.pdb";
+    const auto modified = fs::last_write_time(pdb, ec);
+    if (ec) {
+        m_anlzIndexes.erase(pioneerRoot);
+        return nullptr;
+    }
+    const auto size = fs::file_size(pdb, ec);
+    if (ec) {
+        m_anlzIndexes.erase(pioneerRoot);
+        return nullptr;
+    }
+    if (auto found = m_anlzIndexes.find(pioneerRoot);
+        found != m_anlzIndexes.end() && found->second.modified == modified && found->second.size == size) {
+        return found->second.index;
+    }
+    try {
+        auto index = std::make_shared<const infrastructure::rekordbox::AnlzPathIndex>(pioneerRoot.toStdString());
+        m_anlzIndexes[pioneerRoot] = AnlzIndexEntry{modified, size, index};
+        return index;
+    } catch (const std::exception &) {
+        m_anlzIndexes.erase(pioneerRoot);
+        return nullptr;
+    }
 }
 
 void PlaybackController::setQueue(QAbstractItemModel *model, const QString &format, const QString &libraryPath)

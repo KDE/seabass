@@ -17,11 +17,14 @@ namespace seabass::infrastructure::rekordbox
 using Anlz = rekordbox_anlz_t;
 
 domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const std::string &trackSourceId,
-                                        std::shared_ptr<AnlzByteSource> anlzSource)
+                                        std::shared_ptr<AnlzByteSource> anlzSource,
+                                        const AnlzPathIndex *pathIndex)
 {
     domain::TrackAnalysis analysis;
     try {
-        auto analyzePath = findAnlzPathForTrackId(pioneerRoot, static_cast<uint32_t>(std::stoul(trackSourceId)));
+        const auto trackId = static_cast<uint32_t>(std::stoul(trackSourceId));
+        auto analyzePath = pathIndex != nullptr ? pathIndex->pathFor(trackId)
+                                                : findAnlzPathForTrackId(pioneerRoot, trackId);
         if (!analyzePath) {
             return {};
         }
