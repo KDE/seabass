@@ -74,7 +74,7 @@ int main()
     unsetenv("SEABASS_HOME");
 #endif
     assert(localRoot().filename() == "Seabass");
-    assert(localRoot().is_absolute() || localRoot().begin()->string() == ".");
+    assert(localRoot().is_absolute() || seabass::pathToUtf8(*localRoot().begin()) == ".");
     std::cout << "case 5 (the default local root is <home>/Seabass) OK\n";
 
     std::cout << "all cases passed\n";
