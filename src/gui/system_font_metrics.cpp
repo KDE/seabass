@@ -24,7 +24,24 @@ SystemFontMetrics::SystemFontMetrics(QObject *parent) : QObject(parent)
 
 qreal SystemFontMetrics::generalPointSize() const
 {
+    if (m_generalPointSizeOverride > 0) {
+        return m_generalPointSizeOverride;
+    }
     return QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSizeF();
+}
+
+qreal SystemFontMetrics::generalPointSizeOverride() const
+{
+    return m_generalPointSizeOverride;
+}
+
+void SystemFontMetrics::setGeneralPointSizeOverride(qreal pointSize)
+{
+    if (qFuzzyCompare(m_generalPointSizeOverride, pointSize)) {
+        return;
+    }
+    m_generalPointSizeOverride = pointSize;
+    emit changed();
 }
 
 qreal SystemFontMetrics::smallestReadablePointSize() const

@@ -33,6 +33,12 @@ class SystemFontMetrics : public QObject
     QML_SINGLETON
     Q_PROPERTY(qreal generalPointSize READ generalPointSize NOTIFY changed)
     Q_PROPERTY(qreal smallestReadablePointSize READ smallestReadablePointSize NOTIFY changed)
+    // Stands in for the platform's general font size when above 0, so a
+    // test can lay the app out at another system's size: macOS answers
+    // 13 where a KDE default answers 10, and every Theme.scaled() length
+    // grows with it. Never set by the app itself.
+    Q_PROPERTY(qreal generalPointSizeOverride READ generalPointSizeOverride WRITE setGeneralPointSizeOverride NOTIFY
+                   changed)
 
 public:
     explicit SystemFontMetrics(QObject *parent = nullptr);
@@ -44,11 +50,17 @@ public:
     qreal generalPointSize() const;
     qreal smallestReadablePointSize() const;
 
+    qreal generalPointSizeOverride() const;
+    void setGeneralPointSizeOverride(qreal pointSize);
+
 signals:
     void changed();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
+    qreal m_generalPointSizeOverride = 0;
 };
 
 }  // namespace seabass::gui

@@ -87,11 +87,26 @@ TestCase {
     // The breadcrumb row is the other half of the same problem: it is
     // what pinned the column, and letting it shrink is what unpinned it.
     // So it has to stay inside the page too, at the same widths.
+    // At this system's font size and at macOS's 13pt, where every scaled
+    // length is 1.3 times as long (round 9: "Clean Up Duplicates" reached
+    // 452 in a 380 page on the Mac).
     function test_breadcrumbStaysInsideThePage_data() {
-        return test_filterRowStaysInsideThePage_data();
+        const rows = [];
+        for (const pointSize of [0, 13]) {
+            for (const row of test_filterRowStaysInsideThePage_data()) {
+                rows.push({tag: row.tag + (pointSize ? " at " + pointSize + "pt" : ""),
+                           pageWidth: row.pageWidth, pointSize: pointSize});
+            }
+        }
+        return rows;
+    }
+
+    function cleanup() {
+        SystemFontMetrics.generalPointSizeOverride = 0;
     }
 
     function test_breadcrumbStaysInsideThePage(row) {
+        SystemFontMetrics.generalPointSizeOverride = row.pointSize;
         var page = createTemporaryObject(pageComponent, testCase,
                                           {width: row.pageWidth, height: 660});
         verify(page, "page did not instantiate");
