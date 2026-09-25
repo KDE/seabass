@@ -23,14 +23,22 @@ constexpr const char *FullSubdir = "full";
 // An environment variable as a path, or empty when unset or blank. On
 // Windows the narrow environment is in the ANSI code page, so a profile
 // directory named for an account outside it (a Japanese user name) would
-// not survive std::getenv(); the wide copy the CRT keeps alongside has
-// the real characters. The variable names themselves are ASCII.
+// not survive std::getenv(). _wgetenv() is no better in a process that
+// starts through main(): the CRT builds its wide environment lazily by
+// converting the narrow one, code page and all. GetEnvironmentVariableW
+// reads the OS's own Unicode block. The variable names are ASCII.
 fs::path envPath(const char *name)
 {
 #if defined(_WIN32)
     const std::wstring wideName(name, name + std::strlen(name));
-    const wchar_t *value = _wgetenv(wideName.c_str());
-    if (value != nullptr && *value != L'\0') {
+    std::wstring value(MAX_PATH, L'\0');
+    DWORD length = ::GetEnvironmentVariableW(wideName.c_str(), value.data(), static_cast<DWORD>(value.size()));
+    if (length >= value.size()) {
+        value.resize(length);
+        length = ::GetEnvironmentVariableW(wideName.c_str(), value.data(), static_cast<DWORD>(value.size()));
+    }
+    if (length > 0 && length < value.size()) {
+        value.resize(length);
         return fs::path(value);
     }
 #else
