@@ -7,6 +7,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // The Library Health hub: one card per check, each saying what it found in
 // a sentence. Drives HealthCheckCard directly -- the hub itself needs a
@@ -545,5 +546,47 @@ TestCase {
         // And the content inside it stays within that inset box.
         verify(column.width > 0);
         verify(column.width <= scroll.width);
+    }
+
+    // The page as the app shows it: inside a StackView, `levelsBelow`
+    // pages up from the bottom (1 = pushed from Home, 2 = from another
+    // page on top of Home). The breadcrumb reads the stack's depth to
+    // decide whether its middle segment is a link.
+    Component {
+        id: crumbStackComponent
+        StackView { width: testCase.width; height: testCase.height }
+    }
+    Component {
+        id: crumbFillerComponent
+        Item {}
+    }
+    function pushOnStack(levelsBelow, props) {
+        const stack = createTemporaryObject(crumbStackComponent, testCase);
+        for (let i = 0; i < levelsBelow; ++i) {
+            stack.push(crumbFillerComponent, {}, StackView.Immediate);
+        }
+        return stack.push(pageComponent, props, StackView.Immediate);
+    }
+
+    // From Home the stick is all that stands between the house and this
+    // page; opened from Restore a Stick Backup it names that page too, as the way back,
+    // rather than putting the stick's name on a link to it.
+    function test_breadcrumb_data() {
+        return [
+            {tag: "home", below: 1, hubLabel: "", middle: "", link: false},
+            {tag: "nested", below: 2, hubLabel: "Restore a Stick Backup", middle: "Restore a Stick Backup", link: true},
+        ];
+    }
+
+    function test_breadcrumb(data) {
+        const props = {};
+        props.hubLabel = data.hubLabel;
+        const page = pushOnStack(data.below, props);
+        waitForRendering(page);
+        const crumb = Breadcrumb.read(page);
+        compare(crumb.stick, "TESTSTICK");
+        compare(crumb.middle, data.middle);
+        compare(crumb.middleIsLink, data.link);
+        compare(crumb.title, "Library Health");
     }
 }
