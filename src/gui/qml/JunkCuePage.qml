@@ -107,9 +107,13 @@ Page {
     // Checked a turn later, not from inside the controller's own
     // busyChanged. A cancel stays on this page, so it is checked then too.
     function dropMissingPlaylist() {
-        // Not after a stop either: the playlists of a scan that did not
-        // finish are not the library's, and rescanning would undo the stop.
-        if (consistencyController.busy || root.scanStopped || root.selectedPlaylistName.length === 0
+        // Not after a scan that did not read everything either, stopped
+        // or failed: its playlists are not the library's. A stop would be
+        // undone by the rescan; a failure leaves the pick possibly living
+        // in the very catalog that could not be read (a stick pulled, a
+        // locked database), and rescanning the whole library on a stick
+        // that just failed would throw the user's choice away for nothing.
+        if (consistencyController.busy || root.resultIncomplete || root.selectedPlaylistName.length === 0
             || consistencyController.playlistNames.indexOf(root.selectedPlaylistName) >= 0) {
             return;
         }
