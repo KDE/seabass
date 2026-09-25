@@ -48,7 +48,7 @@ QtObject {
         Binding { target: root.palette; property: "toolTipBase"; value: Theme.surface },
         Binding { target: root.palette; property: "toolTipText"; value: Theme.text },
         Binding { target: root.palette; property: "highlight"; value: Theme.accent },
-        Binding { target: root.palette; property: "highlightedText"; value: "#fcfcfc" },
+        Binding { target: root.palette; property: "highlightedText"; value: Theme.accentInk },
         Binding { target: root.palette; property: "accent"; value: Theme.accent },
         Binding { target: root.palette; property: "link"; value: Theme.info },
         Binding { target: root.palette ? root.palette.disabled : null; property: "windowText"; value: Theme.textMuted },

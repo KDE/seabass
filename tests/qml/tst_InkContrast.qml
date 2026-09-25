@@ -250,6 +250,28 @@ TestCase {
         Theme.materialDivider = "#33ffffff";
     }
 
+    // Selected text in a field and the highlighted entry of a combo box or
+    // menu are palette.highlightedText on palette.highlight under Basic and
+    // Fusion. Both come from ThemePalette; near-white on Kelp's light-blue
+    // accent read at 2.4:1, so every selection outside Plasma was pale.
+    function test_selectedTextReadsOnTheAccent() {
+        const ratio = function(a, b) {
+            const la = luminance(a), lb = luminance(b);
+            return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+        };
+        const inkOnAccent = ratio(Theme.accentInk, Theme.accent);
+        verify(inkOnAccent >= 4.5, "Theme.accentInk reads at " + inkOnAccent.toFixed(2) + ":1 on the accent");
+        // Under KDE's style and Material the palette is the style's own and
+        // ThemePalette leaves it alone; only Basic and Fusion take its roles.
+        if (!ControlsStyle.inksFromPalette)
+            return;
+        for (const on of [false, true]) {
+            chooseSystemTheme(on);
+            const r = ratio(appWindow.palette.highlightedText, appWindow.palette.highlight);
+            verify(r >= 4.5, (on ? "system theme" : "Kelp") + ": selected text reads at " + r.toFixed(2) + ":1 on the accent");
+        }
+    }
+
     function test_themeToggleKeepsTheInkReadableBothWays() {
         chooseSystemTheme(true);
         if (kdeDesktopStyle || materialStyle) {
