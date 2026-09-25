@@ -969,7 +969,7 @@ QVariantMap MetadataBackupController::waveformSourceAt(int row) const
     return {
         {QStringLiteral("format"), QString::fromStdString(catalogRow->format)},
         {QStringLiteral("libraryPath"),
-         QString::fromStdString(catalogPathForFormat(m_sourceLibraryPath.toStdString(), catalogRow->format))},
+         qtPathFromUtf8(catalogPathForFormat(m_sourceLibraryPath.toStdString(), catalogRow->format))},
         {QStringLiteral("sourceId"), QString::fromStdString(catalogRow->sourceId)},
     };
 }

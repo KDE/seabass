@@ -1714,6 +1714,18 @@ target_include_directories(library_catalog_cache_test PRIVATE src)
 target_link_libraries(library_catalog_cache_test PRIVATE seabass_core Threads::Threads)
 add_test(NAME library_catalog_cache_test COMMAND library_catalog_cache_test)
 
+# catalogPathForFormat() answers in the forward-slash form a QString path
+# has. Compiles stick_catalogs.cpp and the catalog cache it reads through,
+# as library_catalog_cache_test does.
+add_executable(stick_catalogs_test
+    src/gui/stick_catalogs.cpp
+    src/gui/library_catalog_cache.cpp
+    tests/stick_catalogs_test.cpp
+)
+target_include_directories(stick_catalogs_test PRIVATE src)
+target_link_libraries(stick_catalogs_test PRIVATE seabass_core Threads::Threads)
+add_test(NAME stick_catalogs_test COMMAND stick_catalogs_test)
+
 add_executable(library_fingerprint_test
     tests/library_fingerprint_test.cpp
 )
