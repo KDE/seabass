@@ -119,6 +119,28 @@ TestCase {
             result: {filesWritten: 14, filesUnchanged: 1147, directoriesCreated: 3, extrasRemoved: 0, rejected: [],
                      writeErrors: [], warnings: [], missingTracks: [], databaseChecked: true},
             statusMessage: "Restored STICK from its backup."})).save(screenshotDir + "/restore-page-result.png");
+        // The report with rows pointing at files that are gone, as round
+        // 8's TESTRIG_2 restored onto A1 showed it: twelve of them, long
+        // paths, one with a control byte in a folder name. What the
+        // picture has to show is the note and the repair button, which
+        // the unbounded path labels once pushed off the overlay's edge.
+        grabImage(makePage([makeDisk({})], {
+            result: {filesWritten: 1, filesUnchanged: 760, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
+                     writeErrors: [], warnings: [], databaseChecked: true,
+                     missingTracks: [
+                         "/media/sebas/A1/Contents/Ann Clue/FCKNG SERIOUS - NINE YEARS/Ann Clue - Fräulein Schmidt (Original Mix).mp3",
+                         "/media/sebas/A1/Contents/2088/You Can Feel It/2088 - You Can Feel It.m4a.missing",
+                         "/media/sebas/A1/Engine Library/Contents",
+                         "/media/sebas/A1/Contents/UnknownArtist/UnknownAlbum/A11-flac48.flac.missing",
+                         "/media/sebas/A1/Contents/AKKI (DE)/Olympus/Tiësto, Böhmer - Røyksopp Café.mp3",
+                         "/media/sebas/A1/Contents/UnknownArtist/UnknownAlbum/A15-untagged.mp3",
+                         "/media/sebas/A1/Contents/A\uFFFD/Olympus/A16-control-byte.mp3",
+                         "/media/sebas/A1/Engine Library/..\\Contents\\Adrianna, Tao Andra\\Shake the Underground (Tao Andra Remix).mp3",
+                         "/media/sebas/A1/Engine Library/..\\Contents\\AKKI (DE)\\Lost In Time\\AKKI (DE) - Lost In Time.mp3",
+                         "/media/sebas/A1/Contents/2 Unlimited/Unlimited Hits & Remixes/2 Unlimited - No Limit.mp3.missing",
+                         "/media/sebas/A1/Contents/2 Unlimited/Unlimited Hits & Remixes/2 Unlimited - No Limit-1.mp3 ",
+                         "/media/sebas/A1/Engine Library/..\\Contents\\AREA ØNE\\Back To The Oldschool\\AREA ØNE - Back To The Oldschool.mp3"]},
+            statusMessage: "Restored 1 files, but with problems."})).save(screenshotDir + "/restore-page-result-missing-tracks.png");
     }
 
     function test_preselectsFirstUsableDriveAndAnalyzesIt() {
