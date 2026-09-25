@@ -101,9 +101,24 @@ std::vector<const char *> candidateNames()
 {
     return {"libsqlcipher.so.0", "libsqlcipher.so.1", "libsqlcipher.so"};
 }
+// RTLD_DEEPBIND: SQLCipher's calls to its own sqlite3_* functions must
+// reach its own code. Seabass also links plain SQLite, which exports
+// every one of those names, and on ELF the copy loaded first wins by
+// default: with the SQLCipher Craft builds for the AppImage (no
+// -Bsymbolic), 433 of its internal calls went to plain SQLite, the codec
+// ran half set up, and the first encrypted OneLibrary crashed on a NULL
+// function pointer. The distributions' packages happen to be built so
+// that it does not matter, which is why an installed Seabass never saw
+// it. glibc only (musl has no DEEPBIND and resolves differently), and not
+// under AddressSanitizer, which refuses DEEPBIND libraries outright.
+#if defined(RTLD_DEEPBIND) && !defined(__SANITIZE_ADDRESS__)
+constexpr int SqlCipherOpenFlags = RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND;
+#else
+constexpr int SqlCipherOpenFlags = RTLD_NOW | RTLD_LOCAL;
+#endif
 void *openLibrary(const char *name)
 {
-    return dlopen(name, RTLD_NOW);
+    return dlopen(name, SqlCipherOpenFlags);
 }
 void *resolveSymbol(void *mod, const char *name)
 {
