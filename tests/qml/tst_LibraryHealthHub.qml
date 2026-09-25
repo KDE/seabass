@@ -137,22 +137,47 @@ TestCase {
             {card: "coverArtCard", section: "artwork"},
             {card: "cleanupLeftoverCard", section: "cleanupleftovers"},
         ];
-        var seen = {};
         for (var i = 0; i < expected.length; ++i) {
             var card = findByObjectName(page, expected[i].card);
             verify(card !== null, expected[i].card + " exists");
             card.actionRequested();
             compare(detailSpy.count, i + 1, expected[i].card + " asks for a page");
-            var section = detailSpy.signalArguments[i][0];
-            compare(section, expected[i].section, expected[i].card);
-            verify(seen[section] === undefined, section + " is asked for by one card only");
-            seen[section] = true;
+            compare(detailSpy.signalArguments[i][0], expected[i].section, expected[i].card);
         }
-        // The two cards that open no page: the filesystem card's action
-        // is its own dialog, and track analysis only reports.
+
+        // And from the page itself rather than from the table above: every
+        // card in the column, pressed in turn, including any added after
+        // this was written. No two may ask for the same page. The
+        // filesystem card opens its own dialog instead, and track analysis
+        // only reports, so neither asks for anything.
         detailSpy.clear();
-        findByObjectName(page, "analysisStateCard").actionRequested();
-        compare(detailSpy.count, 0, "a report-only check has no page to open");
+        var column = findByObjectName(page, "healthColumn");
+        verify(column !== null);
+        var askedBy = {};
+        var cards = 0;
+        for (var c = 0; c < column.children.length; ++c) {
+            var item = column.children[c];
+            if (item.actionRequested === undefined || item.hasTally === undefined) {
+                continue;
+            }
+            ++cards;
+            var before = detailSpy.count;
+            item.actionRequested();
+            if (detailSpy.count === before) {
+                continue;
+            }
+            var asked = detailSpy.signalArguments[before][0];
+            verify(askedBy[asked] === undefined,
+                   item.objectName + " asks for \"" + asked + "\", which " + askedBy[asked] + " already does");
+            askedBy[asked] = item.objectName;
+        }
+        // The filesystem card's press opened its advice dialog.
+        var advice = findChild(page, "repairAdviceDialog");
+        if (advice !== null) {
+            advice.close();
+        }
+        compare(cards, expected.length + 2, "every card on the page was pressed");
+        compare(detailSpy.count, expected.length, "and all but the two without a page asked for one");
     }
 
     function test_aCleanCheckStillGetsACard() {

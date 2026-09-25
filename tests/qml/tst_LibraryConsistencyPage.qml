@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 
@@ -115,6 +116,82 @@ TestCase {
         wait(50);
         verify(page.consistencyController !== null, "the page falls back to a controller of its own");
         compare(page.consistencyController.busy, false);
+    }
+
+    // A fake edit session and registry, the shape tst_EditSessionHost
+    // uses: only what the leave guard reads.
+    Component {
+        id: sessionComponent
+        QtObject {
+            property bool dirty: false
+            property bool writing: false
+            property int pendingCount: 0
+            property var pendingDescriptions: []
+            property string editorOwner: "library-health"
+            property string libraryId: "EB9F-F032"
+            property string stickLabel: "TESTSTICK"
+            property string state: "idle"
+            property string writeLabel: ""
+            property int writeCurrent: 0
+            property int writeTotal: 0
+            property bool cancelRequested: false
+            property bool stickPresent: true
+            property string stickIdentityStrength: "hardware"
+            property bool interruptedSave: false
+            signal saveFinished(var summary)
+            signal lockRefused(var holder)
+            function save() {}
+            function discard() { dirty = false; pendingCount = 0; }
+            function cancelWrite() {}
+        }
+    }
+    Component {
+        id: registryComponent
+        QtObject {
+            property var session: null
+            property bool quitAfterSave: false
+            function openSession(id, label, rb, engine) { return session; }
+            function closeSession(id) {}
+            function removeLock(id) {}
+        }
+    }
+    Component {
+        id: stackComponent
+        StackView { width: 980; height: 760 }
+    }
+    Component {
+        id: bottomPage
+        Item {}
+    }
+
+    // A scan cancelled from its overlay leaves the page the way Back does,
+    // through the leave guard. It used to pop straight past it: stage a
+    // repair, close Resolve... (which rescans the hub's controller), cancel
+    // that scan -- and the page was gone with the repair still staged, on
+    // the hub, which has no guard to offer Save or Discard.
+    function test_aCancelledScanAsksAboutStagedChangesBeforeLeaving() {
+        var controller = createTemporaryObject(controllerComponent, testCase);
+        var session = createTemporaryObject(sessionComponent, testCase, {dirty: true, pendingCount: 1});
+        var registry = createTemporaryObject(registryComponent, testCase, {session: session});
+        var stack = createTemporaryObject(stackComponent, testCase);
+        stack.push(bottomPage);
+        var page = stack.push(pageComponent, {sharedController: controller, editSessionRegistry: registry},
+                              StackView.Immediate);
+        verify(page !== null, "the page must be pushed");
+        compare(stack.depth, 2);
+
+        controller.scanCancelled();
+        var unsaved = findChild(page, "unsavedDialog");
+        verify(unsaved !== null);
+        tryCompare(unsaved, "opened", true);
+        compare(stack.depth, 2, "the page stays until the staged changes are saved or discarded");
+        unsaved.close();
+
+        // With nothing staged it leaves at once, as before.
+        session.dirty = false;
+        session.pendingCount = 0;
+        controller.scanCancelled();
+        tryCompare(stack, "depth", 1);
     }
 
     function test_onlyThisChecksStagedWorkIsCountedHere() {
