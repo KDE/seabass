@@ -1132,6 +1132,30 @@ Page {
                         // replaced on the next open, so an Engine write
                         // would silently vanish. Browse, Statistics and
                         // Metadata Backup only read, and stay.
+                        //
+                        // Second, straight after Browse Library: copying cues
+                        // between the stick's two catalogs is what most people
+                        // open Seabass for, and it sat ninth, below the
+                        // housekeeping and backup tools.
+                        ActionCard {
+                            cardTitle: "Sync Cue Points"
+                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
+                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
+                                : "Another Seabass instance is editing this library"
+                            onReadOnlyClicked: {
+                                if (delegateRoot.readOnly) {
+                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
+                                                                delegateRoot.enginePath);
+                                } else {
+                                    root.explainLock(delegateRoot.libraryId);
+                                }
+                            }
+                            cardSubtitle: "Copy cues between DeviceLibrary and Engine"
+                            cardIcon: "exchange-positions"
+                            visible: delegateRoot.writable
+                            enabled: delegateRoot.hasRekordbox && delegateRoot.hasEngine
+                            onClicked: root.syncRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
+                        }
                         ActionCard {
                             cardTitle: "Housekeeping"
                             readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
@@ -1271,25 +1295,6 @@ Page {
                                 && (!experimental || experimentalFeaturesEnabled)
                             enabled: delegateRoot.hasRekordbox
                             onClicked: root.engineLibraryCreatorRequested(delegateRoot.label, delegateRoot.rekordboxPath)
-                        }
-                        ActionCard {
-                            cardTitle: "Sync Cue Points"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
-                                }
-                            }
-                            cardSubtitle: "Copy cues between DeviceLibrary and Engine"
-                            cardIcon: "exchange-positions"
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox && delegateRoot.hasEngine
-                            onClicked: root.syncRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
                         }
                         ActionCard {
                             cardTitle: "Backups"

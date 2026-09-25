@@ -688,6 +688,36 @@ TestCase {
         }
     }
 
+    // The order of a stick's cards, left to right and down. Sync Cue
+    // Points is second, straight after Browse Library: copying cues
+    // between the stick's two catalogs is what most people open Seabass
+    // for, and it sat ninth, below the housekeeping and backup tools.
+    // Read off the grid as laid out, not off the source: a GridLayout
+    // places its visible children in order, so this is what is on screen.
+    function test_theCardsComeInTheirOrder() {
+        const page = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})});
+        const grid = findByName(page, "actionGrid");
+        verify(grid !== null, "the action grid must exist");
+        const shown = [];
+        for (let i = 0; i < grid.children.length; ++i) {
+            const child = grid.children[i];
+            if (child.visible && child.cardTitle !== undefined) {
+                shown.push(child);
+            }
+        }
+        const titles = shown.map((card) => card.cardTitle);
+        const expected = ["Browse Library", "Sync Cue Points", "Housekeeping", "Library Health",
+                          "Library Statistics", "USB Stick Performance", "Metadata Backup", "Restore Metadata",
+                          "Backups", "Device Profile", "Format USB Stick"];
+        compare(JSON.stringify(titles.slice(0, expected.length)), JSON.stringify(expected));
+        // And where they are drawn: the second card sits beside the first,
+        // on the top row.
+        verify(grid.columns >= 2, "this page is wide enough for two columns");
+        compare(shown[1].y, shown[0].y, "Sync Cue Points is on the first row");
+        verify(shown[1].x > shown[0].x, "to the right of Browse Library");
+        saveScreenshot(page, "stick-list-card-order");
+    }
+
     function test_theHeaderCarriesTheBrandRatherThanTheWordHome() {
         // This is the one page you arrive at rather than navigate to, so
         // "Home" named the position rather than the thing.
