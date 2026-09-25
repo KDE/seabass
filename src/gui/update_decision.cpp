@@ -23,19 +23,31 @@ int compareVersions(const QString &left, const QString &right)
     return 0;
 }
 
-QVector<QString> channelsFor(const QString &channel)
+QString feedChannelFor(const QString &buildChannel)
 {
-    if (channel == QLatin1String("stable")) {
+    if (buildChannel == QLatin1String("stable")) {
+        return QStringLiteral("stable");
+    }
+    if (buildChannel == QLatin1String("alpha") || buildChannel == QLatin1String("beta")) {
+        return QStringLiteral("testing");
+    }
+    // dev, or anything unrecognised. Not published anywhere.
+    return {};
+}
+
+QVector<QString> channelsFor(const QString &buildChannel)
+{
+    const QString own = feedChannelFor(buildChannel);
+    if (own.isEmpty()) {
+        return {};
+    }
+    if (own == QLatin1String("stable")) {
         return {QStringLiteral("stable")};
     }
-    if (channel == QLatin1String("beta")) {
-        return {QStringLiteral("stable"), QStringLiteral("beta")};
-    }
-    if (channel == QLatin1String("alpha")) {
-        return {QStringLiteral("stable"), QStringLiteral("beta"), QStringLiteral("alpha")};
-    }
-    // dev, or anything unrecognised.
-    return {};
+    // A test build follows both: the newest stable is an update for it
+    // just as much as the next alpha is, and which of the two is newer is
+    // the version number's business, not the channel's.
+    return {QStringLiteral("stable"), QStringLiteral("testing")};
 }
 
 std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QString &currentChannel,
@@ -48,6 +60,12 @@ std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QSt
     std::optional<ReleaseInfo> best;
     for (const ReleaseInfo &release : releases) {
         if (release.withdrawn) {
+            continue;
+        }
+        // Uploaded but not yet smoke-tested. The website hides these too;
+        // this is the same gate on the app's side, so a release that
+        // turns out not to start was never offered to anybody.
+        if (!release.released) {
             continue;
         }
         if (!follow.contains(release.channel)) {
@@ -66,8 +84,17 @@ std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QSt
 std::optional<ReleaseInfo> findRunning(const QString &currentVersion, const QString &currentChannel,
                                        const QVector<ReleaseInfo> &releases)
 {
+    // By the build's own channel where the entry records one, and by the
+    // website channel it maps to otherwise: an alpha and a beta of the
+    // same number are different builds and must not inherit each other's
+    // withdrawal, but they share one list.
+    const QString feed = feedChannelFor(currentChannel);
     for (const ReleaseInfo &release : releases) {
-        if (release.version == currentVersion && release.channel == currentChannel) {
+        if (release.version != currentVersion) {
+            continue;
+        }
+        const QString mine = release.build.isEmpty() ? currentChannel : release.build;
+        if (mine == currentChannel && release.channel == feed) {
             return release;
         }
     }

@@ -172,7 +172,12 @@ void UpdateChecker::applyFeed(const QByteArray &body)
             // list it is in would be a bug on the website, and the list
             // is the one that decides.
             release.channel = channel.key();
-            release.released = entry.value(QStringLiteral("released")).toString();
+            release.build = entry.value(QStringLiteral("build")).toString();
+            release.date = entry.value(QStringLiteral("date")).toString();
+            // Absent counts as not released: a feed written by something
+            // older than this field, or by hand, must not be able to
+            // offer a build nobody has started.
+            release.released = entry.value(QStringLiteral("released")).toBool();
             release.note = entry.value(QStringLiteral("note")).toString();
             release.noteLevel = entry.value(QStringLiteral("noteLevel")).toString();
             release.withdrawn = entry.value(QStringLiteral("withdrawn")).toBool();

@@ -42,10 +42,27 @@ newer than 0.7.9 and 0.10.0 than 0.9.0.
 and brought to master with `git cherry-pick -x`. The branch is never
 merged back; history stays linear.
 
-**Channels** are `alpha`, `beta` and `stable`. The channel is compiled
-into the build and is part of the tag, `releases/<channel>/X.Y.Z`: a beta
-binary knows it is a beta and checks the beta and stable channels for its
-updates, an alpha checks all three, a stable build only stable.
+**Channels** come in two sets, and they are not the same words for the
+same thing.
+
+A **build channel** is `alpha`, `beta` or `stable`. It is compiled into the
+binary, shown in Settings, and part of the tag, `releases/<channel>/X.Y.Z`.
+It is what every command here takes.
+
+A **website channel** is `testing` or `stable`, and it is what a user
+chooses between: an alpha and a beta are both a build to try rather than
+one to rely on, and asking people to rank two words nobody had defined for
+them bought nothing. `releases.json` has those two lists, each entry
+recording under `build` what it was actually built as. A stable build is
+offered stable releases only. An alpha or a beta follows both lists, and
+within testing the version number decides, because the numbers only ever
+go up.
+
+The packages are served from
+`downloads/<testing|stable>/<linux|mac|windows>/`, one directory per
+platform. The version is in the filename, so the directory does not
+repeat it, and `publish-release.py` writes each package's full path into
+its entry rather than leaving the pages to rebuild the layout rule.
 
 A tag whose version disagrees with `CMakeLists.txt` is refused, by
 `tools/release.sh` before the push and by `linux:package` in CI after it.
@@ -72,8 +89,17 @@ tools/release.sh alpha 0.7.9 --go
 # 4. Wait for CI and bring the packages down.
 tools/fetch-release.sh alpha 0.7.9 --watch
 
-# 5. Verify them (below), then publish from the website repository.
+# 5. Publish them. This uploads and writes the entry with
+#    "released": false, so the packages are on the server and nothing
+#    offers them. It asks for the changelog and for a note to users.
 ../project/website/scripts/publish-release.py alpha 0.7.9 --go
+../project/website/scripts/deploy.sh --live
+
+# 6. Smoke-test what is actually on the server, reached through
+#    https://vizzzion.org/seabass/get-it.html?unreleased
+#    Then, and only then:
+../project/website/scripts/publish-release.py release alpha 0.7.9 --go
+../project/website/scripts/deploy.sh --live
 
 # The next pre-release, and every later release of the train, on the branch:
 $EDITOR CMakeLists.txt                # project(seabass VERSION 0.7.10 ...)
@@ -122,7 +148,18 @@ and installer test, and the Craft macOS job that signs and notarises a
 |---|---|---|
 | Linux | `linux:package` | `seabass-<version>_<channel>_linux.tar.gz` |
 | Windows | `craft_windows_qt6_x86_64` (Craft; the MSYS2 `windows:package` only once a Windows runner exists) | `seabass-<version>_<channel>_windows.exe` |
-| macOS | `craft_macos_qt6_arm64` | `seabass-<version>_<channel>_macos.dmg` |
+| macOS | `craft_macos_qt6_arm64` | `seabass-<version>_<channel>_macos-arm64.dmg` |
+| macOS | `craft_macos_qt6_x86_64` | `seabass-<version>_<channel>_macos-x86_64.dmg` |
+
+The `<channel>` in a filename is the build channel, which is what the
+binary reports in its own Settings. The directory it is served from is the
+website channel.
+
+The two macOS rows are halves. Neither is published: see "A universal
+macOS package" below. `fetch-release.sh` brings both down as evidence
+that both architectures build, and then looks for
+`seabass-<version>_<channel>_macos.dmg`, the merged package, which is made
+on a Mac. It refuses to call the release complete without it.
 
 `tools/fetch-release.sh` puts them in
 `~/Seabass/releases/<channel>/` under exactly those names, which are also
@@ -133,7 +170,16 @@ missing a platform has to be a decision, never something nobody noticed.
 
 ## Verifying a build
 
-Before anything is published, on each platform:
+Publishing is two steps, and this is what sits between them. The upload
+writes `"released": false`, which puts the packages on the server and
+tells nobody: the download page hides the entry and the app's update check
+skips it. `get-it.html?unreleased` is how you get at it, which is the
+whole point of that parameter, and the page says in as many words that the
+build has not been smoke-tested. `publish-release.py release <channel>
+<version> --go` is the sentence "I installed this and it started", and
+nothing else in the system can say it for you.
+
+Before flipping that flag, on each platform:
 
 1. Install the package the way a user would -- the installer on Windows,
    the `.dmg` on macOS, unpack the tarball on Linux.
@@ -216,14 +262,19 @@ the download directory.
   downloading it can read a dependency list. Not good enough for a stable
   release aimed at DJs; that needs a self-contained build, and it is not
   written yet.
-- **The macOS package has to be universal, and CI does not merge it yet.**
+- **The macOS package has to be universal, and CI does not merge it.**
   Rosetta translates x86_64 to ARM and never the reverse, so an arm64-only
   `.dmg` mounts on an Intel Mac and refuses to launch -- and
   `publish-release.py` has one macOS slot, which is the right shape only if
   what goes in it carries both architectures. `tools/macos-universal-dmg.sh`
   merges an arm64 and an x86_64 Craft bundle into one package; see "A
-  universal macOS package" above. Until the merge runs in CI, the published
-  `.dmg` is not the build CI tested, and the release notes have to say so.
+  universal macOS package" above. So the published `.dmg` is not the build
+  CI tested, and the release notes have to say so. It cannot simply be
+  merged from the two `.dmg` files CI produces either: the check that the
+  two sides hold the same package versions reads each Craft root's
+  `install.db`, and a `.dmg` does not carry one. Two CI runners clone
+  `craft-blueprints-kde` at their own times, so that is exactly the case
+  the check exists for and exactly the case a `.dmg` cannot answer.
 - **The release text.** `publish-release.py` proposes one from the
   commits on the tag, grouped and trimmed, and will not publish until a
   person has edited it. A changelog nobody read is a changelog nobody
