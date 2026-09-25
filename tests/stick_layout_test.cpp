@@ -32,6 +32,10 @@ int main()
 
     const std::string pioneer = seabass::pathToUtf8(root / "PIONEER");
     const std::string engineLib = seabass::pathToUtf8(root / "Engine Library");
+    // Callers pass the native spelling; catalogPathFor answers with the
+    // generic, forward-slash one on every platform (they differ on Windows).
+    const std::string pioneerKey = seabass::pathToGenericUtf8(root / "PIONEER");
+    const std::string engineLibKey = seabass::pathToGenericUtf8(root / "Engine Library");
 
     // Case 1: nothing on the stick yet -- every catalog is absent, and
     // absent must read as empty rather than as a path a writer would
@@ -48,8 +52,8 @@ int main()
     // reach rekordbox to remove that catalog's row for the same file.
     {
         touch(root / "PIONEER" / "rekordbox" / "export.pdb");
-        assert(catalogPathFor("rekordbox", engineLib) == pioneer);
-        assert(catalogPathFor("rekordbox", pioneer) == pioneer);
+        assert(catalogPathFor("rekordbox", engineLib) == pioneerKey);
+        assert(catalogPathFor("rekordbox", pioneer) == pioneerKey);
         std::cout << "case 2 (found from another catalog's path) OK\n";
     }
 
@@ -67,7 +71,7 @@ int main()
         fs::create_directories(root / "Engine Library" / "Database2");
         assert(catalogPathFor("engine", pioneer).empty());
         touch(root / "Engine Library" / "Database2" / "m.db");
-        assert(catalogPathFor("engine", pioneer) == engineLib);
+        assert(catalogPathFor("engine", pioneer) == engineLibKey);
         std::cout << "case 4 (engine needs its database, not just its folder) OK\n";
     }
 
