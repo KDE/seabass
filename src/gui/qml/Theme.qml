@@ -130,6 +130,14 @@ QtObject {
         return value.toFixed(unitIndex === 0 ? 0 : 1) + " " + units[unitIndex];
     }
 
+    // A position or length in a track, as a player shows it: "3:07",
+    // minutes unbounded ("75:02"), never negative.
+    function trackTime(ms) {
+        const seconds = Math.floor(Math.max(0, ms) / 1000);
+        const rest = seconds % 60;
+        return Math.floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;
+    }
+
     // "~4 min", "~25 s", "~1 h 12 min"; "" for unknown (< 0).
     function humanDuration(seconds) {
         if (seconds === undefined || seconds === null || seconds < 0) return "";

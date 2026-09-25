@@ -351,33 +351,12 @@ QStringList RestoreProposalListModel::stagedChanges(int index) const
     return m_stagedChanges[static_cast<std::size_t>(index)];
 }
 
-int RestoreProposalListModel::indexOfChange(const QString &changeId) const
-{
-    for (std::size_t i = 0; i < m_stagedChanges.size(); ++i) {
-        if (m_stagedChanges[i].contains(changeId)) {
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
-}
-
 void RestoreProposalListModel::recountCopies()
 {
     m_copiesByStoredId.clear();
     for (const auto &proposal : m_proposals) {
         m_copiesByStoredId[proposal.storedId]++;
     }
-}
-
-void RestoreProposalListModel::removeAt(int index)
-{
-    if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
-        return;
-    }
-    // A reset rather than beginRemoveRows: removing one proposal
-    // renumbers every visible index after it, and the mapping is what
-    // this model is for.
-    removeAll({index});
 }
 
 void RestoreProposalListModel::removeAll(std::vector<int> indices)

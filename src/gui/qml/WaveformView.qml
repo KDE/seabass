@@ -80,12 +80,6 @@ Canvas {
     // line, the same as a row without a waveform, and the cues on it.
     readonly property bool drawsBars: root.hasWaveform && !root.lengthUnknown
 
-    function timeText(ms) {
-        const seconds = Math.floor(Math.max(0, ms) / 1000);
-        const rest = seconds % 60;
-        return Math.floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;
-    }
-
     signal seekRequested(real ratio)
     // Fires on every plain click alongside seekRequested -- callers that
     // only want click-to-seek (PlayerBar) simply don't connect to this
@@ -115,13 +109,13 @@ Canvas {
         if (!cueData || span <= 0) {
             return "";
         }
-        for (var i = 0; i < cueData.length; i++) {
-            var cue = cueData[i];
-            var x = (cue.positionMs / span) * width;
-            var title = "";
-            var hit = false;
+        for (let i = 0; i < cueData.length; i++) {
+            const cue = cueData[i];
+            const x = (cue.positionMs / span) * width;
+            let title = "";
+            let hit = false;
             if (cue.isLoop && cue.loopEndMs > cue.positionMs) {
-                var xEnd = (cue.loopEndMs / span) * width;
+                const xEnd = (cue.loopEndMs / span) * width;
                 hit = mouseX >= x - 3 && mouseX <= xEnd + 3;
                 title = cue.kind === "hot" ? "Hot loop " + cue.hotCueNumber : "Loop";
             } else {
@@ -132,7 +126,7 @@ Canvas {
                 // Without a length the marker's place says only where it
                 // is among the other cues, so the time is said outright.
                 if (root.lengthUnknown) {
-                    title += " at " + root.timeText(cue.positionMs);
+                    title += " at " + Theme.trackTime(cue.positionMs);
                 }
                 return (cue.comment && cue.comment.length > 0) ? title + ": “" + cue.comment + "”" : title;
             }
@@ -176,13 +170,13 @@ Canvas {
 
         const span = root.cueSpanMs;
         if (cueData && span > 0) {
-            for (var j = 0; j < cueData.length; j++) {
-                var cue = cueData[j];
-                var x = (cue.positionMs / span) * w;
-                var color = (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#")
+            for (let j = 0; j < cueData.length; j++) {
+                const cue = cueData[j];
+                const x = (cue.positionMs / span) * w;
+                const color = (cue.color && cue.color.length > 0 && cue.color.charAt(0) === "#")
                     ? cue.color : "#ffcc00";
-                var isLoop = cue.isLoop === true && cue.loopEndMs > cue.positionMs;
-                var xEnd = isLoop ? (cue.loopEndMs / span) * w : x;
+                const isLoop = cue.isLoop === true && cue.loopEndMs > cue.positionMs;
+                const xEnd = isLoop ? (cue.loopEndMs / span) * w : x;
 
                 // See highlightCuePositionMs's own doc comment. A small
                 // tolerance (not exact equality) since the caller passes
