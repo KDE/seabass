@@ -65,6 +65,20 @@ void BackupAdvisorController::setBackupDirectory(const QString &directory)
     reassessAll();
 }
 
+QStringList BackupAdvisorController::pending() const
+{
+    QStringList mountPoints;
+    if (!m_running.isEmpty()) {
+        mountPoints << m_running;
+    }
+    for (const Request &queued : m_queue) {
+        if (!mountPoints.contains(queued.mountPoint)) {
+            mountPoints << queued.mountPoint;
+        }
+    }
+    return mountPoints;
+}
+
 void BackupAdvisorController::assess(const QString &stickLabel, const QString &mountPoint, const QString &rekordboxPath,
                                      const QString &enginePath)
 {
@@ -80,6 +94,11 @@ void BackupAdvisorController::assess(const QString &stickLabel, const QString &m
         }
     }
     m_queue.push_back(request);
+    if (m_watcher.isRunning()) {
+        // Queued behind the running pass: startNext() below does nothing
+        // yet, so this is the only word that the stick is now waiting.
+        emit pendingChanged();
+    }
     startNext();
 }
 
@@ -108,6 +127,7 @@ void BackupAdvisorController::startNext()
     }
     const Request request = m_queue.front();
     m_queue.erase(m_queue.begin());
+    m_running = request.mountPoint;
     const fs::path directory = pathFromQString(m_backupDirectory);
     m_watcher.setFuture(QtConcurrent::run([request, directory]() {
         namespace stick_backup = infrastructure::stick_backup;
@@ -154,6 +174,7 @@ void BackupAdvisorController::startNext()
     // asking busy() on the signal was told "not running" and never heard
     // otherwise until the pass had finished.
     emit busyChanged();
+    emit pendingChanged();
 }
 
 void BackupAdvisorController::onFinished()
@@ -168,7 +189,13 @@ void BackupAdvisorController::onFinished()
         m_backups = result->backups;
         recomputeAdvice();
     }
-    emit busyChanged();
+    m_running.clear();
+    // Only when nothing else starts: startNext() says it for the next pass,
+    // and the stick just read leaves the list either way.
+    if (m_queue.empty()) {
+        emit busyChanged();
+        emit pendingChanged();
+    }
     startNext();
 }
 

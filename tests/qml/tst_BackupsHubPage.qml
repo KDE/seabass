@@ -30,14 +30,18 @@ TestCase {
         SignalSpy {}
     }
 
-    // An advisor whose busy and advice notify, unlike a plain object.
+    // An advisor whose busy, pending and advice notify, unlike a plain
+    // object. Like the real one, reassessAll() queues every known stick,
+    // and busy holds until the last of them is read.
     Component {
         id: fakeAdvisorComponent
         QtObject {
             property var advice: ({})
-            property bool busy: false
+            property var known: ["/media/MAIN"]
+            property var pending: []
+            readonly property bool busy: pending.length > 0
             property int reassessCalls: 0
-            function reassessAll() { reassessCalls += 1; busy = true; }
+            function reassessAll() { reassessCalls += 1; pending = known.slice(); }
         }
     }
 
@@ -215,7 +219,7 @@ TestCase {
     // cannot be decided yet, so the page says it is scanning, as Match
     // Duplicate Cues does, until the advice lands.
     function test_scanningOverlayUntilThisSticksAdviceLands() {
-        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase, {busy: true, advice: {}});
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase, {pending: ["/media/MAIN"], advice: {}});
         const page = makePage({}, {backupAdvisor: advisor});
         const overlay = findChild(page, "scanOverlay");
         verify(overlay !== null);
@@ -224,16 +228,52 @@ TestCase {
         wait(500);  // the sweeping bar starts off to the left of its track
         saveScreenshot(page, "backups-hub-scanning");
         advisor.advice = upToDateAdvice();
-        advisor.busy = false;
+        advisor.pending = [];
         compare(overlay.visible, false);
         compare(findChild(page, "fullStickBackupCard").cardSubtitle, "Full stick backup is up to date");
     }
 
     // The advisor busy with another stick does not hide this one's cards.
     function test_noOverlayWhileOnlyOtherSticksAreRead() {
-        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase, {busy: true, advice: upToDateAdvice()});
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase,
+                                              {pending: ["/media/B", "/media/C"], advice: upToDateAdvice()});
         const page = makePage({}, {backupAdvisor: advisor});
+        compare(advisor.busy, true);
         compare(findChild(page, "scanOverlay").visible, false);
+    }
+
+    // Opened with three sticks queued and none read yet: the overlay is up
+    // until THIS stick's advice lands, not until the slowest of the three
+    // has been read. The advisor stays busy with the other two meanwhile.
+    function test_overlayHidesOnceThisStickLandsWhileOthersRun() {
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase,
+                                              {pending: ["/media/MAIN", "/media/B", "/media/C"], advice: {}});
+        const page = makePage({}, {backupAdvisor: advisor});
+        const overlay = findChild(page, "scanOverlay");
+        compare(overlay.visible, true);
+        advisor.advice = upToDateAdvice();
+        advisor.pending = ["/media/B", "/media/C"];
+        compare(advisor.busy, true, "the other two sticks are still being read");
+        compare(overlay.visible, false);
+        compare(findChild(page, "fullStickBackupCard").cardSubtitle, "Full stick backup is up to date");
+    }
+
+    // The same on coming back: reassessAll() queues every known stick. This
+    // one is read second; once it has been, the other two do not hold the
+    // page, and one read first does not release it early.
+    function test_reassessOverlayFollowsThisStickNotTheQueue() {
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase,
+                                              {known: ["/media/B", "/media/MAIN", "/media/C"], advice: upToDateAdvice()});
+        const page = makePage({}, {backupAdvisor: advisor});
+        const overlay = findChild(page, "scanOverlay");
+        page.activated();
+        page.activated();
+        compare(overlay.visible, true);
+        advisor.pending = ["/media/MAIN", "/media/C"];
+        compare(overlay.visible, true, "another stick read first is not this one's advice");
+        advisor.pending = ["/media/C"];
+        compare(advisor.busy, true);
+        compare(overlay.visible, false);
     }
 
     // Coming back (from Manage Backups, say) re-reads the backups; the
@@ -249,9 +289,9 @@ TestCase {
         page.activated();
         compare(advisor.reassessCalls, 1);
         compare(overlay.visible, true);
-        advisor.busy = false;
+        advisor.pending = [];
         compare(overlay.visible, false);
-        advisor.busy = true;
+        advisor.pending = ["/media/B"];
         compare(overlay.visible, false, "a later pass for another stick is not this page's wait");
     }
 
@@ -266,6 +306,28 @@ TestCase {
         tryVerify(function() { return seen.length >= 2 && !advisor.busy; }, 10000);
         compare(seen[0], true);
         compare(seen[seen.length - 1], false);
+    }
+
+    // The real advisor names the sticks it is reading, one at a time: with
+    // three queued, the first leaves the list once it has been read while
+    // the other two are still in it, and busy covers all three.
+    function test_realAdvisorPendingNamesEachStick() {
+        const advisor = createTemporaryObject(realAdvisorComponent, testCase);
+        const seen = [];
+        advisor.pendingChanged.connect(function() { seen.push({pending: advisor.pending.slice(), busy: advisor.busy}); });
+        advisor.assess("A", "/nonexistent/seabass-hub-test/A", "", "");
+        advisor.assess("B", "/nonexistent/seabass-hub-test/B", "", "");
+        advisor.assess("C", "/nonexistent/seabass-hub-test/C", "", "");
+        compare(advisor.pending.slice(), ["/nonexistent/seabass-hub-test/A", "/nonexistent/seabass-hub-test/B",
+                                          "/nonexistent/seabass-hub-test/C"]);
+        tryVerify(function() { return !advisor.busy; }, 10000);
+        compare(advisor.pending.length, 0);
+        const firstDone = seen.filter(function(s) {
+            return s.pending.indexOf("/nonexistent/seabass-hub-test/A") < 0 && s.pending.length === 2;
+        });
+        verify(firstDone.length > 0, "A left the list while B and C were still waiting: " + JSON.stringify(seen));
+        compare(firstDone[0].busy, true);
+        compare(seen[seen.length - 1].pending.length, 0);
     }
 
     // Every card on this hub graduated from experimental on 2026-09-17, so
