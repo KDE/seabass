@@ -659,16 +659,29 @@ linux:package:
     - cp build-rel/src/gui/seabass build-rel/seabass-cli "stage/$name/bin/"
     - cp README.md LICENSES/* "stage/$name/" 2>/dev/null || true
     - |
+      # The line ends below are \\ because this heredoc is unquoted (the
+      # $ variables must expand), and a single backslash before a newline
+      # is a line continuation there: the command came out as one line.
       cat > "stage/$name/README-package.txt" <<EOF
       Seabass $SEABASS_VERSION ($SEABASS_CHANNEL), Linux x86_64.
 
       Run bin/seabass. This package carries Seabass only: it uses the Qt 6
-      your distribution ships (Qt 6.5 or newer, with QtQuick, QtMultimedia,
-      QtSvg and the shader tools runtime), plus sqlite3, zlib, sqlcipher
-      and taglib. On Ubuntu/Debian:
+      your distribution ships (Qt 6.5 or newer, with QtQuick, QtMultimedia
+      and QtSvg), plus sqlite3, zlib, SQLCipher 4 and TagLib 2. It was built
+      on Ubuntu 26.04, where this is everything it needs:
 
-        sudo apt install qt6-base qt6-declarative qt6-multimedia qt6-svg \
-             libsqlite3-0 zlib1g libsqlcipher0 libtag1v5
+        sudo apt install libqt6gui6 libqt6qml6 libqt6quick6 libqt6svg6 \\
+             libqt6multimedia6 libqt6network6 libqt6concurrent6 \\
+             qt6-qpa-plugins qt6-svg-plugins qml6-module-qtquick \\
+             qml6-module-qtquick-controls qml6-module-qtquick-templates \\
+             qml6-module-qtquick-layouts qml6-module-qtquick-effects \\
+             qml6-module-qtquick-dialogs qml6-module-qtquick-window \\
+             qml6-module-qtqml-workerscript qml6-module-qtmultimedia \\
+             qml6-module-qtquick-shapes qml6-module-qtcore \\
+             libsqlcipher2 libtag2 libsqlite3-0 zlib1g
+
+      Without SQLCipher it still starts and reads export.pdb and Engine
+      libraries, but cannot open rekordbox's OneLibrary (exportLibrary.db).
 
       Built from $CI_COMMIT_SHA.
       EOF
