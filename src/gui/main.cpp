@@ -7,9 +7,11 @@
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QStyleHints>
 #include <QThreadPool>
 
+#include "gui/app_color_scheme.hpp"
 #include "gui/controls_style.hpp"
 #include "gui/interface_font.hpp"
 #include "gui/seabass_settings.hpp"
@@ -193,6 +195,16 @@ int main(int argc, char **argv)
     if (!useSystemTheme) {
         app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
     }
+#endif
+
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS)
+    // The Linux counterpart of the colour-scheme hint above: KDE's style
+    // takes an unstyled Label's ink from the desktop's colour scheme, not
+    // from Theme, so on a light scheme page titles and overlay headings
+    // were near-black on Kelp's near-black. See gui/app_color_scheme.hpp.
+    seabass::gui::applyAppColorScheme(
+        useSystemTheme,
+        QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/seabass"));
 #endif
 
     QQmlApplicationEngine engine;
