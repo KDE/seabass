@@ -338,11 +338,11 @@ TestCase {
         const titleSlack = crumb.titleNatural - crumb.titleFloor;
         verify(stickSlack > 20 && middleSlack > 20 && titleSlack > 20,
                "the fixture's names are too short to test the order");
-        const short = [0,
+        const shortBy = [0,
                        stickSlack / 2,
                        stickSlack + middleSlack / 2,
                        stickSlack + middleSlack + titleSlack / 2][data.step];
-        holder.crumbWidth = crumb.implicitWidth - short;
+        holder.crumbWidth = crumb.implicitWidth - shortBy;
         waitForRendering(holder);
         const stick = byName(holder, "stickSegment");
         const middle = byName(holder, "middleLink");
