@@ -53,17 +53,6 @@ std::string driveLetterToPath(char letter)
 // A wide string from the OS (a volume label, which the user named and
 // which can hold anything) as UTF-8, the encoding every std::string in
 // Seabass carries.
-std::string utf8FromWide(const wchar_t *text)
-{
-    const int length = ::WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
-    if (length <= 1) {
-        return {};
-    }
-    std::string out(static_cast<std::size_t>(length - 1), '\0');
-    ::WideCharToMultiByte(CP_UTF8, 0, text, -1, out.data(), length, nullptr, nullptr);
-    return out;
-}
-
 // Returns the physical disk number (0, 1, 2, ...) a mounted drive letter
 // lives on, via IOCTL_STORAGE_GET_DEVICE_NUMBER -- the standard, minimal
 // WinAPI way to answer "which disk is this volume on" without needing to
@@ -249,7 +238,7 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
         DWORD volumeSerial = 0;
         if (::GetVolumeInformationW(rootDirectory.c_str(), volumeName, MAX_PATH + 1, &volumeSerial, nullptr,
                                      nullptr, nullptr, 0)) {
-            stick.label = volumeName[0] != L'\0' ? utf8FromWide(volumeName) : rootPath;
+            stick.label = volumeName[0] != L'\0' ? seabass::pathToUtf8(std::filesystem::path(volumeName)) : rootPath;
             if (volumeSerial != 0) {
                 stick.identity.filesystemUuid = volumeSerialString(volumeSerial);
             }

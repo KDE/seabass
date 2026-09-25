@@ -26,18 +26,13 @@ namespace
 // in utf8_path.hpp: script paths and device paths come through here) and
 // widened once for CreateProcessW. The A variant would read the bytes in
 // the ANSI code page and hand the child a mangled path.
+// Through the shared conversion: a std::string is UTF-8 by the rule in
+// utf8_path.hpp, and pathFromUtf8() builds the wide form the same way
+// everywhere else does. A command line is not a path, but the
+// conversion is the same one, and fs::path leaves the text untouched.
 std::wstring widen(const std::string &utf8)
 {
-    if (utf8.empty()) {
-        return {};
-    }
-    const int needed = ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    if (needed <= 0) {
-        return {};
-    }
-    std::wstring wide(static_cast<size_t>(needed), L'\0');
-    ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), needed);
-    return wide;
+    return seabass::pathFromUtf8(utf8).wstring();
 }
 
 // The standard argv[i]->CreateProcess command-line quoting algorithm
