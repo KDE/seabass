@@ -271,5 +271,29 @@ int main()
     }
 
     std::cout << "All library_catalog_cache tests passed.\n";
+    // Case 7: one entry for every spelling of a catalog path. A page hands
+    // the native form on Windows, a session derives its sibling with a
+    // slash, and a trailing separator is the same place: all of them hit
+    // the one cache line, and invalidating under any spelling clears it.
+    {
+        std::atomic<int> scanCount{0};
+        auto scanFn = [&](const std::string &, const std::string &, seabass::application::ProgressReporter &, CancellationToken) {
+            scanCount++;
+            return oneTrack("1");
+        };
+        auto mtimeFn = [](const std::string &, const std::string &) { return std::chrono::system_clock::time_point{}; };
+        LibraryCatalogCache cache(scanFn, mtimeFn);
+
+        cache.tracksFor("rekordbox", "/stick/PIONEER");
+        cache.tracksFor("rekordbox", "/stick/PIONEER/");
+        cache.tracksFor("rekordbox", "/stick//PIONEER");
+        cache.tracksFor("rekordbox", "\\stick\\PIONEER");
+        assert(scanCount == 1);
+        cache.invalidate("rekordbox", "/stick/PIONEER/");
+        cache.tracksFor("rekordbox", "/stick/PIONEER");
+        assert(scanCount == 2);
+        std::cout << "case 7 (one entry per catalog, whatever the spelling) OK\n";
+    }
+
     return 0;
 }

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <stdexcept>
 
+#include "application/path_key.hpp"
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/audio/duration_fill.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
@@ -104,7 +105,11 @@ LibraryCatalogCache::LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn)
 
 std::string LibraryCatalogCache::keyFor(const std::string &format, const std::string &path)
 {
-    return format + "\n" + path;
+    // One key for every spelling of the catalog path: a page hands the
+    // native form on Windows, a session's derived sibling the slash
+    // form, and invalidateEveryCatalogOn() builds its own. Two keys for
+    // one catalog left the stale one behind after a save.
+    return format + "\n" + application::normalizedPathKey(path);
 }
 
 std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &format, const std::string &path,

@@ -56,4 +56,9 @@ inline std::string pathToGenericUtf8(const std::filesystem::path &path)
     return std::string(reinterpret_cast<const char *>(u8.data()), u8.size());
 }
 
+// A path as a map key or for an equality test is not this header's
+// business: application::normalizedPathKey (src/application/path_key.hpp)
+// folds separators, trailing separators, case and Unicode composition,
+// and is the one normaliser every lookup keyed by a path goes through.
+
 }  // namespace seabass

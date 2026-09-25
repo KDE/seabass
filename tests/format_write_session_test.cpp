@@ -8,6 +8,7 @@
 
 #include <QString>
 
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,7 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/progress_reporter.hpp"
+#include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 
@@ -141,5 +143,27 @@ int main()
 
     fs::remove_all(root);
     std::cout << "format_write_session_test: all cases passed\n";
+    // 5. One session per database, whatever the spelling of the catalog
+    //    path. A change opens the session with the path a page gave it;
+    //    the save loop later asks for it with the path off the context,
+    //    and on Windows those differ in separators or a trailing one. A
+    //    second session on the same m.db would be two writers inside one
+    //    save.
+    {
+        fs::path engine = makeStick(root);
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, {}, seabass::gui::pathToQString(engine));
+        const std::string spelled = seabass::pathToUtf8(engine);
+        FormatWriteSession &opened = sharedFormatWriteSession(ctx, "engine", spelled + "/", 1, "test");
+        assert(existingFormatWriteSession(ctx, "engine", spelled) == &opened);
+        std::string backslashed = spelled;
+        std::replace(backslashed.begin(), backslashed.end(), '/', '\\');
+        assert(existingFormatWriteSession(ctx, "engine", backslashed) == &opened);
+        assert(&sharedFormatWriteSession(ctx, "engine", spelled, 1, "test") == &opened);
+        assert(existingFormatWriteSession(ctx, "engine", spelled + "/other") == nullptr);
+        assert(!ctx.runFinishHooks(true).error);
+        std::cout << "case 5 (one session per database, whatever the spelling) OK\n";
+    }
+
     return 0;
 }
