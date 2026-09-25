@@ -493,6 +493,9 @@ TestCase {
         verify(waveform !== null);
         verify(waveform.hasWaveform, "the fixture's analysis has this track's waveform");
         compare(waveform.cueData.length, row.cueCount, "with the stick's cues on it");
+        // And where a stick track has none, that is the stick's doing, not
+        // the backup's, which is what the stored list says.
+        compare(waveform.missingText, "No waveform on the stick for this track");
         if (screenshotDir) {
             grabImage(page).save(screenshotDir + "/MetadataBackupPage-fixture-open.png");
         }

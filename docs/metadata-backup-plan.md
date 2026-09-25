@@ -270,7 +270,9 @@ analysis through `PlaybackController::waveformFor()`: the stick being
 backed up on the backup page, the stick being restored to on the restore
 page. The store's own browse list has no stick behind it. Wherever there
 is no waveform, the cues are drawn on a flat line and hovering it says
-"Waveform not part of backup".
+why: "Waveform not part of backup" on the store's own rows, and "No
+waveform on the stick for this track" on a stick's rows, where the
+missing one is the stick's (never analysed, listed only by OneLibrary).
 
 Read for the opened row only: the `WaveformView` is not even built for a
 collapsed one, and `tst_MetadataRestorePage.qml` fails if opening the page

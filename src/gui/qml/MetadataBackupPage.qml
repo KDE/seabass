@@ -710,6 +710,7 @@ Page {
                 waveformCues: proposalRow.cues
                 waveformDurationMs: proposalRow.durationMs
                 waveformData: proposalRow.expanded ? root.waveformFor(proposalRow.index) : []
+                waveformMissingText: "No waveform on the stick for this track"
                 // What the badge counts is not what is on the track but
                 // what a backup would change about it, and on a track
                 // the store already partly holds those are different
@@ -822,6 +823,7 @@ Page {
                 showWaveform: true
                 waveformCues: trackRow.expanded ? controller.cuesFor(trackRow.trackId) : []
                 waveformDurationMs: trackRow.durationMs
+                waveformMissingText: "Waveform not part of backup"
                 // Fetched for the row the pointer is over, or the one
                 // that is open, and for no others. The list is paged
                 // precisely so that showing twenty rows costs twenty

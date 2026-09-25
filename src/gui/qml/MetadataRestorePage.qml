@@ -483,6 +483,8 @@ Page {
                 waveformCues: proposalRow.cues
                 waveformDurationMs: proposalRow.durationMs
                 waveformData: proposalRow.expanded ? root.waveformFor(proposalRow.index) : []
+                // The waveform is the stick's, so a missing one is too.
+                waveformMissingText: "No waveform on the stick for this track"
                 // What this row's badge is counting is not what is on
                 // the track but what a restore would leave on it, and
                 // the two are different numbers whenever it replaces
