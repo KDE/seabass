@@ -50,14 +50,20 @@ class AppstreamReleaseTest(unittest.TestCase):
         self.assertIn('<release version="9.9.10" type="development" date="2030-01-02"/>', text)
 
     def test_an_existing_entry_keeps_its_description_and_takes_the_new_date(self):
-        # The file ships with an entry for the version it was written for,
-        # description and all; tagging that version must not lose it.
-        original = METAINFO.read_text(encoding="utf-8")
-        version = self.versions(original)[0]
-        text = self.run_tool(version, "alpha", "2031-05-06")
-        self.assertEqual(self.versions(text).count(version), 1, "one entry per version")
-        self.assertIn(f'<release version="{version}" type="development" date="2031-05-06">', text)
-        self.assertIn("<description>", text.split(f'version="{version}"', 1)[1].split("</release>", 1)[0])
+        # Its own entry, written into the copy first: the real file's first
+        # entry changes with every release (0.7.11's was recorded without a
+        # description), and a test that read it broke on the release commit.
+        text = self.file.read_text(encoding="utf-8")
+        entry = ('    <release version="9.8.7" type="stable" date="2029-01-01">\n'
+                 "      <description>\n        <p>Kept.</p>\n      </description>\n"
+                 "    </release>\n")
+        text = text.replace("<releases>\n", "<releases>\n" + entry, 1)
+        self.file.write_text(text, encoding="utf-8")
+        text = self.run_tool("9.8.7", "alpha", "2031-05-06")
+        self.assertEqual(self.versions(text).count("9.8.7"), 1, "one entry per version")
+        self.assertIn('<release version="9.8.7" type="development" date="2031-05-06">', text)
+        kept = text.split('version="9.8.7"', 1)[1].split("</release>", 1)[0]
+        self.assertIn("<p>Kept.</p>", kept)
 
     def test_running_it_twice_changes_nothing_the_second_time(self):
         once = self.run_tool("9.9.9", "stable", "2030-01-02")
