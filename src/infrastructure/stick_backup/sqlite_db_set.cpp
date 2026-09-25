@@ -211,7 +211,7 @@ DbSetCapture captureDbSet(const fs::path &stickRoot, const std::string &relative
                               &readLimitForTesting)
 {
     DbSetCapture capture;
-    const fs::path mainDb = stickRoot / pathFromUtf8(relativeMainDb);
+    const fs::path mainDb = stickRoot / seabass::pathFromUtf8(relativeMainDb);
     // Members are the main file plus a suffix, so their archive names are
     // the main file's name plus the same suffix -- no path arithmetic.
     auto relativeNameOf = [&](const fs::path &member) {
