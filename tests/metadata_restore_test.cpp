@@ -413,7 +413,21 @@ int main()
         assert(restoreSourceKey(proposals[0]) != restoreSourceKey(proposals[1])
                && "two sticks sharing a label are two sticks");
         assert(restoreSourceKey(proposals[3]) == "label:RV2" && "the label stands in when no id was recorded");
-        assert(restoreSourceKey(proposals[4]).empty());
+        // A row the store knows neither the id nor the label of is still a
+        // stick of its own in the picker, and its key is not the empty
+        // one, which means "every stick": picking it used to select
+        // everything while the picker said "A stick with no name".
+        assert(!restoreSourceKey(proposals[4]).empty() && "empty is the key of every stick");
+        assert(restoreSourceKey(proposals[4]) != restoreSourceKey(proposals[3]));
+        {
+            const MetadataRestoreScope unnamed{restoreSourceKey(proposals[4]), {}};
+            int inUnnamed = 0;
+            for (const auto &proposal : proposals) {
+                inUnnamed += proposalInRestoreScope(proposal, unnamed) ? 1 : 0;
+            }
+            assert(inUnnamed == 1 && "the unidentified stick's scope is E alone, not every stick");
+            assert(proposalInRestoreScope(proposals[4], unnamed));
+        }
         const MetadataRestoreScope first{restoreSourceKey(proposals[0]), {}};
         int inFirst = 0;
         for (const auto &proposal : proposals) {
@@ -426,6 +440,7 @@ int main()
         assert(sources.size() == 4);
         // Sorted by label, then key: "" first, the two NO NAMEs by id, RV2.
         assert(sources[0].label.empty() && sources[0].proposalCount == 1);
+        assert(sources[0].key == restoreSourceKey(proposals[4]) && !sources[0].key.empty());
         assert(sources[1].label == "NO NAME" && sources[1].key == "id:uuid-1" && sources[1].proposalCount == 2);
         assert(sources[2].label == "NO NAME" && sources[2].key == "id:uuid-2" && sources[2].proposalCount == 1);
         assert(sources[3].label == "RV2" && sources[3].proposalCount == 1);

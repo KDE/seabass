@@ -101,7 +101,8 @@ std::string restoreSourceKey(const MetadataRestoreProposal &proposal)
     if (!proposal.storedFrom.empty()) {
         return "label:" + proposal.storedFrom;
     }
-    return {};
+    // Not empty: that is MetadataRestoreScope's "every stick".
+    return "unknown";
 }
 
 std::vector<std::string> restorePlaylistsOf(const MetadataRestoreProposal &proposal)

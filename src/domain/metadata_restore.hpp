@@ -105,8 +105,12 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
 
 // A stick the backup came from, as the picker keys it: the library id
 // the store recorded, or the label when it recorded none. Prefixed so a
-// label can never collide with an id. Empty only when the store knows
-// neither, which a row stored by any current Seabass never is.
+// label can never collide with an id. Never empty, because an empty
+// key is MetadataRestoreScope's "every stick": a row the store knows
+// neither for is keyed "unknown", which no "id:" or "label:" key can
+// spell, and is a stick of its own in the picker. Keyed empty, picking
+// it selected every stick, and the picker showed it while every stick
+// was in scope.
 std::string restoreSourceKey(const MetadataRestoreProposal &proposal);
 
 // Every playlist a proposal is in: the backup's record of it and the

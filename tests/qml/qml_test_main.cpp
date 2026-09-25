@@ -626,7 +626,13 @@ public:
         }
     }
 
-    Q_INVOKABLE bool fill(QObject *controller)
+    Q_INVOKABLE bool fill(QObject *controller) { return fillWith(controller, false); }
+
+    // fill(), plus a sixth proposal from a stick the store recorded
+    // neither an id nor a label for.
+    Q_INVOKABLE bool fillWithAnUnnamedStick(QObject *controller) { return fillWith(controller, true); }
+
+    bool fillWith(QObject *controller, bool unnamedStick)
     {
         auto *restore = qobject_cast<seabass::gui::MetadataRestoreController *>(controller);
         if (restore == nullptr) {
@@ -680,8 +686,12 @@ public:
                                              hot(4, 192, "#39d353")}));
         result.proposals.push_back(proposal("Sisters", "Recondite", 402, "uuid-rv2", "RV2", {"Closing"},
                                             {hot(1, 12, "#e03c3c")}));
-        result.stickTrackCount = 5;
-        result.storedTrackCount = 5;
+        if (unnamedStick) {
+            result.proposals.push_back(proposal("Nameless", "Nobody", 300, "", "", {"Warm Up"},
+                                                {hot(1, 10, "#e03c3c")}));
+        }
+        result.stickTrackCount = static_cast<int>(result.proposals.size());
+        result.storedTrackCount = static_cast<int>(result.proposals.size());
         restore->applyScanResult(std::move(result));
         return true;
     }

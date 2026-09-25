@@ -167,6 +167,35 @@ TestCase {
         compare(list.count, 5, "and every stick again");
     }
 
+    // A stick the store knows neither the id nor the label of is a stick
+    // of its own: it has an entry, and picking it narrows to its tracks.
+    // Its key used to be the empty one, which is "every stick", so the
+    // picker showed "A stick with no name" while everything was in scope,
+    // and picking it selected everything.
+    function test_aStickWithNoNameIsNotEveryStick() {
+        const page = make();
+        tryVerify(() => !page.controller.busy, 5000);
+        verify(metadataRestoreFixture.fillWithAnUnnamedStick(page.controller));
+        waitForRendering(page);
+        const list = findChild(page, "proposalList");
+        const picker = findChild(page, "sourcePicker");
+        compare(list.count, 6);
+        compare(picker.currentIndex, 0, "the page opens on every stick");
+        compare(picker.displayText, "Every stick in the backup", "and says so");
+
+        const unnamed = pickerIndex(page.sourceModel, "A stick with no name");
+        verify(unnamed > 0, "the unidentified stick has an entry of its own");
+        verify(page.sourceModel[unnamed].key.length > 0, "whose key is not every stick's");
+        picker.activated(unnamed);
+        compare(list.count, 1, "picking it narrows to its one track");
+        compare(page.controller.scopedProposalCount, 1);
+        compare(picker.currentIndex, unnamed, "and the picker shows it");
+
+        picker.activated(0);
+        compare(list.count, 6, "and every stick again");
+        compare(picker.currentIndex, 0);
+    }
+
     function test_thePlaylistPickerNarrowsTheRestoreToOnePlaylist() {
         const page = makeFilled();
         const list = findChild(page, "proposalList");
