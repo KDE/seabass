@@ -64,7 +64,13 @@ public:
     // read: between two sticks the watcher is idle for a moment, and a
     // page waiting on the advice (BackupsHubPage's scanning overlay) must
     // not see that moment as "done".
-    bool busy() const { return m_watcher.isRunning() || !m_queue.empty(); }
+    //
+    // m_running, not m_watcher.isRunning(): the latter reads the worker's
+    // live state, which goes false the moment the pass returns, before its
+    // result is handled. A stick that is not there is assessed in well
+    // under a millisecond, so busyChanged could announce a pass that was
+    // already "not running".
+    bool busy() const { return !m_running.isEmpty() || !m_queue.empty(); }
     QStringList pending() const;
 
     // Queues a fact-gathering pass for this stick; the result lands in
@@ -117,7 +123,7 @@ private:
     QMap<QString, StickFacts> m_facts;  // by mountPoint, once gathered
     std::vector<application::StickBackupDescription> m_backups;  // as of the last gathering pass
     std::vector<Request> m_queue;
-    QString m_running;  // the mount point the watcher is reading, empty when idle
+    QString m_running;  // the mount point being read: set before setFuture(), cleared once onFinished() has handled the result
     QFutureWatcher<std::shared_ptr<Result>> m_watcher;
 };
 

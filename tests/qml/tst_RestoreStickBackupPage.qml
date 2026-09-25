@@ -244,6 +244,23 @@ TestCase {
         compare(label.text.indexOf("No backups found"), 0, label.text);
     }
 
+    // Listing until the result has been handled, not until the worker
+    // returns. A missing folder lists in well under a millisecond; the UI
+    // thread is held here without turning the event loop, as a busy frame
+    // holds it, so the worker is certainly done before its result is
+    // taken. "Not listing" in that window lifted the overlay, and offered
+    // "no backups", over a list that had not been read yet.
+    function test_listingLastsUntilItsResultLands() {
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        controller.defaultBackupDirectory = "/nonexistent/seabass-restore-test";
+        const until = Date.now() + 200;
+        while (Date.now() < until) {
+            // Hold the UI thread; the worker finishes meanwhile.
+        }
+        verify(controller.listingBackups, "still listing: the result has not been handled yet");
+        tryVerify(function() { return !controller.listingBackups; }, 10000, "and done once it has");
+    }
+
     // Leaving the page while its backup folder is still being listed
     // destroys the controller mid-listing. That must not hold the window
     // until the listing is done (it did: the destructor waited for it, 0.5

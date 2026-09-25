@@ -69,7 +69,11 @@ public:
     QString defaultBackupDirectory() const { return m_defaultBackupDirectory; }
     void setDefaultBackupDirectory(const QString &directory);
     QVariantList knownBackups() const { return m_knownBackups; }
-    bool listingBackups() const { return m_listWatcher.isRunning(); }
+    // From refreshKnownBackups() until the result is handled, not while
+    // the worker runs: an empty or missing folder lists before the start
+    // is even announced, and isRunning() then said "not listing" over a
+    // list that had not been replaced yet.
+    bool listingBackups() const { return m_listing; }
     QVariantMap archiveInfo() const { return m_archiveInfo; }
     QVariantMap preview() const { return m_preview; }
     bool busy() const { return m_restoring || m_analyzing || m_mounting; }
@@ -194,6 +198,7 @@ private:
     QFutureWatcher<std::shared_ptr<AnalyzeResult>> m_analyzeWatcher;
     QFutureWatcher<std::shared_ptr<RestoreResult>> m_restoreWatcher;
     QFutureWatcher<QVariantList> m_listWatcher;
+    bool m_listing = false;
     QFutureWatcher<std::shared_ptr<MountResult>> m_mountWatcher;
 };
 
