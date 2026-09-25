@@ -209,6 +209,9 @@ void MetadataRestoreController::applyScanResult(MetadataRestoreTaskResult result
     }
     // A scan that found something supersedes one that failed before it.
     setErrorMessage({});
+    // Once, over the whole set: which stick an unstamped row belongs to
+    // depends on every other row carrying its label.
+    domain::resolveRestoreSources(result.proposals);
     m_model.setProposals(std::move(result.proposals));
     m_stickTrackCount = result.stickTrackCount;
     m_storedTrackCount = result.storedTrackCount;
@@ -246,6 +249,7 @@ void MetadataRestoreController::refreshScope()
         entry[QStringLiteral("key")] = QString::fromStdString(source.key);
         entry[QStringLiteral("label")] = QString::fromStdString(source.label);
         entry[QStringLiteral("count")] = source.proposalCount;
+        entry[QStringLiteral("idNotRecorded")] = source.idNotRecorded;
         m_sourceSticks << entry;
     }
 

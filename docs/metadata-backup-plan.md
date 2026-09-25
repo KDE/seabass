@@ -239,7 +239,13 @@ They narrow **the restore**, not only the list:
 - The stick picker keys on the stick the store last saw each track on,
   by its library id (`MetadataStore::stickSourcesByTrackId()`), falling
   back to the label for a row that recorded none. Two sticks called NO
-  NAME are two entries.
+  NAME are two entries. The store records the id only since it learned
+  to, so one stick's older rows may carry just its label: those join the
+  stick recorded with an id under that label when there is exactly one
+  (`resolveRestoreSources()`), so the stick is one entry and picking it
+  restores all of it. When several recorded sticks share the label there
+  is no telling which the unstamped rows came from; they stay an entry of
+  their own and the picker says the stick was not recorded.
 - A track is in a playlist when the backup recorded it there **or** the
   stick in front of you lists it there (`restorePlaylistsOf()`): a
   rebuilt stick may have lost its playlists along with its cues, and a
@@ -257,7 +263,7 @@ They narrow **the restore**, not only the list:
 
 All of "in scope" is decided by `domain::proposalInRestoreScope()`, so the
 list, the counts and the staging cannot disagree about it
-(`tests/metadata_restore_test.cpp` cases 15 and 16,
+(`tests/metadata_restore_test.cpp` cases 15 to 17,
 `tests/metadata_restore_proposal_model_test.cpp` case 5).
 
 ## Waveforms on the rows

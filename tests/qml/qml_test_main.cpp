@@ -786,7 +786,12 @@ public:
     // cues left alone.
     Q_INVOKABLE bool fillWithConflictsLeftAlone(QObject *controller) { return fillWith(controller, false, true); }
 
-    bool fillWith(QObject *controller, bool unnamedStick, bool conflictsLeftAlone)
+    // fill(), plus two rows from backups taken before the store recorded
+    // a stick's id: one labelled RV2, which only one recorded stick is
+    // called, and one labelled NO NAME, which two are.
+    Q_INVOKABLE bool fillWithUnstampedRows(QObject *controller) { return fillWith(controller, false, false, true); }
+
+    bool fillWith(QObject *controller, bool unnamedStick, bool conflictsLeftAlone, bool unstampedRows = false)
     {
         auto *restore = qobject_cast<seabass::gui::MetadataRestoreController *>(controller);
         if (restore == nullptr) {
@@ -852,6 +857,12 @@ public:
         }
         if (unnamedStick) {
             result.proposals.push_back(proposal("Nameless", "Nobody", 300, "", "", {"Warm Up"},
+                                                {hot(1, 10, "#e03c3c")}));
+        }
+        if (unstampedRows) {
+            result.proposals.push_back(proposal("Older RV2 Row", "Somebody", 300, "", "RV2", {"Closing"},
+                                                {hot(1, 10, "#e03c3c")}));
+            result.proposals.push_back(proposal("Older NO NAME Row", "Somebody", 300, "", "NO NAME", {"Closing"},
                                                 {hot(1, 10, "#e03c3c")}));
         }
         result.stickTrackCount = static_cast<int>(result.proposals.size());

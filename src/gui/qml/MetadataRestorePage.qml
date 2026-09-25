@@ -59,7 +59,10 @@ Page {
     //
     // Index 0 is every stick, and each stick the proposals were backed up
     // from follows. A label two sticks share says how many tracks each
-    // offers, which is the difference a person can actually see.
+    // offers, which is the difference a person can actually see. Rows the
+    // backup could not tie to one of several sticks of that name (backed
+    // up before it recorded which stick) say that instead of passing for
+    // one more stick.
     readonly property var sourceModel: {
         const list = [{ name: "Every stick in the backup", key: "" }];
         const sticks = controller.sourceSticks;
@@ -70,8 +73,11 @@ Page {
         for (let i = 0; i < sticks.length; i++) {
             const stick = sticks[i];
             let name = stick.label.length > 0 ? "USB Stick " + stick.label : "A stick with no name";
-            if (seen[stick.label] > 1) {
-                name += " (" + stick.count + (stick.count === 1 ? " track)" : " tracks)");
+            const tracks = stick.count + (stick.count === 1 ? " track" : " tracks");
+            if (stick.idNotRecorded) {
+                name += " (which stick not recorded, " + tracks + ")";
+            } else if (seen[stick.label] > 1) {
+                name += " (" + tracks + ")";
             }
             list.push({ name: name, key: stick.key });
         }

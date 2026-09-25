@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -14,6 +15,7 @@ using seabass::domain::MetadataRestoreProposal;
 using seabass::domain::MetadataRestoreScope;
 using seabass::domain::PlaylistMembership;
 using seabass::domain::proposalInRestoreScope;
+using seabass::domain::resolveRestoreSources;
 using seabass::domain::restorePlaylistCounts;
 using seabass::domain::restoreSourceKey;
 using seabass::domain::restoreSources;
@@ -488,6 +490,81 @@ int main()
         const auto second = restorePlaylistCounts(proposals, "id:uuid-2");
         assert(second.at("Warm Up") == 1 && second.at("Closing") == 2 && "counted within the picked stick");
         std::cout << "case 16 (a restore scoped to one playlist, as the backup or the stick lists it) OK\n";
+    }
+
+    // ---- case 17: one stick whose rows are only partly stamped ----------
+    //
+    // The store recorded a stick's library id only from some point on, so
+    // one stick's older rows carry just its label. They are the same
+    // stick: one picker entry, and picking it restores all of them. Only
+    // when two recorded sticks share the label is there no telling which
+    // an unstamped row belongs to, and then those rows stay apart, marked
+    // so the page can say so.
+    {
+        const auto from = [](const std::string &title, const std::string &libraryId, const std::string &label) {
+            MetadataRestoreProposal proposal;
+            proposal.stickTrack = stickTrack(title);
+            proposal.storedFrom = label;
+            proposal.storedFromLibraryId = libraryId;
+            proposal.cuesOffered = true;
+            return proposal;
+        };
+        const auto inScopeOf = [](const std::vector<MetadataRestoreProposal> &proposals, const std::string &key) {
+            int n = 0;
+            for (const auto &proposal : proposals) {
+                n += proposalInRestoreScope(proposal, MetadataRestoreScope{key, {}}) ? 1 : 0;
+            }
+            return n;
+        };
+
+        // Partial stamping: RV2's three rows, one of them from before ids.
+        {
+            std::vector<MetadataRestoreProposal> proposals = {
+                from("A", "uuid-rv2", "RV2"), from("B", "", "RV2"), from("C", "uuid-rv2", "RV2"),
+                from("D", "", "LONELY"), from("E", "", ""),
+            };
+            resolveRestoreSources(proposals);
+            assert(restoreSourceKey(proposals[1]) == restoreSourceKey(proposals[0])
+                   && "an unstamped row joins the one stick recorded under its label");
+            const auto sources = restoreSources(proposals);
+            assert(sources.size() == 3 && "RV2 is one entry, LONELY one, the unknown stick one");
+            const auto rv2 = std::find_if(sources.begin(), sources.end(),
+                                          [](const auto &source) { return source.label == "RV2"; });
+            assert(rv2 != sources.end() && rv2->key == "id:uuid-rv2" && rv2->proposalCount == 3);
+            assert(!rv2->idNotRecorded);
+            assert(inScopeOf(proposals, rv2->key) == 3 && "picking RV2 restores the whole stick");
+            assert(restoreSourceKey(proposals[3]) == "label:LONELY" && "a label no id was recorded for stays a label");
+            assert(restoreSourceKey(proposals[4]) == "unknown");
+            for (const auto &source : sources) {
+                assert(!source.idNotRecorded && "nothing here is ambiguous");
+            }
+        }
+
+        // Two recorded sticks share the label: an unstamped row cannot be
+        // put under either, and says so.
+        {
+            std::vector<MetadataRestoreProposal> proposals = {
+                from("A", "uuid-1", "NO NAME"), from("B", "uuid-2", "NO NAME"), from("C", "", "NO NAME"),
+                from("D", "", "NO NAME"),
+            };
+            resolveRestoreSources(proposals);
+            assert(restoreSourceKey(proposals[0]) != restoreSourceKey(proposals[1]) && "two sticks stay two");
+            assert(restoreSourceKey(proposals[2]) == "label:NO NAME" && "not guessed onto either stick");
+            const auto sources = restoreSources(proposals);
+            assert(sources.size() == 3);
+            int unrecorded = 0;
+            for (const auto &source : sources) {
+                assert(source.label == "NO NAME");
+                if (source.idNotRecorded) {
+                    unrecorded++;
+                    assert(source.key == "label:NO NAME" && source.proposalCount == 2);
+                }
+            }
+            assert(unrecorded == 1 && "the unstamped rows are marked as such");
+            assert(inScopeOf(proposals, "id:uuid-1") == 1 && inScopeOf(proposals, "id:uuid-2") == 1);
+            assert(inScopeOf(proposals, "label:NO NAME") == 2);
+        }
+        std::cout << "case 17 (a stick whose rows are only partly stamped with its id is one stick) OK\n";
     }
 
     std::cout << "all metadata_restore_test cases passed\n";

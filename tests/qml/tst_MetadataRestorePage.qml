@@ -172,6 +172,29 @@ TestCase {
     // Its key used to be the empty one, which is "every stick", so the
     // picker showed "A stick with no name" while everything was in scope,
     // and picking it selected everything.
+    // Rows backed up before the store recorded a stick's id carry only its
+    // label. Under a label one recorded stick has, they are that stick:
+    // one entry, and picking it restores all of it. Under a label two
+    // recorded sticks share there is no telling which, and the entry says
+    // so rather than passing for a third stick of that name.
+    function test_rowsWithoutARecordedStickJoinTheirStick() {
+        const page = make();
+        tryVerify(() => !page.controller.busy, 5000);
+        verify(metadataRestoreFixture.fillWithUnstampedRows(page.controller));
+        waitForRendering(page);
+        const model = page.sourceModel;
+        compare(model.length, 5, "every stick, the two NO NAMEs, RV2, and the unrecorded NO NAME rows");
+        const rv2 = pickerIndex(model, "USB Stick RV2");
+        verify(rv2 > 0, "RV2 is still one entry: " + JSON.stringify(model));
+        const unrecorded = pickerIndex(model, "USB Stick NO NAME (which stick not recorded, 1 track)");
+        verify(unrecorded > 0, "the rows no stick can be told for say so: " + JSON.stringify(model));
+
+        page.controller.setSourceStick(model[rv2].key);
+        compare(page.controller.scopedProposalCount, 3, "Bloom, Sisters and the older RV2 row");
+        page.controller.setSourceStick(model[unrecorded].key);
+        compare(page.controller.scopedProposalCount, 1);
+    }
+
     function test_aStickWithNoNameIsNotEveryStick() {
         const page = make();
         tryVerify(() => !page.controller.busy, 5000);
