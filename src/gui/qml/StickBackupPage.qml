@@ -633,10 +633,10 @@ Page {
                                     // holding the stick's name, and this
                                     // style floats a placeholder above a
                                     // filled field as if it were its title
-                                    // -- "Optional, e.g. before the Berlin
-                                    // gig" sat over "SANDISK_1" and read
-                                    // like the label of the box. The hint
-                                    // it used to give is beside it.
+                                    // -- an "Optional, e.g. ..." hint sat
+                                    // over "SANDISK_1" and read like the
+                                    // label of the box. The hint it used
+                                    // to give is beside it.
                                     text: root.controller.backupName
                                     onEditingFinished: root.controller.backupName = text
                                 }
@@ -648,7 +648,10 @@ Page {
                                     // by a width of its own: a literal wide
                                     // enough here elides the hint on the
                                     // next font or screen.
-                                    text: "Optional, e.g. before the Berlin gig"
+                                    // The example is a name in the shape
+                                    // stick labels have, not a sentence.
+                                    objectName: "backupNameHint"
+                                    text: "Optional, e.g. MYLIBRARY"
                                     color: Theme.textMuted
                                     font.pointSize: Theme.fontSmall
                                 }

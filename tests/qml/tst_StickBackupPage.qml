@@ -109,6 +109,13 @@ TestCase {
         compare(findChild(page, "experimentalBadge"), null);
     }
 
+    // The hint beside the name field, word for word: an example in the
+    // shape of a stick label, not a sentence.
+    function test_backupNameHintNamesAnExampleLabel() {
+        const page = makePage({});
+        compare(findChild(page, "backupNameHint").text, "Optional, e.g. MYLIBRARY");
+    }
+
     function calls(page) {
         return page.controller.calls.join(",");
     }
