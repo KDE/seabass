@@ -151,86 +151,145 @@ Page {
                 }
             }
 
+            // The summary on the left, the page's two buttons on the right.
+            // This was one RowLayout of labels at their natural width
+            // beside the buttons, and a RowLayout does not wrap: once the
+            // group count, what could be freed, the audio note and the
+            // staged count added up to more than the window, the row ran
+            // off the right edge and took "Stage All Fixable", the button
+            // the page is for, with it. The labels are a Flow now, which
+            // wraps, and the buttons keep their natural width beside it.
+            // tst_DuplicatesPage measures it at 960, 700, 520 and 380.
             RowLayout {
+                id: summaryRow
+                objectName: "summaryRow"
                 Layout.fillWidth: true
-                spacing: 12
-                Label {
-                    text: plansListView.count + " duplicate group(s) need attention"
-                    color: Theme.textMuted
-                }
-                // What "duplicate" means here, which is the same thing
-                // it means on Clean Up Duplicates: one rule, one
-                // explanation, and both pages ask Preferences for the
-                // numbers rather than printing their own.
-                InfoButton {
-                    readonly property int exactWindow: root.appSettingsController.exactMatchSeconds
-                    readonly property int audioWindow: root.appSettingsController.compareAudioSeconds
-                    readonly property bool audioCompared:
-                        audioWindow > exactWindow && root.appSettingsController.audioComparisonSupported
+                spacing: Theme.rowSpacing
+                // What the labels can have before they would reach the
+                // buttons. From the page and the buttons, never from the
+                // Flow: a Flow child sized off the Flow is a binding loop
+                // (see CleanupPage's filterRow), which Qt settles with a
+                // stale number.
+                readonly property real textRoom: Math.max(0, root.width - 2 * Theme.pageMargin
+                    - summaryButtons.implicitWidth - summaryRow.spacing)
 
-                    explanationTitle: "What counts as a duplicate?"
-                    summaryText: "Same artist, same title, same length (within " + exactWindow
-                        + (exactWindow === 1 ? " second" : " seconds") + "). "
-                        + "Filenames are ignored, because a re-export renames the same recording."
-                    explanationText:
-                          "## Why length matters\n"
-                        + "It is what tells a radio edit from an extended mix filed under the same "
-                        + "artist and title. Without a length on both sides, nothing is grouped: "
-                        + "giving one of those two the other's cues would be worse than leaving both "
-                        + "alone.\n\n"
-                        + (audioCompared
-                            ? "## When the lengths nearly agree\n"
-                              + "Two copies of one recording often differ by a few seconds that are "
-                              + "silence: encoder padding, a run out kept by a rip, a trimmed "
-                              + "re-export. Where the gap is more than " + exactWindow + " but no more "
-                              + "than " + audioWindow + " seconds, both files are decoded, the silence "
-                              + "at each end is measured, and the length of the music between them is "
-                              + "compared instead of the stored numbers. Both windows are yours to "
-                              + "set, under Preferences, Music.\n\n"
-                            : "## When the lengths nearly agree\n"
-                              + "Seabass can decode two files whose lengths are close but not close "
-                              + "enough, measure the silence at each end, and compare the length of "
-                              + "the music itself. That is off right now. Turn it on under "
-                              + "Preferences, Music.\n\n")
-                        + "## Nothing here is the only way\n"
-                        + "Whatever this page finds or misses, two tracks can always be merged by "
-                        + "hand: open Browse Library, use the **Merge** button on a track, and pick "
-                        + "the other one. That path takes no notice of lengths at all, so it is the "
-                        + "answer for a pair Seabass will not group on its own.\n"
+                // Layout.minimumWidth: 0, or the ColumnLayout hands the
+                // Flow its unwrapped width and it never wraps at all; see
+                // CleanupPage's filterRow, which found this first.
+                Flow {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: Theme.rowSpacing
+
+                    // Each label is at least as tall as the (i), and
+                    // centred in that height, so a line of them reads as
+                    // one line with it rather than hanging off its top.
+                    //
+                    // The count and its (i) wrap as one: the (i) explains
+                    // the count, and alone on a line of its own it
+                    // explains nothing.
+                    Row {
+                        spacing: Theme.tightSpacing
+                        Label {
+                            width: Math.min(implicitWidth, Math.max(0, summaryRow.textRoom
+                                - duplicateInfo.width - parent.spacing))
+                            height: Math.max(implicitHeight, duplicateInfo.height)
+                            verticalAlignment: Text.AlignVCenter
+                            text: plansListView.count + " duplicate group(s) need attention"
+                            color: Theme.textMuted
+                            wrapMode: Text.WordWrap
+                        }
+                        // What "duplicate" means here, which is the same thing
+                        // it means on Clean Up Duplicates: one rule, one
+                        // explanation, and both pages ask Preferences for the
+                        // numbers rather than printing their own.
+                        InfoButton {
+                            id: duplicateInfo
+                            readonly property int exactWindow: root.appSettingsController.exactMatchSeconds
+                            readonly property int audioWindow: root.appSettingsController.compareAudioSeconds
+                            readonly property bool audioCompared:
+                                audioWindow > exactWindow && root.appSettingsController.audioComparisonSupported
+
+                            explanationTitle: "What counts as a duplicate?"
+                            summaryText: "Same artist, same title, same length (within " + exactWindow
+                                + (exactWindow === 1 ? " second" : " seconds") + "). "
+                                + "Filenames are ignored, because a re-export renames the same recording."
+                            explanationText:
+                                  "## Why length matters\n"
+                                + "It is what tells a radio edit from an extended mix filed under the same "
+                                + "artist and title. Without a length on both sides, nothing is grouped: "
+                                + "giving one of those two the other's cues would be worse than leaving both "
+                                + "alone.\n\n"
+                                + (audioCompared
+                                    ? "## When the lengths nearly agree\n"
+                                      + "Two copies of one recording often differ by a few seconds that are "
+                                      + "silence: encoder padding, a run out kept by a rip, a trimmed "
+                                      + "re-export. Where the gap is more than " + exactWindow + " but no more "
+                                      + "than " + audioWindow + " seconds, both files are decoded, the silence "
+                                      + "at each end is measured, and the length of the music between them is "
+                                      + "compared instead of the stored numbers. Both windows are yours to "
+                                      + "set, under Preferences, Music.\n\n"
+                                    : "## When the lengths nearly agree\n"
+                                      + "Seabass can decode two files whose lengths are close but not close "
+                                      + "enough, measure the silence at each end, and compare the length of "
+                                      + "the music itself. That is off right now. Turn it on under "
+                                      + "Preferences, Music.\n\n")
+                                + "## Nothing here is the only way\n"
+                                + "Whatever this page finds or misses, two tracks can always be merged by "
+                                + "hand: open Browse Library, use the **Merge** button on a track, and pick "
+                                + "the other one. That path takes no notice of lengths at all, so it is the "
+                                + "answer for a pair Seabass will not group on its own.\n"
+                        }
+                    }
+                    Label {
+                        visible: plansListView.count > 0
+                        width: Math.min(implicitWidth, summaryRow.textRoom)
+                        height: Math.max(implicitHeight, duplicateInfo.height)
+                        verticalAlignment: Text.AlignVCenter
+                        text: "(" + duplicatesController.totalWastedBytesHuman + " could be freed if each were on the stick once)"
+                        color: Theme.textMuted
+                        wrapMode: Text.WordWrap
+                    }
+                    Label {
+                        objectName: "audioComparisonNote"
+                        visible: duplicatesController.audioComparisonNote.length > 0
+                        width: Math.min(implicitWidth, Theme.scaled(420), summaryRow.textRoom)
+                        height: Math.max(implicitHeight, duplicateInfo.height)
+                        verticalAlignment: Text.AlignVCenter
+                        text: duplicatesController.audioComparisonNote
+                        color: Theme.textMuted
+                        wrapMode: Text.WordWrap
+                    }
+                    Label {
+                        visible: duplicatesController.stagedCount > 0
+                        width: Math.min(implicitWidth, summaryRow.textRoom)
+                        height: Math.max(implicitHeight, duplicateInfo.height)
+                        verticalAlignment: Text.AlignVCenter
+                        text: duplicatesController.stagedCount + " staged, not saved yet"
+                        color: Theme.warnText
+                        wrapMode: Text.WordWrap
+                    }
                 }
-                Label {
-                    visible: plansListView.count > 0
-                    text: "(" + duplicatesController.totalWastedBytesHuman + " could be freed if each were on the stick once)"
-                    color: Theme.textMuted
-                }
-                Label {
-                    objectName: "audioComparisonNote"
-                    visible: duplicatesController.audioComparisonNote.length > 0
-                    text: duplicatesController.audioComparisonNote
-                    color: Theme.textMuted
-                    wrapMode: Text.WordWrap
-                    Layout.maximumWidth: 420
-                }
-                Label {
-                    visible: duplicatesController.stagedCount > 0
-                    text: duplicatesController.stagedCount + " staged, not saved yet"
-                    color: Theme.warnText
-                }
-                Item { Layout.fillWidth: true }
-                Button {
-                    text: "Stage All Fixable"
-                    enabled: !duplicatesController.busy && !duplicatesController.writing
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Stage copying cues onto every clear duplicate. Conflicts are left for you."
-                    onClicked: duplicatesController.applyAllUnambiguous()
-                }
-                Button {
-                    text: "Undo Last Save"
-                    visible: duplicatesController.canUndo
-                    enabled: !duplicatesController.busy && !duplicatesController.writing
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Revert the last save: restores every file it touched to what it was before"
-                    onClicked: duplicatesController.undoLastOperation()
+                RowLayout {
+                    id: summaryButtons
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                    spacing: Theme.rowSpacing
+                    Button {
+                        text: "Stage All Fixable"
+                        enabled: !duplicatesController.busy && !duplicatesController.writing
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Stage copying cues onto every clear duplicate. Conflicts are left for you."
+                        onClicked: duplicatesController.applyAllUnambiguous()
+                    }
+                    Button {
+                        text: "Undo Last Save"
+                        visible: duplicatesController.canUndo
+                        enabled: !duplicatesController.busy && !duplicatesController.writing
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Revert the last save: restores every file it touched to what it was before"
+                        onClicked: duplicatesController.undoLastOperation()
+                    }
                 }
             }
         }
