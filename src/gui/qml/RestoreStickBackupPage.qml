@@ -56,6 +56,17 @@ Page {
     readonly property string chosenFileName: String(controller.archivePath || "").split(/[\\/]/).pop()
     readonly property string chosenTitle: Theme.backupTitle(root.chosenFileName)
     property int selectedIndex: -1
+    // The drive chosen, by what it is (mount point and device) plus how
+    // the list described it then, or null. selectedIndex is only where it
+    // sits in the list right now: every refresh finds it again by this,
+    // and a refresh can list the same drives in another order.
+    property var chosenDrive: null
+    // The chosen drive left the list. Nothing is selected in its place,
+    // and the form says so until the user picks a drive.
+    property bool chosenDriveGone: false
+    // Close asks for a fresh preview of the kept drive even if the
+    // refresh finds it unchanged: a restore has just written to it.
+    property bool freshPreviewWanted: false
     readonly property var selectedDisk: (root.selectedIndex >= 0 && root.selectedIndex < root.disks.length)
         ? root.disks[root.selectedIndex] : null
     property bool exact: false
@@ -88,8 +99,21 @@ Page {
         return -1;
     }
 
+    // How the list describes a drive, comparable across refreshes: keys
+    // sorted, because a map that went through C++ comes back in another
+    // key order than the one it went in with.
+    function driveSnapshot(disk) {
+        return Object.keys(disk).sort().map(function(key) {
+            return key + "=" + JSON.stringify(disk[key]);
+        }).join("\n");
+    }
+
     function applySelection(index) {
         root.selectedIndex = index;
+        root.chosenDrive = root.selectedDisk === null ? null
+            : {mountPoint: root.selectedDisk.mountPoint, devicePath: root.selectedDisk.devicePath,
+               snapshot: root.driveSnapshot(root.selectedDisk)};
+        root.chosenDriveGone = false;
         if (root.selectedDisk !== null && root.selectedDisk.usable === true && root.controller.analyze) {
             root.controller.analyze(root.selectedDisk.mountPoint);
         } else if (root.controller.analyze) {
@@ -181,7 +205,37 @@ Page {
             return;
         }
     }
-    onDisksChanged: if (root.selectedIndex < 0) root.applySelection(root.pickDefaultDrive())
+    // After every refresh of the drive list. The chosen drive is kept
+    // wherever it is now, and analysed again only when the list describes
+    // it differently (or Close asked); gone, nothing is selected, never
+    // another drive, which a blank one would take without a typed
+    // confirmation. With nothing chosen yet, the default is picked as
+    // when the page opened, but not after the chosen drive went: then
+    // only the user picks.
+    function reconcileDriveChoice(forceAnalysis) {
+        if (root.chosenDrive === null) {
+            if (!root.chosenDriveGone) {
+                root.applySelection(root.pickDefaultDrive());
+            } else if (forceAnalysis && root.controller.analyze) {
+                root.controller.analyze("");
+            }
+            return;
+        }
+        const index = root.indexOfDrive(root.chosenDrive);
+        if (index < 0) {
+            root.applySelection(-1);
+            root.chosenDriveGone = true;
+        } else if (forceAnalysis || root.driveSnapshot(root.disks[index]) !== root.chosenDrive.snapshot) {
+            root.applySelection(index);
+        } else {
+            root.selectedIndex = index;
+        }
+    }
+    onDisksChanged: {
+        const force = root.freshPreviewWanted;
+        root.freshPreviewWanted = false;
+        root.reconcileDriveChoice(force);
+    }
 
     MessagePopup { id: messagePopup }
     // Another instance is editing one of the libraries this operation
@@ -315,9 +369,17 @@ Page {
             // flag: a restore refused before it starts (the write hold,
             // a lock) never sets that flag, and its reason belongs on the
             // overlay too -- the form's own error line is out of view.
+            // The target is looked up now, by the chosen drive's identity,
+            // not taken from a row that may have changed hands since the
+            // dialog opened.
+            const index = root.indexOfDrive(root.chosenDrive);
+            if (index < 0 || index !== root.selectedIndex) {
+                root.reconcileDriveChoice(false);
+                return;
+            }
             root.restoreStarted = true;
             root.reportDismissed = false;
-            root.controller.restore(root.selectedDisk.mountPoint, root.exact);
+            root.controller.restore(root.disks[index].mountPoint, root.exact);
         }
 
         GridLayout {
@@ -536,6 +598,14 @@ Page {
                         text: root.disks.length > 0
                             ? "Every removable drive Seabass can see. A drive must be formatted and mounted to receive a restore."
                             : "No removable drives found. Plug one in and it will appear here."
+                    }
+                    Label {
+                        objectName: "chosenDriveGoneLabel"
+                        Layout.fillWidth: true
+                        visible: root.chosenDriveGone
+                        wrapMode: Text.WordWrap
+                        color: Theme.danger
+                        text: "The drive you chose is no longer connected. Choose a drive."
                     }
                     ButtonGroup { id: driveGroup }
                     Repeater {
@@ -828,16 +898,19 @@ Page {
                 ToolTip.visible: hovered
                 ToolTip.text: "Clear this report and look for drives again. Files already restored are kept and skipped next time."
                 onClicked: {
-                    // The drive the user chose, held by what it is: the
-                    // refreshed list can have it on another row, or not
-                    // at all. Never another drive in its place: a blank
-                    // one asks for no typed confirmation, so the next
-                    // Restore would write onto a drive nobody picked.
-                    const chosen = root.selectedDisk;
+                    // The chosen drive is kept through the refresh (see
+                    // reconcileDriveChoice) and analysed again whatever
+                    // the list says, since the restore just wrote to it.
+                    // If the list did not change, disksChanged never
+                    // comes, so the preview is asked for here.
                     root.reportDismissed = true;
                     if (root.controller.clearResult) root.controller.clearResult();
+                    root.freshPreviewWanted = true;
                     if (root.controller.refresh) root.controller.refresh();
-                    root.applySelection(root.indexOfDrive(chosen));
+                    if (root.freshPreviewWanted) {
+                        root.freshPreviewWanted = false;
+                        root.reconcileDriveChoice(true);
+                    }
                 }
             }
         }
