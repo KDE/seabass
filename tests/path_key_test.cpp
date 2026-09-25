@@ -168,10 +168,11 @@ int main()
     assert(seabass::application::composedPathSpelling(invalid) == invalid);
     std::cout << "  (composed spellings compose, and nothing else changes)\n";
 
-    // samePath(): a path the app kept native meets the forward-slash one
-    // a page hands back. These are the Windows spellings, and they fold
-    // on every platform, so Linux tests them.
+    // samePath() and pathIsAtOrUnder(): a path the app kept native meets
+    // the forward-slash one a page hands back. These are the Windows
+    // spellings, and they fold on every platform, so Linux tests them.
     {
+        using seabass::application::pathIsAtOrUnder;
         using seabass::application::samePath;
         // A drive root as the Windows locator reports it, and as a page has it.
         assert(samePath("E:\\", "E:/"));
@@ -190,6 +191,18 @@ int main()
         assert(!samePath("", ""));
         assert(!samePath("", "/"));
 
+        assert(pathIsAtOrUnder("E:/PIONEER/rekordbox/export.pdb", "E:\\"));
+        assert(pathIsAtOrUnder("E:/PIONEER", "E:\\"));
+        assert(pathIsAtOrUnder("E:/", "E:\\"));
+        assert(pathIsAtOrUnder("E:\\PIONEER", "E:/"));
+        assert(pathIsAtOrUnder("C:/Music/Set/Engine Library", "C:\\Music\\Set"));
+        assert(pathIsAtOrUnder("/media/dj/RV2/PIONEER", "/media/dj/RV2/"));
+        assert(pathIsAtOrUnder("/media/dj/RV2/PIONEER", "/"));
+        assert(!pathIsAtOrUnder("F:/PIONEER", "E:\\"));
+        assert(!pathIsAtOrUnder("/media/dj/RV22/PIONEER", "/media/dj/RV2"));
+        assert(!pathIsAtOrUnder("C:/Music/Set2/PIONEER", "C:\\Music\\Set"));
+        assert(!pathIsAtOrUnder("", "E:\\"));
+        assert(!pathIsAtOrUnder("E:/PIONEER", ""));
         std::cout << "  (native and forward-slash spellings of one path agree)\n";
     }
 

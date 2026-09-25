@@ -6,7 +6,6 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 
 #include "application/path_key.hpp"
-#include "application/stick_path_match.hpp"
 
 #include <QCoreApplication>
 #include <QSettings>
@@ -639,9 +638,11 @@ bool MediaController::pathIsPresent(const QString &path) const
     if (path.isEmpty()) {
         return true;  // nothing referenced, so nothing missing
     }
+    // Paths, not strings: a page's path is forward-slash and a mount point
+    // is native, which on Windows are different strings for one drive.
     const std::string wanted = path.toStdString();
     for (const auto &stick : m_model.sticks()) {
-        if (application::pathIsUnder(wanted, stick.mountPoint)) {
+        if (application::pathIsAtOrUnder(wanted, stick.mountPoint)) {
             return true;
         }
     }
@@ -650,9 +651,9 @@ bool MediaController::pathIsPresent(const QString &path) const
 
 QString MediaController::stickLabelForPath(const QString &path) const
 {
-    const std::string wanted = path.toStdString();
+    const std::string wanted = path.toStdString();  // compared as in pathIsPresent()
     for (const auto &stick : m_model.sticks()) {
-        if (application::pathIsUnder(wanted, stick.mountPoint)) {
+        if (application::pathIsAtOrUnder(wanted, stick.mountPoint)) {
             return QString::fromStdString(stick.label);
         }
     }
@@ -682,14 +683,25 @@ std::optional<application::DetectedStick> MediaController::stickForLibraryId(con
 
 std::optional<application::StickIdentity> MediaController::lastKnownIdentity(const std::string &mountPoint) const
 {
-    for (const application::DetectedStick &stick : m_model.sticks()) {
-        if (stick.mounted && stick.mountPoint == mountPoint) {
-            return stick.identity;
+    // The mount point asked about is usually a page's forward-slash one
+    // and the list keeps the native spelling, so they are compared as
+    // paths. The exact spelling still wins first: samePath also folds
+    // case, and two sticks labelled "usb" and "USB" can both be mounted
+    // on Linux.
+    for (const bool exact : {true, false}) {
+        for (const application::DetectedStick &stick : m_model.sticks()) {
+            if (stick.mounted
+                && (exact ? stick.mountPoint == mountPoint : application::samePath(stick.mountPoint, mountPoint))) {
+                return stick.identity;
+            }
         }
     }
-    auto it = m_lastKnownByMountPoint.find(mountPoint);
-    if (it != m_lastKnownByMountPoint.end()) {
-        return it->second;
+    for (const bool exact : {true, false}) {
+        for (const auto &[known, identity] : m_lastKnownByMountPoint) {
+            if (exact ? known == mountPoint : application::samePath(known, mountPoint)) {
+                return identity;
+            }
+        }
     }
     return std::nullopt;
 }
