@@ -1648,7 +1648,7 @@ add_test(NAME camelot_key_test COMMAND camelot_key_test)
 # arithmetic by hand, and both readers against the committed fixture.
 add_executable(beat_grid_test tests/beat_grid_test.cpp)
 target_include_directories(beat_grid_test PRIVATE src)
-target_link_libraries(beat_grid_test PRIVATE seabass_core)
+target_link_libraries(beat_grid_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME beat_grid_test COMMAND beat_grid_test ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(beat_grid_test PROPERTIES LABELS "integration")
 
