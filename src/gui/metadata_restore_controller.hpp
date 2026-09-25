@@ -85,7 +85,11 @@ class MetadataRestoreController : public QObject
     // count below is a count of that set.
     //
     // One entry per stick the proposals were backed up from:
-    // {key, name, count}. The page puts "every stick" in front of it.
+    // {key, label, count, idNotRecorded}; label is the stick's name as
+    // the store recorded it, possibly empty, and idNotRecorded marks rows
+    // that share a label with several recorded sticks and belong to none
+    // of them (domain::resolveRestoreSources). The page puts "every
+    // stick" in front of it and words each entry itself.
     Q_PROPERTY(QVariantList sourceSticks READ sourceSticks NOTIFY analysisChanged)
     Q_PROPERTY(QString selectedSourceKey READ selectedSourceKey NOTIFY analysisChanged)
     Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY analysisChanged)

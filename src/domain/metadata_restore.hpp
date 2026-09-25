@@ -30,6 +30,12 @@ struct MetadataRestoreProposal
     // Filled by the caller, like storedFrom, because the store keeps
     // where a row was last seen out of domain::Track on purpose.
     std::string storedFromLibraryId;
+    // The stick the picker files this row under, when that is not simply
+    // storedFromLibraryId: set by resolveRestoreSources() on a row whose
+    // id the store never recorded (rows stored before it did default to
+    // '') but whose label only one recorded stick carries. Empty
+    // otherwise, and then restoreSourceKey() uses storedFromLibraryId.
+    std::string resolvedLibraryId;
     // The playlists the backup recorded this track in, from the stored
     // side. With the stick track's own playlists, what the restore
     // page's playlist picker narrows on (see proposalInRestoreScope).
@@ -111,7 +117,25 @@ std::vector<MetadataRestoreProposal> planMetadataRestore(const std::vector<Track
 // spell, and is a stick of its own in the picker. Keyed empty, picking
 // it selected every stick, and the picker showed it while every stick
 // was in scope.
+//
+// Rows are keyed as they were resolved by resolveRestoreSources(), which
+// the page runs once over every proposal a scan hands it.
 std::string restoreSourceKey(const MetadataRestoreProposal &proposal);
+
+// One stick whose rows are only partly stamped with its library id is
+// one stick. The store has recorded a stick's id only since it learned
+// to, so a stick backed up before and after that has some rows carrying
+// the id and older ones carrying only the label. Keyed apart, it showed
+// as two picker entries and picking either restored part of the stick.
+//
+// So a row with a label but no id joins the stick recorded WITH an id
+// under that label, when exactly one such stick exists among the
+// proposals (it sets resolvedLibraryId). When several do -- two sticks
+// both called NO NAME, the ordinary case -- there is no telling which one
+// an unstamped row came from, so those rows stay a source of their own,
+// which restoreSources() marks idNotRecorded for the page to say so. A
+// row with neither id nor label stays "unknown".
+void resolveRestoreSources(std::vector<MetadataRestoreProposal> &proposals);
 
 // Every playlist a proposal is in: the backup's record of it and the
 // stick's own, once each. Both, because a restore goes to whichever
@@ -136,6 +160,11 @@ struct MetadataRestoreSource
     std::string key;
     std::string label;
     int proposalCount = 0;
+    // Keyed by label alone although sticks WITH a recorded id carry the
+    // same label: rows the backup could not tie to either of them. The
+    // page says so, since a label and a count alone would read as one
+    // more stick of that name.
+    bool idNotRecorded = false;
 };
 std::vector<MetadataRestoreSource> restoreSources(const std::vector<MetadataRestoreProposal> &proposals);
 
