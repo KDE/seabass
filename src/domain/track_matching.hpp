@@ -52,7 +52,7 @@ std::vector<std::pair<const Track *, const Track *>> matchTracks(const std::vect
 
 // True if two cue sets are the same, ignoring order and allowing a small
 // position tolerance (cross-format conversions can introduce sub-second
-// rounding).
+// rounding). Slot, kind and position decide; comment and colour never do.
 bool cueSetsEqual(const std::vector<CuePoint> &a, const std::vector<CuePoint> &b);
 
 // The same cues, with any colour the target already had put back where
