@@ -14,7 +14,17 @@
 #include <QVariantList>
 #include <QtGlobal>
 
+#include <cstdint>
+#include <filesystem>
+#include <map>
+#include <memory>
+
 #include "domain/audio_levels.hpp"
+
+namespace seabass::infrastructure::rekordbox
+{
+class AnlzPathIndex;
+}
 
 class QAudioBuffer;
 class QAudioBufferOutput;
@@ -236,6 +246,23 @@ private:
     // is comfortably more than a scrollable list ever has on screen or
     // recently scrolled past at once.
     mutable QCache<QString, QVariantList> m_waveformCache{300};
+
+    // Every track's analysis-file path on a stick, from one pass over its
+    // export.pdb, for as long as that export.pdb is unchanged. Without it
+    // each waveform parsed the whole database to find one path: about 20
+    // ms a track on a 1,400-track stick, on the UI thread, so opening a
+    // list of waveform cards (Library Health's Cues at 0:00) froze for as
+    // long as it took to fill the screen, and scrolling stuttered row by
+    // row. Keyed on the PIONEER folder; see anlzIndexFor() for when an
+    // entry is rebuilt.
+    struct AnlzIndexEntry
+    {
+        std::filesystem::file_time_type modified;
+        std::uintmax_t size = 0;
+        std::shared_ptr<const infrastructure::rekordbox::AnlzPathIndex> index;
+    };
+    std::shared_ptr<const infrastructure::rekordbox::AnlzPathIndex> anlzIndexFor(const QString &pioneerRoot) const;
+    mutable std::map<QString, AnlzIndexEntry> m_anlzIndexes;
 };
 
 }  // namespace seabass::gui

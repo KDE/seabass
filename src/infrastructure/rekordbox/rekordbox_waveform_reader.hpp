@@ -11,6 +11,7 @@
 #include "domain/track_analysis.hpp"
 #include "domain/waveform.hpp"
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
+#include "infrastructure/rekordbox/anlz_path_index.hpp"
 
 namespace seabass::infrastructure::rekordbox
 {
@@ -43,7 +44,14 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &pione
 // the file has not got it; both are where there is no file, or it cannot
 // be read -- a missing analysis is a display that falls back, never an
 // error.
+//
+// `pathIndex` answers "which analysis file is this track's" from memory.
+// Without one, that question parses the whole export.pdb: about 20 ms on
+// a 1,400-track stick, for every track asked about. A caller reading many
+// tracks' analyses in a row (a list of waveforms) should hold an index
+// built from the same export.pdb and pass it here.
 domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const std::string &trackSourceId,
-                                        std::shared_ptr<AnlzByteSource> anlzSource = nullptr);
+                                        std::shared_ptr<AnlzByteSource> anlzSource = nullptr,
+                                        const AnlzPathIndex *pathIndex = nullptr);
 
 }  // namespace seabass::infrastructure::rekordbox
