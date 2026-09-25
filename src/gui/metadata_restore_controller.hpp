@@ -8,6 +8,7 @@
 #include <QFutureWatcher>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QQmlEngine>
 #include <QVariantList>
 #include <QVariantMap>
@@ -210,6 +211,24 @@ private:
     // The picker entries and every scoped count, from the proposals and
     // the scope as they are now.
     void refreshScope();
+    // Unstages proposals by index as one batch: one session call, one
+    // analysisChanged.
+    void unstageIndices(const std::vector<int> &indices);
+    // What a save's changeApplied burst landed, taken off the list once
+    // the burst is over rather than per change (see attachSession).
+    void takeAppliedChanges();
+
+    // analysisChanged, or, while an AnalysisBatch is alive, one emission
+    // when the outermost batch ends. Every property the page shows hangs
+    // off that one signal, and each emission has QML re-read all of them
+    // and rebuild both pickers' models, so a bulk operation that emits
+    // per track is quadratic on the UI thread.
+    void noteAnalysisChanged();
+    class AnalysisBatch;
+    int m_analysisBatchDepth = 0;
+    bool m_analysisPending = false;
+    QSet<QString> m_appliedChanges;
+    bool m_takeAppliedQueued = false;
 
     QFutureWatcher<MetadataRestoreTaskResult> m_watcher;
     RestoreProposalListModel m_model;

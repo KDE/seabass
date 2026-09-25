@@ -219,6 +219,8 @@ void RestoreProposalListModel::setProposals(std::vector<MetadataRestoreProposal>
     beginResetModel();
     m_proposals = std::move(proposals);
     m_stagedChanges.assign(m_proposals.size(), QStringList());
+    m_stagedCount = 0;
+    m_stagedChangeCount = 0;
     recountCopies();
     rebuildVisible();
     endResetModel();
@@ -228,11 +230,13 @@ void RestoreProposalListModel::rebuildVisible()
 {
     m_visible.clear();
     m_visible.reserve(m_proposals.size());
+    m_scopedCount = 0;
     const QString needle = m_filter.trimmed().toLower();
     for (std::size_t i = 0; i < m_proposals.size(); ++i) {
         if (!domain::proposalInRestoreScope(m_proposals[i], m_scope)) {
             continue;
         }
+        m_scopedCount++;
         if (needle.isEmpty()) {
             m_visible.push_back(static_cast<int>(i));
             continue;
@@ -280,17 +284,6 @@ bool RestoreProposalListModel::inScope(int index) const
     return domain::proposalInRestoreScope(m_proposals[static_cast<std::size_t>(index)], m_scope);
 }
 
-int RestoreProposalListModel::scopedCount() const
-{
-    int count = 0;
-    for (const auto &proposal : m_proposals) {
-        if (domain::proposalInRestoreScope(proposal, m_scope)) {
-            count++;
-        }
-    }
-    return count;
-}
-
 std::vector<int> RestoreProposalListModel::unstagedInScope() const
 {
     std::vector<int> indices;
@@ -323,12 +316,13 @@ int RestoreProposalListModel::sourceIndexOfRow(int row) const
 
 int RestoreProposalListModel::rowOfSourceIndex(int sourceIndex) const
 {
-    for (std::size_t row = 0; row < m_visible.size(); ++row) {
-        if (m_visible[row] == sourceIndex) {
-            return static_cast<int>(row);
-        }
+    // m_visible is in proposal order (rebuildVisible), so a search, not a
+    // walk: staging a whole list asks this once per row.
+    const auto found = std::lower_bound(m_visible.begin(), m_visible.end(), sourceIndex);
+    if (found == m_visible.end() || *found != sourceIndex) {
+        return -1;
     }
-    return -1;
+    return static_cast<int>(found - m_visible.begin());
 }
 
 void RestoreProposalListModel::setStagedChanges(int index, QStringList changeIds)
@@ -336,7 +330,10 @@ void RestoreProposalListModel::setStagedChanges(int index, QStringList changeIds
     if (index < 0 || index >= static_cast<int>(m_proposals.size())) {
         return;
     }
-    m_stagedChanges[static_cast<std::size_t>(index)] = std::move(changeIds);
+    QStringList &slot = m_stagedChanges[static_cast<std::size_t>(index)];
+    m_stagedCount += (changeIds.isEmpty() ? 0 : 1) - (slot.isEmpty() ? 0 : 1);
+    m_stagedChangeCount += static_cast<int>(changeIds.size()) - static_cast<int>(slot.size());
+    slot = std::move(changeIds);
     // Nothing to repaint when the row is filtered out, but the state
     // still has to be kept: the search is a view of the list, not a
     // different list.
@@ -352,26 +349,6 @@ QStringList RestoreProposalListModel::stagedChanges(int index) const
         return {};
     }
     return m_stagedChanges[static_cast<std::size_t>(index)];
-}
-
-int RestoreProposalListModel::stagedCount() const
-{
-    return static_cast<int>(std::count_if(m_stagedChanges.begin(), m_stagedChanges.end(),
-                                          [](const QStringList &changes) { return !changes.isEmpty(); }));
-}
-
-int RestoreProposalListModel::stagedChangeCount() const
-{
-    // Rows, not changes, is what stagedCount() answers. One proposal
-    // becomes one change per catalog that lists the file, so a stick
-    // whose tracks are in both rekordbox and Engine stages two changes
-    // per row -- and comparing a row count against a change count then
-    // looks like a bug in whichever one you trusted less.
-    int total = 0;
-    for (const QStringList &changes : m_stagedChanges) {
-        total += static_cast<int>(changes.size());
-    }
-    return total;
 }
 
 int RestoreProposalListModel::indexOfChange(const QString &changeId) const
@@ -400,9 +377,40 @@ void RestoreProposalListModel::removeAt(int index)
     // A reset rather than beginRemoveRows: removing one proposal
     // renumbers every visible index after it, and the mapping is what
     // this model is for.
+    removeAll({index});
+}
+
+void RestoreProposalListModel::removeAll(std::vector<int> indices)
+{
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    indices.erase(std::remove_if(indices.begin(), indices.end(),
+                                 [this](int index) { return index < 0 || index >= static_cast<int>(m_proposals.size()); }),
+                  indices.end());
+    if (indices.empty()) {
+        return;
+    }
     beginResetModel();
-    m_proposals.erase(m_proposals.begin() + index);
-    m_stagedChanges.erase(m_stagedChanges.begin() + index);
+    // One pass, keeping what is not being removed, so a thousand removals
+    // move each survivor once rather than once per removal before it.
+    std::size_t next = 0;  // into indices
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < m_proposals.size(); ++i) {
+        if (next < indices.size() && static_cast<std::size_t>(indices[next]) == i) {
+            next++;
+            const QStringList &gone = m_stagedChanges[i];
+            m_stagedCount -= gone.isEmpty() ? 0 : 1;
+            m_stagedChangeCount -= static_cast<int>(gone.size());
+            continue;
+        }
+        if (kept != i) {
+            m_proposals[kept] = std::move(m_proposals[i]);
+            m_stagedChanges[kept] = std::move(m_stagedChanges[i]);
+        }
+        kept++;
+    }
+    m_proposals.resize(kept);
+    m_stagedChanges.resize(kept);
     recountCopies();
     rebuildVisible();
     endResetModel();

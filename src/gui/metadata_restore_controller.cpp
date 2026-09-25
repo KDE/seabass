@@ -10,6 +10,7 @@
 #include <exception>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 
 #include "application/use_cases/collapse_catalog_rows.hpp"
 #include "domain/metadata_merge.hpp"
@@ -112,6 +113,35 @@ MetadataRestoreTaskResult runScanTask(QString libraryPath, std::shared_ptr<QtPro
 }  // namespace
 
 // ---- controller -----------------------------------------------------
+
+class MetadataRestoreController::AnalysisBatch
+{
+public:
+    explicit AnalysisBatch(MetadataRestoreController &controller) : m_controller(controller)
+    {
+        m_controller.m_analysisBatchDepth++;
+    }
+    ~AnalysisBatch()
+    {
+        if (--m_controller.m_analysisBatchDepth == 0 && std::exchange(m_controller.m_analysisPending, false)) {
+            emit m_controller.analysisChanged();
+        }
+    }
+    AnalysisBatch(const AnalysisBatch &) = delete;
+    AnalysisBatch &operator=(const AnalysisBatch &) = delete;
+
+private:
+    MetadataRestoreController &m_controller;
+};
+
+void MetadataRestoreController::noteAnalysisChanged()
+{
+    if (m_analysisBatchDepth > 0) {
+        m_analysisPending = true;
+        return;
+    }
+    emit analysisChanged();
+}
 
 MetadataRestoreController::MetadataRestoreController(QObject *parent) : QObject(parent)
 {
@@ -306,16 +336,15 @@ void MetadataRestoreController::applyScope(domain::MetadataRestoreScope scope)
     if (scope.sourceKey == current.sourceKey && scope.playlist == current.playlist) {
         return;
     }
+    AnalysisBatch batch(*this);
     m_model.setScope(std::move(scope));
     // What the new scope leaves out is not part of this restore any
     // more, so it comes off the save rather than being written by it
     // out of sight.
     const auto outside = m_model.stagedOutsideScope();
-    for (const int index : outside) {
-        unstageAt(index);
-    }
+    unstageIndices(outside);
     refreshScope();
-    emit analysisChanged();
+    noteAnalysisChanged();
     if (!outside.empty()) {
         const int n = static_cast<int>(outside.size());
         emit actionFeedback(n == 1 ? QStringLiteral("1 staged track is outside this selection and was unstaged.")
@@ -350,24 +379,53 @@ void MetadataRestoreController::attachSession()
     }
     connect(m_session, &LibraryEditSession::stateChanged, this, &MetadataRestoreController::writingChanged);
     connect(m_session, &LibraryEditSession::canUndoChanged, this, &MetadataRestoreController::canUndoChanged);
+    // A save emits changeApplied once per landed change, back to back,
+    // and then saveFinished. Each one is only noted here; the list is
+    // brought up to date once, when the burst is over. Done per change,
+    // each of them reset the list and recounted the whole scope, and a
+    // save of fourteen hundred changes was quadratic on the UI thread.
     connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
-        // A proposal disappears once every change it staged has landed:
-        // the stick now has what the store had, so there is nothing left
-        // to offer it.
-        const int index = m_model.indexOfChange(changeId);
-        if (index < 0) {
-            return;
+        m_appliedChanges.insert(changeId);
+        // saveFinished always follows, and takes them. Queued as well, so
+        // a burst that arrived without one is still not left pending.
+        if (!m_takeAppliedQueued) {
+            m_takeAppliedQueued = true;
+            QMetaObject::invokeMethod(this, &MetadataRestoreController::takeAppliedChanges, Qt::QueuedConnection);
         }
-        QStringList remaining = m_model.stagedChanges(index);
-        remaining.removeAll(changeId);
-        if (!remaining.isEmpty()) {
-            m_model.setStagedChanges(index, remaining);
-            return;
-        }
-        m_model.removeAt(index);
-        refreshScope();
-        emit analysisChanged();
     });
+    connect(m_session, &LibraryEditSession::saveFinished, this, &MetadataRestoreController::takeAppliedChanges);
+}
+
+void MetadataRestoreController::takeAppliedChanges()
+{
+    m_takeAppliedQueued = false;
+    if (m_appliedChanges.isEmpty()) {
+        return;
+    }
+    const QSet<QString> applied = std::exchange(m_appliedChanges, {});
+    // A proposal disappears once every change it staged has landed: the
+    // stick now has what the store had, so there is nothing left to
+    // offer it. One that landed only in part keeps what is still to go.
+    std::vector<int> landed;
+    for (int index = 0; index < m_model.totalCount(); ++index) {
+        QStringList changes = m_model.stagedChanges(index);
+        const auto before = changes.size();
+        if (before == 0) {
+            continue;
+        }
+        changes.removeIf([&applied](const QString &changeId) { return applied.contains(changeId); });
+        if (changes.size() == before) {
+            continue;
+        }
+        if (changes.isEmpty()) {
+            landed.push_back(index);
+        } else {
+            m_model.setStagedChanges(index, changes);
+        }
+    }
+    m_model.removeAll(std::move(landed));
+    refreshScope();
+    noteAnalysisChanged();
 }
 
 void MetadataRestoreController::search(const QString &text)
@@ -461,7 +519,7 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
         return;
     }
     m_model.setStagedChanges(index, staged);
-    emit analysisChanged();
+    noteAnalysisChanged();
 }
 
 QString MetadataRestoreController::mergeRuleHelp() const
@@ -488,6 +546,7 @@ void MetadataRestoreController::stageAll()
     // No confirmation afterwards: the toolbar already says how many are
     // staged, and a popup for what the button's own name promised is one
     // more thing to dismiss.
+    AnalysisBatch batch(*this);
     for (const int index : toStage) {
         stageOne(index, static_cast<int>(toStage.size()));
         if (m_session && !m_session->lockHeld()) {
@@ -498,11 +557,14 @@ void MetadataRestoreController::stageAll()
 
 void MetadataRestoreController::unstageAll()
 {
-    // By proposal, through the same path a single row's tick box takes, so
-    // the two cannot drift apart.
-    for (int index = proposalCount() - 1; index >= 0; --index) {
-        unstageAt(index);
+    // By proposal, through the same path a narrowing takes.
+    std::vector<int> staged;
+    for (int index = 0; index < proposalCount(); ++index) {
+        if (m_model.isStaged(index)) {
+            staged.push_back(index);
+        }
     }
+    unstageIndices(staged);
 }
 
 void MetadataRestoreController::unstage(int row)
@@ -512,20 +574,32 @@ void MetadataRestoreController::unstage(int row)
 
 void MetadataRestoreController::unstageAt(int index)
 {
-    if (index < 0) {
-        return;
+    unstageIndices({index});
+}
+
+// Every unstage funnels here, a single row's tick box included, so a bulk
+// unstage cannot drift from what unticking one row does.
+void MetadataRestoreController::unstageIndices(const std::vector<int> &indices)
+{
+    QStringList changes;
+    std::vector<int> staged;
+    for (const int index : indices) {
+        const QStringList mine = m_model.stagedChanges(index);
+        if (!mine.isEmpty()) {
+            changes << mine;
+            staged.push_back(index);
+        }
     }
-    const QStringList changes = m_model.stagedChanges(index);
-    if (changes.isEmpty()) {
+    if (staged.empty()) {
         return;
     }
     if (m_session) {
-        for (const auto &changeId : changes) {
-            m_session->unstage(changeId);
-        }
+        m_session->unstageAll(changes);
     }
-    m_model.setStagedChanges(index, {});
-    emit analysisChanged();
+    for (const int index : staged) {
+        m_model.setStagedChanges(index, {});
+    }
+    noteAnalysisChanged();
 }
 
 std::shared_ptr<QtProgressReporter> MetadataRestoreController::makeReporter()

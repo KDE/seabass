@@ -79,11 +79,17 @@ public:
     void setStagedChanges(int index, QStringList changeIds);
     QStringList stagedChanges(int index) const;
     bool isStaged(int index) const;
-    int stagedCount() const;        // rows with anything staged
-    int stagedChangeCount() const;  // changes staged across all rows
+    // Kept as staging changes rather than counted on each read: the page
+    // reads these on every analysisChanged, and a count over thousands of
+    // proposals per read made every bulk operation quadratic.
+    int stagedCount() const { return m_stagedCount; }             // rows with anything staged
+    int stagedChangeCount() const { return m_stagedChangeCount; }  // changes staged across all rows
     // The proposal a staged change belongs to, or -1.
     int indexOfChange(const QString &changeId) const;
     void removeAt(int index);
+    // Several at once, in one reset: what a save that landed a thousand
+    // proposals takes off the list, without a thousand resets.
+    void removeAll(std::vector<int> indices);
 
     // ---- the search --------------------------------------------------
     // Filtered here rather than in the delegate. A ListView still lays
@@ -109,7 +115,8 @@ public:
     void setScope(domain::MetadataRestoreScope scope);
     const domain::MetadataRestoreScope &scope() const { return m_scope; }
     bool inScope(int index) const;
-    int scopedCount() const;
+    // Counted when the scope or the proposals change, not on each read.
+    int scopedCount() const { return m_scopedCount; }
     // In scope and not yet staged, in list order: what Select All stages.
     std::vector<int> unstagedInScope() const;
     // Staged and out of scope: what a scope change has to unstage.
@@ -128,6 +135,9 @@ private:
     std::vector<int> m_visible;
     QString m_filter;
     domain::MetadataRestoreScope m_scope;
+    int m_scopedCount = 0;
+    int m_stagedCount = 0;
+    int m_stagedChangeCount = 0;
 };
 
 }  // namespace seabass::gui
