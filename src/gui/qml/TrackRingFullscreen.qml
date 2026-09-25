@@ -81,6 +81,12 @@ Window {
         // Held down, these would run through the whole list.
         case Qt.Key_Up: if (!isAutoRepeat) root.playbackController.previous(); return true;
         case Qt.Key_Down: if (!isAutoRepeat) root.playbackController.next(); return true;
+        // The hot cue pads, as in Main.qml: 1 to 8 on either the number
+        // row or the keypad, which report the same key.
+        case Qt.Key_1: case Qt.Key_2: case Qt.Key_3: case Qt.Key_4:
+        case Qt.Key_5: case Qt.Key_6: case Qt.Key_7: case Qt.Key_8:
+            if (!isAutoRepeat) root.playbackController.jumpToHotCue(key - Qt.Key_0);
+            return true;
         }
         return false;
     }

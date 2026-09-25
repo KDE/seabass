@@ -61,6 +61,13 @@ ApplicationWindow {
         onActivated: playbackCtrl.togglePlay()
     }
 
+    // 1 to 8 jump to that hot cue of the playing track, with the same
+    // text-field rule as Space: see common/HotCueShortcuts.qml.
+    HotCueShortcuts {
+        playbackController: playbackCtrl
+        active: !(window.activeFocusItem && window.activeFocusItem.hasOwnProperty("cursorPosition"))
+    }
+
     AppSettingsController {
         id: appSettingsCtrl
     }
