@@ -31,6 +31,9 @@ class LibraryEditSession;
 struct MetadataRestoreTaskResult
 {
     std::vector<domain::MetadataRestoreProposal> proposals;
+    // Every library id the store recorded under each stick label, over
+    // all its rows (see domain::resolveRestoreSources).
+    domain::RecordedIdsByLabel recordedIdsByLabel;
     // The catalog path the scan read, which staging and waveform reads
     // derive every format's own path from.
     QString libraryPath;

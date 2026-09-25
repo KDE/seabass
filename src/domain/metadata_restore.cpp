@@ -110,34 +110,23 @@ std::string restoreSourceKey(const MetadataRestoreProposal &proposal)
     return "unknown";
 }
 
-namespace
+void resolveRestoreSources(std::vector<MetadataRestoreProposal> &proposals,
+                           const RecordedIdsByLabel &recordedIdsByLabel)
 {
-
-// Every library id the proposals recorded under each label.
-std::map<std::string, std::set<std::string>> recordedIdsByLabel(const std::vector<MetadataRestoreProposal> &proposals)
-{
-    std::map<std::string, std::set<std::string>> ids;
-    for (const auto &proposal : proposals) {
-        if (!proposal.storedFrom.empty() && !proposal.storedFromLibraryId.empty()) {
-            ids[proposal.storedFrom].insert(proposal.storedFromLibraryId);
-        }
-    }
-    return ids;
-}
-
-}  // namespace
-
-void resolveRestoreSources(std::vector<MetadataRestoreProposal> &proposals)
-{
-    const auto ids = recordedIdsByLabel(proposals);
     for (auto &proposal : proposals) {
         proposal.resolvedLibraryId.clear();
+        proposal.sourceIdNotRecorded = false;
         if (!proposal.storedFromLibraryId.empty() || proposal.storedFrom.empty()) {
             continue;
         }
-        const auto found = ids.find(proposal.storedFrom);
-        if (found != ids.end() && found->second.size() == 1) {
+        const auto found = recordedIdsByLabel.find(proposal.storedFrom);
+        if (found == recordedIdsByLabel.end() || found->second.empty()) {
+            continue;
+        }
+        if (found->second.size() == 1) {
             proposal.resolvedLibraryId = *found->second.begin();
+        } else {
+            proposal.sourceIdNotRecorded = true;
         }
     }
 }
@@ -169,7 +158,6 @@ bool proposalInRestoreScope(const MetadataRestoreProposal &proposal, const Metad
 
 std::vector<MetadataRestoreSource> restoreSources(const std::vector<MetadataRestoreProposal> &proposals)
 {
-    const auto ids = recordedIdsByLabel(proposals);
     std::vector<MetadataRestoreSource> sources;
     std::map<std::string, std::size_t> indexByKey;
     for (const auto &proposal : proposals) {
@@ -177,13 +165,15 @@ std::vector<MetadataRestoreSource> restoreSources(const std::vector<MetadataRest
         auto found = indexByKey.find(key);
         if (found == indexByKey.end()) {
             MetadataRestoreSource source{key, proposal.storedFrom, 0};
-            // Label-keyed while that label has recorded ids: rows
-            // resolveRestoreSources() could not tie to one of them.
-            source.idNotRecorded = key.rfind("label:", 0) == 0 && ids.count(proposal.storedFrom) > 0;
             found = indexByKey.emplace(key, sources.size()).first;
             sources.push_back(std::move(source));
         }
         sources[found->second].proposalCount++;
+        // As resolveRestoreSources() decided it, never recounted here:
+        // after a save the rows left say nothing about the sticks whose
+        // rows landed.
+        sources[found->second].idNotRecorded =
+            sources[found->second].idNotRecorded || proposal.sourceIdNotRecorded;
     }
     std::sort(sources.begin(), sources.end(), [](const MetadataRestoreSource &a, const MetadataRestoreSource &b) {
         return std::tie(a.label, a.key) < std::tie(b.label, b.key);

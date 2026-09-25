@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,12 @@ struct MetadataRestoreProposal
     // '') but whose label only one recorded stick carries. Empty
     // otherwise, and then restoreSourceKey() uses storedFromLibraryId.
     std::string resolvedLibraryId;
+    // Set by resolveRestoreSources() on a row with a label but no id
+    // whose label the store recorded for more than one stick: there is no
+    // telling which of them it came from. Decided once, against the whole
+    // store, and carried on the row, so it holds however many rows are
+    // left after a save rather than being recounted from them.
+    bool sourceIdNotRecorded = false;
     // The playlists the backup recorded this track in, from the stored
     // side. With the stick track's own playlists, what the restore
     // page's playlist picker narrows on (see proposalInRestoreScope).
@@ -129,13 +136,19 @@ std::string restoreSourceKey(const MetadataRestoreProposal &proposal);
 // as two picker entries and picking either restored part of the stick.
 //
 // So a row with a label but no id joins the stick recorded WITH an id
-// under that label, when exactly one such stick exists among the
-// proposals (it sets resolvedLibraryId). When several do -- two sticks
-// both called NO NAME, the ordinary case -- there is no telling which one
-// an unstamped row came from, so those rows stay a source of their own,
-// which restoreSources() marks idNotRecorded for the page to say so. A
-// row with neither id nor label stays "unknown".
-void resolveRestoreSources(std::vector<MetadataRestoreProposal> &proposals);
+// under that label, when exactly one such stick exists in the store (it
+// sets resolvedLibraryId). `recordedIdsByLabel` is every library id the
+// store recorded under each label, over ALL its rows, not only the ones
+// that became proposals: a second stick of the same name with nothing to
+// offer this stick is still a stick the unstamped row may have come from.
+// When several exist -- two sticks both called NO NAME, the ordinary case
+// -- there is no telling which one an unstamped row came from, so those
+// rows stay a source of their own and are marked sourceIdNotRecorded,
+// which restoreSources() passes on for the page to say so. A row with
+// neither id nor label stays "unknown".
+using RecordedIdsByLabel = std::map<std::string, std::set<std::string>>;
+void resolveRestoreSources(std::vector<MetadataRestoreProposal> &proposals,
+                           const RecordedIdsByLabel &recordedIdsByLabel);
 
 // Every playlist a proposal is in: the backup's record of it and the
 // stick's own, once each. Both, because a restore goes to whichever
@@ -163,7 +176,7 @@ struct MetadataRestoreSource
     // Keyed by label alone although sticks WITH a recorded id carry the
     // same label: rows the backup could not tie to either of them. The
     // page says so, since a label and a count alone would read as one
-    // more stick of that name.
+    // more stick of that name. Read from the rows' sourceIdNotRecorded.
     bool idNotRecorded = false;
 };
 std::vector<MetadataRestoreSource> restoreSources(const std::vector<MetadataRestoreProposal> &proposals);

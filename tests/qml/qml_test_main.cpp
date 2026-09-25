@@ -865,6 +865,7 @@ public:
             result.proposals.push_back(proposal("Older NO NAME Row", "Somebody", 300, "", "NO NAME", {"Closing"},
                                                 {hot(1, 10, "#e03c3c")}));
         }
+        result.recordedIdsByLabel = {{"NO NAME", {"uuid-one", "uuid-two"}}, {"RV2", {"uuid-rv2"}}};
         result.stickTrackCount = static_cast<int>(result.proposals.size());
         result.storedTrackCount = static_cast<int>(result.proposals.size());
         restore->applyScanResult(std::move(result));
@@ -952,6 +953,7 @@ public:
             m_prepared.proposals[i].storedFrom = i % 2 == 0 ? "RV2" : "A4";
             m_prepared.proposals[i].storedFromLibraryId = i % 2 == 0 ? "uuid-rv2" : "uuid-a4";
         }
+        m_prepared.recordedIdsByLabel = {{"RV2", {"uuid-rv2"}}, {"A4", {"uuid-a4"}}};
         m_prepared.libraryPath = QString::fromStdString(pioneer);
         m_prepared.stickTrackCount = static_cast<int>(stickTracks.size());
         m_preparedStickTracks = m_prepared.stickTrackCount;
