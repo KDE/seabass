@@ -812,7 +812,7 @@ TestCase {
         compare(findChild(run.page, "openConfirmButton").enabled, false);
         const note = findChild(run.page, "chosenDriveGoneLabel");
         compare(note.visible, true);
-        compare(note.text, "The drive you chose is no longer connected. Choose a drive.");
+        compare(note.text, "The drive you chose is no longer where it was (unplugged or mounted again). Choose a drive.");
         // A later refresh does not pick one either; only the user does.
         run.controller.disks = [run.c, run.a, makeDisk({label: "D", mountPoint: "/media/D", devicePath: "/dev/sde1"})];
         compare(run.page.selectedIndex, -1);
@@ -892,7 +892,7 @@ TestCase {
         compare(findChild(run.page, "chosenDriveGoneLabel").visible, true);
         compare(run.page.selectedIndex, -1);
         tryCompare(popup, "opened", true);
-        compare(popup.headline, "The drive you chose was disconnected before the restore started. Nothing was written.");
+        compare(popup.headline, "The drive you chose was unplugged or mounted again before the restore started. Nothing was written. Choose a drive.");
         if (screenshotDir && screenshotDir.length > 0) {
             // The window, not the page: the popup sits in its overlay.
             grabImage(run.page.Window.window.contentItem).save(screenshotDir + "/restore-page-confirmed-drive-gone.png");

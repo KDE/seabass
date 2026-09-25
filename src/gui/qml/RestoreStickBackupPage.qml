@@ -396,7 +396,7 @@ Page {
                     root.applySelection(-1);
                 }
                 root.chosenDriveGone = true;
-                messagePopup.show("The drive you chose was disconnected before the restore started. Nothing was written.", true);
+                messagePopup.show("The drive you chose was unplugged or mounted again before the restore started. Nothing was written. Choose a drive.", true);
                 return;
             }
             root.selectedIndex = index;
@@ -628,7 +628,7 @@ Page {
                         visible: root.chosenDriveGone
                         wrapMode: Text.WordWrap
                         color: Theme.danger
-                        text: "The drive you chose is no longer connected. Choose a drive."
+                        text: "The drive you chose is no longer where it was (unplugged or mounted again). Choose a drive."
                     }
                     ButtonGroup { id: driveGroup }
                     Repeater {
