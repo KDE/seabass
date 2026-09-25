@@ -545,6 +545,22 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
                             .toString();
 }
 
+// Leaving a page mid-scan destroys its controller, and with it the
+// watcher, so the result has nowhere to arrive: it is dropped with the
+// task, never applied to a page that has gone. The task itself holds only
+// copies (paths, the token, the reporter, whose connections to this
+// object Qt cuts here), so it can finish on its own. Cancelling just
+// stops it reading the stick for nobody at the next point it checks.
+//
+// Deliberately not awaited, unlike the controllers that hold a lock or
+// write: the Engine leg's audits do not check the token, so waiting here
+// would freeze Back for as long as they run, which is the freeze this
+// page's overlay exists to avoid.
+LibraryConsistencyController::~LibraryConsistencyController()
+{
+    m_scanCancel.cancel();
+}
+
 std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
 {
     auto reporter = std::make_shared<QtProgressReporter>();

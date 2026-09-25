@@ -104,7 +104,9 @@ Page {
     // Checked a turn later, not from inside the controller's own
     // busyChanged. A cancel stays on this page, so it is checked then too.
     function dropMissingPlaylist() {
-        if (consistencyController.busy || root.selectedPlaylistName.length === 0
+        // Not after a stop either: the playlists of a scan that did not
+        // finish are not the library's, and rescanning would undo the stop.
+        if (consistencyController.busy || root.scanStopped || root.selectedPlaylistName.length === 0
             || consistencyController.playlistNames.indexOf(root.selectedPlaylistName) >= 0) {
             return;
         }
@@ -112,13 +114,38 @@ Page {
         consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
     }
 
+    // The last scan did not look at everything: it was stopped from the
+    // overlay, or a catalog could not be read (the stick pulled mid-scan
+    // lands here). Whatever it found stays listed, but the page must not
+    // present it as the whole answer, and above all must not say "no
+    // cues" about a library it never finished reading.
+    //
+    // Taken when the scan ends, not read live off errorMessage: that also
+    // carries a staging error said long after a scan that read everything,
+    // which is no reason to call its count partial.
+    property bool scanStopped: false
+    property bool scanFailed: false
+    readonly property bool resultIncomplete: root.scanStopped || root.scanFailed
+
+    function rescan() {
+        consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
+    }
+
     Connections {
         target: consistencyController
         function onBusyChanged() {
-            if (!consistencyController.busy) {
+            if (consistencyController.busy) {
+                root.scanStopped = false;
+                root.scanFailed = false;
+            } else {
+                root.scanFailed = consistencyController.errorMessage.length > 0;
                 Qt.callLater(root.dropMissingPlaylist);
             }
         }
+        // Stays on this page, unlike Library Health's check pages: this
+        // one scans for itself, so what is left is a list the user can
+        // still act on or scan again, and the picker beside it.
+        function onScanCancelled() { root.scanStopped = true; }
     }
 
     header: ToolBar {
@@ -156,6 +183,10 @@ Page {
             PlaylistPickerCombo {
                 objectName: "playlistPicker"
                 Layout.minimumWidth: 140
+                // The controller ignores a scan asked for while one runs,
+                // so a pick made now would show a playlist the list below
+                // is not about.
+                enabled: !consistencyController.busy
                 model: root.playlistPickerModel
                 currentIndex: {
                     if (root.selectedPlaylistName.length === 0) {
@@ -174,17 +205,6 @@ Page {
                     root.selectedPlaylistName = index === 0 ? "" : modelData.name;
                     root.appSettingsController.lastPlaylistName = root.selectedPlaylistName;
                     consistencyController.scan(root.rekordboxPath, root.enginePath, root.selectedPlaylistName);
-                }
-            }
-            RowLayout {
-                visible: consistencyController.busy
-                spacing: 8
-                BusyIndicator { running: true; implicitWidth: 20; implicitHeight: 20 }
-                Label {
-                    text: consistencyController.scanningFormat.length > 0
-                        ? "Scanning " + root.formatLabel(consistencyController.scanningFormat) + "..."
-                        : "Scanning..."
-                    color: Theme.textMuted
                 }
             }
         }
@@ -248,6 +268,23 @@ Page {
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
+        RowLayout {
+            objectName: "junkCueScanStopped"
+            visible: root.scanStopped
+            Layout.fillWidth: true
+            spacing: Theme.rowSpacing
+            Label {
+                text: "The scan was stopped before it finished, so this list is incomplete."
+                color: Theme.warnText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Button {
+                text: "Scan Again"
+                enabled: !consistencyController.busy
+                onClicked: root.rescan()
+            }
+        }
 
         Rectangle {
             visible: junkCueListView.count > 0
@@ -273,6 +310,7 @@ Page {
                     text: junkCueListView.count + " cue(s) sitting at 0:00, likely accidental"
                         + (root.selectedPlaylistName.length > 0
                             ? ", in " + root.selectedPlaylistName + " only" : ", across the whole library")
+                        + (root.resultIncomplete ? " (so far: not every catalog was read)" : "")
                     font.bold: true
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
@@ -399,9 +437,33 @@ Page {
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 24
             Layout.bottomMargin: 12
-            visible: junkCueListView.count === 0 && !consistencyController.busy
+            objectName: "junkCueNoneFound"
+            // Only after a scan that read everything. Zero from a scan
+            // that was stopped, or that could not read a catalog, is not
+            // a finding.
+            visible: junkCueListView.count === 0 && !consistencyController.busy && !root.resultIncomplete
             text: "No cues are sitting at 0:00."
             color: Theme.textMuted
         }
+    }
+
+    // The scan reads every catalog on the stick, off the UI thread, and on
+    // a full stick that takes a while: say so over the whole content
+    // area, the way Duplicates and Library Health do, rather than with a
+    // spinner in the corner of the header. The header stays live, so the
+    // breadcrumb still leaves (see the controller's destructor for what
+    // becomes of the scan then).
+    BusyOverlay {
+        objectName: "junkCueBusyOverlay"
+        anchors.fill: parent
+        busy: consistencyController.busy
+        current: consistencyController.scanCurrent
+        total: consistencyController.scanTotal
+        unitName: "tracks"
+        label: consistencyController.scanningFormat.length > 0
+            ? "Looking for stray cues in " + root.formatLabel(consistencyController.scanningFormat) + "..."
+            : "Looking for stray cues..."
+        cancellable: consistencyController.scanCancellable
+        onCancelRequested: consistencyController.cancelScan()
     }
 }

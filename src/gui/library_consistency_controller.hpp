@@ -342,6 +342,9 @@ class LibraryConsistencyController : public QObject
 
 public:
     explicit LibraryConsistencyController(QObject *parent = nullptr);
+    // Stops a scan still running: its page is gone, so nothing is left to
+    // show the result on. See the definition for why it does not wait.
+    ~LibraryConsistencyController() override;
 
     LibraryConsistencyIssueListModel *issuesModel() { return &m_model; }
     JunkCueIssueListModel *junkCuesModel() { return &m_junkCueModel; }
