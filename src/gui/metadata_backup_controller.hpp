@@ -346,7 +346,9 @@ public:
     Q_INVOKABLE void loadMore();
     // Re-reads counts and the first page of the browse list.
     Q_INVOKABLE void refresh();
-    Q_INVOKABLE QVariantList cuesFor(qint64 trackId);
+    // An opened stored row's cues, read once: {cues, summary}, the list
+    // WaveformView draws and every cue on a line for the tooltip.
+    Q_INVOKABLE QVariantMap cueDetailFor(qint64 trackId);
     Q_INVOKABLE QStringList playlistsFor(qint64 trackId);
     // Where the waveform of the stick track on proposal row `row` can be
     // read: {format, libraryPath, sourceId} for
@@ -355,8 +357,9 @@ public:
     // only a stick's analysis can supply one. Called by a row when it is
     // opened, never for the whole list.
     Q_INVOKABLE QVariantMap waveformSourceAt(int row) const;
-    // Every cue on one line each, for the hover tooltip on a browse
-    // row's cue badge. Called on hover rather than per row: the browse
+    // Every cue on one line each, for the hover tooltip on a closed
+    // browse row's cue badge (an open one has cueDetailFor's). Called on
+    // hover rather than per row: the browse
     // list is paged precisely so that showing twenty rows costs twenty
     // rows, and fetching every cue of every row to fill tooltips nobody
     // opens would undo that.

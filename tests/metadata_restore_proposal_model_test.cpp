@@ -242,6 +242,10 @@ int main(int argc, char **argv)
         assert(cues[0].toMap()[QStringLiteral("positionMs")].toDouble() == 64'000.0);
         assert(cues[0].toMap()[QStringLiteral("kind")].toString() == QStringLiteral("hot"));
         assert(cues[0].toMap()[QStringLiteral("hotCueNumber")].toInt() == 3);
+        // The same map every metadata list hands out, the store's own
+        // browse list included, and that one always carried the position
+        // as text too.
+        assert(cues[0].toMap()[QStringLiteral("positionText")].toString() == QStringLiteral("1:04"));
         assert(model.data(model.index(0), RestoreProposalListModel::DurationMsRole).toDouble() == 200'000.0);
         assert(model.data(model.index(1), RestoreProposalListModel::CuesRole).toList().size() == 2
                && "cues not on offer: the track keeps its own, so those are what it shows");

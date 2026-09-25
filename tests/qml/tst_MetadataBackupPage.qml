@@ -454,6 +454,13 @@ TestCase {
         compare(waveform.missingText, "Waveform not part of backup");
         compare(waveform.cueData.length, row.cueCount, "every stored cue, from the store");
         verify(waveform.trackDurationMs > 0, "placed against the stored length");
+        // The open row's tooltip comes from the same read as its cues: a
+        // line per cue, at the position the cue map carries as text.
+        verify(row.cueCount > 0, "the harness seeds a stored cue");
+        compare(row.cueTooltip, row.openCues.summary);
+        compare(row.cueTooltip.split("\n").length, row.cueCount);
+        verify(row.cueTooltip.indexOf(" at " + waveform.cueData[0].positionText) > 0,
+               "first cue's line: " + row.cueTooltip);
         if (screenshotDir) {
             waitForRendering(page);
             grabImage(page).save(screenshotDir + "/MetadataBackupPage-stored-open.png");
