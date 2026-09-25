@@ -33,6 +33,10 @@ constexpr qint64 DaySeconds = 24 * 60 * 60;
 
 const auto AutomaticKey = QStringLiteral("updates/automatic");
 const auto LastCheckedKey = QStringLiteral("updates/lastChecked");
+// Whether alphas and betas count here, and whether the checkbox for
+// that is shown. See UpdateChecker::includeTesting.
+const auto IncludeTestingKey = QStringLiteral("updates/includeTesting");
+const auto TestingRevealedKey = QStringLiteral("updates/testingOptionRevealed");
 }  // namespace
 
 UpdateChecker::UpdateChecker(QObject *parent)
@@ -42,6 +46,18 @@ UpdateChecker::UpdateChecker(QObject *parent)
     QSettings settings = openSeabassSettings();
     m_automatic = settings.value(AutomaticKey, false).toBool();
     m_lastChecked = settings.value(LastCheckedKey).toDateTime();
+    m_includeTesting = settings.value(IncludeTestingKey, false).toBool();
+    m_testingOptionRevealed = settings.value(TestingRevealedKey, false).toBool();
+    if (runningPreRelease() && !(m_includeTesting && m_testingOptionRevealed)) {
+        // Running a pre-release is what opts a machine into hearing
+        // about them, and the choice outlives this build: written now,
+        // so that the stable release this one turns into still offers
+        // the next alpha, with the checkbox there to say no.
+        m_includeTesting = true;
+        m_testingOptionRevealed = true;
+        settings.setValue(IncludeTestingKey, true);
+        settings.setValue(TestingRevealedKey, true);
+    }
 
     m_daily.setInterval(DaySeconds * 1000);
     m_daily.setSingleShot(false);
@@ -71,6 +87,56 @@ QString UpdateChecker::currentCommit() const
 QString UpdateChecker::downloadPage() const
 {
     return DownloadPage;
+}
+
+bool UpdateChecker::runningPreRelease() const
+{
+    return isPreReleaseChannel(currentChannel());
+}
+
+void UpdateChecker::setIncludeTesting(bool on)
+{
+    if (runningPreRelease()) {
+        // A beta build follows every channel whatever the box says; the
+        // Settings page shows the box ticked and disabled for it.
+        on = true;
+    }
+    // Turning it off leaves the checkbox where it is: once found, the
+    // option stays in view.
+    rememberTesting(on, m_testingOptionRevealed || on);
+}
+
+bool UpdateChecker::versionTapped()
+{
+    if (!m_versionTaps.tap(QDateTime::currentMSecsSinceEpoch())) {
+        return false;
+    }
+    rememberTesting(true, true);
+    return true;
+}
+
+void UpdateChecker::forgetTestingChoice()
+{
+    rememberTesting(runningPreRelease(), runningPreRelease());
+}
+
+void UpdateChecker::rememberTesting(bool include, bool revealed)
+{
+    if (m_includeTesting == include && m_testingOptionRevealed == revealed) {
+        return;
+    }
+    const bool policyChanged = m_includeTesting != include;
+    m_includeTesting = include;
+    m_testingOptionRevealed = revealed;
+    QSettings settings = openSeabassSettings();
+    settings.setValue(IncludeTestingKey, include);
+    settings.setValue(TestingRevealedKey, revealed);
+    Q_EMIT includeTestingChanged();
+    if (policyChanged && m_haveFeed) {
+        // The releases are known already; only which of them count
+        // changed. Say so without another request.
+        decide();
+    }
 }
 
 void UpdateChecker::setAutomatic(bool on)
@@ -192,11 +258,18 @@ void UpdateChecker::applyFeed(const QByteArray &body)
     QSettings settings = openSeabassSettings();
     settings.setValue(LastCheckedKey, m_lastChecked);
 
-    const auto running = findRunning(currentVersion(), currentChannel(), releases);
+    m_releases = releases;
+    m_haveFeed = true;
+    decide();
+}
+
+void UpdateChecker::decide()
+{
+    const auto running = findRunning(currentVersion(), currentChannel(), m_releases);
     m_runningWithdrawn = running && running->withdrawn;
     m_runningWithdrawnReason = m_runningWithdrawn ? running->withdrawnReason : QString();
 
-    const auto update = chooseUpdate(currentVersion(), currentChannel(), releases);
+    const auto update = chooseUpdate(currentVersion(), currentChannel(), m_releases, m_includeTesting);
     if (update) {
         m_latest = *update;
         setState(QStringLiteral("updateAvailable"));
@@ -229,7 +302,11 @@ QString UpdateChecker::message() const
     }
     if (m_state == QLatin1String("updateAvailable")) {
         QString text = QStringLiteral("Seabass %1 (%2) is available. You have %3.")
-                           .arg(m_latest.version, m_latest.channel, currentVersion());
+                           // What the package calls itself (alpha, beta,
+                           // stable), which is what the user will see in
+                           // its Settings, not the website list it is on.
+                           .arg(m_latest.version, m_latest.build.isEmpty() ? m_latest.channel : m_latest.build,
+                                currentVersion());
         if (m_runningWithdrawn) {
             text += QStringLiteral(" Your version has been withdrawn: %1").arg(m_runningWithdrawnReason);
         } else if (!m_latest.note.isEmpty()) {
@@ -242,8 +319,10 @@ QString UpdateChecker::message() const
             .arg(m_runningWithdrawnReason);
     }
     if (m_state == QLatin1String("upToDate")) {
-        return QStringLiteral("Seabass %1 is the newest release on the %2 channel.")
-            .arg(currentVersion(), currentChannel());
+        if (currentChannel() == QLatin1String("stable") && !m_includeTesting) {
+            return QStringLiteral("Seabass %1 is the newest stable release.").arg(currentVersion());
+        }
+        return QStringLiteral("Seabass %1 is the newest release on any channel.").arg(currentVersion());
     }
     if (m_lastChecked.isValid()) {
         return QStringLiteral("Last checked %1.").arg(m_lastChecked.toLocalTime().toString(QStringLiteral("d MMM, HH:mm")));

@@ -58,6 +58,14 @@ offered stable releases only. An alpha or a beta follows both lists, and
 within testing the version number decides, because the numbers only ever
 go up.
 
+Running an alpha or a beta is remembered on that machine (the
+`updates/includeTesting` setting), so somebody who tried a beta and moved
+to the stable it became is still offered the next test build; somebody
+who has only ever run stable releases stays on stable. Preferences shows
+a checkbox for it only once it has been on: running a test build does
+that, and so does the hidden way in, ten taps on the version line in
+Preferences within five seconds.
+
 The packages are served from
 `downloads/<testing|stable>/<linux|mac|windows>/`, one directory per
 platform. The version is in the filename, so the directory does not

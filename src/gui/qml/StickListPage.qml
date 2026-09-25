@@ -317,48 +317,6 @@ Page {
             }
             Item { Layout.fillWidth: true }
 
-            // The one thing worth interrupting the first screen for: a
-            // newer Seabass, or -- louder -- word that the build being
-            // used has been withdrawn. Nothing at all in the ordinary
-            // case, which is most of the time: the check is off until
-            // somebody turns it on, and says nothing when there is
-            // nothing to say.
-            Control {
-                id: updateBadgeControl
-                objectName: "updateBadge"
-                visible: root.updateChecker !== null
-                    && (root.updateChecker.updateAvailable || root.updateChecker.runningWithdrawn)
-                padding: Theme.scaled(6)
-                leftPadding: Theme.scaled(12)
-                rightPadding: Theme.scaled(12)
-                readonly property bool alarming: root.updateChecker !== null
-                    && root.updateChecker.runningWithdrawn
-                background: Rectangle {
-                    radius: height / 2
-                    color: updateBadgeControl.alarming
-                        ? Theme.dangerBg
-                        : Qt.rgba(Theme.good.r, Theme.good.g, Theme.good.b, 0.16)
-                    border.width: 1
-                    border.color: updateBadgeControl.alarming ? Theme.dangerBorder : Theme.good
-                }
-                contentItem: Label {
-                    objectName: "updateBadgeLabel"
-                    text: updateBadgeControl.alarming
-                        ? "This version was withdrawn"
-                        : "New version available"
-                    color: updateBadgeControl.alarming ? Theme.danger : Theme.good
-                    font.weight: Font.DemiBold
-                    font.pointSize: Theme.fontSmall
-                }
-                HoverHandler { cursorShape: Qt.PointingHandCursor }
-                TapHandler {
-                    onTapped: Qt.openUrlExternally(root.updateChecker.downloadPage)
-                }
-                ToolTip.visible: updateBadgeControl.hovered
-                ToolTip.text: root.updateChecker === null ? ""
-                    : root.updateChecker.message + " Opens the download page."
-            }
-
             // What opens a library from this computer rather than from a
             // stick, behind one button: each is used now and then, and as
             // two header buttons plus a row under the list they crowded a
@@ -503,6 +461,90 @@ Page {
             }
         }
 
+        // Word of a newer Seabass, under the title and above everything
+        // else on the page, because it is worth putting there and the
+        // rest of the time it takes no room at all. Louder, in the danger
+        // colours, when the build being used has been withdrawn. The
+        // check is off until somebody turns it on (gui/update_checker.hpp),
+        // so most people never see this.
+        Rectangle {
+            id: updateBanner
+            objectName: "updateBanner"
+            readonly property bool alarming: root.updateChecker !== null
+                && root.updateChecker.runningWithdrawn
+            readonly property bool newer: root.updateChecker !== null
+                && root.updateChecker.updateAvailable
+            visible: alarming || newer
+            Layout.fillWidth: true
+            implicitHeight: visible ? bannerColumn.implicitHeight + 2 * Theme.cardPadding : 0
+            radius: 4
+            // Opaque, and from the Theme's own surface: the text inside is
+            // Theme ink, and a see-through tint would put it on whatever
+            // ground the style paints, where it can vanish.
+            color: alarming ? Theme.dangerBg
+                            : Qt.tint(Theme.surface, Qt.rgba(Theme.good.r, Theme.good.g, Theme.good.b, 0.14))
+            border.width: 1
+            border.color: alarming ? Theme.dangerBorder : Theme.good
+
+            readonly property string linkText:
+                "<a href=\"" + (root.updateChecker !== null ? root.updateChecker.downloadPage : "") + "\">vizzzion.org/seabass</a>"
+
+            ColumnLayout {
+                id: bannerColumn
+                anchors.fill: parent
+                anchors.margins: Theme.cardPadding
+                spacing: Theme.tightSpacing
+
+                Label {
+                    objectName: "updateBannerTitle"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    font.weight: Theme.cardTitleWeight
+                    font.pointSize: Theme.cardTitleSize
+                    color: updateBanner.alarming ? Theme.dangerText : Theme.text
+                    text: root.updateChecker === null ? ""
+                        : updateBanner.alarming
+                            ? "Seabass " + root.updateChecker.currentVersion + " has been withdrawn."
+                            : "Seabass " + root.updateChecker.latestVersion + " has been released!"
+                }
+                // What the website wants said about it: the reason a build
+                // was withdrawn, or a note on the new one ("fixes a bug that
+                // could lose cues"). Nothing at all when there is none. Plain
+                // text, deliberately: it is the website's text, and a Label's
+                // default guesses at markup, so a note with an angle bracket
+                // in it could format the home page.
+                Label {
+                    objectName: "updateBannerNote"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    textFormat: Text.PlainText
+                    visible: text.length > 0
+                    color: updateBanner.alarming ? Theme.dangerText
+                        : root.updateChecker !== null && root.updateChecker.latestNoteLevel === "warning"
+                            ? Theme.conflictText : Theme.text
+                    text: root.updateChecker === null ? ""
+                        : updateBanner.alarming ? root.updateChecker.runningWithdrawnReason
+                        : root.updateChecker.latestNote
+                }
+                Label {
+                    id: updateBannerLink
+                    objectName: "updateBannerLink"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    textFormat: Text.StyledText
+                    linkColor: Theme.accent
+                    color: updateBanner.alarming ? Theme.dangerText : Theme.text
+                    text: root.updateChecker === null ? ""
+                        : updateBanner.newer
+                            ? "Download the new version from " + updateBanner.linkText + "."
+                            : "There is no newer release yet. Watch " + updateBanner.linkText + "."
+                    onLinkActivated: link => Qt.openUrlExternally(link)
+                    HoverHandler {
+                        cursorShape: updateBannerLink.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    }
+                }
+            }
+        }
         Label {
             visible: root.mediaController.errorMessage.length > 0
             text: root.mediaController.errorMessage

@@ -210,4 +210,109 @@ TestCase {
         wait(100);
         grabImage(page).save(screenshotDir + "/AppSettingsPage-bottom.png");
     }
+
+    // What the Updates section reads and writes on the real UpdateChecker.
+    function fakeUpdateChecker(overrides) {
+        const c = {
+            automatic: false, includeTesting: false, testingOptionRevealed: false, runningPreRelease: false,
+            state: "idle", message: "Not checked yet.", updateAvailable: false, runningWithdrawn: false,
+            latestVersion: "", latestChannel: "", latestNote: "", latestNoteLevel: "",
+            currentVersion: "0.8.0", currentChannel: "stable", currentCommit: "",
+            downloadPage: "https://vizzzion.org/seabass/get-it.html",
+            calls: [], checkNow: function() { this.calls.push("checkNow"); },
+        };
+        for (const key in (overrides || {})) {
+            c[key] = overrides[key];
+        }
+        return c;
+    }
+
+    function test_the_result_is_said_where_the_check_is_switched_on() {
+        const checker = fakeUpdateChecker({updateAvailable: true, state: "updateAvailable", latestVersion: "0.8.1",
+                                           latestChannel: "stable",
+                                           message: "Seabass 0.8.1 (stable) is available. You have 0.8.0."});
+        const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700, updateChecker: checker});
+        const result = findChild(page, "updateCheckResult");
+        verify(result.visible);
+        compare(result.text, "Seabass 0.8.1 (stable) is available. You have 0.8.0.");
+        verify(Qt.colorEqual(result.color, Theme.good), "good news in the good colour");
+        const box = findChild(page, "automaticUpdateCheck");
+        // The same section: the result sits under the box that enables it.
+        const boxPos = box.mapToItem(page, 0, 0);
+        const resultPos = result.mapToItem(page, 0, 0);
+        verify(resultPos.y > boxPos.y, "the result follows the checkbox");
+        findChild(page, "checkForUpdatesNow").clicked();
+        // Through the page: it holds its own reference to the object.
+        compare(page.updateChecker.calls.indexOf("checkNow") >= 0, true);
+    }
+
+
+    // The real checker, for the reason the settings controller above is
+    // real: the tap sequence and what it reveals live in it, and the
+    // settings it writes go to the redirected XDG_CONFIG_HOME.
+    Component {
+        id: checkerComponent
+        UpdateChecker {}
+    }
+
+    function test_ten_quick_taps_on_the_version_line_reveal_the_testing_checkbox() {
+        const checker = createTemporaryObject(checkerComponent, testCase);
+        // Whatever an earlier run left in the settings: a fresh stable
+        // install has never seen the option.
+        checker.forgetTestingChoice();
+        verify(!checker.includeTesting);
+        verify(!checker.testingOptionRevealed);
+        const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700, updateChecker: checker});
+        const box = findChild(page, "includeTestingUpdates");
+        const dialog = findChild(page, "testingRevealedDialog");
+        const version = findChild(page, "currentVersionLabel");
+        verify(box !== null && dialog !== null && version !== null);
+        verify(!box.visible, "nothing on the page says alphas and betas exist");
+        verify(version.text.indexOf("Seabass ") === 0, "the version line reads: " + version.text);
+        // The Updates section is below the fold at this height; bring the
+        // line into view, or the taps land outside the window.
+        const scroll = findChild(page, "settingsScroll");
+        scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height,
+                                               version.mapToItem(scroll.contentItem, 0, 0).y - 100));
+        wait(50);
+        const inWindow = version.mapToItem(testCase, 0, version.height / 2);
+        verify(inWindow.y > 0 && inWindow.y < testCase.height, "the version line is on screen at y " + inWindow.y);
+
+        for (let i = 0; i < 9; ++i) {
+            mouseClick(version, 10, version.height / 2);
+        }
+        verify(!box.visible, "nine taps are not ten");
+        verify(!dialog.visible);
+        mouseClick(version, 10, version.height / 2);
+        tryVerify(() => dialog.visible, 1000, "the tenth tap says what happened");
+        verify(checker.includeTesting, "and switched testing on");
+        verify(box.visible, "and the checkbox is there now");
+        verify(box.checked);
+        verify(box.enabled, "a stable (or dev) build gets to switch it off");
+        dialog.close();
+        tryVerify(() => !dialog.visible && !dialog.opened, 2000, "the popup goes away");
+
+        // Off again through the box, which stays where it is. A real
+        // click: toggle() from script never emits toggled.
+        mouseClick(box);
+        tryVerify(() => !checker.includeTesting, 1000, "unticking turns it off");
+        verify(box.visible, "once found, the option stays in view");
+        verify(checker.testingOptionRevealed);
+        // Ticking works too, and the popup is for the discovery only.
+        mouseClick(box);
+        tryVerify(() => checker.includeTesting, 1000, "ticking turns it back on");
+        verify(!dialog.visible);
+        checker.forgetTestingChoice();
+    }
+
+    function test_the_version_line_is_not_advertised_as_a_switch() {
+        const checker = createTemporaryObject(checkerComponent, testCase);
+        checker.forgetTestingChoice();
+        const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700, updateChecker: checker});
+        const version = findChild(page, "currentVersionLabel");
+        // A plain label: no link, no button, nothing that invites a click.
+        compare(version.textFormat, Text.AutoText);
+        verify(version.text.indexOf("<a ") < 0);
+    }
+
 }

@@ -6,6 +6,7 @@
 
 #include <QString>
 #include <QVector>
+#include <QtGlobal>
 #include <optional>
 
 namespace seabass::gui
@@ -46,6 +47,10 @@ int compareVersions(const QString &left, const QString &right);
 // "dev", which is not published at all.
 QString feedChannelFor(const QString &buildChannel);
 
+// Whether a build channel is a pre-release one: alpha or beta, the two
+// published on the website's "testing" list.
+bool isPreReleaseChannel(const QString &buildChannel);
+
 // Which channels a build of this channel should be offered, steadiest
 // first. A stable build is offered stables only: moving to a test build
 // is not an update. A testing build is offered both, and within testing
@@ -53,7 +58,12 @@ QString feedChannelFor(const QString &buildChannel);
 // "dev" build -- anything not built from a release tag -- is offered
 // nothing, because it is not any published version and comparing it to
 // one is meaningless.
-QVector<QString> channelsFor(const QString &buildChannel);
+//
+// includeTesting widens a stable build's list to testing too. It is the
+// machine's memory of having run a pre-release (or of the hidden opt-in
+// in Settings), so a tester who moved to the stable their beta became is
+// still told about the next alpha. It changes nothing for other builds.
+QVector<QString> channelsFor(const QString &buildChannel, bool includeTesting = false);
 
 // The release this build should be told about, or nothing.
 //
@@ -62,7 +72,7 @@ QVector<QString> channelsFor(const QString &buildChannel);
 // whatever its number, and one nobody has smoke-tested is not offered
 // either.
 std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QString &currentChannel,
-                                        const QVector<ReleaseInfo> &releases);
+                                        const QVector<ReleaseInfo> &releases, bool includeTesting = false);
 
 // The running build's own entry, if the feed has one. Its purpose is the
 // withdrawn flag: a user running a release that was pulled for losing
@@ -72,5 +82,25 @@ std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QSt
 // smoke-test is exactly who needs to hear it was withdrawn.
 std::optional<ReleaseInfo> findRunning(const QString &currentVersion, const QString &currentChannel,
                                        const QVector<ReleaseInfo> &releases);
+
+// The hidden switch for hearing about test builds on a stable build: ten
+// taps on the version line within five seconds. Not in the user
+// interface anywhere, on purpose: it is for people who know, and once it
+// has been used the ordinary checkbox appears and stays. Pure arithmetic
+// on the timestamps it is handed, so a test can tap at any pace it likes.
+class TapSequence
+{
+public:
+    static constexpr int TapsNeeded = 10;
+    static constexpr qint64 WindowMs = 5000;
+
+    // Records a tap at nowMs. True on the tap that completes the
+    // sequence, which also starts over; taps older than the window are
+    // forgotten first, so a slow tapper never gets there.
+    bool tap(qint64 nowMs);
+
+private:
+    QVector<qint64> m_taps;
+};
 
 }  // namespace seabass::gui

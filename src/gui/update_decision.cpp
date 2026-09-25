@@ -4,6 +4,8 @@
 
 #include "gui/update_decision.hpp"
 
+#include <algorithm>
+
 namespace seabass::gui
 {
 
@@ -35,25 +37,31 @@ QString feedChannelFor(const QString &buildChannel)
     return {};
 }
 
-QVector<QString> channelsFor(const QString &buildChannel)
+bool isPreReleaseChannel(const QString &buildChannel)
+{
+    return feedChannelFor(buildChannel) == QLatin1String("testing");
+}
+
+QVector<QString> channelsFor(const QString &buildChannel, bool includeTesting)
 {
     const QString own = feedChannelFor(buildChannel);
     if (own.isEmpty()) {
         return {};
     }
-    if (own == QLatin1String("stable")) {
+    if (own == QLatin1String("stable") && !includeTesting) {
         return {QStringLiteral("stable")};
     }
     // A test build follows both: the newest stable is an update for it
     // just as much as the next alpha is, and which of the two is newer is
-    // the version number's business, not the channel's.
+    // the version number's business, not the channel's. So does a stable
+    // build on a machine that has asked for test builds.
     return {QStringLiteral("stable"), QStringLiteral("testing")};
 }
 
 std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QString &currentChannel,
-                                        const QVector<ReleaseInfo> &releases)
+                                        const QVector<ReleaseInfo> &releases, bool includeTesting)
 {
-    const QVector<QString> follow = channelsFor(currentChannel);
+    const QVector<QString> follow = channelsFor(currentChannel, includeTesting);
     if (follow.isEmpty()) {
         return std::nullopt;
     }
@@ -99,6 +107,19 @@ std::optional<ReleaseInfo> findRunning(const QString &currentVersion, const QStr
         }
     }
     return std::nullopt;
+}
+
+bool TapSequence::tap(qint64 nowMs)
+{
+    m_taps.erase(std::remove_if(m_taps.begin(), m_taps.end(),
+                                [nowMs](qint64 then) { return nowMs - then > WindowMs || then > nowMs; }),
+                 m_taps.end());
+    m_taps.append(nowMs);
+    if (m_taps.size() < TapsNeeded) {
+        return false;
+    }
+    m_taps.clear();
+    return true;
 }
 
 }  // namespace seabass::gui
