@@ -144,7 +144,7 @@ int main(int argc, char **argv)
     }
     const fs::path destination = destinationRoot / pathFromUtf8(setName + "-" + nowStamp());
     if (fs::exists(destination, ec)) {
-        std::cerr << destination << " already exists -- refusing to write into it\n";
+        std::cerr << destination << " already exists: refusing to write into it\n";
         return 1;
     }
 
@@ -198,7 +198,7 @@ int main(int argc, char **argv)
              << "THIS DATA IS NOT ANONYMIZED.\n"
              << "It holds real titles, artists, album names and file paths. Keep it on\n"
              << "this machine. Do not commit it, do not attach it to anything, and do\n"
-             << "not use it as the fixture that ships with the project -- that one is\n"
+             << "not use it as the fixture that ships with the project: that one is\n"
              << "produced by `seabass-cli anonymize` instead.\n\n"
              << "Audio and artwork were deliberately not copied: nothing under test\n"
              << "reads them and they are what makes a stick large.\n";

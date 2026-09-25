@@ -54,7 +54,7 @@ void exec(sqlite3 *db, const std::string &sql)
 {
     char *error = nullptr;
     if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &error) != SQLITE_OK) {
-        std::cerr << "sql failed: " << (error ? error : "?") << " -- " << sql << "\n";
+        std::cerr << "sql failed: " << (error ? error : "?") << " for " << sql << "\n";
         assert(false);
     }
 }
@@ -128,7 +128,7 @@ int main(int argc, char **argv)
                   << "of those, repairable:  " << audit.repairable() << "\n";
         for (size_t i = 0; i < audit.unreadable.size() && i < 3; ++i) {
             const ArtworkEntry &entry = audit.unreadable[i];
-            std::cout << "  e.g. id=" << entry.trackId << " " << entry.title << " -- " << entry.artist << "\n"
+            std::cout << "  e.g. id=" << entry.trackId << " " << entry.title << " by " << entry.artist << "\n"
                       << "       " << entry.reference << "\n"
                       << "       image here: " << (entry.imageOnStick.empty() ? "none" : entry.imageOnStick) << "\n";
         }

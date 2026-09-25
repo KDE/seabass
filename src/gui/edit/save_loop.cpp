@@ -189,7 +189,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             // back: a file removed from Engine but still listed by rekordbox
             // is the one state a DJ cannot repair from the page.
             if (auto undoError = ctx.rollBackChange()) {
-                result.error += QStringLiteral(" -- and putting back what it had already written failed (%1); "
+                result.error += QStringLiteral(", and putting back what it had already written failed (%1); "
                                                "restore this save's backup")
                                     .arg(*undoError);
             } else if (result.appliedIds.isEmpty()) {

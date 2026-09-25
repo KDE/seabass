@@ -225,7 +225,7 @@ int main(int argc, char **argv)
                   << (before.archiveExists ? "exists" : "new") << "; added " << before.added << ", changed " << before.changed
                   << ", removed " << before.removed << ", unchanged " << before.unchanged << ", database "
                   << (before.databaseChanged ? "changed" : "unchanged") << ", " << before.bytesToRead << " bytes to read; "
-                  << gib(before.freeBytesAtDestination) << " free" << (before.enoughFreeSpace ? "" : " -- NOT ENOUGH") << ", "
+                  << gib(before.freeBytesAtDestination) << " free" << (before.enoughFreeSpace ? "" : " (NOT ENOUGH)") << ", "
                   << before.skipped.size() << " skipped\n";
         for (const std::string &skipped : before.skipped) {
             std::cout << "  skipped " << skipped << "\n";

@@ -27,7 +27,7 @@ FilesystemCompatibilityInfo FilesystemCompatibility::lookup(const std::string &f
         return {
             "FAT32",
             "4 GiB minus 1 byte per file",
-            "The most universally supported filesystem across CDJ/XDJ/Engine OS hardware -- this is what "
+            "The most universally supported filesystem across CDJ/XDJ/Engine OS hardware: this is what "
             "Rekordbox and Engine DJ both format a new USB device library to by default. Its one real "
             "practical limitation is the per-file size cap: a single long, lossless (WAV/AIFF/FLAC) file or "
             "a long recorded mix can exceed 4 GiB and simply won't copy. Splitting long files or using a "
@@ -41,7 +41,7 @@ FilesystemCompatibilityInfo FilesystemCompatibility::lookup(const std::string &f
             "16 EiB (no practical limit)",
             "No meaningful file-size limit, so it avoids FAT32's 4 GiB cap. Supported by most current-generation "
             "Pioneer/Denon hardware, but older units and firmware versions have had inconsistent or missing exFAT "
-            "support -- check your specific player's manual/firmware notes before relying on it for a gig, "
+            "support. Check your specific player's manual/firmware notes before relying on it for a gig, "
             "especially on older CDJ/XDJ models.",
             true,
         };
@@ -61,7 +61,7 @@ FilesystemCompatibilityInfo FilesystemCompatibility::lookup(const std::string &f
         return {
             fs == "apfs" ? "APFS" : "HFS+",
             "16 EiB (no practical limit)",
-            "A macOS-native filesystem. Not supported for direct playback by CDJ/XDJ hardware -- Rekordbox and "
+            "A macOS-native filesystem. Not supported for direct playback by CDJ/XDJ hardware: Rekordbox and "
             "Engine DJ both format device libraries to FAT32/exFAT specifically so players can read them.",
             false,
         };

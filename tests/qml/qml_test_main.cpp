@@ -668,7 +668,7 @@ void seedMetadataStoreForTests()
         // tst_StickListPage's home-backup probes would then be reading.
         static QTemporaryDir sandbox;
         if (!sandbox.isValid()) {
-            qCritical("seabass_qml_tests: could not create a settings sandbox (%s) -- refusing "
+            qCritical("seabass_qml_tests: could not create a settings sandbox (%s), refusing "
                       "to run rather than fall back to the real store.",
                       qPrintable(sandbox.errorString()));
             std::abort();
@@ -707,7 +707,7 @@ void seedMetadataStoreForTests()
             if (probe.fileName().startsWith(realConfigRoot)
                 || !probe.fileName().startsWith(sandbox.path())) {
                 qCritical("seabass_qml_tests: settings would be written to %s, outside the "
-                          "sandbox at %s -- refusing to run rather than touch the real store.",
+                          "sandbox at %s, refusing to run rather than touch the real store.",
                           qPrintable(probe.fileName()), qPrintable(sandbox.path()));
                 std::abort();
             }

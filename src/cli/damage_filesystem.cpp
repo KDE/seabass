@@ -233,7 +233,7 @@ int runDamageFilesystemCommand(const std::string &deviceArg, bool confirmedOnCom
     }
     Console::info("");
     Console::info("This clears the clean-unmount bit and wrongs the free-cluster summary. It does NOT");
-    Console::info("touch directory entries or file data, and fsck.fat can put both right -- that repair");
+    Console::info("touch directory entries or file data, and fsck.fat can put both right: that repair");
     Console::info("is the thing under test. Even so, do not do this to a stick whose contents you want.");
     Console::info("");
 

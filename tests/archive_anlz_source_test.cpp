@@ -147,7 +147,7 @@ int main(int argc, char **argv)
                 return 1;
             }
         }
-        std::cout << "case " << (deflated ? "2 (deflated" : "1 (stored") << " archive) OK -- " << totalCues
+        std::cout << "case " << (deflated ? "2 (deflated" : "1 (stored") << " archive) OK: " << totalCues
                   << " cues identical, nothing extracted\n";
 
         // Nothing was written next to the archive: the whole point is

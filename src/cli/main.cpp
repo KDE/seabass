@@ -87,7 +87,7 @@ constexpr size_t DefaultNeedsCuesLimit = 20;
 
 void printUsage()
 {
-    Console::heading("Seabass -- sync rekordbox and Denon Engine DJ libraries");
+    Console::heading("Seabass: sync rekordbox and Denon Engine DJ libraries");
     Console::info("");
     Console::info("Seabass reads DJ track libraries off USB sticks prepared by rekordbox or");
     Console::info("Engine DJ (the format Denon's Prime-series gear uses), so cue points can");
@@ -117,8 +117,8 @@ void printUsage()
     Console::info("  sync     Matches tracks between one rekordbox source and one Engine source by");
     Console::info("           filename and duration, and syncs their cues (see \"Sync\" below).");
     Console::info("           Two phases, always: first it analyzes both libraries and prints the");
-    Console::info("           full proposal -- what would move where, and what can't be applied");
-    Console::info("           yet -- without touching anything; only then does it ask you to");
+    Console::info("           full proposal (what would move where, and what can't be applied");
+    Console::info("           yet) without touching anything; only then does it ask you to");
     Console::info("           confirm (unless --auto or --dry-run) before writing anything.");
     Console::info("  backups  Lists the backups seabass-cli has made on a stick (see \"Backups\"");
     Console::info("           below). With --clean, deletes the oldest ones so at most --keep");
@@ -136,7 +136,7 @@ void printUsage()
     Console::info("           names are replaced with placeholders, artwork and detailed color");
     Console::info("           waveform data are dropped, everything else (BPM/key/cues/ratings/");
     Console::info("           play counts/playlist structure) is kept as-is. Never sends anything");
-    Console::info("           anywhere -- only ever writes to DIR. Useful for building a realistic,");
+    Console::info("           anywhere, only ever writes to DIR. Useful for building a realistic,");
     Console::info("           privacy-safe test dataset, whether for this project's own test suite");
     Console::info("           or to send to its maintainer (see the notice this command prints).");
     Console::info("");
@@ -151,17 +151,17 @@ void printUsage()
     Console::info("                      stick is auto-detected.");
     Console::info("  --auto              Skip the confirmation prompt (scan: for consolidating an");
     Console::info("                      unambiguous duplicate group; sync: for applying the");
-    Console::info("                      analyzed plan). Never changes *what* gets decided --");
+    Console::info("                      analyzed plan). Never changes *what* gets decided:");
     Console::info("                      conflicts are still resolved the same way, and anything");
     Console::info("                      unwritable is still only reported, never guessed at.");
     Console::info("  --dry-run           sync only: run the analysis and print the full proposal,");
-    Console::info("                      then stop -- never prompts, never writes.");
+    Console::info("                      then stop: never prompts, never writes.");
     Console::info("  --force             Write even while a Seabass window on this machine is");
     Console::info("                      editing the same library (its unsaved changes may then");
     Console::info("                      overwrite yours, or yours theirs). Off by default.");
     Console::info("  --track NAME        Show only tracks whose title, artist, or filename");
     Console::info("                      fuzzy-matches NAME (typo-tolerant, case-insensitive).");
-    Console::info("                      Shows every match, including ones with no cues yet --");
+    Console::info("                      Shows every match, including ones with no cues yet,");
     Console::info("                      unlike the default report, which only samples tracks");
     Console::info("                      that already have cues.");
     Console::info("  --needs-cues [N]    List cue-less tracks worth setting cues on, most");
@@ -188,7 +188,7 @@ void printUsage()
     Console::info("                      otherwise dropped");
     Console::info("                      and MANIFEST.txt. Required.");
     Console::info("  --slim              anonymize only: the three catalogs and the cues, without");
-    Console::info("                      the binary bulk -- unreferenced analysis files, Engine's");
+    Console::info("                      the binary bulk: unreferenced analysis files, Engine's");
     Console::info("                      waveform blobs and .rgb previews all go. For building a");
     Console::info("                      test fixture; leave off for a library you are submitting.");
     Console::info("  --hardware TEXT     anonymize only: what hardware you use, saved into");
@@ -197,13 +197,13 @@ void printUsage()
     Console::info("                      MANIFEST.txt verbatim. Optional.");
     Console::info("  --verbose           Print extra detail (resolved paths, per-item");
     Console::info("                      diagnostics). Default output is already");
-    Console::info("                      informational, not silent -- this adds more on top.");
+    Console::info("                      informational, not silent. This adds more on top.");
     Console::info("  --help, -h          Show this help and exit.");
     Console::info("");
     Console::heading("Auto-detection");
     Console::info("  Run \"seabass-cli scan\" with no --rekordbox/--engine PATH to auto-detect");
     Console::info("  inserted USB stick(s). A single stick often carries both a \"PIONEER\" folder");
-    Console::info("  and an \"Engine Library\" folder side by side -- if so, both are scanned and");
+    Console::info("  and an \"Engine Library\" folder side by side. If so, both are scanned and");
     Console::info("  reported. Scanning is read-only, so if more than one stick is mounted, ALL of");
     Console::info("  them get scanned (each report labeled with the stick it came from); pass");
     Console::info("  --rekordbox/--engine with a PATH to scan just one specific stick instead.");
@@ -213,46 +213,46 @@ void printUsage()
     Console::heading("Duplicate-track cue consolidation");
     Console::info("  A stick can hold the same track more than once (re-imports, duplicate");
     Console::info("  rows). If exactly one copy has hot cues and the others have none, Seabass");
-    Console::info("  offers to copy those cues onto the cue-less copies -- this runs as the last");
+    Console::info("  offers to copy those cues onto the cue-less copies. This runs as the last");
     Console::info("  step of a scan, after all reporting is done, for both rekordbox and Engine.");
     Console::info("  If copies have cues that actually *differ*, that's reported as a conflict and");
-    Console::info("  never touched -- you decide by hand which copy is right.");
+    Console::info("  never touched: you decide by hand which copy is right.");
     Console::info("");
     Console::heading("Sync");
     Console::info("  Matches tracks between a rekordbox source and an Engine source by filename +");
     Console::info("  duration, then for each matched pair: if only one side has cues, they'd move");
     Console::info("  to the other side; if both have the *same* cues, nothing happens; if both");
     Console::info("  have *different* cues, that's a conflict, resolved by which side's underlying");
-    Console::info("  file was modified more recently (a heuristic, not a true edit timestamp --");
+    Console::info("  file was modified more recently (a heuristic, not a true edit timestamp,");
     Console::info("  documented as such, not treated as certain). Both directions can be written");
     Console::info("  now. Writing to rekordbox (rewriting the target track's ANLZ .EXT file) is the");
-    Console::info("  least-proven part of Seabass -- validated by round-tripping real files and");
+    Console::info("  least-proven part of Seabass: validated by round-tripping real files and");
     Console::info("  cross-checking with an independent reader, but not yet confirmed against real");
     Console::info("  rekordbox software or real CDJ/XDJ hardware. Verify on your own gear before");
     Console::info("  trusting it for a gig. The full proposal is always printed before anything is");
-    Console::info("  written -- --auto only skips the confirmation prompt afterwards, it never");
+    Console::info("  written: --auto only skips the confirmation prompt afterwards, it never");
     Console::info("  skips the analysis step.");
     Console::info("");
     Console::info("  On positions: the same cue rarely sits at the same millisecond in two");
     Console::info("  catalogs. rekordbox keeps a pad in more than one list of its own that can");
     Console::info("  disagree by half a second, and every cross-format conversion rounds, so two");
     Console::info("  cues within half a second are treated as the same cue rather than as a");
-    Console::info("  difference. Quantize on the player hides the small ones -- it snaps the");
-    Console::info("  moment a cue fires to the beat grid -- but it never changes what is stored,");
+    Console::info("  difference. Quantize on the player hides the small ones (it snaps the");
+    Console::info("  moment a cue fires to the beat grid), but it never changes what is stored,");
     Console::info("  and a cue further off than half a quantize step snaps to the next beat");
     Console::info("  instead of the one you meant.");
     Console::info("");
     Console::heading("Backups");
     Console::info("  Every write Seabass makes (duplicate-cue consolidation, sync) backs up the");
     Console::info("  file(s) it's about to touch first, under");
-    Console::info("  \"<stick root>/Seabass/backups/<timestamp>-<label>/\" -- shared across");
+    Console::info("  \"<stick root>/Seabass/backups/<timestamp>-<label>/\", shared across");
     Console::info("  rekordbox and Engine, since both live under the same stick root. Nothing");
     Console::info("  is ever deleted automatically; run \"seabass-cli backups --clean\" yourself to");
     Console::info("  prune old ones once they've accumulated (default: keep the " +
                    std::to_string(DefaultKeepBackups) + " most recent).");
     Console::info("  Every write is also appended to a plain-text log at");
     Console::info("  \"<stick root>/Seabass/seabass.log\" (what was copied, to/from which track id,");
-    Console::info("  and which backup covers it) -- kept forever, since it's just text.");
+    Console::info("  and which backup covers it), kept forever, since it's just text.");
     Console::info("");
     Console::heading("Examples");
     Console::info("  seabass-cli scan                              # auto-detect an inserted stick");
@@ -489,7 +489,7 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
 
         if (plan.kind == ConsolidationPlan::Kind::Conflict) {
             Console::warn("\"" + plan.group.tracks.front().filename +
-                           "\" has duplicate copies with different cues -- not touching them:");
+                           "\" has duplicate copies with different cues (not touching them):");
             for (const auto &t : plan.group.tracks) {
                 Console::info("  id=" + t.sourceId + "  cues=" + std::to_string(t.cues.size()));
             }
@@ -502,7 +502,7 @@ void handleDuplicates(const std::string &formatName, const std::vector<Track> &t
                        std::to_string(plan.targets.size()) + " other copy/copies.");
 
         if (!writer) {
-            Console::info("  " + formatName + " writing isn't supported yet -- cues not copied.");
+            Console::info("  " + formatName + " writing isn't supported yet: cues not copied.");
             continue;
         }
 
@@ -584,7 +584,7 @@ std::optional<std::string> resolvePath(const std::optional<std::string> &explici
         return std::nullopt;
     }
     if (candidates.size() > 1) {
-        Console::warn("multiple " + formatName + " USB sticks found -- specify one explicitly:");
+        Console::warn("multiple " + formatName + " USB sticks found. Specify one explicitly:");
         for (const auto *stick : candidates) {
             Console::info("  " + stick->label + "  (" + stick->mountPoint + ")");
         }
@@ -627,7 +627,7 @@ ResolvedLibraryPaths resolveLibraryPaths(bool &wantRekordbox, bool &wantEngine,
             return {.ok = false};
         }
         if (detected.size() > 1) {
-            Console::warn("multiple USB sticks found -- specify one explicitly with --rekordbox/--engine:");
+            Console::warn("multiple USB sticks found. Specify one explicitly with --rekordbox/--engine:");
             for (const auto &stick : detected) {
                 std::string formats = (stick.rekordboxPath ? "rekordbox" : "");
                 if (stick.enginePath) {
@@ -916,7 +916,7 @@ std::string describeCues(const std::vector<seabass::domain::CuePoint> &cues)
     }
     std::string result = std::to_string(hot) + " hot";
     if (memory > 0) {
-        result += ", " + std::to_string(memory) + " memory (not written -- Engine writer only handles hot cues)";
+        result += ", " + std::to_string(memory) + " memory (not written: Engine writer only handles hot cues)";
     }
     return result;
 }
@@ -940,7 +940,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         hasRekordbox && seabass::infrastructure::onelibrary::OneLibraryCueWriter::existsFor(*resolved.rekordboxPath);
 
     if (static_cast<int>(hasRekordbox) + static_cast<int>(hasEngine) + static_cast<int>(hasOneLibrary) < 2) {
-        Console::error("sync needs at least two catalogs -- found: " +
+        Console::error("sync needs at least two catalogs, found: " +
                         std::string(hasRekordbox ? "rekordbox" : "no rekordbox") + ", " +
                         std::string(hasEngine ? "engine" : "no engine") + ", " +
                         std::string(hasOneLibrary ? "onelibrary" : "no onelibrary"));
@@ -1031,7 +1031,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         // saying "already consistent" would imply this checked something.
         Console::info("");
         Console::info("rekordbox and OneLibrary are one library in two formats, kept in step whenever");
-        Console::info("Seabass writes either of them -- there is nothing for sync to reconcile between");
+        Console::info("Seabass writes either of them: there is nothing for sync to reconcile between");
         Console::info("them. Add an Engine library to have something to sync with.");
         return 0;
     }
@@ -1089,7 +1089,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
         // are not consistent -- they were just listed as disagreeing -- and a
         // last line saying otherwise is what a reader, or a script, keeps.
         if (hotCueChoices.empty()) {
-            Console::info("  nothing to sync -- matched tracks' cues are already consistent (or empty on both sides).");
+            Console::info("  nothing to sync: matched tracks' cues are already consistent (or empty on both sides).");
         } else {
             Console::info("  nothing else to sync. " + std::to_string(hotCueChoices.size())
                           + " track(s) above still disagree and need a choice in the app.");
@@ -1115,7 +1115,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
             Console::info("  \"" + targetOf(*plan)->filename + "\": " + describeCues(plan->cuesToApply) +
                            (conflict ? "  [differing cues merged; nothing overwritten]" : ""));
         }
-        Console::warn("rekordbox writing is the least-proven part of Seabass -- verify the result in rekordbox");
+        Console::warn("rekordbox writing is the least-proven part of Seabass: verify the result in rekordbox");
         Console::warn("and on real hardware before trusting it for a gig (see --help's Sync section).");
     }
 
@@ -1139,7 +1139,7 @@ int runSyncCommand(bool wantRekordbox, bool wantEngine, const std::optional<std:
     size_t totalChanges = toEngine.size() + toRekordbox.size() + toOneLibrary.size();
     bool apply = autoMode || Console::confirm("\nApply the " + std::to_string(totalChanges) + " change(s) above?");
     if (!apply) {
-        Console::info("skipped -- no changes made.");
+        Console::info("skipped: no changes made.");
         return 0;
     }
     if ((hasEngine && refuseIfLockedByGui(*resolved.enginePath, force))
@@ -1405,7 +1405,7 @@ int runExportXmlCommand(bool wantRekordbox, bool wantEngine, const std::optional
     }
     if (result.tracksStreaming > 0) {
         Console::info("  skipped:   " + std::to_string(result.tracksStreaming) +
-                       " streaming track(s) -- they have no local file");
+                       " streaming track(s): they have no local file");
     }
     if (result.tracksWithoutPath > 0) {
         Console::info("  skipped:   " + std::to_string(result.tracksWithoutPath) +

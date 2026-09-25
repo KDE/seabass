@@ -121,8 +121,8 @@ bool replaceArchive(const fs::path &tempPath, const fs::path &archivePath, std::
     // are looking at -- goes unsaid. Explorer's preview pane is real too,
     // so it stays in the sentence, second.
     error = "could not replace the archive: something still has it open. That is usually "
-            "Seabass itself -- a backup you are browsing, or a scan of it that has not "
-            "finished -- so close it here and try again. Windows Explorer's preview pane "
+            "Seabass itself (a backup you are browsing, or a scan of it that has not "
+            "finished), so close it here and try again. Windows Explorer's preview pane "
             "can hold it too.";
     return false;
 #else

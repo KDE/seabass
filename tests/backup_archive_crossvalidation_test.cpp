@@ -402,7 +402,7 @@ int main()
         assert(status == 0);
         std::cout << "case 3 (unzip -t) OK\n";
     } else {
-        std::cout << "case 3 (unzip -t) skipped -- unzip not found\n";
+        std::cout << "case 3 (unzip -t) skipped: unzip not found\n";
     }
 
     if (!sevenZip.empty()) {
@@ -413,7 +413,7 @@ int main()
         assert(status == 0);
         std::cout << "case 4 (7z t) OK\n";
     } else {
-        std::cout << "case 4 (7z t) skipped -- 7z not found\n";
+        std::cout << "case 4 (7z t) skipped: 7z not found\n";
     }
 
     fs::remove_all(root);

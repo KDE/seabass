@@ -100,7 +100,7 @@ void PosixArchiveFile::append(std::span<const std::byte> bytes)
     if (static_cast<std::uint64_t>(current.QuadPart) < m_size) {
         throw ArchiveIoError("archive " + seabass::pathToUtf8(m_path) + " shrank underneath us: expected at least "
                              + std::to_string(m_size) + " bytes, found " + std::to_string(current.QuadPart)
-                             + " -- something else wrote to it while a backup was running");
+                             + " (something else wrote to it while a backup was running)");
     }
     const char *p = reinterpret_cast<const char *>(bytes.data());
     std::size_t remaining = bytes.size();
@@ -233,7 +233,7 @@ void PosixArchiveFile::append(std::span<const std::byte> bytes)
     if (static_cast<std::uint64_t>(before.st_size) < m_size) {
         throw ArchiveIoError("archive " + seabass::pathToUtf8(m_path) + " shrank underneath us: expected at least "
                              + std::to_string(m_size) + " bytes, found " + std::to_string(before.st_size)
-                             + " -- something else wrote to it while a backup was running");
+                             + " (something else wrote to it while a backup was running)");
     }
     const char *p = reinterpret_cast<const char *>(bytes.data());
     std::size_t remaining = bytes.size();

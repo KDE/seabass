@@ -408,7 +408,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
     const fs::path sourceDir = pathFromUtf8(sourceRoot);
     const fs::path destinationDir = pathFromUtf8(destinationRoot);
     if (fs::exists(destinationDir, ec) && !fs::is_empty(destinationDir, ec)) {
-        result.errorMessage = destinationRoot + " already exists and isn't empty -- refusing to write into it";
+        result.errorMessage = destinationRoot + " already exists and isn't empty: refusing to write into it";
         return result;
     }
     fs::create_directories(destinationDir, ec);
@@ -871,8 +871,8 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         result.errorMessage = std::to_string(result.unremovedUnanonymizableFiles.size())
             + " file(s) that cannot be anonymized are still in the export and could not be removed: "
             + result.unremovedUnanonymizableFiles.front()
-            + (result.unremovedUnanonymizableFiles.size() > 1 ? ", ..." : "")
-            + " -- this export must not be shared.";
+            + (result.unremovedUnanonymizableFiles.size() > 1 ? " and others" : "")
+            + ". This export must not be shared.";
     }
     return result;
 }

@@ -64,7 +64,7 @@ int main()
     for (const Site &site : kSites) {
         const fs::path path = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / site.file;
         const std::string text = read(path);
-        assert(!text.empty() && "a listed source file is missing -- the list is out of date");
+        assert(!text.empty() && "a listed source file is missing: the list is out of date");
         const std::string marker = site.marker;
         std::size_t found = 0;
         for (std::size_t at = text.find(marker); at != std::string::npos; at = text.find(marker, at + 1)) {
@@ -75,14 +75,14 @@ int main()
             const std::string around = text.substr(from, (at - from) + 300);
             if (around.find("SleepInhibitor::hold") == std::string::npos) {
                 std::cerr << site.file << ": " << site.what
-                          << " starts without a SleepInhibitor hold -- the system could suspend mid-write\n";
+                          << " starts without a SleepInhibitor hold. The system could suspend mid-write\n";
                 ok = false;
             }
             ++checked;
         }
         if (found == 0) {
             std::cerr << site.file << ": no \"" << marker << "\" found for " << site.what
-                      << " -- the test's list is out of date\n";
+                      << " (the test's list is out of date)\n";
             ok = false;
         }
     }

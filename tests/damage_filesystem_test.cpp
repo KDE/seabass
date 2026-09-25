@@ -153,7 +153,7 @@ int main()
                 std::cerr << "byte " << at << " changed and is in none of the three bookkeeping fields\n";
             }
             assert((inFatEntry || inFreeCount || inNextFree)
-                   && "every changed byte is FAT[1] or an FSINFO counter -- never a directory entry or file data");
+                   && "every changed byte is FAT[1] or an FSINFO counter, never a directory entry or file data");
         }
 
         // The dirty bit specifically: bit 27 of FAT[1] cleared.
@@ -176,7 +176,7 @@ int main()
             const int repaired = std::system(("fsck.fat -a " + seabass::pathToUtf8(image) + " > /dev/null 2>&1").c_str());
             (void)repaired;
             const int clean = std::system(("fsck.fat -n " + seabass::pathToUtf8(image) + " > /dev/null 2>&1").c_str());
-            assert(clean == 0 && "and must be able to repair it -- that repair is the feature under test");
+            assert(clean == 0 && "and must be able to repair it: that repair is the feature under test");
             std::cout << "case 3 (fsck.fat reports it, then repairs it clean) OK\n";
         } else {
             std::cout << "  fsck.fat not present: the repairable-by-design claim was not checked here\n";

@@ -676,7 +676,7 @@ RestoreSummary RestoreStickBackup::execute(const RestoreOptions &options, Progre
     // real scale of it -- past the point of taking the target stick back.
     if (const std::size_t total = opened.reader->entries().size(); total > 0 && opened.unreadableEntries * 2 > total) {
         summary.message = std::to_string(opened.unreadableEntries) + " of " + std::to_string(total)
-                          + " entries in this backup have no readable data -- the archive appears to be damaged; nothing was restored";
+                          + " entries in this backup have no readable data: the archive appears to be damaged; nothing was restored";
         return summary;
     }
     std::error_code ec;

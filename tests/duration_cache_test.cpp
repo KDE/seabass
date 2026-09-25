@@ -54,7 +54,7 @@ int main()
     // Case 2: a file whose size changed is stale, never a hit -- a wrong
     // length here would feed duplicate detection.
     {
-        writeFile(root / "Contents" / "a" / "track.mp3", "not really audio, but a real file -- now longer");
+        writeFile(root / "Contents" / "a" / "track.mp3", "not really audio, but a real file, now longer");
         DurationCache reloaded(seabass::pathToUtf8(root));
         assert(!reloaded.lookup(audio).has_value());
         std::cout << "case 2 (size changed -> stale) OK\n";

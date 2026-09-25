@@ -145,7 +145,7 @@ int main(int argc, char **argv)
         assert(opened.otherEntriesSkipped >= 1);  // the audio file
         assert(fs::exists(cache / "PIONEER" / "rekordbox" / "export.pdb"));
         assert(!fs::exists(cache / "PIONEER" / "USBANLZ"));
-        std::cout << "case 2 (only catalogs extracted) OK -- " << opened.filesExtracted << " files, "
+        std::cout << "case 2 (only catalogs extracted) OK: " << opened.filesExtracted << " files, "
                   << opened.bytesExtracted / 1024 << " KiB, " << opened.analysisFilesLeftInArchive
                   << " analysis files left in the archive\n";
     }

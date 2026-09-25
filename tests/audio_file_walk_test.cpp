@@ -105,7 +105,7 @@ int main()
         fs::create_directory_symlink(outside, root / "Contents" / "linked-dir", ec);
         fs::create_symlink(outside / "elsewhere.mp3", root / "Contents" / "linked.mp3", ec);
         if (ec) {
-            std::cout << "case 4 (symlinks) SKIPPED -- cannot create symlinks here\n";
+            std::cout << "case 4 (symlinks) SKIPPED: cannot create symlinks here\n";
         } else {
             auto result = walkAudioFiles(seabass::pathToGenericUtf8(root / "Contents"), CancellationToken());
             assert(!found(result, root / "Contents" / "linked.mp3"));

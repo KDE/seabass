@@ -175,7 +175,7 @@ int main()
     std::cout << "unreferenced on disk: " << scan.filesFound << " files, "
               << double(scan.bytesFound) / 1e9 << " GB\n";
     std::cout << "  identified by their tags: " << scan.tracks.size() << ", unreadable: " << scan.unreadable << "\n";
-    std::cout << "  walk complete: " << (scan.walkIncomplete ? "NO -- part of the stick unreadable" : "yes") << "\n";
+    std::cout << "  walk complete: " << (scan.walkIncomplete ? "NO (part of the stick unreadable)" : "yes") << "\n";
     std::printf("  cold scan: %.1f s\n", coldSeconds);
     checkExpected("SEABASS_LIVE_EXPECT_FILES", static_cast<int>(scan.filesFound));
 

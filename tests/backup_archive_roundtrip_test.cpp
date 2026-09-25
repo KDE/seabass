@@ -350,7 +350,7 @@ int main()
         fs::remove_all(root);
         std::cout << "case 6 (> 4 GiB entry and > 4 GiB offsets via zip64 extra fields) OK\n";
     } else {
-        std::cout << "case 6 (> 4 GiB entry) skipped -- set SEABASS_LARGE_TESTS=1 to run\n";
+        std::cout << "case 6 (> 4 GiB entry) skipped: set SEABASS_LARGE_TESTS=1 to run\n";
     }
 
     std::cout << "all cases passed\n";

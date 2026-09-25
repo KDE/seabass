@@ -76,7 +76,7 @@ ChangeOutcome DeviceSettingChange::apply(SaveContext &ctx)
                                                                  m_optionName.toStdString());
     if (!ok) {
         return ChangeOutcome::failure("Could not save \"" + m_fieldLabel
-                                      + "\" -- the file wasn't in the expected format.");
+                                      + "\": the file wasn't in the expected format.");
     }
     ctx.log().record("device-settings: set \"" + m_fieldLabel.toStdString() + "\" to " + m_optionName.toStdString()
                      + " in " + m_fileName.toStdString());

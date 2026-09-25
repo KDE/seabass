@@ -196,7 +196,7 @@ bool looksLikeIndexedPlaceholder(const std::string &value, const std::string &ki
 std::string AnonymizationVerification::describe() const
 {
     std::ostringstream out;
-    out << (ok ? "Anonymization verified." : "ANONYMIZATION CHECK FAILED -- do not share this export.") << "\n";
+    out << (ok ? "Anonymization verified." : "ANONYMIZATION CHECK FAILED: do not share this export.") << "\n";
     out << "Analysis files checked: " << analysisFilesChecked << "\n";
     out << "Files swept for readable bytes: " << filesSwept << "\n";
     if (audioFilesChecked > 0) {
@@ -681,7 +681,7 @@ AnonymizationVerification verifyAnonymizedExport(const std::string &exportRoot, 
             constexpr size_t MaxReported = 5;
             std::ostringstream message;
             message << relative
-                    << " still has readable text in its raw bytes, which the catalog readers cannot see -- "
+                    << " still has readable text in its raw bytes, which the catalog readers cannot see. "
                     << unaccounted->size() << " distinct: ";
             for (size_t i = 0; i < unaccounted->size() && i < MaxReported; ++i) {
                 message << (i > 0 ? ", " : "") << '"' << (*unaccounted)[i] << '"';

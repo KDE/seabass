@@ -341,8 +341,8 @@ int main(int argc, char **argv)
         const auto created = infrastructure::engine::readRekordboxImportState(pathToUtf8(out), pathToUtf8(pioneer));
         std::cout << "  rekordbox import counter " << created.engineCounter << ", export.pdb sequence "
                   << created.librarySequence
-                  << (created.playerWillOfferImport() ? " -- a player WILL offer to import over this library"
-                                                      : " -- level, a player will not offer an import")
+                  << (created.playerWillOfferImport() ? ": a player WILL offer to import over this library"
+                                                      : ": level, a player will not offer an import")
                   << "\n";
         if (created.playerWillOfferImport()) {
             std::cout << "RESULT: FAIL\n";

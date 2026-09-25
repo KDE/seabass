@@ -113,7 +113,7 @@ void testOlderHeadersStillParse()
           "seabass-stick-manifest\t1\t1234-ABCD\tWHALESHARK\tcomplete\t1700000000"},
         {"7 fields: fingerprint, no read-only flag",
           "seabass-stick-manifest\t1\t1234-ABCD\tWHALESHARK\tcomplete\t1700000000\tfp"},
-        {"8 fields: read-only flag, no name -- what every backup written before today looks like",
+        {"8 fields: read-only flag, no name (what every backup written before today looks like)",
           "seabass-stick-manifest\t1\t1234-ABCD\tWHALESHARK\tcomplete\t1700000000\tfp\t0"},
     };
 

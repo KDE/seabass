@@ -125,7 +125,7 @@ int main(int argc, char **argv)
         }
         std::cout << "before: " << before.filesToWrite << " files to write (" << gib(before.bytesToWrite) << "), "
                   << before.filesUnchanged << " unchanged, " << before.extras << " extra on the stick, "
-                  << gib(before.freeBytesAtTarget) << " free" << (before.enoughFreeSpace ? "" : " -- NOT ENOUGH")
+                  << gib(before.freeBytesAtTarget) << " free" << (before.enoughFreeSpace ? "" : " (NOT ENOUGH)")
                   << ", " << before.rejected.size() << " rejected\n";
 
         if (execute) {

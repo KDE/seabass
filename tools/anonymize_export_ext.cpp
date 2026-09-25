@@ -74,7 +74,7 @@ int main(int argc, char **argv)
             // opened as the wrong format, and those look identical from
             // here. Saying so beats writing nothing and reporting success.
             std::cout << "no tag rows found in " << pathToUtf8(path)
-                      << " -- either it carries none, or it is not an exportExt.pdb\n";
+                      << ": either it carries none, or it is not an exportExt.pdb\n";
             return 1;
         }
         // A row this could not rewrite kept the name it already had, and

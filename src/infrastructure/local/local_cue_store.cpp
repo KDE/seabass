@@ -277,7 +277,7 @@ std::vector<Track> deserializeTracks(const std::string &data, int formatVersion)
         throw std::runtime_error("local cue store: snapshot was written with format version " +
                                   std::to_string(formatVersion) +
                                   ", which this version of Seabass doesn't know how to read "
-                                  "(a downgrade?) -- try a newer version of the app");
+                                  "(a downgrade?). Try a newer version of the app");
     }
 }
 

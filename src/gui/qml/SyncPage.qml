@@ -554,7 +554,7 @@ Page {
                     + "cross-format conversion rounds. So two cues within half a second count as the same "
                     + "cue here, rather than as a difference that is not really there.\n\n"
                     + "Quantize hides the small ones while you play: it snaps the moment a cue fires to the "
-                    + "beat grid. It does not change what is stored, and it is only as good as that grid -- "
+                    + "beat grid. It does not change what is stored, and it is only as good as that grid: "
                     + "a cue further off than half a quantize step snaps to the next beat, not back to the "
                     + "one you meant.\n\n"
                     + "## DeviceLibrary and OneLibrary\n"

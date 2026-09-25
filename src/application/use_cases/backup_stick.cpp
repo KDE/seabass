@@ -988,7 +988,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
                 }
             } else {
                 outcome.databaseCaptured = false;
-                outcome.warnings.push_back(mainDb + ": not backed up -- " + capture.detail);
+                outcome.warnings.push_back(mainDb + " not backed up: " + capture.detail);
                 if (capture.status == DbSetCapture::Status::TooLarge) {
                     if (status == BackupStatus::Complete) {
                         status = BackupStatus::PartialDbTooLarge;

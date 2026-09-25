@@ -355,7 +355,7 @@ int main()
         const auto one = opensForTrackCount(1);
         const auto three = opensForTrackCount(3);
         std::cout << "case 6: one track costs " << one << " SQLCipher open(s), three cost " << three
-                  << " -- " << ((three - one) / 2) << " per extra track, against the floor of 2 per save"
+                  << " (" << ((three - one) / 2) << " per extra track, against the floor of 2 per save)"
                   << std::endl;
 
         // Two: the writer's own write connection and the separate

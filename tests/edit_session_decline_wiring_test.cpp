@@ -39,13 +39,13 @@ int main()
         ++checked;
         if (text.find("onBackupLocationDeclined") == std::string::npos) {
             std::cerr << seabass::pathToUtf8(entry.path().filename())
-                      << ": hosts an edit session but ignores backupLocationDeclined -- Cancel on the "
+                      << ": hosts an edit session but ignores backupLocationDeclined. Cancel on the "
                          "low-space question would close the dialog and change nothing\n";
             ok = false;
         }
     }
     // A scan that found nothing proves nothing.
-    assert(checked > 0 && "no page uses EditSessionHost -- the scan is looking in the wrong place");
+    assert(checked > 0 && "no page uses EditSessionHost: the scan is looking in the wrong place");
     if (!ok) {
         return 1;
     }
