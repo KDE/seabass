@@ -325,7 +325,7 @@ Page {
             spacing: Theme.rowSpacing
             BackBreadcrumb {
                 stack: root.StackView.view
-                middleLabel: root.stickLabel
+                stickLabel: root.stickLabel
                 title: "Metadata Backup"
                 onHomeRequested: root.requestLeave(() => root.StackView.view.pop(null))
                 onBackRequested: root.requestLeave(() => root.StackView.view.pop())

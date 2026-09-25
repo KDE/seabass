@@ -78,6 +78,7 @@ Page {
             // names it, as on every other check's page (HealthCheckPage).
             BackBreadcrumb {
                 stack: root.StackView.view
+                stickLabel: root.stickLabel
                 middleLabel: "Library Health"
                 title: "Cover Art"
                 backEnabled: !consistencyController?.busy && !consistencyController?.writing

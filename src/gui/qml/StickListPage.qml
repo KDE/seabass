@@ -253,7 +253,10 @@ Page {
     // mountPoint (or, for a not-yet-mounted stick, devicePath) preselects
     // the target drive; both empty means "pick one there". archivePath
     // preselects the backup (the advisor's pick), empty picks the newest.
-    signal restoreStickBackupRequested(string mountPoint, string devicePath, string archivePath)
+    // stickLabel is the row's name for the restore page's breadcrumb,
+    // empty from the general card that is not about any one stick.
+    signal restoreStickBackupRequested(string mountPoint, string devicePath, string archivePath,
+                                       string stickLabel)
     // General entry point (Backups block above the stick list): not
     // tied to any particular stick, so mountPoint/devicePath/archivePath
     // (or stickLabel/rekordboxPath/enginePath) may all be empty; the
@@ -594,7 +597,7 @@ Page {
                     cardIcon: "document-revert"
                     // No stick preselected: the page itself lists every
                     // mounted drive and every backup on disk to choose from.
-                    onClicked: root.restoreStickBackupRequested("", "", "")
+                    onClicked: root.restoreStickBackupRequested("", "", "", "")
                 }
             }
         }
@@ -1082,7 +1085,8 @@ Page {
                             visible: !delegateRoot.hasKnownLibrary && !delegateRoot.isFolder
                             enabled: !delegateRoot.thisRowBusy
                             onClicked: root.restoreStickBackupRequested(delegateRoot.mountPoint, delegateRoot.devicePath,
-                                delegateRoot.adviceState === "restore" ? delegateRoot.advice.backupPath : "")
+                                delegateRoot.adviceState === "restore" ? delegateRoot.advice.backupPath : "",
+                                delegateRoot.label)
                         }
                         // Copying another mounted stick's live library onto
                         // this empty one, through a fresh backup of it. Only

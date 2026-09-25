@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // Library Health's "Cues at 0:00" page, driven by a stand-in controller:
 // every row says why it is here and points at its own cue, and what is
@@ -103,6 +104,8 @@ TestCase {
         verify(crumb !== null, "the header has a breadcrumb");
         compare(crumb.title, "Cues at 0:00");
         compare(crumb.middleLabel, "Library Health", "one level up is the hub");
+        // And the stick before it, on screen, as every hub page's children do.
+        compare(Breadcrumb.read(page.header).stick, "TESTSTICK");
 
         verify(findChild(page, "cuesAtZeroSummary") !== null, "its own check is here");
         for (const other of ["missingFilesSummary", "stagedIssuesNote", "importPromptSummary", "markImportedButton",

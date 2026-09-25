@@ -25,6 +25,9 @@ import SeabassGui
 Page {
     id: root
     required property string stickLabel
+    // The page it was opened from, for the breadcrumb: Housekeeping's card
+    // or Sync Cue Points' stray-cue link.
+    property string hubLabel: "Housekeeping"
     required property string rekordboxPath
     required property string enginePath
     required property var appSettingsController
@@ -169,7 +172,8 @@ Page {
             spacing: 12
             BackBreadcrumb {
                 stack: root.StackView.view
-                middleLabel: "Housekeeping"
+                stickLabel: root.stickLabel
+                middleLabel: root.hubLabel
                 title: "Clean Up Stray Cues"
                 backEnabled: !consistencyController.writing
                 onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))

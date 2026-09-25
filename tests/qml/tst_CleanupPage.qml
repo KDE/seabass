@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // Clean Up's filter row, at the widths a real window actually gets.
 //
@@ -129,5 +131,44 @@ TestCase {
         waitForRendering(page);
         wait(100);
         grabImage(page).save(screenshotDir + "/CleanupPage-narrow.png");
+    }
+
+    // The page as the app shows it: inside a StackView, `levelsBelow`
+    // pages up from the bottom (1 = pushed from Home, 2 = from a hub on
+    // top of Home). The breadcrumb reads the stack's depth to decide
+    // whether its middle segment is a link, so a page on its own cannot
+    // show that.
+    Component {
+        id: crumbStackComponent
+        StackView { width: testCase.width; height: testCase.height }
+    }
+    Component {
+        id: crumbFillerComponent
+        Item {}
+    }
+    function pushOnStack(levelsBelow, props) {
+        const stack = createTemporaryObject(crumbStackComponent, testCase);
+        for (let i = 0; i < levelsBelow; ++i) {
+            stack.push(crumbFillerComponent, {}, StackView.Immediate);
+        }
+        return stack.push(pageComponent, props, StackView.Immediate);
+    }
+
+    function saveCrumbShot(page, name) {
+        if (screenshotDir && screenshotDir.length > 0) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/crumb-" + name + ".png");
+        }
+    }
+
+    function test_breadcrumbNamesTheStickAndHousekeeping() {
+        const page = pushOnStack(2, {});
+        waitForRendering(page);
+        const crumb = Breadcrumb.read(page);
+        compare(crumb.stick, "TESTSTICK");
+        compare(crumb.middle, "Housekeeping");
+        verify(crumb.middleIsLink);
+        compare(crumb.title, "Clean Up Duplicates");
+        saveCrumbShot(page, "cleanup");
     }
 }

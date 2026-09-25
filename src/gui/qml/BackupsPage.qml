@@ -169,7 +169,9 @@ Page {
             anchors.margins: Theme.pageMargin
             BackBreadcrumb {
                 stack: root.StackView.view
-                // As before: the crumb names the Backups page it came from.
+                // Opened from a stick's Backups page it names both; opened
+                // from Home's menu it has neither, and is one below Home.
+                stickLabel: root.stickLabel
                 middleLabel: root.stickLabel.length > 0 ? "Backups" : ""
                 title: "Manage Backups"
                 backEnabled: root.controller.deleting !== true

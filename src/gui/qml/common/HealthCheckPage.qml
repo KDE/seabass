@@ -125,6 +125,7 @@ Page {
             // a click on it lands on Library Health, not on the stick.
             BackBreadcrumb {
                 stack: root.StackView.view
+                stickLabel: root.stickLabel
                 middleLabel: "Library Health"
                 title: root.checkTitle
                 backEnabled: !consistencyController?.writing

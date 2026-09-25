@@ -496,10 +496,11 @@ ApplicationWindow {
             onAboutRequested: stackView.push(aboutPageComponent)
             onDonationRequested: stackView.push(donationPageComponent)
             onFormatUsbRequested: stackView.push(formatUsbPageComponent)
-            onRestoreStickBackupRequested: (mountPoint, devicePath, archivePath) => stackView.push(restoreStickBackupPageComponent, {
+            onRestoreStickBackupRequested: (mountPoint, devicePath, archivePath, stickLabel) => stackView.push(restoreStickBackupPageComponent, {
                 preselectedMountPoint: mountPoint,
                 preselectedDevicePath: devicePath,
                 preselectedArchivePath: archivePath,
+                stickLabel: stickLabel,
             })
             onCloneStickRequested: (sourceLabel, sourceRekordboxPath, sourceEnginePath, targetMountPoint, targetLabel, targetHasLibrary) => stackView.push(cloneStickPageComponent, {
                 sourceLabel: sourceLabel,
@@ -719,6 +720,7 @@ ApplicationWindow {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
+                hubLabel: "Sync Cue Points",
             })
         }
     }
@@ -743,6 +745,7 @@ ApplicationWindow {
     Component {
         id: backupsHubPageComponent
         BackupsHubPage {
+            id: backupsHub
             appSettingsController: appSettingsCtrl
             onManageBackupsRequested: (stickLabel, currentArchivePath) => stackView.push(backupsPageComponent, {
                 stickLabel: stickLabel,
@@ -757,6 +760,10 @@ ApplicationWindow {
                 preselectedMountPoint: mountPoint,
                 preselectedDevicePath: devicePath,
                 preselectedArchivePath: archivePath,
+                // For the breadcrumb only: the stick this Backups page is
+                // about, and the page itself as the way back.
+                stickLabel: backupsHub.stickLabel,
+                hubLabel: "Backups",
             })
             onCloneStickRequested: (sourceLabel, sourceRekordboxPath, sourceEnginePath, targetMountPoint, targetLabel, targetHasLibrary) => stackView.push(cloneStickPageComponent, {
                 sourceLabel: sourceLabel,
@@ -783,6 +790,8 @@ ApplicationWindow {
                 preselectedMountPoint: stickRoot,
                 preselectedArchivePath: archivePath,
                 preselectedLabel: stickLabel,
+                stickLabel: stickLabel,
+                hubLabel: "Full Stick Backup",
             })
         }
     }
@@ -825,6 +834,7 @@ ApplicationWindow {
     Component {
         id: backupsPageComponent
         BackupsPage {
+            id: backupsPage
             // The folder goes through the page, which hands it on after this
             // stick's archive -- see BackupsPage.backupDirectory.
             controller: FullBackupsController {}
@@ -843,6 +853,10 @@ ApplicationWindow {
                 preselectedArchivePath: archivePath,
                 preselectedMountPoint: mountPoint,
                 preselectedLabel: label,
+                // The stick this list was opened for, if any; `label` is
+                // only the stick the archive came from.
+                stickLabel: backupsPage.stickLabel,
+                hubLabel: "Manage Backups",
             })
         }
     }
@@ -864,6 +878,7 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
                 libraryId: libraryId,
+                hubLabel: "Metadata Backup",
             })
         }
     }

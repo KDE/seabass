@@ -62,6 +62,7 @@ Page {
             spacing: 12
             BackBreadcrumb {
                 stack: root.StackView.view
+                stickLabel: root.stickLabel
                 middleLabel: "Housekeeping"
                 title: "Delete Orphaned Files"
                 backEnabled: !cleanupController.writing

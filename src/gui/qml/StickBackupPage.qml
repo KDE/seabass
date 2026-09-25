@@ -149,6 +149,7 @@ Page {
             spacing: 12
             BackBreadcrumb {
                 stack: root.StackView.view
+                stickLabel: root.stickLabel
                 middleLabel: "Backups"
                 title: "Full Stick Backup"
                 backEnabled: !root.controller.busy

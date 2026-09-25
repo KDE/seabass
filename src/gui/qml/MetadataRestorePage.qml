@@ -18,6 +18,9 @@ import SeabassGui
 Page {
     id: root
     required property string stickLabel
+    // "" when opened from Home; "Metadata Backup" when opened from that
+    // page's own restore link, which puts it one level further down.
+    property string hubLabel: ""
     required property string rekordboxPath
     required property string enginePath
     required property string libraryId
@@ -168,7 +171,8 @@ Page {
             spacing: Theme.rowSpacing
             BackBreadcrumb {
                 stack: root.StackView.view
-                middleLabel: root.stickLabel
+                stickLabel: root.stickLabel
+                middleLabel: root.hubLabel
                 title: "Restore Metadata"
                 onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
                 onBackRequested: editHost.requestLeave(() => root.StackView.view.pop())

@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // Restore Metadata's page. This is the half of the feature that writes
 // to a stick, so what is guarded here is that nothing reaches one by
@@ -416,5 +418,54 @@ TestCase {
         openRow(page, 1);
         wait(100);
         grabImage(page).save(screenshotDir + "/MetadataRestorePage-narrowed-open.png");
+    }
+
+    // The page as the app shows it: inside a StackView, `levelsBelow`
+    // pages up from the bottom (1 = pushed from Home, 2 = from a hub on
+    // top of Home). The breadcrumb reads the stack's depth to decide
+    // whether its middle segment is a link, so a page on its own cannot
+    // show that.
+    Component {
+        id: crumbStackComponent
+        StackView { width: testCase.width; height: testCase.height }
+    }
+    Component {
+        id: crumbFillerComponent
+        Item {}
+    }
+    function pushOnStack(levelsBelow, props) {
+        const stack = createTemporaryObject(crumbStackComponent, testCase);
+        for (let i = 0; i < levelsBelow; ++i) {
+            stack.push(crumbFillerComponent, {}, StackView.Immediate);
+        }
+        return stack.push(pageComponent, props, StackView.Immediate);
+    }
+
+    function saveCrumbShot(page, name) {
+        if (screenshotDir && screenshotDir.length > 0) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/crumb-" + name + ".png");
+        }
+    }
+
+    // From the stick's row on Home, and from Metadata Backup's own
+    // restore link one level further down.
+    function test_breadcrumbFromHome() {
+        const page = pushOnStack(1, {});
+        waitForRendering(page);
+        const crumb = Breadcrumb.read(page);
+        compare(crumb.stick, "TESTSTICK");
+        compare(crumb.middle, "");
+        compare(crumb.title, "Restore Metadata");
+    }
+
+    function test_breadcrumbFromMetadataBackup() {
+        const page = pushOnStack(2, {hubLabel: "Metadata Backup"});
+        waitForRendering(page);
+        const crumb = Breadcrumb.read(page);
+        compare(crumb.stick, "TESTSTICK");
+        compare(crumb.middle, "Metadata Backup");
+        verify(crumb.middleIsLink);
+        saveCrumbShot(page, "metadata-restore-from-backup");
     }
 }

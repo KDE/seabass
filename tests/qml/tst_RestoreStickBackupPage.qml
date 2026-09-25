@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // RestoreStickBackupPage.qml headless with a fake controller: drive
 // selection rules, the analyze/restore calls it makes, and the confirm
@@ -515,5 +517,67 @@ TestCase {
     Component {
         id: spyComponent
         SignalSpy {}
+    }
+
+    // The page as the app shows it: inside a StackView, `levelsBelow`
+    // pages up from the bottom (1 = pushed from Home, 2 = from a hub on
+    // top of Home). The breadcrumb reads the stack's depth to decide
+    // whether its middle segment is a link, so a page on its own cannot
+    // show that.
+    Component {
+        id: crumbStackComponent
+        StackView { width: testCase.width; height: testCase.height }
+    }
+    Component {
+        id: crumbFillerComponent
+        Item {}
+    }
+    function pushOnStack(levelsBelow, props) {
+        const stack = createTemporaryObject(crumbStackComponent, testCase);
+        for (let i = 0; i < levelsBelow; ++i) {
+            stack.push(crumbFillerComponent, {}, StackView.Immediate);
+        }
+        return stack.push(pageComponent, props, StackView.Immediate);
+    }
+
+    function saveCrumbShot(page, name) {
+        if (screenshotDir && screenshotDir.length > 0) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/crumb-" + name + ".png");
+        }
+    }
+
+    // Reached four ways, and the crumb must be right each time.
+    function test_breadcrumb_data() {
+        return [
+            // Home's general card: no stick, nothing between.
+            {tag: "home-card", below: 1, stickLabel: "", hubLabel: "",
+             stick: "", middle: "", link: false},
+            // A stick's own row on Home: the stick, as context.
+            {tag: "home-row", below: 1, stickLabel: "STICK", hubLabel: "",
+             stick: "STICK", middle: "", link: false},
+            // The stick's Backups page.
+            {tag: "backups-hub", below: 2, stickLabel: "STICK", hubLabel: "Backups",
+             stick: "STICK", middle: "Backups", link: true},
+            // Full Stick Backup, itself under the Backups page.
+            {tag: "full-backup", below: 3, stickLabel: "STICK", hubLabel: "Full Stick Backup",
+             stick: "STICK", middle: "Full Stick Backup", link: true},
+        ];
+    }
+
+    function test_breadcrumb(data) {
+        const page = pushOnStack(data.below, {
+            controller: makeFakeController([makeDisk({})], {}),
+            appSettingsController: fakeAppSettings(),
+            stickLabel: data.stickLabel,
+            hubLabel: data.hubLabel,
+        });
+        waitForRendering(page);
+        const crumb = Breadcrumb.read(page);
+        compare(crumb.stick, data.stick);
+        compare(crumb.middle, data.middle);
+        compare(crumb.middleIsLink, data.link);
+        compare(crumb.title, "Restore a Stick Backup");
+        saveCrumbShot(page, "restore-" + data.tag);
     }
 }
