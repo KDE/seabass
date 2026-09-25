@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 
 // The Cover Art page, both ways round: nothing to report on one library,
@@ -304,5 +305,16 @@ TestCase {
         verify(button === null || !button.visible, "nothing to copy in, so nothing to offer");
         var nothing = findChild(page, "coverArtNothingToDo");
         verify(nothing !== null && nothing.visible, "and the page says why there is no button");
+    }
+
+    // Pushed from the Library Health hub only: Home > stick > Library
+    // Health > Cover Art.
+    function test_breadcrumbNamesTheStickAndLibraryHealth() {
+        const page = createTemporaryObject(pageComponent, testCase);
+        waitForRendering(page);
+        const crumb = Breadcrumb.read(page.header);
+        compare(crumb.stick, "TESTSTICK");
+        compare(crumb.middle, "Library Health");
+        compare(crumb.title, "Cover Art");
     }
 }

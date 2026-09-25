@@ -27,6 +27,15 @@ Page {
     property string preselectedDevicePath: ""
     property string preselectedArchivePath: ""
     property string preselectedLabel: ""
+    // For the breadcrumb only, and deliberately not preselectedLabel:
+    // that names the stick a backup came from, which Manage Backups opened
+    // from Home hands over without there being any stick this page was
+    // opened for. Empty on Home's general restore card; the stick, from
+    // the stick's own row or pages; hubLabel is the page it was opened
+    // from when that is not Home (Backups, Full Stick Backup, Manage
+    // Backups).
+    property string stickLabel: ""
+    property string hubLabel: ""
     signal formatUsbRequested()
     // Same signature as StickListPage's own -- see TransferResultFrame's
     // repairLibraryRequested for why the result report offers this.
@@ -223,6 +232,9 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
             BackBreadcrumb {
+                stack: root.StackView.view
+                stickLabel: root.stickLabel
+                middleLabel: root.hubLabel
                 title: "Restore a Stick Backup"
                 backEnabled: !root.controller.busy
                 backDisabledTooltip: "Wait for the restore to finish (or cancel it) before leaving this page"

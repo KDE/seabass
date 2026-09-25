@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // Library Health's "Sample rates" page, driven by a stand-in controller.
 // A row without a sample rate means every cue on that track is placed by
@@ -102,6 +103,8 @@ TestCase {
         verify(crumb !== null, "the header has a breadcrumb");
         compare(crumb.title, "Sample Rates");
         compare(crumb.middleLabel, "Library Health", "one level up is the hub");
+        // And the stick before it, on screen, as every hub page's children do.
+        compare(Breadcrumb.read(page.header).stick, "TESTSTICK");
 
         verify(findChild(page, "sampleRateSummary") !== null, "its own check is here");
         for (const other of ["missingFilesSummary", "stagedIssuesNote", "cuesAtZeroSummary", "stagedJunkCuesNote",

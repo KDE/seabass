@@ -326,6 +326,8 @@ TestCase {
         compare(spy.count, 1);
         compare(spy.signalArguments[0][0], "/media/MAIN");
         compare(spy.signalArguments[0][2], "/b/OLD.zip");
+        // The row's own name, for the restore page's breadcrumb.
+        compare(spy.signalArguments[0][3], "MAIN");
     }
 
     // A stick's own eject/mount button used to go dark while ANY other
@@ -365,6 +367,8 @@ TestCase {
         restoreCard.clicked();
         compare(restoreSpy.count, 1);
         compare(restoreSpy.signalArguments[0][0], "");
+        // Not about any one stick, so no stick in the breadcrumb either.
+        compare(restoreSpy.signalArguments[0][3], "");
     }
 
     // The card is visible unconditionally for a blank stick (it is also

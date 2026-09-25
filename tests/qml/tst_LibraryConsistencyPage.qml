@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // Library Health's "Tracks and their files" page, driven by a stand-in
 // controller: what is staged is said beside the buttons that staged it,
@@ -249,6 +250,8 @@ TestCase {
         verify(crumb !== null, "the header has a breadcrumb");
         compare(crumb.title, "Tracks and Their Files");
         compare(crumb.middleLabel, "Library Health", "one level up is the hub");
+        // And the stick before it, on screen, as every hub page's children do.
+        compare(Breadcrumb.read(page.header).stick, "TESTSTICK");
 
         // Handed the hub's controller, it shows that scan rather than
         // making the user wait through the same one again.

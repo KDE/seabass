@@ -142,6 +142,7 @@ Page {
                 Layout.bottomMargin: Theme.headerBottomPadding - headerLayout.spacing
                 BackBreadcrumb {
                     stack: root.StackView.view
+                    stickLabel: root.stickLabel
                     middleLabel: "Housekeeping"
                     title: "Clean Up Duplicates"
                     backEnabled: !cleanupController.writing

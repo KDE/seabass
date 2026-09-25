@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "Breadcrumb.js" as Breadcrumb
 
 // Library Health's "Duplicates left in OneLibrary" page (#8), driven by a
 // stand-in controller.
@@ -103,6 +104,8 @@ TestCase {
         verify(crumb !== null, "the header has a breadcrumb");
         compare(crumb.title, "Duplicates Left in OneLibrary");
         compare(crumb.middleLabel, "Library Health", "one level up is the hub");
+        // And the stick before it, on screen, as every hub page's children do.
+        compare(Breadcrumb.read(page.header).stick, "TESTSTICK");
 
         verify(findChild(page, "cleanupLeftoverSummary") !== null, "its own check is here");
         for (const other of ["missingFilesSummary", "stagedIssuesNote", "cuesAtZeroSummary", "stagedJunkCuesNote",
