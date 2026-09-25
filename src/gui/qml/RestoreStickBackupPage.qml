@@ -768,17 +768,14 @@ Page {
             errorMessage: root.controller.errorMessage
             statusMessage: root.controller.statusMessage
             busy: root.controller.busy === true
-            startOverTooltip: "Clear this report and look for drives again. Files already restored are kept and skipped next time."
-            onStartOverRequested: {
-                if (root.controller.clearResult) root.controller.clearResult();
-                root.controller.refresh();
-                root.selectedIndex = -1;
-                root.applySelection(root.pickDefaultDrive());
-            }
+            // The overlay's Close below is the one way out, and it does
+            // what Start Over did; a second button for the same thing
+            // inside the report was the "Close and Done" complaint again.
+            startOverVisible: false
             // The disk just restored onto, not whatever was selected
             // when the report was drawn -- selectedDisk can already
-            // have moved on (Start Over resets it) by the time this
-            // is clicked.
+            // have moved on (Close resets it) by the time this is
+            // clicked.
             onRepairLibraryRequested: root.libraryHealthRequested(
                 (root.selectedDisk && root.selectedDisk.label) || "",
                 (root.selectedDisk && root.selectedDisk.rekordboxPath) || "",
@@ -806,11 +803,25 @@ Page {
             // way back to the header's breadcrumb; this does the same. A
             // "Done" beside it that popped the page was a second answer
             // to the same question, and the two read as synonyms.
+            //
+            // Closing also clears the report and looks at the drives
+            // again, which is what the report's own Start Over did: the
+            // form under the overlay still holds the preview from before
+            // the restore ("14 files to write"), and a second restore
+            // should start from what the drive holds now.
             Button {
                 objectName: "closeReportButton"
                 text: "Close"
                 highlighted: true
-                onClicked: root.reportDismissed = true
+                ToolTip.visible: hovered
+                ToolTip.text: "Clear this report and look for drives again. Files already restored are kept and skipped next time."
+                onClicked: {
+                    root.reportDismissed = true;
+                    if (root.controller.clearResult) root.controller.clearResult();
+                    if (root.controller.refresh) root.controller.refresh();
+                    root.selectedIndex = -1;
+                    root.applySelection(root.pickDefaultDrive());
+                }
             }
         }
     }

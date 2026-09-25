@@ -548,9 +548,12 @@ TestCase {
     }
 
     // A finished restore has one way off its overlay, not two that read as
-    // synonyms ("Close" beside "Done"). Counted over every visible button
-    // on the overlay outside the report itself (whose Start Over, Show
-    // details and Check Library Health are about the report).
+    // synonyms ("Close" beside "Done", or beside the report's own "Start
+    // Over"). Counted over every visible button on the overlay, the
+    // report's included; a clean report has nothing to show details of
+    // and no missing tracks to repair, so any other button is an exit.
+    // Close then does what Start Over did: clears the report and looks at
+    // the drives again, so the form under it is not the stale preview.
     function test_aFinishedRestoreOffersOneWayOut() {
         const page = makePage([makeDisk({})], {
             result: {filesWritten: 14, filesUnchanged: 1147, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
@@ -559,18 +562,12 @@ TestCase {
         });
         const overlay = findChild(page, "restoreOverlay");
         compare(overlay.visible, true);
-        const report = findChild(overlay, "restoreResultFrame");
-        function insideReport(item) {
-            for (let p = item; p; p = p.parent) {
-                if (p === report) return true;
-            }
-            return false;
-        }
+        verify(findChild(overlay, "restoreResultFrame").visible);
         const buttons = [];
         function collect(item) {
             for (let i = 0; i < item.children.length; ++i) {
                 const child = item.children[i];
-                if (child instanceof Button && child.visible && !insideReport(child)) {
+                if (child instanceof Button && child.visible) {
                     buttons.push(child);
                 }
                 collect(child);
@@ -579,8 +576,12 @@ TestCase {
         collect(overlay);
         compare(buttons.length, 1, buttons.map(function(b) { return b.text; }).join(", "));
         compare(buttons[0].objectName, "closeReportButton");
+        const analyzed = page.controller.analyzeCalls.length;
         buttons[0].clicked();
         compare(overlay.visible, false);
+        compare(page.controller.clearCalls, 1, "Close must clear the report");
+        compare(page.controller.analyzeCalls.length, analyzed + 1, "and look at the drive again");
+        compare(page.controller.analyzeCalls[analyzed], "/media/STICK");
     }
 
     // The stick list hands over a device path for a stick it could not
@@ -612,8 +613,8 @@ TestCase {
     }
 
     // A stick yanked mid-restore: the problems are counted, listed only on
-    // request (and capped), and "Start Over" clears the report.
-    function test_manyProblemsAreCountedNotListedAndStartOverClears() {
+    // request (and capped), and Close clears the report.
+    function test_manyProblemsAreCountedNotListedAndCloseClears() {
         var errors = [];
         for (var i = 0; i < 500; ++i) {
             errors.push("track" + i + ".mp3: write failed");
@@ -627,7 +628,7 @@ TestCase {
         compare(findChild(page, "problemList").count, 0);
         findChild(page, "toggleProblemsButton").clicked();
         compare(findChild(page, "problemList").count, 200);
-        findChild(page, "startOverButton").clicked();
+        findChild(page, "closeReportButton").clicked();
         compare(page.controller.clearCalls, 1);
     }
 
