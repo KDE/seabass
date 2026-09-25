@@ -4,6 +4,8 @@
 
 #include "application/path_key.hpp"
 
+#include "application/stick_path_match.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -358,6 +360,14 @@ bool samePath(const std::string &a, const std::string &b)
         return false;
     }
     return normalizedPathKey(a) == normalizedPathKey(b);
+}
+
+bool pathIsAtOrUnder(const std::string &path, const std::string &root)
+{
+    if (path.empty() || root.empty()) {
+        return false;
+    }
+    return pathIsUnder(normalizedPathKey(path), normalizedPathKey(root));
 }
 
 }  // namespace seabass::application

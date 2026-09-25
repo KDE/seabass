@@ -462,6 +462,34 @@ int main(int argc, char **argv)
         std::cout << "case 13 (a folder closes by any spelling of its path) OK\n";
     }
 
+    // The lookups a page makes with a path it holds: is my stick still
+    // here, what was it called, which library is it. The list keeps the
+    // native mount point and the page the forward-slash one, so on Windows
+    // every one of these missed; the backslash spelling reproduces that
+    // here, as in case 13.
+    {
+        const std::string native = pathToUtf8(rbOnly);
+        const QString backslashed = QString::fromStdString(windowsSpelling(native));
+        MediaController controller;
+        assert(controller.openFolder(pathToQString(rbOnly)).isEmpty());
+        const int row = rowForMountPoint(*controller.sticksModel(), native);
+        assert(row >= 0);
+        const QString label = QString::fromStdString(controller.sticksModel()->sticks()[static_cast<size_t>(row)].label);
+        assert(!label.isEmpty());
+
+        assert(controller.pathIsPresent(backslashed));
+        assert(controller.pathIsPresent(backslashed + QStringLiteral("\\PIONEER")));
+        assert(controller.pathIsPresent(pathToQString(rbOnly / "PIONEER") + QStringLiteral("/")));
+        assert(!controller.pathIsPresent(pathToQString(scratch / "rb-only-not")));
+        assert(controller.stickLabelForPath(backslashed + QStringLiteral("\\PIONEER")) == label);
+
+        const QString id = controller.libraryIdForMountPoint(pathToQString(rbOnly));
+        assert(!id.isEmpty());
+        assert(controller.libraryIdForMountPoint(backslashed) == id);
+        assert(controller.libraryIdForMountPoint(pathToQString(rbOnly) + QStringLiteral("/")) == id);
+        std::cout << "case 14 (a page's path finds its stick by any spelling) OK\n";
+    }
+
     fs::remove_all(scratch);
     std::cout << "open_folder_test: all cases passed\n";
     return 0;

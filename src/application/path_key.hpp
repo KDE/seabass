@@ -87,4 +87,10 @@ std::string composedPathSpelling(const std::string &path);
 // An empty path is the same as nothing, not as another empty path.
 bool samePath(const std::string &a, const std::string &b);
 
+// Whether `path` is `root` itself or somewhere inside it, with both sides
+// through normalizedPathKey first: pathIsUnder (stick_path_match.hpp) on
+// the keys, so "E:/PIONEER/rekordbox" is under "E:\" and
+// "/media/RV22" is still not under "/media/RV2".
+bool pathIsAtOrUnder(const std::string &path, const std::string &root);
+
 }  // namespace seabass::application
