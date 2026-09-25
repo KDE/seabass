@@ -183,6 +183,9 @@ QString RestoreStickBackupController::archivePathForLabel(const QString &label) 
 void RestoreStickBackupController::refreshKnownBackups()
 {
     if (m_listing) {
+        // The folder changed mid-listing: list again once this one lands,
+        // so the list ends up being the folder asked for last.
+        m_refreshAgain = true;
         return;
     }
     const fs::path directory = pathFromQString(m_defaultBackupDirectory);
@@ -215,8 +218,16 @@ void RestoreStickBackupController::refreshKnownBackups()
 void RestoreStickBackupController::onListFinished()
 {
     QString thrown;
-    m_knownBackups = takeResult(m_listWatcher, &thrown);
+    QVariantList backups = takeResult(m_listWatcher, &thrown);
     m_listing = false;
+    if (m_refreshAgain) {
+        // A listing of a folder no longer asked for: not shown, and the
+        // page stays listing until the one it asked for has landed.
+        m_refreshAgain = false;
+        refreshKnownBackups();
+        return;
+    }
+    m_knownBackups = std::move(backups);
     if (!thrown.isEmpty()) {
         setErrorMessage(QStringLiteral("Could not list the backup folder: ") + thrown);
     }

@@ -261,6 +261,30 @@ TestCase {
         tryVerify(function() { return !controller.listingBackups; }, 10000, "and done once it has");
     }
 
+    // The backup folder changed while the old one was still being listed:
+    // the list that ends up on the page is the new folder's. The refresh
+    // asked for mid-listing used to be dropped, leaving the old folder's
+    // backups offered under the new folder's name.
+    function test_aFolderChangedMidListingListsTheNewFolder() {
+        const folder = controllerFixture.slowBackupFolder(5);
+        verify(folder.length > 0, "could not make the backup folder");
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        controller.defaultBackupDirectory = folder;
+        verify(controller.listingBackups);
+        controller.defaultBackupDirectory = "/nonexistent/seabass-restore-test";
+        tryVerify(function() { return !controller.listingBackups; }, 10000);
+        compare(controller.knownBackups.length, 0, "the new, empty folder's list, not the old one's");
+
+        // And the other way round: the listing that lands last is the
+        // folder asked for last.
+        controller.defaultBackupDirectory = "/nonexistent/seabass-restore-test-2";
+        verify(controller.listingBackups);
+        controller.defaultBackupDirectory = folder;
+        tryVerify(function() { return !controller.listingBackups; }, 10000);
+        compare(controller.knownBackups.length, 5, "the new folder's five backups");
+        controllerFixture.removeSlowBackupFolder();
+    }
+
     // Leaving the page while its backup folder is still being listed
     // destroys the controller mid-listing. That must not hold the window
     // until the listing is done (it did: the destructor waited for it, 0.5

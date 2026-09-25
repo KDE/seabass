@@ -199,6 +199,8 @@ private:
     QFutureWatcher<std::shared_ptr<RestoreResult>> m_restoreWatcher;
     QFutureWatcher<QVariantList> m_listWatcher;
     bool m_listing = false;
+    // A refresh asked for while a listing ran: one more pass once it lands.
+    bool m_refreshAgain = false;
     QFutureWatcher<std::shared_ptr<MountResult>> m_mountWatcher;
 };
 
