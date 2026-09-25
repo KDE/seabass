@@ -15,13 +15,6 @@ Frame {
     // Over the player, so the close button can show itself only then.
     HoverHandler { id: playerHover }
 
-    function formatTime(ms) {
-        var totalSec = Math.max(0, Math.floor(ms / 1000));
-        var m = Math.floor(totalSec / 60);
-        var s = totalSec % 60;
-        return m + ":" + (s < 10 ? "0" : "") + s;
-    }
-
     RowLayout {
         anchors.fill: parent
         spacing: 12
@@ -105,7 +98,7 @@ Frame {
                 }
                 Label {
                     objectName: "playerTime"
-                    text: root.formatTime(root.controller.position) + " / " + root.formatTime(root.controller.duration)
+                    text: Theme.trackTime(root.controller.position) + " / " + Theme.trackTime(root.controller.duration)
                     color: Theme.textMuted
                 }
             }

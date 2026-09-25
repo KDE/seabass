@@ -98,21 +98,27 @@ int main(int argc, char **argv)
         std::cout << "case 1 (two tracks matched to one stored track stage and unstage apart) OK\n";
     }
 
-    // ---- case 2: a landed change finds its row, and removing a row keeps
-    //      every other row's staging with its own proposal
+    // ---- case 2: removing rows keeps every other row's staging with its
+    //      own proposal, and the counts with it
     {
         RestoreProposalListModel model;
         model.setProposals({first, copy, other});
+        const QString firstChange = QStringLiteral("metadata-restore:rekordbox:100");
         const QString copyChange = QStringLiteral("metadata-restore:engine:102");
         const QString otherChange = QStringLiteral("metadata-restore:rekordbox:103");
+        model.setStagedChanges(0, {firstChange});
         model.setStagedChanges(1, {copyChange});
         model.setStagedChanges(2, {otherChange});
-        assert(model.indexOfChange(copyChange) == 1 && model.indexOfChange(otherChange) == 2);
-        assert(model.indexOfChange(QStringLiteral("metadata-restore:nothing:1")) == -1);
-        model.removeAt(0);
-        assert(model.isStaged(0) && model.isStaged(1) && model.stagedCount() == 2);
-        assert(model.indexOfChange(otherChange) == 1);
-        std::cout << "case 2 (staging stays with its proposal when a row goes) OK\n";
+        assert(model.stagedCount() == 3 && model.stagedChangeCount() == 3);
+        // Out of order, repeated and out of range: taken once each, the
+        // rest ignored.
+        model.removeAll({2, 0, 2, -1, 7});
+        assert(model.totalCount() == 1 && model.rowCount() == 1);
+        assert(model.stagedChanges(0) == QStringList{copyChange} && "the survivor keeps its own staging");
+        assert(model.stagedCount() == 1 && model.stagedChangeCount() == 1);
+        model.removeAll({});
+        assert(model.totalCount() == 1);
+        std::cout << "case 2 (staging stays with its proposal when rows go) OK\n";
     }
 
     // ---- case 3: a search narrows the view, not the staging
@@ -159,7 +165,7 @@ int main(int argc, char **argv)
         assert(bothSays.contains(QStringLiteral("comment goes only to OneLibrary")));
         assert(summaryAtRow(more, 1).startsWith(QStringLiteral("Nothing can be restored")));
         // And once a copy has landed and gone, the other no longer claims one.
-        model.removeAt(1);
+        model.removeAll({1});
         assert(!summaryAtRow(model, 0).contains(QStringLiteral("other track")));
         std::cout << "case 4 (each row says what a restore writes, where, and to how many) OK\n";
     }

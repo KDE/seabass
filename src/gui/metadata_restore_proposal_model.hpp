@@ -84,11 +84,11 @@ public:
     // proposals per read made every bulk operation quadratic.
     int stagedCount() const { return m_stagedCount; }             // rows with anything staged
     int stagedChangeCount() const { return m_stagedChangeCount; }  // changes staged across all rows
-    // The proposal a staged change belongs to, or -1.
-    int indexOfChange(const QString &changeId) const;
-    void removeAt(int index);
-    // Several at once, in one reset: what a save that landed a thousand
-    // proposals takes off the list, without a thousand resets.
+    // Takes proposals off the list, in one reset: what a save that landed
+    // a thousand proposals takes off the list, without a thousand resets.
+    // A reset rather than beginRemoveRows, because removing a proposal
+    // renumbers every visible index after it, and that mapping is what
+    // this model is for.
     void removeAll(std::vector<int> indices);
 
     // ---- the search --------------------------------------------------
