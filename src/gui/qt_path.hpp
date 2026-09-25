@@ -34,4 +34,12 @@ inline QString pathToQString(const std::filesystem::path &path)
     return QString::fromStdString(pathToGenericUtf8(path));
 }
 
+// A UTF-8 std::string path (a DetectedStick's, a use case's) as the
+// QString a page holds: the same conversion, so the stick list and a
+// path a page derived agree on the spelling.
+inline QString qtPathFromUtf8(const std::string &utf8)
+{
+    return pathToQString(pathFromUtf8(utf8));
+}
+
 }  // namespace seabass::gui
