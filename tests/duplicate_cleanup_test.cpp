@@ -119,7 +119,7 @@ int main()
         assert(plan.survivor.sourceId == "solo");
         assert(plan.toRemove.empty());
         assert(!plan.differs);
-        std::cout << "case 5 (single-track group -- nothing to remove) OK\n";
+        std::cout << "case 5 (single-track group: nothing to remove) OK\n";
     }
 
     // Tie on bitrate -- longer duration wins the tie-break.
@@ -170,7 +170,7 @@ int main()
         assert(!plan.bpmForSurvivor.has_value());
         assert(!plan.keyForSurvivor.has_value());
         assert(!plan.artworkPathForSurvivor.has_value());
-        std::cout << "case 8 (survivor already has bpm/key/artwork -- nothing propagates) OK\n";
+        std::cout << "case 8 (survivor already has bpm/key/artwork: nothing propagates) OK\n";
     }
 
     // Neither copy has bpm/key/artwork -- nothing to propagate, no crash.
@@ -180,7 +180,7 @@ int main()
         assert(!plan.bpmForSurvivor.has_value());
         assert(!plan.keyForSurvivor.has_value());
         assert(!plan.artworkPathForSurvivor.has_value());
-        std::cout << "case 9 (neither copy has bpm/key/artwork -- nothing propagates) OK\n";
+        std::cout << "case 9 (neither copy has bpm/key/artwork: nothing propagates) OK\n";
     }
 
     // Play counts are added up onto the survivor: each copy was played in
@@ -256,7 +256,7 @@ int main()
         DuplicateGroup group{{a, b}};
         auto plan = DuplicateCleanupPlanner::plan(group);
         assert(!plan.hasUnpreservableDataAtRisk);
-        std::cout << "case 11 (only one copy has a rating -- not at risk) OK\n";
+        std::cout << "case 11 (only one copy has a rating: not at risk) OK\n";
     }
 
     // Both copies agree on rating/comment -- not at risk either.
@@ -270,7 +270,7 @@ int main()
         DuplicateGroup group{{a, b}};
         auto plan = DuplicateCleanupPlanner::plan(group);
         assert(!plan.hasUnpreservableDataAtRisk);
-        std::cout << "case 12 (agreeing rating/comment -- not at risk) OK\n";
+        std::cout << "case 12 (agreeing rating/comment: not at risk) OK\n";
     }
 
     // A differing comment trips the flag too, not just rating.
@@ -339,7 +339,7 @@ int main()
         auto plan = DuplicateCleanupPlanner::plan(group);
         assert(plan.differs);
         assert(!plan.hasUnpreservableDataAtRisk);
-        std::cout << "case 16 (differs without hasUnpreservableDataAtRisk -- flags are independent) OK\n";
+        std::cout << "case 16 (differs without hasUnpreservableDataAtRisk: flags are independent) OK\n";
     }
 
     // Regression test for a real bug found in review: case 11 above
@@ -359,7 +359,7 @@ int main()
         auto plan = DuplicateCleanupPlanner::plan(group);
         assert(plan.survivor.sourceId == "a");
         assert(plan.hasUnpreservableDataAtRisk);
-        std::cout << "case 17 (only a DOOMED copy has a rating -- flagged as at risk, not silently kept) OK\n";
+        std::cout << "case 17 (only a DOOMED copy has a rating: flagged as at risk, not silently kept) OK\n";
     }
 
     // --- unreferenced files ------------------------------------------
@@ -527,7 +527,7 @@ int main()
         DuplicateGroup group{{makeTrack("a", 200.0, 320, 8'000'000), makeTrack("b", 200.0, 128, 3'000'000)}};
         auto plan = DuplicateCleanupPlanner::plan(group);
         assert(!plan.wouldStrandAFormat);
-        std::cout << "case 27 (no catalogRows -- the rule cannot fire) OK\n";
+        std::cout << "case 27 (no catalogRows: the rule cannot fire) OK\n";
     }
 
     // catalogsWrittenBy(): which catalogs a plan's removals actually

@@ -110,7 +110,7 @@ void assertNotHollow(const fs::path &archive)
     // produces and far above a hollow one.
     if (allocated * 2 < apparent) {
         std::cerr << "archive is hollow: reports " << apparent << " bytes, only " << allocated << " allocated\n";
-        assert(false && "archive is sparse -- data was never written");
+        assert(false && "archive is sparse: data was never written");
     }
 }
 
@@ -167,7 +167,7 @@ int main()
             reader.join();
         };
         BackupStickOutcome outcome = BackupStick::execute(f.options);
-        assert(passes > 0 && "the reader never ran -- the test proves nothing");
+        assert(passes > 0 && "the reader never ran: the test proves nothing");
         if (outcome.status != BackupOutcomeStatus::Complete) {
             std::cerr << "backup did not complete: " << outcome.message << "\n";
         }

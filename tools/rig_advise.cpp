@@ -233,7 +233,7 @@ int main(int argc, char **argv)
                       << "\n  " << advice.detail
                       << "\n  update from: " << application::toString(advice.updateSource.kind)
                       << (advice.updateSource.label.empty() ? "" : " " + advice.updateSource.label)
-                      << (advice.updateSource.detail.empty() ? "" : " -- " + advice.updateSource.detail)
+                      << (advice.updateSource.detail.empty() ? "" : " (" + advice.updateSource.detail + ")")
                       << "\n  clone from: " << application::toString(advice.cloneSource.kind)
                       << (advice.cloneSource.label.empty() ? "" : " " + advice.cloneSource.label)
                       << "\n  diverged: " << (advice.diverged ? "yes" : "no") << "\n";

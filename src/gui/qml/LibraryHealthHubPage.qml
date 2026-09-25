@@ -339,7 +339,7 @@ Page {
         }
         return healthController.analysisNotAnalyzedCount + " of " + healthController.analysisTracksChecked
              + " tracks have not been analysed for Engine players. The player analyses each one the first time "
-             + "it is loaded, which takes a moment, happens once, and is written back to the stick -- but that "
+             + "it is loaded, which takes a moment, happens once, and is written back to the stick, but that "
              + "moment is spent on the deck, and the waveform only appears when it finishes. Load them once "
              + "before the gig, or let Engine DJ analyse the library, and the first load at the gig is instant. "
              + "Seabass does not do this itself: the analysis is the player's own beatgrid, waveform and key "

@@ -101,7 +101,7 @@ int main(int argc, char **argv)
     // pathFromUtf8 would be the wrong one. Not a std::string path.
     const fs::path fixture = argc > 1 ? fs::path(argv[1]) : fs::path("tests/fixtures/anonymized_library");
     if (!fs::is_directory(fixture)) {
-        std::cerr << "fixture not found at " << fixture << " -- run from the repository root\n";
+        std::cerr << "fixture not found at " << fixture << ": run from the repository root\n";
         return 1;
     }
 
@@ -138,7 +138,7 @@ int main(int argc, char **argv)
         // knownDirtyFixtureFiles and every use of it, and go back to
         // asserting v.problems.empty() outright.
         if (v.problems.empty()) {
-            std::cerr << "The fixture is clean now -- remove knownDirtyFixtureFiles from this test.\n";
+            std::cerr << "The fixture is clean now: remove knownDirtyFixtureFiles from this test.\n";
             return 1;
         }
         std::cout << "case 1 (the fixture passes apart from its two known-dirty files) OK\n";

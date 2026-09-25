@@ -53,7 +53,7 @@ void TerminalProgressReporter::finish()
 
     if (m_suppressedWarnings > 0) {
         Console::warn(std::to_string(m_suppressedWarnings) +
-                       " warning(s) hidden -- re-run with --verbose to see them");
+                       " warning(s) hidden: re-run with --verbose to see them");
     }
 }
 

@@ -86,7 +86,7 @@ OpenedStickBackup OpenStickBackup::execute(const fs::path &archivePath, const fs
             fs::remove_all(retired, ec);
             if (fs::exists(retired, ec)) {
                 result.error = "A previous copy of this backup could not be cleared away (" + pathToUtf8(retired)
-                               + "). Something still has a file in it open -- possibly a scan of this "
+                               + "). Something still has a file in it open, possibly a scan of this "
                                  "backup that is still running in Seabass; wait for it and try again.";
                 return result;
             }

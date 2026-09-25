@@ -104,7 +104,7 @@ BackupStickOutcome runBackupWithInjectedCall(Fixture &f, const std::function<voi
         other.join();
     };
     BackupStickOutcome outcome = BackupStick::execute(f.options);
-    assert(injected && "the injected call never ran -- the test proves nothing");
+    assert(injected && "the injected call never ran: the test proves nothing");
     return outcome;
 }
 

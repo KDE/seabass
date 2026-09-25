@@ -102,7 +102,7 @@ void AnlzFile::writeRaw(const std::string &path) const
         auto currentSize = fs::file_size(pathFromUtf8(path), ec);
         auto currentMtime = fs::last_write_time(pathFromUtf8(path), ec);
         if (ec || currentSize != m_sourceFileSize || currentMtime != m_sourceMtime) {
-            throw std::runtime_error(path + " changed on disk since it was read -- refusing to overwrite it with a stale copy");
+            throw std::runtime_error(path + " changed on disk since it was read: refusing to overwrite it with a stale copy");
         }
     }
 

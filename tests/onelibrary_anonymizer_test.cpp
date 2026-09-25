@@ -98,7 +98,7 @@ int main(int argc, char **argv)
         ? fs::path(argv[1])
         : fs::path("tests/fixtures/anonymized_library/rekordbox/rekordbox/exportLibrary.db");
     if (!fs::is_regular_file(fixture)) {
-        std::cerr << "fixture not found at " << fixture << " -- run from the repository root\n";
+        std::cerr << "fixture not found at " << fixture << ": run from the repository root\n";
         return 1;
     }
 

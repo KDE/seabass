@@ -244,7 +244,7 @@ std::vector<DataSet> discoverSets()
         committed->name = "committed fixture";
         sets.push_back(*committed);
     } else {
-        std::cout << "WARNING: the committed fixture was not found -- run from the repository root\n";
+        std::cout << "WARNING: the committed fixture was not found. Run from the repository root\n";
         ++g_failures;
     }
     // The second committed set exists for one property the first cannot
@@ -257,7 +257,7 @@ std::vector<DataSet> discoverSets()
         oneStick->name = "committed fixture (one stick, two catalogs)";
         sets.push_back(*oneStick);
     } else {
-        std::cout << "WARNING: the one-stick fixture was not found -- run from the repository root\n";
+        std::cout << "WARNING: the one-stick fixture was not found. Run from the repository root\n";
         ++g_failures;
     }
     const char *corpus = std::getenv("SEABASS_CORPUS");
@@ -1540,7 +1540,7 @@ void caseBackupPathResolver(const DataSet &set, const fs::path &scratch, const C
     const auto cuesOnly = gui::filesWrittenFor(gui::WriteScope{}, id, qroot, ctx);
     check(has(cuesOnly, ".EXT"), "a cue write names this track's analysis file");
     check(!has(cuesOnly, "export.pdb"),
-          "a cue write does NOT name export.pdb -- rekordbox keeps cues outside the catalog, and backing it "
+          "a cue write does NOT name export.pdb: rekordbox keeps cues outside the catalog, and backing it "
           "up would put a file Undo restores but the save never changed into the record");
 
     const auto withRows = gui::filesWrittenFor(gui::WriteScope{.catalogRows = true}, id, qroot, ctx);
@@ -2138,7 +2138,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
                                   + std::to_string(static_cast<long long>(planned.positionMs)) + " ms"
                                   + (wasAlreadyThere ? " (it was already there, so this proves nothing about the mirror)"
                                                      : " (the mirror had to write this one)")
-                                  + " -- one library written twice must not disagree with itself");
+                                  + ": one library written twice must not disagree with itself");
             }
         }
         int rekordboxTargets = 0;
@@ -2167,7 +2167,7 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
             // it is said out loud, so a green run is never mistaken for
             // evidence that the mirror works.
             if (exercised == 0) {
-                std::cout << "    sync: NONE of them -- every cue was already in the OneLibrary copy before the "
+                std::cout << "    sync: NONE of them. Every cue was already in the OneLibrary copy before the "
                              "save, and no plan in this set would have written one that was not, so this data "
                              "set cannot tell a mirror that ran from one that did not\n";
             }
@@ -2211,20 +2211,20 @@ void caseSync(const DataSet &set, const fs::path &scratch, const Catalogs &catal
             // they could not be matched -- a diagnostic contradicting
             // its own evidence, and the exact failure #14 is about:
             // output that reads like a finding and is not one.
-            std::cout << "    sync: OneLibrary mirror NOT exercised -- " << rekordboxTargets << " of "
+            std::cout << "    sync: OneLibrary mirror NOT exercised. " << rekordboxTargets << " of "
                       << withCues.size() << " sampled plans target rekordbox, and " << shared << " of "
                       << catalogs.rekordbox.size() << " rekordbox tracks share a filename with a OneLibrary row.\n";
             if (shared == 0) {
-                std::cout << "    sync: the two catalogs cannot be matched up in this set at all -- the "
+                std::cout << "    sync: the two catalogs cannot be matched up in this set at all. The "
                              "anonymizer renamed each catalog's files independently, so the same audio has a "
                              "different placeholder name in export.pdb and exportLibrary.db\n";
             } else if (rekordboxTargets == 0) {
-                std::cout << "    sync: the catalogs DO match up here, so this set could exercise the mirror -- "
-                             "no sampled plan targets rekordbox, because the planner emitted none the mirror is "
+                std::cout << "    sync: the catalogs DO match up here, so this set could exercise the mirror. "
+                             "No sampled plan targets rekordbox, because the planner emitted none the mirror is "
                              "behind on (the two halves already agree wherever there was a cue to sync)\n";
             } else {
                 std::cout << "    sync: plans target rekordbox and the catalogs match up, yet no cue was "
-                             "checked -- the targets had no OneLibrary row, which is worth looking at\n";
+                             "checked. The targets had no OneLibrary row, which is worth looking at\n";
             }
         }
     }

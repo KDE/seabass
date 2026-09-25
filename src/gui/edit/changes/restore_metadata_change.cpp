@@ -291,7 +291,7 @@ AnnotationOutcome applyAnnotation(SaveContext &ctx, RestoreWriterContext &writer
             // both catalogs the comment did go back, and saying it could
             // not would contradict both the page and the truth.
             ctx.log().record(std::string(LogTag) + ": DeviceLibrary cannot store a comment for \"" +
-                             proposal.stickTrack.title + "\" -- its row has no room to grow one");
+                             proposal.stickTrack.title + "\": its row has no room to grow one");
         }
         return outcome;
     }

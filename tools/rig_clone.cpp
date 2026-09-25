@@ -165,7 +165,7 @@ int main(int argc, char **argv)
                   << " (added " << preview.backup.added << ", changed " << preview.backup.changed << ", removed "
                   << preview.backup.removed << "); source " << gib(preview.sourceBytes) << ", about "
                   << gib(preview.bytesToTarget) << " to the target, " << gib(preview.targetFreeBytes) << " free"
-                  << (preview.enoughTargetSpace ? "" : " -- NOT ENOUGH");
+                  << (preview.enoughTargetSpace ? "" : " (NOT ENOUGH)");
         if (preview.restore) {
             std::cout << "; restore would write " << preview.restore->filesToWrite << " files, extras "
                       << preview.restore->extras;
@@ -179,8 +179,8 @@ int main(int argc, char **argv)
             std::cout << "target space: needs " << gib(preview.bytesToTarget) << " plus the app's margin, has "
                       << gib(preview.targetFreeBytes) << " -> "
                       << (refused ? "too small, as expected"
-                                  : (somethingToCopy ? "BIG ENOUGH -- this target cannot check C6"
-                                                     : "NOTHING TO COPY -- the source scanned to zero bytes"))
+                                  : (somethingToCopy ? "BIG ENOUGH: this target cannot check C6"
+                                                     : "NOTHING TO COPY: the source scanned to zero bytes"))
                       << "\n";
             std::cout << "RIG RESULT: " << (refused ? "PASS" : "FAIL") << "\n";
             return refused ? 0 : 1;

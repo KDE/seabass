@@ -65,11 +65,11 @@ int main(int argc, char **argv)
 
     auto walk = infrastructure::cleanup::walkAudioFiles(root + "/Contents", application::CancellationToken());
     std::cerr << "walked: " << walk.files.size() << " audio files in " << walk.directoriesVisited
-              << " directories" << (walk.incomplete ? " (INCOMPLETE -- some entries unreadable)" : "") << "\n";
+              << " directories" << (walk.incomplete ? " (INCOMPLETE: some entries unreadable)" : "") << "\n";
 
     auto scan = application::findUnreferencedFiles(walk.files, catalogs);
     if (!scan.usable) {
-        std::cerr << "no catalog could be read -- refusing to call anything unreferenced\n";
+        std::cerr << "no catalog could be read: refusing to call anything unreferenced\n";
         return 2;
     }
 

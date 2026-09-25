@@ -49,7 +49,7 @@ std::optional<std::string> WindowsRemovableMediaMounter::mount(const std::string
     // device back without a reinsertion.
     if (::GetDriveTypeW(pathFromUtf8(devicePath).c_str()) != DRIVE_REMOVABLE) {
         errorMessage = "Drive " + devicePath +
-                        " is not available. If it was just ejected, reinsert the stick -- "
+                        " is not available. If it was just ejected, reinsert the stick: "
                         "Windows can't remount an ejected drive without that.";
         return std::nullopt;
     }
@@ -104,7 +104,7 @@ bool WindowsRemovableMediaMounter::unmount(const std::string &devicePath, std::s
 
     if (!ok) {
         errorMessage = "Could not eject " + devicePath +
-                        " -- it may still be in use (error " + std::to_string(lastError) + ").";
+                        ". It may still be in use (error " + std::to_string(lastError) + ").";
         return false;
     }
     return true;
@@ -131,7 +131,7 @@ bool WindowsRemovableMediaMounter::release(const std::string &devicePath, std::s
 
     if (!ok) {
         errorMessage = "Could not release " + devicePath +
-                        " -- it may still be in use (error " + std::to_string(lastError) + ").";
+                        ". It may still be in use (error " + std::to_string(lastError) + ").";
         return false;
     }
     return true;

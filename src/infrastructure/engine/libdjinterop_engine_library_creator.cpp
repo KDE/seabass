@@ -610,7 +610,7 @@ std::string verifyInformationRowAtIdOne(const std::filesystem::path &databaseDir
                        ? std::string()
                        : "the new Engine database has " + std::to_string(rows) +
                              " Information row(s), the first at id " + std::to_string(firstId) +
-                             " -- Engine expects exactly one, at id 1.";
+                             ". Engine expects exactly one, at id 1.";
     }
     sqlite3_finalize(check);
     sqlite3_close(db);
@@ -632,7 +632,7 @@ EngineLibraryCreationResult EngineLibraryCreator::create(const std::string &dire
     result.tracksTotal = static_cast<int>(tracks.size());
 
     if (djinterop::engine::database_exists(directory)) {
-        result.errorMessage = "An Engine Library already exists at " + directory + " -- refusing to overwrite it.";
+        result.errorMessage = "An Engine Library already exists at " + directory + ": refusing to overwrite it.";
         return result;
     }
 

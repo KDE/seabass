@@ -371,7 +371,7 @@ int main(int argc, char **argv)
             const DeleteStickBackupResult refused = ManageStickBackups::remove(archive);
             stillThere = fs::is_regular_file(archive, ec);
             busyRefused = refused.status == DeleteStickBackupResult::Status::Busy;
-            std::cout << "while another process writes it: " << toString(refused.status) << " -- " << refused.message
+            std::cout << "while another process writes it: " << toString(refused.status) << " (" << refused.message << ")"
                       << "; archive " << (stillThere ? "still there" : "GONE") << "\n";
         } else {
             std::cout << "the lock holder never took the lock: the refusal was not checked\n";
@@ -460,7 +460,7 @@ int main(int argc, char **argv)
             const DeleteStickBackupResult refused = ManageStickBackups::remove(archive);
             stillThere = fs::is_regular_file(archive, ec);
             busyRefused = refused.status == DeleteStickBackupResult::Status::Busy;
-            std::cout << "while another process writes it: " << toString(refused.status) << " -- " << refused.message
+            std::cout << "while another process writes it: " << toString(refused.status) << " (" << refused.message << ")"
                       << "; archive " << (stillThere ? "still there" : "GONE") << "\n";
         } else {
             std::cout << "the lock holder never took the lock: the refusal was not checked\n";
@@ -484,7 +484,7 @@ int main(int argc, char **argv)
         const bool archiveGone = !fs::exists(archive, ec);
         const fs::path journal = infrastructure::stick_backup::journal::journalPathFor(archive);
         const bool journalGone = !fs::exists(journal, ec);
-        std::cout << "delete: " << toString(deleted.status) << (deleted.message.empty() ? "" : " -- " + deleted.message)
+        std::cout << "delete: " << toString(deleted.status) << (deleted.message.empty() ? "" : " (" + deleted.message + ")")
                   << "; archive " << (archiveGone ? "gone" : "STILL THERE") << ", journal "
                   << (journalGone ? "gone" : "STILL THERE") << "\n";
         pass = pass && deleted.status == DeleteStickBackupResult::Status::Deleted && archiveGone && journalGone;

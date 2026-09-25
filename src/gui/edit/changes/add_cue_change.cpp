@@ -131,7 +131,7 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
         }
     }
     if (!track) {
-        return ChangeOutcome::failure("This track no longer exists in the library -- rescan and try again.");
+        return ChangeOutcome::failure("This track no longer exists in the library. Rescan and try again.");
     }
 
     domain::CuePoint newCue;
@@ -169,7 +169,7 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
         // write path rather than another branch of the writer
         // dispatch below.
         if (track->filePath.empty()) {
-            return ChangeOutcome::failure("This track has no known file path in OneLibrary -- can't write a cue.");
+            return ChangeOutcome::failure("This track has no known file path in OneLibrary: can't write a cue.");
         }
         ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot), "add-cue");
         sharedOneLibraryWriter(ctx, pioneerRoot).writeCuesForPath(track->filePath, cues);

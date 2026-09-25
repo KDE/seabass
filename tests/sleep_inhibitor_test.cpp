@@ -123,7 +123,7 @@ int main(int argc, char **argv)
                 assert(listed.contains(why) && "powercfg /requests must list the request while it is held");
                 std::cout << "case 1w: powercfg /requests lists the request while it is held\n";
             } else {
-                std::cout << "case 1w: powercfg /requests not available here (needs an elevated prompt) -- "
+                std::cout << "case 1w: powercfg /requests not available here (needs an elevated prompt), "
                              "listing not checked\n";
             }
         }

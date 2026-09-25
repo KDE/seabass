@@ -695,7 +695,7 @@ std::optional<QString> SaveContext::rollBackChange()
                 for (const std::string &name : moved) {
                     list += (list.empty() ? "" : ", ") + name;
                 }
-                log().record("save: moved " + list + " aside as .seabass-stale -- the rollback could not put "
+                log().record("save: moved " + list + " aside as .seabass-stale: the rollback could not put "
                              + pathToUtf8(pathFromUtf8(database.path).filename())
                              + " back in step with them, and SQLite would replay them into the wrong generation "
                                "on the next open. The backup taken before this save holds the state to go back to.");

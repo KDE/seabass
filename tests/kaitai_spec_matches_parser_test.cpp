@@ -187,7 +187,7 @@ Result compare(const fs::path &ksy, const fs::path &headerPath)
             ++result.fieldsCompared;
             if (accessors.count(field) == 0) {
                 result.problems.push_back(name + "." + field + " is in " + seabass::pathToUtf8(ksy.filename())
-                                          + " but the generated parser does not expose it -- the parser needs "
+                                          + " but the generated parser does not expose it: the parser needs "
                                             "regenerating from the spec");
             }
         }
@@ -202,7 +202,7 @@ Result compare(const fs::path &ksy, const fs::path &headerPath)
                 continue;
             }
             result.problems.push_back(name + "." + accessor + " is in the generated parser but not in "
-                                      + seabass::pathToUtf8(ksy.filename()) + " -- the spec is behind the parser");
+                                      + seabass::pathToUtf8(ksy.filename()) + ": the spec is behind the parser");
         }
     }
     return result;

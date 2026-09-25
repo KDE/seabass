@@ -40,7 +40,7 @@ public:
     }
     bool unmount(const std::string &, std::string &) override
     {
-        assert(false && "FormatUsbStick must use release(), not unmount() -- unmount() ejects on Windows");
+        assert(false && "FormatUsbStick must use release(), not unmount(): unmount() ejects on Windows");
         return false;
     }
     bool release(const std::string &devicePath, std::string &errorMessage) override

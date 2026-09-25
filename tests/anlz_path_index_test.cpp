@@ -193,7 +193,7 @@ int main(int argc, char **argv)
     const fs::path fixture = argc > 1 ? fs::path(argv[1]) : fs::path("tests/fixtures/anonymized_library");
     const fs::path pioneerRoot = fixture / "rekordbox";
     if (!fs::is_regular_file(pioneerRoot / "rekordbox" / "export.pdb")) {
-        std::cerr << "fixture not found at " << fixture << " -- run from the repository root\n";
+        std::cerr << "fixture not found at " << fixture << ": run from the repository root\n";
         return 1;
     }
     const std::string root = seabass::pathToUtf8(pioneerRoot);

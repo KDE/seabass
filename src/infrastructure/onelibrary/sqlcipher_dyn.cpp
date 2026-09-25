@@ -59,7 +59,7 @@ void unloadLibrary(void *mod)
 }
 const char *libraryNotFoundHint()
 {
-    return "could not load libsqlcipher-0.dll or libsqlcipher.dll -- is the mingw-w64-ucrt-x86_64-sqlcipher "
+    return "could not load libsqlcipher-0.dll or libsqlcipher.dll: is the mingw-w64-ucrt-x86_64-sqlcipher "
            "package's DLL (or Craft's) on PATH or next to the executable?";
 }
 #elif defined(__APPLE__)
@@ -87,7 +87,7 @@ void unloadLibrary(void *mod)
 }
 const char *libraryNotFoundHint()
 {
-    return "could not load libsqlcipher.0.dylib -- is Homebrew's sqlcipher package installed "
+    return "could not load libsqlcipher.0.dylib: is Homebrew's sqlcipher package installed "
            "(brew install sqlcipher)?";
 }
 #else
@@ -115,7 +115,7 @@ void unloadLibrary(void *mod)
 }
 const char *libraryNotFoundHint()
 {
-    return "could not load libsqlcipher (tried libsqlcipher.so.0/.so.1/.so) -- is the libsqlcipher1 "
+    return "could not load libsqlcipher (tried libsqlcipher.so.0/.so.1/.so): is the libsqlcipher1 "
            "(or equivalent) package installed?";
 }
 #endif

@@ -118,7 +118,7 @@ TestCase {
         } else {
             saveFitted = true;
             console.log("  the save FITTED (" + s.stickBytesFree + " bytes were free before it): " + summary.written
-                        + " of " + staged + " written -- the stick was not full enough for this check");
+                        + " of " + staged + " written (the stick was not full enough for this check)");
             compare(summary.written, staged, "a save that reports success wrote everything it staged");
             compare(s.dirty, false);
         }

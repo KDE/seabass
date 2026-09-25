@@ -185,7 +185,7 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
     std::error_code ec;
     const fs::path destination = pathFromUtf8(destinationRoot);
     if (fs::exists(destination, ec) && !fs::is_empty(destination, ec)) {
-        result.errorMessage = destinationRoot + " already exists and isn't empty -- refusing to write into it";
+        result.errorMessage = destinationRoot + " already exists and isn't empty: refusing to write into it";
         return result;
     }
     fs::create_directories(destination, ec);
@@ -218,7 +218,7 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
             fs::directory_iterator entry(databaseDir, listEc);
             if (listEc) {
                 result.errorMessage = "could not list " + pathToUtf8(databaseDir) + ": " + listEc.message()
-                    + " -- so the files that have no anonymizer could not be found, let alone dropped";
+                    + ", so the files that have no anonymizer could not be found, let alone dropped";
                 return result;
             }
             for (const fs::directory_iterator end; entry != end;) {
@@ -235,7 +235,7 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
                 entry.increment(listEc);
                 if (listEc) {
                     result.errorMessage = "stopped listing " + pathToUtf8(databaseDir) + ": " + listEc.message()
-                        + " -- so the rest of it was never examined";
+                        + ", so the rest of it was never examined";
                     return result;
                 }
             }
@@ -412,8 +412,8 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
         result.errorMessage = std::to_string(result.unremovedUnanonymizableFiles.size())
             + " file(s) that cannot be anonymized are still in the export and could not be removed: "
             + result.unremovedUnanonymizableFiles.front()
-            + (result.unremovedUnanonymizableFiles.size() > 1 ? ", ..." : "")
-            + " -- this export must not be shared.";
+            + (result.unremovedUnanonymizableFiles.size() > 1 ? " and others" : "")
+            + ". This export must not be shared.";
     }
     return result;
 }
