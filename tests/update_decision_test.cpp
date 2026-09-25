@@ -4,8 +4,9 @@
 
 // What the update check decides, without a network anywhere near it.
 // The rules it encodes are promises: a withdrawn release is never
-// offered, a build is never sent to a less finished channel than its
-// own, and a development build is offered nothing at all.
+// offered, a release nobody has smoke-tested is never offered, a stable
+// build is never sent to a test build, and a development build is offered
+// nothing at all.
 
 #include <QTest>
 
@@ -15,11 +16,19 @@ using namespace seabass::gui;
 
 namespace
 {
-ReleaseInfo make(const QString &version, const QString &channel, bool withdrawn = false)
+// Released by default, because that is what an entry on the website looks
+// like by the time anyone is meant to see it. The one test about the gate
+// clears it deliberately -- everywhere else it would only be noise, and
+// leaving it false would quietly turn every other assertion here into a
+// test of the gate instead of the thing it names.
+ReleaseInfo make(const QString &version, const QString &channel, bool withdrawn = false,
+                 const QString &build = {})
 {
     ReleaseInfo release;
     release.version = version;
     release.channel = channel;
+    release.build = build.isEmpty() ? channel : build;
+    release.released = true;
     release.withdrawn = withdrawn;
     if (withdrawn) {
         release.withdrawnReason = QStringLiteral("it ate a library");
@@ -44,26 +53,35 @@ private Q_SLOTS:
         QCOMPARE(compareVersions(QStringLiteral("not.a.version"), QStringLiteral("0.0.1")), -1);
     }
 
+    void alphaAndBetaAreBothTesting()
+    {
+        QCOMPARE(feedChannelFor(QStringLiteral("alpha")), QStringLiteral("testing"));
+        QCOMPARE(feedChannelFor(QStringLiteral("beta")), QStringLiteral("testing"));
+        QCOMPARE(feedChannelFor(QStringLiteral("stable")), QStringLiteral("stable"));
+        // Not published, so it has no channel to be on.
+        QVERIFY(feedChannelFor(QStringLiteral("dev")).isEmpty());
+    }
+
     void aStableBuildStaysOnStable()
     {
-        const QVector<ReleaseInfo> feed{make(QStringLiteral("0.3.0"), QStringLiteral("beta")),
+        const QVector<ReleaseInfo> feed{make(QStringLiteral("0.3.0"), QStringLiteral("testing")),
                                         make(QStringLiteral("0.2.0"), QStringLiteral("stable"))};
         const auto update = chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("stable"), feed);
         QVERIFY(update.has_value());
         QCOMPARE(update->version, QStringLiteral("0.2.0"));
     }
 
-    void aBetaBuildTakesStableToo()
+    void aTestBuildTakesStableToo()
     {
         const QVector<ReleaseInfo> feed{make(QStringLiteral("0.4.0"), QStringLiteral("stable")),
-                                        make(QStringLiteral("0.3.0"), QStringLiteral("beta")),
-                                        make(QStringLiteral("0.9.0"), QStringLiteral("alpha"))};
-        const auto update = chooseUpdate(QStringLiteral("0.2.0"), QStringLiteral("beta"), feed);
-        QVERIFY(update.has_value());
-        // The newest of the two it follows. Never the alpha, however high
-        // its number: that is not an update, it is a downgrade in
-        // finish.
-        QCOMPARE(update->version, QStringLiteral("0.4.0"));
+                                        make(QStringLiteral("0.3.0"), QStringLiteral("testing"))};
+        // Both from an alpha and from a beta: they are one channel here,
+        // and the number decides which of the two on offer is newer.
+        for (const auto &running : {QStringLiteral("alpha"), QStringLiteral("beta")}) {
+            const auto update = chooseUpdate(QStringLiteral("0.2.0"), running, feed);
+            QVERIFY(update.has_value());
+            QCOMPARE(update->version, QStringLiteral("0.4.0"));
+        }
     }
 
     void aWithdrawnReleaseIsNeverOffered()
@@ -73,6 +91,28 @@ private Q_SLOTS:
         const auto update = chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("stable"), feed);
         QVERIFY(update.has_value());
         QCOMPARE(update->version, QStringLiteral("0.2.0"));
+    }
+
+    // The packages are uploaded and the entry is written before anybody
+    // has installed the build; only then is it marked released. Until it
+    // is, the app must not send people to it, or a build that does not
+    // start would reach everyone running the version before it.
+    void aReleaseNobodyHasTestedIsNeverOffered()
+    {
+        ReleaseInfo fresh = make(QStringLiteral("0.3.0"), QStringLiteral("stable"));
+        fresh.released = false;
+        const QVector<ReleaseInfo> feed{fresh, make(QStringLiteral("0.2.0"), QStringLiteral("stable"))};
+        const auto update = chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("stable"), feed);
+        QVERIFY(update.has_value());
+        QCOMPARE(update->version, QStringLiteral("0.2.0"));
+
+        // And it is offered the moment it is marked released, so what is
+        // being tested here is the flag and not the version.
+        fresh.released = true;
+        const QVector<ReleaseInfo> after{fresh, make(QStringLiteral("0.2.0"), QStringLiteral("stable"))};
+        const auto now = chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("stable"), after);
+        QVERIFY(now.has_value());
+        QCOMPARE(now->version, QStringLiteral("0.3.0"));
     }
 
     void nothingNewerMeansNothingToSay()
@@ -89,18 +129,35 @@ private Q_SLOTS:
         QVERIFY(!chooseUpdate(QStringLiteral("0.1.0"), QStringLiteral("dev"), feed).has_value());
     }
 
-    void theRunningBuildIsFoundByVersionAndChannel()
+    void theRunningBuildIsFoundByVersionAndBuildChannel()
     {
-        const QVector<ReleaseInfo> feed{make(QStringLiteral("0.2.0"), QStringLiteral("beta"), true),
-                                        make(QStringLiteral("0.2.0"), QStringLiteral("stable"))};
+        const QVector<ReleaseInfo> feed{
+            make(QStringLiteral("0.2.0"), QStringLiteral("testing"), true, QStringLiteral("alpha")),
+            make(QStringLiteral("0.2.0"), QStringLiteral("testing"), false, QStringLiteral("beta")),
+            make(QStringLiteral("0.2.0"), QStringLiteral("stable"))};
+        const auto alpha = findRunning(QStringLiteral("0.2.0"), QStringLiteral("alpha"), feed);
+        QVERIFY(alpha.has_value());
+        QVERIFY(alpha->withdrawn);
+        // The same number built as a beta shares the testing list with
+        // it, and must not inherit its withdrawal.
         const auto beta = findRunning(QStringLiteral("0.2.0"), QStringLiteral("beta"), feed);
         QVERIFY(beta.has_value());
-        QVERIFY(beta->withdrawn);
-        // The same number on another channel is a different build and
-        // must not inherit the other one's withdrawal.
+        QVERIFY(!beta->withdrawn);
         const auto stable = findRunning(QStringLiteral("0.2.0"), QStringLiteral("stable"), feed);
         QVERIFY(stable.has_value());
         QVERIFY(!stable->withdrawn);
+    }
+
+    // Somebody handed a build to smoke-test is running an entry that is
+    // not released yet, and is exactly who needs to hear it was pulled.
+    void anUntestedBuildStillHearsItWasWithdrawn()
+    {
+        ReleaseInfo fresh = make(QStringLiteral("0.3.0"), QStringLiteral("testing"), true,
+                                 QStringLiteral("alpha"));
+        fresh.released = false;
+        const auto running = findRunning(QStringLiteral("0.3.0"), QStringLiteral("alpha"), {fresh});
+        QVERIFY(running.has_value());
+        QVERIFY(running->withdrawn);
     }
 
     void withdrawnAndNothingNewerIsStillWorthSaying()

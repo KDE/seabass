@@ -85,11 +85,19 @@ fi
 # Which job carries which platform's package. A job that is not there --
 # no Windows runner registered, say -- is reported, not silently skipped:
 # a release missing a platform must be a decision, never an oversight.
+#
+# The names are Invent's, exactly. Two of the three here were wrong for
+# as long as this script existed and nobody found out, because it had
+# never been run against a real tag: "windows:package" is the MSYS2 job
+# that no runner picks up, and the macOS job is craft_macos_qt6_arm64,
+# not craft_macos_arm64_qt6. Both reported the platform missing, which
+# reads exactly like a job that did not run.
 want_linux="linux:package"
 # The Craft job, not the MSYS2 windows:package: that chain has no runner
 # (docs/releasing.md, "Packages before the tag").
 want_windows="craft_windows_qt6_x86_64"
-want_macos="craft_macos_qt6_arm64"
+want_macos_arm64="craft_macos_qt6_arm64"
+want_macos_x86_64="craft_macos_qt6_x86_64"
 
 jobs="$(api "$API/projects/$PROJECT/pipelines/$id/jobs?per_page=100")"
 
@@ -135,12 +143,38 @@ echo "into $dest:"
 missing=0
 fetch_job "$want_linux" linux tar.gz || missing=1
 fetch_job "$want_windows" windows exe || missing=1
-fetch_job "$want_macos" macos dmg || missing=1
+# Both Mac architectures, because the package that gets published is
+# neither of them: Craft builds one architecture per root, and an
+# arm64-only .dmg mounts on an Intel Mac and refuses to launch. These two
+# are the halves; tools/macos-universal-dmg.sh makes the whole, on a Mac.
+fetch_job "$want_macos_arm64" macos-arm64 dmg || missing=1
+fetch_job "$want_macos_x86_64" macos-x86_64 dmg || missing=1
+
+universal="$dest/$(seabass_package_name "$version" "$channel" macos dmg)"
+echo
+if [ -f "$universal" ]; then
+    echo "macos:   $universal"
+    echo "         $(sha256sum "$universal" | cut -d" " -f1)"
+else
+    # Named as a thing that is owed, not as a thing that failed. The
+    # publisher looks for this exact filename and will refuse the release
+    # without it, so there is no way to publish the arm64 half by
+    # mistake.
+    missing=1
+    echo "macos:   no universal package yet, and the two above are not it."
+    echo "         They are CI's halves, one architecture each, and they are here as"
+    echo "         evidence that both build. The package that gets published is merged"
+    echo "         on a Mac from two Craft roots, because the check that the two roots"
+    echo "         hold the same package versions reads their install.db and a .dmg"
+    echo "         does not carry one. See docs/releasing.md, \"A universal macOS"
+    echo "         package\", then put the result here as:"
+    echo "           $(seabass_package_name "$version" "$channel" macos dmg)"
+fi
 
 echo
 if [ "$missing" -eq 1 ]; then
-    echo "Some platforms have no package. Publishing a release that is missing one"
-    echo "is a decision to take deliberately, not by not noticing."
+    echo "Not every platform has a package yet. Publishing a release that is missing"
+    echo "one is a decision to take deliberately, not by not noticing."
     exit 1
 fi
 echo "All three are here. Install and run each one before publishing:"
