@@ -77,6 +77,17 @@ Page {
         return -1;
     }
 
+    // Where `disk` is in the current list, by mount point and device
+    // together, or -1 when it is no longer there. A row number is not an
+    // identity: a refresh can list the same drives in another order.
+    function indexOfDrive(disk) {
+        if (!disk || !disk.mountPoint) return -1;
+        for (let i = 0; i < root.disks.length; ++i) {
+            if (root.disks[i].mountPoint === disk.mountPoint && root.disks[i].devicePath === disk.devicePath) return i;
+        }
+        return -1;
+    }
+
     function applySelection(index) {
         root.selectedIndex = index;
         if (root.selectedDisk !== null && root.selectedDisk.usable === true && root.controller.analyze) {
@@ -533,6 +544,7 @@ Page {
                             id: driveRadio
                             required property var modelData
                             required property int index
+                            objectName: "driveRadio_" + index
                             Layout.fillWidth: true
                             ButtonGroup.group: driveGroup
                             enabled: modelData.usable === true && root.controller.busy !== true
@@ -772,10 +784,9 @@ Page {
             // what Start Over did; a second button for the same thing
             // inside the report was the "Close and Done" complaint again.
             startOverVisible: false
-            // The disk just restored onto, not whatever was selected
-            // when the report was drawn -- selectedDisk can already
-            // have moved on (Close resets it) by the time this is
-            // clicked.
+            // The disk just restored onto: the report is only on screen
+            // until Close, and nothing else moves the selection while
+            // it is.
             onRepairLibraryRequested: root.libraryHealthRequested(
                 (root.selectedDisk && root.selectedDisk.label) || "",
                 (root.selectedDisk && root.selectedDisk.rekordboxPath) || "",
@@ -805,10 +816,11 @@ Page {
             // to the same question, and the two read as synonyms.
             //
             // Closing also clears the report and looks at the drives
-            // again, which is what the report's own Start Over did: the
-            // form under the overlay still holds the preview from before
-            // the restore ("14 files to write"), and a second restore
-            // should start from what the drive holds now.
+            // again: the form under the overlay still holds the preview
+            // from before the restore ("14 files to write"), and a second
+            // restore should start from what the drive holds now. The
+            // drive stays the one the user chose; if it is gone, none is
+            // chosen until the user picks one.
             Button {
                 objectName: "closeReportButton"
                 text: "Close"
@@ -816,11 +828,16 @@ Page {
                 ToolTip.visible: hovered
                 ToolTip.text: "Clear this report and look for drives again. Files already restored are kept and skipped next time."
                 onClicked: {
+                    // The drive the user chose, held by what it is: the
+                    // refreshed list can have it on another row, or not
+                    // at all. Never another drive in its place: a blank
+                    // one asks for no typed confirmation, so the next
+                    // Restore would write onto a drive nobody picked.
+                    const chosen = root.selectedDisk;
                     root.reportDismissed = true;
                     if (root.controller.clearResult) root.controller.clearResult();
                     if (root.controller.refresh) root.controller.refresh();
-                    root.selectedIndex = -1;
-                    root.applySelection(root.pickDefaultDrive());
+                    root.applySelection(root.indexOfDrive(chosen));
                 }
             }
         }

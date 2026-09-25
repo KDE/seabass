@@ -24,6 +24,53 @@ TestCase {
         RestoreStickBackupPage { width: 880; height: 880 }
     }
 
+    // A stand-in whose properties notify, for the tests where the drive
+    // list itself changes under the page (a plain JS object's do not).
+    Component {
+        id: liveDisksControllerComponent
+        QtObject {
+            property var disks: []
+            property var nextDisks: []
+            property string archivePath: "/home/u/Seabass Backups/STICK.zip"
+            property string defaultBackupDirectory: "/home/u/Seabass Backups"
+            property var archiveInfo: ({error: "", label: "STICK", identifier: "uuid", status: "complete",
+                                        createdAt: "2026-09-03T21:14:00", entries: 1161, bytes: 25 * 1024 * 1024 * 1024,
+                                        rejectedCount: 0})
+            property var preview: ({filesToWrite: 14, filesUnchanged: 1147, bytesToWrite: 500 * 1024 * 1024, extras: 0,
+                                    targetHasEngineLibrary: false, freeBytes: 60 * 1024 * 1024 * 1024, enoughFreeSpace: true})
+            property var result: ({})
+            property bool busy: false
+            property bool restoring: false
+            property bool analyzing: false
+            property string phase: ""
+            property real filesDone: 0
+            property real filesTotal: 0
+            property real bytesDone: 0
+            property real bytesTotal: 0
+            property real bytesPerSecond: 0
+            property real etaSeconds: -1
+            property string currentFile: ""
+            property string errorMessage: ""
+            property string statusMessage: ""
+            property var knownBackups: []
+            property bool listingBackups: false
+            property var analyzeCalls: []
+            property var lastRestore: null
+            property int refreshCalls: 0
+            property int clearCalls: 0
+            function refresh() { refreshCalls += 1; disks = nextDisks; }
+            function refreshKnownBackups() {}
+            function analyze(mountPoint) { analyzeCalls = analyzeCalls.concat([mountPoint]); }
+            function restore(mountPoint, exact) { lastRestore = {mountPoint: mountPoint, exact: exact}; }
+            function restoreAnyway(mountPoint, exact) {}
+            function retryLockedAction() {}
+            function cancel() {}
+            function clearResult() { result = ({}); errorMessage = ""; statusMessage = ""; clearCalls += 1; }
+            function mount(devicePath) {}
+            function archivePathForLabel(label) { return defaultBackupDirectory + "/" + label + ".zip"; }
+        }
+    }
+
     Component {
         id: realControllerComponent
         RestoreStickBackupController {}
@@ -582,6 +629,86 @@ TestCase {
         compare(page.controller.clearCalls, 1, "Close must clear the report");
         compare(page.controller.analyzeCalls.length, analyzed + 1, "and look at the drive again");
         compare(page.controller.analyzeCalls[analyzed], "/media/STICK");
+    }
+
+    // Close refreshes the drive list and must keep the drive the user
+    // chose, found again by what it is (mount point and device), not by
+    // its row. It used to fall back to the first usable drive: pick B,
+    // restore, Close, and the form had quietly moved to A and analysed
+    // it, and a blank A asks for no typed confirmation, so the next
+    // Restore wrote onto a drive nobody picked. Checked after each way a
+    // restore ends, with B moved to another row by the refresh.
+    function closeAfter(outcome) {
+        const a = makeDisk({label: "A", mountPoint: "/media/A", devicePath: "/dev/sdb1"});
+        const b = makeDisk({label: "B", mountPoint: "/media/B", devicePath: "/dev/sdc1"});
+        const c = makeDisk({label: "C", mountPoint: "/media/C", devicePath: "/dev/sdd1"});
+        const controller = createTemporaryObject(liveDisksControllerComponent, testCase, {disks: [a, b]});
+        const page = createTemporaryObject(pageComponent, testCase,
+                                           {controller: controller, appSettingsController: fakeAppSettings()});
+        compare(page.selectedDisk.label, "A", "A is the default");
+        const radioB = findChild(page, "driveRadio_1");
+        radioB.checked = true;
+        radioB.toggled();
+        compare(page.selectedDisk.label, "B", "the user picks B");
+        findChild(page, "confirmDialog").accepted();
+        compare(controller.lastRestore.mountPoint, "/media/B");
+        controller.restoring = true;
+        controller.busy = true;
+        controller.restoring = false;
+        controller.busy = false;
+        if (outcome === "finished") {
+            controller.result = {filesWritten: 14, filesUnchanged: 1147, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
+                                 writeErrors: [], warnings: [], missingTracks: [], databaseChecked: true};
+            controller.statusMessage = "Restored 14 files (1147 already up to date).";
+        } else if (outcome === "cancelled") {
+            controller.result = {filesWritten: 3, filesUnchanged: 0, directoriesCreated: 0, extrasRemoved: 0, rejected: [],
+                                 writeErrors: [], warnings: [], missingTracks: [], databaseChecked: false};
+            controller.statusMessage = "Restore cancelled after 3 files.";
+        } else {
+            controller.errorMessage = "The drive was removed.";
+        }
+        const overlay = findChild(page, "restoreOverlay");
+        compare(overlay.visible, true, outcome + ": the overlay shows how it ended");
+        // The refresh finds the drives in another order: B is row 2 now.
+        controller.nextDisks = outcome === "gone" ? [c, a] : [c, a, b];
+        const analyzed = controller.analyzeCalls.length;
+        findChild(overlay, "closeReportButton").clicked();
+        compare(overlay.visible, false);
+        compare(controller.refreshCalls, 1, "Close looks at the drives again");
+        return {page: page, controller: controller, analyzed: analyzed};
+    }
+
+    function test_closeKeepsTheChosenDrive_data() {
+        return [{tag: "finished"}, {tag: "failed"}, {tag: "cancelled"}];
+    }
+
+    function test_closeKeepsTheChosenDrive(data) {
+        const run = closeAfter(data.tag);
+        compare(run.page.selectedDisk !== null, true, "a drive is still selected");
+        compare(run.page.selectedDisk.label, "B", "still the drive the user chose");
+        compare(run.page.selectedIndex, 2, "found at its new row");
+        compare(run.controller.analyzeCalls.length, run.analyzed + 1, "and analysed afresh");
+        compare(run.controller.analyzeCalls[run.analyzed], "/media/B");
+        compare(findChild(run.page, "driveRadio_2").checked, true);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(run.page).save(screenshotDir + "/restore-page-closed-after-" + data.tag + ".png");
+        }
+    }
+
+    // The chosen drive is gone: nothing is selected and nothing can be
+    // restored until the user picks, never another drive in its place.
+    function test_closeWithTheChosenDriveGoneSelectsNothing() {
+        const run = closeAfter("gone");
+        compare(run.page.selectedIndex, -1);
+        compare(run.page.selectedDisk, null);
+        compare(run.controller.analyzeCalls.length, run.analyzed + 1);
+        compare(run.controller.analyzeCalls[run.analyzed], "", "the stale preview is dropped");
+        compare(findChild(run.page, "openConfirmButton").enabled, false);
+        compare(findChild(run.page, "driveRadio_0").checked, false);
+        compare(findChild(run.page, "driveRadio_1").checked, false);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(run.page).save(screenshotDir + "/restore-page-closed-drive-gone.png");
+        }
     }
 
     // The stick list hands over a device path for a stick it could not
