@@ -180,6 +180,17 @@ TestCase {
         compare(overlay.visible, false);
     }
 
+    // Step 1 must not say the folder is empty before it has been read:
+    // while the listing runs it says it is looking, and "No backups found"
+    // only once a listing came back with none.
+    function test_noBackupsFoundOnlyAfterTheListing() {
+        const page = makePage([makeDisk({})], {listingBackups: true, knownBackups: []});
+        const label = findChild(page, "knownBackupsLabel");
+        verify(label.text.indexOf("No backups found") < 0, label.text);
+        page.controller = makeFakeController([makeDisk({})], {listingBackups: false, knownBackups: []});
+        compare(label.text.indexOf("No backups found"), 0, label.text);
+    }
+
     // Leaving the page while its backup folder is still being listed
     // destroys the controller mid-listing. That must not hold the window
     // until the listing is done (it did: the destructor waited for it, 0.5

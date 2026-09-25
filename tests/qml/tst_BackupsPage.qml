@@ -277,6 +277,30 @@ TestCase {
         compare(findChild(page, "backupsList").count, 3);
     }
 
+    // Before the first listing has finished nothing has been counted, so
+    // the summary names the folder and no number: "0 backups, 0 B" under
+    // the scanning overlay was a confident zero that nobody had counted.
+    // Once a listing has landed the count shows, and stays shown (the
+    // last real one) while a later listing runs.
+    function test_summaryStatesNoCountBeforeTheFirstListing() {
+        const page = makePage(makeController({backups: [], totalBytes: 0, listing: true}));
+        const summary = findChild(page, "summaryLabel");
+        verify(!/[0-9]/.test(summary.text.replace("/home/u/Backups", "")),
+               "a number before anything was counted: " + summary.text);
+        verify(summary.text.indexOf("/home/u/Backups") >= 0, "the folder is still named: " + summary.text);
+        page.controller = makeController({listing: false});
+        compare(summary.text.indexOf("3 backups"), 0, summary.text);
+        page.controller = makeController({listing: true});
+        compare(summary.text.indexOf("3 backups"), 0, "a relisting keeps the last real count: " + summary.text);
+    }
+
+    // A folder that simply has no backups still says 0, once it is known.
+    function test_summarySaysZeroOnceAnEmptyFolderWasListed() {
+        const page = makePage(makeController({backups: [], totalBytes: 0, listing: true}));
+        page.controller = makeController({backups: [], totalBytes: 0, listing: false});
+        compare(findChild(page, "summaryLabel").text.indexOf("0 backups"), 0);
+    }
+
     // The real controller drives it: on while its listing runs, off after.
     function test_scanningOverlayFollowsTheRealController() {
         const controller = createTemporaryObject(realControllerComponent, testCase);
