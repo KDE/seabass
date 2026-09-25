@@ -42,8 +42,8 @@ TestCase {
         }
     }
 
-    function makeLoaded() {
-        var page = createTemporaryObject(pageComponent, testCase);
+    function makeLoaded(size) {
+        var page = createTemporaryObject(pageComponent, testCase, size || {});
         verify(page, "page did not instantiate");
         // Loading runs on a worker thread; wait for the groups, not a delay.
         tryVerify(function () { return findAll(page, "settingsGroup").length > 0; }, 5000,
@@ -145,6 +145,47 @@ TestCase {
         }
     }
 
+    // Centred the way Preferences is: the settings column stops at a
+    // maximum width and sits in the middle of a wide window, with the
+    // scroll view still spanning the window so its bar stays on the
+    // edge. It used to fill the window, so on a wide one every control
+    // sat far left under the breadcrumb with the rest of the page empty,
+    // while Preferences, one click away, stood in the middle. Same
+    // measurement as tst_AppSettingsPage's, against the same idiom.
+    function test_aWideWindowCapsTheColumnAndCentresItLikePreferences() {
+        const page = makeLoaded({width: 1600, height: 780});
+        const scroll = findChild(page, "settingsScroll");
+        const column = findChild(page, "settingsColumn");
+        verify(column.maxWidth > 0, "the column carries a maximum width");
+        compare(column.width, column.maxWidth, "the column stops at its maximum");
+        const holder = column.parent;
+        const leftGap = column.x;
+        const rightGap = holder.width - (column.x + column.width);
+        verify(leftGap > 0, "and does not sit against the left edge");
+        fuzzyCompare(leftGap, rightGap, 1, "with equal space either side");
+        compare(scroll.contentWidth, scroll.width,
+                "while the scroll view still spans the window, so its bar stays on the edge");
+        // Every row inside the column, not only the column itself: a
+        // row that kept the old full width would reach past it.
+        const rows = findAll(page, "settingRow");
+        verify(rows.length > 0);
+        for (let i = 0; i < rows.length; ++i) {
+            const r = rows[i].mapToItem(column, 0, 0);
+            verify(r.x >= 0 && r.x + rows[i].width <= column.width + 0.5,
+                   rows[i].modelData.label + " is outside the centred column");
+        }
+    }
+
+    // The cap is not a floor: narrower than the maximum, the column fills
+    // what there is and starts on the page's left line.
+    function test_aNarrowWindowStillFillsTheWidth() {
+        const page = makeLoaded({width: 520, height: 780});
+        const column = findChild(page, "settingsColumn");
+        verify(column.width < column.maxWidth);
+        compare(column.width, column.parent.width, "no cap to apply, so it uses what it is given");
+        compare(column.x, 0);
+    }
+
     function test_screenshot() {
         if (!screenshotDir) {
             skip("SEABASS_SCREENSHOT_DIR not set");
@@ -158,5 +199,17 @@ TestCase {
         scroll.contentY = scroll.contentHeight - scroll.height;
         waitForRendering(page);
         grabImage(page).save(screenshotDir + "/SettingsPage-bottom.png");
+        // Wide, where the centring shows: at 900, the width
+        // tst_AppSettingsPage grabs Preferences at, so the two can be laid
+        // side by side, and at 1600 with the window widened to match (an
+        // item wider than the window is clipped by it).
+        const wasWidth = testCase.width;
+        const widths = [900, 1600];
+        for (let i = 0; i < widths.length; ++i) {
+            testCase.width = Math.max(wasWidth, widths[i]);
+            const wide = makeLoaded({width: widths[i], height: 780});
+            grabImage(wide).save(screenshotDir + "/SettingsPage-" + widths[i] + ".png");
+        }
+        testCase.width = wasWidth;
     }
 }
