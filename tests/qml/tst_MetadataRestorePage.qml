@@ -381,6 +381,111 @@ TestCase {
 
     PlaybackController { id: realPlayer }
 
+    // The real-scale bulk operations, on a writable copy of the committed
+    // anonymized library: Select All, narrowing to one stick's backup with
+    // everything staged, and a real save of what is left. Every property
+    // the page shows hangs off analysisChanged, and each emission has the
+    // page re-read them all and rebuild both pickers, so what is checked
+    // is how often it fires per operation: once, not once per track. A
+    // narrowing used to emit it per unstaged track and a save per landed
+    // track, recounting the whole list each time, which is quadratic on
+    // the UI thread. Timings are logged, never asserted.
+    function test_bulkOperationsUpdateThePageOnce() {
+        const fixture = Qt.resolvedUrl("../fixtures/anonymized_library").toString().replace(/^file:\/\//, "");
+        const prepared = metadataRestoreFixture.prepareFromLibrary(fixture);
+        verify(prepared > 1000, "the fixture must offer the whole library back, got " + prepared);
+        const stick = metadataRestoreFixture.stickRoot();
+        const rekordboxPath = stick + "/PIONEER";
+        const libraryId = EditSessionRegistry.libraryIdForPath(rekordboxPath);
+        verify(libraryId.length > 0, "the stick-shaped copy has a library id");
+        const page = make({stickLabel: "FIXTURE", rekordboxPath: rekordboxPath,
+                           enginePath: stick + "/Engine Library", libraryId: libraryId});
+        const controller = page.controller;
+        // The page scans the copy against the (empty) sandboxed store on
+        // opening; that must be over before the prepared proposals go in.
+        tryVerify(() => !controller.busy, 60000);
+        verify(metadataRestoreFixture.applyPrepared(controller));
+        waitForRendering(page);
+        compare(controller.proposalCount, prepared);
+
+        let emitted = 0;
+        const count = () => emitted++;
+        controller.analysisChanged.connect(count);
+        try {
+            // ---- Select All ----
+            let started = Date.now();
+            controller.stageAll();
+            const stageMs = Date.now() - started;
+            const staged = controller.stagedCount;
+            // A proposal with no catalog row on the stick has nothing a
+            // save could write, and is not staged.
+            verify(staged > 1000, "Select All staged " + staged);
+            console.log("  Select All: " + staged + " proposals, " + controller.stagedChangeCount + " changes, "
+                        + emitted + " analysisChanged, " + stageMs + " ms");
+            compare(emitted, 1, "Select All updates the page once");
+
+            // ---- narrowing with everything staged ----
+            const sources = controller.sourceSticks;
+            compare(sources.length, 2, "the prepared proposals come from RV2 and A4");
+            emitted = 0;
+            started = Date.now();
+            controller.setSourceStick("id:uuid-rv2");
+            const narrowMs = Date.now() - started;
+            const kept = controller.stagedCount;
+            console.log("  narrowing to RV2 with " + staged + " staged: " + (staged - kept) + " unstaged, "
+                        + emitted + " analysisChanged, " + narrowMs + " ms");
+            verify(staged - kept > 800, "the narrowing unstaged " + (staged - kept));
+            verify(kept > 800 && kept <= controller.scopedProposalCount, "what is left staged is in the scope");
+            const scoped = controller.scopedProposalCount;
+            compare(emitted, 1, "narrowing updates the page once, not once per unstaged track");
+
+            // ---- a real save of what is left ----
+            const session = EditSessionRegistry.sessionFor(libraryId, "FIXTURE");
+            verify(session !== null);
+            compare(session.pendingCount, controller.stagedChangeCount);
+            const changes = session.pendingCount;
+            let burstStarted = 0;
+            let emittedInBurst = -1;
+            let burstMs = -1;
+            let summary = null;
+            const onApplied = function() {
+                if (burstStarted === 0) {
+                    burstStarted = Date.now();
+                    emitted = 0;
+                }
+            };
+            const onFinished = function(result) {
+                // Connected after the controller's own handler, so this
+                // runs once the controller has taken the burst.
+                burstMs = burstStarted > 0 ? Date.now() - burstStarted : -1;
+                emittedInBurst = emitted;
+                summary = result;
+            };
+            session.changeApplied.connect(onApplied);
+            session.saveFinished.connect(onFinished);
+            try {
+                started = Date.now();
+                session.save();
+                tryVerify(() => summary !== null, 600000, "the save finishes");
+            } finally {
+                session.changeApplied.disconnect(onApplied);
+                session.saveFinished.disconnect(onFinished);
+            }
+            compare(summary.error, "", "the save worked");
+            console.log("  save: " + kept + " proposals, " + changes + " changes, " + (Date.now() - started)
+                        + " ms in all; the changeApplied burst took " + burstMs + " ms on the UI thread with "
+                        + emittedInBurst + " analysisChanged");
+            compare(emittedInBurst, 1, "a save updates the page once, not once per landed track");
+            compare(controller.stagedCount, 0, "every staged proposal landed");
+            compare(controller.proposalCount, prepared - kept, "and is no longer offered");
+            compare(findChild(page, "proposalList").count, scoped - kept,
+                    "RV2 lists only what it could not restore");
+        } finally {
+            controller.analysisChanged.disconnect(count);
+            EditSessionRegistry.closeSession(libraryId);
+        }
+    }
+
     function test_headerTextLinesUpWithTheBody() {
         var page = make();
         var crumbText = null;
