@@ -197,6 +197,20 @@ if [ "$current" != "$branch" ]; then
     exit 1
 fi
 
+# ---- the AppStream history ---------------------------------------------
+# Software centres show the release list in the metainfo file as the
+# version history, so the release goes in before the tag and the tagged
+# tree lists itself. Committed only when the file changed: re-running a
+# release that failed later on must not stack up empty commits.
+metainfo="src/gui/org.kde.seabass.metainfo.xml"
+step "record $version ($channel) in $metainfo"
+if [ "$go" -eq 1 ]; then
+    python3 "$here/appstream-release.py" "$root/$metainfo" "$version" "$channel"
+    if ! git -C "$root" diff --quiet -- "$metainfo"; then
+        git -C "$root" commit -q -m "Seabass $version: recorded in the AppStream metadata" -- "$metainfo"
+    fi
+fi
+
 # ---- the gate ----------------------------------------------------------
 # The whole suite, integration label included. CI runs it too, on the tag,
 # but finding out here costs minutes and finding out there costs a

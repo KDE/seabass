@@ -123,6 +123,14 @@ exists, a cut that is not at a train's first pre-release, a cut from
 anything but Invent's master, and a tag from anywhere but the train's
 branch.
 
+Before it tags, it records the release in the AppStream metadata
+(`src/gui/org.kde.seabass.metainfo.xml`, through
+`tools/appstream-release.py`) and commits that on the branch, so the
+tagged tree lists its own release and software centres show the version
+history. An alpha or beta is a `development` release there, a stable one
+`stable`; an entry that exists already keeps its description. A release
+that is already recorded with today's date adds no commit.
+
 ## Packages before the tag
 
 A tag is never moved, so a package that does not build from one costs a
