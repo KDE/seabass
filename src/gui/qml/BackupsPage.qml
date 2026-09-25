@@ -42,6 +42,18 @@ Page {
         }
     }
     property bool configured: false
+    // Whether a listing has come back yet. Until one has, nothing has been
+    // counted, and the summary names the folder without a number: "0
+    // backups, 0 B" under the scanning overlay was a zero nobody counted.
+    // A later listing keeps showing the last real count meanwhile.
+    readonly property bool listing: root.controller.listing === true
+    property bool listedOnce: false
+    onListingChanged: {
+        if (!root.listing) {
+            root.listedOnce = true;
+        }
+    }
+    readonly property bool countKnown: !root.listing || root.listedOnce
     signal browseRequested(string archivePath)
     // The archive to write, and the drive to write it onto if one is an
     // obvious match. Both are only a starting point: the restore page
@@ -232,8 +244,10 @@ Page {
         }
         Label {
             objectName: "summaryLabel"
-            text: backupsList.count + (backupsList.count === 1 ? " backup, " : " backups, ")
-                + Theme.humanBytes(root.controller.totalBytes) + " in " + root.controller.backupDirectory
+            text: root.countKnown
+                ? backupsList.count + (backupsList.count === 1 ? " backup, " : " backups, ")
+                  + Theme.humanBytes(root.controller.totalBytes) + " in " + root.controller.backupDirectory
+                : "Backups in " + root.controller.backupDirectory
             color: Theme.textMuted
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
