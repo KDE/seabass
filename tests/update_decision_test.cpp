@@ -123,6 +123,33 @@ private Q_SLOTS:
         QVERIFY(channelsFor(QStringLiteral("dev"), true).isEmpty());
     }
 
+    void aSettingChangeOnlyRedecidesASettledAnswer()
+    {
+        QVERIFY(mayRedecideFrom(QStringLiteral("upToDate")));
+        QVERIFY(mayRedecideFrom(QStringLiteral("updateAvailable")));
+        QVERIFY(mayRedecideFrom(QStringLiteral("withdrawn")));
+        // Mid-check: re-deciding would end "checking" and let Check Now
+        // start a second request.
+        QVERIFY(!mayRedecideFrom(QStringLiteral("checking")));
+        // After a failure: re-deciding would hide the error behind an
+        // answer from an older feed.
+        QVERIFY(!mayRedecideFrom(QStringLiteral("failed")));
+        QVERIFY(!mayRedecideFrom(QStringLiteral("idle")));
+        QVERIFY(!mayRedecideFrom(QStringLiteral("notARelease")));
+    }
+
+    void theTapsOnlyClaimAChangeWhereTheyMakeOne()
+    {
+        QVERIFY(tapsWouldEnableTesting(QStringLiteral("stable"), false));
+        // Already on: nothing to announce.
+        QVERIFY(!tapsWouldEnableTesting(QStringLiteral("stable"), true));
+        // A test build follows everything anyway.
+        QVERIFY(!tapsWouldEnableTesting(QStringLiteral("alpha"), true));
+        QVERIFY(!tapsWouldEnableTesting(QStringLiteral("beta"), false));
+        // A development build is offered nothing, testing or not.
+        QVERIFY(!tapsWouldEnableTesting(QStringLiteral("dev"), false));
+    }
+
     void tenQuickTapsRevealTesting()
     {
         TapSequence taps;

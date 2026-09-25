@@ -931,6 +931,16 @@ TestCase {
         verify(findByName(page, "updateBannerLink").text.indexOf("There is no newer release yet.") === 0);
     }
 
+    function test_aWithdrawnBuildIsToldWhichVersionToGetInstead() {
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({
+            runningWithdrawn: true, runningWithdrawnReason: "Cue sync could drop memory cues.",
+            updateAvailable: true, latestVersion: "0.7.11", latestChannel: "testing",
+        })});
+        compare(findByName(page, "updateBannerTitle").text, "Seabass 0.7.9 has been withdrawn.");
+        const link = findByName(page, "updateBannerLink").text;
+        verify(link.indexOf("Download Seabass 0.7.11 from ") === 0, "names what to get: " + link);
+    }
+
     function test_theNoteCannotInjectMarkup() {
         // The note is the website's text inside a StyledText label. It
         // is ours, but a stray angle bracket must still read as one.

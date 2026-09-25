@@ -92,8 +92,9 @@ public:
     bool runningPreRelease() const;
 
     // One tap on the version line in Settings. The tenth within five
-    // seconds switches includeTesting on, reveals its checkbox, and
-    // returns true so the page can say what just happened.
+    // seconds switches includeTesting on and reveals its checkbox, on a
+    // stable build that was not following test builds yet, and returns
+    // true then only, so the page can say what just happened.
     Q_INVOKABLE bool versionTapped();
     // Back to the way a fresh stable install is: testing off and the
     // checkbox hidden again. A pre-release build stays on, as always.

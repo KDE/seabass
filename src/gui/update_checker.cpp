@@ -111,6 +111,13 @@ bool UpdateChecker::versionTapped()
     if (!m_versionTaps.tap(QDateTime::currentMSecsSinceEpoch())) {
         return false;
     }
+    // True only when this actually switched something on: the page shows
+    // a popup saying so, and on a development build (offered nothing)
+    // or a test build (already following everything) that would be a
+    // claim about a change that did not happen.
+    if (!tapsWouldEnableTesting(currentChannel(), m_includeTesting)) {
+        return false;
+    }
     rememberTesting(true, true);
     return true;
 }
@@ -132,9 +139,10 @@ void UpdateChecker::rememberTesting(bool include, bool revealed)
     settings.setValue(IncludeTestingKey, include);
     settings.setValue(TestingRevealedKey, revealed);
     Q_EMIT includeTestingChanged();
-    if (policyChanged && m_haveFeed) {
+    if (policyChanged && m_haveFeed && mayRedecideFrom(m_state)) {
         // The releases are known already; only which of them count
-        // changed. Say so without another request.
+        // changed. Say so without another request (see mayRedecideFrom
+        // for why only over a settled answer).
         decide();
     }
 }
