@@ -484,8 +484,27 @@ TestCase {
                 emittedInBurst = emitted;
                 summary = result;
             };
+            // The session says the save is over (pendingChanged, then
+            // stateChanged, which is the page's writingChanged) before
+            // saveFinished. The landed rows must be gone by then: the page
+            // reads stagedCount on those signals, and used to find the
+            // staged rows of a save that had already landed.
+            let stagedWhenPendingChanged = -1;
+            let stagedWhenWritingEnded = -1;
+            const onPending = function() {
+                if (burstStarted > 0 && summary === null) {
+                    stagedWhenPendingChanged = controller.stagedCount;
+                }
+            };
+            const onWriting = function() {
+                if (!controller.writing && burstStarted > 0 && summary === null) {
+                    stagedWhenWritingEnded = controller.stagedCount;
+                }
+            };
             session.changeApplied.connect(onApplied);
             session.saveFinished.connect(onFinished);
+            session.pendingChanged.connect(onPending);
+            controller.writingChanged.connect(onWriting);
             try {
                 started = Date.now();
                 session.save();
@@ -493,6 +512,8 @@ TestCase {
             } finally {
                 session.changeApplied.disconnect(onApplied);
                 session.saveFinished.disconnect(onFinished);
+                session.pendingChanged.disconnect(onPending);
+                controller.writingChanged.disconnect(onWriting);
             }
             compare(summary.error, "", "the save worked");
             console.log("  save: " + kept + " proposals, " + changes + " changes, " + (Date.now() - started)
@@ -500,6 +521,8 @@ TestCase {
                         + emittedInBurst + " analysisChanged");
             compare(emittedInBurst, 1, "a save updates the page once, not once per landed track");
             compare(controller.stagedCount, 0, "every staged proposal landed");
+            compare(stagedWhenPendingChanged, 0, "already gone when the session's pending count changed");
+            compare(stagedWhenWritingEnded, 0, "already gone when the page stopped writing");
             compare(controller.proposalCount, prepared - kept, "and is no longer offered");
             compare(findChild(page, "proposalList").count, scoped - kept,
                     "RV2 lists only what it could not restore");

@@ -386,6 +386,15 @@ void MetadataRestoreController::attachSession()
     if (!m_session) {
         return;
     }
+    // A save ends with changeApplied per landed change, then pendingChanged,
+    // then stateChanged (the page's writingChanged), then saveFinished.
+    // The landed rows are taken at the first of those that follows the
+    // burst, before anything the page reads on them, so stagedCount is
+    // already right when writing ends. Connected ahead of writingChanged
+    // for that reason; taking an empty set is a no-op, so the later ones
+    // (and every pendingChanged while staging) cost nothing.
+    connect(m_session, &LibraryEditSession::pendingChanged, this, &MetadataRestoreController::takeAppliedChanges);
+    connect(m_session, &LibraryEditSession::stateChanged, this, &MetadataRestoreController::takeAppliedChanges);
     connect(m_session, &LibraryEditSession::stateChanged, this, &MetadataRestoreController::writingChanged);
     connect(m_session, &LibraryEditSession::canUndoChanged, this, &MetadataRestoreController::canUndoChanged);
     // A save emits changeApplied once per landed change, back to back,
@@ -395,7 +404,7 @@ void MetadataRestoreController::attachSession()
     // save of fourteen hundred changes was quadratic on the UI thread.
     connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
         m_appliedChanges.insert(changeId);
-        // saveFinished always follows, and takes them. Queued as well, so
+        // The end-of-save signals always follow, and take them. Queued as well, so
         // a burst that arrived without one is still not left pending.
         if (!m_takeAppliedQueued) {
             m_takeAppliedQueued = true;
