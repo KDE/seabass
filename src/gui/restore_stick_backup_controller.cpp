@@ -371,13 +371,18 @@ void RestoreStickBackupController::applyProgress(const RestoreProgress &progress
     m_bytesTotal = static_cast<qlonglong>(progress.bytesTotal);
     m_currentFile = QString::fromStdString(progress.currentFile);
     // Same sampling as StickBackupController: a one-second window for the
-    // rate, no ETA before five seconds in (too jumpy until then).
+    // rate, no ETA before five seconds in (too jumpy until then). The rate
+    // is taken over the bytes this run wrote, not over bytesDone: on a
+    // restore run again onto a half-restored drive bytesDone starts at
+    // what was already there, and the first window would count all of it
+    // as written in that one second.
     const qint64 now = m_progressClock.elapsed();
+    const qlonglong bytesThisRun = m_bytesDone - static_cast<qlonglong>(progress.bytesAlreadyPresent);
     if (now - m_lastProgressMs >= 1000) {
         const double seconds = static_cast<double>(now - m_lastProgressMs) / 1000.0;
-        m_bytesPerSecond = static_cast<double>(m_bytesDone - m_lastProgressBytes) / seconds;
+        m_bytesPerSecond = static_cast<double>(bytesThisRun - m_lastProgressBytes) / seconds;
         m_lastProgressMs = now;
-        m_lastProgressBytes = m_bytesDone;
+        m_lastProgressBytes = bytesThisRun;
     }
     m_etaSeconds = (progress.phase == RestoreProgress::Phase::Writing && m_bytesPerSecond > 0 && m_bytesTotal > m_bytesDone
                     && now > 5000)
@@ -461,7 +466,7 @@ void RestoreStickBackupController::restore(const QString &targetRoot, bool exact
     auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>();
     options.onProgress = [self, lastPost](const RestoreProgress &progress) {
         auto now = std::chrono::steady_clock::now();
-        bool edge = progress.bytesDone == 0 || progress.bytesDone == progress.bytesTotal;
+        bool edge = progress.bytesDone == progress.bytesAlreadyPresent || progress.bytesDone == progress.bytesTotal;
         if (!edge && now - *lastPost < std::chrono::milliseconds(100)) {
             return;
         }

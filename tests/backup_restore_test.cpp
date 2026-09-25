@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "application/use_cases/backup_stick.hpp"
 #include "application/use_cases/compact_stick_backup.hpp"
@@ -199,6 +200,53 @@ int main()
         std::cout << "case non-ansi-folder (a folder name outside every ANSI code page restores cleanly) OK\n";
     }
 
+    // ---- A restore run again onto a half-restored drive: progress against the whole backup ----
+    // The bar is about the backup, not about this run. A run that finds
+    // four of six files already in place starts at four of six, and the
+    // part already there is reported apart so a rate can leave it out.
+    {
+        Fixture f("resume-progress");
+        assert(BackupStick::execute(f.backup).status == BackupOutcomeStatus::Complete);
+        assert(RestoreStickBackup::execute(f.restore).status == RestoreSummary::Status::Restored);
+        // What an interrupted first run leaves: two tracks never arrived.
+        fs::remove(f.target / "Contents" / "a.mp3");
+        fs::remove(f.target / "Contents" / "Sub" / "b.mp3");
+        const std::uint64_t missingBytes = 90'000 + 40'000;
+
+        const RestorePreview preview = RestoreStickBackup::preview(f.restore);
+        assert(preview.filesToWrite == 2 && preview.filesUnchanged == 4);
+        assert(preview.bytesToWrite == missingBytes);
+
+        std::vector<RestoreProgress> writing;
+        f.restore.onProgress = [&](const RestoreProgress &p) {
+            if (p.phase == RestoreProgress::Phase::Writing) {
+                writing.push_back(p);
+            }
+        };
+        const RestoreSummary summary = RestoreStickBackup::execute(f.restore);
+        assert(summary.status == RestoreSummary::Status::Restored);
+        assert(summary.filesWritten == 2 && summary.filesUnchanged == 4);
+        assert(!writing.empty());
+
+        const RestoreProgress &first = writing.front();
+        assert(first.filesTotal == 6);
+        assert(first.bytesTotal == preview.bytes);
+        assert(first.filesDone == 4);
+        assert(first.bytesDone == preview.bytes - missingBytes);
+        assert(first.filesAlreadyPresent == 4);
+        assert(first.bytesAlreadyPresent == preview.bytes - missingBytes);
+
+        const RestoreProgress &last = writing.back();
+        assert(last.filesDone == last.filesTotal && last.bytesDone == last.bytesTotal);
+        for (std::size_t i = 1; i < writing.size(); ++i) {
+            assert(writing[i].filesDone >= writing[i - 1].filesDone);
+            assert(writing[i].bytesDone >= writing[i - 1].bytesDone);
+            assert(writing[i].bytesDone <= writing[i].bytesTotal);
+        }
+        std::cout << "resume-progress: a re-run restore starts its progress at what is already on the drive, "
+                     "against the whole backup OK\n";
+    }
+
     // ---- A database that changed within the mtime window and kept its size is still restored ----
     // SQLite reuses pages, FAT keeps 2 s mtimes: size + mtime cannot tell
     // "one commit later" apart. The manifest's DbSetFingerprint can.
@@ -307,9 +355,20 @@ int main()
             bytes[static_cast<std::size_t>(at)] ^= 0x01;
             std::ofstream(f.archive, std::ios::binary) << bytes;
         }
+        std::vector<RestoreProgress> writing;
+        f.restore.onProgress = [&](const RestoreProgress &p) {
+            if (p.phase == RestoreProgress::Phase::Writing) {
+                writing.push_back(p);
+            }
+        };
         RestoreSummary summary = RestoreStickBackup::execute(f.restore);
         assert(summary.status == RestoreSummary::Status::RestoredWithProblems);
         assert(summary.writeErrors.size() == 1 && summary.writeErrors[0].find("Contents/a.mp3") != std::string::npos);
+        // The failed file is one the restore is past: the bar still ends
+        // full, rather than short by the size of the file that failed.
+        assert(!writing.empty());
+        assert(writing.back().filesDone == writing.back().filesTotal);
+        assert(writing.back().bytesDone == writing.back().bytesTotal);
         assert(!fs::exists(f.target / "Contents" / "a.mp3"));
         assert(fs::exists(f.target / "Contents" / "Sub" / "b.mp3"));
         assert(tempFilesUnder(f.target) == 0);

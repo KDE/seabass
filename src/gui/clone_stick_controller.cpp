@@ -232,6 +232,12 @@ void CloneStickController::applyProgress(const CloneProgress &progress)
         m_bytesPerSecond = 0.0;
     }
     bool determinate = false;
+    // The rate is over bytes this stage moved. The restore stage's
+    // bytesDone starts at what the target already held (see
+    // RestoreProgress): counted as moved, an update onto a stick that
+    // already has most of the library opened on a rate of gigabytes a
+    // second and an ETA to match.
+    qlonglong alreadyPresent = 0;
     if (progress.stage == CloneProgress::Stage::Backup) {
         const BackupProgress &b = progress.backup;
         m_phase = backupPhaseName(b.phase);
@@ -250,14 +256,16 @@ void CloneStickController::applyProgress(const CloneProgress &progress)
         m_bytesTotal = static_cast<qlonglong>(r.bytesTotal);
         m_currentFile = QString::fromStdString(r.currentFile);
         determinate = r.phase == RestoreProgress::Phase::Writing;
+        alreadyPresent = static_cast<qlonglong>(r.bytesAlreadyPresent);
     }
     // Same sampling as the backup and restore controllers: a one-second
     // window for the rate, no ETA before five seconds into the stage.
+    const qlonglong bytesThisStage = m_bytesDone - alreadyPresent;
     if (now - m_lastProgressMs >= 1000) {
         const double seconds = static_cast<double>(now - m_lastProgressMs) / 1000.0;
-        m_bytesPerSecond = static_cast<double>(m_bytesDone - m_lastProgressBytes) / seconds;
+        m_bytesPerSecond = static_cast<double>(bytesThisStage - m_lastProgressBytes) / seconds;
         m_lastProgressMs = now;
-        m_lastProgressBytes = m_bytesDone;
+        m_lastProgressBytes = bytesThisStage;
     }
     m_etaSeconds = (determinate && m_bytesPerSecond > 0 && m_bytesTotal > m_bytesDone && now - m_stageStartMs > 5000)
                        ? static_cast<int>(static_cast<double>(m_bytesTotal - m_bytesDone) / m_bytesPerSecond)
@@ -301,7 +309,8 @@ void CloneStickController::start(bool exact)
         const auto now = std::chrono::steady_clock::now();
         const std::uint64_t done = progress.stage == CloneProgress::Stage::Backup ? progress.backup.bytesDone : progress.restore.bytesDone;
         const std::uint64_t total = progress.stage == CloneProgress::Stage::Backup ? progress.backup.bytesTotal : progress.restore.bytesTotal;
-        const bool edge = done == 0 || done == total;
+        const std::uint64_t start = progress.stage == CloneProgress::Stage::Backup ? 0 : progress.restore.bytesAlreadyPresent;
+        const bool edge = done == start || done == total;
         if (!edge && now - *lastPost < std::chrono::milliseconds(100)) {
             return;
         }

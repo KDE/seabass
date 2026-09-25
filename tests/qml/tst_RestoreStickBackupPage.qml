@@ -128,6 +128,12 @@ TestCase {
                                             bytesDone: 1024 * 1024 * 1024, bytesTotal: 4 * 1024 * 1024 * 1024,
                                             bytesPerSecond: 30 * 1024 * 1024, etaSeconds: 95,
                                             currentFile: "Contents/Artist - Title.mp3"})).save(screenshotDir + "/restore-page-progress.png");
+        // Run again onto a drive the first run got most of the way through:
+        // the bar picks up where that run stopped, against the whole backup.
+        grabImage(makePage([makeDisk({})], {busy: true, restoring: true, phase: "writing", filesDone: 1150, filesTotal: 1161,
+                                            bytesDone: 24 * 1024 * 1024 * 1024, bytesTotal: 25 * 1024 * 1024 * 1024,
+                                            bytesPerSecond: 30 * 1024 * 1024, etaSeconds: 34,
+                                            currentFile: "Contents/Artist - Title.mp3"})).save(screenshotDir + "/restore-page-progress-resumed.png");
         grabImage(makePage([makeDisk({})], {
             result: {filesWritten: 14, filesUnchanged: 1147, directoriesCreated: 3, extrasRemoved: 0, rejected: [],
                      writeErrors: [], warnings: [], missingTracks: [], databaseChecked: true},
