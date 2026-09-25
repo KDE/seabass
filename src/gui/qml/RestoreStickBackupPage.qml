@@ -754,10 +754,14 @@ Page {
             spacing: Theme.rowSpacing
             Item { Layout.fillWidth: true }
             // Back to the form, as it was: to pick another backup or drive
-            // and try again.
+            // and try again. Named for that when there is a report to
+            // dismiss; beside "Done" a plain "Close" did not say which
+            // of the two leaves the page. A restore that stopped without
+            // a report has nothing to go back from, so there it stays
+            // "Close".
             Button {
                 objectName: "closeReportButton"
-                text: "Close"
+                text: root.hasResult ? "Restore Another" : "Close"
                 flat: true
                 onClicked: root.reportDismissed = true
             }

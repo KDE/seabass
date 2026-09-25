@@ -82,32 +82,63 @@ Frame {
             color: (resultFrame.result.missingTracks || []).length === 0 ? Theme.good : Theme.danger
             text: (resultFrame.result.missingTracks || []).length === 0
                 ? "Engine database opens and every track it references is present."
-                : "Engine database opens, but " + resultFrame.result.missingTracks.length + " referenced track(s) are missing:"
+                : "The Engine database opened, but it points at " + resultFrame.result.missingTracks.length
+                  + (resultFrame.result.missingTracks.length === 1 ? " file that is" : " files that are") + " not on this drive:"
         }
         Repeater {
             model: (resultFrame.result.missingTracks || []).slice(0, 20)
-            delegate: Label { required property string modelData; Layout.leftMargin: 16; font.family: Theme.dataFamily; font.pointSize: Theme.fontSmall; color: Theme.danger; text: modelData }
-        }
-        RowLayout {
-            visible: (resultFrame.result.missingTracks || []).length > 0
-            Label {
+            // Width-bound and elided in the middle: a path label with no
+            // width limit widened the whole report past the overlay, and
+            // the note and the button below it were cut off (round 8,
+            // TESTRIG_2 restored onto A1). The full path is the tooltip.
+            delegate: Label {
+                required property string modelData
                 Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.textMuted
+                Layout.leftMargin: 16
+                font.family: Theme.dataFamily
                 font.pointSize: Theme.fontSmall
-                text: "This can predate the backup: a re-numbered or re-imported track can leave the database still pointing at its old file. Library Health can tell the two apart and offer to fix it."
+                color: Theme.danger
+                elide: Text.ElideMiddle
+                text: modelData
+                ToolTip.visible: truncated && hovered
+                ToolTip.text: modelData
+                HoverHandler { id: pathHover }
+                readonly property bool hovered: pathHover.hovered
             }
-            Button {
-                objectName: "repairLibraryButton"
-                // Set directly (not just inherited from the RowLayout
-                // above) so a test can read this button's own visible
-                // property, the same convention every other conditional
-                // button on this page follows.
-                visible: (resultFrame.result.missingTracks || []).length > 0
-                text: "Check Library Health"
-                flat: true
-                onClicked: resultFrame.repairLibraryRequested()
-            }
+        }
+        Label {
+            visible: (resultFrame.result.missingTracks || []).length > 20
+            Layout.leftMargin: 16
+            color: Theme.textMuted
+            font.pointSize: Theme.fontSmall
+            text: "and " + ((resultFrame.result.missingTracks || []).length - 20) + " more"
+        }
+        // Said plainly, because the red list above reads as "the restore
+        // broke something": it did not. The rows pointed at those files
+        // before the backup was ever taken, the backup carried them as
+        // they were, and this restore put them back as they were. The
+        // way out is Library Health, which finds a row whose file is
+        // gone and offers the repair.
+        Label {
+            visible: (resultFrame.result.missingTracks || []).length > 0
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            font.pointSize: Theme.fontSmall
+            text: "This is the library as it was backed up, not damage from the restore: the backup is intact and every file it holds is on the drive. "
+                  + "A re-numbered or re-imported track leaves its old row pointing at a file that is gone. "
+                  + "Library Health finds those rows and can repair them."
+        }
+        Button {
+            objectName: "repairLibraryButton"
+            // Set directly (not inherited) so a test can read this
+            // button's own visible property, the same convention every
+            // other conditional button on this page follows.
+            visible: (resultFrame.result.missingTracks || []).length > 0
+            Layout.alignment: Qt.AlignRight
+            text: "Repair in Library Health"
+            highlighted: true
+            onClicked: resultFrame.repairLibraryRequested()
         }
         RowLayout {
             visible: resultFrame.problems.length > 0
