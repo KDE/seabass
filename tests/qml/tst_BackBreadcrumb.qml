@@ -150,6 +150,7 @@ TestCase {
     // tests that follow.
     function cleanup() {
         testCase.width = 900;
+        SystemFontMetrics.generalPointSizeOverride = 0;
     }
 
     function test_stickNameIsNotAbbreviatedWhenTheRowHasRoom() {
@@ -359,5 +360,78 @@ TestCase {
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(holder).save(screenshotDir + "/breadcrumb-elide-" + data.tag + ".png");
         }
+    }
+
+    // Never wider than its row, at any width and any system font size.
+    //
+    // Every segment used to have a floor it would not go below (the stick
+    // and hub 64, the title 120, all Theme.scaled), so the row's minimum
+    // was the floors plus the house, the separators and the gaps. At 10pt
+    // that sum just fitted a 380 page; at macOS's 13pt every one of those
+    // lengths is 1.3 times as long and Clean Up's title ran 72px past the
+    // page (round 9, tst_CleanupPage). 16 is a KDE user with large text.
+    //
+    // The row may drop the stick, and the title may elide below its
+    // floor; what it may not do is draw past its own right edge.
+    function test_neverWiderThanItsRow_data() {
+        const rows = [];
+        for (const pointSize of [10, 13, 16]) {
+            for (const width of [700, 520, 420, 380, 340, 300, 260, 220]) {
+                rows.push({tag: pointSize + "pt " + width, pointSize: pointSize, width: width});
+            }
+        }
+        return rows;
+    }
+
+    function test_neverWiderThanItsRow(data) {
+        SystemFontMetrics.generalPointSizeOverride = data.pointSize;
+        compare(Theme.baseFontPointSize, data.pointSize, "the precondition: the font size took");
+        const holder = createTemporaryObject(fourComponent, testCase, {crumbWidth: data.width});
+        waitForRendering(holder);
+        const crumb = holder.crumb;
+        compare(crumb.width, data.width, "the precondition: the row is as wide as asked");
+        const right = crumb.mapToItem(holder, crumb.width, 0).x;
+        let widest = 0;
+        let widestText = "";
+        function walk(item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i];
+                if (child.visible && child.width > 0) {
+                    const edge = child.mapToItem(holder, child.width, 0).x;
+                    if (edge > widest) {
+                        widest = edge;
+                        widestText = child.text !== undefined ? child.text : child.objectName;
+                    }
+                }
+                walk(child);
+            }
+        }
+        walk(crumb);
+        verify(widest <= right + 0.5,
+               "\"" + widestText + "\" reaches " + widest + " in a row ending at " + right);
+        // Nothing dangles either: a separator for every segment shown.
+        const stickShown = byName(holder, "stickSegment").visible;
+        compare(visibleSeparators(holder), stickShown ? 3 : 2);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(holder).save(screenshotDir + "/breadcrumb-" + data.pointSize + "pt-" + data.width + ".png");
+        }
+    }
+
+    // When the stick has to go, it goes whole, and only then: with room
+    // for every floor it stays, abbreviated.
+    function test_stickGoesOnlyWhenTheFloorsDoNotFit() {
+        SystemFontMetrics.generalPointSizeOverride = 13;
+        const holder = createTemporaryObject(fourComponent, testCase);
+        waitForRendering(holder);
+        const crumb = holder.crumb;
+        const floors = crumb.implicitWidth - (crumb.stickNatural - crumb.stickFloor)
+            - (crumb.middleNatural - crumb.middleFloor) - (crumb.titleNatural - crumb.titleFloor);
+        holder.crumbWidth = Math.ceil(floors) + 2;
+        waitForRendering(holder);
+        verify(byName(holder, "stickSegment").visible, "every floor fits: the stick stays");
+        holder.crumbWidth = Math.floor(floors) - 2;
+        waitForRendering(holder);
+        verify(!byName(holder, "stickSegment").visible, "one floor too many: the stick goes");
+        verify(byName(holder, "middleLink").visible, "and the hub stays, a link back");
     }
 }

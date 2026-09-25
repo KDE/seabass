@@ -56,7 +56,9 @@ RowLayout {
 
     // Who gives way, and in what order, when the row is narrower than
     // its natural width: the stick first, then the middle segment, then
-    // the page's own name, each down to a floor and no further.
+    // the page's own name, each down to a floor. When even the floors do
+    // not fit, the stick goes altogether, and then the title elides below
+    // its floor: the row is never wider than it was given.
     //
     // A RowLayout alone cannot say "first". Squeezed below the preferred
     // widths it shares the shortfall out among every segment in
@@ -68,24 +70,53 @@ RowLayout {
     // stick is handed all of the shortfall it can absorb, the middle the
     // rest, and the title only what neither could take.
     //
-    // No binding loop: the row's implicit width is the sum of the
-    // segments' PREFERRED widths, which are their natural widths and do
-    // not depend on this; and a minimum is never set above a preferred
-    // width, which is the one way a minimum could feed back into it.
-    readonly property real shortfall: Math.max(0, implicitWidth - width)
-    readonly property real stickNatural: stickText.visible ? stickText.naturalWidth : 0
-    readonly property real middleNatural: middleCrumb.visible ? middleCrumb.naturalWidth
-        : middleText.visible ? middleText.naturalWidth : 0
+    // The floors used to be the end of it, and they are Theme.scaled, so
+    // they grow with the system font: at macOS's 13pt the floors, the
+    // house, the separators and the gaps came to more than a 380 page and
+    // Clean Up's title ran 72px past its edge (round 9). Dropping the
+    // stick is the first thing past the floors because it is context
+    // only, never a link, and the reader picked it on Home a moment ago.
+    //
+    // No binding loop: everything here is worked out from the segments'
+    // own natural widths, which do not depend on whether they are shown,
+    // and never from the row's implicit width, which does -- dropping the
+    // stick changes that, and a shortfall read from it would bring the
+    // stick straight back. A minimum is never set above a preferred
+    // width either, which is the one way a minimum could feed back.
+    readonly property bool hasStick: stickLabel.length > 0
+    readonly property bool hasMiddle: middleLabel.length > 0
+    readonly property real stickNatural: hasStick ? stickText.naturalWidth : 0
+    readonly property real middleNatural: !hasMiddle ? 0
+        : middleClickable ? middleCrumb.naturalWidth : middleText.naturalWidth
     readonly property real titleNatural: titleText.naturalWidth
+    // A segment with its separator and the two gaps it brings, whole
+    // pixels up, as the layout hands them out.
+    function segmentCost(natural, separator) {
+        return natural + Math.ceil(separator.implicitWidth) + 2 * spacing;
+    }
+    readonly property real stickCost: hasStick ? segmentCost(stickNatural, stickSep) : 0
+    // The row's natural width with every segment it has, the stick
+    // included whether or not it is showing.
+    readonly property real fullNatural: homeCrumb.naturalWidth + stickCost
+        + (hasMiddle ? segmentCost(middleNatural, middleSep) : 0)
+        + segmentCost(titleNatural, titleSep)
     // Floors, clamped to the natural width so that a short name is never
     // padded out to one.
     readonly property real stickFloor: Math.min(Theme.scaled(64), stickNatural)
     readonly property real middleFloor: Math.min(Theme.scaled(64), middleNatural)
     readonly property real titleFloor: Math.min(Theme.scaled(120), titleNatural)
-    readonly property real stickShortfall: Math.min(shortfall, stickNatural - stickFloor)
+    readonly property bool stickDropped: hasStick
+        && fullNatural - (stickNatural - stickFloor) - (middleNatural - middleFloor)
+               - (titleNatural - titleFloor) > width
+    readonly property real shortfall: Math.max(0, fullNatural - (stickDropped ? stickCost : 0) - width)
+    readonly property real stickShortfall: stickDropped ? 0 : Math.min(shortfall, stickNatural - stickFloor)
     readonly property real middleShortfall: Math.min(shortfall - stickShortfall, middleNatural - middleFloor)
-    readonly property real titleShortfall: Math.min(shortfall - stickShortfall - middleShortfall,
-                                                    titleNatural - titleFloor)
+    // Past its floor the title keeps giving, down to nothing: an ellipsis
+    // is a title cut short, where overflowing is a title cut off by the
+    // window edge, and then the hub below its floor as well.
+    readonly property real titleShortfall: Math.min(shortfall - stickShortfall - middleShortfall, titleNatural)
+    readonly property real middleBelowFloor: Math.min(shortfall - stickShortfall - middleShortfall
+                                                      - titleShortfall, middleFloor)
     signal homeRequested()
     signal backRequested()
 
@@ -196,6 +227,7 @@ RowLayout {
     // so the button a KDE user reaches for looks like the one they
     // already know.
     Crumb {
+        id: homeCrumb
         objectName: "homeCrumb"
         showsIcon: true
         onClicked: root.homeRequested()
@@ -226,7 +258,10 @@ RowLayout {
         ToolTip.text: context.text
     }
 
-    Sep { visible: root.stickLabel.length > 0 }
+    Sep {
+        id: stickSep
+        visible: root.hasStick && !root.stickDropped
+    }
 
     // The stick. The segment that gives way first: it is the one the
     // reader can most easily do without, having picked it on Home a
@@ -237,12 +272,15 @@ RowLayout {
     Context {
         id: stickText
         objectName: "stickSegment"
-        visible: root.stickLabel.length > 0
+        visible: root.hasStick && !root.stickDropped
         text: root.stickLabel
         Layout.minimumWidth: naturalWidth - root.stickShortfall
     }
 
-    Sep { visible: root.middleLabel.length > 0 }
+    Sep {
+        id: middleSep
+        visible: root.hasMiddle
+    }
 
     Crumb {
         id: middleCrumb
@@ -255,7 +293,7 @@ RowLayout {
         // one click behind them. Same floor as the stick, for the same
         // reason.
         Layout.fillWidth: true
-        Layout.minimumWidth: naturalWidth - root.middleShortfall
+        Layout.minimumWidth: naturalWidth - root.middleShortfall - root.middleBelowFloor
         text: root.middleLabel
         onClicked: root.backRequested()
         // Names itself in full when it has been shortened -- an
@@ -272,10 +310,10 @@ RowLayout {
         objectName: "middleSegment"
         visible: root.middleLabel.length > 0 && !root.middleClickable
         text: root.middleLabel
-        Layout.minimumWidth: naturalWidth - root.middleShortfall
+        Layout.minimumWidth: naturalWidth - root.middleShortfall - root.middleBelowFloor
     }
 
-    Sep {}
+    Sep { id: titleSep }
 
     // The page's own name. fillWidth as well, because measurement says
     // an item without it does not shrink here at all -- a minimum of 0
@@ -284,7 +322,9 @@ RowLayout {
     //
     // It gives way last, and only to 120 against the others' 64: the
     // page's own name is still readable when both of them have been
-    // spent. See `shortfall` above for how the order is enforced.
+    // spent. Below that only once the stick has gone and the row still
+    // does not fit, and then it elides as far as it has to. See
+    // `shortfall` above for how the order is enforced.
     PageTitle {
         id: titleText
         objectName: "titleSegment"
