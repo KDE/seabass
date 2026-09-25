@@ -17,6 +17,7 @@
 #include "infrastructure/work_counters.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 #include "application/ports/progress_reporter.hpp"
+#include "gui/app_color_scheme.hpp"
 #include "gui/controls_style.hpp"
 #include "gui/interface_font.hpp"
 #include "gui/qt_path.hpp"
@@ -1010,6 +1011,13 @@ void seedMetadataStoreForTests()
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                            seabass::gui::pathToQString(sandboxRoot / "config"));
+
+        // The colour scheme the app hands KDE's style (gui/main.cpp), for
+        // the reason the style and the font are matched above: without it
+        // the desktop-style lane draws unstyled Labels in whatever scheme
+        // the machine has, which is not the ink the app ships. Written
+        // into the sandbox, never the real cache.
+        seabass::gui::applyAppColorScheme(false, seabass::gui::pathToQString(sandboxRoot / "color-schemes"));
 
         // And proof -- against the real store, computed independently,
         // rather than against the string just handed to setPath(), which
