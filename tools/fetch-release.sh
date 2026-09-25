@@ -86,8 +86,10 @@ fi
 # no Windows runner registered, say -- is reported, not silently skipped:
 # a release missing a platform must be a decision, never an oversight.
 want_linux="linux:package"
-want_windows="windows:package"
-want_macos="craft_macos_arm64_qt6"
+# The Craft job, not the MSYS2 windows:package: that chain has no runner
+# (docs/releasing.md, "Packages before the tag").
+want_windows="craft_windows_qt6_x86_64"
+want_macos="craft_macos_qt6_arm64"
 
 jobs="$(api "$API/projects/$PROJECT/pipelines/$id/jobs?per_page=100")"
 

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 
+import os
+
 import info
 from CraftCore import CraftCore
 
@@ -62,6 +64,20 @@ class Package(CMakePackageBase):
         # up: a packaged release build has no use for building Seabass's
         # own ~90 test binaries either.
         self.subinfo.options.configure.args += ["-DSEABASS_TESTS=OFF", "-DSEABASS_LIBDJINTEROP_TESTS=OFF"]
+        # The channel the app reports and checks for updates on, which
+        # CMake defaults to "dev". A release tag names it,
+        # releases/<channel>/X.Y.Z, and CI hands the tag to Craft as
+        # CI_COMMIT_TAG; a package built by hand takes it from
+        # SEABASS_RELEASE_CHANNEL, which is how the universal .dmg is made
+        # until the macOS job signs on Invent (docs/releasing.md). Anything
+        # else stays "dev": a wrong channel would send the app to the wrong
+        # place for updates, and dev is the one that never looks.
+        channel = os.environ.get("SEABASS_RELEASE_CHANNEL", "")
+        tag = os.environ.get("CI_COMMIT_TAG", "")
+        if not channel and tag.startswith("releases/"):
+            channel = tag.split("/")[1]
+        if channel in ("alpha", "beta", "stable"):
+            self.subinfo.options.configure.args += [f"-DSEABASS_RELEASE_CHANNEL={channel}"]
 
     def createPackage(self):
         # Keep the two real entry points; drop whatever else CMake put
