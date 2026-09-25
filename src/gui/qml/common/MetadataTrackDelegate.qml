@@ -335,6 +335,9 @@ Rectangle {
                 waveformData: delegate.waveformData
                 cueData: delegate.waveformCues
                 trackDurationMs: delegate.waveformDurationMs
+                // A metadata row often has no length; its cues are what
+                // the row is for, so they are placed all the same.
+                placeCuesWithoutLength: true
                 missingText: delegate.waveformMissingText
             }
         }
