@@ -230,7 +230,7 @@ HealthCheckPage {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        CheckBox {
+                        SeabassCheckBox {
                             checked: planRow.included
                             onToggled: mergeController.setIncluded(planRow.index, checked)
                         }

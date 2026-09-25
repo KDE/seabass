@@ -209,7 +209,7 @@ Page {
             ColumnLayout {
                 spacing: Theme.scaled(6)
                 Subtitle { text: "Streaming tracks" }
-                CheckBox {
+                SeabassCheckBox {
                     Layout.leftMargin: root.settingIndent
                     text: "Hide tracks from streaming services"
                     checked: root.appSettingsController.hideStreamingTracks
@@ -355,7 +355,7 @@ Page {
                 RowLayout {
                     Layout.leftMargin: root.settingIndent
                     spacing: 8 * Theme.iconScale
-                    CheckBox {
+                    SeabassCheckBox {
                         objectName: "ignoreCuesAtStartCheck"
                         text: "Ignore cues at 0:00"
                         checked: root.appSettingsController.ignoreCuesAtStart
@@ -507,7 +507,7 @@ Page {
                     }
                 }
 
-                CheckBox {
+                SeabassCheckBox {
                     Layout.leftMargin: root.settingIndent
                     objectName: "automaticUpdateCheck"
                     text: "Check for new versions of Seabass"
@@ -534,7 +534,7 @@ Page {
                 // been switched on once, by running an alpha or beta or by
                 // the tap sequence above; from then on it stays, so it can
                 // be switched off again (see UpdateChecker::includeTesting).
-                CheckBox {
+                SeabassCheckBox {
                     Layout.leftMargin: root.settingIndent
                     objectName: "includeTestingUpdates"
                     visible: root.updateChecker !== null && root.updateChecker.testingOptionRevealed
@@ -608,7 +608,7 @@ Page {
                 // No Subtitle of its own: it used to read "Experimental
                 // features" above a checkbox saying "Enable experimental
                 // features", which is the same words twice.
-                CheckBox {
+                SeabassCheckBox {
                     Layout.leftMargin: root.settingIndent
                     text: "Enable experimental features"
                     checked: root.appSettingsController.experimentalFeaturesEnabled

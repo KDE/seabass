@@ -567,7 +567,7 @@ Page {
                         spacing: 2
                         RowLayout {
                             Layout.fillWidth: true
-                            CheckBox {
+                            SeabassCheckBox {
                                 checked: delegateRoot.included
                                 enabled: !delegateRoot.staged
                                 onToggled: cleanupController.setIncluded(delegateRoot.index, checked)

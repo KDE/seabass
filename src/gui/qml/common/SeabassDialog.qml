@@ -293,7 +293,7 @@ Dialog {
                 spacing: 8
             }
 
-            CheckBox {
+            SeabassCheckBox {
                 id: dontAskBox
                 objectName: "dontAskCheckBox"
                 visible: root.dontAskVisible

@@ -1322,6 +1322,10 @@ add_executable(no_em_dashes_test tests/no_em_dashes_test.cpp)
 target_compile_definitions(no_em_dashes_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_em_dashes_test COMMAND no_em_dashes_test)
 
+add_executable(no_plain_checkboxes_test tests/no_plain_checkboxes_test.cpp)
+target_compile_definitions(no_plain_checkboxes_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME no_plain_checkboxes_test COMMAND no_plain_checkboxes_test)
+
 # The desktop file and the AppStream metadata, checked by the tools that
 # consume them, so a mistake fails here rather than in a software centre
 # or in linuxdeploy on CI. --no-net: the screenshots are on the website,
