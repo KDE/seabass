@@ -15,7 +15,7 @@ cmake_minimum_required(VERSION 3.16)
 # down. A release tag (releases/<channel>/X.Y.Z) has to agree with it --
 # tools/release.sh refuses to tag a tree that says something else -- so
 # the tag stays a statement about this file rather than a second opinion.
-project(seabass VERSION 0.7.10 LANGUAGES CXX C)
+project(seabass VERSION 0.7.11 LANGUAGES CXX C)
 
 # Which shelf this build came off. Set by CI from the release tag; a
 # build from a working tree is "dev", and says so in Settings and in the
