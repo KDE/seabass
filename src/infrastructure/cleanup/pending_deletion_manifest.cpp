@@ -237,16 +237,37 @@ std::vector<PendingDeletion> PendingDeletionManifest::list() const
 // remove": on a dying stick or after a permission change, that answer
 // had the removers report the manifest brought in line while every
 // entry stayed on disk. An absent file IS empty, and is true.
+//
+// Something at the manifest path that is not a regular file is not a
+// list either. Opening it is not the test: libstdc++ refuses a directory
+// at open(), but libc++ (macOS) opens one, then its read fails with
+// EISDIR and libc++'s filebuf reports that as an ordinary end of file.
+// The stream ends up in exactly the state a clean, empty file leaves, so
+// nothing read from it afterwards can tell the two apart; only asking
+// what the path is, before reading, can. A device or a FIFO is the same
+// case on every platform.
 bool PendingDeletionManifest::readAll(std::vector<PendingDeletion> &result) const
 {
     const std::filesystem::path manifest = pathFromUtf8(m_manifestPath);
+    std::error_code ec;
+    const std::filesystem::file_status status = std::filesystem::status(manifest, ec);
+    if (status.type() == std::filesystem::file_type::not_found) {
+        return true;
+    }
+    if (ec || status.type() != std::filesystem::file_type::regular) {
+        return false;
+    }
     std::ifstream ifs(manifest);
     if (!ifs.is_open()) {
-        std::error_code ec;
-        return !std::filesystem::exists(manifest, ec);
+        return false;
     }
+    return readFrom(ifs, result);
+}
+
+bool PendingDeletionManifest::readFrom(std::istream &in, std::vector<PendingDeletion> &result)
+{
     std::string line;
-    while (std::getline(ifs, line)) {
+    while (std::getline(in, line)) {
         if (line.empty()) {
             continue;
         }
@@ -276,8 +297,10 @@ bool PendingDeletionManifest::readAll(std::vector<PendingDeletion> &result) cons
     // exists for, the loop ends early with a prefix of the entries and
     // nothing says so. A rewrite would then write that prefix back and
     // the rest -- the files still orphaned -- would be gone from the
-    // list for good. eof is the ordinary end; bad() is the medium.
-    return !ifs.bad();
+    // list for good. The loop leaves eof set when it reached the end;
+    // bad() is the medium, and a failure without eof is a stream that
+    // stopped somewhere other than the end.
+    return !in.bad() && (!in.fail() || in.eof());
 }
 
 }  // namespace seabass::infrastructure::cleanup

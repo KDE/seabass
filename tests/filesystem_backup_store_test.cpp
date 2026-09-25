@@ -1041,6 +1041,37 @@ int main()
     }
 #endif
 
+    // A manifest that is there and cannot be read does not make its record
+    // Automatic. It used to: the reader stopped at a failed open (or, on
+    // macOS, at a read libc++ reports as a clean end of file) and left
+    // the origin unset, which list() fills with Automatic, so prune()
+    // deleted a backup the user had made. Made unreadable here by taking
+    // the read permission off the manifest. POSIX only, and not as root.
+#if !defined(_WIN32)
+    if (::geteuid() != 0) {
+        fs::path stick = root / "unreadable-manifest";
+        fs::path a = stick / "PIONEER" / "export.pdb";
+        FilesystemBackupStore store(pathToUtf8(stick / "Seabass" / "backups"));
+        writeFile(a, "one");
+        auto mine = store.backup({pathToUtf8(a)}, "before-gig", BackupOrigin::UserRequested);
+        writeFile(a, "two");
+        auto auto1 = store.backup({pathToUtf8(a)}, "sync");
+        const fs::path manifest = pathFromUtf8(mine.path) / ".manifest";
+        assert(fs::is_regular_file(manifest) && "the precondition: the record's manifest is where this test looks");
+        fs::permissions(manifest, fs::perms::none, fs::perm_options::replace);
+        const bool permissionsBind = !std::ifstream(manifest).is_open();
+        const auto pruned = store.prune(0);
+        std::error_code restoreEc;  // the record may be gone, which the asserts below say better
+        fs::permissions(manifest, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace,
+                        restoreEc);
+        assert(permissionsBind && "the precondition: the manifest really could not be opened");
+        assert(fs::exists(pathFromUtf8(mine.path)) && "a record whose owner cannot be read is never pruned");
+        assert(!fs::exists(pathFromUtf8(auto1.path)) && "while the readable automatic one still is");
+        assert(pruned.removed == 1);
+        std::cout << "case: a record with an unreadable manifest is never taken for automatic OK\n";
+    }
+#endif
+
     std::cout << "all cases passed\n";
     return 0;
 }
