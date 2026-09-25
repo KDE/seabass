@@ -4,7 +4,10 @@
 
 #pragma once
 
+#include "infrastructure/paths/utf8_path.hpp"
+
 #include <filesystem>
+#include <string>
 #include <optional>
 #include <string_view>
 
@@ -55,17 +58,19 @@ inline bool isSqliteShmFile(std::string_view filename)
 // `-shm`).
 inline std::optional<std::filesystem::path> dbSetMainFile(const std::filesystem::path &path)
 {
-    // On the path itself, never through a narrow string: "m.db-wal" has
-    // the extension ".db-wal" and the stem "m", so the main file is the
-    // stem with ".db" back on it.
-    const std::filesystem::path extension = path.extension();
-    if (extension == ".db") {
+    // By the same suffix test as isSqliteDatabaseFile(), on the UTF-8
+    // file name, so the two classifiers the backup and restore planners
+    // share can never disagree on a name. path::extension() would: a
+    // file named exactly ".db" has no extension, and a comparison of
+    // paths is case-sensitive on MSVC where FAT is not.
+    const std::string name = pathToUtf8(path.filename());
+    if (isSqliteDatabaseFile(name)) {
         return path;
     }
-    if (extension == ".db-wal" || extension == ".db-journal") {
-        std::filesystem::path main = path.stem();
-        main += ".db";
-        return path.parent_path() / main;
+    for (const std::string_view sidecar : {std::string_view(".db-wal"), std::string_view(".db-journal")}) {
+        if (endsWith(name, sidecar)) {
+            return path.parent_path() / pathFromUtf8(name.substr(0, name.size() - sidecar.size()) + ".db");
+        }
     }
     return std::nullopt;
 }
