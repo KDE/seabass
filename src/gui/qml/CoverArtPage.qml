@@ -24,7 +24,7 @@ Page {
     // Library Health hands over the controller that just scanned this
     // library, so this page reports that scan rather than repeating work
     // that reads three catalogs. Opened on its own, it scans for itself.
-    // Object-typed and read through ?., for the reason LibraryConsistencyPage
+    // Object-typed and read through ?., for the reason HealthCheckPage
     // gives: the hub's controller can go before this page does.
     property QtObject sharedController: null
     readonly property QtObject consistencyController: root.sharedController !== null
@@ -74,9 +74,11 @@ Page {
             anchors.margins: Theme.pageMargin
             spacing: 12
 
+            // One level up is Library Health, so the middle segment
+            // names it, as on every other check's page (HealthCheckPage).
             BackBreadcrumb {
                 stack: root.StackView.view
-                middleLabel: root.stickLabel
+                middleLabel: "Library Health"
                 title: "Cover Art"
                 backEnabled: !consistencyController?.busy && !consistencyController?.writing
                 onHomeRequested: editHost.requestLeave(() => root.StackView.view.pop(null))
