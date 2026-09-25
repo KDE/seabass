@@ -55,21 +55,6 @@ Page {
         id: controller
     }
 
-    // The waveform of the track on list row `row`, from the stick in front
-    // of you: a metadata backup holds none. Only ever called for the row
-    // that is open (see the delegate's waveformData binding), and the
-    // player caches what it has read.
-    function waveformFor(row) {
-        if (!root.playbackController) {
-            return [];
-        }
-        const source = controller.waveformSourceAt(row);
-        if (!source || !source.format) {
-            return [];
-        }
-        return root.playbackController.waveformFor(source.format, source.libraryPath, source.sourceId);
-    }
-
     // ---- the stick picker's model --------------------------------------
     //
     // Index 0 is every stick, and each stick the proposals were backed up
@@ -490,7 +475,10 @@ Page {
                 showWaveform: true
                 waveformCues: proposalRow.cues
                 waveformDurationMs: proposalRow.durationMs
-                waveformData: proposalRow.expanded ? root.waveformFor(proposalRow.index) : []
+                waveformData: proposalRow.expanded
+                    ? proposalRow.stickWaveform(root.playbackController,
+                                                controller.waveformSourceAt(proposalRow.index))
+                    : []
                 // The waveform is the stick's, so a missing one is too.
                 waveformMissingText: "No waveform on the stick for this track"
                 // What this row's badge is counting is not what is on

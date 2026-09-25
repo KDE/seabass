@@ -933,23 +933,15 @@ QString MetadataBackupController::cueSummaryFor(qint64 trackId)
 
 QVariantMap MetadataBackupController::waveformSourceAt(int row) const
 {
-    if (m_browsingStore || m_sourceLibraryPath.isEmpty()) {
+    if (m_browsingStore) {
         return {};
     }
     const int index = m_proposalModel.sourceIndexOfRow(row);
     if (index < 0) {
         return {};
     }
-    const auto *catalogRow = waveformCatalogRow(m_proposalModel.proposals()[static_cast<std::size_t>(index)].stickTrack);
-    if (catalogRow == nullptr) {
-        return {};
-    }
-    return {
-        {QStringLiteral("format"), QString::fromStdString(catalogRow->format)},
-        {QStringLiteral("libraryPath"),
-         qtPathFromUtf8(catalogPathForFormat(m_sourceLibraryPath.toStdString(), catalogRow->format))},
-        {QStringLiteral("sourceId"), QString::fromStdString(catalogRow->sourceId)},
-    };
+    return metadataWaveformSource(m_proposalModel.proposals()[static_cast<std::size_t>(index)].stickTrack,
+                                  m_sourceLibraryPath);
 }
 
 QStringList MetadataBackupController::playlistsFor(qint64 trackId)

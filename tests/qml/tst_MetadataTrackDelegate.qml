@@ -148,4 +148,25 @@ TestCase {
         compare(waveform.missingText, "");
         compare(findChild(waveform, "waveformMouseArea").explainMissing, false);
     }
+
+    // The one reading of a waveform both metadata pages do, from a
+    // controller's waveformSourceAt() answer. Nothing without a player or a
+    // source; otherwise exactly what the source names.
+    function test_stickWaveformReadsWhatTheSourceNames() {
+        const row = createTemporaryObject(rowComponent, testCase, {index: 0});
+        const asked = [];
+        const player = {
+            waveformFor: function (format, path, id) {
+                asked.push(format + " " + path + " " + id);
+                return [{low: 0.5, mid: 0.4, high: 0.3}];
+            }
+        };
+        const source = {format: "engine", libraryPath: "/media/STICK/Engine Library", sourceId: "12"};
+        compare(row.stickWaveform(null, source).length, 0, "no player, nothing to read with");
+        compare(row.stickWaveform(player, {}).length, 0, "no source, nothing to read");
+        compare(row.stickWaveform(player, null).length, 0);
+        compare(asked.length, 0, "and neither asks");
+        compare(row.stickWaveform(player, source).length, 1);
+        compare(asked, ["engine /media/STICK/Engine Library 12"]);
+    }
 }
