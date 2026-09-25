@@ -64,6 +64,10 @@ Page {
     // The chosen drive left the list. Nothing is selected in its place,
     // and the form says so until the user picks a drive.
     property bool chosenDriveGone: false
+    // A drive has been selected at some point, by the user or by default.
+    // Until then a refresh may pick the default drive; after it, only the
+    // user picks one.
+    property bool driveEverChosen: false
     // Close asks for a fresh preview of the kept drive even if the
     // refresh finds it unchanged: a restore has just written to it.
     property bool freshPreviewWanted: false
@@ -108,22 +112,37 @@ Page {
         }).join("\n");
     }
 
+    // Selects the drive at `index`, or none with -1. Only a drive
+    // actually selected answers "the drive you chose is gone": selecting
+    // none leaves that note (and the rule that no drive is picked for the
+    // user any more) as it was.
     function applySelection(index) {
         root.selectedIndex = index;
         root.chosenDrive = root.selectedDisk === null ? null
             : {mountPoint: root.selectedDisk.mountPoint, devicePath: root.selectedDisk.devicePath,
                snapshot: root.driveSnapshot(root.selectedDisk)};
-        root.chosenDriveGone = false;
-        if (root.selectedDisk !== null && root.selectedDisk.usable === true && root.controller.analyze) {
-            root.controller.analyze(root.selectedDisk.mountPoint);
-        } else if (root.controller.analyze) {
-            root.controller.analyze("");
+        if (root.selectedDisk !== null) {
+            root.chosenDriveGone = false;
+            root.driveEverChosen = true;
         }
+        root.analyzeSelectedDrive();
     }
 
+    // Compares the backup with the selected drive, or drops the preview
+    // when there is no usable drive to compare it with.
+    function analyzeSelectedDrive() {
+        if (!root.controller.analyze) return;
+        root.controller.analyze(root.selectedDisk !== null && root.selectedDisk.usable === true
+            ? root.selectedDisk.mountPoint : "");
+    }
+
+    // Another backup is not another drive: the drive choice stays exactly
+    // as it is, and a selected drive is compared with the new backup.
     function chooseArchive(path) {
         root.controller.archivePath = path;
-        root.applySelection(root.selectedIndex);
+        if (root.selectedDisk !== null) {
+            root.analyzeSelectedDrive();
+        }
     }
 
     function phaseLabel(phase) {
@@ -157,10 +176,10 @@ Page {
             root.controller.archivePath = root.defaultArchivePath();
             archiveChanged = true;
         }
-        if (root.selectedIndex < 0) {
+        if (root.selectedIndex < 0 && !root.driveEverChosen) {
             root.applySelection(root.pickDefaultDrive());
-        } else if (archiveChanged) {
-            root.applySelection(root.selectedIndex);
+        } else if (archiveChanged && root.selectedDisk !== null) {
+            root.analyzeSelectedDrive();
         }
         root.mountPreselectedDrive();
     }
@@ -182,8 +201,8 @@ Page {
     onKnownBackupsChanged: {
         if ((root.controller.archivePath || "").length === 0 && root.defaultArchivePath().length > 0) {
             root.controller.archivePath = root.defaultArchivePath();
-            if (root.selectedIndex >= 0) {
-                root.applySelection(root.selectedIndex);
+            if (root.selectedDisk !== null) {
+                root.analyzeSelectedDrive();
             }
         }
     }
@@ -209,12 +228,11 @@ Page {
     // wherever it is now, and analysed again only when the list describes
     // it differently (or Close asked); gone, nothing is selected, never
     // another drive, which a blank one would take without a typed
-    // confirmation. With nothing chosen yet, the default is picked as
-    // when the page opened, but not after the chosen drive went: then
-    // only the user picks.
+    // confirmation. While no drive has ever been selected, the default is
+    // picked as when the page opened; once one has, only the user picks.
     function reconcileDriveChoice(forceAnalysis) {
         if (root.chosenDrive === null) {
-            if (!root.chosenDriveGone) {
+            if (!root.driveEverChosen) {
                 root.applySelection(root.pickDefaultDrive());
             } else if (forceAnalysis && root.controller.analyze) {
                 root.controller.analyze("");
@@ -275,13 +293,11 @@ Page {
 
     FileDialog {
         id: archiveDialog
+        objectName: "archiveDialog"
         title: "Choose a Seabass stick backup"
         nameFilters: ["Stick backups (*.zip)", "All files (*)"]
         currentFolder: root.appSettingsController.toLocalFileUrl(root.controller.defaultBackupDirectory || "")
-        onAccepted: {
-            root.controller.archivePath = selectedFile.toString();
-            root.applySelection(root.selectedIndex);
-        }
+        onAccepted: root.chooseArchive(selectedFile.toString())
     }
 
     header: ToolBar {

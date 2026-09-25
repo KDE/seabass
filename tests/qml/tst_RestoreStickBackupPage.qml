@@ -716,10 +716,14 @@ TestCase {
     // possibly in another order. The selection used to be a row number,
     // so a reorder quietly moved it (and the preview, and the Restore
     // button's target) onto another drive.
-    function pageWithBChosen() {
+    function pageWithBChosen(controllerProps) {
         const a = makeDisk({label: "A", mountPoint: "/media/A", devicePath: "/dev/sdb1"});
         const b = makeDisk({label: "B", mountPoint: "/media/B", devicePath: "/dev/sdc1"});
-        const controller = createTemporaryObject(liveDisksControllerComponent, testCase, {disks: [a, b]});
+        const props = {disks: [a, b]};
+        for (const key in (controllerProps || {})) {
+            props[key] = controllerProps[key];
+        }
+        const controller = createTemporaryObject(liveDisksControllerComponent, testCase, props);
         const page = createTemporaryObject(pageComponent, testCase,
                                            {controller: controller, appSettingsController: fakeAppSettings()});
         const radioB = findChild(page, "driveRadio_1");
@@ -780,6 +784,56 @@ TestCase {
         radioA.toggled();
         compare(run.page.selectedDisk.label, "A");
         compare(note.visible, false, "picking a drive answers the note");
+    }
+
+    // Picking another backup is not picking a drive. It used to go
+    // through the drive selection with no drive selected, which cleared
+    // "the chosen drive is gone", and the next refresh then picked a
+    // default drive (possibly a blank one) in its place.
+    function test_pickingAnotherBackupAfterTheChosenDriveWentPicksNoDrive_data() {
+        return [{tag: "from the list"}, {tag: "from a file"}];
+    }
+
+    function test_pickingAnotherBackupAfterTheChosenDriveWentPicksNoDrive(data) {
+        const other = makeBackup({archivePath: "/home/u/Seabass Backups/OTHER.zip", fileName: "OTHER.zip", label: "OTHER"});
+        const run = pageWithBChosen({knownBackups: [makeBackup({archivePath: "/home/u/Seabass Backups/STICK.zip",
+                                                                fileName: "STICK.zip", label: "STICK"}), other]});
+        run.controller.disks = [run.c, run.a];
+        const note = findChild(run.page, "chosenDriveGoneLabel");
+        compare(note.visible, true);
+        const analyzed = run.controller.analyzeCalls.length;
+        let expectedPath = other.archivePath;
+        if (data.tag === "from the list") {
+            const radio = findChildren(run.page, "backupRadio").filter(function(r) { return r.text === "OTHER"; })[0];
+            verify(radio !== undefined);
+            mouseClick(radio);
+        } else {
+            // The dialog only takes a file that exists: this test's own.
+            const dialog = findChild(run.page, "archiveDialog");
+            expectedPath = String(Qt.resolvedUrl("tst_RestoreStickBackupPage.qml"));
+            dialog.selectedFile = expectedPath;
+            dialog.accepted();
+        }
+        compare(run.controller.archivePath, expectedPath);
+        compare(run.page.selectedIndex, -1, "no drive picked with the backup");
+        compare(note.visible, true, "the note stays until the user picks a drive");
+        compare(run.controller.analyzeCalls.length, analyzed, "nothing to compare the backup with");
+        // The next refresh (Close, Mount, a drive plugged in) picks none either.
+        run.controller.disks = [run.a, run.c];
+        compare(run.page.selectedIndex, -1, "a refresh picks no drive for the user");
+        compare(run.page.selectedDisk, null);
+        compare(note.visible, true);
+        compare(findChild(run.page, "openConfirmButton").enabled, false);
+    }
+
+    // With a drive chosen, another backup is compared with that drive.
+    function test_pickingAnotherBackupAnalysesTheChosenDrive() {
+        const run = pageWithBChosen();
+        const analyzed = run.controller.analyzeCalls.length;
+        run.page.chooseArchive("/home/u/Seabass Backups/OTHER.zip");
+        compare(run.page.selectedDisk.label, "B");
+        compare(run.controller.analyzeCalls.length, analyzed + 1);
+        compare(run.controller.analyzeCalls[analyzed], "/media/B");
     }
 
     // The drive is unplugged while the confirmation is open: nothing is
