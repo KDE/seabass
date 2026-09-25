@@ -236,7 +236,10 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
 infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveContext &ctx,
                                                                            const std::string &engineLibraryPath)
 {
-    const std::string key = "engine-cue-writer:" + engineLibraryPath;
+    // Keyed by the normalised path, like the write session below: the
+    // callers hand this path in from a page, a change's own member and a
+    // derived sibling, and on Windows those spell separators differently.
+    const std::string key = "engine-cue-writer:" + application::normalizedPathKey(engineLibraryPath);
     return ctx.shared<infrastructure::engine::LibdjinteropEngineCueWriter>(key, [&]() {
         return std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
     });
@@ -244,9 +247,15 @@ infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveC
 
 namespace
 {
+// One key for every spelling of the catalog path. A change carries the
+// path a page gave it, the save loop reads it back off the context, and
+// on Windows the two can differ in separators or a trailing one; a
+// session that is not found under the second spelling would be opened
+// twice, and two writers on one database inside one save is the bug
+// the whole-save sharing exists to prevent.
 std::string writeSessionKey(const std::string &format, const std::string &catalogPath)
 {
-    return "write-session:" + FormatWriteSession::databaseFileFor(format, catalogPath);
+    return "write-session:" + application::normalizedPathKey(FormatWriteSession::databaseFileFor(format, catalogPath));
 }
 }  // namespace
 
