@@ -8,12 +8,15 @@ import QtQuick.Layouts
 import SeabassGui
 
 // Replaces the old "‹" ToolButton + separate PageTitle pair every
-// section page's header used to duplicate. Up to three segments:
-// "[home] › [middle] › this page", where the house always jumps back
-// to the StackView's very first item in one click (pop(null), not a
-// single pop()) no matter how deep the current page sits -- the middle
-// segment, when present, is one level up (the stick, for a page pushed
-// directly from Home, or the hub page, for a page nested inside one).
+// section page's header used to duplicate. Up to four segments:
+// "[home] › [stick] › [middle] › this page", where the house always
+// jumps back to the StackView's very first item in one click (pop(null),
+// not a single pop()) no matter how deep the current page sits. The
+// stick segment names the stick the page is about; the middle segment,
+// when present, is one level up -- the hub page for a page nested inside
+// one, or (on pages that predate the stick segment and pass the stick's
+// name as middleLabel) the stick itself for a page pushed directly from
+// Home.
 // Every clickable segment uses Theme.rowHover/rowPressed -- the same
 // tint tokens list rows already use -- rather than inventing its own
 // hover color, so this is also the fix for hover feedback being
@@ -22,6 +25,12 @@ import SeabassGui
 // identically.
 RowLayout {
     id: root
+    // The stick this page works on. Always context, never a link: Home
+    // is the stick list, so there is no page in the stack that IS the
+    // stick, and a click on its name could only ever land on Home -- the
+    // house to its left already does that. Empty omits it (a page with no
+    // stick of its own, e.g. Manage Backups opened from Home).
+    property string stickLabel: ""
     // Empty omits the middle segment entirely (a page pushed directly
     // from Home with no stick/hub context of its own, e.g. Preferences).
     property string middleLabel: ""
@@ -44,6 +53,39 @@ RowLayout {
     // Home and from Library Statistics) gets it right both times.
     readonly property bool middleLeadsHome: stack ? stack.depth <= 2 : false
     readonly property bool middleClickable: middleLabel.length > 0 && !middleLeadsHome
+
+    // Who gives way, and in what order, when the row is narrower than
+    // its natural width: the stick first, then the middle segment, then
+    // the page's own name, each down to a floor and no further.
+    //
+    // A RowLayout alone cannot say "first". Squeezed below the preferred
+    // widths it shares the shortfall out among every segment in
+    // proportion to how far each can shrink, so all three elided at once
+    // -- "MY-ST... > Houseke... > Clean Up Dupl..." -- and none of them
+    // could be read. Instead each segment's minimum is worked out here
+    // from the shortfall, so that the minimums add up to exactly the width
+    // the row was given and the layout has nothing left to share out: the
+    // stick is handed all of the shortfall it can absorb, the middle the
+    // rest, and the title only what neither could take.
+    //
+    // No binding loop: the row's implicit width is the sum of the
+    // segments' PREFERRED widths, which are their natural widths and do
+    // not depend on this; and a minimum is never set above a preferred
+    // width, which is the one way a minimum could feed back into it.
+    readonly property real shortfall: Math.max(0, implicitWidth - width)
+    readonly property real stickNatural: stickText.visible ? stickText.naturalWidth : 0
+    readonly property real middleNatural: middleCrumb.visible ? middleCrumb.naturalWidth
+        : middleText.visible ? middleText.naturalWidth : 0
+    readonly property real titleNatural: titleText.naturalWidth
+    // Floors, clamped to the natural width so that a short name is never
+    // padded out to one.
+    readonly property real stickFloor: Math.min(Theme.scaled(64), stickNatural)
+    readonly property real middleFloor: Math.min(Theme.scaled(64), middleNatural)
+    readonly property real titleFloor: Math.min(Theme.scaled(120), titleNatural)
+    readonly property real stickShortfall: Math.min(shortfall, stickNatural - stickFloor)
+    readonly property real middleShortfall: Math.min(shortfall - stickShortfall, middleNatural - middleFloor)
+    readonly property real titleShortfall: Math.min(shortfall - stickShortfall - middleShortfall,
+                                                    titleNatural - titleFloor)
     signal homeRequested()
     signal backRequested()
 
@@ -87,8 +129,9 @@ RowLayout {
         // which is why the ceiling needs the +1 rather than standing on
         // its own. Measured in tests/qml/tst_BackBreadcrumb.qml: without
         // it the segment is handed 264 for a 264.37 name.
-        Layout.preferredWidth: Math.ceil(implicitWidth) + 1
-        Layout.maximumWidth: Math.ceil(implicitWidth) + 1
+        readonly property real naturalWidth: Math.ceil(implicitWidth) + 1
+        Layout.preferredWidth: naturalWidth
+        Layout.maximumWidth: naturalWidth
 
         ToolTip.visible: hovered
 
@@ -148,10 +191,10 @@ RowLayout {
 
     // A house, not the word "Home". The word cost this row about four
     // characters of width on every page that has a breadcrumb, and the
-    // row it was spending them on is the one whose middle segment --
-    // usually the stick's name -- gives way first when the header runs
-    // out of room. Breeze's own go-home, so the button a KDE user reaches
-    // for looks like the one they already know.
+    // row it was spending them on is the one whose stick's name gives
+    // way first when the header runs out of room. Breeze's own go-home,
+    // so the button a KDE user reaches for looks like the one they
+    // already know.
     Crumb {
         objectName: "homeCrumb"
         showsIcon: true
@@ -159,38 +202,11 @@ RowLayout {
         ToolTip.text: root.backEnabled ? "Back to Home" : root.backDisabledTooltip
     }
 
-    Sep { visible: root.middleLabel.length > 0 }
-
-    Crumb {
-        visible: root.middleClickable
-        // The segment that gives way first. "Home > Hou... > Clean Up
-        // Duplicates" tells a reader what page they are on; "Home >
-        // Housekeeping > Clea..." tells them where it sits and leaves
-        // them guessing what it is. The middle is also the one they can
-        // most easily infer, being one click behind them.
-        //
-        // With a floor, though. Squeezed to zero it left "Home >  >
-        // Clean Up Duplicates" -- a gap and a dangling separator, which
-        // reads as a bug rather than as an abbreviation. A few
-        // characters and an ellipsis still say a name was here.
-        Layout.fillWidth: true
-        Layout.minimumWidth: Theme.scaled(64)
-        text: root.middleLabel
-        onClicked: root.backRequested()
-        // Names itself in full when it has been shortened -- an
-        // abbreviation the reader cannot expand is just a missing word.
-        ToolTip.text: !root.backEnabled ? root.backDisabledTooltip
-            : contentItem.truncated ? (root.middleLabel + ": back to it")
-            : ("Back to " + root.middleLabel)
-    }
-
-    // The same segment when it leads nowhere new: context, not a link.
-    // No hover pill and no click, but it still elides last-but-one and
-    // still says its full name on hover when it has had to.
-    Label {
-        id: middleText
-        visible: root.middleLabel.length > 0 && !root.middleClickable
-        text: root.middleLabel
+    // A segment that leads nowhere new: context, not a link. No hover
+    // pill and no click, but it still elides and still says its full
+    // name on hover when it has had to.
+    component Context: Label {
+        id: context
         font.family: Theme.titleFamily
         font.weight: Theme.titleWeight
         font.pointSize: Theme.titleCrumb
@@ -200,14 +216,63 @@ RowLayout {
         // separators around it sit where they do around a Crumb.
         leftPadding: Theme.scaled(8)
         rightPadding: Theme.scaled(8)
+        readonly property real naturalWidth: Math.ceil(implicitWidth) + 1
         Layout.fillWidth: true
-        Layout.minimumWidth: Theme.scaled(64)
-        Layout.preferredWidth: Math.ceil(implicitWidth) + 1
-        Layout.maximumWidth: Math.ceil(implicitWidth) + 1
+        Layout.preferredWidth: naturalWidth
+        Layout.maximumWidth: naturalWidth
 
-        HoverHandler { id: middleHover }
-        ToolTip.visible: middleHover.hovered && middleText.truncated
-        ToolTip.text: root.middleLabel
+        HoverHandler { id: contextHover }
+        ToolTip.visible: contextHover.hovered && context.truncated
+        ToolTip.text: context.text
+    }
+
+    Sep { visible: root.stickLabel.length > 0 }
+
+    // The stick. The segment that gives way first: it is the one the
+    // reader can most easily do without, having picked it on Home a
+    // moment ago. With a floor, though. Squeezed to zero it left "Home >
+    // > Clean Up Duplicates" -- a gap and a dangling separator, which
+    // reads as a bug rather than as an abbreviation. A few characters and
+    // an ellipsis still say a name was here.
+    Context {
+        id: stickText
+        objectName: "stickSegment"
+        visible: root.stickLabel.length > 0
+        text: root.stickLabel
+        Layout.minimumWidth: naturalWidth - root.stickShortfall
+    }
+
+    Sep { visible: root.middleLabel.length > 0 }
+
+    Crumb {
+        id: middleCrumb
+        objectName: "middleLink"
+        visible: root.middleClickable
+        // Gives way second. "Home > Hou... > Clean Up Duplicates" tells a
+        // reader what page they are on; "Home > Housekeeping > Clea..."
+        // tells them where it sits and leaves them guessing what it is.
+        // The middle is also the one they can most easily infer, being
+        // one click behind them. Same floor as the stick, for the same
+        // reason.
+        Layout.fillWidth: true
+        Layout.minimumWidth: naturalWidth - root.middleShortfall
+        text: root.middleLabel
+        onClicked: root.backRequested()
+        // Names itself in full when it has been shortened -- an
+        // abbreviation the reader cannot expand is just a missing word.
+        ToolTip.text: !root.backEnabled ? root.backDisabledTooltip
+            // contentItem is the Loader; the Label that elides is its item.
+            : (contentItem.item && contentItem.item.truncated) ? (root.middleLabel + ": back to it")
+            : ("Back to " + root.middleLabel)
+    }
+
+    // The same segment when it leads nowhere new.
+    Context {
+        id: middleText
+        objectName: "middleSegment"
+        visible: root.middleLabel.length > 0 && !root.middleClickable
+        text: root.middleLabel
+        Layout.minimumWidth: naturalWidth - root.middleShortfall
     }
 
     Sep {}
@@ -217,17 +282,19 @@ RowLayout {
     // is not enough on its own, and the title kept its full 307px
     // inside a 345px row and simply hung out of it.
     //
-    // Priority between the two shrinkable segments is expressed as
-    // floors rather than as order: the middle gives way to 64 and the
-    // title only to 120, so the middle is spent first and the page's own
-    // name is still readable when it is.
+    // It gives way last, and only to 120 against the others' 64: the
+    // page's own name is still readable when both of them have been
+    // spent. See `shortfall` above for how the order is enforced.
     PageTitle {
         id: titleText
+        objectName: "titleSegment"
         text: root.title
         level: "crumb"
         elide: Text.ElideRight
+        readonly property real naturalWidth: Math.ceil(implicitWidth) + 1
         Layout.fillWidth: true
-        Layout.minimumWidth: Theme.scaled(120)
+        Layout.preferredWidth: naturalWidth
+        Layout.minimumWidth: naturalWidth - root.titleShortfall
 
         // Same bargain as the middle segment: it may be shortened, but
         // only if hovering it gives the whole name back.
