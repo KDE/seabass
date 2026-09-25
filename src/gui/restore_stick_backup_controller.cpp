@@ -182,7 +182,7 @@ QString RestoreStickBackupController::archivePathForLabel(const QString &label) 
 
 void RestoreStickBackupController::refreshKnownBackups()
 {
-    if (m_listWatcher.isRunning()) {
+    if (m_listing) {
         return;
     }
     const fs::path directory = pathFromQString(m_defaultBackupDirectory);
@@ -208,6 +208,7 @@ void RestoreStickBackupController::refreshKnownBackups()
         }
         return backups;
     }));
+    m_listing = true;
     emit knownBackupsChanged();
 }
 
@@ -215,6 +216,7 @@ void RestoreStickBackupController::onListFinished()
 {
     QString thrown;
     m_knownBackups = takeResult(m_listWatcher, &thrown);
+    m_listing = false;
     if (!thrown.isEmpty()) {
         setErrorMessage(QStringLiteral("Could not list the backup folder: ") + thrown);
     }

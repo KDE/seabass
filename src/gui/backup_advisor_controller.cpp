@@ -94,7 +94,7 @@ void BackupAdvisorController::assess(const QString &stickLabel, const QString &m
         }
     }
     m_queue.push_back(request);
-    if (m_watcher.isRunning()) {
+    if (!m_running.isEmpty()) {
         // Queued behind the running pass: startNext() below does nothing
         // yet, so this is the only word that the stick is now waiting.
         emit pendingChanged();
@@ -122,7 +122,7 @@ void BackupAdvisorController::forget(const QString &mountPoint)
 
 void BackupAdvisorController::startNext()
 {
-    if (m_watcher.isRunning() || m_queue.empty()) {
+    if (!m_running.isEmpty() || m_queue.empty()) {
         return;
     }
     const Request request = m_queue.front();

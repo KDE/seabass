@@ -330,6 +330,23 @@ TestCase {
         compare(seen[seen.length - 1].pending.length, 0);
     }
 
+    // Busy until the pass's result has been handled, not until its worker
+    // thread returns. A stick that is not there is assessed in well under
+    // a millisecond; the UI thread is held here without turning the event
+    // loop, as a busy frame holds it, so the worker is certainly done
+    // before its result is taken. "Not busy" in that window is what made
+    // the test above flake: the announcement of a pass said it was over.
+    function test_realAdvisorIsBusyUntilItsResultLands() {
+        const advisor = createTemporaryObject(realAdvisorComponent, testCase);
+        advisor.assess("GHOST", "/nonexistent/seabass-hub-test/GHOST", "", "");
+        const until = Date.now() + 200;
+        while (Date.now() < until) {
+            // Hold the UI thread; the worker finishes meanwhile.
+        }
+        verify(advisor.busy, "still busy: the result has not been handled yet");
+        tryVerify(function() { return !advisor.busy; }, 10000, "and done once it has");
+    }
+
     // Every card on this hub graduated from experimental on 2026-09-17, so
     // none of them answers to the flag any more.
     function test_everyCardIsShownWithoutExperimentalFeatures() {
