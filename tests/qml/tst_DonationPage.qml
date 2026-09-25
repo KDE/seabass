@@ -164,10 +164,17 @@ TestCase {
             }
             verify(besideSeen, "text sits beside the portrait at width " + widths[w]);
             var kind = findChild(page, "supportKindWords");
-            if (widths[w] === 880) {
-                verify(kind.mapToItem(page, 0, 0).y < portraitBox.y + portrait.height,
-                       "the letter starts beside the portrait, not under it");
-            }
+            // What the flow guarantees, at any font: the letter follows the
+            // byline directly, one paragraph gap below it, instead of being
+            // held down to the portrait's bottom. (Whether that lands beside
+            // the portrait depends on the font's height -- Linux's fonts push
+            // the title and byline taller than macOS's, and a check for
+            // "beside" failed on CI while the page was right.)
+            var byline = findChild(page, "supportByline");
+            var bylineBottom = byline.mapToItem(page, 0, byline.height).y;
+            var flow = findChild(page, "supportHeading");
+            verify(kind.mapToItem(page, 0, 0).y <= bylineBottom + flow.gap + 1,
+                   "the letter follows the byline, not the bottom of the portrait, at width " + widths[w]);
             if (screenshotDir && screenshotDir.length > 0 && widths[w] !== 880) {
                 findChild(page, "supportHeartbeat").stop();
                 waitForRendering(page);
