@@ -255,54 +255,104 @@ TestCase {
         UpdateChecker {}
     }
 
+    // A stable build as the page sees it: the tenth tap switches testing
+    // on and reveals the box, as UpdateChecker::versionTapped does there.
+    // A stand-in because the test binary itself is a development build,
+    // where the real checker rightly does nothing (next test). A QtObject
+    // rather than a plain object, so the page's bindings hear the change.
+    Component {
+        id: stableCheckerComponent
+        QtObject {
+            property bool automatic: false
+            property bool includeTesting: false
+            property bool testingOptionRevealed: false
+            property bool runningPreRelease: false
+            property string state: "idle"
+            property string message: "Not checked yet."
+            property bool updateAvailable: false
+            property bool runningWithdrawn: false
+            property string currentVersion: "0.8.0"
+            property string currentChannel: "stable"
+            property string currentCommit: ""
+            property string downloadPage: "https://vizzzion.org/seabass/get-it.html"
+            property int taps: 0
+            function checkNow() {}
+            function versionTapped() {
+                taps += 1;
+                if (taps < 10 || includeTesting) return false;
+                includeTesting = true;
+                testingOptionRevealed = true;
+                return true;
+            }
+        }
+    }
+
+    function scrollIntoView(page, item) {
+        // The Updates section is below the fold at this height; bring the
+        // item into view, or the taps land outside the window.
+        const scroll = findChild(page, "settingsScroll");
+        scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height,
+                                               item.mapToItem(scroll.contentItem, 0, 0).y - 100));
+        wait(50);
+        const inWindow = item.mapToItem(testCase, 0, item.height / 2);
+        verify(inWindow.y > 0 && inWindow.y < testCase.height, "on screen at y " + inWindow.y);
+    }
+
     function test_ten_quick_taps_on_the_version_line_reveal_the_testing_checkbox() {
-        const checker = createTemporaryObject(checkerComponent, testCase);
-        // Whatever an earlier run left in the settings: a fresh stable
-        // install has never seen the option.
-        checker.forgetTestingChoice();
-        verify(!checker.includeTesting);
-        verify(!checker.testingOptionRevealed);
-        const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700, updateChecker: checker});
+        const page = createTemporaryObject(pageComponent, testCase,
+            {width: 900, height: 700, updateChecker: createTemporaryObject(stableCheckerComponent, testCase)});
+        const checker = page.updateChecker;
         const box = findChild(page, "includeTestingUpdates");
         const dialog = findChild(page, "testingRevealedDialog");
         const version = findChild(page, "currentVersionLabel");
         verify(box !== null && dialog !== null && version !== null);
         verify(!box.visible, "nothing on the page says alphas and betas exist");
         verify(version.text.indexOf("Seabass ") === 0, "the version line reads: " + version.text);
-        // The Updates section is below the fold at this height; bring the
-        // line into view, or the taps land outside the window.
-        const scroll = findChild(page, "settingsScroll");
-        scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height,
-                                               version.mapToItem(scroll.contentItem, 0, 0).y - 100));
-        wait(50);
-        const inWindow = version.mapToItem(testCase, 0, version.height / 2);
-        verify(inWindow.y > 0 && inWindow.y < testCase.height, "the version line is on screen at y " + inWindow.y);
+        scrollIntoView(page, version);
 
         for (let i = 0; i < 9; ++i) {
             mouseClick(version, 10, version.height / 2);
         }
+        compare(checker.taps, 9, "every tap reaches the checker");
         verify(!box.visible, "nine taps are not ten");
         verify(!dialog.visible);
         mouseClick(version, 10, version.height / 2);
         tryVerify(() => dialog.visible, 1000, "the tenth tap says what happened");
         verify(checker.includeTesting, "and switched testing on");
-        verify(box.visible, "and the checkbox is there now");
+        tryVerify(() => box.visible, 1000, "and the checkbox is there now");
         verify(box.checked);
-        verify(box.enabled, "a stable (or dev) build gets to switch it off");
+        verify(box.enabled, "a stable build gets to switch it off");
         dialog.close();
         tryVerify(() => !dialog.visible && !dialog.opened, 2000, "the popup goes away");
 
         // Off again through the box, which stays where it is. A real
         // click: toggle() from script never emits toggled.
+        scrollIntoView(page, box);
         mouseClick(box);
         tryVerify(() => !checker.includeTesting, 1000, "unticking turns it off");
         verify(box.visible, "once found, the option stays in view");
         verify(checker.testingOptionRevealed);
-        // Ticking works too, and the popup is for the discovery only.
         mouseClick(box);
         tryVerify(() => checker.includeTesting, 1000, "ticking turns it back on");
-        verify(!dialog.visible);
+        verify(!dialog.visible, "the popup is for the discovery only");
+    }
+
+    function test_on_a_development_build_the_taps_claim_nothing() {
+        // The real checker: this test binary is a dev build, offered no
+        // release at all, so the popup would promise something that never
+        // happens (review finding on 4f2cfd21).
+        const checker = createTemporaryObject(checkerComponent, testCase);
         checker.forgetTestingChoice();
+        const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700, updateChecker: checker});
+        const version = findChild(page, "currentVersionLabel");
+        scrollIntoView(page, version);
+        for (let i = 0; i < 12; ++i) {
+            mouseClick(version, 10, version.height / 2);
+        }
+        wait(100);
+        verify(!findChild(page, "testingRevealedDialog").visible, "no popup");
+        verify(!findChild(page, "includeTestingUpdates").visible, "no checkbox");
+        verify(!checker.includeTesting);
     }
 
     function test_the_version_line_is_not_advertised_as_a_switch() {

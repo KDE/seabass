@@ -109,6 +109,17 @@ std::optional<ReleaseInfo> findRunning(const QString &currentVersion, const QStr
     return std::nullopt;
 }
 
+bool mayRedecideFrom(const QString &state)
+{
+    return state == QLatin1String("upToDate") || state == QLatin1String("updateAvailable")
+        || state == QLatin1String("withdrawn");
+}
+
+bool tapsWouldEnableTesting(const QString &buildChannel, bool includeTestingNow)
+{
+    return feedChannelFor(buildChannel) == QLatin1String("stable") && !includeTestingNow;
+}
+
 bool TapSequence::tap(qint64 nowMs)
 {
     m_taps.erase(std::remove_if(m_taps.begin(), m_taps.end(),

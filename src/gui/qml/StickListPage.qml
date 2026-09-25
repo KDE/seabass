@@ -534,7 +534,13 @@ Page {
                     textFormat: Text.StyledText
                     linkColor: Theme.accent
                     color: updateBanner.alarming ? Theme.dangerText : Theme.text
+                    // Withdrawn with a newer release to move to names it:
+                    // the title is about the build being used, so this line
+                    // is the only place that says what to get instead.
                     text: root.updateChecker === null ? ""
+                        : updateBanner.newer && updateBanner.alarming
+                            ? "Download Seabass " + root.updateChecker.latestVersion + " from "
+                              + updateBanner.linkText + "."
                         : updateBanner.newer
                             ? "Download the new version from " + updateBanner.linkText + "."
                             : "There is no newer release yet. Watch " + updateBanner.linkText + "."

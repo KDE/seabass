@@ -83,6 +83,22 @@ std::optional<ReleaseInfo> chooseUpdate(const QString &currentVersion, const QSt
 std::optional<ReleaseInfo> findRunning(const QString &currentVersion, const QString &currentChannel,
                                        const QVector<ReleaseInfo> &releases);
 
+// Whether a change to includeTesting may re-decide the checker's answer
+// from the releases it already has, given the state it is in. Only over
+// an answer that came from that feed: during a check, re-deciding would
+// end "checking" early (and let a second request start), and after a
+// failed one it would replace the error with an answer from an older feed
+// that the failed check never gave.
+bool mayRedecideFrom(const QString &state);
+
+// Whether completing the tap sequence changes anything on a build of
+// this channel with the setting as it is: only on a stable build, and
+// only when test builds are not followed already. A pre-release build
+// follows them whatever the setting says, and a development build is
+// offered nothing at all, so for both the taps must neither claim a
+// change nor pop anything up.
+bool tapsWouldEnableTesting(const QString &buildChannel, bool includeTestingNow);
+
 // The hidden switch for hearing about test builds on a stable build: ten
 // taps on the version line within five seconds. Not in the user
 // interface anywhere, on purpose: it is for people who know, and once it
