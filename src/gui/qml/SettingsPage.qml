@@ -120,7 +120,17 @@ Page {
             // width minus the scrollbar gutter. PageScrollView is not a
             // ScrollView and has no availableWidth; binding to that left
             // the column at its implicit width, where no label could elide.
-            width: parent.width
+            //
+            // Capped and centred the way Preferences is (AppSettingsPage's
+            // settingsColumn, the same 640): on a wide window the page
+            // used to put every control far left under the breadcrumb and
+            // leave the rest of the window empty, one click away from a
+            // Preferences page that stands in the middle. The cap is on
+            // the column, not the scroll view, so the scroll bar stays on
+            // the window's edge.
+            readonly property int maxWidth: 640
+            width: Math.min(parent.width, maxWidth)
+            x: Math.round(Math.max(0, (parent.width - width) / 2))
             spacing: Theme.sectionSpacing
 
             Label {
