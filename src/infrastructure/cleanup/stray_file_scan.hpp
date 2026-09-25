@@ -55,6 +55,10 @@ struct StrayFileScanResult
     // never proposed) but the totals must not be presented as the whole
     // truth -- see AudioFileWalkResult::incomplete.
     bool walkIncomplete = false;
+    // The stick's pending-deletion list is there but could not be read, so
+    // files Clean Up already scheduled may be among `unreferenced`. Set
+    // together with walkIncomplete; kept apart so the page can say which.
+    bool pendingDeletionsUnreadable = false;
 
     // False when this build has no TagLib: every file then reads as
     // unreadable, and "632 files found, none reviewable" needs saying
@@ -122,7 +126,17 @@ inline StrayFileScanResult scanStrayFiles(const std::string &stickRoot, const ap
     // absolute paths, through normalizedPathKey().
     {
         std::set<std::string> listed;
-        for (const auto &entry : PendingDeletionManifest(pathToUtf8(paths::stickPendingDeletions(root))).list()) {
+        std::vector<PendingDeletion> pending;
+        // readAll(), not list(): list() answers an empty vector for a
+        // manifest that is there but cannot be read, and an empty answer
+        // here would re-offer every file Clean Up already scheduled, with
+        // a confident count. A manifest that cannot be read makes this
+        // scan incomplete, and the page says so.
+        if (!PendingDeletionManifest(pathToUtf8(paths::stickPendingDeletions(root))).readAll(pending)) {
+            result.walkIncomplete = true;
+            result.pendingDeletionsUnreadable = true;
+        }
+        for (const auto &entry : pending) {
             if (!entry.filePath.empty()) {
                 listed.insert(application::normalizedPathKey(entry.filePath));
             }
@@ -137,7 +151,8 @@ inline StrayFileScanResult scanStrayFiles(const std::string &stickRoot, const ap
     }
 
     result.usable = true;
-    result.walkIncomplete = walk.incomplete;
+    // Or-ed: the pending-deletion list above may already have marked it.
+    result.walkIncomplete = result.walkIncomplete || walk.incomplete;
     result.catalogsConsulted = scan.catalogsConsulted;
     result.filesFound = scan.unreferenced.size();
     for (const auto &f : scan.unreferenced) {

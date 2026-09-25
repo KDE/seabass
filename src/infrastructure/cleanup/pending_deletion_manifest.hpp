@@ -82,12 +82,14 @@ public:
     // could not be rewritten -- see removeProcessed().
     [[nodiscard]] bool removeForBackups(const std::set<std::string> &backupIds);
 
-private:
     // Every entry the file holds. False means it is there and could not
     // be read, which an empty list cannot say and which neither rewrite
-    // may take for "nothing to remove".
-    bool readAll(std::vector<PendingDeletion> &entries) const;
+    // may take for "nothing to remove". A reader whose answer depends on
+    // the list being complete (the stray-file scan, which offers what is
+    // not on it) asks here rather than through list().
+    [[nodiscard]] bool readAll(std::vector<PendingDeletion> &entries) const;
 
+private:
     // Replaces the whole file, durably and atomically. False means the
     // old contents are still there, untouched.
     bool rewrite(const std::string &contents) const;
