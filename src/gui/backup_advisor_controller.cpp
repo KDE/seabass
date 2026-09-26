@@ -89,16 +89,13 @@ BackupAdvisorController::BackupAdvisorController(QObject *parent)
           return readLibraryFingerprint(rekordboxPath, enginePath, pass, std::move(cancel));
       })
 {
-    connect(&m_watcher, &QFutureWatcher<std::shared_ptr<Result>>::finished, this, &BackupAdvisorController::onFinished);
 }
 
-BackupAdvisorController::~BackupAdvisorController()
-{
-    // Nothing will read the result: a step waiting on the cache's cue
-    // pass need not hold the page up.
-    m_runningCancel.cancel();
-    awaitQuietly(m_watcher);
-}
+// m_step cancels the running step and gives it a bounded moment to stop
+// (docs/async-requests.md): a step stuck where no token reaches it (a
+// hardware query, a backup folder on a slow disk) no longer holds the
+// window up.
+BackupAdvisorController::~BackupAdvisorController() = default;
 
 void BackupAdvisorController::setBackupDirectory(const QString &directory)
 {
@@ -184,16 +181,18 @@ void BackupAdvisorController::forget(const QString &mountPoint)
     const auto dropped = std::erase_if(m_queue, [&mountPoint](const Request &queued) {
         return queued.mountPoint == mountPoint;
     });
-    // And the one running for it: stopped where the cache next checks,
-    // and its result discarded by onFinished() however it ends.
-    if (m_running == mountPoint) {
-        m_runningCancel.cancel();
-    }
     if (dropped > 0) {
         emit pendingChanged();
         if (!busy()) {
             emit busyChanged();
         }
+    }
+    // And the one running for it ends here, not when its read notices:
+    // a step stuck on the pulled device, or on a slow backup folder, kept
+    // this stick pending, and every stick queued behind it, until its I/O
+    // gave up. Its token is cancelled too, and its answer is dropped.
+    if (m_running == mountPoint) {
+        m_step.cancel();
     }
     const bool hadFacts = m_facts.remove(mountPoint) > 0;
     const bool hadAdvice = m_advice.remove(mountPoint) > 0;
@@ -212,28 +211,27 @@ void BackupAdvisorController::startNext()
     m_queue.erase(m_queue.begin());
     m_running = request.mountPoint;
     m_runningStep = request.step;
-    m_runningCancel = application::CancellationToken();
-    const application::CancellationToken cancel = m_runningCancel;
     const FingerprintReader readFingerprint = m_readFingerprint;
     if (request.step == Step::Cues) {
         // The catalog cache's prefetch, started by the first step, is
         // reading the cues already: this waits for that pass rather than
         // starting another, and returns at once if it is done. The wait
         // ends early when forget() cancels it.
-        m_watcher.setFuture(QtConcurrent::run([request, cancel, readFingerprint]() {
+        m_step.start(stepKey(request), request.mountPoint, [request, readFingerprint](application::CancellationToken cancel) {
             auto result = std::make_shared<Result>();
             result->mountPoint = request.mountPoint;
             result->request = request;
             result->facts.fingerprint =
                 readFingerprint(request.rekordboxPath, request.enginePath, FingerprintPass::Cues, cancel);
             return result;
-        }));
+        }, stepEnding());
         emit busyChanged();
         emit pendingChanged();
         return;
     }
     const fs::path directory = pathFromQString(m_backupDirectory);
-    m_watcher.setFuture(QtConcurrent::run([request, directory, cancel, readFingerprint]() {
+    m_step.start(stepKey(request), request.mountPoint,
+                 [request, directory, readFingerprint](application::CancellationToken cancel) {
         namespace stick_backup = infrastructure::stick_backup;
         auto result = std::make_shared<Result>();
         result->mountPoint = request.mountPoint;
@@ -290,15 +288,32 @@ void BackupAdvisorController::startNext()
             }
         }
         return result;
-    }));
-    // After the watcher has the future: announced before it, a reader
+    }, stepEnding());
+    // After the step has started: announced before it, a reader
     // asking busy() on the signal was told "not running" and never heard
     // otherwise until the pass had finished.
     emit busyChanged();
     emit pendingChanged();
 }
 
-void BackupAdvisorController::onFinished()
+QString BackupAdvisorController::stepKey(const Request &request)
+{
+    return request.mountPoint + (request.step == Step::Facts ? QStringLiteral("\nfacts") : QStringLiteral("\ncues"));
+}
+
+AsyncRequest<std::shared_ptr<BackupAdvisorController::Result>>::Ending BackupAdvisorController::stepEnding()
+{
+    // Every step ends and lets the next one start, whatever its read did:
+    // a failed step, a cancelled one and one whose stick was pulled all
+    // leave the advice as it was.
+    return {
+        [this](std::shared_ptr<Result> &&result) { onFinished(result); },
+        [this](const QString &) { onFinished(nullptr); },
+        [this]() { onFinished(nullptr); },
+    };
+}
+
+void BackupAdvisorController::onFinished(std::shared_ptr<Result> result)
 {
     // No error surface here on purpose: the advisor is background
     // colour on the stick list, so a stick that could not be read this
@@ -313,8 +328,8 @@ void BackupAdvisorController::onFinished()
     // stick is gone (or, assessed again since, has a newer step queued),
     // and facts stored now would bring it back into the advice and offer
     // it to the others as a peer.
-    std::shared_ptr<Result> result = takeResult(m_watcher);
-    if (m_runningCancel.cancelled() || (result && !m_known.contains(result->mountPoint))) {
+    // (A cancelled step arrives here with no result: see stepEnding().)
+    if (result && !m_known.contains(result->mountPoint)) {
         result.reset();
     }
     if (result && result->request.step == Step::Facts) {

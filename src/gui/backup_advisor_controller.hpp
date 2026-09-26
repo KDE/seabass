@@ -18,6 +18,7 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/advise_stick_backup.hpp"
+#include "gui/async_request.hpp"
 #include "gui/library_fingerprint_reader.hpp"
 
 namespace seabass::gui
@@ -83,7 +84,7 @@ public:
     // page waiting on the advice (BackupsHubPage's scanning overlay) must
     // not see that moment as "done".
     //
-    // m_running, not m_watcher.isRunning(): the latter reads the worker's
+    // m_running, not a watcher's isRunning(): the latter reads the worker's
     // live state, which goes false the moment the pass returns, before its
     // result is handled. A stick that is not there is assessed in well
     // under a millisecond, so busyChanged could announce a pass that was
@@ -152,7 +153,9 @@ private:
     struct Result;
 
     void startNext();
-    void onFinished();
+    void onFinished(std::shared_ptr<Result> result);
+    static QString stepKey(const Request &request);
+    AsyncRequest<std::shared_ptr<Result>>::Ending stepEnding();
     void enqueue(const Request &request);
     void recomputeAdvice();
     QVariantMap sourceToVariant(const application::StickBackupAdvice::SourceRef &source) const;
@@ -165,11 +168,12 @@ private:
     std::vector<Request> m_queue;
     QString m_running;  // the mount point being read: set before setFuture(), cleared once onFinished() has handled the result
     Step m_runningStep = Step::Facts;
-    // The running step's own token: forget() cancels it, and onFinished()
-    // discards the result of a step that was cancelled.
-    application::CancellationToken m_runningCancel;
     FingerprintReader m_readFingerprint;
-    QFutureWatcher<std::shared_ptr<Result>> m_watcher;
+    // The step being read, under docs/async-requests.md: it always ends,
+    // forget() ends it at once (cancelling its token, so the cache stops
+    // too), a pulled stick ends it through StickEvents, and its answer is
+    // dropped either way. Last, so it is destroyed first.
+    AsyncRequest<std::shared_ptr<Result>> m_step{this, nullptr};
 };
 
 }  // namespace seabass::gui
