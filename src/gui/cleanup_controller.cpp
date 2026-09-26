@@ -967,6 +967,14 @@ void CleanupController::planManualMerge(const QString &format, const QString &pa
     if (m_deleting) {
         return;
     }
+    // A plan for another pair supersedes one still being worked out: the
+    // Resolve popup used to open on pair Y while the dropped request left
+    // pair X's plan to land under Y's names. The same pair again is
+    // answered by the plan being worked out, and changes nothing here.
+    const QString key = QStringLiteral("merge\n%1\n%2\n%3\n%4").arg(format, path, sourceIdA, sourceIdB);
+    if (m_scan.busy() && m_scan.key() == key) {
+        return;
+    }
     m_format = format;
     m_path = path;
     attachSession();
@@ -976,15 +984,8 @@ void CleanupController::planManualMerge(const QString &format, const QString &pa
     // one's leftover success message hide this new plan's own preview
     // (see ScanPage.qml's Repeater, gated on statusMessage being empty).
     setStatusMessage({});
-    // A plan for another pair supersedes one still being worked out: the
-    // Resolve popup used to open on pair Y while the dropped request left
-    // pair X's plan to land under Y's names.
-    const QString key = QStringLiteral("merge\n%1\n%2\n%3\n%4").arg(format, path, sourceIdA, sourceIdB);
-    if (m_scan.busy() && m_scan.key() == key) {
-        return;  // that plan is being worked out already; it answers this
-    }
     setScanProgress(0, 0);
-    auto reporter = makeReporter();
+    auto reporter = makeReporter(m_scan.speaksForNext());
     startScanRequest(key, false,
                      [format, path, sourceIdA, sourceIdB, reporter](application::CancellationToken cancel) {
                          return runManualMergeTask(format, path, sourceIdA, sourceIdB, reporter, cancel);
@@ -1011,7 +1012,7 @@ void CleanupController::rescan(bool restart)
     }
     setErrorMessage({});
     setScanProgress(0, 0);
-    auto reporter = makeReporter();
+    auto reporter = makeReporter(m_scan.speaksForNext());
     startScanRequest(key, restart,
                      [format, path, playlist, search, reporter](application::CancellationToken cancel) {
                          return runRescanTask(format, path, playlist, search, reporter, cancel);
@@ -1026,7 +1027,7 @@ void CleanupController::startScanRequest(const QString &key, bool restart,
         [this](const QString &message) { setErrorMessage(message); },
         [this]() { emit scanCancelled(); },
     };
-    const QString stickRoot = pathToQString(pathFromQString(m_path).parent_path());
+    const QString stickRoot = stickRootOf(m_path);
     if (restart) {
         m_scan.restart(key, stickRoot, std::move(work), std::move(ending));
     } else {
@@ -1061,13 +1062,12 @@ void CleanupController::search(const QString &query)
     emit includedChanged();
 }
 
-std::shared_ptr<QtProgressReporter> CleanupController::makeReporter()
+std::shared_ptr<QtProgressReporter> CleanupController::makeReporter(std::function<bool()> speaks)
 {
     // Each reporter speaks for the request made right after it, and only
     // while that request (or the delete, which has no scan) is current.
     auto reporter = std::make_shared<QtProgressReporter>();
-    const quint64 serial = ++m_scanSerial;
-    const auto current = [this, serial]() { return serial == m_scanSerial; };
+    const auto current = std::move(speaks);
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
         if (current()) {
             setScanProgress(0, total);
@@ -1449,7 +1449,7 @@ void CleanupController::deleteSelectedPendingFiles()
     // Awake while files are deleted from the stick: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Deleting files from a USB stick"));
     m_pendingWriteWatcher.setFuture(QtConcurrent::run(
-        [keepAwake, format = m_format, path = m_path, selected = std::move(selected), reporter = makeReporter(),
+        [keepAwake, format = m_format, path = m_path, selected = std::move(selected), reporter = makeReporter([] { return true; }),
          cancel = m_pendingDeleteCancel]() mutable {
             return runDeletePendingTask(format, path, std::move(selected), reporter, cancel);
         }));

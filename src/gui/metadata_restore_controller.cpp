@@ -175,9 +175,9 @@ void MetadataRestoreController::scan(const QString &libraryPath)
     m_currentPhaseTotal = 0;
     setProgress(0, 0);
     setCurrentPhase(QStringLiteral("Reading this stick"));
-    auto reporter = makeReporter(++m_scanSerial);
+    auto reporter = makeReporter(m_scan.speaksForNext());
     m_scan.start(
-        libraryPath, pathToQString(pathFromQString(libraryPath).parent_path()),
+        libraryPath, stickRootOf(libraryPath),
         [libraryPath, reporter](application::CancellationToken cancel) {
             return runScanTask(libraryPath, reporter, cancel);
         },
@@ -668,12 +668,12 @@ void MetadataRestoreController::unstageIndices(const std::vector<int> &indices)
     noteAnalysisChanged();
 }
 
-std::shared_ptr<QtProgressReporter> MetadataRestoreController::makeReporter(quint64 serial)
+std::shared_ptr<QtProgressReporter> MetadataRestoreController::makeReporter(std::function<bool()> speaks)
 {
     auto reporter = std::make_shared<QtProgressReporter>();
     // Only the scan outstanding moves the bar: a superseded or cancelled
     // one reports until its worker notices.
-    const auto current = [this, serial]() { return serial == m_scanSerial && m_scan.busy(); };
+    const auto current = [speaks = std::move(speaks)]() { return speaks(); };
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
         if (!current()) {
             return;

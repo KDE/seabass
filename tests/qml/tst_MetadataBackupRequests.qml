@@ -222,4 +222,32 @@ TestCase {
         verify(controller.hasScanned && !controller.browsingStore, "with the stick's plan, showing the stick");
         verifyIdleOnceNothingReads([controller]);
     }
+
+    // Another stick asked for while a save writes is read once the save is
+    // over. It used to be dropped while the page was told yes, and the
+    // save's own rescan put the stick just left back on the list.
+    function test_aStickAskedForDuringASaveIsReadAfterIt() {
+        const first = stick();
+        const second = stick();
+        catalogGate.hold(3, true);
+        catalogGate.setTrackCountFor(second + "/PIONEER", 5);
+        catalogGate.release();
+        const controller = make();
+        controller.selectStick(first + "/PIONEER", "", "FIRST");
+        tryVerify(() => !controller.busy && controller.hasScanned, 10000, "the first stick must be read");
+        verify(controller.proposalCount > 0, "with something to back up");
+
+        catalogGate.holdStore();
+        controller.toggleStagedForAdd(0);
+        controller.save();
+        tryVerify(() => catalogGate.storeWaiting(), 5000, "the save must be writing");
+        controller.discardStagingAndSelectStick(second + "/PIONEER", "", "SECOND");
+        catalogGate.releaseStore();
+        tryVerify(() => !controller.busy && controller.hasScanned
+                  && controller.sourceLibraryPath === second + "/PIONEER", 10000,
+                  "the stick asked for during the save must be the one read after it, got "
+                  + controller.sourceLibraryPath);
+        compare(controller.sourceStickLabel, "SECOND");
+        verifyIdleOnceNothingReads([controller]);
+    }
 }

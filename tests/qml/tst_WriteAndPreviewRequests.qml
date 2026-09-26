@@ -90,6 +90,24 @@ TestCase {
         tryVerify(() => !backups.deleting, 2000, "and nothing is deleting after");
     }
 
+    // Deletes asked for and still waiting their turn when the page goes
+    // are done all the same. They were accepted; the page going used to
+    // make them vanish without a word.
+    function test_queuedDeletesOutliveThePage() {
+        const folder = controllerFixture.slowBackupFolder(3);
+        verify(folder.length > 0, "the backup folder must be made");
+        const backups = fullBackupsComponent.createObject(testCase, {backupDirectory: folder});
+        backups.deleteBackup(folder + "/backup-0.zip");
+        backups.deleteBackup(folder + "/backup-1.zip");
+        backups.deleteBackup(folder + "/backup-2.zip");
+        backups.destroy();
+        wait(0);
+        tryVerify(() => !stickFixture.exists(folder + "/backup-0.zip")
+                  && !stickFixture.exists(folder + "/backup-1.zip")
+                  && !stickFixture.exists(folder + "/backup-2.zip"), 5000,
+                  "every delete asked for is done");
+    }
+
     // An analysis of the archive being left does not land under the one
     // chosen next. It used to: the answer was not tied to its archive, so
     // A's label and status showed as B's.

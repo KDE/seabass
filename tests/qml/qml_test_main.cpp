@@ -29,6 +29,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/sync_controller.hpp"
+#include "gui/metadata_backup_controller.hpp"
 #include "gui/metadata_restore_controller.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "application/use_cases/collapse_catalog_rows.hpp"
@@ -326,6 +327,8 @@ public:
         return QFile::exists(file);
     }
 
+    Q_INVOKABLE bool exists(const QString &file) const { return QFile::exists(file); }
+
     Q_INVOKABLE bool makeDirectory(const QString &directory)
     {
         std::error_code ec;
@@ -510,10 +513,10 @@ public:
     // (delivery still needs the event loop to run).
     Q_INVOKABLE bool waitForScans()
     {
-        // A page's read runs on AsyncRequest's own pool, the rest on the
-        // global one.
+        // A page's read runs on a thread of its own (AsyncWorkers), the
+        // rest on the global pool.
         const bool global = QThreadPool::globalInstance()->waitForDone(10000);
-        return seabass::gui::asyncRequestPool().waitForDone(10000) && global;
+        return seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(10)) && global;
     }
 
     Q_INVOKABLE void restore()
@@ -559,7 +562,7 @@ public:
     {
         restore();
         QThreadPool::globalInstance()->waitForDone();
-        seabass::gui::asyncRequestPool().waitForDone();
+        seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     }
 
     Q_INVOKABLE void hold(int trackCount, bool honourCancel)
@@ -662,6 +665,34 @@ public:
         }).detach();
     }
 
+    // Holds Metadata Backup's save at the start of its worker until
+    // releaseStore(); storeWaiting() says one is standing there.
+    Q_INVOKABLE void holdStore()
+    {
+        auto gate = std::make_shared<Gate>();
+        m_storeGate = gate;
+        seabass::gui::MetadataBackupController::setStoreGateForTesting([gate]() {
+            ++gate->waiting;
+            std::unique_lock<std::mutex> lock(gate->mutex);
+            while (!gate->released) {
+                gate->cv.wait_for(lock, std::chrono::milliseconds(5));
+            }
+            --gate->waiting;
+        });
+    }
+    Q_INVOKABLE void releaseStore()
+    {
+        if (!m_storeGate) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_storeGate->mutex);
+            m_storeGate->released = true;
+        }
+        m_storeGate->cv.notify_all();
+    }
+    Q_INVOKABLE bool storeWaiting() const { return m_storeGate && m_storeGate->waiting.load() > 0; }
+
     // What MediaController says when a stick is pulled.
     Q_INVOKABLE void announceStickGone(const QString &mountPoint)
     {
@@ -671,9 +702,15 @@ public:
     Q_INVOKABLE void restore()
     {
         release();
+        releaseStore();
         m_gate.reset();
+        m_storeGate.reset();
         seabass::gui::LibraryCatalogCache::setInstanceForTesting(nullptr);
+        seabass::gui::MetadataBackupController::setStoreGateForTesting({});
     }
+
+private:
+    std::shared_ptr<Gate> m_storeGate;
 };
 
 // Test seams on controllers whose real work touches hardware: a
@@ -887,8 +924,13 @@ public:
             if (destroy) {
                 controller.reset();
             } else {
+                // Until the worker has stopped, not until busy drops: a
+                // cancel ends the request for the page at once
+                // (docs/async-requests.md), so busy says nothing about
+                // whether the read took the cancel. The task count does.
                 controller->cancelScan();
-                while (controller->busy() && clock.elapsed() < 120000) {
+                while (seabass::gui::LibraryConsistencyController::runningScanTasksForTesting() > 0
+                       && clock.elapsed() < 120000) {
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
                 }
             }

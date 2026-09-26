@@ -55,6 +55,24 @@ FullBackupsController::~FullBackupsController()
     // on a slow disk. A delete is awaited -- Back is off while one runs,
     // so this only matters when the window closes.
     awaitQuietly(m_deleteWatcher);
+    // Deletes asked for behind it were accepted, and accepted work does
+    // not vanish with the page: they are done now, in the background,
+    // one after the other as they would have been. Each takes the
+    // archive's own write lock, so nothing else is writing it meanwhile;
+    // one open for browsing is still left alone, as deleteBackup() would.
+    QStringList queued;
+    for (const QString &path : std::as_const(m_deleteQueue)) {
+        if (!isOpen(path)) {
+            queued << path;
+        }
+    }
+    if (!queued.isEmpty()) {
+        QtConcurrent::run([queued]() {
+            for (const QString &path : queued) {
+                application::ManageStickBackups::remove(pathFromQString(path));
+            }
+        });
+    }
 }
 
 void FullBackupsController::setBackupDirectory(const QString &directory)

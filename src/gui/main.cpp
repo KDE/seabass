@@ -10,6 +10,8 @@
 #include <QStandardPaths>
 #include <QThreadPool>
 
+#include <memory>
+
 #include "gui/async_request.hpp"
 
 #include "gui/app_color_scheme.hpp"
@@ -201,13 +203,22 @@ int main(int argc, char **argv)
         QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/seabass"));
 #endif
 
-    QQmlApplicationEngine engine;
+    // On the heap so it can go before the end of main(): see below.
+    auto engine = std::make_unique<QQmlApplicationEngine>();
     QObject::connect(
-        &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
+        engine.get(), &QQmlApplicationEngine::objectCreationFailed, &app,
         []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
-    engine.loadFromModule("SeabassGui", "Main");
+    engine->loadFromModule("SeabassGui", "Main");
 
     int result = app.exec();
+
+    // The pages first, and with them every controller: each cancels the
+    // reads it is still waiting for (AsyncRequest) without waiting for
+    // them, since they are all waited for once, together, at the end. A
+    // controller running a write hands it on rather than dropping it (see
+    // finishWriteDetached()), so the writes are still there to wait for.
+    seabass::gui::AsyncWorkers::instance().beginShutdown();
+    engine.reset();
 
     // A write task is a detached QtConcurrent::run() -- it keeps running
     // on the thread pool independent of any window, so give it a real
@@ -216,9 +227,9 @@ int main(int argc, char **argv)
     // process exit over) rather than let the process tear down mid-write
     // to a stick.
     QThreadPool::globalInstance()->waitForDone(15000);
-    // And the reads pages were waiting for (see AsyncRequest), briefly:
-    // they write nothing, and one stuck on a pulled stick must not hold
-    // the process up.
-    seabass::gui::asyncRequestPool().waitForDone(2000);
-    return result;
+    // And the reads the pages let go of, briefly: they write nothing, and
+    // one stuck on a pulled stick must neither hold the process up nor be
+    // left running while the statics it reads are destroyed. See
+    // docs/async-requests.md, "The end of the process".
+    return seabass::gui::exitAfterAsyncWork(result);
 }

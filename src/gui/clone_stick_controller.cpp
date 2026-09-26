@@ -15,6 +15,7 @@
 #include "gui/library_fingerprint_reader.hpp"
 #include "gui/stick_backup_paths.hpp"
 #include "gui/edit/edit_session_registry.hpp"
+#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
@@ -109,8 +110,16 @@ CloneStickController::CloneStickController(QObject *parent) : QObject(parent)
 
 CloneStickController::~CloneStickController()
 {
+    // A clone still going is asked to stop, as its own Cancel does, and
+    // handed on rather than waited for (see StickBackupController). When
+    // it returns the target's catalogs are forgotten, as onRunFinished()
+    // would have, and then the locks go back.
     m_cancel.cancel();
-    awaitQuietly(m_runWatcher);
+    if (m_runWatcher.isRunning() || m_writeHold.held()) {
+        const std::string target = m_targetRoot.toStdString();
+        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver(),
+                            [target] { LibraryCatalogCache::instance().invalidateEveryCatalogOn(target); });
+    }
 }
 
 void CloneStickController::configure(const QString &sourceLabel, const QString &sourceRekordboxPath,
@@ -121,7 +130,7 @@ void CloneStickController::configure(const QString &sourceLabel, const QString &
     m_sourceLabel = sourceLabel;
     m_sourceRekordboxPath = sourceRekordboxPath;
     m_sourceEnginePath = sourceEnginePath;
-    m_sourceRoot = anyPath.isEmpty() ? QString() : pathToQString(pathFromQString(anyPath).parent_path());
+    m_sourceRoot = stickRootOf(anyPath);
     m_targetLabel = targetLabel;
     m_targetRoot = targetMountPoint;
     m_archivePath = archivePathForLabel(backupDirectory, sourceLabel);
@@ -153,12 +162,19 @@ void CloneStickController::refreshPreview(bool restart)
     // not queued behind; one for this configuration answers, unless a
     // clone just changed what it read (restart). It takes no token, so a
     // request for the same thing must not start another.
-    const CloneStickOptions options = baseOptions();
+    CloneStickOptions options = baseOptions();
     const QString key = m_archivePath + QLatin1Char('\n') + m_sourceRoot + QLatin1Char('\n') + m_targetRoot;
-    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options](application::CancellationToken) {
+    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options](application::CancellationToken cancel) mutable {
+        // Nothing to read for a preview nobody waits for any more, and
+        // the source walk inside stops on the same token.
+        cancel.throwIfCancelled();
+        options.cancel = cancel;
+        options.backup.cancel = cancel;
         auto result = std::make_shared<PreviewResult>();
         result->blockedBy = QString::fromStdString(infrastructure::system::conflictingDjSoftwareName());
+        cancel.throwIfCancelled();
         result->preview = CloneStick::preview(options);
+        cancel.throwIfCancelled();
         return result;
     };
     AsyncRequest<std::shared_ptr<PreviewResult>>::Ending ending{
@@ -167,9 +183,11 @@ void CloneStickController::refreshPreview(bool restart)
         nullptr,
     };
     if (restart) {
-        m_previewRequest.restart(key, m_sourceRoot, std::move(work), std::move(ending));
+        m_previewRequest.restartOnSticks(key, {m_sourceRoot, m_targetRoot}, std::move(work), std::move(ending));
     } else {
-        m_previewRequest.start(key, m_sourceRoot, std::move(work), std::move(ending));
+        // Both sticks: the preview reads the target as well, and pulling
+        // either one ends it.
+        m_previewRequest.startOnSticks(key, {m_sourceRoot, m_targetRoot}, std::move(work), std::move(ending));
     }
 }
 

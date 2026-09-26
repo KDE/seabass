@@ -18,6 +18,7 @@
 
 #include "gui/stick_backup_paths.hpp"
 #include "gui/edit/edit_session_registry.hpp"
+#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
@@ -127,15 +128,20 @@ RestoreStickBackupController::RestoreStickBackupController(QObject *parent) : QO
 
 RestoreStickBackupController::~RestoreStickBackupController()
 {
+    // A restore still going is asked to stop, as its own Cancel does (it
+    // rolls back), and handed on rather than waited for (see
+    // StickBackupController). When it returns the target's catalogs are
+    // forgotten, as onRestoreFinished() would have, and the locks go back.
+    //
+    // Not the backup listing and not a mount: they capture nothing of this
+    // object, run out on their own, and their answers go nowhere. Waiting
+    // for them froze the window for as long as they had left.
     m_cancel.cancel();
-    awaitQuietly(m_restoreWatcher);
-    // Not the backup listing: it only reads the folder and captures
-    // nothing of this object, so it runs out on its own and its result is
-    // dropped with the watcher (no finished() reaches a controller that is
-    // gone). Waiting for it froze the window for as long as the listing
-    // had left when the page was left mid-scan -- FullBackupsController
-    // learned the same.
-    awaitQuietly(m_mountWatcher);
+    if (m_restoreWatcher.isRunning() || m_writeHold.held()) {
+        const std::string target = m_restoreTarget.toStdString();
+        finishWriteDetached(m_restoreWatcher.future(), m_writeHold.handOver(),
+                            [target] { LibraryCatalogCache::instance().invalidateEveryCatalogOn(target); });
+    }
 }
 
 void RestoreStickBackupController::refresh()
@@ -306,7 +312,11 @@ void RestoreStickBackupController::analyze(const QString &targetRoot)
     options.targetRoot = pathFromQString(targetRoot);
     bool targetGiven = !targetRoot.isEmpty();
     m_analyze.start(m_archivePath + QLatin1Char('\n') + targetRoot, targetRoot,
-                    [options, targetGiven, targetRoot](application::CancellationToken) {
+                    [options, targetGiven, targetRoot](application::CancellationToken cancel) mutable {
+        // Nothing to read for an analysis nobody waits for any more; the
+        // preview inside stops on the same token.
+        cancel.throwIfCancelled();
+        options.cancel = cancel;
         auto result = std::make_shared<AnalyzeResult>();
         result->targetGiven = targetGiven;
         if (targetGiven) {
@@ -317,7 +327,9 @@ void RestoreStickBackupController::analyze(const QString &targetRoot)
             result->targetIdentifier = QString::fromStdString(
                 infrastructure::system::readStickHardwareInfo(targetRoot.toStdString(), std::string()).stickIdentifier);
         }
+        cancel.throwIfCancelled();
         result->preview = RestoreStickBackup::preview(options);
+        cancel.throwIfCancelled();
         return result;
     },
                     {

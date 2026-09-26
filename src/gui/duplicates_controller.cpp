@@ -359,7 +359,7 @@ void DuplicatesController::startRescan(bool restart)
     setScanProgress(0, 0);
     auto reporter = makeReporter();
     startScan<DuplicatesTaskResult>(
-        key, pathToQString(pathFromQString(path).parent_path()), restart,
+        key, stickRootOf(path), restart,
         [format, path, reporter](application::CancellationToken cancel) {
             return runRescanTask(format, path, reporter, cancel);
         },

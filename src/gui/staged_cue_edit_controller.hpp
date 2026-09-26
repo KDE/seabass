@@ -206,7 +206,6 @@ private:
     void onSessionChangesDiscarded();
 
     QPointer<LibraryEditSession> m_session;
-    quint64 m_scanSerial = 0;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
     QString m_scanLabel;

@@ -9,6 +9,7 @@
 #include <QFutureWatcher>
 #include <QObject>
 
+#include <functional>
 #include <memory>
 
 #include "gui/edit/direct_write_hold.hpp"
@@ -23,12 +24,21 @@ namespace seabass::gui
 // stuck on a device that is not there). It is watched from the
 // application instead, and its locks are given back when it returns,
 // whenever that is. See docs/async-requests.md, "Writes are different".
+//
+// `afterwards` is what the page's own finished handler would have done
+// that does not need the page: telling the catalog cache the stick was
+// rewritten, say. It runs before the locks are given back, so nothing can
+// read the stick in between.
 template <typename T>
-void finishWriteDetached(const QFuture<T> &write, std::unique_ptr<DirectWriteHold> hold)
+void finishWriteDetached(const QFuture<T> &write, std::unique_ptr<DirectWriteHold> hold,
+                         std::function<void()> afterwards = {})
 {
     auto *watcher = new QFutureWatcher<T>(QCoreApplication::instance());
     std::shared_ptr<DirectWriteHold> held(std::move(hold));
-    QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, [watcher, held]() {
+    QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, [watcher, held, afterwards]() {
+        if (afterwards) {
+            afterwards();
+        }
         held->release();
         watcher->deleteLater();
     });

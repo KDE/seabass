@@ -4,22 +4,25 @@
 
 #pragma once
 
+#include <QFuture>
 #include <QFutureWatcher>
 #include <QObject>
 #include <QPointer>
+#include <QPromise>
 #include <QString>
-#include <QThread>
-#include <QThreadPool>
-#include <QtConcurrent/QtConcurrentRun>
-
-#include <algorithm>
+#include <QStringList>
 
 #include <chrono>
 #include <condition_variable>
+#include <atomic>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -28,26 +31,111 @@
 #include "gui/future_result.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_events.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 
 namespace seabass::gui
 {
 
-// The pool every AsyncRequest's worker runs on, apart from the global one
-// the writes use. Rules 5 and 7 let go of a worker that cannot see its
-// token, and such a worker keeps its thread until its I/O returns: on the
-// global pool a hung stick and a few cancels would use up every thread,
-// and every later task in the process -- a save among them -- would queue
-// behind them without starting. Here they can only crowd other reads, and
-// there is room for many. Never destroyed: a pool's destructor waits for
-// its threads, and one of them may be stuck on a device that is gone.
-inline QThreadPool &asyncRequestPool()
+// The stick a catalog path ("<stick>/PIONEER", "<stick>/Engine Library")
+// is on, as the QString a request names its stick by.
+inline QString stickRootOf(const QString &catalogPath)
 {
-    static QThreadPool *pool = [] {
-        auto *created = new QThreadPool();
-        created->setMaxThreadCount(std::max(32, 4 * QThread::idealThreadCount()));
-        return created;
-    }();
-    return *pool;
+    if (catalogPath.isEmpty()) {
+        return {};
+    }
+    return qtPathFromUtf8(infrastructure::paths::stickRootForCatalogPath(pathToUtf8(pathFromQString(catalogPath))));
+}
+
+// Where every AsyncRequest's worker runs: a thread of its own, not a pool.
+// Rules 5 and 7 let go of a worker that cannot see its token, and such a
+// worker keeps its thread until its I/O returns. In any pool with a cap --
+// the global one the writes use, or one of its own -- enough of them on a
+// hung stick would take every thread, and every later read (or save)
+// would queue behind them and never start. A thread per request has no
+// cap to reach; a page asks for a read when it opens or when the user
+// picks something, so there are never many.
+//
+// It also counts the workers still running, for the one moment that has
+// to know: the end of the process (see exitAfterAsyncWork()). Never
+// destroyed, since a worker let go may outlive every static there is.
+class AsyncWorkers
+{
+public:
+    static AsyncWorkers &instance()
+    {
+        static AsyncWorkers *workers = new AsyncWorkers();
+        return *workers;
+    }
+
+    // `work` on a new thread, its answer (or what it threw) in the future.
+    template <typename Result>
+    QFuture<Result> run(std::function<Result()> work)
+    {
+        auto promise = std::make_shared<QPromise<Result>>();
+        QFuture<Result> future = promise->future();
+        promise->start();
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_live;
+        }
+        std::thread([this, promise, work = std::move(work)]() {
+            try {
+                promise->addResult(work());
+            } catch (...) {
+                promise->setException(std::current_exception());
+            }
+            promise->finish();
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                --m_live;
+            }
+            m_cv.notify_all();
+        }).detach();
+        return future;
+    }
+
+    int live()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_live;
+    }
+
+    // True once no worker is running, false if `timeout` passed first.
+    bool waitForAll(std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, timeout, [this] { return m_live == 0; });
+    }
+
+    // From here on a request going away does not wait for its worker at
+    // all: the process is ending, every page is being torn down one after
+    // the other, and exitAfterAsyncWork() waits once for all of them.
+    void beginShutdown() { m_shuttingDown.store(true); }
+    bool shuttingDown() const { return m_shuttingDown.load(); }
+
+private:
+    AsyncWorkers() = default;
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    int m_live = 0;
+    std::atomic<bool> m_shuttingDown{false};
+};
+
+// The last thing main() does, once the pages (and so every request) are
+// gone: waits a bounded moment for the workers they let go of, and if one
+// is still running, ends the process without running static destructors.
+// A worker stuck on a pulled stick may be inside LibraryCatalogCache or
+// the SQLite and Kaitai code under it; destroying those statics beneath
+// it is a use-after-destroy. Nothing is lost by skipping them: a read
+// writes nothing, and the writes were waited for before this.
+inline int exitAfterAsyncWork(int result, std::chrono::milliseconds bound = std::chrono::milliseconds(2000))
+{
+    AsyncWorkers::instance().beginShutdown();
+    if (!AsyncWorkers::instance().waitForAll(bound)) {
+        std::fflush(nullptr);
+        std::quick_exit(result);
+    }
+    return result;
 }
 
 // One read a page is waiting for, run on the thread pool, under the rule
@@ -110,9 +198,11 @@ public:
         // preview with no token, a read stuck on a device) is let go
         // after the bound rather than freezing the window: it holds its
         // token, its arguments and the process-wide cache, never its
-        // controller, so it can finish alone, and main() waits for the
-        // pool before the process ends.
-        const auto deadline = std::chrono::steady_clock::now() + LetGoAfter;
+        // controller, so it can finish alone; exitAfterAsyncWork() sees to
+        // the end of the process. While the process is ending it waits
+        // for nothing: that function waits once for every worker.
+        const auto deadline = std::chrono::steady_clock::now()
+            + (AsyncWorkers::instance().shuttingDown() ? std::chrono::milliseconds(0) : LetGoAfter);
         for (Flight &flight : m_flights) {
             std::unique_lock<std::mutex> lock(flight.done->mutex);
             flight.done->cv.wait_until(lock, deadline, [&] { return flight.done->finished; });
@@ -136,11 +226,28 @@ public:
     // above it ends the request (rule 6).
     bool start(const QString &key, const QString &stickRoot, Work work, Ending ending)
     {
+        return startOnSticks(key, QStringList{stickRoot}, std::move(work), std::move(ending));
+    }
+    // A request reading more than one stick (a clone's source and target):
+    // any of them going away ends it.
+    bool startOnSticks(const QString &key, const QStringList &stickRoots, Work work, Ending ending)
+    {
         if (busy() && key == m_currentKey) {
             return false;
         }
-        restart(key, stickRoot, std::move(work), std::move(ending));
+        restartOnSticks(key, stickRoots, std::move(work), std::move(ending));
         return true;
+    }
+
+    // Whether the request about to be started is still the outstanding one,
+    // for its progress reporter: a superseded or cancelled read goes on
+    // reporting until its worker notices, and must not move the bar. Take
+    // it right before start() or restart(); it is never true for a request
+    // that was served by the running one instead.
+    std::function<bool()> speaksForNext() const
+    {
+        const std::uint64_t ticket = m_lastTicket + 1;
+        return [this, ticket]() { return m_current == ticket; };
     }
 
     // start() without rule 3: supersedes even a request for the same key.
@@ -148,6 +255,10 @@ public:
     // date -- the rescan after its own write, or after an undo -- and
     // would otherwise be answered with the stick as it was before.
     void restart(const QString &key, const QString &stickRoot, Work work, Ending ending)
+    {
+        restartOnSticks(key, QStringList{stickRoot}, std::move(work), std::move(ending));
+    }
+    void restartOnSticks(const QString &key, const QStringList &stickRoots, Work work, Ending ending)
     {
         supersede();
         const std::uint64_t ticket = ++m_lastTicket;
@@ -157,11 +268,12 @@ public:
         m_flights.push_back({ticket, cancel, watcher, done});
         m_current = ticket;
         m_currentKey = key;
-        m_currentStick = stickRoot;
+        m_currentSticks = stickRoots;
+        m_currentSticks.removeAll(QString());
         m_ending = std::move(ending);
         QObject::connect(watcher, &QFutureWatcher<Result>::finished, m_owner,
                          [this, ticket]() { onFinished(ticket); });
-        watcher->setFuture(QtConcurrent::run(&asyncRequestPool(), [work = std::move(work), cancel, done]() {
+        watcher->setFuture(AsyncWorkers::instance().run<Result>([work = std::move(work), cancel, done]() {
             struct SayDone
             {
                 Done &done;
@@ -243,7 +355,7 @@ private:
         }
         m_current = 0;
         m_currentKey.clear();
-        m_currentStick.clear();
+        m_currentSticks.clear();
     }
 
     void endCurrent(Outcome outcome, const QString &message)
@@ -289,7 +401,7 @@ private:
         m_ending = {};
         m_current = 0;
         m_currentKey.clear();
-        m_currentStick.clear();
+        m_currentSticks.clear();
         if (!thrown.isEmpty()) {
             if (ending.error) {
                 ending.error(thrown);
@@ -302,12 +414,14 @@ private:
 
     void onStickGone(const QString &mountPoint)
     {
-        if (!busy() || m_currentStick.isEmpty() || mountPoint.isEmpty()) {
+        if (!busy() || mountPoint.isEmpty()) {
             return;
         }
-        if (application::pathIsAtOrUnder(pathToUtf8(pathFromQString(m_currentStick)),
-                                         pathToUtf8(pathFromQString(mountPoint)))) {
-            fail(QStringLiteral("The stick was removed while it was being read."));
+        for (const QString &stick : m_currentSticks) {
+            if (application::pathIsAtOrUnder(pathToUtf8(pathFromQString(stick)), pathToUtf8(pathFromQString(mountPoint)))) {
+                fail(QStringLiteral("The stick was removed while it was being read."));
+                return;
+            }
         }
     }
 
@@ -318,7 +432,7 @@ private:
     std::uint64_t m_lastTicket = 0;
     std::uint64_t m_current = 0;
     QString m_currentKey;
-    QString m_currentStick;
+    QStringList m_currentSticks;
     Ending m_ending;
     bool m_reportedBusy = false;
 };

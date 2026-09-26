@@ -268,7 +268,7 @@ void SyncController::startAnalysis(const QString &rekordboxPath, const QString &
     auto reporter = makeReporter();
     startScan<SyncTaskResult>(
         key,
-        pathToQString(pathFromQString(catalog).parent_path()), restart,
+        stickRootOf(catalog), restart,
         [rekordboxPath, enginePath, playlistName, reporter](application::CancellationToken cancel) {
             return runAnalyzeTask(rekordboxPath, enginePath, playlistName, reporter, cancel);
         },
