@@ -378,10 +378,68 @@ void aReporterSpeaksOnlyForItsRequest()
     const auto second = request.speaksForNext();
     request.start("b", {}, work, {});
     check(second() && !first(), "reporter: a superseded request falls silent");
+    check(!served(), "reporter: a served request stays silent when the next one starts");
     request.cancel();
     check(!second(), "reporter: and so does a cancelled one");
     latch->release();
     seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
+}
+
+// A request the process cannot give a thread to ends in error, at once,
+// instead of throwing into the page or waiting for good. Too many stuck
+// workers is the case a test can make happen; a thread the system refuses
+// takes the same path.
+void noThreadEndsTheRequestInError()
+{
+    auto latch = std::make_shared<Latch>();
+    QObject owner;
+    auto &workers = seabass::gui::AsyncWorkers::instance();
+    workers.waitForAll(std::chrono::seconds(30));
+    workers.setCeilingForTesting(2);
+    AsyncRequest<int> one(&owner, nullptr);
+    AsyncRequest<int> two(&owner, nullptr);
+    one.start("a", {}, [latch](CancellationToken cancel) { latch->wait(cancel, false); return 1; }, {});
+    two.start("b", {}, [latch](CancellationToken cancel) { latch->wait(cancel, false); return 2; }, {});
+    AsyncRequest<int> three(&owner, nullptr);
+    Endings endings;
+    three.start("c", {}, [](CancellationToken) { return 3; }, endings.make());
+    check(pumpUntil([&] { return !three.busy(); }), "no thread: the request still ends");
+    check(endings.errors == 1 && endings.lastError.contains(QStringLiteral("stuck")),
+          "no thread: in an error that says why: " + endings.lastError.toStdString());
+    workers.setCeilingForTesting(seabass::gui::AsyncWorkers::DefaultCeiling);
+    latch->release();
+    workers.waitForAll(std::chrono::seconds(30));
+}
+
+// "All done" means the workers' captures are gone too: a capture's
+// destructor may still be running (a reporter, a reader's handle) when
+// the work returns, and the end of the process must wait for it.
+void allDoneMeansCapturesAreGone()
+{
+    auto destroyed = std::make_shared<std::atomic<bool>>(false);
+    struct SlowToGo
+    {
+        std::shared_ptr<std::atomic<bool>> flag;
+        ~SlowToGo()
+        {
+            if (flag) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                flag->store(true);
+            }
+        }
+    };
+    {
+        QObject owner;
+        AsyncRequest<int> request(&owner, nullptr);
+        auto capture = std::make_shared<SlowToGo>();
+        capture->flag = destroyed;
+        request.start("a", {}, [capture](CancellationToken) { return 1; }, {});
+        capture.reset();
+        pumpUntil([&] { return !request.busy(); });
+    }
+    check(!destroyed->load(), "all done: the capture is still alive until the worker lets go of it");
+    const bool allDone = seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(10));
+    check(allDone && destroyed->load(), "all done: the work's captures were destroyed before it said so");
 }
 
 }  // namespace
@@ -402,6 +460,8 @@ int main(int argc, char **argv)
     letGoWorkersStarveNothing();
     ruleSixAnyOfSeveralSticks();
     aReporterSpeaksOnlyForItsRequest();
+    noThreadEndsTheRequestInError();
+    allDoneMeansCapturesAreGone();
     seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     if (failures > 0) {
         std::cerr << failures << " check(s) failed\n";

@@ -9,7 +9,6 @@
 #include "gui/library_fingerprint_reader.hpp"
 #include "application/find_stick_archive.hpp"
 #include "gui/stick_backup_paths.hpp"
-#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 
 #include <QDateTime>
@@ -107,15 +106,13 @@ StickBackupController::~StickBackupController()
     // A pending decision that never got made is left to journal recovery
     // (= discard) on the next open; nothing to do here but let it go.
     //
-    // A run still going is asked to stop, as its own Cancel does (a backup
-    // rolls back or leaves its journal for recovery), and then handed on
-    // rather than waited for: the page is often gone because its stick
-    // was pulled, which is when a write can hang on I/O and would freeze
-    // the window. The lock goes back when the run returns.
+    // A run still going is asked to stop and waited for, even if that
+    // freezes the window on a stick that hangs: a keep or a discard runs
+    // through m_pending, which goes with this object, and handing either
+    // on would leave it writing the archive through a freed pointer (see
+    // docs/async-requests.md, "Writes are different").
     m_cancel.cancel();
-    if (m_runWatcher.isRunning() || m_writeHold.held()) {
-        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver());
-    }
+    awaitQuietly(m_runWatcher);
 }
 
 void StickBackupController::configure(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,

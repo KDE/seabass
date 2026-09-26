@@ -4,6 +4,7 @@
 
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QCoreApplication>
@@ -557,7 +558,13 @@ class CatalogGateFixture : public QObject
     std::vector<std::unique_ptr<seabass::gui::LibraryCatalogCache>> m_caches;
 
 public:
-    using QObject::QObject;
+    explicit CatalogGateFixture(QObject *parent = nullptr) : QObject(parent)
+    {
+        connect(&seabass::gui::StickEvents::instance(), &seabass::gui::StickEvents::stickContentsChanged, this,
+                [this](const QString &) { ++m_contentsChanged; });
+    }
+    // How often a write that outlived its page said a stick changed.
+    Q_INVOKABLE int contentsChangedCount() const { return m_contentsChanged; }
     ~CatalogGateFixture() override
     {
         restore();
@@ -569,7 +576,13 @@ public:
     {
         restore();
         auto gate = std::make_shared<Gate>();
-        auto stage = [gate, trackCount, honourCancel](seabass::gui::LibraryCatalogCache::Detail detail,
+        // Titles of their own per hold, so a track a test backed up does
+        // not make the next test's tracks "already current".
+        // Across runs too: the metadata store can outlive one run of the
+        // suite.
+        const std::string salt = std::to_string(QCoreApplication::applicationPid()) + "."
+            + std::to_string(QDateTime::currentMSecsSinceEpoch()) + "." + std::to_string(++m_holds);
+        auto stage = [gate, trackCount, honourCancel, salt](seabass::gui::LibraryCatalogCache::Detail detail,
                                                       const std::string &format, const std::string &path,
                                                       std::vector<seabass::domain::Track> &tracks,
                                                       seabass::gui::LibraryCatalogCache::StageNotes &,
@@ -605,10 +618,12 @@ public:
                 seabass::domain::Track track;
                 track.format = format;
                 track.sourceId = std::to_string(i + 1);
-                track.title = "Gated Track " + std::to_string(1000 + i);
-                track.artist = "Gated Artist";
-                track.filePath = "/Contents/gated/" + std::to_string(i + 1) + ".mp3";
-                track.durationSeconds = 200 + i;
+                track.title = "Gated Track " + salt + "-" + std::to_string(1000 + i);
+                // Artist and length of their own as well: the store matches
+                // a recording by more than its title.
+                track.artist = "Gated Artist " + salt;
+                track.filePath = "/Contents/gated/" + salt + "/" + std::to_string(i + 1) + ".mp3";
+                track.durationSeconds = 200 + i + static_cast<int>(std::hash<std::string>{}(salt) % 3000) * 7;
                 seabass::domain::CuePoint cue;
                 cue.kind = seabass::domain::CuePoint::Kind::Hot;
                 cue.hotCueNumber = 1;
@@ -667,17 +682,24 @@ public:
 
     // Holds Metadata Backup's save at the start of its worker until
     // releaseStore(); storeWaiting() says one is standing there.
-    Q_INVOKABLE void holdStore()
+    // fail: once released, the save fails as a store that cannot be
+    // written would.
+    Q_INVOKABLE void holdStore(bool fail = false)
     {
         auto gate = std::make_shared<Gate>();
         m_storeGate = gate;
-        seabass::gui::MetadataBackupController::setStoreGateForTesting([gate]() {
+        seabass::gui::MetadataBackupController::setStoreGateForTesting([gate, fail]() {
             ++gate->waiting;
-            std::unique_lock<std::mutex> lock(gate->mutex);
-            while (!gate->released) {
-                gate->cv.wait_for(lock, std::chrono::milliseconds(5));
+            {
+                std::unique_lock<std::mutex> lock(gate->mutex);
+                while (!gate->released) {
+                    gate->cv.wait_for(lock, std::chrono::milliseconds(5));
+                }
             }
             --gate->waiting;
+            if (fail) {
+                throw std::runtime_error("The metadata store could not be written.");
+            }
         });
     }
     Q_INVOKABLE void releaseStore()
@@ -711,6 +733,8 @@ public:
 
 private:
     std::shared_ptr<Gate> m_storeGate;
+    int m_contentsChanged = 0;
+    int m_holds = 0;
 };
 
 // Test seams on controllers whose real work touches hardware: a

@@ -484,6 +484,12 @@ void MetadataBackupController::refresh()
 bool MetadataBackupController::selectStick(const QString &libraryPath, const QString &libraryId,
                                             const QString &stickLabel)
 {
+    // The stick the save is writing from, picked again while it writes:
+    // the last choice wins, so a different stick asked for in between is
+    // no longer wanted. The save's own rescan answers this one.
+    if (m_saving && !m_browsingStore && m_sourceLibraryPath == libraryPath) {
+        m_scanAfterSave.reset();
+    }
     // Same stick, already scanned: nothing to do, and re-scanning would
     // throw away staging for no reason.
     if (!m_browsingStore && m_sourceLibraryPath == libraryPath && m_hasScanned) {
@@ -513,7 +519,11 @@ void MetadataBackupController::startScan(const QString &libraryPath, const QStri
     // from the save's own ending. Dropped here, as it used to be, the page
     // was told yes and then shown the stick it had just left.
     if (m_saving) {
-        m_scanAfterSave = ScanRequest{libraryPath, libraryId, stickLabel};
+        if (!m_browsingStore && libraryPath == m_sourceLibraryPath) {
+            m_scanAfterSave.reset();  // the save's own rescan is this read
+        } else {
+            m_scanAfterSave = ScanRequest{libraryPath, libraryId, stickLabel};
+        }
         return;
     }
     // Already reading this stick: that read answers this request too.
@@ -580,6 +590,9 @@ bool MetadataBackupController::browseStore()
 
 void MetadataBackupController::discardStagingAndBrowseStore()
 {
+    // The store is the last choice: a stick asked for during a save is
+    // not read after it.
+    m_scanAfterSave.reset();
     // A stick still being read is not what the list shows any more; its
     // plan must not land over the store's rows.
     m_scan.cancel();
@@ -789,10 +802,12 @@ void MetadataBackupController::onSaveFinished()
     // Asked for while the save wrote; read now, whatever the save did.
     const std::optional<ScanRequest> asked = std::exchange(m_scanAfterSave, std::nullopt);
     if (!result.succeeded) {
-        setErrorMessage(result.errorMessage);
         if (asked) {
             startScan(asked->libraryPath, asked->libraryId, asked->stickLabel);
         }
+        // After the scan starts, which clears the banner for its own
+        // errors: a save that failed must still say so.
+        setErrorMessage(result.errorMessage);
         return;
     }
 

@@ -108,24 +108,35 @@ the save pattern). What a write does share with reads:
 - A lock it takes is released by an RAII hold (`DirectWriteHold`), never
   by a finished handler that might not run.
 
-A write whose page goes away while it runs is neither abandoned with its
-lock still held nor waited for on the GUI thread. The page is often gone
-because the stick-gone dialog popped it, which is exactly when a write
-can be stuck on a device that is not there. `finishWriteDetached()`
-(src/gui/detached_write.hpp) hands the write and its locks to a watcher
-owned by the application. When the write returns, that watcher does what
-the page's own handler would have done without the page, for example
-telling the catalog cache that a restored or cloned stick was rewritten.
-Then it gives the locks back.
+A write whose page goes away while it runs is never abandoned with its
+lock still held. Whether the page waits for it depends on one question:
+does the worker reach into anything the page owns? Data safety wins over
+a frozen window. A freeze while a pulled stick's write gives up is
+acceptable. A write carrying on through freed memory is not.
 
-A write is cancelled on the way out only where its own Cancel is safe at
-any moment:
-- Clean Up's deletes stop between files.
-- A stick backup, a clone or a restore rolls back or leaves its journal
-  for recovery.
-- The Engine library creation is not cancelled, because whether it has
-  reached its copy to the stick is something the GUI thread only learns
-  from a signal still in flight.
+- **Waited for, on the GUI thread**: Stick Backup, Clone Stick and
+  Restore Stick Backup. Each is cancelled first, as its own Cancel does:
+  it rolls back, or leaves its journal for recovery. A stick backup's
+  keep or discard runs through the page's own pending-backup object, so
+  handing it on would leave it writing the archive through a pointer that
+  was freed. The waits cover every write those pages start, keep and
+  discard included, because each runs on the page's one watcher. The
+  page's finished handler never runs for an object going away. After the
+  wait, the destructor does what that handler would have done without
+  the page: it forgets the target's catalogs and announces through
+  `StickEvents` that the stick changed, so MediaController detects the
+  sticks again.
+- **Handed on** (`finishWriteDetached()`, src/gui/detached_write.hpp):
+  Clean Up's pending deletions and Create Engine Library. Their workers
+  own everything they touch: paths, file lists, and a shared reporter
+  whose signals die with the page. They hold no pointer into the page. A
+  watcher owned by the application keeps the locks until the write
+  returns. Then it does what the page's handler would have done without
+  the page (the creator's re-detect, through `StickEvents`) and gives the
+  locks back. Clean Up's deletes are cancelled on the way out and stop
+  between files. The Engine library creation is not cancelled, because
+  whether it has reached its copy to the stick is something the GUI
+  thread only learns from a signal still in flight.
 
 Work a page accepted but had not started yet goes on too: deletes queued
 on Manage Backups run in the background when the page closes.
@@ -142,15 +153,29 @@ order:
    waits for nothing, since there is one wait for all of them below.
 2. The QML engine is destroyed, and with it every page and controller.
    Each cancels the reads it was waiting for. A controller with a write
-   still running hands the write on (`finishWriteDetached()`) and does
-   not drop it.
-3. The global pool, where the writes run, is waited for up to 15
-   seconds, as before.
-4. `exitAfterAsyncWork()` waits up to 2 seconds for the workers that were
-   let go. If one is still running, the process ends with
-   `std::quick_exit()`, which runs no static destructors. Nothing is
-   lost: a read writes nothing, and the writes were waited for in
-   step 3.
+   still running either waits for it here or hands it on, as described
+   under "Writes are different". None is dropped.
+3. The global pool, where the writes run, is waited for, for as long as
+   it takes. A line goes to the log every 15 seconds while a write is
+   still running. A write is never cut off. If one never finishes, on a
+   device that stopped answering mid-write, the process stays and says
+   why. The person can then see it and decide, which is better than
+   Seabass leaving a stick half written. The static QThreadPool would
+   have waited for it in its destructor anyway.
+4. `exitAfterAsyncWork()` waits up to 2 seconds for the reads that were
+   let go. If one is still running, the process flushes its output and
+   ends with `std::_Exit()`, which runs no static destructors.
+   (`std::quick_exit` is missing from Apple's C library.) Nothing is
+   lost: a read writes nothing, and every write was finished in step 3.
+
+A worker has let go of what it captured before it counts as done, so
+"no worker running" really means none: no reporter or reader handle is
+still being destroyed on a worker thread while the statics go.
+
+A read the process cannot give a thread to ends at once, in error, with
+a message that says why. That happens when the system refuses a thread,
+or when 256 workers are already running, which only happens when reads
+are stuck on a device that stopped answering.
 
 `async_request_exit_test` runs the same sequence in a child process with
 a worker stuck for good and a static that aborts if it is destroyed

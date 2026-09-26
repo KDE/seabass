@@ -215,21 +215,22 @@ int main(int argc, char **argv)
     // The pages first, and with them every controller: each cancels the
     // reads it is still waiting for (AsyncRequest) without waiting for
     // them, since they are all waited for once, together, at the end. A
-    // controller running a write hands it on rather than dropping it (see
-    // finishWriteDetached()), so the writes are still there to wait for.
+    // controller running a write either waits for it here (a stick
+    // backup, a clone, a restore) or hands it on to the global pool's
+    // wait below (finishWriteDetached()); none is dropped.
     seabass::gui::AsyncWorkers::instance().beginShutdown();
     engine.reset();
 
-    // A write task is a detached QtConcurrent::run() -- it keeps running
-    // on the thread pool independent of any window, so give it a real
-    // chance to finish (backup + write are already-fast, small-file
-    // operations; a stuck one past this timeout is not worth hanging
-    // process exit over) rather than let the process tear down mid-write
-    // to a stick.
-    QThreadPool::globalInstance()->waitForDone(15000);
-    // And the reads the pages let go of, briefly: they write nothing, and
-    // one stuck on a pulled stick must neither hold the process up nor be
-    // left running while the statics it reads are destroyed. See
+    // The writes run on the global pool, and none is ever abandoned: a
+    // write torn up half way is the one thing worse than a slow exit. So
+    // this waits for them for as long as they take. If one never finishes
+    // (a device that stopped answering mid-write), the process stays,
+    // saying so every 15 seconds, rather than cutting the write off; the
+    // person can see it in a process list and decide, which is better
+    // than Seabass deciding to leave a stick half written. See
     // docs/async-requests.md, "The end of the process".
+    while (!QThreadPool::globalInstance()->waitForDone(15000)) {
+        qWarning("Seabass is still finishing a write to a stick; it will quit when the write is done.");
+    }
     return seabass::gui::exitAfterAsyncWork(result);
 }

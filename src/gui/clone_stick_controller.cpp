@@ -15,8 +15,8 @@
 #include "gui/library_fingerprint_reader.hpp"
 #include "gui/stick_backup_paths.hpp"
 #include "gui/edit/edit_session_registry.hpp"
-#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
+#include "gui/stick_events.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
@@ -110,15 +110,18 @@ CloneStickController::CloneStickController(QObject *parent) : QObject(parent)
 
 CloneStickController::~CloneStickController()
 {
-    // A clone still going is asked to stop, as its own Cancel does, and
-    // handed on rather than waited for (see StickBackupController). When
-    // it returns the target's catalogs are forgotten, as onRunFinished()
-    // would have, and then the locks go back.
+    // A clone still going is asked to stop and waited for, freeze or not
+    // (docs/async-requests.md, "Writes are different"). Its own finished
+    // handler will not run for an object going away, so what it would
+    // have done without the page is done here: the target's catalogs are
+    // forgotten and the stick list is told to look again. The locks go
+    // back with m_writeHold after that.
     m_cancel.cancel();
-    if (m_runWatcher.isRunning() || m_writeHold.held()) {
-        const std::string target = m_targetRoot.toStdString();
-        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver(),
-                            [target] { LibraryCatalogCache::instance().invalidateEveryCatalogOn(target); });
+    const bool wasRunning = m_runWatcher.isRunning();
+    awaitQuietly(m_runWatcher);
+    if (wasRunning) {
+        LibraryCatalogCache::instance().invalidateEveryCatalogOn(m_targetRoot.toStdString());
+        StickEvents::instance().announceStickContentsChanged(m_targetRoot);
     }
 }
 

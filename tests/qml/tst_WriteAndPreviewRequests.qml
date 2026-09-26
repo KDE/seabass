@@ -70,7 +70,10 @@ TestCase {
         verify(took < 1000, "leaving does not wait for the write, took " + took + " ms");
         verify(EditSessionRegistry.anyWriting, "the write still runs, so its lock is still held");
         catalogGate.release();
+        const announced = catalogGate.contentsChangedCount();
         tryVerify(() => !EditSessionRegistry.anyWriting, 10000, "the write is over, so its lock is given back");
+        tryVerify(() => catalogGate.contentsChangedCount() > announced, 5000,
+                  "and the stick list is told to look again, as the page would have");
         verify(browseFixture.waitForScans(), "and its worker has returned");
     }
 
