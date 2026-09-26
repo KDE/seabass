@@ -9,6 +9,7 @@
 #include "gui/library_fingerprint_reader.hpp"
 #include "application/find_stick_archive.hpp"
 #include "gui/stick_backup_paths.hpp"
+#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 
 #include <QDateTime>
@@ -105,8 +106,16 @@ StickBackupController::~StickBackupController()
 {
     // A pending decision that never got made is left to journal recovery
     // (= discard) on the next open; nothing to do here but let it go.
+    //
+    // A run still going is asked to stop, as its own Cancel does (a backup
+    // rolls back or leaves its journal for recovery), and then handed on
+    // rather than waited for: the page is often gone because its stick
+    // was pulled, which is when a write can hang on I/O and would freeze
+    // the window. The lock goes back when the run returns.
     m_cancel.cancel();
-    awaitQuietly(m_runWatcher);
+    if (m_runWatcher.isRunning() || m_writeHold.held()) {
+        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver());
+    }
 }
 
 void StickBackupController::configure(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
@@ -187,7 +196,11 @@ void StickBackupController::refreshPreview(bool restart)
     QString label = m_stickLabel;
     QString root = m_stickRoot;
     const QString key = m_archivePath + QLatin1Char('\n') + root + QLatin1Char('\n') + m_backupName;
-    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options, label, root](application::CancellationToken) mutable {
+    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options, label, root](application::CancellationToken cancel) mutable {
+        // Superseded, cancelled or left before it got going: nothing to
+        // read. And the walk inside the preview stops on the same token.
+        cancel.throwIfCancelled();
+        options.cancel = cancel;
         auto result = std::make_shared<PreviewResult>();
         if (options.stickIdentifier.empty()) {
             auto info = infrastructure::system::readStickHardwareInfo(root.toStdString(), label.toStdString());
@@ -207,7 +220,9 @@ void StickBackupController::refreshPreview(bool restart)
                 result->adoptedArchivePath = pathToQString(found);
             }
         }
+        cancel.throwIfCancelled();
         result->preview = BackupStick::preview(options);
+        cancel.throwIfCancelled();
         // The newest streaming rate USB Stick Performance recorded for
         // this stick on this computer, if it ever measured it; otherwise
         // the ETA stays unknown.

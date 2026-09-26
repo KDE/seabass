@@ -260,7 +260,7 @@ void StickStatisticsController::scan(const QString &stickLabel, const QString &r
     const QString catalog = rekordboxPath.isEmpty() ? enginePath : rekordboxPath;
     m_scan.start(
         stickLabel + QLatin1Char('\n') + rekordboxPath + QLatin1Char('\n') + enginePath,
-        pathToQString(pathFromQString(catalog).parent_path()),
+        stickRootOf(catalog),
         [stickLabel, rekordboxPath, enginePath](application::CancellationToken cancel) {
             return runScanTask(stickLabel, rekordboxPath, enginePath, cancel);
         },

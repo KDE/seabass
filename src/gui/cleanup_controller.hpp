@@ -499,7 +499,9 @@ private:
     // never wipes one of those.
     void setStagedStatusMessage(const QString &message);
     void clearStagedStatusIfNothingStaged();
-    std::shared_ptr<QtProgressReporter> makeReporter();
+    // speaks: whether it may move the bar right now; a scan passes
+    // m_scan.speaksForNext(), the delete (no scan runs beside it) always.
+    std::shared_ptr<QtProgressReporter> makeReporter(std::function<bool()> speaks);
 
     CleanupPlanListModel m_model;
     PendingDeletionListModel m_pendingModel;
@@ -512,7 +514,6 @@ private:
     DirectWriteHold m_writeHold;
     // A scan asked for while the write ran, answered once it is over.
     bool m_rescanAfterWrite = false;
-    quint64 m_scanSerial = 0;
     QPointer<LibraryEditSession> m_session;
     struct StagedInfo
     {

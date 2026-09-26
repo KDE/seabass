@@ -221,7 +221,7 @@ private:
     void setProgress(int current, int total);
     void setCurrentPhase(const QString &phase);
     void setErrorMessage(const QString &message);
-    std::shared_ptr<QtProgressReporter> makeReporter(quint64 serial);
+    std::shared_ptr<QtProgressReporter> makeReporter(std::function<bool()> speaks);
     void applyScope(domain::MetadataRestoreScope scope);
     // The picker entries and every scoped count, from the proposals and
     // the scope as they are now.
@@ -247,8 +247,6 @@ private:
 
     RestoreProposalListModel m_model;
     QPointer<LibraryEditSession> m_session;
-    // Which scan the progress bar belongs to; see MetadataBackupController.
-    quint64 m_scanSerial = 0;
 
     QString m_libraryPath;
     bool m_hasScanned = false;

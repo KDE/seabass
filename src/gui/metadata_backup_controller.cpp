@@ -13,6 +13,7 @@
 #include <exception>
 #include <map>
 #include <string>
+#include <utility>
 
 #include "application/use_cases/collapse_catalog_rows.hpp"
 #include "domain/metadata_backup_plan.hpp"
@@ -37,6 +38,12 @@ namespace
 // One page of the browse list. Big enough that a normal library needs
 // one or two, small enough that the first page paints immediately.
 constexpr int PageSize = 200;
+
+std::function<void()> &storeGate()
+{
+    static std::function<void()> gate;
+    return gate;
+}
 
 
 // Reads every catalog on the stick, folds them into files, and works out
@@ -391,6 +398,11 @@ QStringList StoredTrackListModel::stagedDescriptions() const
 
 // ---- controller -----------------------------------------------------
 
+void MetadataBackupController::setStoreGateForTesting(std::function<void()> gate)
+{
+    storeGate() = std::move(gate);
+}
+
 MetadataBackupController::MetadataBackupController(QObject *parent) : QObject(parent)
 {
     connect(&m_saveWatcher, &QFutureWatcher<MetadataBackupTaskResult>::finished, this,
@@ -497,9 +509,11 @@ void MetadataBackupController::discardStagingAndSelectStick(const QString &libra
 void MetadataBackupController::startScan(const QString &libraryPath, const QString &libraryId,
                                           const QString &stickLabel)
 {
-    // A save is writing the store; the rescan after it is started from
-    // its own ending, once it is over.
+    // A save is writing the store: the stick is read once it is over,
+    // from the save's own ending. Dropped here, as it used to be, the page
+    // was told yes and then shown the stick it had just left.
     if (m_saving) {
+        m_scanAfterSave = ScanRequest{libraryPath, libraryId, stickLabel};
         return;
     }
     // Already reading this stick: that read answers this request too.
@@ -538,9 +552,8 @@ void MetadataBackupController::startScan(const QString &libraryPath, const QStri
     // Any other read still outstanding is superseded by this one: its
     // worker is told to stop and whatever it returns is dropped, so a
     // list for the stick the page left can never land under this one.
-    const quint64 serial = ++m_scanSerial;
-    auto reporter = makeReporter(serial);
-    const QString stickRoot = pathToQString(pathFromQString(libraryPath).parent_path());
+    auto reporter = makeReporter(m_scan.speaksForNext());
+    const QString stickRoot = stickRootOf(libraryPath);
     m_scan.start(
         libraryPath, stickRoot,
         [libraryPath, reporter](application::CancellationToken cancel) {
@@ -755,7 +768,10 @@ void MetadataBackupController::beginSave()
     m_saveWatcher.setFuture(QtConcurrent::run(
         [keepAwake, tracks, wholeStick = m_stickTracks, libraryPath = m_sourceLibraryPath,
          libraryId = m_sourceLibraryId, stickLabel = m_sourceStickLabel, reporter = makeReporter(),
-         cancel = m_cancel]() {
+         cancel = m_cancel, gate = storeGate()]() {
+            if (gate) {
+                gate();
+            }
             return runStoreTask(tracks, wholeStick, libraryPath, libraryId, stickLabel, reporter, cancel);
         }));
 }
@@ -770,8 +786,13 @@ void MetadataBackupController::onSaveFinished()
     setSaving(false);
     setWriting(false);
     setCurrentPhase({});
+    // Asked for while the save wrote; read now, whatever the save did.
+    const std::optional<ScanRequest> asked = std::exchange(m_scanAfterSave, std::nullopt);
     if (!result.succeeded) {
         setErrorMessage(result.errorMessage);
+        if (asked) {
+            startScan(asked->libraryPath, asked->libraryId, asked->stickLabel);
+        }
         return;
     }
 
@@ -801,6 +822,9 @@ void MetadataBackupController::onSaveFinished()
         // permanently forget the rows this page warns may be the last
         // copy of anything would be the worst thing on the page.
         emit resultChanged();
+        if (asked) {
+            startScan(asked->libraryPath, asked->libraryId, asked->stickLabel);
+        }
         return;
     }
 
@@ -821,7 +845,11 @@ void MetadataBackupController::onSaveFinished()
     // A cancelled run never reaches here: it returned above with its
     // staging intact, because that staging is still the best
     // description of what is left to do.
-    if (!m_browsingStore && !m_sourceLibraryPath.isEmpty()) {
+    if (asked && asked->libraryPath != m_sourceLibraryPath) {
+        // Another stick was picked while this saved: that is the list the
+        // page wants now, not this stick's again.
+        startScan(asked->libraryPath, asked->libraryId, asked->stickLabel);
+    } else if (!m_browsingStore && !m_sourceLibraryPath.isEmpty()) {
         // Kept across the rescan. startScan() drops the playlist filter
         // because it is normally switching to a different stick, whose
         // playlists are not this one's -- but this is the same stick,
@@ -991,10 +1019,10 @@ QString MetadataBackupController::mergeRuleHelp() const
 
 // ---- progress and state ----------------------------------------------
 
-std::shared_ptr<QtProgressReporter> MetadataBackupController::makeReporter(quint64 serial)
+std::shared_ptr<QtProgressReporter> MetadataBackupController::makeReporter(std::function<bool()> speaks)
 {
     // A scan's reporter speaks only while its scan is the current one.
-    const auto current = [this, serial]() { return serial == 0 || (serial == m_scanSerial && m_scan.busy()); };
+    const auto current = [speaks = std::move(speaks)]() { return !speaks || speaks(); };
     auto reporter = std::make_shared<QtProgressReporter>();
     // Each phase (one per catalog read, then the store write) reports
     // its own 0..N. Adding the previous phases' totals as a baseline

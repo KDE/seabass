@@ -612,8 +612,7 @@ std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
     // Speaks only for the leg started right after it, while that leg is
     // the one outstanding: a superseded leg reports until it notices.
     auto reporter = std::make_shared<QtProgressReporter>();
-    const quint64 serial = ++m_scanSerial;
-    const auto current = [this, serial]() { return serial == m_scanSerial && busy(); };
+    const auto current = m_scan.speaksForNext();
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
         if (current()) {
             setScanProgress(0, total);
@@ -805,7 +804,7 @@ void LibraryConsistencyController::scanNextPendingFormat(bool restart)
         [this]() { endScanCancelled(); },
     };
     const QString key = m_scanScope + QLatin1Char('\n') + format;
-    const QString stickRoot = pathToQString(pathFromQString(path).parent_path());
+    const QString stickRoot = stickRootOf(path);
     if (restart) {
         m_scan.restart(key, stickRoot, std::move(work), std::move(ending));
     } else {

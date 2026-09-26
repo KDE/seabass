@@ -570,7 +570,6 @@ private:
     // The scope the scan chain was started for, to know the same request
     // again when it comes.
     QString m_scanScope;
-    quint64 m_scanSerial = 0;
     QPointer<LibraryEditSession> m_session;
     struct StagedInfo
     {

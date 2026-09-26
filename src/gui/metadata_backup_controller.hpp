@@ -13,7 +13,9 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
@@ -367,6 +369,10 @@ public:
     // opens would undo that.
     Q_INVOKABLE QString cueSummaryFor(qint64 trackId);
 
+    // Test seam: called on the save's worker before it writes anything,
+    // so a test can hold a save while it asks for something else.
+    static void setStoreGateForTesting(std::function<void()> gate);
+
 signals:
     void busyChanged();
     void selectionChanged();
@@ -402,8 +408,9 @@ private:
     void setProgress(int current, int total);
     void setCurrentPhase(const QString &phase);
     void setErrorMessage(const QString &message);
-    // serial: the scan this reporter belongs to, or 0 for the save.
-    std::shared_ptr<QtProgressReporter> makeReporter(quint64 serial = 0);
+    // speaks: whether the reporter may move the bar right now (a scan's,
+    // from AsyncRequest::speaksForNext()); always, when empty (the save).
+    std::shared_ptr<QtProgressReporter> makeReporter(std::function<bool()> speaks = {});
     // Opened lazily, on the UI thread, for browsing only. A scan and a
     // save each open their own connection on their own thread.
     infrastructure::local::MetadataStore *store();
@@ -415,9 +422,6 @@ private:
     application::CancellationToken m_cancel;
 
     bool m_saving = false;
-    // Which scan the progress bar belongs to: a superseded or cancelled
-    // scan still reports until its worker notices, and must not move it.
-    quint64 m_scanSerial = 0;
     bool m_writing = false;
     bool m_hasResult = false;
     bool m_hasScanned = false;
@@ -454,6 +458,16 @@ private:
     QString m_sourceStickLabel;
     // The last scan's whole stick reading; see MetadataBackupScanResult.
     std::vector<domain::Track> m_stickTracks;
+
+    // A stick asked for while a save was writing, read once the save is
+    // over (docs/async-requests.md: accepted, never dropped).
+    struct ScanRequest
+    {
+        QString libraryPath;
+        QString libraryId;
+        QString stickLabel;
+    };
+    std::optional<ScanRequest> m_scanAfterSave;
 
     // Last, so it is destroyed first: its destructor cancels the scan and
     // lets its worker go before anything the endings touch is gone.

@@ -39,8 +39,7 @@ void StagedCueEditController::cancelScan()
 std::shared_ptr<QtProgressReporter> StagedCueEditController::makeReporter()
 {
     auto reporter = std::make_shared<QtProgressReporter>();
-    const quint64 serial = ++m_scanSerial;
-    const auto current = [this, serial]() { return serial == m_scanSerial && busy(); };
+    const auto current = m_scan.speaksForNext();
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
         if (current()) {
             setScanLabel(label);

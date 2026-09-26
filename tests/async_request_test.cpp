@@ -168,7 +168,7 @@ void ruleThreeTheSameKeyIsServed()
     check(!request.start("a", {}, work, second.make()), "rule 3: the same key again does not");
     latch->release();
     check(pumpUntil([&] { return !request.busy(); }), "rule 3: the one request ends");
-    seabass::gui::asyncRequestPool().waitForDone();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     check(runs == 1, "rule 3: one worker ran");
     check(first.results == 1 && second.total() == 0, "rule 3: the running request answered");
 }
@@ -211,7 +211,7 @@ void ruleFourRestartSupersedesTheSameKey()
                   first.make());
     request.restart("a", {}, [&runs](CancellationToken) { ++runs; return 2; }, second.make());
     check(pumpUntil([&] { return !request.busy(); }), "restart: the new request ends");
-    seabass::gui::asyncRequestPool().waitForDone();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     check(runs == 2, "restart: a second worker ran for the same key");
     check(second.results == 1 && second.lastValue == 2 && first.total() == 0,
           "restart: the fresh answer, never the one read before");
@@ -230,7 +230,7 @@ void ruleFiveCancelEndsAtOnce()
     check(!request.busy(), "rule 5: cancel ends the request at once, with the worker still stuck");
     check(endings.cancels == 1 && endings.total() == 1, "rule 5: as cancelled, once");
     latch->release();
-    seabass::gui::asyncRequestPool().waitForDone();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     QCoreApplication::processEvents();
     check(endings.total() == 1, "rule 5: the worker's late answer is swallowed");
 }
@@ -252,7 +252,7 @@ void ruleSixAPulledStickEndsItsRequest()
     check(onOther.busy() && otherEndings.total() == 0, "rule 6: another stick's request carries on");
     latch->release();
     check(pumpUntil([&] { return !onOther.busy(); }), "rule 6: and ends on its own");
-    seabass::gui::asyncRequestPool().waitForDone();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     QCoreApplication::processEvents();
     check(stickEndings.total() == 1, "rule 6: the pulled stick's late answer is swallowed");
 }
@@ -297,7 +297,7 @@ void ruleSevenDestructionDoesNotWait()
     check(timer.elapsed() < 1500, "rule 7: going away waits no longer than its bound for a worker that cannot notice");
     check(token->cancelled(), "rule 7: but it does tell the worker");
     latch->release();
-    seabass::gui::asyncRequestPool().waitForDone();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
 }
 
 void ruleSevenAWorkerThatNoticesIsWaitedFor()
@@ -313,7 +313,7 @@ void ruleSevenAWorkerThatNoticesIsWaitedFor()
         pumpUntil([&] { return latch->arrived.load() == 1; });
     }
     check(latch->left.load() == 1, "rule 7: a worker that notices the cancel has stopped by the time it is gone");
-    seabass::gui::asyncRequestPool().waitForDone();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
 }
 
 // Workers let go of while stuck keep their threads. They must not take
@@ -322,7 +322,9 @@ void letGoWorkersStarveNothing()
 {
     auto latch = std::make_shared<Latch>();
     QObject owner;
-    const int stuck = 3 * std::max(1, QThread::idealThreadCount());
+    // More than any pool this helper ever had (max(32, 4 x cores)), so a
+    // cap anywhere would leave the fresh read below without a thread.
+    const int stuck = std::max(32, 4 * QThread::idealThreadCount()) + 8;
     std::vector<std::unique_ptr<AsyncRequest<int>>> requests;
     for (int i = 0; i < stuck; ++i) {
         requests.push_back(std::make_unique<AsyncRequest<int>>(&owner, nullptr));
@@ -343,8 +345,43 @@ void letGoWorkersStarveNothing()
     check(pumpUntil([&] { return endings.results == 1; }), "starvation: a new read still gets a thread");
 
     latch->release();
-    seabass::gui::asyncRequestPool().waitForDone();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     requests.clear();
+}
+
+void ruleSixAnyOfSeveralSticks()
+{
+    QObject owner;
+    AsyncRequest<int> request(&owner, nullptr);
+    Endings endings;
+    auto latch = std::make_shared<Latch>();
+    request.startOnSticks("a", QStringList{QStringLiteral("/media/SOURCE"), QStringLiteral("/media/TARGET")},
+                  [latch](CancellationToken cancel) { latch->wait(cancel, false); return 1; }, endings.make());
+    StickEvents::instance().announceStickGone(QStringLiteral("/media/TARGET"));
+    check(!request.busy() && endings.errors == 1, "rule 6: a request on two sticks ends when either goes");
+    latch->release();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
+}
+
+void aReporterSpeaksOnlyForItsRequest()
+{
+    QObject owner;
+    AsyncRequest<int> request(&owner, nullptr);
+    auto latch = std::make_shared<Latch>();
+    auto work = [latch](CancellationToken cancel) { latch->wait(cancel, true); return 1; };
+    const auto first = request.speaksForNext();
+    request.start("a", {}, work, {});
+    check(first(), "reporter: the request's own reporter speaks while it is outstanding");
+    const auto served = request.speaksForNext();
+    request.start("a", {}, work, {});
+    check(!served() && first(), "reporter: a served request has no voice; the running one keeps its");
+    const auto second = request.speaksForNext();
+    request.start("b", {}, work, {});
+    check(second() && !first(), "reporter: a superseded request falls silent");
+    request.cancel();
+    check(!second(), "reporter: and so does a cancelled one");
+    latch->release();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
 }
 
 }  // namespace
@@ -363,7 +400,9 @@ int main(int argc, char **argv)
     ruleSevenDestructionDoesNotWait();
     ruleSevenAWorkerThatNoticesIsWaitedFor();
     letGoWorkersStarveNothing();
-    seabass::gui::asyncRequestPool().waitForDone();
+    ruleSixAnyOfSeveralSticks();
+    aReporterSpeaksOnlyForItsRequest();
+    seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     if (failures > 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

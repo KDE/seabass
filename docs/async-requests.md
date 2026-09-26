@@ -51,26 +51,41 @@ For a read a page is waiting for:
    look at its token, is let go instead of freezing the window. It never
    touches its controller: it holds its token, its arguments, and the
    process-wide catalog cache, so it can finish on its own, and its answer
-   goes nowhere. `main()` waits for the thread pool before the process
-   exits.
+   goes nowhere. See "The end of the process" below for what happens to
+   one still running when the app quits.
 
-Two refinements. First, a request whose scope is the one outstanding is
-recognised before anything is reset: a request that turns out to be
-served must not reset the progress bar or take the reporter away from
-the read that answers it. Second, a read asked for while the page's own
-write runs is not started beside the write. The page disables the
-controls that would ask for one. A rescan the page asks for itself is
-put off until the write is over (Clean Up's `m_rescanAfterWrite`).
+Some refinements:
+
+- A request whose scope is the one outstanding is recognised before
+  anything is reset. A request that turns out to be served must not
+  change the page's scope, reset the progress bar or take the reporter
+  away from the read that answers it.
+- A progress reporter speaks only while its own request is the
+  outstanding one: `AsyncRequest::speaksForNext()`, taken right before
+  the request starts. A superseded or cancelled read reports until its
+  worker notices, and must not move the bar.
+- A read asked for while the page's own write runs is not started beside
+  the write, and it is not dropped either. It runs once the write is
+  over: Clean Up's `m_rescanAfterWrite`, Metadata Backup's
+  `m_scanAfterSave`.
+- A request that reads more than one stick names all of them
+  (`startOnSticks()`). Clone's preview reads its source and its target,
+  and pulling either one ends it.
+- A worker that can look at a token does. The Stick Backup, Clone and
+  Restore previews take none of their own, so they stop at the start and
+  between phases, and hand the token to the walk inside.
 
 `gui::AsyncRequest<Result>` (src/gui/async_request.hpp) implements the
 rule, so a controller does not have to rebuild it. Each request gets its
 own `QFutureWatcher`. Reusing one watcher with `setFuture()` loses a
 finished signal that has already been sent, and a lost "done" is exactly
-what this rule exists to prevent. The workers run on a pool of their own
-(`asyncRequestPool()`), not the global one the writes use. A worker that
-was let go keeps its thread until its I/O returns. On a shared pool, a
-hung stick and a few cancels would take every thread, and a save would
-queue behind them and never start.
+what this rule exists to prevent. Each worker runs on a thread of its
+own (`AsyncWorkers`), not on a pool. A worker that was let go keeps its
+thread until its I/O returns, so in any pool with a cap, enough of them on
+a hung stick would take every thread. Every later read, and on the global
+pool every save, would then queue behind them and never start. A page
+asks for a read when it opens or when someone picks something, so there
+are never many threads.
 
 ```cpp
 AsyncRequest<ScanResult> m_scan{this, [this]() { emit busyChanged(); }};
@@ -98,12 +113,48 @@ lock still held nor waited for on the GUI thread. The page is often gone
 because the stick-gone dialog popped it, which is exactly when a write
 can be stuck on a device that is not there. `finishWriteDetached()`
 (src/gui/detached_write.hpp) hands the write and its locks to a watcher
-owned by the application. That watcher gives the locks back when the
-write returns. A write is cancelled on the way out only where its own
-Cancel is safe at any moment. Clean Up's deletes stop between files. The
-Engine library creation is not cancelled there, because whether it has
-reached its copy to the stick is something the GUI thread only learns
-from a signal still in flight.
+owned by the application. When the write returns, that watcher does what
+the page's own handler would have done without the page, for example
+telling the catalog cache that a restored or cloned stick was rewritten.
+Then it gives the locks back.
+
+A write is cancelled on the way out only where its own Cancel is safe at
+any moment:
+- Clean Up's deletes stop between files.
+- A stick backup, a clone or a restore rolls back or leaves its journal
+  for recovery.
+- The Engine library creation is not cancelled, because whether it has
+  reached its copy to the stick is something the GUI thread only learns
+  from a signal still in flight.
+
+Work a page accepted but had not started yet goes on too: deletes queued
+on Manage Backups run in the background when the page closes.
+
+## The end of the process
+
+A worker let go of on a pulled stick can still be running when the app
+quits, possibly inside `LibraryCatalogCache` or the SQLite and Kaitai code
+under it. If `main()` simply returned, the static destructors would
+destroy those under it: a use after destroy. So `main()` ends in this
+order:
+
+1. `AsyncWorkers::beginShutdown()`. From here on a request going away
+   waits for nothing, since there is one wait for all of them below.
+2. The QML engine is destroyed, and with it every page and controller.
+   Each cancels the reads it was waiting for. A controller with a write
+   still running hands the write on (`finishWriteDetached()`) and does
+   not drop it.
+3. The global pool, where the writes run, is waited for up to 15
+   seconds, as before.
+4. `exitAfterAsyncWork()` waits up to 2 seconds for the workers that were
+   let go. If one is still running, the process ends with
+   `std::quick_exit()`, which runs no static destructors. Nothing is
+   lost: a read writes nothing, and the writes were waited for in
+   step 3.
+
+`async_request_exit_test` runs the same sequence in a child process with
+a worker stuck for good and a static that aborts if it is destroyed
+while a worker runs. The child has to exit cleanly.
 
 ## Testing it
 

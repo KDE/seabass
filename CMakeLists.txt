@@ -2142,6 +2142,16 @@ if(TARGET seabass_edit)
     target_link_libraries(async_request_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
     add_test(NAME async_request_test COMMAND async_request_test)
 
+    # The end of the process with a read still stuck: no static destructor
+    # runs beneath it.
+    add_executable(async_request_exit_test
+        src/gui/stick_events.cpp
+        tests/async_request_exit_test.cpp
+    )
+    target_include_directories(async_request_exit_test PRIVATE src)
+    target_link_libraries(async_request_exit_test PRIVATE seabass_core Qt6::Core)
+    add_test(NAME async_request_exit_test COMMAND async_request_exit_test)
+
     add_executable(open_folder_test
         src/gui/media_controller.cpp
         src/gui/stick_events.cpp
