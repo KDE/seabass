@@ -87,6 +87,12 @@ pool every save, would then queue behind them and never start. A page
 asks for a read when it opens or when someone picks something, so there
 are never many threads.
 
+Reads that are not a page's request run the same way, through
+`runRead()`: a folder listing, a Browse scan, a mount, a process list, a
+free-space measurement. That keeps the global pool for writes alone, and
+the end of the process waits for writes without limit. A read stuck on a
+pulled stick must not be among them.
+
 ```cpp
 AsyncRequest<ScanResult> m_scan{this, [this]() { emit busyChanged(); }};
 
@@ -143,11 +149,11 @@ on Manage Backups run in the background when the page closes.
 
 ## The end of the process
 
-A worker let go of on a pulled stick can still be running when the app
+A read let go of on a pulled stick can still be running when the app
 quits, possibly inside `LibraryCatalogCache` or the SQLite and Kaitai code
 under it. If `main()` simply returned, the static destructors would
 destroy those under it: a use after destroy. So `main()` ends in this
-order:
+order, and `endProcess()` (src/gui/process_end.hpp) does steps 3 to 5:
 
 1. `AsyncWorkers::beginShutdown()`. From here on a request going away
    waits for nothing, since there is one wait for all of them below.
@@ -155,18 +161,31 @@ order:
    Each cancels the reads it was waiting for. A controller with a write
    still running either waits for it here or hands it on, as described
    under "Writes are different". None is dropped.
-3. The global pool, where the writes run, is waited for, for as long as
-   it takes. A line goes to the log every 15 seconds while a write is
-   still running. A write is never cut off. If one never finishes, on a
-   device that stopped answering mid-write, the process stays and says
-   why. The person can then see it and decide, which is better than
-   Seabass leaving a stick half written. The static QThreadPool would
-   have waited for it in its destructor anyway.
-4. `exitAfterAsyncWork()` waits up to 2 seconds for the reads that were
-   let go. If one is still running, the process flushes its output and
-   ends with `std::_Exit()`, which runs no static destructors.
-   (`std::quick_exit` is missing from Apple's C library.) Nothing is
-   lost: a read writes nothing, and every write was finished in step 3.
+3. The global pool, where the writes run and nothing else does, is
+   waited for without limit. A line goes to the log every 15 seconds
+   while a write is still running. A write is never cut off. If one
+   never finishes, on a device that stopped answering mid-write, the
+   process stays and says why. The person can then see it and decide,
+   which is better than Seabass leaving a stick half written.
+   MediaController's mounts and unmounts also stay on this pool. The
+   unmounts at quit are waited for before the event loop even ends, and
+   an unmount flushes a stick.
+4. What finished writes left for the GUI thread runs by hand
+   (`settleDetachedWrites()`), since there is no event loop any more: a
+   write handed on by its page gives its lock back and tells the cache.
+   Without this step, a finished write would leave a lock saying a
+   Seabass that no longer exists is editing the stick.
+5. The reads get up to 2 seconds. If one is still running, the process
+   flushes its output and ends with `std::_Exit()`, which runs no static
+   destructors. (`std::quick_exit` is missing from Apple's C library.)
+   Nothing is lost: a read writes nothing, and every write was finished
+   by step 3.
+
+`async_request_exit_test` runs steps 3 to 5 in a child process, with a
+page's read and a `runRead()` read both stuck for good, a write that ends
+a moment later, and a static that aborts if it is destroyed while a
+worker runs. The child has to exit cleanly, and the write has to have
+given its lock back first.
 
 A worker has let go of what it captured before it counts as done, so
 "no worker running" really means none: no reporter or reader handle is

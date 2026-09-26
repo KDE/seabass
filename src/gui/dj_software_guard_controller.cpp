@@ -6,6 +6,7 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include "gui/async_request.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/future_result.hpp"
 #include "infrastructure/system/rekordbox_process_detector.hpp"
@@ -113,7 +114,7 @@ void DjSoftwareGuardController::poll()
     if (m_watcher.isRunning()) {
         return;  // the previous check has not returned yet; skip this tick
     }
-    m_watcher.setFuture(QtConcurrent::run(detectConflictingSoftware));
+    m_watcher.setFuture(runRead([] { return detectConflictingSoftware(); }));
 }
 
 void DjSoftwareGuardController::onPollFinished()

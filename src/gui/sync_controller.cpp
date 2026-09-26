@@ -4,6 +4,7 @@
 
 #include "sync_controller.hpp"
 
+#include "gui/stick_path.hpp"
 #include "gui/future_result.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>

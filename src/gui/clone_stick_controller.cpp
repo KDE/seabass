@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include "gui/stick_path.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "clone_stick_controller.hpp"
@@ -116,11 +117,20 @@ CloneStickController::~CloneStickController()
     // have done without the page is done here: the target's catalogs are
     // forgotten and the stick list is told to look again. The locks go
     // back with m_writeHold after that.
+    //
+    // m_cloning, not isRunning(): a run that has returned but whose
+    // finished handler has not run yet is just as unhandled.
     m_cancel.cancel();
-    const bool wasRunning = m_runWatcher.isRunning();
+    if (!m_cloning) {
+        return;
+    }
     awaitQuietly(m_runWatcher);
-    if (wasRunning) {
-        LibraryCatalogCache::instance().invalidateEveryCatalogOn(m_targetRoot.toStdString());
+    QString thrown;
+    const std::shared_ptr<RunResult> result = takeResult(m_runWatcher, &thrown);
+    LibraryCatalogCache::instance().invalidateEveryCatalogOn(m_targetRoot.toStdString());
+    // As onRunFinished(): the target changed only once the restore half
+    // began. A run that threw may have begun it, so it counts.
+    if (!result || !thrown.isEmpty() || result->outcome.restoreStarted) {
         StickEvents::instance().announceStickContentsChanged(m_targetRoot);
     }
 }

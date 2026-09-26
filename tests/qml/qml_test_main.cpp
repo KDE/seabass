@@ -402,7 +402,9 @@ public:
     ~BrowseFixture() override
     {
         restore();
+        // Browse's scans run on threads of their own (runRead()).
         QThreadPool::globalInstance()->waitForDone();
+        seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
     }
 
     // A real cover on disk, for the fallback to find.

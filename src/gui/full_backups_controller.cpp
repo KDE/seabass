@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QUrl>
 
+#include "gui/async_request.hpp"
 #include "gui/backup_changelog_text.hpp"
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -86,6 +87,9 @@ FullBackupsController::~FullBackupsController()
                 } catch (const std::exception &e) {
                     qWarning("Could not delete the backup %s, asked for before its page closed: %s",
                              qUtf8Printable(path), e.what());
+                } catch (...) {
+                    qWarning("Could not delete the backup %s, asked for before its page closed.",
+                             qUtf8Printable(path));
                 }
             }
         });
@@ -144,7 +148,8 @@ void FullBackupsController::refresh()
     }
     const fs::path directory = pathFromQString(m_backupDirectory);
     const fs::path current = pathFromQString(m_currentArchivePath);
-    m_listWatcher.setFuture(QtConcurrent::run([directory, current]() {
+    // A read: its own thread, not the writes' pool (see runRead()).
+    m_listWatcher.setFuture(runRead([directory, current]() {
         QVariantList backups;
         for (const application::ManagedStickBackup &backup : application::ManageStickBackups::list(directory, current)) {
             const application::StickBackupDescription &d = backup.description;
