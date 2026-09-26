@@ -1762,6 +1762,23 @@ target_include_directories(stick_catalogs_test PRIVATE src)
 target_link_libraries(stick_catalogs_test PRIVATE seabass_core Threads::Threads)
 add_test(NAME stick_catalogs_test COMMAND stick_catalogs_test)
 
+# The fingerprint reader's cue decisions: the advisor's second-step rule,
+# and "cues known" taken from the cache entry that served the tracks, over
+# a copy of the committed fixture. Compiles the reader and the cache it
+# reads through, as library_catalog_cache_test does; QtCore only for the
+# QString paths the reader takes.
+if(TARGET Qt6::Core)
+    add_executable(library_fingerprint_reader_test
+        src/gui/library_fingerprint_reader.cpp
+        src/gui/library_catalog_cache.cpp
+        tests/library_fingerprint_reader_test.cpp
+    )
+    target_include_directories(library_fingerprint_reader_test PRIVATE src)
+    target_link_libraries(library_fingerprint_reader_test PRIVATE seabass_core Qt6::Core Threads::Threads)
+    add_test(NAME library_fingerprint_reader_test COMMAND library_fingerprint_reader_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+endif()
+
 add_executable(library_fingerprint_test
     tests/library_fingerprint_test.cpp
 )

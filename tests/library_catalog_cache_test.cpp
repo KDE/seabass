@@ -7,6 +7,7 @@
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <future>
 #include <iostream>
 #include <map>
@@ -15,7 +16,13 @@
 #include <stdexcept>
 #include <thread>
 
+#include <filesystem>
+#include <fstream>
+
+#include "application/use_cases/fill_file_sizes.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "scratch_path.hpp"
 
 using namespace seabass::gui;
 using namespace std::chrono_literals;
@@ -81,6 +88,8 @@ struct FakeReader
     // Set to make the next Cues pass of a path half-fill its copy and
     // then throw, the way a reader does when the stick is pulled.
     std::set<std::string> cuesThrowOnce;
+    // What each Full pass found in the notes the Tracks pass left.
+    std::vector<std::vector<std::string>> notesSeenByFull;
 
     int count(Detail stage, const std::string &path)
     {
@@ -97,8 +106,8 @@ struct FakeReader
     LibraryCatalogCache::StageFn stageFn()
     {
         return [this](Detail stage, const std::string &, const std::string &path,
-                      std::vector<seabass::domain::Track> &tracks, seabass::application::ProgressReporter &,
-                      CancellationToken cancel) {
+                      std::vector<seabass::domain::Track> &tracks, LibraryCatalogCache::StageNotes &notes,
+                      seabass::application::ProgressReporter &, CancellationToken cancel) {
             Gate *gate = nullptr;
             bool throwNow = false;
             {
@@ -118,8 +127,10 @@ struct FakeReader
             switch (stage) {
             case Detail::Tracks:
                 assert(tracks.empty());
+                assert(notes.unverifiedDurationPaths.empty() && "a Tracks pass starts from fresh notes");
                 tracks = oneTrack(path);
                 tracks.push_back(oneTrack(path + "#2").front());
+                notes.unverifiedDurationPaths = {path + "/taken on trust"};
                 break;
             case Detail::Cues:
                 assert(tracks.size() == 2 && tracks[0].cues.empty());
@@ -134,6 +145,10 @@ struct FakeReader
                 break;
             case Detail::Full:
                 assert(tracks.size() == 2 && tracks[0].cues.size() == 1);
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    notesSeenByFull.push_back(notes.unverifiedDurationPaths);
+                }
                 for (auto &track : tracks) {
                     track.fileSizeBytes = 42;
                 }
@@ -476,6 +491,123 @@ void stagedCases()
         first.get();
         assert(reader.count(Detail::Cues, stick) == 1);
         std::cout << "stage 11 (a cancelled waiter leaves the wait) OK\n";
+    }
+
+    // Stage 12: the stage comes back with the tracks, from the entry that
+    // served them. An entry at Cues answering a Tracks request says Cues:
+    // the fingerprint reader decides "cues known" from this, and asking
+    // for the stage separately raced a cue pass committing in between.
+    {
+        FakeReader reader;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+        const auto cold = cache.stagedTracksFor("rekordbox", stick, Detail::Tracks);
+        assert(cold.stage == Detail::Tracks && cold.tracks[0].cues.empty());
+        cache.tracksFor("rekordbox", stick, Detail::Cues);
+        const auto served = cache.stagedTracksFor("rekordbox", stick, Detail::Tracks);
+        assert(served.stage == Detail::Cues && "an entry at Cues answers a Tracks request with stage Cues");
+        assert(served.tracks[0].cues.size() == 1 && "and the tracks it hands out carry those cues");
+        assert(reader.count(Detail::Cues, stick) == 1);
+        const auto full = cache.stagedTracksFor("rekordbox", stick, Detail::Full);
+        assert(full.stage == Detail::Full && full.tracks[0].fileSizeBytes == 42);
+        assert(cache.stagedTracksFor("rekordbox", stick, Detail::Tracks).stage == Detail::Full);
+        std::cout << "stage 12 (the stage reached comes back with the tracks, under one lock) OK\n";
+    }
+
+    // Stage 13: what the Tracks pass notes (the durations it took from the
+    // cache unverified) reaches the Full pass of the same entry, and a
+    // re-read after an invalidation starts from fresh notes.
+    {
+        FakeReader reader;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+        cache.tracksFor("rekordbox", stick, Detail::Tracks);
+        cache.tracksFor("rekordbox", stick, Detail::Cues);
+        cache.tracksFor("rekordbox", stick, Detail::Full);
+        assert(reader.notesSeenByFull.size() == 1);
+        assert(reader.notesSeenByFull[0] == std::vector<std::string>{stick + "/taken on trust"});
+        cache.invalidate("rekordbox", stick);
+        cache.tracksFor("rekordbox", stick);  // the fake asserts its Tracks pass gets empty notes
+        assert(reader.notesSeenByFull.size() == 2);
+        std::cout << "stage 13 (the Tracks pass's notes reach the Full pass) OK\n";
+    }
+
+    // Stage 14: a stick pulled in the middle of the Full pass. The pass is
+    // the real application::fillFileSizes over real files; the stick is
+    // "pulled" (invalidateEveryCatalogOn) from inside the pass, right
+    // after its third stat, and the files' stats are counted as they run.
+    // The prefetch worker must stop within one file: no stat after that
+    // one, nothing cached at Full, and the worker idle again.
+    {
+        namespace fs = std::filesystem;
+        const fs::path root = seabass::testing::scratchRoot() / "library_catalog_cache_test_full_cancel";
+        fs::remove_all(root);
+        const fs::path contents = root / "Contents";
+        fs::create_directories(contents);
+        constexpr int fileCount = 20;
+        for (int i = 0; i < fileCount; ++i) {
+            std::ofstream(contents / ("t" + std::to_string(i) + ".mp3"), std::ios::binary) << "audio";
+        }
+        const std::string pioneer = seabass::pathToUtf8(root / "PIONEER");
+        const std::string stickRoot = seabass::pathToUtf8(root);
+
+        struct PullingReporter : seabass::application::ProgressReporter
+        {
+            std::function<void()> pull;
+            std::atomic<int> statted{0};
+            std::atomic<int> afterPull{0};
+            bool pulled = false;
+            void start(const std::string &, size_t) override {}
+            void finish() override {}
+            void warn(const std::string &) override {}
+            void tick(size_t) override
+            {
+                ++statted;
+                if (pulled) {
+                    ++afterPull;
+                } else if (statted == 3) {
+                    pulled = true;
+                    pull();
+                }
+            }
+        };
+        PullingReporter reporter;
+        std::atomic<int> fullPasses{0};
+        std::atomic<int> fullCompleted{0};
+        auto stage = [&](Detail detail, const std::string &, const std::string &, std::vector<seabass::domain::Track> &tracks,
+                         LibraryCatalogCache::StageNotes &, seabass::application::ProgressReporter &,
+                         CancellationToken cancel) {
+            if (detail == Detail::Tracks) {
+                for (int i = 0; i < fileCount; ++i) {
+                    seabass::domain::Track track;
+                    track.sourceId = std::to_string(i);
+                    track.filePath = seabass::pathToUtf8(contents / ("t" + std::to_string(i) + ".mp3"));
+                    tracks.push_back(track);
+                }
+            } else if (detail == Detail::Full) {
+                ++fullPasses;
+                seabass::application::fillFileSizes(tracks, cancel, reporter);
+                ++fullCompleted;
+            }
+        };
+        LibraryCatalogCache cache(stage, fixedMtime());
+        reporter.pull = [&] { cache.invalidateEveryCatalogOn(stickRoot); };
+        cache.prefetch("rekordbox", pioneer);
+        cache.waitUntilPrefetchIdle();
+
+        assert(fullPasses == 1);
+        assert(fullCompleted == 0 && "the Full pass must not run to its end after the stick is pulled");
+        assert(reporter.statted == 3 && "no file is stat'd after the one during which the stick was pulled");
+        assert(reporter.afterPull == 0);
+        const int stattedBeforeStop = reporter.statted;
+        // Nothing of the cancelled pass is cached: a Full request reads
+        // the sizes again, all of them.
+        reporter.pull = [] {};
+        reporter.pulled = true;
+        const auto again = cache.stagedTracksFor("rekordbox", pioneer, Detail::Full);
+        assert(fullPasses == 2 && fullCompleted == 1);
+        assert(again.stage == Detail::Full && again.tracks.size() == fileCount && again.tracks[19].fileSizeBytes == 5);
+        std::cout << "stage 14 (a stick pulled mid Full stops the prefetch within one file: " << stattedBeforeStop
+                  << " stats ran, " << fileCount << " named) OK\n";
+        fs::remove_all(root);
     }
 }
 

@@ -68,14 +68,27 @@ public:
     // overload without a Detail is Full.
     enum class Detail { Tracks, Cues, Full };
 
+    // What a pass leaves for a later pass of the same entry, kept with the
+    // entry and committed with its tracks: the Tracks stage takes cached
+    // durations without looking at the audio files, and the Full stage,
+    // which stats them anyway, checks those.
+    struct StageNotes
+    {
+        // Files whose cached duration the Tracks stage took unverified.
+        std::vector<std::string> unverifiedDurationPaths;
+    };
+
     // One pass of a staged read. For Detail::Tracks, `tracks` arrives
     // empty and the pass fills it from the catalog; for Cues and Full it
     // arrives holding the previous stage's result and the pass adds to
-    // it in place. A pass that throws leaves the cache as it was: it
-    // works on a copy, so a reader unwinding halfway (a pulled stick, a
-    // cancel) never leaves a half-filled stage behind.
+    // it in place. `notes` arrives as the previous pass left it. A pass
+    // that throws leaves the cache as it was: it works on copies, so a
+    // reader unwinding halfway (a pulled stick, a cancel) never leaves a
+    // half-filled stage behind. A pass checks `cancel` at least once per
+    // file it touches.
     using StageFn = std::function<void(Detail stage, const std::string &format, const std::string &path,
-                                       std::vector<domain::Track> &tracks, application::ProgressReporter &progress,
+                                       std::vector<domain::Track> &tracks, StageNotes &notes,
+                                       application::ProgressReporter &progress,
                                        application::CancellationToken cancel)>;
     // The one-shot shape the cache had before it had stages, kept for the
     // tests that only care about hit, miss and invalidation: the scan is
@@ -130,6 +143,20 @@ public:
                                           application::CancellationToken cancel =
                                               application::CancellationToken::none());
 
+    // The tracks, and the stage the entry they came from had reached,
+    // taken together under one lock: a Tracks request served from an
+    // entry that already holds its cues says so in `stage`, and a cue pass
+    // committing a moment later cannot make the answer claim cues it does
+    // not carry. `stage` is never below the stage asked for.
+    struct StagedTracks
+    {
+        std::vector<domain::Track> tracks;
+        Detail stage = Detail::Tracks;
+    };
+    StagedTracks stagedTracksFor(const std::string &format, const std::string &path, Detail detail,
+                                 application::ProgressReporter &progress = application::NullProgressReporter::instance(),
+                                 application::CancellationToken cancel = application::CancellationToken::none());
+
     // Reads the rest of this library in the background, up to Full, one
     // catalog at a time on one worker thread for the whole cache (the FAT
     // driver and the USB queue serialise every read anyway): the prefetch
@@ -140,11 +167,6 @@ public:
     // that fails in the background is forgotten: the next foreground
     // request runs it and sees the error itself.
     void prefetch(const std::string &format, const std::string &path);
-
-    // The stage the cached entry for this catalog has reached, or nothing
-    // when there is no entry. A reader that asked for Tracks can tell
-    // from this that the cues are already in hand.
-    std::optional<Detail> stageReached(const std::string &format, const std::string &path);
 
     // Blocks until the prefetch queue is empty and the worker is idle.
     // For tests and for anything that must know the background reads are
@@ -192,6 +214,7 @@ private:
     {
         // Holds everything up to and including `stage`.
         std::vector<domain::Track> tracks;
+        StageNotes notes;
         std::chrono::system_clock::time_point mtime;
         // 0 = nothing read yet, else 1 + Detail of the last stage read.
         int stage = 0;

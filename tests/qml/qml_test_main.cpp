@@ -378,6 +378,7 @@ public:
         auto stage = [gate, trackCount, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
                                                           const std::string &format, const std::string &,
                                                           std::vector<seabass::domain::Track> &tracks,
+                                                          seabass::gui::LibraryCatalogCache::StageNotes &,
                                                           seabass::application::ProgressReporter &,
                                                           seabass::application::CancellationToken cancel) {
             using Detail = seabass::gui::LibraryCatalogCache::Detail;
