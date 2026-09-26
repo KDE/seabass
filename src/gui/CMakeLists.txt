@@ -84,6 +84,8 @@ set(SEABASS_GUI_QML_FILES
     qml/common/UnreferencedFilesNotice.qml
     qml/common/StatValue.qml
     qml/common/StatusBadge.qml
+    qml/common/StickHeaderRow.qml
+    qml/common/StickToolCards.qml
     qml/common/Subtitle.qml
     qml/common/TableHeaderLabel.qml
     qml/common/ThemePalette.qml

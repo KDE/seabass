@@ -1,0 +1,457 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import SeabassGui
+
+// The cards of one tool group for one stick, as the home screen's pane
+// shows them beside the rail: Explore, Sync, Backup or Maintain. Every
+// card keeps the rule it had in the old home list (when it shows, when
+// it is enabled, when it goes read-only and what it says then) and asks
+// for the same page with the same arguments; only the grouping is new.
+Item {
+    id: root
+    // The stick model's row (see StickHeaderRow for its roles).
+    required property var row
+    // "explore", "sync", "backup" or "maintain".
+    required property string group
+    required property var mediaController
+    required property var appSettingsController
+    required property var backupAdvisor
+    // The edit-lock registry (EditSessionRegistry; a fake in tests), or
+    // null where nothing is wired: no library is then ever locked.
+    property var editRegistry: null
+    property int columns: 2
+    property bool large: true
+
+    // Nothing to show for this row in this group: a stick with no
+    // library, or a browsed backup, in a group whose cards all need one.
+    readonly property bool empty: {
+        switch (root.group) {
+        case "explore":
+            return !(root.showBrowse || root.showStatistics || root.showDeviceProfile || root.showPerformance);
+        case "sync":
+            return !(root.showSync || root.showCreateEngine);
+        case "backup":
+            return !(root.showBackups || root.showMetadataBackup || root.showRestoreMetadata
+                     || root.showCreateBackupStick || root.showRestoreBackup);
+        case "maintain":
+            return !(root.showHousekeeping || root.showLibraryHealth || root.showFormat);
+        default:
+            return true;
+        }
+    }
+
+    // How far a card's text sits from this item's left edge, so the pane
+    // can put the stick's name and the group heading on the same line.
+    readonly property real textInset: Theme.cardPadding + Theme.iconSizeNormal + Theme.rowSpacing
+
+    signal browseRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal stickPerformanceRequested(string stickLabel, string rekordboxPath, string enginePath, string mountPoint)
+    signal engineLibraryCreatorRequested(string stickLabel, string rekordboxPath)
+    signal settingsRequested(string stickLabel, string pioneerRoot)
+    signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal backupsHubRequested(string stickLabel, string rekordboxPath, string enginePath, string mountPoint, string devicePath)
+    signal formatUsbRequested()
+    signal restoreStickBackupRequested(string mountPoint, string devicePath, string archivePath, string stickLabel)
+    signal metadataBackupRequested(string stickLabel, string rekordboxPath, string enginePath, string libraryId)
+    signal metadataRestoreRequested(string stickLabel, string rekordboxPath, string enginePath, string libraryId)
+    signal cloneStickRequested(string sourceLabel, string sourceRekordboxPath, string sourceEnginePath,
+                               string targetMountPoint, string targetLabel, bool targetHasLibrary)
+    // A read-only card clicked while another instance holds the lock:
+    // the page explains who holds it (StickListPage.explainLock).
+    signal explainLockRequested(string libraryId)
+
+    // ---- The row, read defensively: a fake row may lack a role.
+    readonly property bool hasRow: root.row !== null && root.row !== undefined
+    readonly property string label: root.hasRow ? String(root.row.label || "") : ""
+    readonly property string mountPoint: root.hasRow ? String(root.row.mountPoint || "") : ""
+    readonly property string devicePath: root.hasRow ? String(root.row.devicePath || "") : ""
+    readonly property string rekordboxPath: root.hasRow ? String(root.row.rekordboxPath || "") : ""
+    readonly property string enginePath: root.hasRow ? String(root.row.enginePath || "") : ""
+    readonly property string libraryId: root.hasRow ? String(root.row.libraryId || "") : ""
+    readonly property bool mounted: root.hasRow && root.row.mounted === true
+    readonly property bool hasRekordbox: root.hasRow && root.row.hasRekordbox === true
+    readonly property bool hasEngine: root.hasRow && root.row.hasEngine === true
+    readonly property bool isFolder: root.hasRow && root.row.isFolder === true
+    readonly property bool isBrowsedBackup: root.hasRow && root.row.isBrowsedBackup === true
+    // The kernel mounted this stick read-only, which is what a damaged
+    // filesystem looks like after an unclean unplug. Nothing can be
+    // written until it has been checked, so every card that writes goes
+    // read-only too and points at Library Health, which offers the repair.
+    readonly property bool stickReadOnly: root.hasRow && root.row.readOnly === true
+
+    readonly property bool hasKnownLibrary: root.hasRekordbox || root.hasEngine
+    // Which cards a row may offer that write: a library, and not a stick
+    // backup being browsed. Every writing card binds to this one line.
+    readonly property bool writable: root.hasKnownLibrary && !root.isBrowsedBackup
+    // Another instance is editing this stick's library: every card that
+    // would change it goes read-only.
+    readonly property bool lockedByOther: root.libraryId.length > 0 && root.editRegistry !== null
+        && root.editRegistry !== undefined && root.editRegistry.lockedByOther.indexOf(root.libraryId) >= 0
+    // What a card that writes says when the stick itself is the reason
+    // it cannot: a click opens Library Health rather than only
+    // explaining, since the repair lives there.
+    readonly property string readOnlyNote:
+        "This stick is mounted read-only: its filesystem needs checking. Library Health can do that."
+    readonly property string lockNote: "Another Seabass instance is editing this library"
+    // What the backup advisor found for this stick; null until it has looked.
+    readonly property var advice: root.backupAdvisor && root.backupAdvisor.advice
+        ? (root.backupAdvisor.advice[root.mountPoint] || null) : null
+    readonly property string adviceState: root.advice ? root.advice.state : ""
+    // The verdict stands unless the cues turn out different, and they are
+    // still being read: said beside the verdict for the seconds that takes.
+    readonly property bool cuesPending: root.advice !== null && root.advice.cuesPending === true
+    // Another mounted stick whose library could be copied onto this empty
+    // one / is a newer copy of this stick's library.
+    readonly property var cloneSource: root.advice && root.advice.cloneSource && root.advice.cloneSource.kind === "stick"
+        ? root.advice.cloneSource : null
+    readonly property var updateSource: root.advice && root.advice.updateSource && root.advice.updateSource.kind !== "none"
+        ? root.advice.updateSource : null
+    // In flight (mount, unmount, or an automatic mount) via this row's
+    // own devicePath, not the app-wide busy flag.
+    readonly property bool thisRowBusy: root.mediaController.busy
+        && root.mediaController.busyDevicePath === root.devicePath
+
+    // ---- Which card shows, one line each, the rules of the old list.
+    // Every writing card is withheld for a browsed backup (`writable`):
+    // its analysis files are in the archive, not on disk, and its
+    // directory is replaced on the next open. Browse, Statistics and
+    // Metadata Backup only read, and stay.
+    readonly property bool showBrowse: root.hasKnownLibrary
+    readonly property bool showStatistics: root.hasKnownLibrary
+    readonly property bool showDeviceProfile: root.writable
+    // Needs no library, but a stick: a browsed backup or an opened
+    // folder is on this computer, and measuring it says nothing.
+    readonly property bool showPerformance: root.mounted && !root.isBrowsedBackup && !root.isFolder
+    readonly property bool showSync: root.writable
+    // Experimental (see docs/experimental-features.md), and hidden once
+    // the stick has an Engine Library rather than shown disabled.
+    readonly property bool showCreateEngine: root.writable && !root.hasEngine
+        && root.appSettingsController.experimentalFeaturesEnabled === true
+    readonly property bool showBackups: root.writable
+    readonly property bool showMetadataBackup: root.hasKnownLibrary
+    readonly property bool showRestoreMetadata: root.writable
+    // Only when another mounted stick has a library to copy onto this
+    // empty one; restoring from this computer is Restore Backup's job.
+    readonly property bool showCreateBackupStick: !root.hasKnownLibrary && !root.isFolder && root.cloneSource !== null
+    // A folder row has no devicePath to restore a whole stick through.
+    readonly property bool showRestoreBackup: !root.hasKnownLibrary && !root.isFolder
+    readonly property bool showHousekeeping: root.writable
+    readonly property bool showLibraryHealth: root.writable
+    // There is no drive behind a folder row to erase.
+    readonly property bool showFormat: !root.isFolder
+
+    // A writing card clicked while it is read-only: a stick mounted
+    // read-only goes to Library Health, which can repair it; a library
+    // another instance holds has the lock explained.
+    function explainWriteBlock() {
+        if (root.stickReadOnly) {
+            root.libraryHealthRequested(root.label, root.rekordboxPath, root.enginePath);
+        } else {
+            root.explainLockRequested(root.libraryId);
+        }
+    }
+
+    implicitHeight: content.implicitHeight
+
+    ColumnLayout {
+        id: content
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        spacing: 0
+
+        // A group with nothing to offer this stick says so, under the
+        // heading the pane shows, rather than leaving a blank.
+        Label {
+            objectName: "nothingHereLabel"
+            Layout.fillWidth: true
+            // On the pane's one text edge, with the cards' text and the
+            // group heading above it.
+            Layout.leftMargin: root.textInset
+            visible: root.empty
+            text: "Nothing here for this stick."
+            color: Theme.textMuted
+            wrapMode: Text.WordWrap
+        }
+
+        GridLayout {
+            id: grid
+            objectName: "actionGrid"
+            Layout.fillWidth: true
+            visible: !root.empty
+            columns: Math.max(1, root.columns)
+            columnSpacing: Theme.rowSpacing
+            rowSpacing: Theme.rowSpacing
+
+            // Every column the same width, whatever each card's text
+            // would ask for on its own.
+            readonly property real cellWidth: Math.max(0, (root.width - (grid.columns - 1) * grid.columnSpacing)
+                                                          / grid.columns)
+
+            // ---- Explore
+            ActionCard {
+                objectName: "browseLibraryCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Browse Library"
+                cardSubtitle: "View tracks, playlists and cues"
+                cardIcon: "view-media-track"
+                visible: root.group === "explore" && root.showBrowse
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.browseRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "statisticsCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Library Statistics"
+                cardSubtitle: "Filesystem, library stats, and disk usage"
+                cardIcon: "office-chart-bar"
+                visible: root.group === "explore" && root.showStatistics
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.stickStatisticsRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "deviceProfileCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Device Profile"
+                readOnly: root.lockedByOther
+                onReadOnlyClicked: root.explainLockRequested(root.libraryId)
+                cardSubtitle: "View this stick's saved Rekordbox player settings"
+                cardIcon: "view-media-equalizer"
+                visible: root.group === "explore" && root.showDeviceProfile
+                enabled: root.hasRekordbox
+                onClicked: root.settingsRequested(root.label, root.rekordboxPath)
+            }
+            ActionCard {
+                objectName: "stickPerformanceCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "USB Stick Performance"
+                cardSubtitle: "Measure the stick the way a player reads it, per player generation"
+                cardIcon: "speedometer"
+                // The write test has nowhere to write on a read-only
+                // stick, and half a benchmark is worse than none.
+                readOnly: root.stickReadOnly
+                readOnlyReason: root.readOnlyNote
+                onReadOnlyClicked: root.libraryHealthRequested(root.label, root.rekordboxPath, root.enginePath)
+                visible: root.group === "explore" && root.showPerformance
+                onClicked: root.stickPerformanceRequested(root.label, root.rekordboxPath, root.enginePath,
+                                                          root.mountPoint)
+            }
+
+            // ---- Sync
+            ActionCard {
+                objectName: "syncCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Sync Cue Points"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Copy cues between DeviceLibrary and Engine"
+                cardIcon: "exchange-positions"
+                visible: root.group === "sync" && root.showSync
+                enabled: root.hasRekordbox && root.hasEngine
+                onClicked: root.syncRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "createEngineLibraryCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Create Engine Library"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Build a new Engine Library from this stick's DeviceLibrary export"
+                cardIcon: "server-database"
+                // The first feature here that fabricates a whole new
+                // database from scratch, and the one card still behind
+                // the experimental setting. A visible binding of our own
+                // replaces ActionCard's default, which is where the gate
+                // lives, so showCreateEngine restates it.
+                experimental: true
+                experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
+                visible: root.group === "sync" && root.showCreateEngine
+                enabled: root.hasRekordbox
+                onClicked: root.engineLibraryCreatorRequested(root.label, root.rekordboxPath)
+            }
+
+            // ---- Backup
+            ActionCard {
+                objectName: "backupsCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Backups"
+                readOnly: root.lockedByOther
+                onReadOnlyClicked: root.explainLockRequested(root.libraryId)
+                // The advisor's verdict on the full stick backup leads
+                // when it has one; the generic line otherwise.
+                cardSubtitle: {
+                    const pending = root.cuesPending ? " (checking cues)" : "";
+                    if (root.updateSource !== null) {
+                        return "Newer copy on " + root.updateSource.label + ": update this stick from here" + pending;
+                    }
+                    switch (root.adviceState) {
+                    case "outdated": return "Update the full stick backup: " + root.advice.detail + pending;
+                    case "behind-backup": return root.advice.detail + pending;
+                    case "current": return "Full stick backup is up to date" + pending;
+                    case "back-up-new":
+                    case "no-backups": return "No full stick backup of this library yet" + pending;
+                    case "different-library": return root.advice.detail + " Back it up as new." + pending;
+                    default: return "Back up the whole stick, and manage its backups on this computer";
+                    }
+                }
+                cardIcon: "backup"
+                visible: root.group === "backup" && root.showBackups
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.backupsHubRequested(root.label, root.rekordboxPath, root.enginePath,
+                                                    root.mountPoint, root.devicePath)
+            }
+            ActionCard {
+                objectName: "metadataBackupCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Metadata Backup"
+                cardSubtitle: "Copy this stick's cues, ratings and comments to this computer"
+                cardIcon: "document-save"
+                // Not gated on the write lock: this only ever writes to
+                // the local store, so another session editing the library
+                // is no reason to refuse a copy of what is on it.
+                visible: root.group === "backup" && root.showMetadataBackup
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.metadataBackupRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
+            }
+            ActionCard {
+                objectName: "restoreMetadataCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Restore Metadata"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Put cues from this computer back on tracks that have lost them"
+                cardIcon: "document-import"
+                visible: root.group === "backup" && root.showRestoreMetadata
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.metadataRestoreRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
+            }
+            // Copying another mounted stick's live library onto this
+            // empty one, through a fresh backup of it.
+            ActionCard {
+                objectName: "createBackupStickCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Create Backup USB Stick"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: root.cloneSource !== null ? root.cloneSource.detail : ""
+                cardIcon: "edit-copy"
+                visible: root.group === "backup" && root.showCreateBackupStick
+                // The source stick has to be mounted, which cloneSource
+                // being non-null already implies (peers are only ever
+                // mounted sticks).
+                enabled: !root.thisRowBusy && root.cloneSource !== null
+                    && root.mounted && root.cloneSource.enoughSpace !== false
+                onClicked: root.cloneStickRequested(root.cloneSource.label,
+                    root.cloneSource.rekordboxPath, root.cloneSource.enginePath,
+                    root.mountPoint, root.label, false)
+            }
+            // Restoring a backup onto an empty stick: the disaster case, a
+            // blank replacement drive. Always offered, whether or not a
+            // backup is known, and worded so it does not presuppose one:
+            // "no-backups" is a real, common state here. Not gated on
+            // `mounted`: a stick fresh out of Format USB Stick is not
+            // remounted, and the restore page mounts it itself.
+            ActionCard {
+                objectName: "restoreBackupCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Restore Backup"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: root.adviceState === "restore"
+                    ? "Restore " + root.advice.backupLabel + "'s library onto this stick"
+                    : "No known stick backups yet. Browse for a backup file to restore"
+                cardIcon: "document-revert"
+                visible: root.group === "backup" && root.showRestoreBackup
+                enabled: !root.thisRowBusy
+                onClicked: root.restoreStickBackupRequested(root.mountPoint, root.devicePath,
+                    root.adviceState === "restore" ? root.advice.backupPath : "",
+                    root.label)
+            }
+
+            // ---- Maintain
+            ActionCard {
+                objectName: "housekeepingCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Housekeeping"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Duplicate stats, copy cues between copies, and clean up"
+                cardIcon: "edit-clear-all"
+                visible: root.group === "maintain" && root.showHousekeeping
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.duplicateTracksHubRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "libraryHealthCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Library Health"
+                // Not read-only on a read-only stick: this is where that
+                // stick's repair lives.
+                readOnly: root.lockedByOther
+                onReadOnlyClicked: root.explainLockRequested(root.libraryId)
+                cardSubtitle: "Find rows whose file is missing and repair or clean them up"
+                cardIcon: "kt-check-data"
+                visible: root.group === "maintain" && root.showLibraryHealth
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.libraryHealthRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "formatUsbCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Format USB Stick"
+                cardSubtitle: "Erase and prepare this drive for CDJs, XDJs, and Denon Engine players"
+                cardIcon: "edit-delete-shred"
+                // The one action here that can permanently erase a drive,
+                // so it keeps its own warnings and its type-to-confirm
+                // dialog, and it is offered whether or not the stick has
+                // a library: it is the action for a stick with nothing
+                // recognizable on it yet.
+                visible: root.group === "maintain" && root.showFormat
+                enabled: !root.mediaController.busy
+                onClicked: root.formatUsbRequested()
+            }
+        }
+    }
+}
