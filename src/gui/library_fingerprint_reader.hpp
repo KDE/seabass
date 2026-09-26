@@ -8,6 +8,7 @@
 
 #include <optional>
 
+#include "application/ports/cancellation_token.hpp"
 #include "domain/library_fingerprint.hpp"
 
 namespace seabass::gui
@@ -16,8 +17,12 @@ namespace seabass::gui
 // The content identity of the library on a stick, read through
 // LibraryCatalogCache from whichever of the two catalogs exist
 // (rekordboxPath: the PIONEER folder; enginePath: the Engine Library
-// folder; either may be empty). nullopt when neither could be read: the
-// callers then fall back to the hardware identifier and the label.
+// folder; either may be empty). A path is given only for a catalog that
+// is there, so nullopt whenever one that was given could not be read
+// (or the read was cancelled), and when neither was given: a fingerprint
+// of the other catalog alone would describe half the library, and read
+// as "a different library" about a stick nobody changed. The callers
+// then fall back to the hardware identifier and the label.
 // Read-only, safe on a worker thread; shared by the stick backup, the
 // advisor and the clone controller so all three agree on what "this
 // library" means.
@@ -28,23 +33,29 @@ namespace seabass::gui
 // one ANLZ file per track, so a Tracks read of a stick with a rekordbox
 // catalog comes back with cuesKnown false. Cues reads those too: the
 // whole fingerprint, for as long as the Cues stage takes.
+//
+// cancel: handed to the cache, which checks it while this waits for a
+// pass another thread is running and in the passes this call runs
+// itself. A cancelled read returns nullopt.
 enum class FingerprintPass
 {
     Tracks,
     Cues,
 };
-std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &rekordboxPath, const QString &enginePath,
-                                                                 FingerprintPass pass = FingerprintPass::Cues);
+std::optional<domain::LibraryFingerprint> readLibraryFingerprint(
+    const QString &rekordboxPath, const QString &enginePath, FingerprintPass pass = FingerprintPass::Cues,
+    application::CancellationToken cancel = application::CancellationToken::none());
 
 // What the advisor keeps once its second, Cues, read of a stick is back:
-// that read's fingerprint when it came back whole, with its cues, and
-// with the tracks and playlists the first read saw; otherwise the first read's, cuesKnown still false, so the verdict it
+// that read's fingerprint when there is one and it knows its cues;
+// otherwise the first read's, cuesKnown still false, so the verdict it
 // gave stands, still marked as waiting on the cues. A second read that
 // failed (a stick pulled between the two, a catalog briefly unreadable)
-// returns nothing, or, on a stick with both catalogs, only Engine's
-// fingerprint: taking either would turn "up to date" into "no backup of
-// this library yet" or "a different library" about a stick nobody
-// changed.
+// returns nothing, since readLibraryFingerprint() never answers with
+// half a library. No comparison with the first read: the Full stage may
+// have filled in a length between the two, and a probed length is not
+// part of a track's identity, but a second read that differs for any
+// reason is still the newer word on the stick.
 std::optional<domain::LibraryFingerprint> fingerprintAfterCuesPass(const std::optional<domain::LibraryFingerprint> &first,
                                                                    const std::optional<domain::LibraryFingerprint> &second);
 

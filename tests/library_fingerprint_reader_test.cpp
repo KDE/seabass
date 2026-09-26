@@ -5,9 +5,11 @@
 // The fingerprint reader's two decisions about cues:
 //
 // - fingerprintAfterCuesPass(): what the backup advisor keeps once its
-//   second read of a stick is back. Only a whole fingerprint, cues known,
-//   of the library the first read saw, replaces the first; a failed or
-//   short second read leaves the first standing, still pending.
+//   second read of a stick is back. A fingerprint that knows its cues
+//   replaces the first; a failed second read leaves the first standing,
+//   still pending.
+// - An unreadable catalog, or a cancelled read, gives no fingerprint at
+//   all, never one of the other catalog alone.
 // - readLibraryFingerprint(): whether the cues are known comes with the
 //   tracks from the catalog cache, from one look at its entry. Over a
 //   copy of the committed fixture: a Tracks read of a cold rekordbox
@@ -16,6 +18,7 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <set>
@@ -66,8 +69,7 @@ void cuesPassCases()
     const LibraryFingerprint first = fingerprintLibrary(library(10, false), /*cuesKnown=*/false);
     const LibraryFingerprint whole = fingerprintLibrary(library(10, true), true);
     const LibraryFingerprint wholeButNoCuesKnown = fingerprintLibrary(library(10, true), false);
-    // One catalog of two unreadable by the second read: fewer tracks,
-    // and "cues known" because the catalog that was read keeps its own.
+    // Fewer tracks than the first read, cues known.
     const LibraryFingerprint shortRead = fingerprintLibrary(library(6, true), true);
     // A stick whose tracks changed between the two reads.
     auto changed = library(10, true);
@@ -83,11 +85,17 @@ void cuesPassCases()
     kept = fingerprintAfterCuesPass(first, wholeButNoCuesKnown);
     assert(kept && !kept->cuesKnown && kept->cueHashes.empty() && "a second read without its cues keeps the first");
 
+    // Anything the second read says with its cues known is taken, even
+    // where its tracks differ from the first: the Full stage may have
+    // filled a length in between, and a stick changed in between is best
+    // described by the newer read. (A short read cannot arrive here:
+    // readLibraryFingerprint() gives nothing rather than one catalog of
+    // two, see unreadableCatalogCases().)
     kept = fingerprintAfterCuesPass(first, shortRead);
-    assert(kept && kept->trackCount == 10 && !kept->cuesKnown && "a short second read keeps the first");
+    assert(kept && *kept == shortRead && "a second read with its cues known is taken, whatever its tracks");
 
     kept = fingerprintAfterCuesPass(first, changedLibrary);
-    assert(kept && !kept->cuesKnown && "a second read of a different library keeps the first");
+    assert(kept && *kept == changedLibrary && kept->cuesKnown);
 
     kept = fingerprintAfterCuesPass(std::nullopt, whole);
     assert(kept && *kept == whole && "with no first fingerprint, a whole second one is taken");
@@ -120,6 +128,45 @@ void stageFromTheCacheCases(const fs::path &fixture)
     assert(*served == *withCues && "and says what the Cues read said");
     std::cout << "readLibraryFingerprint: the stage comes from the entry that served the tracks OK ("
               << served->trackCount << " tracks, " << served->cuedTrackCount << " with cues)\n";
+    seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
+    fs::remove_all(stick);
+}
+
+// A stick with both catalogs whose rekordbox catalog cannot be read: no
+// fingerprint, not Engine's alone (which, against a backup of both,
+// reads as a different library). A cancelled read likewise gives none.
+void unreadableCatalogCases(const fs::path &fixture)
+{
+    const fs::path stick = seabass::testing::scratchRoot() / "library_fingerprint_reader_test_unreadable";
+    fs::remove_all(stick);
+    fs::create_directories(stick);
+    fs::copy(fixture / "rekordbox", stick / "PIONEER", fs::copy_options::recursive);
+    fs::copy(fixture / "engine", stick / "Engine Library", fs::copy_options::recursive);
+    const QString pioneer = QString::fromStdString(seabass::pathToUtf8(stick / "PIONEER"));
+    const QString engine = QString::fromStdString(seabass::pathToUtf8(stick / "Engine Library"));
+
+    const auto whole = seabass::gui::readLibraryFingerprint(pioneer, engine, seabass::gui::FingerprintPass::Cues);
+    assert(whole && whole->trackCount > 0 && "both catalogs read: the precondition");
+    const auto engineAlone = seabass::gui::readLibraryFingerprint(QString(), engine, seabass::gui::FingerprintPass::Cues);
+    assert(engineAlone && engineAlone->trackCount > 0 && engineAlone->trackCount < whole->trackCount);
+
+    seabass::application::CancellationToken cancel;
+    cancel.cancel();
+    seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
+    assert(!seabass::gui::readLibraryFingerprint(pioneer, engine, seabass::gui::FingerprintPass::Tracks, cancel)
+           && "a cancelled read gives no fingerprint");
+
+    // Garbage where export.pdb was: the rekordbox read throws.
+    {
+        std::ofstream pdb(stick / "PIONEER" / "rekordbox" / "export.pdb", std::ios::binary | std::ios::trunc);
+        pdb << "not a pdb";
+    }
+    seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
+    for (const auto pass : {seabass::gui::FingerprintPass::Tracks, seabass::gui::FingerprintPass::Cues}) {
+        const auto read = seabass::gui::readLibraryFingerprint(pioneer, engine, pass);
+        assert(!read && "an unreadable catalog gives no fingerprint, not the other one's alone");
+    }
+    std::cout << "readLibraryFingerprint: an unreadable or cancelled catalog gives no fingerprint OK\n";
     seabass::gui::LibraryCatalogCache::instance().invalidateEveryCatalogOn(seabass::pathToUtf8(stick));
     fs::remove_all(stick);
 }
@@ -196,6 +243,7 @@ int main(int argc, char **argv)
     }
     cuesPassCases();
     stageFromTheCacheCases(seabass::pathFromUtf8(argv[1]));
+    unreadableCatalogCases(seabass::pathFromUtf8(argv[1]));
 #ifdef SEABASS_TEST_HAVE_PROBE
     durationStageCases(seabass::pathFromUtf8(argv[1]));
 #else
