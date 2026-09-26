@@ -91,15 +91,8 @@ std::string cueColor(Anlz::cue_extended_entry_t &cue)
 // they sit; a memory cue has no slot, so it is the same cue when it is
 // within PositionToleranceMs. PCO2 wins either way -- it is the list
 // rekordbox refines, and the one modern players read.
-void appendLegacyCues(const std::string &anlzBytes, std::vector<domain::CuePoint> &cues)
+void appendLegacyCues(Anlz &anlz, std::vector<domain::CuePoint> &cues)
 {
-    if (anlzBytes.empty()) {
-        return;
-    }
-    std::istringstream ifs(anlzBytes, std::ios::binary);
-    kaitai::kstream ks(&ifs);
-    Anlz anlz(&ks);
-
     auto alreadyKnown = [&cues](const domain::CuePoint &candidate) {
         for (const auto &have : cues) {
             if (have.kind != candidate.kind) {
@@ -191,8 +184,16 @@ std::vector<domain::CuePoint> readCues(const std::string &anlzBytes, const std::
             cues.push_back(std::move(cp));
         }
     }
-    appendLegacyCues(anlzBytes, cues);
-    appendLegacyCues(datBytes, cues);
+    // The same parse: parsing the .EXT a second time for its legacy list
+    // was half of this function's CPU, and every section, waveforms
+    // included, is materialised by a parse.
+    appendLegacyCues(anlz, cues);
+    if (!datBytes.empty()) {
+        std::istringstream datStream(datBytes, std::ios::binary);
+        kaitai::kstream datKs(&datStream);
+        Anlz dat(&datKs);
+        appendLegacyCues(dat, cues);
+    }
     return cues;
 }
 
