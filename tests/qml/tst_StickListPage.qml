@@ -307,6 +307,40 @@ TestCase {
         saveScreenshot(page, "stick-list-update");
     }
 
+    // An advisor whose advice notifies, like the real one: the stick
+    // list's line follows it as the second step lands.
+    Component {
+        id: notifyingAdvisorComponent
+        QtObject {
+            property var advice: ({})
+            property var pending: []
+            function assess(l, m, r, e) {}
+            function reassessAll() {}
+            function forget(m) {}
+        }
+    }
+
+    // The verdict with "checking cues" beside it while the cue pass runs,
+    // the plain verdict once it has landed.
+    function test_backupsLineSaysCheckingCuesWhilePending() {
+        const pendingAdvice = {};
+        pendingAdvice["/media/MAIN"] = makeAdvice({state: "current", detail: "Backup is up to date.", cuesPending: true});
+        const advisor = createTemporaryObject(notifyingAdvisorComponent, testCase, {advice: pendingAdvice});
+        const page = makePage([makeStick({})], {}, {backupAdvisor: advisor});
+        const card = findCard(page, "/media/MAIN", "Backups");
+        verify(card !== null);
+        compare(card.cardSubtitle, "Full stick backup is up to date (checking cues)");
+        saveScreenshot(page, "stick-list-checking-cues");
+        const settled = {};
+        settled["/media/MAIN"] = makeAdvice({state: "current", detail: "Backup is up to date.", cuesPending: false});
+        advisor.advice = settled;
+        compare(card.cardSubtitle, "Full stick backup is up to date");
+        const noBackup = {};
+        noBackup["/media/MAIN"] = makeAdvice({cuesPending: true});
+        advisor.advice = noBackup;
+        compare(card.cardSubtitle, "No full stick backup of this library yet (checking cues)");
+    }
+
     function test_emptyStickRestoreFallsBackToDiskBackupWhenNoPeer() {
         var advice = {};
         advice["/media/MAIN"] = makeAdvice({state: "restore", backupPath: "/b/OLD.zip", backupLabel: "OLD",

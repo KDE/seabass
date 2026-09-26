@@ -8,9 +8,12 @@
 #include <QDateTime>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <algorithm>
 #include <filesystem>
 #include <set>
+#include <utility>
 
+#include "gui/library_catalog_cache.hpp"
 #include "gui/library_fingerprint_reader.hpp"
 #include "gui/future_result.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
@@ -31,6 +34,7 @@ using application::StickBackupDescription;
 struct BackupAdvisorController::Result
 {
     QString mountPoint;
+    Request request;
     StickFacts facts;
     std::vector<StickBackupDescription> backups;
 };
@@ -41,6 +45,39 @@ namespace
 QString isoTime(std::int64_t unix)
 {
     return unix > 0 ? QDateTime::fromSecsSinceEpoch(unix).toString(Qt::ISODate) : QString();
+}
+
+// Whether this advice stands only for as long as nobody's cues turn out
+// different: this stick's fingerprint, or a peer's, is still missing its
+// cues, and against the backup the verdict came from, or against a peer
+// stick, everything else is identical. Tracks or playlists that differ
+// settle it without the cues (matchFingerprints() answers Different at
+// once), and so does a verdict no fingerprint was compared for.
+bool cuesPendingFor(const StickBackupAdviceInput &input, const StickBackupAdvice &advice)
+{
+    if (!input.liveFingerprint) {
+        return false;
+    }
+    const auto hangsOnCues = [&input](const domain::LibraryFingerprint &other) {
+        return domain::matchFingerprints(*input.liveFingerprint, other) == domain::FingerprintMatch::IdenticalSoFar;
+    };
+    if (!advice.backupPath.empty()) {
+        for (const StickBackupDescription &backup : input.backups) {
+            if (backup.archivePath != advice.backupPath) {
+                continue;
+            }
+            const std::optional<domain::LibraryFingerprint> stored = domain::LibraryFingerprint::parse(backup.libraryFingerprint);
+            if (stored && hangsOnCues(*stored)) {
+                return true;
+            }
+        }
+    }
+    for (const StickBackupAdviceInput::PeerStick &peer : input.peers) {
+        if (peer.fingerprint && hangsOnCues(*peer.fingerprint)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -68,15 +105,29 @@ void BackupAdvisorController::setBackupDirectory(const QString &directory)
 QStringList BackupAdvisorController::pending() const
 {
     QStringList mountPoints;
-    if (!m_running.isEmpty()) {
+    if (!m_running.isEmpty() && m_runningStep == Step::Facts) {
         mountPoints << m_running;
     }
     for (const Request &queued : m_queue) {
-        if (!mountPoints.contains(queued.mountPoint)) {
+        if (queued.step == Step::Facts && !mountPoints.contains(queued.mountPoint)) {
             mountPoints << queued.mountPoint;
         }
     }
     return mountPoints;
+}
+
+void BackupAdvisorController::enqueue(const Request &request)
+{
+    // Every stick's first step before any stick's second: the first is
+    // what the stick list shows a verdict from, and the second only waits
+    // for a cue pass the catalog cache is running anyway.
+    if (request.step == Step::Cues) {
+        m_queue.push_back(request);
+        return;
+    }
+    const auto firstCues = std::find_if(m_queue.begin(), m_queue.end(),
+                                        [](const Request &queued) { return queued.step == Step::Cues; });
+    m_queue.insert(firstCues, request);
 }
 
 void BackupAdvisorController::assess(const QString &stickLabel, const QString &mountPoint, const QString &rekordboxPath,
@@ -85,15 +136,22 @@ void BackupAdvisorController::assess(const QString &stickLabel, const QString &m
     if (mountPoint.isEmpty()) {
         return;
     }
-    const Request request{stickLabel, mountPoint, rekordboxPath, enginePath};
+    const Request request{Step::Facts, stickLabel, mountPoint, rekordboxPath, enginePath};
     m_known[mountPoint] = request;
-    for (Request &queued : m_queue) {
-        if (queued.mountPoint == mountPoint) {
-            queued = request;
+    for (auto queued = m_queue.begin(); queued != m_queue.end(); ++queued) {
+        if (queued->mountPoint != mountPoint) {
+            continue;
+        }
+        if (queued->step == Step::Facts) {
+            *queued = request;
             return;
         }
+        // A second step still waiting: the first step queued now reads
+        // everything again and queues its own second step if it needs one.
+        m_queue.erase(queued);
+        break;
     }
-    m_queue.push_back(request);
+    enqueue(request);
     if (!m_running.isEmpty()) {
         // Queued behind the running pass: startNext() below does nothing
         // yet, so this is the only word that the stick is now waiting.
@@ -112,6 +170,14 @@ void BackupAdvisorController::reassessAll()
 void BackupAdvisorController::forget(const QString &mountPoint)
 {
     m_known.remove(mountPoint);
+    // A second step for a stick that is gone would only read a catalog
+    // that is not there any more.
+    const auto dropped = std::erase_if(m_queue, [&mountPoint](const Request &queued) {
+        return queued.step == Step::Cues && queued.mountPoint == mountPoint;
+    });
+    if (dropped > 0 && !busy()) {
+        emit busyChanged();
+    }
     const bool hadFacts = m_facts.remove(mountPoint) > 0;
     const bool hadAdvice = m_advice.remove(mountPoint) > 0;
     if (hadFacts || hadAdvice) {
@@ -128,11 +194,29 @@ void BackupAdvisorController::startNext()
     const Request request = m_queue.front();
     m_queue.erase(m_queue.begin());
     m_running = request.mountPoint;
+    m_runningStep = request.step;
+    if (request.step == Step::Cues) {
+        // The catalog cache's prefetch, started by the first step, is
+        // reading the cues already: this waits for that pass rather than
+        // starting another, and returns at once if it is done.
+        m_watcher.setFuture(QtConcurrent::run([request]() {
+            auto result = std::make_shared<Result>();
+            result->mountPoint = request.mountPoint;
+            result->request = request;
+            result->facts.fingerprint =
+                readLibraryFingerprint(request.rekordboxPath, request.enginePath, FingerprintPass::Cues);
+            return result;
+        }));
+        emit busyChanged();
+        emit pendingChanged();
+        return;
+    }
     const fs::path directory = pathFromQString(m_backupDirectory);
     m_watcher.setFuture(QtConcurrent::run([request, directory]() {
         namespace stick_backup = infrastructure::stick_backup;
         auto result = std::make_shared<Result>();
         result->mountPoint = request.mountPoint;
+        result->request = request;
         StickFacts &facts = result->facts;
 
         facts.hasLibrary = !request.rekordboxPath.isEmpty() || !request.enginePath.isEmpty();
@@ -144,7 +228,17 @@ void BackupAdvisorController::startNext()
         facts.usedBytes = hardware.totalBytes > hardware.freeBytes ? hardware.totalBytes - hardware.freeBytes : 0;
         const fs::path root = pathFromQString(request.mountPoint);
         if (facts.hasLibrary) {
-            facts.fingerprint = readLibraryFingerprint(request.rekordboxPath, request.enginePath);
+            // The catalogs alone: the advice goes out on these, and the
+            // cue pass the second step waits for runs in the cache's own
+            // background worker meanwhile, then the file sizes the other
+            // pages want.
+            facts.fingerprint = readLibraryFingerprint(request.rekordboxPath, request.enginePath, FingerprintPass::Tracks);
+            for (const auto &[format, path] :
+                 {std::pair{"rekordbox", request.rekordboxPath}, std::pair{"engine", request.enginePath}}) {
+                if (!path.isEmpty()) {
+                    LibraryCatalogCache::instance().prefetch(format, path.toStdString());
+                }
+            }
             facts.catalogModifiedAtUnix = stick_backup::libraryCatalogModifiedAt(root);
         }
         if (!directory.empty()) {
@@ -183,11 +277,33 @@ void BackupAdvisorController::onFinished()
     // colour on the stick list, so a stick that could not be read this
     // pass just keeps whatever advice it had (or none) rather than
     // interrupting anything.
+    //
+    // A second step whose task failed leaves the first step's advice up,
+    // marked pending, until the next assessment of that stick.
     const std::shared_ptr<Result> result = takeResult(m_watcher);
-    if (result) {
+    if (result && result->request.step == Step::Facts) {
         m_facts[result->mountPoint] = result->facts;
         m_backups = result->backups;
+        const bool factsQueued = std::any_of(m_queue.begin(), m_queue.end(), [&result](const Request &queued) {
+            return queued.mountPoint == result->mountPoint && queued.step == Step::Facts;
+        });
+        // Queued before m_running is cleared below, so busy never reads
+        // false between the two steps.
+        if (result->facts.fingerprint && !result->facts.fingerprint->cuesKnown && !factsQueued
+            && m_known.contains(result->mountPoint)) {
+            Request cues = result->request;
+            cues.step = Step::Cues;
+            enqueue(cues);
+        }
         recomputeAdvice();
+    } else if (result) {
+        // Only onto facts that are still there: forget() between the two
+        // steps means the stick is gone.
+        const auto facts = m_facts.find(result->mountPoint);
+        if (facts != m_facts.end()) {
+            facts->fingerprint = result->facts.fingerprint;
+            recomputeAdvice();
+        }
     }
     m_running.clear();
     // Only when nothing else starts: startNext() says it for the next pass,
@@ -275,6 +391,7 @@ void BackupAdvisorController::recomputeAdvice()
         map["cloneSource"] = sourceToVariant(result.cloneSource);
         map["updateSource"] = sourceToVariant(result.updateSource);
         map["diverged"] = result.diverged;
+        map["cuesPending"] = cuesPendingFor(input, result);
         advice[it.key()] = map;
     }
     m_advice = std::move(advice);

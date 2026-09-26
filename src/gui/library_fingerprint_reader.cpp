@@ -5,6 +5,7 @@
 #include "library_fingerprint_reader.hpp"
 
 #include <exception>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -14,18 +15,25 @@
 namespace seabass::gui
 {
 
-std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &rekordboxPath, const QString &enginePath)
+std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &rekordboxPath, const QString &enginePath,
+                                                                 FingerprintPass pass)
 {
+    // The fingerprint wants titles, artists, durations, playlists and cue
+    // positions: never a file size, so never the Full stage.
+    const LibraryCatalogCache::Detail detail =
+        pass == FingerprintPass::Tracks ? LibraryCatalogCache::Detail::Tracks : LibraryCatalogCache::Detail::Cues;
     std::vector<domain::Track> tracks;
     bool anyRead = false;
+    bool rekordboxRead = false;
     for (const auto &[format, path] : {std::pair{"rekordbox", rekordboxPath}, std::pair{"engine", enginePath}}) {
         if (path.isEmpty()) {
             continue;
         }
         try {
-            std::vector<domain::Track> read = LibraryCatalogCache::instance().tracksFor(format, path.toStdString());
+            std::vector<domain::Track> read = LibraryCatalogCache::instance().tracksFor(format, path.toStdString(), detail);
             tracks.insert(tracks.end(), read.begin(), read.end());
             anyRead = true;
+            rekordboxRead = rekordboxRead || std::string_view(format) == "rekordbox";
         } catch (const std::exception &) {
             // Unreadable catalog: the other one may still do.
         }
@@ -33,7 +41,12 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
     if (!anyRead) {
         return std::nullopt;
     }
-    return domain::fingerprintLibrary(tracks);
+    // Engine's cues are in its catalog, so a Tracks read of an Engine-only
+    // stick is already the whole fingerprint. rekordbox's are not: its
+    // tracks may carry cues here (a cache that had read further already),
+    // but whether all of them do is what the Cues stage is for.
+    const bool cuesKnown = pass == FingerprintPass::Cues || !rekordboxRead;
+    return domain::fingerprintLibrary(tracks, cuesKnown);
 }
 
 std::optional<domain::LibraryFingerprint> readLibraryFingerprintUncached(const QString &rekordboxPath,

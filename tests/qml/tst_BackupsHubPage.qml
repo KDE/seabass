@@ -295,6 +295,70 @@ TestCase {
         compare(overlay.visible, false, "a later pass for another stick is not this page's wait");
     }
 
+    // Advice whose cues are still being read: the verdict stands, with
+    // "checking cues" beside it, and no overlay over it; the advisor has
+    // taken this stick out of pending already. Gone once the cues land.
+    function test_checkingCuesBesideTheVerdict() {
+        const advice = upToDateAdvice();
+        advice["/media/MAIN"].cuesPending = true;
+        const advisor = createTemporaryObject(fakeAdvisorComponent, testCase, {pending: [], advice: advice});
+        const page = makePage({}, {backupAdvisor: advisor});
+        const card = findChild(page, "fullStickBackupCard");
+        compare(card.cardSubtitle, "Full stick backup is up to date (checking cues)");
+        compare(findChild(page, "scanOverlay").visible, false, "a spinner would hide the verdict");
+        saveScreenshot(page, "backups-hub-checking-cues");
+        advisor.advice = upToDateAdvice();
+        compare(card.cardSubtitle, "Full stick backup is up to date");
+
+        const outdated = {};
+        outdated["/media/MAIN"] = {state: "outdated", detail: "The library has changed since its last backup.",
+                                   cloneSource: noSource(), updateSource: noSource(), diverged: false, cuesPending: true};
+        advisor.advice = outdated;
+        compare(card.cardSubtitle, "Update the full stick backup: The library has changed since its last backup. (checking cues)");
+    }
+
+    // tests/qml/ -> tests/fixtures/anonymized_library/rekordbox, the
+    // committed library, read only (the advisor never writes).
+    readonly property string fixtureRekordbox: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library/rekordbox").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    // The real advisor, two sticks carrying the same rekordbox library:
+    // each one's first step publishes advice at once, and while either
+    // side's cues are still to come the two only match "so far", so both
+    // pieces of advice say cuesPending, with neither stick in pending any
+    // more and busy still true. The second steps settle it: both false,
+    // busy false. Holds whether the cache's stages are real or every stage
+    // is read in full: the steps are the advisor's own.
+    function test_realAdvisorTwoStepsOverTheFixture() {
+        const advisor = createTemporaryObject(realAdvisorComponent, testCase);
+        const a = "/nonexistent/seabass-cues-test/A";
+        const b = "/nonexistent/seabass-cues-test/B";
+        const seen = [];
+        const snapshot = function(signal) {
+            const pendingA = advisor.advice[a] ? advisor.advice[a].cuesPending : undefined;
+            const pendingB = advisor.advice[b] ? advisor.advice[b].cuesPending : undefined;
+            seen.push({signal: signal, a: pendingA, b: pendingB, pending: advisor.pending.slice(), busy: advisor.busy});
+        };
+        advisor.adviceChanged.connect(function() { snapshot("advice"); });
+        advisor.pendingChanged.connect(function() { snapshot("pending"); });
+        advisor.assess("A", a, testCase.fixtureRekordbox, "");
+        advisor.assess("B", b, testCase.fixtureRekordbox, "");
+        tryVerify(function() { return !advisor.busy; }, 60000);
+        const trace = JSON.stringify(seen);
+        const provisional = seen.filter(function(s) {
+            return s.a === true && s.b === true && s.pending.length === 0;
+        });
+        verify(provisional.length > 0, "both verdicts up, both checking cues, neither pending: " + trace);
+        compare(provisional[0].busy, true, "busy covers the second step: " + trace);
+        const advice = seen.filter(function(s) { return s.signal === "advice"; });
+        compare(advice.length, 4, "two first steps and two second steps: " + trace);
+        compare(advice[3].a, false, trace);
+        compare(advice[3].b, false, trace);
+        compare(advisor.pending.length, 0);
+    }
+
     // The real advisor says it is busy when it says anything: it used to
     // announce the change before the pass was running, so a page asking on
     // the signal heard "not busy" and never heard otherwise.
