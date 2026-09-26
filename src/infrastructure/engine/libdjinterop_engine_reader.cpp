@@ -18,6 +18,7 @@
 #include <sqlite3.h>
 
 #include <djinterop/djinterop.hpp>
+#include <djinterop/track_snapshot.hpp>
 
 namespace seabass::infrastructure::engine
 {
@@ -104,6 +105,39 @@ void collectPlaylistMemberships(const djinterop::playlist &pl, const std::string
 // as a second, independent, read-only connection to the same m.db
 // djinterop::engine::load_database() above already has open, never
 // written through.
+// A snapshot assembled from the per-field getters, for a row whose
+// snapshot() threw. Each getter is its own statement and its own
+// try/catch: a field that cannot be read is left unset and named in a
+// warning, and the rest of the track reads as usual.
+djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &progress, const djinterop::track &tr)
+{
+    djinterop::track_snapshot snap;
+    const int64_t id = tr.id();
+    const auto field = [&](const char *name, auto &&read) {
+        try {
+            read();
+        } catch (const std::exception &e) {
+            progress.warn("track id=" + std::to_string(id) + ": " + name + " unreadable (" + e.what() + ")");
+        }
+    };
+    field("title", [&] { snap.title = tr.title(); });
+    field("artist", [&] { snap.artist = tr.artist(); });
+    field("album", [&] { snap.album = tr.album(); });
+    field("relative_path", [&] { snap.relative_path = tr.relative_path(); });
+    field("bpm", [&] { snap.bpm = tr.bpm(); });
+    field("bitrate", [&] { snap.bitrate = tr.bitrate(); });
+    field("key", [&] { snap.key = tr.key(); });
+    field("duration", [&] { snap.duration = tr.duration(); });
+    field("last_played_at", [&] { snap.last_played_at = tr.last_played_at(); });
+    field("rating", [&] { snap.rating = tr.rating(); });
+    field("comment", [&] { snap.comment = tr.comment(); });
+    field("sample_rate", [&] { snap.sample_rate = tr.sample_rate(); });
+    field("hot_cues", [&] { snap.hot_cues = tr.hot_cues(); });
+    field("loops", [&] { snap.loops = tr.loops(); });
+    field("main_cue", [&] { snap.main_cue = tr.main_cue(); });
+    return snap;
+}
+
 std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &engineLibraryPath)
 {
     std::unordered_map<int64_t, std::string> result;
@@ -347,18 +381,43 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
     std::vector<domain::Track> tracks;
     for (auto &tr : allTracks) {
         int64_t id = tr.id();
+        // One read of the row, not one statement per field: each getter
+        // on a djinterop::track is its own SELECT, and every statement
+        // outside a transaction has SQLite look for a hot journal first,
+        // two stats on the stick. Eighteen getters over 1564 tracks were
+        // 53,000 such stats and 0.6 s of a warm read. snapshot() reads
+        // the row once and hands every field back.
+        djinterop::track_snapshot snap;
+        try {
+            snap = tr.snapshot();
+        } catch (const std::exception &e) {
+            // snapshot() decodes every blob of the row, waveforms included,
+            // and throws for one it cannot (a real stick had a track with a
+            // truncated overview waveform). The track is not lost over
+            // that: its fields are read one by one instead, the way this
+            // reader always did, each on its own so one bad field costs
+            // only itself.
+            m_progress->warn("track id=" + std::to_string(id) + ": read field by field (" + e.what() + ")");
+            snap = snapshotFromGetters(*m_progress, tr);
+        }
         domain::Track track;
         track.sourceId = std::to_string(id);
         track.format = "engine";
-        track.title = safeGet<std::string>(*m_progress, id, "title", [&] { return tr.title().value_or(""); });
-        track.artist = safeGet<std::string>(*m_progress, id, "artist", [&] { return tr.artist().value_or(""); });
-        track.album = safeGet<std::string>(*m_progress, id, "album", [&] { return tr.album().value_or(""); });
-        track.filename = safeGet<std::string>(*m_progress, id, "filename", [&] { return tr.filename(); });
+        track.title = snap.title.value_or("");
+        track.artist = snap.artist.value_or("");
+        track.album = snap.album.value_or("");
+        track.filename = safeGet<std::string>(*m_progress, id, "filename", [&] {
+            // The last path component, as libdjinterop's own filename()
+            // gives it: the part after the last slash of the relative path.
+            const std::string relative = snap.relative_path.value_or("");
+            const auto slash = relative.find_last_of('/');
+            return slash == std::string::npos ? relative : relative.substr(slash + 1);
+        });
         track.filePath = safeGet<std::string>(*m_progress, id, "relative_path", [&] {
             // No relative path names no file. Joined anyway it would name the
             // Engine Library folder itself -- one path shared by every such
             // row, which anything keyed on the file would take for one track.
-            const std::string relative = tr.relative_path();
+            const std::string relative = snap.relative_path.value_or("");
             if (relative.empty()) {
                 return std::string();
             }
@@ -367,10 +426,10 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
         });
         // No size: Engine does not record one, and a stat per audio file
         // is a stage of its own (application::fillFileSizes).
-        track.bpm = safeGet<double>(*m_progress, id, "bpm", [&] { return tr.bpm().value_or(0.0); });
-        track.bitrate = safeGet<int>(*m_progress, id, "bitrate", [&] { return tr.bitrate().value_or(0); });
+        track.bpm = snap.bpm.value_or(0.0);
+        track.bitrate = snap.bitrate.value_or(0);
         track.key = safeGet<std::string>(*m_progress, id, "key", [&] {
-            auto k = tr.key();
+            auto k = snap.key;
             if (!k) {
                 return std::string();
             }
@@ -378,20 +437,16 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
             oss << *k;
             return oss.str();
         });
-        track.durationSeconds = safeGet<double>(*m_progress, id, "duration", [&] {
-            auto duration = tr.duration();
-            return duration ? duration->count() / 1000.0 : 0.0;
-        });
-        track.lastPlayedAt = safeGet<std::optional<std::chrono::system_clock::time_point>>(
-            *m_progress, id, "last_played_at", [&] { return tr.last_played_at(); });
+        track.durationSeconds = snap.duration ? snap.duration->count() / 1000.0 : 0.0;
+        track.lastPlayedAt = snap.last_played_at;
         track.rating = safeGet<std::optional<int>>(*m_progress, id, "rating", [&] {
-            auto r = tr.rating();
+            auto r = snap.rating;
             if (!r || *r <= 0) {
                 return std::optional<int>{};
             }
             return std::optional<int>{*r / 20};
         });
-        track.comment = safeGet<std::string>(*m_progress, id, "comment", [&] { return tr.comment().value_or(""); });
+        track.comment = snap.comment.value_or("");
         auto playlistsIt = playlistsByTrackId.find(id);
         if (playlistsIt != playlistsByTrackId.end()) {
             track.playlists = playlistsIt->second;
@@ -409,8 +464,7 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
             track.metadataModifiedAt = lastEditIt->second;
         }
 
-        auto sampleRate = safeGet<std::optional<double>>(*m_progress, id, "sample_rate",
-                                                          [&] { return tr.sample_rate(); });
+        auto sampleRate = snap.sample_rate;
         // Or a stored zero, which real libraries carry: dividing by it
         // gives inf (or NaN at offset 0), and an infinite cue position
         // walks straight past every check that asks whether a cue is near
@@ -423,8 +477,7 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
             // (which is wrong by roughly a factor of 44).
             sampleRate = 44100.0;
         }
-        auto hotCues = safeGet<std::vector<std::optional<djinterop::hot_cue>>>(*m_progress, id, "hot_cues",
-                                                                                [&] { return tr.hot_cues(); });
+        const auto &hotCues = snap.hot_cues;
         for (size_t i = 0; i < hotCues.size(); ++i) {
             if (!hotCues[i]) {
                 continue;
@@ -449,8 +502,7 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
         // loop for its number depending on pad mode, never both; Seabass
         // itself enforces that one-or-the-other rule when writing (see
         // AddCueController), matching the design this reads back into.
-        auto loops = safeGet<std::vector<std::optional<djinterop::loop>>>(*m_progress, id, "loops",
-                                                                            [&] { return tr.loops(); });
+        const auto &loops = snap.loops;
         for (size_t i = 0; i < loops.size(); ++i) {
             if (!loops[i]) {
                 continue;
@@ -478,7 +530,7 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
         // own reader marks memory cues) so it can be matched/synced like
         // any other cue; see libdjinterop_engine_cue_writer.cpp for the
         // corresponding (necessarily lossy beyond one cue) write side.
-        auto mainCue = safeGet<std::optional<double>>(*m_progress, id, "main_cue", [&] { return tr.main_cue(); });
+        const auto mainCue = snap.main_cue;
         // A track with no main cue carries -1 as its sample offset, which
         // is libdjinterop's "not set" rather than a position: dividing it
         // by the sample rate made a memory cue a fraction of a
