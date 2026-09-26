@@ -7,6 +7,7 @@
 #include "infrastructure/paths/seabass_paths.hpp"
 
 #include <charconv>
+#include <exception>
 #include <locale>
 #include <filesystem>
 #include <system_error>
@@ -88,9 +89,19 @@ struct FileStat
     bool ok = false;
 };
 
-FileStat statFile(const std::string &path)
+FileStat statFile(const std::string &utf8Path)
 {
     FileStat out;
+    // Through pathFromUtf8, not the string itself: on Windows a
+    // std::string path is read in the ANSI code page, and a non-ASCII
+    // file name was a miss every time. It throws there for bytes that
+    // are not UTF-8, which reads as "no such file".
+    std::filesystem::path path;
+    try {
+        path = pathFromUtf8(utf8Path);
+    } catch (const std::exception &) {
+        return out;
+    }
     std::error_code ec;
     auto size = std::filesystem::file_size(path, ec);
     if (ec) {
@@ -177,6 +188,19 @@ std::optional<double> DurationCache::lookup(const std::string &absoluteFilePath)
     if (!current.ok || current.sizeBytes != it->second.sizeBytes ||
         current.mtimeSeconds != it->second.mtimeSeconds) {
         return std::nullopt;  // changed (or gone) since it was probed
+    }
+    return it->second.durationSeconds;
+}
+
+std::optional<double> DurationCache::lookupUnverified(const std::string &absoluteFilePath) const
+{
+    const std::string key = relativeKey(absoluteFilePath);
+    if (key.empty()) {
+        return std::nullopt;
+    }
+    auto it = m_entries.find(key);
+    if (it == m_entries.end()) {
+        return std::nullopt;
     }
     return it->second.durationSeconds;
 }

@@ -8,7 +8,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <optional>
+#include <string>
+#include <vector>
 
+#include "application/use_cases/fill_missing_durations.hpp"
 #include "infrastructure/local/duration_cache.hpp"
 
 #include "infrastructure/paths/utf8_path.hpp"
@@ -26,6 +31,19 @@ std::string writeFile(const fs::path &p, const std::string &data)
     out << data;
     return seabass::pathToUtf8(p);
 }
+// Answers from a table and counts what it was asked.
+class TableProbe : public seabass::application::TrackDurationProbe
+{
+public:
+    std::map<std::string, double> answers;
+    std::map<std::string, int> calls;
+    std::optional<double> durationSeconds(const std::string &path) override
+    {
+        calls[path]++;
+        const auto found = answers.find(path);
+        return found == answers.end() ? std::nullopt : std::optional<double>(found->second);
+    }
+};
 }  // namespace
 
 int main()
@@ -127,6 +145,101 @@ int main()
             std::setlocale(LC_ALL, "C");
             std::cout << "case 6 (comma-decimal locale round-trips) OK\n";
         }
+    }
+
+    // Case 7: lookupUnverified() answers by path alone. It never looks at
+    // the file, so it answers for a file that changed and for one that is
+    // gone, where lookup() answers for neither; outside the root it has
+    // nothing. A non-ASCII name goes through the UTF-8 path helpers.
+    {
+        const fs::path root7 = root / "case7";
+        const std::string kept = writeFile(root7 / "Contents" / seabass::pathFromUtf8("Kügler.mp3"), "kept");
+        const std::string grown = writeFile(root7 / "Contents" / "grown.mp3", "short");
+        const std::string gone = writeFile(root7 / "Contents" / "gone.mp3", "soon gone");
+        {
+            DurationCache cache(seabass::pathToUtf8(root7));
+            cache.store(kept, 101.0);
+            cache.store(grown, 202.0);
+            cache.store(gone, 303.0);
+            assert(cache.save());
+        }
+        writeFile(root7 / "Contents" / "grown.mp3", "a good deal longer than it was");
+        fs::remove(root7 / "Contents" / "gone.mp3");
+
+        DurationCache cache(seabass::pathToUtf8(root7));
+        assert(cache.lookup(kept) && *cache.lookup(kept) == 101.0);
+        assert(cache.lookupUnverified(kept) && *cache.lookupUnverified(kept) == 101.0);
+        assert(!cache.lookup(grown) && cache.lookupUnverified(grown) && *cache.lookupUnverified(grown) == 202.0);
+        assert(!cache.lookup(gone) && cache.lookupUnverified(gone) && *cache.lookupUnverified(gone) == 303.0);
+        assert(!cache.lookupUnverified("/somewhere/else/kept.mp3"));
+        std::cout << "case 7 (lookupUnverified answers by path, without the file) OK\n";
+    }
+
+    // Case 8: the two halves of a staged read against the real cache. The
+    // Tracks stage fills Unverified: every cached length is taken, even for
+    // a file already deleted (which proves it was not looked at), and the
+    // files are listed. The Full stage then verifies them: the unchanged
+    // file stands, the changed one is probed again and its rows and the
+    // cache get the new length, the deleted one becomes unknown, and a
+    // row whose length the catalog gave is left alone.
+    {
+        using seabass::application::CachedDurations;
+        using seabass::domain::Track;
+        const fs::path root8 = root / "case8";
+        const std::string same = writeFile(root8 / "Contents" / "same.mp3", "same");
+        const std::string edited = writeFile(root8 / "Contents" / "edited.mp3", "before");
+        const std::string deleted = writeFile(root8 / "Contents" / "deleted.mp3", "deleted");
+        {
+            DurationCache cache(seabass::pathToUtf8(root8));
+            cache.store(same, 100.0);
+            cache.store(edited, 200.0);
+            cache.store(deleted, 300.0);
+            assert(cache.save());
+        }
+        fs::remove(root8 / "Contents" / "deleted.mp3");
+
+        const auto row = [](const std::string &path, double seconds = 0.0) {
+            Track track;
+            track.filePath = path;
+            track.durationSeconds = seconds;
+            return track;
+        };
+        std::vector<Track> tracks{row(same), row(edited), row(edited), row(deleted), row(edited, 199.0)};
+        TableProbe probe;
+        probe.answers[edited] = 250.0;
+        {
+            DurationCache cache(seabass::pathToUtf8(root8));
+            const auto filled = seabass::application::fillMissingDurations(tracks, probe, &cache,
+                                                                           CachedDurations::Unverified);
+            assert(filled.fromCache == 4 && filled.fromCacheUnverified == 4);
+            assert(filled.alreadyKnown == 1 && filled.probed == 0 && filled.unreadable == 0);
+            assert((filled.unverifiedPaths == std::vector<std::string>{same, edited, deleted}));
+            assert(tracks[3].durationSeconds == 300.0 && "a deleted file's length is taken: nothing looked at it");
+            assert(probe.calls.empty());
+        }
+        // The file is re-tagged between the two stages.
+        writeFile(root8 / "Contents" / "edited.mp3", "after a re-tag, and longer");
+        {
+            DurationCache cache(seabass::pathToUtf8(root8));
+            const auto verified = seabass::application::verifyCachedDurations(tracks, {same, edited, deleted}, probe, cache);
+            assert(verified.confirmed == 1 && verified.reprobed == 1 && verified.unreadable == 1);
+            assert(verified.tracksUpdated == 3);
+            assert(tracks[0].durationSeconds == 100.0);
+            assert(tracks[1].durationSeconds == 250.0 && tracks[2].durationSeconds == 250.0);
+            assert(tracks[3].durationSeconds == 0.0 && "a file gone since it was cached reads unknown");
+            assert(tracks[4].durationSeconds == 199.0 && "the catalog's own length is left alone");
+            assert(probe.calls[edited] == 1 && probe.calls[deleted] == 1 && probe.calls.count(same) == 0);
+            assert(cache.lookup(edited) && *cache.lookup(edited) == 250.0 && "the cache has the new length");
+            assert(cache.save());
+        }
+        // A Verified fill afterwards agrees with what the Full stage made.
+        std::vector<Track> fresh{row(same), row(edited), row(deleted)};
+        TableProbe second;
+        DurationCache cache(seabass::pathToUtf8(root8));
+        const auto again = seabass::application::fillMissingDurations(fresh, second, &cache);
+        assert(again.fromCacheUnverified == 0 && again.unverifiedPaths.empty());
+        assert(fresh[0].durationSeconds == 100.0 && fresh[1].durationSeconds == 250.0 && fresh[2].durationSeconds == 0.0);
+        std::cout << "case 8 (Unverified at Tracks, verified at Full: a changed file is caught) OK\n";
     }
 
     fs::remove_all(root);
