@@ -37,20 +37,16 @@ Page {
     // dirty or saving; a clean session is closed, releasing its lock.
     // Returns whether the way is clear.
     function releaseOpenedFolder() {
-        var model = root.mediaController.sticks;
-        if (model === null || model === undefined) {
-            return true;
-        }
-        // A plain array in the tests, the real list model otherwise.
-        var count = model.length !== undefined ? model.length : model.rowCount();
-        for (var i = 0; i < count; ++i) {
-            var row = model.length !== undefined ? model[i] : model.get(i);
+        const model = root.sticksModel;
+        const count = root.modelRowCount(model);
+        for (let i = 0; i < count; ++i) {
+            const row = root.modelRowAt(model, i);
             if (!row.isFolder) {
                 continue;
             }
-            var reg = root.editRegistry;
+            const reg = root.editRegistry;
             if (reg && reg.hasSession(row.libraryId)) {
-                var session = reg.sessionFor(row.libraryId);
+                const session = reg.sessionFor(row.libraryId);
                 if (session && (session.dirty === true || session.writing === true)) {
                     openFolderError.text = "\"" + row.label
                         + "\" has unsaved changes. Save or discard them first.";
@@ -65,25 +61,16 @@ Page {
     // How many rows are actual removable media, i.e. not a folder
     // someone opened and not a browsed backup.
     //
-    // The model answers this itself; the loop is for the QML tests,
-    // which stand a plain array of stick objects in for the model and
-    // have no such property. Same shape as the editRegistry guard above:
-    // this page is built to run against fakes.
+    // The model answers this itself; the count over the copied rows is
+    // for the QML tests, which stand a plain array or a ListModel in for
+    // the model and have no such property. Same shape as the editRegistry
+    // guard above: this page is built to run against fakes.
     readonly property int removableStickCount: {
-        var model = root.mediaController.sticks;
-        if (model === null || model === undefined) {
-            return 0;
-        }
-        if (model.removableCount !== undefined) {
+        const model = root.sticksModel;
+        if (model !== null && model.removableCount !== undefined) {
             return model.removableCount;
         }
-        var count = 0;
-        for (var i = 0; i < (model.length || 0); ++i) {
-            if (!model[i].isFolder) {
-                count++;
-            }
-        }
-        return count;
+        return root.rows.filter((row) => row.isFolder !== true).length;
     }
 
     // The metadata store's count, readable by a test that wants to check
@@ -97,10 +84,224 @@ Page {
     // binding to it gave 0 there and the heart filled its whole button.
     readonly property int headerIconSize: Math.round(Theme.scaled(22))
 
-    // The narrowest a stick's action card is laid out at: the grid under
-    // each stick drops from three columns to two, then one, rather than
-    // squeezing three cards into a window that has room for fewer.
-    readonly property real minimumCardWidth: Theme.scaled(300)
+    // ---- the stick model, read as plain rows ---------------------------
+    //
+    // MediaController's DetectedStickListModel (count, get(i), inserts,
+    // removes, dataChanged), a ListModel, or a plain array of stick
+    // objects in the tests: every row is read through these two.
+    readonly property var sticksModel: root.mediaController.sticks !== undefined ? root.mediaController.sticks : null
+    function modelRowCount(model) {
+        if (model === null || model === undefined) {
+            return 0;
+        }
+        if (model.length !== undefined) {
+            return model.length;
+        }
+        return model.count !== undefined ? model.count : model.rowCount();
+    }
+    function modelRowAt(model, i) {
+        return model.length !== undefined ? model[i] : model.get(i);
+    }
+    // The roles the pane reads, copied out of the model into a plain
+    // object: a get(i) result does not follow later changes, so the page
+    // takes a fresh copy of every row whenever the model says something
+    // changed, and the stick row and the cards get the new object.
+    readonly property var rowRoles: ["label", "mountPoint", "devicePath", "mounted", "hasRekordbox", "hasEngine",
+        "hasOneLibrary", "rekordboxPath", "enginePath", "isSdCard", "isFolder", "isBrowsedBackup", "libraryId",
+        "safeToUnplug", "readOnly", "capacityBytes"]
+    property var rows: []
+    property bool rowsLoaded: false
+    // The mount points that were mounted at the last copy, so a stick
+    // is assessed when it appears mounted or gets mounted, and not again
+    // on every other change to its row.
+    property var mountedAtLastCopy: ({})
+
+    // mountPoint when there is one, else devicePath: the key the rail
+    // and the pane's stick section are named by.
+    function keyOf(row) {
+        if (!row) {
+            return "";
+        }
+        const mountPoint = String(row.mountPoint || "");
+        return mountPoint.length > 0 ? mountPoint : String(row.devicePath || "");
+    }
+    function stickKeys() {
+        return root.rows.map((row) => root.keyOf(row));
+    }
+    function copyRows() {
+        const model = root.sticksModel;
+        const count = root.modelRowCount(model);
+        const copies = [];
+        for (let i = 0; i < count; ++i) {
+            const source = root.modelRowAt(model, i);
+            const copy = {};
+            for (let r = 0; r < root.rowRoles.length; ++r) {
+                copy[root.rowRoles[r]] = source[root.rowRoles[r]];
+            }
+            copies.push(copy);
+        }
+        return copies;
+    }
+    function refreshRows() {
+        const previous = root.rows;
+        const next = root.copyRows();
+        root.rows = next;
+        root.assessNewlyMounted(next);
+        root.reconcileSelection(previous, next);
+        root.rowsLoaded = true;
+    }
+    // Every mounted stick is assessed, not only the selected one: which
+    // stick an empty one could be cloned from, and which holds a newer
+    // copy, depend on the other sticks' assessments. A browsed backup is
+    // never a backup subject or peer: the advisor would offer it as the
+    // newest clone source, and cloning from it targets its own archive.
+    function assessNewlyMounted(next) {
+        const mountedNow = {};
+        for (let i = 0; i < next.length; ++i) {
+            const row = next[i];
+            const mountPoint = String(row.mountPoint || "");
+            if (row.mounted !== true || mountPoint.length === 0 || row.isBrowsedBackup === true) {
+                continue;
+            }
+            mountedNow[mountPoint] = true;
+            if (root.mountedAtLastCopy[mountPoint] !== true) {
+                root.backupAdvisor.assess(String(row.label || ""), mountPoint, String(row.rekordboxPath || ""),
+                                          String(row.enginePath || ""));
+            }
+        }
+        root.mountedAtLastCopy = mountedNow;
+    }
+    Component.onCompleted: {
+        const saved = root.appSettingsController.homeGroup;
+        if (saved !== undefined && root.groupKeys.indexOf(String(saved)) >= 0) {
+            root.selectedGroup = String(saved);
+        }
+        root.refreshRows();
+    }
+    onSticksModelChanged: {
+        if (root.rowsLoaded) {
+            root.refreshRows();
+        }
+    }
+    Connections {
+        // Only a model object says when it changes; a plain array is
+        // copied again when it is replaced (onSticksModelChanged).
+        target: root.sticksModel !== null && typeof root.sticksModel.get === "function" ? root.sticksModel : null
+        ignoreUnknownSignals: true
+        function onDataChanged() { root.refreshRows(); }
+        function onRowsInserted() { root.refreshRows(); }
+        function onRowsRemoved() { root.refreshRows(); }
+        function onRowsMoved() { root.refreshRows(); }
+        function onModelReset() { root.refreshRows(); }
+    }
+
+    // ---- selection --------------------------------------------------
+    //
+    // The stick is chosen afresh every run: on load the first stick with
+    // a library, else the first stick. A stick that arrives while none is
+    // selected becomes selected; the selected one leaving selects the
+    // first that remains. Mounting or unmounting changes a stick's key
+    // (devicePath and mountPoint), so the selection follows its device.
+    property string selectedStickKey: ""
+    property string selectedDevicePath: ""
+    readonly property var selectedRow: {
+        for (let i = 0; i < root.rows.length; ++i) {
+            if (root.keyOf(root.rows[i]) === root.selectedStickKey) {
+                return root.rows[i];
+            }
+        }
+        return null;
+    }
+    // What the backup advisor found for the selected stick; null until
+    // it has looked.
+    readonly property var selectedAdvice: root.selectedRow !== null && root.backupAdvisor.advice
+        ? (root.backupAdvisor.advice[String(root.selectedRow.mountPoint || "")] || null) : null
+
+    function selectStick(key) {
+        for (let i = 0; i < root.rows.length; ++i) {
+            if (root.keyOf(root.rows[i]) === key) {
+                root.selectedStickKey = key;
+                root.selectedDevicePath = String(root.rows[i].devicePath || "");
+                return true;
+            }
+        }
+        return false;
+    }
+    function firstWithLibrary(rows) {
+        for (let i = 0; i < rows.length; ++i) {
+            if (rows[i].hasRekordbox === true || rows[i].hasEngine === true) {
+                return rows[i];
+            }
+        }
+        return rows.length > 0 ? rows[0] : null;
+    }
+    function reconcileSelection(previous, next) {
+        if (next.length === 0) {
+            root.selectedStickKey = "";
+            root.selectedDevicePath = "";
+            return;
+        }
+        if (root.selectedStickKey.length > 0) {
+            if (root.selectStick(root.selectedStickKey)) {
+                return;
+            }
+            // The same device under its other key: mounted or unmounted.
+            if (root.selectedDevicePath.length > 0) {
+                for (let i = 0; i < next.length; ++i) {
+                    if (String(next[i].devicePath || "") === root.selectedDevicePath) {
+                        root.selectStick(root.keyOf(next[i]));
+                        return;
+                    }
+                }
+            }
+            // Gone: the first that remains.
+            root.selectStick(root.keyOf(next[0]));
+            return;
+        }
+        if (root.rowsLoaded) {
+            // Nothing selected and a stick arrived: that one.
+            const before = {};
+            for (let i = 0; i < previous.length; ++i) {
+                before[root.keyOf(previous[i])] = true;
+            }
+            for (let i = 0; i < next.length; ++i) {
+                if (before[root.keyOf(next[i])] !== true) {
+                    root.selectStick(root.keyOf(next[i]));
+                    return;
+                }
+            }
+        }
+        root.selectStick(root.keyOf(root.firstWithLibrary(next)));
+    }
+
+    // The group is remembered across runs (AppSettingsController.homeGroup).
+    readonly property var groupKeys: ["explore", "sync", "backup", "maintain"]
+    property string selectedGroup: "explore"
+    function groupInfo(group) {
+        switch (group) {
+        case "sync": return {name: "Sync", description: "Keep the catalogs in step"};
+        case "backup": return {name: "Backup", description: "Keep a copy on this computer"};
+        case "maintain": return {name: "Maintain", description: "Find and fix what is wrong"};
+        default: return {name: "Explore", description: "See what is on the stick"};
+        }
+    }
+    function selectGroup(group) {
+        if (root.groupKeys.indexOf(group) < 0) {
+            return;
+        }
+        root.selectedGroup = group;
+        if (root.appSettingsController.homeGroup !== group) {
+            root.appSettingsController.homeGroup = group;
+        }
+    }
+
+    // A narrow window: the rail wraps into rows above the pane, and the
+    // cards go one to a row.
+    readonly property bool compact: root.width < Theme.scaled(820)
+    // Where the pane's text starts, from the pane's left edge: the stick's
+    // name, the group heading and every card title share this line (see
+    // StickHeaderRow.textInset and StickToolCards.textInset).
+    readonly property real paneTextInset: Theme.cardPadding + Theme.iconSizeNormal + Theme.rowSpacing
 
     function isLockedByOther(libraryId) {
         return libraryId.length > 0 && root.editRegistry !== null && root.editRegistry !== undefined
@@ -179,14 +380,10 @@ Page {
         }
     }
     function browsedBackupRow() {
-        var model = root.mediaController.sticks;
-        if (model === null || model === undefined) {
-            return null;
-        }
-        // A plain array in the tests, the real list model otherwise.
-        var count = model.length !== undefined ? model.length : model.rowCount();
-        for (var i = 0; i < count; ++i) {
-            var row = model.length !== undefined ? model[i] : model.get(i);
+        const model = root.sticksModel;
+        const count = root.modelRowCount(model);
+        for (let i = 0; i < count; ++i) {
+            const row = root.modelRowAt(model, i);
             if (row.isBrowsedBackup) {
                 return row;
             }
@@ -277,8 +474,8 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 16
-        spacing: 12
+        anchors.margins: Theme.pageMargin
+        spacing: Theme.sectionSpacing
 
         RowLayout {
             Layout.fillWidth: true
@@ -562,816 +759,282 @@ Page {
             Layout.fillWidth: true
         }
 
-        // Tools that work on this computer's own backup stores, not on
-        // whatever stick happens to be plugged in right now -- pulled out
-        // of the per-stick Backups hub for exactly that reason (see
-        // BackupsHubPage.qml's own comment for what stays there because
-        // it genuinely does need a specific stick).
-        //
-        // Shown only while no stick is plugged in. With one in, the
-        // sticks are what this page is about and this card sits above
-        // them taking the top of the screen for the case that is not
-        // happening. (Local Cue Backup used to sit beside it; it was
-        // removed once Metadata Backup and Restore covered the same need.)
-        //
-        // removableCount, not the row count: a folder someone opened is
-        // not a stick, and should not make the no-stick tools vanish.
-        ColumnLayout {
-            objectName: "noStickBackupTools"
-            Layout.fillWidth: true
-            visible: root.removableStickCount === 0
-            spacing: 8
-
-            Subtitle { text: "Backups"; color: Theme.textMuted }
-
-            GridLayout {
-                Layout.fillWidth: true
-                columns: 2
-                columnSpacing: 12
-                rowSpacing: 12
-
-                ActionCard {
-                    objectName: "generalRestoreCard"
-                    cardTitle: "Restore a Stick Backup"
-                    cardSubtitle: "Put a stick backup from this computer onto any drive"
-                    cardIcon: "document-revert"
-                    // No stick preselected: the page itself lists every
-                    // mounted drive and every backup on disk to choose from.
-                    onClicked: root.restoreStickBackupRequested("", "", "", "")
-                }
-            }
-        }
-
-        ListView {
-            // Named for the tests, which reach rows and cards through these
-            // rather than by guessing at the delegate's properties.
-            objectName: "stickList"
+        // The rail beside the pane: which stick and which kind of tool
+        // down the left, and on the right the selected stick's row, the
+        // selected group's heading and that group's cards. In a narrow
+        // window the rail wraps into rows of chips above the pane and the
+        // cards go one to a row.
+        GridLayout {
+            objectName: "homeBody"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            model: root.mediaController.sticks
-            clip: true
-            // Not draggable when every stick already fits.
-            interactive: contentHeight > height
-            spacing: 4
+            columns: root.compact ? 1 : 2
+            columnSpacing: Theme.pageMargin
+            rowSpacing: Theme.sectionSpacing
 
-            // A stick appearing is the one event on this page the user
-            // did not cause from the screen -- they caused it at the USB
-            // port, and they are usually looking at the port rather than
-            // the list. So the card arrives visibly: it fades and grows
-            // into place while the cards below it slide down to make
-            // room, which is what tells the eye WHERE it went as well as
-            // that it came. The model reports an insert now rather than
-            // resetting itself, which is what makes any of this possible
-            // (see DetectedStickListModel::setSticks).
-            add: Transition {
-                // Grows past its size and settles back, the way a thing
-                // put down on a table does. A straight ease-in stops
-                // dead on arrival and reads as a redraw; the small
-                // overshoot is what makes it read as something that
-                // moved into place.
-                NumberAnimation { property: "opacity"; from: 0; to: 1
-                                   duration: Theme.arrivalTransitionDuration; easing.type: Easing.OutCubic }
-                NumberAnimation { property: "scale"; from: 0.85; to: 1
-                                   duration: Theme.arrivalTransitionDuration
-                                   easing.type: Easing.OutBack; easing.overshoot: 1.8 }
-            }
-            // The cards below getting out of the way, and closing up
-            // again afterwards. Slightly softer than the arrival so the
-            // eye follows the card that appeared rather than the ones
-            // making room for it.
-            displaced: Transition {
-                NumberAnimation { properties: "x,y"; duration: Theme.arrivalTransitionDuration
-                                   easing.type: Easing.OutQuint }
-            }
-            remove: Transition {
-                // Shrinks away rather than merely fading: a card that
-                // only loses opacity leaves a hole the eye does not
-                // connect to the stick being pulled out.
-                NumberAnimation { property: "opacity"; to: 0
-                                   duration: Theme.departureTransitionDuration; easing.type: Easing.InCubic }
-                NumberAnimation { property: "scale"; to: 0.82
-                                   duration: Theme.departureTransitionDuration; easing.type: Easing.InBack
-                                   easing.overshoot: 1.4 }
+            // First in item order, so Tab reaches the rail's two
+            // sections before the cards.
+            HomeRail {
+                id: rail
+                // The model itself, handed over once: the rail's own
+                // Repeater follows its inserts and removes.
+                sticks: root.sticksModel
+                selectedStickKey: root.selectedStickKey
+                selectedGroup: root.selectedGroup
+                compact: root.compact
+                Layout.alignment: Qt.AlignTop
+                Layout.fillWidth: root.compact
+                Layout.preferredWidth: root.compact ? -1 : implicitWidth
+                onStickActivated: (key) => root.selectStick(key)
+                onGroupActivated: (group) => root.selectGroup(group)
             }
 
-            delegate: Rectangle {
-                id: delegateRoot
-                // The mount point, or the device for a stick that is not
-                // mounted (its mount point is empty, and every unmounted
-                // stick would share one name).
-                objectName: "stickRow:" + (mountPoint.length > 0 ? mountPoint : devicePath)
-                width: ListView.view.width
-                height: contentColumn.implicitHeight + 24
-                color: Theme.surface
-                border.color: Theme.border
-                radius: 4
-
-                required property string label
-                // NOT required: a required property makes delegate
-                // creation fail for any model that lacks the role, which
-                // took out four StickListPage tests whose fake sticks
-                // predate it. Defaulted instead, and the size is hidden
-                // when it is zero anyway.
-                property var capacityBytes: 0
-                required property string mountPoint
-                required property string devicePath
-                required property bool mounted
-                required property bool hasRekordbox
-                required property bool hasEngine
-                required property string rekordboxPath
-                required property string enginePath
-                // Required, unlike capacityBytes above, because this one
-                // has to carry a real answer: a model role only reaches a
-                // delegate that declares it required, so a defaulted
-                // version would read false forever and the card would
-                // never say anything. Every fake stick in the tests
-                // supplies it for that reason.
-                required property bool safeToUnplug
-                required property bool hasOneLibrary
-                required property bool isSdCard
-                required property bool isFolder
-                required property bool isBrowsedBackup
-                required property string libraryId
-                // The kernel mounted this stick read-only, which is what a
-                // damaged filesystem looks like after an unclean unplug.
-                // Nothing can be written until it has been checked, so
-                // every card that writes goes read-only too and points at
-                // Library Health, which offers the repair.
-                required property bool readOnly
-                readonly property bool hasKnownLibrary: hasRekordbox || hasEngine
-                // Which cards a row may offer that write: a library, and
-                // not a stick backup being browsed. Every writing card
-                // binds to this one line rather than restating the rule.
-                readonly property bool writable: hasKnownLibrary && !isBrowsedBackup
-                // Another instance is editing this stick's library: every
-                // card that would change it goes read-only.
-                readonly property bool lockedByOther: root.isLockedByOther(delegateRoot.libraryId)
-                // What a card that writes says when the stick itself is
-                // the reason it cannot: a click opens Library Health
-                // rather than only explaining, since the repair lives
-                // there and sending someone looking for it is no help.
-                readonly property string readOnlyNote:
-                    "This stick is mounted read-only: its filesystem needs checking. Library Health can do that."
-                // What the backup advisor found for this stick (see
-                // BackupAdvisorController); null until it has looked.
-                readonly property var advice: root.backupAdvisor.advice[mountPoint] || null
-                readonly property string adviceState: advice ? advice.state : ""
-                // The verdict stands unless the cues turn out different,
-                // and they are still being read: said beside the verdict,
-                // which stays readable, for the seconds that takes.
-                readonly property bool cuesPending: advice !== null && advice.cuesPending === true
-                // Another mounted stick whose library could be copied onto
-                // this empty one / is a newer copy of this stick's library.
-                readonly property var cloneSource: advice && advice.cloneSource && advice.cloneSource.kind === "stick"
-                    ? advice.cloneSource : null
-                readonly property var updateSource: advice && advice.updateSource && advice.updateSource.kind !== "none"
-                    ? advice.updateSource : null
-                // In flight (mount, unmount, or an automatic mount) via this
-                // row's own devicePath -- distinct from mediaController.busy,
-                // which is true for the whole app while ANY stick's task is
-                // running (they're processed one at a time) and used to
-                // disable every OTHER row's button too, making a click on a
-                // stick nothing else was busy with look like it did nothing.
-                readonly property bool thisRowBusy: root.mediaController.busy
-                    && root.mediaController.busyDevicePath === delegateRoot.devicePath
-                function assessBackup() {
-                    // A browsed backup is never a backup subject or peer:
-                    // the advisor would offer it as the newest clone
-                    // source, and cloning from it targets its own archive.
-                    if (mounted && mountPoint.length > 0 && !isBrowsedBackup) {
-                        root.backupAdvisor.assess(label, mountPoint, rekordboxPath, enginePath);
-                    }
-                }
-                Component.onCompleted: assessBackup()
-                onMountedChanged: assessBackup()
-
-                ColumnLayout {
-                    id: contentColumn
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 4
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 12
-
-                    // A plain Item + explicit MouseArea, not an ItemDelegate
-                    // -- ItemDelegate's own hover/press background isn't
-                    // reliably gated by `enabled` in this KDE-Breeze/Material
-                    // style mashup (confirmed: `enabled: !mounted` still left
-                    // the row hover-highlighting and accepting clicks once
-                    // mounted). ScanPage.qml's track rows already hit the
-                    // exact same class of Material-Control-chrome issue and
-                    // settled on this same Rectangle+MouseArea sidestep --
-                    // see its comment for the fuller story.
-                    Item {
-                        Layout.fillWidth: true
-                        implicitHeight: rowContent.implicitHeight
-
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: -6
-                            radius: 4
-                            visible: !delegateRoot.mounted
-                            color: rowMouseArea.pressed ? Theme.rowPressed
-                                : rowMouseArea.containsMouse ? Theme.rowHover
-                                : "transparent"
-                        }
-
-                        MouseArea {
-                            id: rowMouseArea
-                            anchors.fill: parent
-                            // Not gated on the whole app being busy anymore:
-                            // mountStick() queues behind whatever else is
-                            // running instead of being silently dropped, so
-                            // there's no reason to make this look unusable
-                            // meanwhile -- only this row's own task (if any)
-                            // disables it.
-                            enabled: !delegateRoot.mounted && !delegateRoot.thisRowBusy
-                            hoverEnabled: !delegateRoot.mounted && !delegateRoot.thisRowBusy
-                            ToolTip.visible: containsMouse
-                            ToolTip.text: "Click to mount " + delegateRoot.label
-                            onClicked: root.mediaController.mountStick(delegateRoot.devicePath)
-                        }
-
-                        RowLayout {
-                            id: rowContent
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 12
-
-                            UsbStickIcon {
-                                size: Theme.iconSizeNormal
-                                Layout.alignment: Qt.AlignVCenter
-                                isSdCard: delegateRoot.isSdCard
-                                isFolder: delegateRoot.isFolder
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 2
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Subtitle {
-                                        text: delegateRoot.label
-                                        color: Theme.text
-                                    }
-                                    Item { Layout.fillWidth: true }
-                                }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 8
-                                    Label {
-                                        objectName: "stickPathLabel"
-                                        text: delegateRoot.mounted ? delegateRoot.mountPoint : delegateRoot.devicePath
-                                        color: Theme.textMuted
-                                        font.pointSize: Theme.baseFontPointSize * 0.9
-                                        elide: Text.ElideMiddle
-                                        // A Text's Layout.minimumWidth
-                                        // defaults to its implicit width,
-                                        // so this had a floor at its full
-                                        // natural size: the elide could
-                                        // never fire and a long mount
-                                        // point pushed the size beside it
-                                        // off the card instead. The
-                                        // maximum keeps a short path from
-                                        // stretching; the minimum is what
-                                        // lets a long one shorten.
-                                        Layout.minimumWidth: 0
-                                        // Whole pixels, with one to spare. A layout
-                                        // hands out whole pixels, and a Text given
-                                        // a fraction less than its natural width
-                                        // elides: /media/sebas/WHALESHARK2 measures
-                                        // 208.03 and got 208, abbreviated on a card
-                                        // with hundreds of pixels left over. Same
-                                        // fix as BackBreadcrumb's crumbs.
-                                        Layout.preferredWidth: Math.ceil(implicitWidth) + 1
-                                        Layout.maximumWidth: Math.ceil(implicitWidth) + 1
-                                        Layout.fillWidth: true
-                                    }
-                                    // The stick's size, beside the path. Hidden
-                                    // rather than shown as "0 B" when the locator
-                                    // could not read a capacity, which happens for
-                                    // a drive with no partition table at all.
-                                    Label {
-                                        visible: delegateRoot.capacityBytes > 0
-                                        text: Theme.humanBytes(delegateRoot.capacityBytes)
-                                        color: Theme.textMuted
-                                        font.pointSize: Theme.baseFontPointSize * 0.9
-                                    }
-                                    Item { Layout.fillWidth: true }
-                                }
-                                // What is on the stick or, once it is
-                                // unmounted, whether it may be pulled. One
-                                // row for both, at one height, so pressing
-                                // eject changes what the row says without
-                                // moving the card under the pointer.
-                                RowLayout {
-                                    objectName: "stickStateRow"
-                                    spacing: Theme.tightSpacing
-                                    Layout.preferredHeight: Math.max(unmountedLabel.implicitHeight,
-                                                                     deviceLibraryBadge.implicitHeight)
-                                    // "OK to unplug" where that is provably
-                                    // true, and the old description where it
-                                    // is not. The state is the same either
-                                    // way -- nothing of ours holds the device
-                                    // open -- but the reader asks this right
-                                    // after pressing eject, and wants to know
-                                    // whether they may pull the stick out.
-                                    // True for a stick that was never mounted
-                                    // too: an unmounted device is safe to pull
-                                    // however it got that way.
-                                    Label {
-                                        id: unmountedLabel
-                                        objectName: "unmountedLabel"
-                                        visible: !delegateRoot.mounted
-                                        text: delegateRoot.safeToUnplug ? "OK to unplug" : "(not mounted)"
-                                        color: Theme.textMuted
-                                    }
-                                    // Said, not left as an empty line, for a
-                                    // mounted stick with no catalog on it.
-                                    Label {
-                                        objectName: "noLibraryLabel"
-                                        visible: delegateRoot.mounted && !delegateRoot.hasRekordbox
-                                                 && !delegateRoot.hasEngine && !delegateRoot.hasOneLibrary
-                                        text: "No library"
-                                        color: Theme.textMuted
-                                    }
-                                    StatusBadge {
-                                        id: deviceLibraryBadge
-                                        objectName: "deviceLibraryBadge"
-                                        visible: delegateRoot.mounted && delegateRoot.hasRekordbox
-                                        label: "DeviceLibrary"
-                                        badgeColor: Theme.accent
-                                    }
-                                    StatusBadge {
-                                        objectName: "oneLibraryBadge"
-                                        visible: delegateRoot.mounted && delegateRoot.hasOneLibrary
-                                        label: "OneLibrary"
-                                        badgeColor: Theme.accent
-                                    }
-                                    StatusBadge {
-                                        objectName: "engineBadge"
-                                        visible: delegateRoot.mounted && delegateRoot.hasEngine
-                                        label: "Engine"
-                                        badgeColor: Theme.accent
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Mount/unmount now run on a background thread (a real
-                    // syscall/subprocess that can visibly take a moment --
-                    // this exact freeze used to look like the app had hung
-                    // or the stick had vanished, with zero feedback that
-                    // anything was happening). While this row's own
-                    // operation is in flight, show a spinner in the eject
-                    // button's place instead of leaving it looking dead.
-
-                    BusyIndicator {
-                        visible: delegateRoot.thisRowBusy
-                        running: visible
-                        Layout.preferredWidth: Theme.iconSizeLarge
-                        Layout.preferredHeight: Theme.iconSizeLarge
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    // A folder was never mounted, so there is nothing to
-                    // eject -- the equivalent is dropping it from the
-                    // list, which touches nothing on disk.
-                    ToolButton {
-                        visible: delegateRoot.isFolder
-                        objectName: "closeFolderButton"
-                        // Icon only; the text is what an assistive
-                        // reader announces.
-                        display: AbstractButton.IconOnly
-                        text: "Remove from list"
-                        icon.source: Theme.iconUrl("window-close")
-                        icon.color: Theme.text
-                        icon.width: root.headerIconSize
-                        icon.height: root.headerIconSize
-                        Layout.preferredWidth: Theme.iconSizeLarge
-                        Layout.preferredHeight: Theme.iconSizeLarge
-                        Layout.alignment: Qt.AlignVCenter
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Remove " + delegateRoot.label + " from this list (nothing on disk is changed)"
-                        onClicked: {
-                            if (root.releaseOpenedFolder()) {
-                                root.mediaController.closeFolder(delegateRoot.mountPoint);
-                            }
-                        }
-                    }
-
-                    ToolButton {
-                        visible: !delegateRoot.thisRowBusy && !delegateRoot.isFolder
-                        // Not `!root.mediaController.busy`: that disabled
-                        // every OTHER row's button too while any one stick's
-                        // task was running (including a background auto-
-                        // mount), which read as "eject does nothing" on a
-                        // stick that was not itself busy at all. A click
-                        // here queues behind whatever else is in flight.
-                        objectName: "ejectButton"
-                        enabled: true
-                        display: AbstractButton.IconOnly
-                        text: delegateRoot.mounted ? "Eject" : "Mount"
-                        icon.source: Theme.iconUrl("media-eject")
-                        icon.color: Theme.text
-                        icon.width: root.headerIconSize
-                        icon.height: root.headerIconSize
-                        // Rotating the eject icon 180° to mean "mount"
-                        // isn't a real convention -- it just reads as
-                        // an upside-down (broken-looking) eject icon.
-                        // Kept upright always; the tooltip (and now
-                        // click-anywhere-on-the-row) carry the "mount"
-                        // meaning instead.
-                        Layout.preferredWidth: Theme.iconSizeLarge
-                        Layout.preferredHeight: Theme.iconSizeLarge
-                        Layout.alignment: Qt.AlignVCenter
-                        ToolTip.visible: hovered
-                        ToolTip.text: delegateRoot.mounted ? "Eject " + delegateRoot.label : "Mount " + delegateRoot.label
-                        onClicked: {
-                            if (delegateRoot.mounted) {
-                                // Stop first -- unmounting out from under an open
-                                // file handle on the playing track would be bad.
-                                root.playbackController.stop();
-                                root.mediaController.unmountStick(delegateRoot.devicePath);
-                            } else {
-                                root.mediaController.mountStick(delegateRoot.devicePath);
-                            }
-                        }
-                    }
-                }
-
-                // No point showing a wall of disabled action buttons for a
-                // stick that isn't mounted yet (nothing here is clickable
-                // until it is -- click the row itself to mount) or that's
-                // mounted but has no rekordbox/Engine library on it at all
-                // (there's nothing for any of these actions to do).
-                Label {
-                    Layout.fillWidth: true
-                    Layout.topMargin: 8
-                    visible: !delegateRoot.hasKnownLibrary
-                    wrapMode: Text.WordWrap
-                    color: Theme.textMuted
-                    text: delegateRoot.mounted
-                        ? "No DeviceLibrary or Engine library detected on this stick. "
-                          + (delegateRoot.cloneSource !== null
-                             ? delegateRoot.cloneSource.detail + " "
-                             : "")
-                          + (delegateRoot.adviceState === "restore"
-                             ? delegateRoot.advice.detail + " (" + delegateRoot.advice.backupLabel + ")"
-                             : "Restore a backup onto it, or format it.")
-                        : "Click to mount, then Seabass will show what's available here."
+            Flickable {
+                id: pane
+                objectName: "homePane"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: width
+                contentHeight: paneColumn.implicitHeight
+                // Not draggable when everything already fits.
+                interactive: contentHeight > height
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {
+                    policy: pane.interactive ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
                 }
 
                 ColumnLayout {
-                    // Always visible now, unlike the individual cards
-                    // below -- Format is available for every stick
-                    // regardless of whether it has a recognized library
-                    // (it's the one thing you can do to a stick that
-                    // *doesn't*), so this whole grid can no longer be
-                    // gated behind hasKnownLibrary the way it used to be.
-                    Layout.fillWidth: true
+                    id: paneColumn
+                    width: pane.width
+                    spacing: Theme.sectionSpacing
 
-                    GridLayout {
-                        objectName: "actionGrid"
+                    // The selected stick: its row, the group's heading and
+                    // the group's cards. Named for the stick, as each row
+                    // of the old list was, so the tests and the live
+                    // helpers reach its cards under it (LiveHelpers.js).
+                    ColumnLayout {
+                        id: stickSection
+                        objectName: "stickRow:" + root.selectedStickKey
+                        visible: root.selectedRow !== null
                         Layout.fillWidth: true
-                        Layout.topMargin: 8
-                        Layout.bottomMargin: 8
-                        // From the space the cards get -- this column's width,
-                        // set by the stick card -- counting the spacing between
-                        // them. Not the grid's own width: that follows its
-                        // columns, and binding to it would feed back.
-                        columns: Math.max(1, Math.min(3, Math.floor((parent.width + columnSpacing)
-                                                                    / (root.minimumCardWidth + columnSpacing))))
-                        columnSpacing: 12
-                        rowSpacing: 12
+                        spacing: Theme.sectionSpacing
+                        // What the old delegate carried, for the tests.
+                        readonly property string label: root.selectedRow ? String(root.selectedRow.label || "") : ""
+                        readonly property string mountPoint: root.selectedRow ? String(root.selectedRow.mountPoint || "") : ""
+                        readonly property string devicePath: root.selectedRow ? String(root.selectedRow.devicePath || "") : ""
 
-                        // First in the grid: on an empty stick these two are
-                        // what it is for, and neither shows on one with a
-                        // library, so they move nothing for a stick in use.
-                        // Restoring a backup onto an empty stick: the
-                        // disaster case, a blank replacement drive. Always
-                        // offered, whether or not a backup is known, so a
-                        // new stick shows where its library comes back from.
-                        // Its wording must not presuppose a backup exists:
-                        // "no-backups" is a real, common state here -- a
-                        // freshly formatted stick with an empty default
-                        // backup directory reaches it every time -- and the
-                        // old text, "Restore a library onto this USB stick",
-                        // was reported as "Seabass offers to restore a
-                        // backup ... but we don't have one".
-                        // Restoring writes a whole stick through devicePath,
-                        // which a folder row does not have. Not gated on
-                        // `mounted`: a stick fresh out of Format USB Stick is
-                        // not remounted, and the restore page mounts it
-                        // itself when handed the device path.
-                        ActionCard {
-                            objectName: "restoreBackupCard"
-                            cardTitle: "Restore Backup"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
+                        StickHeaderRow {
+                            id: stickHeader
+                            objectName: "stickHeader"
+                            Layout.fillWidth: true
+                            row: root.selectedRow
+                            mediaController: root.mediaController
+                            playbackController: root.playbackController
+                            advice: root.selectedAdvice
+                            adviceState: root.selectedAdvice ? String(root.selectedAdvice.state || "") : ""
+                            cloneSource: root.selectedAdvice && root.selectedAdvice.cloneSource
+                                && root.selectedAdvice.cloneSource.kind === "stick"
+                                ? root.selectedAdvice.cloneSource : null
+                            onCloseFolderRequested: (mountPoint) => {
+                                if (root.releaseOpenedFolder()) {
+                                    root.mediaController.closeFolder(mountPoint);
                                 }
                             }
-                            cardSubtitle: delegateRoot.adviceState === "restore"
-                                ? "Restore " + delegateRoot.advice.backupLabel + "'s library onto this stick"
-                                : "No known stick backups yet. Browse for a backup file to restore"
-                            cardIcon: "document-revert"
-                            visible: !delegateRoot.hasKnownLibrary && !delegateRoot.isFolder
-                            enabled: !delegateRoot.thisRowBusy
-                            onClicked: root.restoreStickBackupRequested(delegateRoot.mountPoint, delegateRoot.devicePath,
-                                delegateRoot.adviceState === "restore" ? delegateRoot.advice.backupPath : "",
-                                delegateRoot.label)
                         }
-                        // Copying another mounted stick's live library onto
-                        // this empty one, through a fresh backup of it. Only
-                        // when there is such a stick: restoring a backup
-                        // from this computer is Restore Backup's job, and
-                        // this card used to do both, which hid the restore
-                        // behind a name about making backups.
-                        ActionCard {
-                            objectName: "createBackupStickCard"
-                            cardTitle: "Create Backup USB Stick"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
-                                }
+
+                        GroupHeading {
+                            groupName: root.groupInfo(root.selectedGroup).name
+                            groupDescription: root.groupInfo(root.selectedGroup).description
+                            textInset: root.paneTextInset
+                        }
+
+                        StickToolCards {
+                            id: toolCards
+                            Layout.fillWidth: true
+                            row: root.selectedRow
+                            group: root.selectedGroup
+                            mediaController: root.mediaController
+                            appSettingsController: root.appSettingsController
+                            backupAdvisor: root.backupAdvisor
+                            editRegistry: root.editRegistry
+                            columns: root.compact ? 1 : 2
+                            onBrowseRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.browseRequested(stickLabel, rekordboxPath, enginePath)
+                            onDuplicateTracksHubRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.duplicateTracksHubRequested(stickLabel, rekordboxPath, enginePath)
+                            onLibraryHealthRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.libraryHealthRequested(stickLabel, rekordboxPath, enginePath)
+                            onStickStatisticsRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.stickStatisticsRequested(stickLabel, rekordboxPath, enginePath)
+                            onStickPerformanceRequested: (stickLabel, rekordboxPath, enginePath, mountPoint) =>
+                                root.stickPerformanceRequested(stickLabel, rekordboxPath, enginePath, mountPoint)
+                            onEngineLibraryCreatorRequested: (stickLabel, rekordboxPath) =>
+                                root.engineLibraryCreatorRequested(stickLabel, rekordboxPath)
+                            onSettingsRequested: (stickLabel, pioneerRoot) => root.settingsRequested(stickLabel, pioneerRoot)
+                            onSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.syncRequested(stickLabel, rekordboxPath, enginePath)
+                            onBackupsHubRequested: (stickLabel, rekordboxPath, enginePath, mountPoint, devicePath) =>
+                                root.backupsHubRequested(stickLabel, rekordboxPath, enginePath, mountPoint, devicePath)
+                            onFormatUsbRequested: root.formatUsbRequested()
+                            onRestoreStickBackupRequested: (mountPoint, devicePath, archivePath, stickLabel) =>
+                                root.restoreStickBackupRequested(mountPoint, devicePath, archivePath, stickLabel)
+                            onMetadataBackupRequested: (stickLabel, rekordboxPath, enginePath, libraryId) =>
+                                root.metadataBackupRequested(stickLabel, rekordboxPath, enginePath, libraryId)
+                            onMetadataRestoreRequested: (stickLabel, rekordboxPath, enginePath, libraryId) =>
+                                root.metadataRestoreRequested(stickLabel, rekordboxPath, enginePath, libraryId)
+                            onCloneStickRequested: (sourceLabel, sourceRekordboxPath, sourceEnginePath,
+                                                    targetMountPoint, targetLabel, targetHasLibrary) =>
+                                root.cloneStickRequested(sourceLabel, sourceRekordboxPath, sourceEnginePath,
+                                                         targetMountPoint, targetLabel, targetHasLibrary)
+                            onExplainLockRequested: (libraryId) => root.explainLock(libraryId)
+                        }
+                    }
+
+                    // No stick and no folder: the group's heading all the
+                    // same, and what can be done on this computer alone.
+                    GroupHeading {
+                        objectName: "noStickHeading"
+                        visible: root.selectedRow === null
+                        groupName: root.groupInfo(root.selectedGroup).name
+                        groupDescription: root.groupInfo(root.selectedGroup).description
+                        textInset: root.paneTextInset
+                    }
+                    Label {
+                        objectName: "noStickNothingHere"
+                        visible: root.selectedRow === null && root.selectedGroup !== "backup"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: root.paneTextInset
+                        text: "Nothing here without a USB stick. Insert one to get started."
+                        color: Theme.textMuted
+                        wrapMode: Text.WordWrap
+                    }
+
+                    // Tools that work on this computer's own backup stores,
+                    // not on whatever stick happens to be plugged in: the
+                    // Backup group's cards while no stick is. The header
+                    // menu offers the same, and a card here says so
+                    // plainly on a screen that would otherwise be empty.
+                    //
+                    // removableCount, not the row count: a folder someone
+                    // opened is not a stick, and should not make these
+                    // vanish, since then there would be no route to
+                    // Restore a Stick Backup at all.
+                    ColumnLayout {
+                        objectName: "noStickBackupTools"
+                        Layout.fillWidth: true
+                        visible: root.removableStickCount === 0 && root.selectedGroup === "backup"
+                        spacing: Theme.tightSpacing
+
+                        // Only beside an opened folder's own cards, where
+                        // it says these are not about that folder.
+                        TableHeaderLabel {
+                            objectName: "noStickToolsLabel"
+                            visible: root.selectedRow !== null
+                            label: "On this computer"
+                            leftPadding: root.paneTextInset
+                        }
+
+                        GridLayout {
+                            id: computerGrid
+                            Layout.fillWidth: true
+                            columns: root.compact ? 1 : 2
+                            columnSpacing: Theme.rowSpacing
+                            rowSpacing: Theme.rowSpacing
+                            // Every column the same width, as the stick's
+                            // cards above have it.
+                            readonly property real cellWidth: Math.max(0, (paneColumn.width
+                                - (computerGrid.columns - 1) * computerGrid.columnSpacing) / computerGrid.columns)
+
+                            ActionCard {
+                                objectName: "generalRestoreCard"
+                                large: true
+                                Layout.preferredWidth: computerGrid.cellWidth
+                                Layout.fillHeight: true
+                                cardTitle: "Restore a Stick Backup"
+                                cardSubtitle: "Put a stick backup from this computer onto any drive"
+                                cardIcon: "document-revert"
+                                // No stick preselected: the page itself lists
+                                // every mounted drive and every backup on disk.
+                                onClicked: root.restoreStickBackupRequested("", "", "", "")
                             }
-                            cardSubtitle: delegateRoot.cloneSource !== null ? delegateRoot.cloneSource.detail : ""
-                            cardIcon: "edit-copy"
-                            visible: !delegateRoot.hasKnownLibrary && !delegateRoot.isFolder
-                                && delegateRoot.cloneSource !== null
-                            // The source stick has to be mounted, which
-                            // cloneSource being non-null already implies
-                            // (peers are only ever mounted sticks).
-                            enabled: !delegateRoot.thisRowBusy && delegateRoot.cloneSource !== null
-                                && delegateRoot.mounted && delegateRoot.cloneSource.enoughSpace !== false
-                            onClicked: root.cloneStickRequested(delegateRoot.cloneSource.label,
-                                delegateRoot.cloneSource.rekordboxPath, delegateRoot.cloneSource.enginePath,
-                                delegateRoot.mountPoint, delegateRoot.label, false)
-                        }
-                        ActionCard {
-                            cardTitle: "Browse Library"
-                            cardSubtitle: "View tracks, playlists and cues"
-                            cardIcon: "view-media-track"
-                            visible: delegateRoot.hasKnownLibrary
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.browseRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
-                        }
-                        // Every card below that writes is withheld for a
-                        // browsed backup: its analysis files are in the
-                        // archive, not on disk, so a rekordbox cue write
-                        // would fail mid-save, and the directory is
-                        // replaced on the next open, so an Engine write
-                        // would silently vanish. Browse, Statistics and
-                        // Metadata Backup only read, and stay.
-                        //
-                        // Second, straight after Browse Library: copying cues
-                        // between the stick's two catalogs is what most people
-                        // open Seabass for, and it sat ninth, below the
-                        // housekeeping and backup tools.
-                        ActionCard {
-                            cardTitle: "Sync Cue Points"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
-                                }
+                            ActionCard {
+                                objectName: "browseFullBackupCard"
+                                large: true
+                                Layout.preferredWidth: computerGrid.cellWidth
+                                Layout.fillHeight: true
+                                cardTitle: "Browse a Full Stick Backup"
+                                cardSubtitle: "Look at a backup's library without restoring it"
+                                cardIcon: "backup"
+                                onClicked: openBackupDialog.open()
                             }
-                            cardSubtitle: "Copy cues between DeviceLibrary and Engine"
-                            cardIcon: "exchange-positions"
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox && delegateRoot.hasEngine
-                            onClicked: root.syncRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
-                        }
-                        ActionCard {
-                            cardTitle: "Housekeeping"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
-                                }
+                            ActionCard {
+                                objectName: "manageBackupsCard"
+                                large: true
+                                Layout.preferredWidth: computerGrid.cellWidth
+                                Layout.fillHeight: true
+                                cardTitle: "Manage Full Stick Backups"
+                                cardSubtitle: homeBackups.fullBackupCount > 0
+                                    ? "See, browse and delete the stick backups on this computer"
+                                    : "None yet"
+                                cardIcon: "deep-history"
+                                enabled: homeBackups.fullBackupCount > 0
+                                onClicked: root.manageBackupsRequested()
                             }
-                            cardSubtitle: "Duplicate stats, copy cues between copies, and clean up"
-                            cardIcon: "edit-clear-all"
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.duplicateTracksHubRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
-                        }
-                        ActionCard {
-                            cardTitle: "Library Health"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
-                            cardSubtitle: "Find rows whose file is missing and repair or clean them up"
-                            cardIcon: "kt-check-data"
-                            // Graduated from experimental (see
-                            // docs/experimental-features.md) after real
-                            // use with no incidents.
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
-                        }
-                        ActionCard {
-                            cardTitle: "Library Statistics"
-                            cardSubtitle: "Filesystem, library stats, and disk usage"
-                            cardIcon: "office-chart-bar"
-                            // Graduated from experimental (see
-                            // docs/experimental-features.md) after real
-                            // use with no incidents.
-                            visible: delegateRoot.hasKnownLibrary
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.stickStatisticsRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath)
-                        }
-                        ActionCard {
-                            cardTitle: "USB Stick Performance"
-                            cardSubtitle: "Measure the stick the way a player reads it, per player generation"
-                            cardIcon: "speedometer"
-                            // The write test has nowhere to write on a
-                            // read-only stick, and half a benchmark is
-                            // worse than none.
-                            readOnly: delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnlyNote
-                            onReadOnlyClicked: root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                           delegateRoot.enginePath)
-                            // Needs no library: a stick with any files on
-                            // it is measured on those, a blank one on
-                            // throwaway files the page writes and removes.
-                            // A browsed backup or an opened folder is on
-                            // this computer, and measuring it would say
-                            // nothing about any stick.
-                            visible: delegateRoot.mounted && !delegateRoot.isBrowsedBackup && !delegateRoot.isFolder
-                            onClicked: root.stickPerformanceRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                      delegateRoot.enginePath, delegateRoot.mountPoint)
-                        }
-                        ActionCard {
-                            cardTitle: "Metadata Backup"
-                            cardSubtitle: "Copy this stick's cues, ratings and comments to this computer"
-                            cardIcon: "document-save"
-                            // Not gated on the write lock: this only ever
-                            // writes to the local store, so another
-                            // session editing the library is no reason to
-                            // refuse a copy of what is on it.
-                            visible: delegateRoot.hasKnownLibrary
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.metadataBackupRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                    delegateRoot.enginePath, delegateRoot.libraryId)
-                        }
-                        ActionCard {
-                            cardTitle: "Restore Metadata"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
-                                }
+                            ActionCard {
+                                objectName: "browseMetadataBackupsCard"
+                                large: true
+                                Layout.preferredWidth: computerGrid.cellWidth
+                                Layout.fillHeight: true
+                                cardTitle: "Browse Metadata Backups"
+                                cardSubtitle: homeBackups.metadataTrackCount > 0
+                                    ? "The cues, ratings and comments kept on this computer"
+                                    : "None yet"
+                                cardIcon: "view-list-details"
+                                // Off rather than missing while the store is
+                                // empty: the card says the feature exists.
+                                enabled: homeBackups.metadataTrackCount > 0
+                                // No stick: the page opens on its browse half.
+                                onClicked: root.metadataBackupRequested("", "", "", "")
                             }
-                            cardSubtitle: "Put cues from this computer back on tracks that have lost them"
-                            cardIcon: "document-import"
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.metadataRestoreRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                     delegateRoot.enginePath, delegateRoot.libraryId)
-                        }
-                        ActionCard {
-                            cardTitle: "Create Engine Library"
-                            readOnly: delegateRoot.lockedByOther || delegateRoot.readOnly
-                            readOnlyReason: delegateRoot.readOnly ? delegateRoot.readOnlyNote
-                                : "Another Seabass instance is editing this library"
-                            onReadOnlyClicked: {
-                                if (delegateRoot.readOnly) {
-                                    root.libraryHealthRequested(delegateRoot.label, delegateRoot.rekordboxPath,
-                                                                delegateRoot.enginePath);
-                                } else {
-                                    root.explainLock(delegateRoot.libraryId);
-                                }
-                            }
-                            cardSubtitle: "Build a new Engine Library from this stick's DeviceLibrary export"
-                            cardIcon: "server-database"
-                            // Experimental (see docs/experimental-features.md):
-                            // the first feature here that fabricates a whole
-                            // new database from scratch. Only makes sense
-                            // when there's rekordbox data to build from and
-                            // no Engine Library already present to overwrite.
-                            experimental: true
-                            experimentalFeaturesEnabled: root.appSettingsController.experimentalFeaturesEnabled
-                            // Both sides of a merge, kept. Master hides
-                            // this once the stick HAS an Engine Library
-                            // rather than showing it disabled: a disabled
-                            // control is an offer the user has to work out
-                            // they cannot take, and it pushes every card
-                            // below it down the page for nothing.
-                            // backup-browsing hides it on anything not
-                            // writable, which is how a browsed backup
-                            // stops offering write actions at all.
-                            // `writable` already implies hasKnownLibrary
-                            // (hasKnownLibrary && !isBrowsedBackup), so
-                            // the two compose without repeating it.
-                            // The experimental gate restated: a visible
-                            // binding of our own replaces ActionCard's
-                            // default, which is where the gate lives, and
-                            // this is the one card still behind it.
-                            visible: delegateRoot.writable && !delegateRoot.hasEngine
-                                && (!experimental || experimentalFeaturesEnabled)
-                            enabled: delegateRoot.hasRekordbox
-                            onClicked: root.engineLibraryCreatorRequested(delegateRoot.label, delegateRoot.rekordboxPath)
-                        }
-                        ActionCard {
-                            cardTitle: "Backups"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
-                            // The advisor's verdict on the full stick backup
-                            // leads when it has one; the generic line otherwise.
-                            cardSubtitle: {
-                                const pending = delegateRoot.cuesPending ? " (checking cues)" : "";
-                                if (delegateRoot.updateSource !== null) {
-                                    return "Newer copy on " + delegateRoot.updateSource.label + ": update this stick from here" + pending;
-                                }
-                                switch (delegateRoot.adviceState) {
-                                case "outdated": return "Update the full stick backup: " + delegateRoot.advice.detail + pending;
-                                case "behind-backup": return delegateRoot.advice.detail + pending;
-                                case "current": return "Full stick backup is up to date" + pending;
-                                case "back-up-new":
-                                case "no-backups": return "No full stick backup of this library yet" + pending;
-                                case "different-library": return delegateRoot.advice.detail + " Back it up as new." + pending;
-                                default: return "Back up the whole stick, and manage its backups on this computer";
-                                }
-                            }
-                            cardIcon: "backup"
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox || delegateRoot.hasEngine
-                            onClicked: root.backupsHubRequested(delegateRoot.label, delegateRoot.rekordboxPath, delegateRoot.enginePath,
-                                delegateRoot.mountPoint, delegateRoot.devicePath)
-                        }
-                        ActionCard {
-                            cardTitle: "Device Profile"
-                            readOnly: delegateRoot.lockedByOther
-                            onReadOnlyClicked: root.explainLock(delegateRoot.libraryId)
-                            cardSubtitle: "View this stick's saved Rekordbox player settings"
-                            cardIcon: "view-media-equalizer"
-                            visible: delegateRoot.writable
-                            enabled: delegateRoot.hasRekordbox
-                            onClicked: root.settingsRequested(delegateRoot.label, delegateRoot.rekordboxPath)
-                        }
-                        ActionCard {
-                            cardTitle: "Format USB Stick"
-                            // There is no drive behind a folder row to
-                            // erase, and devicePath is empty for one.
-                            visible: !delegateRoot.isFolder
-                            cardSubtitle: "Erase and prepare this drive for CDJs, XDJs, and Denon Engine players"
-                            cardIcon: "edit-delete-shred"
-                            // The one action here that can permanently erase a
-                            // drive, not just modify or consolidate library
-                            // data on one, so it keeps its own warnings and
-                            // its type-to-confirm dialog.
-                            // Available for every stick regardless of
-                            // hasKnownLibrary -- unlike every other card
-                            // here, this is the one action meant for a
-                            // stick with nothing recognizable on it yet.
-                            enabled: !root.mediaController.busy
-                            onClicked: root.formatUsbRequested()
                         }
                     }
                 }
-                }
-            }
-
-            Label {
-                anchors.centerIn: parent
-                visible: parent.count === 0
-                text: "No USB sticks detected. Insert one to get started."
-                font.pointSize: Theme.fontLarge
-                color: Theme.textMuted
             }
         }
+    }
 
+    // The selected group's name, and beside it what the group is for,
+    // on the pane's text line: the stick's name above it and the cards'
+    // titles below start at the same x. An inline component sees none of
+    // this file's ids, so what it shows is handed in.
+    component GroupHeading: RowLayout {
+        id: heading
+        property string groupName
+        property string groupDescription
+        property real textInset: 0
+        objectName: "groupHeading"
+        Layout.fillWidth: true
+        Layout.leftMargin: textInset
+        Layout.topMargin: Theme.tightSpacing
+        spacing: Theme.rowSpacing
+        Label {
+            objectName: "groupHeadingName"
+            text: heading.groupName
+            font.family: Theme.titleFamily
+            font.weight: Font.DemiBold
+            font.pointSize: Theme.cardTitleSize * 1.1
+            color: Theme.text
+            Layout.alignment: Qt.AlignBaseline
+        }
+        Label {
+            objectName: "groupHeadingDescription"
+            text: heading.groupDescription
+            color: Theme.textMuted
+            elide: Text.ElideRight
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            Layout.alignment: Qt.AlignBaseline
+        }
     }
 }

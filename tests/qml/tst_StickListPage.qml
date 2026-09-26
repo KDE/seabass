@@ -7,10 +7,12 @@ import QtTest
 import SeabassGui
 import "../qml-live/LiveHelpers.js" as Live
 
-// StickListPage.qml headless with fake controllers: which cards an empty
-// stick and a library stick show once the backup advisor has spoken, and
-// what the new clone / update cards request. Also the page's screenshot
-// when SEABASS_SCREENSHOT_DIR is set.
+// StickListPage.qml headless with fake controllers: the rail and the pane
+// beside it (which stick and which group are selected, and what that
+// selection follows), which cards an empty stick and a library stick show
+// once the backup advisor has spoken, and what the clone / update cards
+// request. Also the page's screenshot, in every state the home has, when
+// SEABASS_SCREENSHOT_DIR is set.
 TestCase {
     id: testCase
     name: "StickListPage"
@@ -79,8 +81,14 @@ TestCase {
 
     // Rows and cards by the objectNames StickListPage gives them, shared
     // with the live tests: one place that knows how the page is built.
+    // Finding a card selects its stick and its group, as the rail would;
+    // the frame after that is what a click at the card's centre needs.
     function findCard(page, mountPoint, title) {
-        return Live.cardInRow(page, mountPoint, title);
+        const card = Live.cardInRow(page, mountPoint, title);
+        if (card !== null && card.visible) {
+            waitForRendering(page);
+        }
+        return card;
     }
     function findRowObject(page, mountPoint, objectName) {
         return Live.objectInRow(page, mountPoint, objectName);
@@ -95,7 +103,7 @@ TestCase {
     // What StickListPage reads and calls on the real AppSettingsController.
     function fakeAppSettings() {
         return {
-            experimentalFeaturesEnabled: true, stickBackupDirectory: "/tmp",
+            experimentalFeaturesEnabled: true, stickBackupDirectory: "/tmp", homeGroup: "explore",
             toLocalFileUrl: function(p) { return "file://" + p; },
             localPathFromUrl: function(u) { return u.replace(/^file:\/\//, ""); },
         };
@@ -120,13 +128,17 @@ TestCase {
     // clicked; Browse stays a plain card.
     function test_readOnlyCardsWhileAnotherInstanceEdits() {
         var page = makePage([makeStick({})], {}, {editRegistry: fakeEditRegistry(["lib-main"])});
-        var housekeeping = findCard(page, "/media/MAIN", "Housekeeping");
+        // Browse first: finding Housekeeping switches the pane to its
+        // group, Maintain, where the click below has to land.
         var browse = findCard(page, "/media/MAIN", "Browse Library");
-        verify(housekeeping !== null && browse !== null);
-        compare(housekeeping.readOnly, true);
+        verify(browse !== null);
         compare(browse.readOnly, false);
-        compare(findChild(housekeeping, "readOnlyBadge").visible, true);
         compare(findChild(browse, "readOnlyBadge").visible, false);
+        var housekeeping = findCard(page, "/media/MAIN", "Housekeeping");
+        verify(housekeeping !== null);
+        compare(page.selectedGroup, "maintain");
+        compare(housekeeping.readOnly, true);
+        compare(findChild(housekeeping, "readOnlyBadge").visible, true);
 
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "duplicateTracksHubRequested"});
         mouseClick(housekeeping);
@@ -177,21 +189,185 @@ TestCase {
         mouseClick(findCard(page, "/media/MAIN", "Housekeeping"));
         compare(housekeepingSpy.count, 0);
         compare(healthSpy.count, 1);
+        saveScreenshot(page, "stick-list-read-only-stick");
     }
 
-    // A stick appearing or disappearing is the one thing on this page the
-    // user does at the USB port rather than on the screen, so the list
-    // has to show it happening. Without these the model's inserts and
-    // removes are still correct and the list still redraws -- which is
-    // exactly the failure worth catching, because nothing else looks
-    // wrong when a transition quietly goes missing.
-    function test_theListShowsSticksArrivingAndLeaving() {
-        var page = makePage([makeStick({label: "ONE"})], []);
-        var list = findChild(page, "stickList");
-        verify(list, "the stick list must exist");
-        verify(list.add, "an arriving stick must be animated in");
-        verify(list.remove, "a leaving stick must be animated out");
-        verify(list.displaced, "the cards making room must move rather than jump");
+    // A ListModel stands in for the real model where rows come and go:
+    // it has count, get(i) and the inserts and removes the page follows.
+    Component {
+        id: listModelComponent
+        ListModel {}
+    }
+    function makeModel(sticks) {
+        const model = createTemporaryObject(listModelComponent, testCase);
+        for (let i = 0; i < sticks.length; ++i) {
+            model.append(sticks[i]);
+        }
+        return model;
+    }
+    function noLibrary(overrides) {
+        const s = makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1",
+                             hasRekordbox: false, hasEngine: false, rekordboxPath: "", enginePath: "", libraryId: ""});
+        for (const key in (overrides || {})) {
+            s[key] = overrides[key];
+        }
+        return s;
+    }
+
+    // On load the first stick with a library is selected, not simply the
+    // first stick: an empty stick listed first would open the home on a
+    // pane with nothing to do.
+    function test_theFirstStickWithALibraryIsSelectedOnLoad() {
+        const page = makePage([noLibrary({}), makeStick({})], {});
+        compare(page.selectedStickKey, "/media/MAIN");
+        compare(Live.findByObjectName(page, "stickLabel").text, "MAIN");
+        // No stick has one: the first.
+        const bare = makePage([noLibrary({}), noLibrary({label: "BLANK", mountPoint: "/media/BLANK", devicePath: "/dev/sdd1"})], {});
+        compare(bare.selectedStickKey, "/media/SPARE");
+        // The rail shows which.
+        compare(findByName(page, "railStick:/media/MAIN").selected, true);
+        compare(findByName(page, "railStick:/media/SPARE").selected, false);
+    }
+
+    // A click on the rail selects that stick; the pane follows.
+    function test_clickingARailStickSelectsIt() {
+        const page = makePage([makeStick({}), noLibrary({})], {});
+        const entry = findByName(page, "railStick:/media/SPARE");
+        verify(entry !== null);
+        mouseClick(entry);
+        compare(page.selectedStickKey, "/media/SPARE");
+        compare(findByName(page, "stickLabel").text, "SPARE");
+        compare(findByName(page, "stickRow:/media/SPARE").visible, true);
+        compare(findByName(page, "noKnownLibraryLabel").visible, true);
+    }
+
+    // Sticks come and go at the USB port. The rail animates them in and
+    // out (HomeRail's own tests look at the animation), and the selection
+    // follows: an arrival is selected only when nothing was, the selected
+    // stick leaving selects the first that remains, and mounting, which
+    // changes a stick's key from its device to its mount point, keeps it
+    // selected.
+    function test_theSelectionFollowsSticksArrivingAndLeaving() {
+        const model = makeModel([noLibrary({label: "ONE", mountPoint: "/media/ONE", devicePath: "/dev/sdb1"})]);
+        const page = makePage(model, {});
+        compare(page.selectedStickKey, "/media/ONE");
+        verify(findByName(page, "railStick:/media/ONE") !== null, "the rail lists the stick");
+
+        // Another arrives while one is selected: the selection stays.
+        model.append(makeStick({label: "TWO", mountPoint: "/media/TWO", devicePath: "/dev/sdc1"}));
+        compare(page.selectedStickKey, "/media/ONE");
+        tryVerify(() => findByName(page, "railStick:/media/TWO") !== null, 2000, "the rail lists the arrival");
+        compare(page.backupAdvisor.calls.indexOf("assess:/media/TWO") >= 0, true, "an arrival is assessed");
+
+        // The selected one leaves: the first that remains.
+        model.remove(0);
+        compare(page.selectedStickKey, "/media/TWO");
+        compare(findByName(page, "stickLabel").text, "TWO");
+        verify(findByName(page, "railStickLeaving:/media/ONE") !== null, "the rail shows the stick going");
+
+        // Another stick listed ahead of it, so "the first that remains"
+        // would be the wrong answer to the key changing below.
+        model.insert(0, noLibrary({label: "ZERO", mountPoint: "/media/ZERO", devicePath: "/dev/sde1"}));
+        compare(page.selectedStickKey, "/media/TWO");
+
+        // Unmounted and mounted again: the same stick, still selected,
+        // and assessed again once it is back.
+        const assessedBefore = page.backupAdvisor.calls.filter((c) => c === "assess:/media/TWO").length;
+        model.setProperty(1, "mountPoint", "");
+        model.setProperty(1, "mounted", false);
+        compare(page.selectedStickKey, "/dev/sdc1");
+        compare(findByName(page, "unmountedLabel").visible, true);
+        model.setProperty(1, "mounted", true);
+        model.setProperty(1, "mountPoint", "/media/TWO");
+        compare(page.selectedStickKey, "/media/TWO");
+        compare(page.backupAdvisor.calls.filter((c) => c === "assess:/media/TWO").length, assessedBefore + 1);
+
+        // The last ones leave: nothing selected, the no-stick pane.
+        model.remove(1);
+        compare(page.selectedStickKey, "/media/ZERO");
+        model.remove(0);
+        compare(page.selectedStickKey, "");
+        compare(findByName(page, "noStickHeading").visible, true);
+        compare(findByName(page, "railNoSticks").visible, true);
+
+        // One arrives while none is selected: that one.
+        model.append(noLibrary({label: "THREE", mountPoint: "/media/THREE", devicePath: "/dev/sdd1"}));
+        compare(page.selectedStickKey, "/media/THREE");
+        compare(findByName(page, "noStickHeading").visible, false);
+    }
+
+    // The group is remembered across runs, through the settings; a value
+    // nobody recognises falls back to Explore.
+    function test_theGroupIsRememberedAcrossRuns() {
+        const settings = fakeAppSettings();
+        settings.homeGroup = "maintain";
+        const page = makePage([makeStick({})], {}, {appSettingsController: settings});
+        compare(page.selectedGroup, "maintain");
+        compare(findByName(page, "railGroup:maintain").selected, true);
+        compare(findByName(page, "groupHeadingName").text, "Maintain");
+        compare(findByName(page, "groupHeadingDescription").text, "Find and fix what is wrong");
+
+        mouseClick(findByName(page, "railGroup:sync"));
+        compare(page.selectedGroup, "sync");
+        compare(page.appSettingsController.homeGroup, "sync", "the choice is stored for the next run");
+        compare(findByName(page, "groupHeadingName").text, "Sync");
+        compare(findByName(page, "groupHeadingDescription").text, "Keep the catalogs in step");
+        compare(findCard(page, "/media/MAIN", "Sync Cue Points").visible, true);
+
+        const odd = fakeAppSettings();
+        odd.homeGroup = "bogus";
+        compare(makePage([makeStick({})], {}, {appSettingsController: odd}).selectedGroup, "explore");
+    }
+
+    // One left line for the page and one for the pane: the rail's pills
+    // start where the brand does, and the stick's name, the group heading
+    // and the cards' titles share an edge of their own.
+    function test_thePaneTextSharesOneLeftEdge() {
+        const page = makePage([makeStick({})], {});
+        const x = (item) => Math.round(item.mapToItem(page, 0, 0).x);
+        compare(x(findByName(page, "homeRail")), x(findByName(page, "brandLockup")));
+        const name = findByName(page, "stickLabel");
+        const heading = findByName(page, "groupHeadingName");
+        const card = findCard(page, "/media/MAIN", "Browse Library");
+        const title = findChild(card, "cardTitleLabel");
+        compare(x(heading), x(name), "the group heading starts under the stick's name");
+        compare(x(title), x(name), "the cards' titles start under the stick's name");
+        verify(x(name) > x(findByName(page, "homePane")), "inside the pane");
+    }
+
+    // A group with nothing for this stick says so rather than showing a
+    // blank under its heading.
+    function test_anEmptyGroupSaysSo() {
+        const page = makePage([noLibrary({})], {});
+        page.selectGroup("sync");
+        const nothing = findByName(page, "nothingHereLabel");
+        verify(nothing !== null);
+        compare(nothing.visible, true);
+        compare(nothing.text, "Nothing here for this stick.");
+        waitForRendering(page);
+        saveScreenshot(page, "stick-list-no-library-sync");
+        page.selectGroup("backup");
+        compare(nothing.visible, false);
+    }
+
+    // Tab goes from the rail to the pane: the stick row, then the cards.
+    function test_tabGoesFromTheRailToTheCards() {
+        const page = makePage([makeStick({})], {});
+        const tools = findByName(page, "railToolKeys");
+        tools.forceActiveFocus();
+        verify(tools.activeFocus);
+        keyClick(Qt.Key_Down);
+        keyClick(Qt.Key_Return);
+        compare(page.selectedGroup, "sync", "Down and Enter on the rail pick the next group");
+        // The stick row's eject button is the pane's first stop, then the
+        // group's cards.
+        keyClick(Qt.Key_Tab);
+        compare(page.Window.activeFocusItem, findByName(page, "ejectButton"));
+        keyClick(Qt.Key_Tab);
+        const focused = page.Window.activeFocusItem;
+        verify(focused !== null && focused.cardTitle !== undefined,
+               "Tab after the stick row lands on a card, not on " + focused);
+        compare(focused.cardTitle, "Sync Cue Points");
     }
 
     function test_everyMountedStickIsAssessed() {
@@ -218,6 +394,7 @@ TestCase {
         compare(spy.count, 1);
         compare(spy.signalArguments[0][0], "SPARE");
         compare(spy.signalArguments[0][3], "/media/SPARE");
+        saveScreenshot(page, "stick-list-no-library");
     }
 
     // Graduated on 2026-09-17: the card is there with the experimental
@@ -249,19 +426,23 @@ TestCase {
                           enoughSpace: true, detail: "Copy MAIN's library onto this stick.",
                           rekordboxPath: "/media/MAIN/PIONEER", enginePath: "/media/MAIN/Engine Library"}});
         var page = makePage([makeStick({}), spare], advice);
+        // MAIN first: one stick's section is shown at a time, so each
+        // card is read while its own stick is the selected one.
+        verify(findCard(page, "/media/MAIN", "Create Backup USB Stick").visible === false);
+        verify(findCard(page, "/media/MAIN", "Update Stick") === null);
+        // A stick with a library restores from its Backups page instead.
+        compare(findCard(page, "/media/MAIN", "Restore Backup").visible, false);
         var card = findCard(page, "/media/SPARE", "Create Backup USB Stick");
         verify(card !== null);
         compare(card.visible, true);
         compare(card.enabled, true);
         compare(card.cardSubtitle, "Copy MAIN's library onto this stick.");
-        verify(findCard(page, "/media/MAIN", "Create Backup USB Stick").visible === false);
-        verify(findCard(page, "/media/MAIN", "Update Stick") === null);
         // Restoring the backup is offered beside the copy, not instead of it.
         var restoreCard = findCard(page, "/media/SPARE", "Restore Backup");
         compare(restoreCard.visible, true);
         compare(restoreCard.cardSubtitle, "Restore MAIN's library onto this stick");
-        // A stick with a library restores from its Backups page instead.
-        compare(findCard(page, "/media/MAIN", "Restore Backup").visible, false);
+        // The stick's row says the same, under its name.
+        verify(findByName(page, "noKnownLibraryLabel").text.indexOf("Copy MAIN's library onto this stick.") >= 0);
 
         var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "cloneStickRequested"});
         card.clicked();
@@ -379,21 +560,39 @@ TestCase {
         compare(mainButton.visible, true);
         compare(mainButton.enabled, true);
         mainButton.clicked();
-        compare(page.mediaController.calls.indexOf("unmount:/dev/sdb1") >= 0, true);
+        // Asked of the stick row's own copy: a plain JS object handed on
+        // through a binding arrives as a copy, so its calls land there.
+        compare(findByName(page, "stickHeader").mediaController.calls.indexOf("unmount:/dev/sdb1") >= 0, true);
     }
 
     function test_generalBackupsBlockRequestsWithNoStick() {
         // With no stick in, which is when this block is shown at all --
         // see test_theNoStickToolsStepAsideOnceAStickIsIn.
         var page = makePage([], {});
-        var restoreCard = findChild(page, "generalRestoreCard");
+        // Explore, Sync and Maintain have nothing without a stick.
+        compare(findByName(page, "noStickNothingHere").visible, true);
+        compare(findByName(page, "noStickBackupTools").visible, false);
+        waitForRendering(page);
+        saveScreenshot(page, "stick-list-no-stick-explore");
+
+        page.selectGroup("backup");
+        compare(findByName(page, "noStickNothingHere").visible, false);
+        var restoreCard = findByName(page, "generalRestoreCard");
         verify(restoreCard !== null);
+        compare(restoreCard.visible, true);
         // Local Cue Backup is gone: Metadata Backup and Restore replaced it.
         compare(findChild(page, "generalLocalCueCard"), null);
-
-        // The block holds one card now that Local Cue Backup is gone; worth a
-        // picture, because a two-column grid with one card in it is exactly
-        // the kind of layout no assertion here would call wrong.
+        // The header menu's entries as cards, with the menu's enabled rules.
+        compare(findByName(page, "browseFullBackupCard").enabled, true);
+        compare(findByName(page, "manageBackupsCard").enabled, page.homeBackupsFullCount > 0);
+        const metadataCard = findByName(page, "browseMetadataBackupsCard");
+        compare(metadataCard.enabled, page.homeBackupsMetadataCount > 0);
+        const metadataSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "metadataBackupRequested"});
+        metadataCard.clicked();
+        compare(metadataSpy.count, 1);
+        for (let i = 0; i < 4; ++i) {
+            compare(metadataSpy.signalArguments[0][i], "", "no stick: argument " + i + " is empty");
+        }
         waitForRendering(page);
         saveScreenshot(page, "stick-list-no-stick");
 
@@ -467,7 +666,16 @@ TestCase {
         close.clicked();
         compare(page.mediaController.calls.indexOf("closeFolder:/home/dj/restored") >= 0, true);
 
+        page.selectGroup("explore");
+        waitForRendering(page);
         saveScreenshot(page, "stick-list-folder-library");
+        // No stick in, so the Backup group also offers this computer's own
+        // tools, under a line saying they are not about the folder.
+        page.selectGroup("backup");
+        compare(findByName(page, "noStickBackupTools").visible, true);
+        compare(findByName(page, "noStickToolsLabel").visible, true);
+        waitForRendering(page);
+        saveScreenshot(page, "stick-list-folder-library-backup");
     }
 
     // A browsed stick backup is a folder row that must not be written
@@ -498,7 +706,14 @@ TestCase {
             var w = findCard(page, mp, writes[j]);
             verify(w === null || !w.visible, writes[j] + " must be withheld on a browsed backup");
         }
+        page.selectGroup("explore");
+        waitForRendering(page);
         saveScreenshot(page, "stick-list-browsed-backup");
+        // Sync has nothing for a backup: every card in it writes.
+        page.selectGroup("sync");
+        compare(findByName(page, "nothingHereLabel").visible, true);
+        waitForRendering(page);
+        saveScreenshot(page, "stick-list-browsed-backup-sync");
     }
 
     // Closing a folder row is where its unsaved edits would otherwise
@@ -654,11 +869,13 @@ TestCase {
         // the thing the page is actually about, taking the top of the
         // screen for the case that is not happening.
         var empty = makePage([], {});
+        empty.selectGroup("backup");
         var tools = findByName(empty, "noStickBackupTools");
         verify(tools !== null, "the no-stick tools must exist");
         compare(tools.visible, true, "and must be shown when no stick is in");
 
         var withStick = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})});
+        withStick.selectGroup("backup");
         compare(findByName(withStick, "noStickBackupTools").visible, false,
                 "and must step aside once a stick is in");
     }
@@ -671,6 +888,7 @@ TestCase {
         var page = makePage([makeStick({label: "COPY", mountPoint: "/home/sebas/copy", isFolder: true,
                                         devicePath: ""})],
                             {});
+        page.selectGroup("backup");
         compare(findByName(page, "noStickBackupTools").visible, true,
                 "an opened folder must not count as a stick being in");
     }
@@ -708,52 +926,69 @@ TestCase {
         }
     }
 
-    // The stick card's actions keep a usable width: three columns where
-    // the page has room, then two, then one as the window narrows.
-    function test_theActionGridNarrowsWithThePage() {
-        var probe = makePage([], {});
-        var card = probe.minimumCardWidth;
-        verify(card > 0);
-        // Room for that many cards and the 12 px between them, plus the page
-        // and card margins, with some to spare but never a card's worth.
-        var sizes = [{width: card * 3 + 24 + 120, columns: 3}, {width: card * 2 + 12 + 120, columns: 2},
-                     {width: card + 120, columns: 1}];
-        for (var i = 0; i < sizes.length; ++i) {
-            var page = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})}, {width: sizes[i].width});
-            var grid = findByName(page, "actionGrid");
-            verify(grid !== null, "the action grid must exist");
-            compare(grid.columns, sizes[i].columns, "at a page " + Math.round(sizes[i].width) + " px wide");
-        }
+    // A narrow window: the rail wraps into rows above the pane instead
+    // of standing beside it, and the cards go one to a row.
+    function test_aNarrowWindowPutsTheRailAboveThePane() {
+        const wide = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})});
+        compare(wide.compact, false);
+        const wideRail = findByName(wide, "homeRail");
+        const widePane = findByName(wide, "homePane");
+        compare(wideRail.compact, false);
+        verify(widePane.mapToItem(wide, 0, 0).x > wideRail.mapToItem(wide, 0, 0).x + wideRail.width - 1,
+               "the pane stands beside the rail");
+        compare(findByName(wide, "actionGrid").columns, 2);
+
+        const narrow = makePage([makeStick({}), makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1"})],
+                                {"/media/MAIN": makeAdvice({})}, {width: Theme.scaled(820) - 40});
+        compare(narrow.compact, true);
+        const rail = findByName(narrow, "homeRail");
+        const pane = findByName(narrow, "homePane");
+        compare(rail.compact, true);
+        compare(Math.round(pane.mapToItem(narrow, 0, 0).x), Math.round(rail.mapToItem(narrow, 0, 0).x),
+                "the pane starts on the rail's line");
+        verify(pane.mapToItem(narrow, 0, 0).y >= rail.mapToItem(narrow, 0, 0).y + rail.height,
+               "the pane is under the rail");
+        compare(findByName(narrow, "actionGrid").columns, 1);
+        saveScreenshot(narrow, "stick-list-compact");
     }
 
-    // The order of a stick's cards, left to right and down. Sync Cue
-    // Points is second, straight after Browse Library: copying cues
-    // between the stick's two catalogs is what most people open Seabass
-    // for, and it sat ninth, below the housekeeping and backup tools.
-    // Read off the grid as laid out, not off the source: a GridLayout
-    // places its visible children in order, so this is what is on screen.
+    // The order of a stick's cards in each group, left to right and
+    // down. Browse Library leads Explore; Sync Cue Points, what most people
+    // open Seabass for, leads Sync. Read off the grid as laid out, not off
+    // the source: a GridLayout places its visible children in order, so
+    // this is what is on screen. A picture of each group, too.
     function test_theCardsComeInTheirOrder() {
-        const page = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})});
+        const settings = fakeAppSettings();
+        const page = makePage([makeStick({hasEngine: false, enginePath: ""})], {"/media/MAIN": makeAdvice({})},
+                              {appSettingsController: settings});
         const grid = findByName(page, "actionGrid");
         verify(grid !== null, "the action grid must exist");
-        const shown = [];
-        for (let i = 0; i < grid.children.length; ++i) {
-            const child = grid.children[i];
-            if (child.visible && child.cardTitle !== undefined) {
-                shown.push(child);
+        const expected = {
+            explore: ["Browse Library", "Library Statistics", "Device Profile", "USB Stick Performance"],
+            sync: ["Sync Cue Points", "Create Engine Library"],
+            backup: ["Backups", "Metadata Backup", "Restore Metadata"],
+            maintain: ["Housekeeping", "Library Health", "Format USB Stick"],
+        };
+        for (const group of page.groupKeys) {
+            page.selectGroup(group);
+            waitForRendering(page);
+            const shown = [];
+            for (let i = 0; i < grid.children.length; ++i) {
+                const child = grid.children[i];
+                if (child.visible && child.cardTitle !== undefined) {
+                    shown.push(child);
+                }
+            }
+            compare(JSON.stringify(shown.map((card) => card.cardTitle)), JSON.stringify(expected[group]), group);
+            // Two to a row: the second card beside the first.
+            compare(grid.columns, 2);
+            compare(shown[1].y, shown[0].y, group + ": the second card is on the first row");
+            verify(shown[1].x > shown[0].x, group + ": to the right of the first");
+            saveScreenshot(page, "stick-list-group-" + group);
+            if (group === "explore") {
+                saveScreenshot(page, "stick-list-card-order");
             }
         }
-        const titles = shown.map((card) => card.cardTitle);
-        const expected = ["Browse Library", "Sync Cue Points", "Housekeeping", "Library Health",
-                          "Library Statistics", "USB Stick Performance", "Metadata Backup", "Restore Metadata",
-                          "Backups", "Device Profile", "Format USB Stick"];
-        compare(JSON.stringify(titles.slice(0, expected.length)), JSON.stringify(expected));
-        // And where they are drawn: the second card sits beside the first,
-        // on the top row.
-        verify(grid.columns >= 2, "this page is wide enough for two columns");
-        compare(shown[1].y, shown[0].y, "Sync Cue Points is on the first row");
-        verify(shown[1].x > shown[0].x, "to the right of Browse Library");
-        saveScreenshot(page, "stick-list-card-order");
     }
 
     function test_theHeaderCarriesTheBrandRatherThanTheWordHome() {
@@ -831,18 +1066,18 @@ TestCase {
         compare(label.text, "(not mounted)");
     }
 
-    // A stick that is not mounted has no mount point, so its row is named
-    // by its device: two unmounted sticks must not share one name, or the
-    // finders would hand back whichever row was built first.
+    // A stick that is not mounted has no mount point, so it is named by
+    // its device: two unmounted sticks must not share one name, or the
+    // rail and the finders would take one for the other.
     function test_anUnmountedStickRowIsNamedByItsDevice() {
         var page = makePage([makeStick({label: "MAIN", mounted: false, mountPoint: "", devicePath: "/dev/sdb1"}),
                              makeStick({label: "SPARE", mounted: false, mountPoint: "", devicePath: "/dev/sdc1"})], {});
-        var main = Live.stickRow(page, "/dev/sdb1");
-        var spare = Live.stickRow(page, "/dev/sdc1");
-        verify(main !== null && spare !== null && main !== spare, "each unmounted stick has its own row");
-        compare(main.label, "MAIN");
-        compare(spare.label, "SPARE");
-        compare(Live.stickRows(page).length, 2);
+        compare(JSON.stringify(Live.stickKeys(page)), JSON.stringify(["/dev/sdb1", "/dev/sdc1"]));
+        verify(findByName(page, "railStick:/dev/sdb1") !== null && findByName(page, "railStick:/dev/sdc1") !== null,
+               "each unmounted stick has its own rail entry");
+        compare(Live.stickRow(page, "/dev/sdb1").label, "MAIN");
+        compare(Live.stickRow(page, "/dev/sdc1").label, "SPARE");
+        compare(findByName(page, "stickLabel").text, "SPARE");
     }
 
     function test_aMountedStickSaysNothingAboutUnplugging() {
@@ -971,8 +1206,8 @@ TestCase {
         const namePos = name.mapToItem(page, 0, name.height);
         const bannerPos = banner.mapToItem(page, 0, 0);
         verify(bannerPos.y >= namePos.y, "the banner sits under the title, not beside it");
-        const list = findByName(page, "stickList");
-        verify(list.mapToItem(page, 0, 0).y >= bannerPos.y + banner.height, "the stick list follows the banner");
+        const body = findByName(page, "homeBody");
+        verify(body.mapToItem(page, 0, 0).y >= bannerPos.y + banner.height, "the rail and the pane follow the banner");
         // The green of "good news", not the danger colours.
         compare(banner.border.color, Theme.good);
         saveScreenshot(page, "sticklist-update-banner");
