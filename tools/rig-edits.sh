@@ -28,6 +28,8 @@ baseline="${2:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 . "$here/rig-platform.sh"
+# Never beside a working stick or a reference (see rig-platform.sh).
+refuse_if_protected_sticks_inserted
 . "$here/rig-parts.sh"
 build="${SEABASS_BUILD_DIR:-$root/build}"
 export SEABASS_LIVE_STICK="$stick"
