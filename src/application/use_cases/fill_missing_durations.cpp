@@ -17,7 +17,7 @@ namespace
 // counted nowhere is a row the report says nothing about.
 struct Resolved
 {
-    enum class Origin { Cache, Probe };
+    enum class Origin { Cache, Probe, Deferred };
     std::optional<double> seconds;  // nothing = no length is available for this file
     Origin origin = Origin::Probe;
 };
@@ -25,7 +25,7 @@ struct Resolved
 }  // namespace
 
 FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &tracks, TrackDurationProbe &probe,
-                                                 DurationCachePort *cache, CachedDurations trust,
+                                                 DurationCachePort *cache, DurationFill fill,
                                                  CancellationToken cancel)
 {
     FillMissingDurationsResult result;
@@ -35,7 +35,7 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
     // so remember what this run already resolved and never pay twice.
     std::map<std::string, Resolved> resolvedThisRun;
 
-    const bool unverified = trust == CachedDurations::Unverified;
+    const bool unverified = fill == DurationFill::CachedByPathOnly;
     auto count = [&result, unverified](Resolved::Origin origin) {
         if (origin == Resolved::Origin::Cache) {
             result.fromCache++;
@@ -63,6 +63,8 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
                 track.durationSeconds = *seen->second.seconds;
                 track.durationIsProbed = true;
                 count(seen->second.origin);
+            } else if (seen->second.origin == Resolved::Origin::Deferred) {
+                result.deferred++;
             } else {
                 result.unreadable++;
             }
@@ -85,6 +87,14 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
                 }
                 continue;
             }
+        }
+
+        if (unverified) {
+            // Not in the cache, and this fill never opens a file: left
+            // unknown for a Complete fill to probe.
+            resolvedThisRun[track.filePath] = {std::nullopt, Resolved::Origin::Deferred};
+            result.deferred++;
+            continue;
         }
 
         auto probed = probe.durationSeconds(track.filePath);
@@ -133,11 +143,16 @@ VerifyCachedDurationsResult verifyCachedDurations(std::vector<domain::Track> &tr
             cache.store(path, *probed);
             result.reprobed++;
         } else {
+            // Forgotten, not kept: the stale length would come back at
+            // the next Tracks stage and be undone at the next Full.
+            cache.forget(path);
             result.unreadable++;
         }
         for (auto &track : tracks) {
-            if (track.filePath == path && track.durationSeconds == *taken) {
+            if (track.filePath == path && track.durationIsProbed && track.durationSeconds == *taken) {
                 track.durationSeconds = now;
+                // An unknown length is no filled-in length.
+                track.durationIsProbed = now > 0.0;
                 result.tracksUpdated++;
             }
         }

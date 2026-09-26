@@ -66,21 +66,24 @@ auto withDurationProbe(Use &&use)
 // ignores anything resolving outside the root it was given, so a wrong
 // guess costs caching, never correctness.
 //
-// trust: Verified checks every cached length against its file (a stat
-// each); Unverified takes it by path, for the catalog cache's Tracks
-// stage, which must not touch the audio files, and returns the files it
-// did that for in unverifiedPaths, for verifyTrackDurations() to check at
-// the Full stage. A file the cache does not know is probed either way.
+// fill: Complete checks every cached length against its file (a stat
+// each) and probes every file the cache does not know. CachedByPathOnly
+// takes cached lengths by path and opens nothing, for the catalog cache's
+// Tracks stage, which must not touch the audio files: it returns the
+// files it took a length for in unverifiedPaths, for
+// verifyTrackDurations() to check at the Full stage, and leaves a file
+// the cache does not know at 0 (deferred) for the Full stage's Complete
+// fill to probe.
 // cancel: checked per file; a cancelled fill still saves what it probed.
 inline application::FillMissingDurationsResult
 fillTrackDurations(std::vector<domain::Track> &tracks, const std::string &libraryPath,
-                   application::CachedDurations trust = application::CachedDurations::Verified,
+                   application::DurationFill fill = application::DurationFill::Complete,
                    application::CancellationToken cancel = application::CancellationToken::none())
 {
     local::DurationCache cache(paths::stickRootForCatalogPath(libraryPath));
     return withDurationProbe([&](application::TrackDurationProbe &probe) {
         try {
-            auto result = application::fillMissingDurations(tracks, probe, &cache, trust, cancel);
+            auto result = application::fillMissingDurations(tracks, probe, &cache, fill, cancel);
             // A read-only or full stick costs only a re-probe next time,
             // never the scan itself.
             cache.save();
@@ -93,10 +96,11 @@ fillTrackDurations(std::vector<domain::Track> &tracks, const std::string &librar
     });
 }
 
-// The check an Unverified fillTrackDurations() owes, for its
+// The check a CachedByPathOnly fillTrackDurations() owes, for its
 // unverifiedPaths: one verified lookup per file, a fresh probe for a file
-// that changed since it was cached, and the rows that carried the stale
-// length corrected. By the Full stage the sizes have been read, so the
+// that changed since it was cached, the rows that carried the stale
+// length corrected, and the entry of a changed file that no longer gives
+// a length forgotten. By the Full stage the sizes have been read, so the
 // stat each file costs here is answered from the kernel's cache.
 inline application::VerifyCachedDurationsResult verifyTrackDurations(
     std::vector<domain::Track> &tracks, const std::string &libraryPath, const std::vector<std::string> &unverifiedPaths,

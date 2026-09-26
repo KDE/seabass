@@ -37,6 +37,10 @@ public:
         return lookup(absoluteFilePath);
     }
     virtual void store(const std::string &absoluteFilePath, double durationSeconds) = 0;
+    // Drops what is cached for this file: it changed since it was probed
+    // and gave no length when probed again, so the recorded length is
+    // stale and there is no new one to put in its place.
+    virtual void forget(const std::string &absoluteFilePath) = 0;
 };
 
 }  // namespace seabass::application

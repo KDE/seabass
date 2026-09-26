@@ -50,6 +50,10 @@ public:
     // Records a duration. Nothing is written to disk until save().
     void store(const std::string &absoluteFilePath, double durationSeconds) override;
 
+    // Drops the entry for this file, if any. Nothing is written to disk
+    // until save().
+    void forget(const std::string &absoluteFilePath) override;
+
     // True when store() has added or changed anything since load.
     bool dirty() const { return m_dirty; }
 

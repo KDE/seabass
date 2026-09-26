@@ -18,12 +18,20 @@
 namespace seabass::application
 {
 
-// Whether a cached length is checked against its file before it is used.
-// Verified looks at every file it takes a length for (a stat, via
-// DurationCachePort::lookup); Unverified takes it by path alone and lists
-// the files it did that for, so a later pass can check them once the
-// stick has been read further (verifyCachedDurations()).
-enum class CachedDurations { Verified, Unverified };
+// How far a fill goes for a track its catalog gave no length.
+//
+// Complete: the stick's cache, every entry checked against its file (a
+// stat, via DurationCachePort::lookup), and a probe of the file for
+// whatever the cache does not know. Everything there is to know.
+//
+// CachedByPathOnly: the cache by path alone, never looking at an audio
+// file: no stat, no probe. For the catalog cache's Tracks stage, which
+// must not touch the audio files (a stat per file is seconds cold on a
+// stick, a probe far more). The files whose length it took are listed,
+// for verifyCachedDurations() to check later; a track the cache does not
+// know is left at 0 and counted as deferred, for a Complete fill to
+// probe later.
+enum class DurationFill { Complete, CachedByPathOnly };
 
 struct FillMissingDurationsResult
 {
@@ -31,16 +39,18 @@ struct FillMissingDurationsResult
     size_t fromCache = 0;     // served from the stick's duration cache
     size_t probed = 0;        // read from the audio file this run
     size_t unreadable = 0;    // no length available even after probing
+    size_t deferred = 0;      // not in the cache, and this fill does not probe (CachedByPathOnly)
 
-    // The four add up to the number of tracks that went in, always.
+    // The five add up to the number of tracks that went in, always.
     // Rows after the first pointing at one file are filled from what
     // this run already worked out for it, and are counted under where
     // that came from rather than not at all: several rows per file is
     // the ordinary shape here, since duplicates are what this feeds.
 
     // Of fromCache, the rows whose length was taken without looking at
-    // the file (CachedDurations::Unverified), and the distinct files they
-    // name, for verifyCachedDurations(). Always 0 and empty when Verified.
+    // the file (DurationFill::CachedByPathOnly), and the distinct files
+    // they name, for verifyCachedDurations(). Always 0 and empty when
+    // Complete.
     size_t fromCacheUnverified = 0;
     std::vector<std::string> unverifiedPaths;
 };
@@ -62,7 +72,7 @@ struct FillMissingDurationsResult
 // which is why its callers work on a copy.
 FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &tracks, TrackDurationProbe &probe,
                                                  DurationCachePort *cache,
-                                                 CachedDurations trust = CachedDurations::Verified,
+                                                 DurationFill fill = DurationFill::Complete,
                                                  CancellationToken cancel = CancellationToken::none());
 
 struct VerifyCachedDurationsResult
@@ -75,13 +85,16 @@ struct VerifyCachedDurationsResult
     size_t tracksUpdated = 0;
 };
 
-// The check a CachedDurations::Unverified fill owes: for each of `paths`
-// (FillMissingDurationsResult::unverifiedPaths), one verified lookup;
-// where the file no longer matches the cache, a fresh probe, stored, and
-// every row naming that file that still carries the stale cached length
-// gets the new one. A row with a length the catalog gave was never filled
-// from the cache and is left alone, unless its length is the stale value
-// to the last bit, where it gets the same correction. `cancel` as above.
+// The check a DurationFill::CachedByPathOnly fill owes: for each of
+// `paths` (FillMissingDurationsResult::unverifiedPaths), one verified
+// lookup; where the file no longer matches the cache, a fresh probe,
+// stored, and every row naming that file that was filled in with the
+// stale cached length (durationIsProbed) gets the new one. A row whose
+// length the catalog gave is never touched. A file that changed and then
+// gives no length (gone, or no longer audio) is forgotten by the cache,
+// not left there with its stale length: otherwise every later Tracks
+// stage would take the stale value by path and every Full stage turn it
+// back into 0. `cancel` as above.
 VerifyCachedDurationsResult verifyCachedDurations(std::vector<domain::Track> &tracks,
                                                    const std::vector<std::string> &paths, TrackDurationProbe &probe,
                                                    DurationCachePort &cache,

@@ -183,7 +183,7 @@ int main()
     // cache get the new length, the deleted one becomes unknown, and a
     // row whose length the catalog gave is left alone.
     {
-        using seabass::application::CachedDurations;
+        using seabass::application::DurationFill;
         using seabass::domain::Track;
         const fs::path root8 = root / "case8";
         const std::string same = writeFile(root8 / "Contents" / "same.mp3", "same");
@@ -210,7 +210,7 @@ int main()
         {
             DurationCache cache(seabass::pathToUtf8(root8));
             const auto filled = seabass::application::fillMissingDurations(tracks, probe, &cache,
-                                                                           CachedDurations::Unverified);
+                                                                           DurationFill::CachedByPathOnly);
             assert(filled.fromCache == 4 && filled.fromCacheUnverified == 4);
             assert(filled.alreadyKnown == 1 && filled.probed == 0 && filled.unreadable == 0);
             assert((filled.unverifiedPaths == std::vector<std::string>{same, edited, deleted}));
@@ -240,6 +240,68 @@ int main()
         assert(again.fromCacheUnverified == 0 && again.unverifiedPaths.empty());
         assert(fresh[0].durationSeconds == 100.0 && fresh[1].durationSeconds == 250.0 && fresh[2].durationSeconds == 0.0);
         std::cout << "case 8 (Unverified at Tracks, verified at Full: a changed file is caught) OK\n";
+    }
+
+    // Case 9: a file that changed and then gives no length when probed
+    // again (re-encoded into something unreadable, or deleted) is
+    // forgotten, not kept with its stale length. Kept, the next insertion
+    // would take the stale length at its Tracks stage and turn it back
+    // into 0 at its Full stage, every time.
+    {
+        using seabass::application::DurationFill;
+        using seabass::domain::Track;
+        const fs::path root9 = root / "case9";
+        const std::string broken = writeFile(root9 / "Contents" / "broken.mp3", "audio");
+        const std::string deleted = writeFile(root9 / "Contents" / "deleted.mp3", "audio");
+        const std::string fine = writeFile(root9 / "Contents" / "fine.mp3", "audio");
+        {
+            DurationCache cache(seabass::pathToUtf8(root9));
+            cache.store(broken, 400.0);
+            cache.store(deleted, 500.0);
+            cache.store(fine, 600.0);
+            assert(cache.save());
+        }
+        const auto rows = [&] {
+            std::vector<Track> tracks(3);
+            tracks[0].filePath = broken;
+            tracks[1].filePath = deleted;
+            tracks[2].filePath = fine;
+            return tracks;
+        };
+        // One insertion: Tracks takes the three by path, then the files
+        // change, then Full checks them.
+        std::vector<Track> tracks = rows();
+        TableProbe probe;  // answers nothing for broken.mp3
+        std::vector<std::string> taken;
+        {
+            DurationCache cache(seabass::pathToUtf8(root9));
+            taken = seabass::application::fillMissingDurations(tracks, probe, &cache, DurationFill::CachedByPathOnly)
+                        .unverifiedPaths;
+            assert(taken.size() == 3 && tracks[0].durationSeconds == 400.0);
+        }
+        writeFile(root9 / "Contents" / "broken.mp3", "no longer audio, and a different size");
+        fs::remove(root9 / "Contents" / "deleted.mp3");
+        {
+            DurationCache cache(seabass::pathToUtf8(root9));
+            const auto verified = seabass::application::verifyCachedDurations(tracks, taken, probe, cache);
+            assert(verified.unreadable == 2 && verified.confirmed == 1);
+            assert(tracks[0].durationSeconds == 0.0 && tracks[1].durationSeconds == 0.0);
+            assert(!cache.lookupUnverified(broken) && "a changed file that gives no length is forgotten");
+            assert(!cache.lookupUnverified(deleted) && "and so is a deleted one");
+            assert(cache.lookupUnverified(fine) && *cache.lookupUnverified(fine) == 600.0);
+            assert(cache.save());
+        }
+        // The next insertion's Tracks stage: no stale length comes back,
+        // so it reads what the Full stage read (0), and the good file
+        // still reads from the cache.
+        std::vector<Track> next = rows();
+        DurationCache cache(seabass::pathToUtf8(root9));
+        const auto again = seabass::application::fillMissingDurations(next, probe, &cache, DurationFill::CachedByPathOnly);
+        assert(next[0].durationSeconds == 0.0 && "not the stale 400");
+        assert(next[1].durationSeconds == 0.0 && "not the stale 500");
+        assert(next[2].durationSeconds == 600.0);
+        assert(again.deferred == 2 && again.fromCache == 1);
+        std::cout << "case 9 (a changed file that no longer gives a length is forgotten, not kept stale) OK\n";
     }
 
     fs::remove_all(root);

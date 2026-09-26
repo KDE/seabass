@@ -1775,6 +1775,12 @@ if(TARGET Qt6::Core)
     )
     target_include_directories(library_fingerprint_reader_test PRIVATE src)
     target_link_libraries(library_fingerprint_reader_test PRIVATE seabass_core Qt6::Core Threads::Threads)
+    # The real duration probe, so the Full stage has something to probe
+    # in the duration case; without TagLib that case cannot run.
+    if(TARGET seabass_taglib)
+        target_link_libraries(library_fingerprint_reader_test PRIVATE seabass_taglib)
+        target_compile_definitions(library_fingerprint_reader_test PRIVATE SEABASS_TEST_HAVE_PROBE)
+    endif()
     add_test(NAME library_fingerprint_reader_test COMMAND library_fingerprint_reader_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 endif()

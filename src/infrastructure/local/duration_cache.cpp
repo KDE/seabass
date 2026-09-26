@@ -222,6 +222,14 @@ void DurationCache::store(const std::string &absoluteFilePath, double durationSe
     m_dirty = true;
 }
 
+void DurationCache::forget(const std::string &absoluteFilePath)
+{
+    const std::string key = relativeKey(absoluteFilePath);
+    if (!key.empty() && m_entries.erase(key) > 0) {
+        m_dirty = true;
+    }
+}
+
 bool DurationCache::save()
 {
     if (!m_dirty) {
