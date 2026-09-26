@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 
+#include "gui/detached_completion.hpp"
 #include "gui/edit/direct_write_hold.hpp"
 
 namespace seabass::gui
@@ -33,16 +34,13 @@ template <typename T>
 void finishWriteDetached(const QFuture<T> &write, std::unique_ptr<DirectWriteHold> hold,
                          std::function<void()> afterwards = {})
 {
-    auto *watcher = new QFutureWatcher<T>(QCoreApplication::instance());
     std::shared_ptr<DirectWriteHold> held(std::move(hold));
-    QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, [watcher, held, afterwards]() {
+    whenWriteEnds(write, [held, afterwards]() {
         if (afterwards) {
             afterwards();
         }
         held->release();
-        watcher->deleteLater();
     });
-    watcher->setFuture(write);
 }
 
 }  // namespace seabass::gui

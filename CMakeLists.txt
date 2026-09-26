@@ -2149,7 +2149,7 @@ if(TARGET seabass_edit)
         tests/async_request_exit_test.cpp
     )
     target_include_directories(async_request_exit_test PRIVATE src)
-    target_link_libraries(async_request_exit_test PRIVATE seabass_core Qt6::Core)
+    target_link_libraries(async_request_exit_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
     add_test(NAME async_request_exit_test COMMAND async_request_exit_test)
 
     add_executable(open_folder_test

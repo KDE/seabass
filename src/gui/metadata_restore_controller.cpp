@@ -14,6 +14,7 @@
 
 #include "application/use_cases/collapse_catalog_rows.hpp"
 #include "domain/metadata_merge.hpp"
+#include "gui/stick_path.hpp"
 #include "gui/edit/changes/restore_metadata_change.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"

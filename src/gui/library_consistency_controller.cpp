@@ -20,6 +20,7 @@
 #include "domain/clustered_cue.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/track_scope.hpp"
+#include "gui/stick_path.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/library_edit_session.hpp"

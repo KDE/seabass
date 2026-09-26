@@ -4,6 +4,7 @@
 
 #include "infrastructure/paths/seabass_paths.hpp"
 
+#include "gui/stick_path.hpp"
 #include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 #include "gui/sleep_inhibitor.hpp"

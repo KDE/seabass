@@ -385,6 +385,12 @@ void aReporterSpeaksOnlyForItsRequest()
     seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
 }
 
+QElapsedTimer &timerForRefused()
+{
+    static QElapsedTimer timer;
+    return timer;
+}
+
 // A request the process cannot give a thread to ends in error, at once,
 // instead of throwing into the page or waiting for good. Too many stuck
 // workers is the case a test can make happen; a thread the system refuses
@@ -400,12 +406,21 @@ void noThreadEndsTheRequestInError()
     AsyncRequest<int> two(&owner, nullptr);
     one.start("a", {}, [latch](CancellationToken cancel) { latch->wait(cancel, false); return 1; }, {});
     two.start("b", {}, [latch](CancellationToken cancel) { latch->wait(cancel, false); return 2; }, {});
-    AsyncRequest<int> three(&owner, nullptr);
     Endings endings;
-    three.start("c", {}, [](CancellationToken) { return 3; }, endings.make());
-    check(pumpUntil([&] { return !three.busy(); }), "no thread: the request still ends");
-    check(endings.errors == 1 && endings.lastError.contains(QStringLiteral("stuck")),
-          "no thread: in an error that says why: " + endings.lastError.toStdString());
+    {
+        AsyncRequest<int> three(&owner, nullptr);
+        three.start("c", {}, [](CancellationToken) { return 3; }, endings.make());
+        check(pumpUntil([&] { return !three.busy(); }), "no thread: the request still ends");
+        check(endings.errors == 1 && endings.lastError.contains(QStringLiteral("stuck")),
+              "no thread: in an error that says why: " + endings.lastError.toStdString());
+        // Refused again and let go of at once: nothing ever ran, so there
+        // is no worker to wait the bound for.
+        three.start("d", {}, [](CancellationToken) { return 4; }, {});
+        timerForRefused().start();
+    }
+    check(timerForRefused().elapsed() < 500,
+          "no thread: going away does not wait for a worker that never was, took "
+              + std::to_string(timerForRefused().elapsed()) + " ms");
     workers.setCeilingForTesting(seabass::gui::AsyncWorkers::DefaultCeiling);
     latch->release();
     workers.waitForAll(std::chrono::seconds(30));

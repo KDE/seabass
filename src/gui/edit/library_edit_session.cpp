@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/local/browsed_backup_root.hpp"
+#include "gui/async_request.hpp"
 #include "gui/edit/library_edit_session.hpp"
 
 #include "gui/future_result.hpp"
@@ -190,8 +191,7 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
     if (!any.isEmpty()) {
         const std::filesystem::path root =
             pathFromUtf8(infrastructure::backup::stickRootForCatalogPath(any.toStdString()));
-        m_stickSpaceWatcher.setFuture(QtConcurrent::run(
-            infrastructure::backup::measureStickSpace, root));
+        m_stickSpaceWatcher.setFuture(runRead([root] { return infrastructure::backup::measureStickSpace(root); }));
     }
 }
 

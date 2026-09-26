@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include "gui/async_request.hpp"
 #include "gui/backup_changelog_text.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/sleep_inhibitor.hpp"
@@ -132,17 +133,28 @@ RestoreStickBackupController::~RestoreStickBackupController()
     // for, freeze or not (docs/async-requests.md, "Writes are
     // different"), and then what its finished handler would have done
     // without the page: the target's catalogs are forgotten and the stick
-    // list is told to look again. So is a mount.
+    // list is told to look again.
     //
     // Not the backup listing: it only reads the folder and captures
     // nothing of this object, so it runs out on its own and its result is
     // dropped with the watcher.
+    //
+    // m_restoring, not isRunning(): a restore that has returned but whose
+    // finished handler has not run yet is just as unhandled. A mount is
+    // not waited for: it changes no stick's contents and captures only
+    // its device path, so it finishes on its own.
     m_cancel.cancel();
-    const bool wasRestoring = m_restoreWatcher.isRunning();
+    if (!m_restoring) {
+        return;
+    }
     awaitQuietly(m_restoreWatcher);
-    awaitQuietly(m_mountWatcher);
-    if (wasRestoring) {
-        LibraryCatalogCache::instance().invalidateEveryCatalogOn(m_restoreTarget.toStdString());
+    QString thrown;
+    const std::shared_ptr<RestoreResult> result = takeResult(m_restoreWatcher, &thrown);
+    LibraryCatalogCache::instance().invalidateEveryCatalogOn(m_restoreTarget.toStdString());
+    // As onRestoreFinished(): anything that wrote a byte counts. A restore
+    // that threw may have, so it counts too.
+    if (!result || !thrown.isEmpty()
+        || result->summary.status != RestoreSummary::Status::Failed || result->summary.filesWritten > 0) {
         StickEvents::instance().announceStickContentsChanged(m_restoreTarget);
     }
 }
@@ -202,7 +214,7 @@ void RestoreStickBackupController::refreshKnownBackups()
         return;
     }
     const fs::path directory = pathFromQString(m_defaultBackupDirectory);
-    m_listWatcher.setFuture(QtConcurrent::run([directory]() {
+    m_listWatcher.setFuture(runRead([directory]() {
         QVariantList backups;
         if (directory.empty()) {
             return backups;
@@ -255,7 +267,9 @@ void RestoreStickBackupController::mount(const QString &devicePath)
     m_mounting = true;
     emit busyChanged();
     setErrorMessage({});
-    m_mountWatcher.setFuture(QtConcurrent::run([devicePath]() {
+    // Not the writes' pool: a mount changes no stick's contents, and the
+    // end of the process must not wait on one without limit.
+    m_mountWatcher.setFuture(runRead([devicePath]() {
         auto result = std::make_shared<MountResult>();
         result->devicePath = devicePath;
         auto mounter = infrastructure::media::createRemovableMediaMounter();

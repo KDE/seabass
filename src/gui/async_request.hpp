@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -32,20 +33,10 @@
 #include "gui/future_result.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_events.hpp"
-#include "infrastructure/paths/seabass_paths.hpp"
+#include "gui/stick_path.hpp"
 
 namespace seabass::gui
 {
-
-// The stick a catalog path ("<stick>/PIONEER", "<stick>/Engine Library")
-// is on, as the QString a request names its stick by.
-inline QString stickRootOf(const QString &catalogPath)
-{
-    if (catalogPath.isEmpty()) {
-        return {};
-    }
-    return qtPathFromUtf8(infrastructure::paths::stickRootForCatalogPath(pathToUtf8(pathFromQString(catalogPath))));
-}
 
 // Where every AsyncRequest's worker runs: a thread of its own, not a pool.
 // Rules 5 and 7 let go of a worker that cannot see its token, and such a
@@ -57,7 +48,7 @@ inline QString stickRootOf(const QString &catalogPath)
 // picks something, so there are never many.
 //
 // It also counts the workers still running, for the one moment that has
-// to know: the end of the process (see exitAfterAsyncWork()). Never
+// to know: the end of the process (see endProcess()). Never
 // destroyed, since a worker let go may outlive every static there is.
 class AsyncWorkers
 {
@@ -150,7 +141,7 @@ public:
 
     // From here on a request going away does not wait for its worker at
     // all: the process is ending, every page is being torn down one after
-    // the other, and exitAfterAsyncWork() waits once for all of them.
+    // the other, and endProcess() waits once for all of them.
     void beginShutdown() { m_shuttingDown.store(true); }
     bool shuttingDown() const { return m_shuttingDown.load(); }
 
@@ -163,24 +154,18 @@ private:
     std::atomic<bool> m_shuttingDown{false};
 };
 
-// The last thing main() does, once the pages (and so every request) are
-// gone: waits a bounded moment for the workers they let go of, and if one
-// is still running, ends the process without running static destructors
-// (std::_Exit, after flushing: std::quick_exit is missing from Apple's C
-// library).
-// A worker stuck on a pulled stick may be inside LibraryCatalogCache or
-// the SQLite and Kaitai code under it; destroying those statics beneath
-// it is a use-after-destroy. Nothing is lost by skipping them: a read
-// writes nothing, and the writes were waited for before this.
-inline int exitAfterAsyncWork(int result, std::chrono::milliseconds bound = std::chrono::milliseconds(2000))
+// A read that is not a page's request (a folder listing, a mount, a
+// process list) run the same way: a thread of its own, counted with the
+// rest, never on the global pool. The global pool is for writes, and the
+// end of the process waits for those without limit; a read stuck on a
+// pulled stick must not be among them.
+template <typename F>
+auto runRead(F work) -> QFuture<std::invoke_result_t<F>>
 {
-    AsyncWorkers::instance().beginShutdown();
-    if (!AsyncWorkers::instance().waitForAll(bound)) {
-        std::fflush(nullptr);
-        std::_Exit(result);
-    }
-    return result;
+    using Result = std::invoke_result_t<F>;
+    return AsyncWorkers::instance().run<Result>(std::function<Result()>(std::move(work)));
 }
+
 
 // One read a page is waiting for, run on the thread pool, under the rule
 // docs/async-requests.md writes down. In short:
@@ -242,7 +227,7 @@ public:
         // preview with no token, a read stuck on a device) is let go
         // after the bound rather than freezing the window: it holds its
         // token, its arguments and the process-wide cache, never its
-        // controller, so it can finish alone; exitAfterAsyncWork() sees to
+        // controller, so it can finish alone; endProcess() sees to
         // the end of the process. While the process is ending it waits
         // for nothing: that function waits once for every worker.
         const auto deadline = std::chrono::steady_clock::now()
@@ -292,6 +277,10 @@ public:
     // that was served by the running one instead.
     std::function<bool()> speaksForNext()
     {
+        // One voice at a time, taken right before the start it belongs to:
+        // a second one taken first would leave the earlier one mute for
+        // good without anyone knowing.
+        Q_ASSERT_X(!m_nextVoice, "AsyncRequest::speaksForNext", "a voice was taken for a request never started");
         m_nextVoice = std::make_shared<std::uint64_t>(0);
         return [this, voice = m_nextVoice]() { return *voice != 0 && m_current == *voice; };
     }
@@ -338,6 +327,12 @@ public:
             } sayDone{*done};
             return work(cancel);
         }));
+        if (watcher->future().isFinished()) {
+            // Refused a thread (see AsyncWorkers::run): no worker will ever
+            // say it is done, so nobody must wait for one.
+            std::lock_guard<std::mutex> lock(done->mutex);
+            done->finished = true;
+        }
         report();
     }
 

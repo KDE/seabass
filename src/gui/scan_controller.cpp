@@ -4,6 +4,7 @@
 
 #include "scan_controller.hpp"
 
+#include "gui/async_request.hpp"
 #include "gui/future_result.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -416,8 +417,11 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
         s_catalogCacheForTesting != nullptr ? s_catalogCacheForTesting : &LibraryCatalogCache::instance();
     m_scanCancel = application::CancellationToken();
     ++m_scanGeneration;
-    m_watcher.setFuture(QtConcurrent::run(runScanTask, cache, format, path, siblingRekordboxPath, reporter, relay,
-                                          m_scanCancel, m_scanGeneration));
+    // A read: its own thread, not the writes' pool (see runRead()).
+    m_watcher.setFuture(runRead([cache, format, path, siblingRekordboxPath, reporter, relay, cancel = m_scanCancel,
+                                 generation = m_scanGeneration]() {
+        return runScanTask(cache, format, path, siblingRekordboxPath, reporter, relay, cancel, generation);
+    }));
 }
 
 void ScanController::cancelScan()

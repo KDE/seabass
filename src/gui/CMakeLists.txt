@@ -206,6 +206,9 @@ set(SEABASS_GUI_SOURCES
     stick_events.hpp
     stick_events.cpp
     detached_write.hpp
+    detached_completion.hpp
+    process_end.hpp
+    stick_path.hpp
     staged_plan_model.hpp
     staged_cue_edit_controller.hpp
     staged_cue_edit_controller.cpp

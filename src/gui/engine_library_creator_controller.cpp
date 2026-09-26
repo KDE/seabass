@@ -4,6 +4,7 @@
 
 #include "engine_library_creator_controller.hpp"
 
+#include "gui/stick_path.hpp"
 #include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 #include "gui/stick_events.hpp"

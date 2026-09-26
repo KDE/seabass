@@ -13,6 +13,7 @@
 #include <memory>
 
 #include "gui/async_request.hpp"
+#include "gui/process_end.hpp"
 
 #include "gui/app_color_scheme.hpp"
 #include "gui/style_color_scheme.hpp"
@@ -221,16 +222,7 @@ int main(int argc, char **argv)
     seabass::gui::AsyncWorkers::instance().beginShutdown();
     engine.reset();
 
-    // The writes run on the global pool, and none is ever abandoned: a
-    // write torn up half way is the one thing worse than a slow exit. So
-    // this waits for them for as long as they take. If one never finishes
-    // (a device that stopped answering mid-write), the process stays,
-    // saying so every 15 seconds, rather than cutting the write off; the
-    // person can see it in a process list and decide, which is better
-    // than Seabass deciding to leave a stick half written. See
-    // docs/async-requests.md, "The end of the process".
-    while (!QThreadPool::globalInstance()->waitForDone(15000)) {
-        qWarning("Seabass is still finishing a write to a stick; it will quit when the write is done.");
-    }
-    return seabass::gui::exitAfterAsyncWork(result);
+    // Then the writes, without limit, what they left for this thread, and
+    // the reads, briefly: see endProcess().
+    return seabass::gui::endProcess(result);
 }

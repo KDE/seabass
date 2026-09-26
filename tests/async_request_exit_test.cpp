@@ -2,15 +2,19 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-// The end of the process with a read still stuck (docs/async-requests.md,
-// "The end of the process"). A worker let go of on a pulled stick may be
+// The end of the process with reads still stuck and a write just done
+// (docs/async-requests.md, "The end of the process"). A worker let go of on a pulled stick may be
 // inside LibraryCatalogCache or the readers under it when main() returns,
 // and static destructors must not run beneath it. The child below stands
 // in for main(): a static whose destructor aborts if a worker is still
 // running plays the part of the cache, a request is left stuck, and the
 // child ends the way main() does. The parent runs it and wants a clean
 // exit: a return that ran static destructors under the stuck worker is
-// an abort.
+// an abort. It also wants the child to exit at all with a read stuck the
+// way a folder listing or a Browse scan gets stuck (runRead()), which on
+// the writes' pool kept the process alive for good; and to have run what
+// a write handed on by its page leaves behind -- the lock given back --
+// before it exits, which with no event loop left it did not.
 
 #include <QCoreApplication>
 #include <QObject>
@@ -23,7 +27,14 @@
 #include <memory>
 #include <mutex>
 
+#include <QThreadPool>
+#include <QtConcurrent/QtConcurrentRun>
+
+#include <thread>
+
 #include "gui/async_request.hpp"
+#include "gui/detached_completion.hpp"
+#include "gui/process_end.hpp"
 
 using seabass::application::CancellationToken;
 using seabass::gui::AsyncRequest;
@@ -59,7 +70,23 @@ int child(int argc, char **argv)
         }, {});
         AsyncWorkers::instance().beginShutdown();
     }
-    return seabass::gui::exitAfterAsyncWork(0, std::chrono::milliseconds(200));
+    // A read that is not a page's request, stuck the same way.
+    auto stuckRead = seabass::gui::runRead([gate]() {
+        std::unique_lock<std::mutex> lock(gate->first);
+        gate->second.wait(lock, [] { return false; });
+        return 0;
+    });
+    (void)stuckRead;
+    // A write on the writes' pool, handed on by a page that went: done a
+    // moment after the pages are gone, its lock given back after that.
+    auto write = QtConcurrent::run([]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return 1;
+    });
+    seabass::gui::whenWriteEnds(write, []() {
+        std::cout << "lock given back" << std::endl;
+    });
+    return seabass::gui::endProcess(0, std::chrono::milliseconds(200));
 }
 
 }  // namespace
@@ -82,6 +109,11 @@ int main(int argc, char **argv)
                   << process.exitCode() << "): " << process.readAllStandardError().toStdString() << "\n";
         return 1;
     }
-    std::cout << "async_request_exit_test: a stuck worker outlives no static\n";
+    const QString out = QString::fromUtf8(process.readAllStandardOutput());
+    if (!out.contains(QStringLiteral("lock given back"))) {
+        std::cerr << "FAIL: a write handed on by its page ended without giving its lock back\n";
+        return 1;
+    }
+    std::cout << "async_request_exit_test: a stuck read keeps nothing alive, a finished write gives its lock back\n";
     return 0;
 }

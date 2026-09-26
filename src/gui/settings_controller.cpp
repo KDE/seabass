@@ -4,6 +4,7 @@
 
 #include "settings_controller.hpp"
 
+#include "gui/async_request.hpp"
 #include "gui/future_result.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -165,7 +166,7 @@ void SettingsController::load(const QString &pioneerRoot)
     attachSession();
     setErrorMessage({});
     setBusy(true);
-    m_watcher.setFuture(QtConcurrent::run(runLoadTask, pioneerRoot));
+    m_watcher.setFuture(runRead([pioneerRoot] { return runLoadTask(pioneerRoot); }));
 }
 
 void SettingsController::setField(const QString &fileName, const QString &fieldLabel, const QString &optionName)
