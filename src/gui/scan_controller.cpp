@@ -411,20 +411,22 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
 
 void ScanController::cancelScan()
 {
-    if (m_busy) {
-        m_scanCancel.cancel();
+    if (!m_busy && !m_cuesPending) {
         return;
     }
-    if (m_cuesPending) {
-        // The list is up already: nothing to wait for before letting go.
-        // The read notices the cancel at its next track, or once the
-        // pass it is waiting on is done, and whatever it reports then
-        // belongs to a generation nobody is listening for.
-        m_scanCancel.cancel();
-        ++m_scanGeneration;
-        setCuesPending(false);
-        emit scanCancelled();
-    }
+    // Let go at once, in either phase, and say so once. The read notices
+    // the cancel at its next track, or once the pass it is waiting on is
+    // done, and whatever it reports then belongs to a generation nobody
+    // is listening for. That matters in the Tracks phase too: the task
+    // may have relayed its list a moment before this, still queued for
+    // this thread. Under the old generation that list was published after
+    // the cancel and the page popped from under it, and every handler of
+    // tracksPublished ran for a scan the user had just cancelled.
+    m_scanCancel.cancel();
+    ++m_scanGeneration;
+    setCuesPending(false);
+    setBusy(false);
+    emit scanCancelled();
 }
 
 void ScanController::onTracksRead(std::shared_ptr<ScanTaskResult> result)
