@@ -5,16 +5,13 @@
 #include "application/use_cases/real_file_sizes.hpp"
 
 #include <algorithm>
-#include <filesystem>
 #include <map>
 
 #include "application/path_key.hpp"
-#include "infrastructure/paths/utf8_path.hpp"
+#include "application/use_cases/fill_file_sizes.hpp"
 
 namespace seabass::application
 {
-
-namespace fs = std::filesystem;
 
 namespace
 {
@@ -39,7 +36,7 @@ MeasuredFileSizes measureRealFileSizes(std::vector<domain::DuplicateCleanupPlan>
     // once. Keyed the same way every other path comparison in this
     // codebase is, because exFAT and NTFS are case-insensitive and two
     // spellings of one path are one file.
-    std::map<std::string, std::uintmax_t> sizeByPath;
+    std::map<std::string, std::uint64_t> sizeByPath;
 
     for (auto &plan : plans) {
         const std::string survivorKey = normalizedPathKey(plan.survivor.filePath);
@@ -59,20 +56,19 @@ MeasuredFileSizes measureRealFileSizes(std::vector<domain::DuplicateCleanupPlan>
 
             auto known = sizeByPath.find(key);
             if (known == sizeByPath.end()) {
-                std::error_code ec;
-                const std::uintmax_t size = fs::file_size(pathFromUtf8(doomed.filePath), ec);
-                if (ec) {
+                const std::optional<std::uint64_t> size = fileSizeOnDisk(doomed.filePath);
+                if (!size) {
                     // Named by a catalog, absent from the stick. Removing
                     // its row frees nothing, so it contributes nothing.
                     ++measured.filesMissing;
                     known = sizeByPath.emplace(key, 0).first;
                 } else {
                     ++measured.filesMeasured;
-                    measured.reclaimableBytes += size;
-                    known = sizeByPath.emplace(key, size).first;
+                    measured.reclaimableBytes += *size;
+                    known = sizeByPath.emplace(key, *size).first;
                 }
             }
-            doomed.fileSizeBytes = static_cast<std::uint64_t>(known->second);
+            doomed.fileSizeBytes = known->second;
         }
     }
     return measured;

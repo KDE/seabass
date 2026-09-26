@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -88,6 +89,63 @@ int main()
     seabass::application::fillFileSizes(tracks);
     check(tracks[3].fileSizeBytes == 7, "a row left at 0 is filled by a later call");
     check(tracks[0].fileSizeBytes == 4321, "a known size is not asked again");
+
+    // fileSizeOnDisk(): the one rule both size stages share.
+    check(seabass::application::fileSizeOnDisk(seabass::pathToUtf8(present)) == std::optional<std::uint64_t>(4321),
+          "fileSizeOnDisk sizes a file with a non-ASCII name");
+    check(!seabass::application::fileSizeOnDisk(seabass::pathToUtf8(root / "nothing.mp3")),
+          "fileSizeOnDisk has nothing for a missing file");
+    check(!seabass::application::fileSizeOnDisk(""), "fileSizeOnDisk has nothing for no path");
+
+    // Cancellation: checked before every file, and a tick after each one,
+    // so a cancel landing during the second file's tick stops the pass
+    // before the third file is looked at. The same for the artwork check.
+    {
+        struct CancelAt : seabass::application::ProgressReporter
+        {
+            seabass::application::CancellationToken token;
+            size_t at = 0;
+            int ticks = 0;
+            void start(const std::string &, size_t) override {}
+            void finish() override {}
+            void warn(const std::string &) override {}
+            void tick(size_t current) override
+            {
+                ++ticks;
+                if (current == at) {
+                    token.cancel();
+                }
+            }
+        };
+        std::vector<Track> many;
+        for (int i = 0; i < 6; ++i) {
+            const fs::path file = root / "Contents" / ("many" + std::to_string(i) + ".mp3");
+            plant(file, 10 + i);
+            many.push_back(row("many" + std::to_string(i), file));
+            many.back().artworkPath = seabass::pathToUtf8(file);
+        }
+        CancelAt reporter;
+        reporter.at = 2;
+        bool threw = false;
+        try {
+            seabass::application::fillFileSizes(many, reporter.token, reporter);
+        } catch (const seabass::application::OperationCancelled &) {
+            threw = true;
+        }
+        check(threw, "a cancelled size pass throws OperationCancelled");
+        check(reporter.ticks == 2, "no file is stat'd after the cancel");
+        check(many[1].fileSizeBytes == 11 && many[2].fileSizeBytes == 0, "the pass stopped where it was cancelled");
+
+        CancelAt art;
+        art.at = 3;
+        threw = false;
+        try {
+            seabass::application::dropMissingArtwork(many, art.token, art);
+        } catch (const seabass::application::OperationCancelled &) {
+            threw = true;
+        }
+        check(threw && art.ticks == 3, "the artwork check stops within one image of a cancel");
+    }
 
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
