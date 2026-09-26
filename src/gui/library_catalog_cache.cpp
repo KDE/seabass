@@ -182,6 +182,19 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
     return tracks;
 }
 
+std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &format, const std::string &path,
+                                                            Detail /*detail*/, application::ProgressReporter &progress,
+                                                            application::CancellationToken cancel)
+{
+    // Skeleton: every stage is Full until the staged cache lands.
+    return tracksFor(format, path, progress, cancel);
+}
+
+void LibraryCatalogCache::prefetch(const std::string & /*format*/, const std::string & /*path*/)
+{
+    // Skeleton: nothing is read ahead until the staged cache lands.
+}
+
 void LibraryCatalogCache::invalidate(const std::string &format, const std::string &path)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
