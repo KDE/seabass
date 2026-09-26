@@ -23,6 +23,7 @@
 #include <memory>
 #include <string>
 
+#include "application/use_cases/fill_file_sizes.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -63,13 +64,17 @@ int main(int argc, char **argv)
 
     try {
         infrastructure::rekordbox::KaitaiRekordboxReader rb(root + "/PIONEER");
-        dump("rekordbox", rb.readAll());
+        auto tracks = rb.readAll();
+        application::completeTracks(tracks);
+        dump("rekordbox", tracks);
     } catch (const std::exception &e) {
         std::cerr << "rekordbox: " << e.what() << "\n";
     }
     try {
         infrastructure::engine::LibdjinteropEngineReader en(root + "/Engine Library");
-        dump("engine", en.readAll());
+        auto tracks = en.readAll();
+        application::completeTracks(tracks);
+        dump("engine", tracks);
     } catch (const std::exception &e) {
         std::cerr << "engine: " << e.what() << "\n";
     }

@@ -65,23 +65,6 @@ std::unique_ptr<application::LibraryReader> makeReader(const std::string &format
     throw std::invalid_argument("LibraryCatalogCache: unknown format \"" + format + "\"");
 }
 
-// What the readers used to do inside every read and do not any more: a
-// stat per audio file for its size, and for Engine and OneLibrary a stat
-// per artwork to drop the ones not on disk (rekordbox never checked its
-// artwork, and still does not, so a Full read is what it always was for
-// every format).
-// Checked per file, so a stick pulled mid pass (invalidateEveryCatalogOn()
-// cancels the prefetch) stops within one stat rather than after every
-// other file on it.
-void fillSizesAndVerifyArtwork(const std::string &format, std::vector<domain::Track> &tracks,
-                               const application::CancellationToken &cancel)
-{
-    application::fillFileSizes(tracks, cancel);
-    if (format != "rekordbox") {
-        application::dropMissingArtwork(tracks, cancel);
-    }
-}
-
 void realStage(LibraryCatalogCache::Detail stage, const std::string &format, const std::string &path,
                std::vector<domain::Track> &tracks, LibraryCatalogCache::StageNotes &notes,
                application::ProgressReporter &progress, application::CancellationToken cancel)
@@ -123,7 +106,14 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
     }
     case LibraryCatalogCache::Detail::Full:
         cancel.throwIfCancelled();
-        fillSizesAndVerifyArtwork(format, tracks, cancel);
+        // What the readers used to do inside every read and do not any
+        // more: a stat per audio file for its size, and for Engine and
+        // OneLibrary a stat per cover to drop the ones not on disk. The
+        // same completeTracks() the CLI runs after its reads, so a page
+        // and the command line agree on a catalog. Checked per file, so
+        // a stick pulled mid pass (invalidateEveryCatalogOn() cancels the
+        // prefetch) stops within one stat.
+        application::completeTracks(tracks, cancel);
         // The lengths the Tracks stage left out: every file the cache did
         // not know is probed now (and cached for the next insertion).
         // Rows the Tracks stage filled already have a length and are not

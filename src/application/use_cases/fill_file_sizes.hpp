@@ -62,4 +62,18 @@ void dropMissingArtwork(std::vector<domain::Track> &tracks,
                         CancellationToken cancel = CancellationToken::none(),
                         ProgressReporter &progress = NullProgressReporter::instance());
 
+// What a read of a whole library owes its caller now that the readers
+// read the catalog alone: every size (fillFileSizes()), and the covers
+// that are not on disk dropped (dropMissingArtwork()) for the rows of
+// the catalogs whose readers used to check them, Engine and OneLibrary.
+// A rekordbox row keeps the artwork its catalog names, exactly as its
+// reader always returned it (Track::format says which catalog a row came
+// from). The catalog cache's Full stage is this, and so is
+// ScanLibrary::execute() and every direct readAll() caller in the CLI
+// and the tools, so a page and the command line agree on a catalog.
+// `cancel` and `progress` as for the two it runs.
+void completeTracks(std::vector<domain::Track> &tracks,
+                    CancellationToken cancel = CancellationToken::none(),
+                    ProgressReporter &progress = NullProgressReporter::instance());
+
 }  // namespace seabass::application

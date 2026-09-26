@@ -48,12 +48,19 @@ void fillFileSizes(std::vector<domain::Track> &tracks, CancellationToken cancel,
     }
 }
 
-void dropMissingArtwork(std::vector<domain::Track> &tracks, CancellationToken cancel, ProgressReporter &progress)
+namespace
+{
+
+// dropMissingArtwork() over the rows `checked` accepts; the others keep
+// their artworkPath untouched.
+template <typename Checked>
+void dropMissingArtworkWhere(std::vector<domain::Track> &tracks, const CancellationToken &cancel,
+                             ProgressReporter &progress, Checked checked)
 {
     std::unordered_map<std::string, bool> presentByPath;
     size_t looked = 0;
     for (auto &track : tracks) {
-        if (track.artworkPath.empty()) {
+        if (track.artworkPath.empty() || !checked(track)) {
             continue;
         }
         auto known = presentByPath.find(track.artworkPath);
@@ -72,6 +79,21 @@ void dropMissingArtwork(std::vector<domain::Track> &tracks, CancellationToken ca
             track.artworkPath.clear();
         }
     }
+}
+
+}  // namespace
+
+void dropMissingArtwork(std::vector<domain::Track> &tracks, CancellationToken cancel, ProgressReporter &progress)
+{
+    dropMissingArtworkWhere(tracks, cancel, progress, [](const domain::Track &) { return true; });
+}
+
+void completeTracks(std::vector<domain::Track> &tracks, CancellationToken cancel, ProgressReporter &progress)
+{
+    fillFileSizes(tracks, cancel, progress);
+    dropMissingArtworkWhere(tracks, cancel, progress, [](const domain::Track &track) {
+        return track.format != "rekordbox";
+    });
 }
 
 }  // namespace seabass::application
