@@ -11,10 +11,14 @@
 #include <QString>
 #include <QVariantMap>
 
+#include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/advise_stick_backup.hpp"
+#include "gui/library_fingerprint_reader.hpp"
 
 namespace seabass::gui
 {
@@ -94,7 +98,19 @@ public:
     // Re-runs every assessment made so far (after a backup or restore, or
     // when the stick list is shown again).
     Q_INVOKABLE void reassessAll();
+    // The stick is gone: its queued steps are dropped, the one running
+    // for it is cancelled (the catalog cache stops waiting or reading at
+    // its next check) and its result, whenever it lands, is thrown away,
+    // so a pulled stick never comes back into the advice or as a peer.
     Q_INVOKABLE void forget(const QString &mountPoint);
+
+    // Test seam: what reads a stick's fingerprint, readLibraryFingerprint()
+    // unless replaced. Called on the worker thread with the running step's
+    // token.
+    using FingerprintReader = std::function<std::optional<domain::LibraryFingerprint>(
+        const QString &rekordboxPath, const QString &enginePath, FingerprintPass pass,
+        application::CancellationToken cancel)>;
+    void setFingerprintReaderForTesting(FingerprintReader reader) { m_readFingerprint = std::move(reader); }
 
 signals:
     void backupDirectoryChanged();
@@ -149,6 +165,10 @@ private:
     std::vector<Request> m_queue;
     QString m_running;  // the mount point being read: set before setFuture(), cleared once onFinished() has handled the result
     Step m_runningStep = Step::Facts;
+    // The running step's own token: forget() cancels it, and onFinished()
+    // discards the result of a step that was cancelled.
+    application::CancellationToken m_runningCancel;
+    FingerprintReader m_readFingerprint;
     QFutureWatcher<std::shared_ptr<Result>> m_watcher;
 };
 

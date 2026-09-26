@@ -82,13 +82,21 @@ bool cuesPendingFor(const StickBackupAdviceInput &input, const StickBackupAdvice
 
 }  // namespace
 
-BackupAdvisorController::BackupAdvisorController(QObject *parent) : QObject(parent)
+BackupAdvisorController::BackupAdvisorController(QObject *parent)
+    : QObject(parent),
+      m_readFingerprint([](const QString &rekordboxPath, const QString &enginePath, FingerprintPass pass,
+                           application::CancellationToken cancel) {
+          return readLibraryFingerprint(rekordboxPath, enginePath, pass, std::move(cancel));
+      })
 {
     connect(&m_watcher, &QFutureWatcher<std::shared_ptr<Result>>::finished, this, &BackupAdvisorController::onFinished);
 }
 
 BackupAdvisorController::~BackupAdvisorController()
 {
+    // Nothing will read the result: a step waiting on the cache's cue
+    // pass need not hold the page up.
+    m_runningCancel.cancel();
     awaitQuietly(m_watcher);
 }
 
@@ -170,13 +178,22 @@ void BackupAdvisorController::reassessAll()
 void BackupAdvisorController::forget(const QString &mountPoint)
 {
     m_known.remove(mountPoint);
-    // A second step for a stick that is gone would only read a catalog
-    // that is not there any more.
+    // Every step still queued for a stick that is gone, the first as well
+    // as the second: a queued first step would read nothing that is there
+    // and put the stick back into the advice.
     const auto dropped = std::erase_if(m_queue, [&mountPoint](const Request &queued) {
-        return queued.step == Step::Cues && queued.mountPoint == mountPoint;
+        return queued.mountPoint == mountPoint;
     });
-    if (dropped > 0 && !busy()) {
-        emit busyChanged();
+    // And the one running for it: stopped where the cache next checks,
+    // and its result discarded by onFinished() however it ends.
+    if (m_running == mountPoint) {
+        m_runningCancel.cancel();
+    }
+    if (dropped > 0) {
+        emit pendingChanged();
+        if (!busy()) {
+            emit busyChanged();
+        }
     }
     const bool hadFacts = m_facts.remove(mountPoint) > 0;
     const bool hadAdvice = m_advice.remove(mountPoint) > 0;
@@ -195,16 +212,20 @@ void BackupAdvisorController::startNext()
     m_queue.erase(m_queue.begin());
     m_running = request.mountPoint;
     m_runningStep = request.step;
+    m_runningCancel = application::CancellationToken();
+    const application::CancellationToken cancel = m_runningCancel;
+    const FingerprintReader readFingerprint = m_readFingerprint;
     if (request.step == Step::Cues) {
         // The catalog cache's prefetch, started by the first step, is
         // reading the cues already: this waits for that pass rather than
-        // starting another, and returns at once if it is done.
-        m_watcher.setFuture(QtConcurrent::run([request]() {
+        // starting another, and returns at once if it is done. The wait
+        // ends early when forget() cancels it.
+        m_watcher.setFuture(QtConcurrent::run([request, cancel, readFingerprint]() {
             auto result = std::make_shared<Result>();
             result->mountPoint = request.mountPoint;
             result->request = request;
             result->facts.fingerprint =
-                readLibraryFingerprint(request.rekordboxPath, request.enginePath, FingerprintPass::Cues);
+                readFingerprint(request.rekordboxPath, request.enginePath, FingerprintPass::Cues, cancel);
             return result;
         }));
         emit busyChanged();
@@ -212,7 +233,7 @@ void BackupAdvisorController::startNext()
         return;
     }
     const fs::path directory = pathFromQString(m_backupDirectory);
-    m_watcher.setFuture(QtConcurrent::run([request, directory]() {
+    m_watcher.setFuture(QtConcurrent::run([request, directory, cancel, readFingerprint]() {
         namespace stick_backup = infrastructure::stick_backup;
         auto result = std::make_shared<Result>();
         result->mountPoint = request.mountPoint;
@@ -232,7 +253,13 @@ void BackupAdvisorController::startNext()
             // cue pass the second step waits for runs in the cache's own
             // background worker meanwhile, then the file sizes the other
             // pages want.
-            facts.fingerprint = readLibraryFingerprint(request.rekordboxPath, request.enginePath, FingerprintPass::Tracks);
+            facts.fingerprint =
+                readFingerprint(request.rekordboxPath, request.enginePath, FingerprintPass::Tracks, cancel);
+            if (cancel.cancelled()) {
+                // Forgotten while it read: the result is discarded, and a
+                // prefetch now would only read a stick that is gone.
+                return result;
+            }
             for (const auto &[format, path] :
                  {std::pair{"rekordbox", request.rekordboxPath}, std::pair{"engine", request.enginePath}}) {
                 if (!path.isEmpty()) {
@@ -281,7 +308,15 @@ void BackupAdvisorController::onFinished()
     // A second step whose read failed leaves the first step's advice up,
     // marked pending, until the next assessment of that stick: only a
     // whole fingerprint, cues included, replaces the first step's.
-    const std::shared_ptr<Result> result = takeResult(m_watcher);
+    //
+    // A step forget() cancelled is discarded whole, whatever it read: its
+    // stick is gone (or, assessed again since, has a newer step queued),
+    // and facts stored now would bring it back into the advice and offer
+    // it to the others as a peer.
+    std::shared_ptr<Result> result = takeResult(m_watcher);
+    if (m_runningCancel.cancelled() || (result && !m_known.contains(result->mountPoint))) {
+        result.reset();
+    }
     if (result && result->request.step == Step::Facts) {
         m_facts[result->mountPoint] = result->facts;
         m_backups = result->backups;
@@ -290,8 +325,7 @@ void BackupAdvisorController::onFinished()
         });
         // Queued before m_running is cleared below, so busy never reads
         // false between the two steps.
-        if (result->facts.fingerprint && !result->facts.fingerprint->cuesKnown && !factsQueued
-            && m_known.contains(result->mountPoint)) {
+        if (result->facts.fingerprint && !result->facts.fingerprint->cuesKnown && !factsQueued) {
             Request cues = result->request;
             cues.step = Step::Cues;
             enqueue(cues);

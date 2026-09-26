@@ -2094,6 +2094,18 @@ if(TARGET seabass_edit)
     target_link_libraries(stick_list_order_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME stick_list_order_test COMMAND stick_list_order_test)
 
+    # The backup advisor's forget() against a step queued, running, or
+    # waiting on the cue pass, through its fingerprint reader seam.
+    add_executable(backup_advisor_controller_test
+        src/gui/backup_advisor_controller.cpp
+        src/gui/library_fingerprint_reader.cpp
+        src/gui/library_catalog_cache.cpp
+        tests/backup_advisor_controller_test.cpp
+    )
+    target_include_directories(backup_advisor_controller_test PRIVATE src tests)
+    target_link_libraries(backup_advisor_controller_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
+    add_test(NAME backup_advisor_controller_test COMMAND backup_advisor_controller_test)
+
     add_executable(open_folder_test
         src/gui/media_controller.cpp
         src/gui/library_catalog_cache.cpp
