@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/async_request.hpp"
 #include "domain/cleanup_leftovers.hpp"
 #include "domain/junk_cue.hpp"
 #include "domain/library_consistency.hpp"
@@ -351,7 +352,9 @@ public:
 
     LibraryConsistencyIssueListModel *issuesModel() { return &m_model; }
     JunkCueIssueListModel *junkCuesModel() { return &m_junkCueModel; }
-    bool busy() const { return m_busy; }
+    // A scan leg outstanding (docs/async-requests.md). Legs chain inside
+    // the previous leg's ending, so busy never dips between formats.
+    bool busy() const { return m_scan.busy(); }
     bool writing() const;
     bool canUndo() const;
     int stagedCount() const { return static_cast<int>(m_stagedIssues.size() + m_stagedJunk.size()); }
@@ -499,7 +502,7 @@ public:
     // Reverts every file the last save touched (the session's undo).
     Q_INVOKABLE void undoLastOperation();
 
-    bool scanCancellable() const { return m_busy && !writing(); }
+    bool scanCancellable() const { return busy() && !writing(); }
     Q_INVOKABLE void cancelScan();
 
 signals:
@@ -526,10 +529,15 @@ signals:
     void canUndoChanged();
 
 private:
-    void onScanFinished();
+    void onScanFinished(LibraryConsistencyScanResult &&result);
     void onFilesystemRepairFinished();
-    void scanNextPendingFormat();
-    void setBusy(bool busy);
+    // restart: supersede even a leg of the same scope (see rescanAfterWrite).
+    void scanNextPendingFormat(bool restart);
+    void startScanChain(const QString &rekordboxPath, const QString &enginePath, const QString &playlistName,
+                        bool restart);
+    // The scan again, after a write, an undo or a repair changed the stick.
+    void rescanAfterWrite();
+    void endScanCancelled();
     void setScanProgress(int current, int total);
     void attachSession();
     bool ensureSessionForStaging();
@@ -559,8 +567,10 @@ private:
 
     LibraryConsistencyIssueListModel m_model;
     JunkCueIssueListModel m_junkCueModel;
-    QFutureWatcher<LibraryConsistencyScanResult> m_watcher;
-    application::CancellationToken m_scanCancel;  // fresh per scan(), shared by its per-format tasks
+    // The scope the scan chain was started for, to know the same request
+    // again when it comes.
+    QString m_scanScope;
+    quint64 m_scanSerial = 0;
     QPointer<LibraryEditSession> m_session;
     struct StagedInfo
     {
@@ -605,13 +615,16 @@ private:
     std::shared_ptr<ArtworkRescueSources> m_rescue;
     // Where this computer keeps full stick backups, for the rescue above.
     QString m_backupDirectory;
-    bool m_busy = false;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
     QString m_scanningFormat;
     QString m_errorMessage;
     QString m_statusMessage;
     bool m_statusIsAboutStaging = false;
+
+    // Last, so it is destroyed first: it cancels the leg being read and
+    // lets it go.
+    AsyncRequest<LibraryConsistencyScanResult> m_scan{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

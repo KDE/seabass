@@ -215,7 +215,7 @@ namespace
 // needs the tracks it is about to write (see below).
 
 // Runs entirely on a background thread (see DuplicatesController::
-// rescan()) - no access to the controller itself.
+// startRescan()) - no access to the controller itself.
 DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr<QtProgressReporter> reporter,
                                    application::CancellationToken cancel)
 {
@@ -285,11 +285,7 @@ DuplicatesTaskResult runRescanTask(QString format, QString path, std::shared_ptr
 
 }  // namespace
 
-DuplicatesController::DuplicatesController(QObject *parent) : StagedCueEditController(parent)
-{
-    connect(&m_watcher, &QFutureWatcher<DuplicatesTaskResult>::finished, this,
-            &DuplicatesController::onRescanFinished);
-}
+DuplicatesController::DuplicatesController(QObject *parent) : StagedCueEditController(parent) {}
 
 QString DuplicatesController::totalWastedBytesHuman() const
 {
@@ -336,10 +332,14 @@ void DuplicatesController::attachSession()
 
 void DuplicatesController::scan(const QString &format, const QString &path)
 {
+    // Always answered (docs/async-requests.md): the same library again by
+    // the scan already running, another by a new scan that supersedes it.
+    // Setting the scope and then dropping the rescan while busy, as this
+    // did, put the old format's groups under the new format's session.
     m_format = format;
     m_path = path;
     attachSession();
-    rescan();
+    startRescan(false);
 }
 
 bool DuplicatesController::hasOneLibrary(const QString &pioneerRoot) const
@@ -347,14 +347,23 @@ bool DuplicatesController::hasOneLibrary(const QString &pioneerRoot) const
     return infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneerRoot.toStdString());
 }
 
-void DuplicatesController::rescan()
+void DuplicatesController::startRescan(bool restart)
 {
-    if (busy()) {
-        return;  // never overlap two rescans
+    const QString format = m_format;
+    const QString path = m_path;
+    const QString key = format + QLatin1Char('\n') + path;
+    if (!restart && scanServes(key)) {
+        return;
     }
     setErrorMessage({});
     setScanProgress(0, 0);
-    m_watcher.setFuture(QtConcurrent::run(runRescanTask, m_format, m_path, makeReporter(), beginScan()));
+    auto reporter = makeReporter();
+    startScan<DuplicatesTaskResult>(
+        key, pathToQString(pathFromQString(path).parent_path()), restart,
+        [format, path, reporter](application::CancellationToken cancel) {
+            return runRescanTask(format, path, reporter, cancel);
+        },
+        [this](DuplicatesTaskResult &&result) { onRescanFinished(std::move(result)); });
 }
 
 void DuplicatesController::setAudioComparisonNote(const DuplicatesTaskResult &result)
@@ -381,22 +390,14 @@ void DuplicatesController::setAudioComparisonNote(const DuplicatesTaskResult &re
     }
 }
 
-void DuplicatesController::onRescanFinished()
+void DuplicatesController::onRescanFinished(DuplicatesTaskResult &&result)
 {
-    QString thrown;
-    DuplicatesTaskResult result = takeResult(m_watcher, &thrown);
-    if (!thrown.isEmpty()) {
-        result.errorMessage = thrown;
-    }
-
     if (result.cancelled) {
-        setBusy(false);
         emit scanCancelled();
         return;
     }
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
-        setBusy(false);
         return;
     }
 
@@ -410,7 +411,6 @@ void DuplicatesController::onRescanFinished()
             m_model.setStaged(index, true, info.description);
         }
     }
-    setBusy(false);
     emit plansChanged();
 }
 

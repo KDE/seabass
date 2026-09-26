@@ -28,29 +28,30 @@ bool StagedCueEditController::canUndo() const
     return m_session && m_session->canUndo();
 }
 
-application::CancellationToken StagedCueEditController::beginScan()
-{
-    setBusy(true);
-    m_scanCancel = application::CancellationToken();
-    return m_scanCancel;
-}
-
 void StagedCueEditController::cancelScan()
 {
     if (scanCancellable()) {
-        m_scanCancel.cancel();
+        // Over at once; scanCancelled() comes from the scan's ending.
+        m_scan.cancel();
     }
 }
 
 std::shared_ptr<QtProgressReporter> StagedCueEditController::makeReporter()
 {
     auto reporter = std::make_shared<QtProgressReporter>();
-    connect(reporter.get(), &QtProgressReporter::started, this, [this](const QString &label, int total) {
-        setScanLabel(label);
-        setScanProgress(0, total);
+    const quint64 serial = ++m_scanSerial;
+    const auto current = [this, serial]() { return serial == m_scanSerial && busy(); };
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
+        if (current()) {
+            setScanLabel(label);
+            setScanProgress(0, total);
+        }
     });
-    connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this](int current) { setScanProgress(current, m_scanTotal); });
+    connect(reporter.get(), &QtProgressReporter::progressed, this, [this, current](int done) {
+        if (current()) {
+            setScanProgress(done, m_scanTotal);
+        }
+    });
     return reporter;
 }
 
@@ -163,21 +164,12 @@ void StagedCueEditController::unstage(int index)
 
 void StagedCueEditController::undoLastOperation()
 {
-    if (m_busy || !m_session) {
+    if (busy() || !m_session) {
         return;
     }
     setErrorMessage({});
     setStatusMessage({});
     m_session->undoLastSave();
-}
-
-void StagedCueEditController::setBusy(bool busy)
-{
-    if (m_busy == busy) {
-        return;
-    }
-    m_busy = busy;
-    emit busyChanged();
 }
 
 void StagedCueEditController::setScanProgress(int current, int total)

@@ -9,10 +9,13 @@
 #include <QQmlEngine>
 #include <QString>
 
+#include <functional>
 #include <map>
 #include <memory>
+#include <utility>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/async_request.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
 namespace seabass::gui
@@ -65,8 +68,10 @@ public:
     explicit StagedCueEditController(QObject *parent = nullptr);
     ~StagedCueEditController() override;
 
-    bool busy() const { return m_busy; }
-    bool scanCancellable() const { return m_busy && !writing(); }
+    // A scan outstanding (docs/async-requests.md). Never a write: that
+    // is `writing`.
+    bool busy() const { return m_scan.busy(); }
+    bool scanCancellable() const { return busy() && !writing(); }
     int scanCurrent() const { return m_scanCurrent; }
     int scanTotal() const { return m_scanTotal; }
     QString scanLabel() const { return m_scanLabel; }
@@ -120,12 +125,43 @@ protected:
 
     // --- what the base supplies --------------------------------------
 
-    // Marks the controller busy and hands out the token the new scan task
-    // must carry, replacing any previous scan's token.
-    application::CancellationToken beginScan();
+    // Runs a scan under docs/async-requests.md: busy while it is
+    // outstanding, `apply` with its result, an error message, or
+    // scanCancelled(), exactly once. Another scan supersedes it; with
+    // `restart` false the same key again is answered by the one running,
+    // with `restart` true (after a write or an undo, when what the running
+    // scan read is out of date) it is superseded too. `stickRoot` is the
+    // stick the scan reads, so pulling it ends the scan.
+    template <typename Result>
+    void startScan(const QString &key, const QString &stickRoot, bool restart,
+                   std::function<Result(application::CancellationToken)> work, std::function<void(Result &&)> apply)
+    {
+        AsyncRequest<std::shared_ptr<void>>::Work erased = [work = std::move(work)](application::CancellationToken cancel) {
+            return std::static_pointer_cast<void>(std::make_shared<Result>(work(cancel)));
+        };
+        AsyncRequest<std::shared_ptr<void>>::Ending ending{
+            [apply = std::move(apply)](std::shared_ptr<void> &&result) {
+                apply(std::move(*std::static_pointer_cast<Result>(result)));
+            },
+            [this](const QString &message) { setErrorMessage(message); },
+            [this]() { emit scanCancelled(); },
+        };
+        if (restart) {
+            m_scan.restart(key, stickRoot, std::move(erased), std::move(ending));
+        } else {
+            m_scan.start(key, stickRoot, std::move(erased), std::move(ending));
+        }
+    }
 
-    // See ScanController::scan() for why the reporter is owned by the
-    // task (via shared_ptr) rather than by this controller.
+    // The scan outstanding is for `key`: a request for it again is served
+    // by it. Asked before anything is reset, so the answer the page is
+    // already waiting for keeps its progress bar.
+    bool scanServes(const QString &key) const { return m_scan.busy() && m_scan.key() == key; }
+
+    // The reporter for the scan about to start: it moves the bar only
+    // while that scan is the outstanding one. See ScanController::scan()
+    // for why the reporter is owned by the task (via shared_ptr) rather
+    // than by this controller.
     std::shared_ptr<QtProgressReporter> makeReporter();
 
     // Finds (or re-finds) the LibraryEditSession for the library at
@@ -144,7 +180,6 @@ protected:
     // dropped it while its change was still staged.
     int indexOfStagedKey(const QString &key);
 
-    void setBusy(bool busy);
     void setScanProgress(int current, int total);
     void setScanLabel(const QString &label);
     void setErrorMessage(const QString &message);
@@ -171,13 +206,17 @@ private:
     void onSessionChangesDiscarded();
 
     QPointer<LibraryEditSession> m_session;
-    application::CancellationToken m_scanCancel;  // fresh per scan
-    bool m_busy = false;
+    quint64 m_scanSerial = 0;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
     QString m_scanLabel;
     QString m_errorMessage;
     QString m_statusMessage;
+
+protected:
+    // Last, so it is destroyed first: its destructor cancels the scan and
+    // lets its worker go.
+    AsyncRequest<std::shared_ptr<void>> m_scan{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

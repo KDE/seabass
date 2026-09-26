@@ -10,6 +10,8 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include "gui/async_request.hpp"
+
 #include "application/ports/cancellation_token.hpp"
 
 namespace seabass::gui
@@ -52,7 +54,7 @@ class StickStatisticsController : public QObject
 public:
     explicit StickStatisticsController(QObject *parent = nullptr);
 
-    bool busy() const { return m_busy; }
+    bool busy() const { return m_scan.busy(); }
     QString errorMessage() const { return m_errorMessage; }
     QVariantMap filesystemInfo() const { return m_filesystemInfo; }
     QVariantMap rekordboxStats() const { return m_rekordboxStats; }
@@ -64,7 +66,7 @@ public:
     // stick, same convention as every other controller in this app.
     Q_INVOKABLE void scan(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath);
 
-    bool scanCancellable() const { return m_busy; }
+    bool scanCancellable() const { return busy(); }
     Q_INVOKABLE void cancelScan();
 
 signals:
@@ -74,20 +76,18 @@ signals:
     void resultsChanged();
 
 private:
-    void onScanFinished();
-    void setBusy(bool busy);
+    void onScanFinished(StickStatisticsScanResult &&result);
     void setErrorMessage(const QString &message);
 
-    QFutureWatcher<StickStatisticsScanResult> m_watcher;
-    application::CancellationToken m_scanCancel;  // fresh per scan()
-
-    bool m_busy = false;
     QString m_errorMessage;
     QVariantMap m_filesystemInfo;
     QVariantMap m_rekordboxStats;
     QVariantMap m_engineStats;
     QVariantMap m_oneLibraryStats;
     QVariantMap m_diskUsage;
+
+    // Last, so it is destroyed first. See docs/async-requests.md.
+    AsyncRequest<StickStatisticsScanResult> m_scan{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui
