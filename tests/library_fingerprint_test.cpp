@@ -225,7 +225,7 @@ int main()
                 }
                 assert(matchFingerprints(a, b) == expected);
                 assert(matchFingerprints(b, a) == expected);
-                assert((a == b) == (expected != FingerprintMatch::Different));
+                assert((a == b) == (expected == FingerprintMatch::Identical));
 
                 // The estimate: the same library throughout (one track
                 // more at most), so never Different; pending exactly when

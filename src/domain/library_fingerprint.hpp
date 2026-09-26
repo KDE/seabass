@@ -63,10 +63,10 @@ struct LibraryFingerprint
     std::string serialize() const;
     static std::optional<LibraryFingerprint> parse(std::string_view text);
 
-    // Equal as far as both sides know: see matchFingerprints(). Two
-    // fingerprints that know their cues are equal only when every part
-    // is; one whose cues are still being read equals any fingerprint with
-    // the same tracks and playlists.
+    // Identical, cues included: matchFingerprints() == Identical. A
+    // fingerprint whose cues are still being read is equal to nothing;
+    // a caller that wants "the same as far as both sides know" asks
+    // matchFingerprints() for the three-way answer.
     bool operator==(const LibraryFingerprint &other) const;
 };
 

@@ -24,7 +24,7 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
         pass == FingerprintPass::Tracks ? LibraryCatalogCache::Detail::Tracks : LibraryCatalogCache::Detail::Cues;
     std::vector<domain::Track> tracks;
     bool anyRead = false;
-    bool rekordboxRead = false;
+    bool rekordboxCuesMissing = false;
     for (const auto &[format, path] : {std::pair{"rekordbox", rekordboxPath}, std::pair{"engine", enginePath}}) {
         if (path.isEmpty()) {
             continue;
@@ -33,7 +33,13 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
             std::vector<domain::Track> read = LibraryCatalogCache::instance().tracksFor(format, path.toStdString(), detail);
             tracks.insert(tracks.end(), read.begin(), read.end());
             anyRead = true;
-            rekordboxRead = rekordboxRead || std::string_view(format) == "rekordbox";
+            if (std::string_view(format) == "rekordbox" && detail == LibraryCatalogCache::Detail::Tracks) {
+                // A Tracks answer from an entry that had already read its
+                // cues carries them, and saying "checking cues" over it
+                // would be a flash of nothing: the stage says which.
+                const auto reached = LibraryCatalogCache::instance().stageReached(format, path.toStdString());
+                rekordboxCuesMissing = !reached || *reached < LibraryCatalogCache::Detail::Cues;
+            }
         } catch (const std::exception &) {
             // Unreadable catalog: the other one may still do.
         }
@@ -42,10 +48,9 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
         return std::nullopt;
     }
     // Engine's cues are in its catalog, so a Tracks read of an Engine-only
-    // stick is already the whole fingerprint. rekordbox's are not: its
-    // tracks may carry cues here (a cache that had read further already),
-    // but whether all of them do is what the Cues stage is for.
-    const bool cuesKnown = pass == FingerprintPass::Cues || !rekordboxRead;
+    // stick is already the whole fingerprint. rekordbox's are not, unless
+    // the cache had read that far before this call.
+    const bool cuesKnown = !rekordboxCuesMissing;
     return domain::fingerprintLibrary(tracks, cuesKnown);
 }
 

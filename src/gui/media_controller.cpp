@@ -356,9 +356,11 @@ namespace
 // cached all the same, and an opened folder that went away (an
 // unmounted share, a disk pulled) or was closed or replaced is the same
 // case as a pulled stick.
-void forgetCatalogsOfSticksGone(const std::vector<application::DetectedStick> &before,
-                                const std::vector<application::DetectedStick> &after)
+// Returns the mount points that are gone, for the advisor to forget too.
+std::vector<std::string> forgetCatalogsOfSticksGone(const std::vector<application::DetectedStick> &before,
+                                                    const std::vector<application::DetectedStick> &after)
 {
+    std::vector<std::string> gone;
     for (const application::DetectedStick &was : before) {
         if (!was.mounted || was.mountPoint.empty()) {
             continue;
@@ -369,8 +371,10 @@ void forgetCatalogsOfSticksGone(const std::vector<application::DetectedStick> &b
         });
         if (!stillThere) {
             LibraryCatalogCache::instance().invalidateEveryCatalogOn(was.mountPoint);
+            gone.push_back(was.mountPoint);
         }
     }
+    return gone;
 }
 
 }  // namespace
@@ -423,7 +427,9 @@ void MediaController::detect()
         }
     }
     m_openedFolderListed = folderListed;
-    forgetCatalogsOfSticksGone(m_model.sticks(), sticks);
+    for (const std::string &mountPoint : forgetCatalogsOfSticksGone(m_model.sticks(), sticks)) {
+        emit stickGone(qtPathFromUtf8(mountPoint));
+    }
     m_model.setSticks(std::move(sticks));
     std::vector<application::StickIdentity> present;
     for (const application::DetectedStick &stick : m_model.sticks()) {

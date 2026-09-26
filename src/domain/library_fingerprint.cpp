@@ -202,7 +202,7 @@ FingerprintMatch matchFingerprints(const LibraryFingerprint &a, const LibraryFin
 
 bool LibraryFingerprint::operator==(const LibraryFingerprint &other) const
 {
-    return matchFingerprints(*this, other) != FingerprintMatch::Different;
+    return matchFingerprints(*this, other) == FingerprintMatch::Identical;
 }
 
 std::string LibraryFingerprint::serialize() const
