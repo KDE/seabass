@@ -479,6 +479,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/collapse_catalog_rows.cpp
     src/application/use_cases/export_rekordbox_xml.cpp
     src/application/use_cases/real_file_sizes.cpp
+    src/application/use_cases/fill_file_sizes.cpp
     src/application/use_cases/find_unreferenced_files.cpp
     src/infrastructure/stick_layout.cpp
     src/application/use_cases/unreferenced_tracks.cpp
@@ -1402,6 +1403,21 @@ add_executable(real_file_sizes_test tests/real_file_sizes_test.cpp)
 target_include_directories(real_file_sizes_test PRIVATE src)
 target_link_libraries(real_file_sizes_test PRIVATE seabass_core)
 add_test(NAME real_file_sizes_test COMMAND real_file_sizes_test)
+
+add_executable(fill_file_sizes_test tests/fill_file_sizes_test.cpp)
+target_include_directories(fill_file_sizes_test PRIVATE src)
+target_link_libraries(fill_file_sizes_test PRIVATE seabass_core)
+add_test(NAME fill_file_sizes_test COMMAND fill_file_sizes_test)
+
+# The progressive catalog read (readTracks, fillCues, fillFileSizes) gives
+# the library the one-shot read gave, over the fixture, for all three
+# readers. See the test's own header.
+add_executable(progressive_catalog_read_test tests/progressive_catalog_read_test.cpp)
+target_include_directories(progressive_catalog_read_test PRIVATE src)
+target_link_libraries(progressive_catalog_read_test PRIVATE seabass_core)
+add_test(NAME progressive_catalog_read_test COMMAND progressive_catalog_read_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(progressive_catalog_read_test PROPERTIES LABELS "integration")
 
 # The Linux formatter only builds into seabass_core on Linux, but the value
 # this pins is one a second operating system has to agree with -- that is the

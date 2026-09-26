@@ -253,7 +253,29 @@ KaitaiRekordboxReader::KaitaiRekordboxReader(std::string pioneerRoot, std::share
 
 std::vector<domain::Track> KaitaiRekordboxReader::readAll()
 {
+    // The catalog pass is a tenth of a second against the ANLZ pass's
+    // seconds, so the one progress bar a caller of readAll() has always
+    // seen follows the ANLZ pass, under the label it always had. The
+    // catalog pass still checks the cancellation token per track.
+    auto tracks = readCatalog(application::NullProgressReporter::instance());
+    readAnalysis(tracks, *m_progress, "Scanning rekordbox tracks");
+    return tracks;
+}
+
+std::vector<domain::Track> KaitaiRekordboxReader::readTracks()
+{
+    return readCatalog(*m_progress);
+}
+
+void KaitaiRekordboxReader::fillCues(std::vector<domain::Track> &tracks)
+{
+    readAnalysis(tracks, *m_progress, "Reading rekordbox cues");
+}
+
+std::vector<domain::Track> KaitaiRekordboxReader::readCatalog(application::ProgressReporter &progress)
+{
     std::vector<domain::Track> tracks;
+    m_analyzePathBySourceId.clear();
 
     const std::filesystem::path pdbPath = pathFromUtf8(m_pioneerRoot) / "rekordbox" / "export.pdb";
     std::ifstream ifs(pdbPath, std::ifstream::binary);
@@ -429,7 +451,7 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
         forEachDataPage(*table, [&totalRows](Pdb::page_t *page) { totalRows += page->num_rows(); });
     }
 
-    m_progress->start("Scanning rekordbox tracks", totalRows);
+    progress.start("Scanning rekordbox tracks", totalRows);
     size_t processed = 0;
 
     for (const auto &table : *pdb.tables()) {
@@ -506,10 +528,9 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         // pattern in OneLibraryReader::readAll(), which this
                         // now matches exactly). The join itself lives in
                         // trackFilePathOnStick(), which deleted rows share.
+                        // No stat for the size here: that is a file per
+                        // track, and a stage of its own (fillFileSizes).
                         track.filePath = trackFilePathOnStick(stickRoot, trackFilePath);
-                        std::error_code ec;
-                        auto size = std::filesystem::file_size(pathFromUtf8(track.filePath), ec);
-                        track.fileSizeBytes = ec ? 0 : size;
                     }
                     auto artworkIt = artworkPathById.find(rowTrack->artwork_id());
                     if (artworkIt != artworkPathById.end() && !artworkIt->second.empty()) {
@@ -537,57 +558,119 @@ std::vector<domain::Track> KaitaiRekordboxReader::readAll()
                         track.playlists = playlistsIt->second;
                     }
 
+                    // The analysis files are read by readAnalysis(), not
+                    // here: one folder per track, fifty times this pass.
                     std::string analyzePath = sqlText(rowTrack->analyze_path());
                     if (!analyzePath.empty()) {
-                        const std::string extRelative = anlzRelativePath(analyzePath, /*wantExt=*/true);
-                        auto bytes = m_anlzSource->read(extRelative);
-                        if (bytes) {
-                            // The .DAT as well: hot cues 1-3 live only in
-                            // its legacy list, and a save writes that list
-                            // back from what was read here. It is the small
-                            // one of the pair (8 KB against 167 KB on a real
-                            // track), and a missing one just yields nothing.
-                            const std::string datRelative = anlzRelativePath(analyzePath, /*wantExt=*/false);
-                            auto datBytes = m_anlzSource->read(datRelative);
-                            track.cues = readCues(*bytes, datBytes ? *datBytes : std::string());
-                        }
-                        // The track's own edit time: rekordbox keeps a
-                        // track's cues in its ANLZ .EXT file, so that
-                        // file's mtime moves when this track's cues change
-                        // and for no other track. Sync resolves a hot cue
-                        // conflict with it instead of export.pdb's mtime,
-                        // which moves for the whole library at once.
-                        //
-                        // Left at 0 (unknown) when the bytes did not come
-                        // from a file on disk -- a browsed backup reads
-                        // them out of an archive, where there is no mtime
-                        // to take -- and Sync then falls back to the
-                        // catalog dates for this track.
-                        // The conversion is spelled out here rather than
-                        // borrowed from stick_tree_walker's toUnixSeconds:
-                        // this reader is compiled into narrow test targets
-                        // that list their own sources, and the walker
-                        // would drag its directory reader in with it.
-                        std::error_code ec;
-                        const auto written =
-                            std::filesystem::last_write_time(pathFromUtf8(m_pioneerRoot) / pathFromUtf8(extRelative), ec);
-                        if (!ec) {
-                            const auto asSystem = infrastructure::toSystemClock(written);
-                            track.metadataModifiedAt =
-                                std::chrono::duration_cast<std::chrono::seconds>(asSystem.time_since_epoch()).count();
-                        }
+                        m_analyzePathBySourceId[track.sourceId] = std::move(analyzePath);
                     }
                     tracks.push_back(std::move(track));
 
-                    m_progress->tick(++processed);
+                    progress.tick(++processed);
                     m_cancel.throwIfCancelled();
                 }
             }
         });
     }
 
-    m_progress->finish();
+    progress.finish();
     return tracks;
+}
+
+std::unordered_map<std::string, std::string> KaitaiRekordboxReader::analyzePathsFromPdb() const
+{
+    std::unordered_map<std::string, std::string> result;
+
+    const std::filesystem::path pdbPath = pathFromUtf8(m_pioneerRoot) / "rekordbox" / "export.pdb";
+    std::ifstream ifs(pdbPath, std::ifstream::binary);
+    if (!ifs.is_open()) {
+        throw std::runtime_error("could not open " + pathToUtf8(pdbPath));
+    }
+    kaitai::kstream ks(&ifs);
+    Pdb pdb(false, &ks);
+
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != Pdb::PAGE_TYPE_TRACKS) {
+            continue;
+        }
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    if (!row->present()) {
+                        continue;
+                    }
+                    auto *rowTrack = dynamic_cast<Pdb::track_row_t *>(row->body());
+                    if (!rowTrack) {
+                        continue;
+                    }
+                    std::string analyzePath = sqlText(rowTrack->analyze_path());
+                    if (!analyzePath.empty()) {
+                        result[std::to_string(rowTrack->id())] = std::move(analyzePath);
+                    }
+                }
+            }
+        });
+    }
+    return result;
+}
+
+void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, application::ProgressReporter &progress,
+                                         const std::string &label)
+{
+    // A reader that has not read the catalog itself (the cache may hand
+    // the second stage to a fresh one) asks export.pdb for the paths. The
+    // same file the tracks came from: a row that is not in it has no
+    // analysis files to read.
+    if (m_analyzePathBySourceId.empty()) {
+        m_analyzePathBySourceId = analyzePathsFromPdb();
+    }
+
+    progress.start(label, tracks.size());
+    size_t processed = 0;
+    for (auto &track : tracks) {
+        auto pathIt = track.format == "rekordbox" ? m_analyzePathBySourceId.find(track.sourceId)
+                                                  : m_analyzePathBySourceId.end();
+        if (pathIt != m_analyzePathBySourceId.end()) {
+            const std::string &analyzePath = pathIt->second;
+            const std::string extRelative = anlzRelativePath(analyzePath, /*wantExt=*/true);
+            auto bytes = m_anlzSource->read(extRelative);
+            if (bytes) {
+                // The .DAT as well: hot cues 1-3 live only in its legacy
+                // list, and a save writes that list back from what was
+                // read here. It is the small one of the pair (8 KB against
+                // 167 KB on a real track), and a missing one just yields
+                // nothing.
+                const std::string datRelative = anlzRelativePath(analyzePath, /*wantExt=*/false);
+                auto datBytes = m_anlzSource->read(datRelative);
+                track.cues = readCues(*bytes, datBytes ? *datBytes : std::string());
+            }
+            // The track's own edit time: rekordbox keeps a track's cues in
+            // its ANLZ .EXT file, so that file's mtime moves when this
+            // track's cues change and for no other track. Sync resolves a
+            // hot cue conflict with it instead of export.pdb's mtime, which
+            // moves for the whole library at once.
+            //
+            // Left at 0 (unknown) when the bytes did not come from a file
+            // on disk -- a browsed backup reads them out of an archive,
+            // where there is no mtime to take -- and Sync then falls back
+            // to the catalog dates for this track.
+            // The conversion is spelled out here rather than borrowed from
+            // stick_tree_walker's toUnixSeconds: this reader is compiled
+            // into narrow test targets that list their own sources, and
+            // the walker would drag its directory reader in with it.
+            std::error_code ec;
+            const auto written =
+                std::filesystem::last_write_time(pathFromUtf8(m_pioneerRoot) / pathFromUtf8(extRelative), ec);
+            if (!ec) {
+                const auto asSystem = infrastructure::toSystemClock(written);
+                track.metadataModifiedAt =
+                    std::chrono::duration_cast<std::chrono::seconds>(asSystem.time_since_epoch()).count();
+            }
+        }
+        progress.tick(++processed);
+        m_cancel.throwIfCancelled();
+    }
+    progress.finish();
 }
 
 }  // namespace seabass::infrastructure::rekordbox

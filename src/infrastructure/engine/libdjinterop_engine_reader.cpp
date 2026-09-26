@@ -154,12 +154,15 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
         // row, not just by readAll()'s outer try/catch around this whole
         // function: that one would otherwise lose every OTHER track's
         // artwork too, not just this row's.
+        //
+        // Not checked for existence: the catalog says which artwork a track
+        // has, and whether the file is still there is for the consumer that
+        // draws or audits it to find out. A stat per artwork here was
+        // ~1500 stats on a real stick, paid by every page that wanted a
+        // title. Library Health's artwork audit reads its own rows.
         try {
             std::filesystem::path candidate = (stickRoot / pathFromUtf8(hash.substr(pos))).make_preferred();
-            std::error_code ec;
-            if (std::filesystem::exists(candidate, ec)) {
-                result[trackId] = pathToUtf8(candidate);
-            }
+            result[trackId] = pathToUtf8(candidate);
         } catch (const std::exception &) {
             // Best-effort, same as the rest of this loop's field reads:
             // one unreadable artwork path is not worth losing the scan.
@@ -362,11 +365,8 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
             auto resolved = pathFromUtf8(m_engineLibraryPath) / pathFromUtf8(relative);
             return pathToUtf8(resolved.lexically_normal());
         });
-        if (!track.filePath.empty()) {
-            std::error_code ec;
-            auto size = std::filesystem::file_size(pathFromUtf8(track.filePath), ec);
-            track.fileSizeBytes = ec ? 0 : size;
-        }
+        // No size: Engine does not record one, and a stat per audio file
+        // is a stage of its own (application::fillFileSizes).
         track.bpm = safeGet<double>(*m_progress, id, "bpm", [&] { return tr.bpm().value_or(0.0); });
         track.bitrate = safeGet<int>(*m_progress, id, "bitrate", [&] { return tr.bitrate().value_or(0); });
         track.key = safeGet<std::string>(*m_progress, id, "key", [&] {

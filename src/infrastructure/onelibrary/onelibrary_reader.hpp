@@ -44,6 +44,11 @@ public:
     // existsFor() first, same convention as the writer.
     explicit OneLibraryReader(std::string pioneerRoot);
 
+    // The cues are in the catalog, so readTracks() is this and fillCues()
+    // has nothing to add (the LibraryReader defaults). Reads exportLibrary.db
+    // alone: no audio file is stat'd for its size (application::
+    // fillFileSizes) and no artwork file for its existence; artworkPath is
+    // what the catalog names, whether or not the file is still there.
     std::vector<domain::Track> readAll() override;
 
 private:

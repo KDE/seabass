@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "application/ports/library_reader.hpp"
@@ -45,11 +46,34 @@ public:
     // parser seeks all over it.
     KaitaiRekordboxReader(std::string pioneerRoot, std::shared_ptr<AnlzByteSource> anlzSource);
 
+    // readTracks() + fillCues(), with one progress pass over the tracks
+    // under the label this reader always used.
     std::vector<domain::Track> readAll() override;
 
+    // export.pdb alone: every field but the cues and metadataModifiedAt,
+    // which live in the per-track ANLZ files. No audio file is stat'd
+    // (see application::fillFileSizes) and no ANLZ file is opened.
+    std::vector<domain::Track> readTracks() override;
+
+    // The ANLZ pass over `tracks`: sets each rekordbox track's cues and its
+    // metadataModifiedAt (the .EXT's mtime), matched to its catalog row by
+    // sourceId. Works on any reader for the same root: one that did not
+    // run readTracks() reads the analysis paths from export.pdb first.
+    // Tracks of another format, or with no analysis file, are left alone.
+    void fillCues(std::vector<domain::Track> &tracks) override;
+
 private:
+    std::vector<domain::Track> readCatalog(application::ProgressReporter &progress);
+    void readAnalysis(std::vector<domain::Track> &tracks, application::ProgressReporter &progress,
+                      const std::string &label);
+    // Track id (as sourceId) -> export.pdb's analyze_path, for readAnalysis.
+    std::unordered_map<std::string, std::string> analyzePathsFromPdb() const;
+
     std::string m_pioneerRoot;
     std::shared_ptr<AnlzByteSource> m_anlzSource;
+    // Filled by readCatalog(), so a fillCues() after readTracks() on the
+    // same reader does not parse export.pdb a second time.
+    std::unordered_map<std::string, std::string> m_analyzePathBySourceId;
 };
 
 }  // namespace seabass::infrastructure::rekordbox

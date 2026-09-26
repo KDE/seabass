@@ -277,12 +277,12 @@ std::vector<Track> OneLibraryReader::readAll()
             //
             // Same undecodable-bytes risk as filePath above, and the same
             // fix: one bad artwork path must not lose the whole track.
+            //
+            // Not checked for existence, as in the Engine reader: whether
+            // the file is still there is for the consumer that draws or
+            // audits it to find out, not a stat per track in every read.
             try {
-                fs::path candidate = (stickRoot / pathFromUtf8(imageRelPath.substr(1))).make_preferred();
-                std::error_code ec;
-                if (fs::exists(candidate, ec)) {
-                    track.artworkPath = pathToUtf8(candidate);
-                }
+                track.artworkPath = pathToUtf8((stickRoot / pathFromUtf8(imageRelPath.substr(1))).make_preferred());
             } catch (const std::exception &e) {
                 m_progress->warn("content_id=" + track.sourceId + ": artwork path unreadable (" + e.what() + ")");
             }

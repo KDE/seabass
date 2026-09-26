@@ -72,8 +72,8 @@ void createFixture(const std::string &pioneerRoot)
     db.exec("INSERT INTO album VALUES (1, 'Test Album');");
     db.exec("INSERT INTO key VALUES (1, 'Fm');");
     // image_id 1 resolves to a real file (created below); image_id 2's
-    // path is never created on disk -- readAll() must leave artworkPath
-    // empty rather than pointing at a non-existent file.
+    // path is never created on disk. readAll() reports both as the catalog
+    // names them: whether the file is there is for whoever draws it.
     db.exec("INSERT INTO image VALUES (1, '/PIONEER/Artwork/00001/a1.jpg');");
     db.exec("INSERT INTO image VALUES (2, '/PIONEER/Artwork/00002/missing.jpg');");
 
@@ -174,8 +174,10 @@ int main()
         std::cout << "case 1 (fully-populated track parses every joined field) OK\n";
     }
 
-    // Case 2: an image row exists but the file it points to doesn't --
-    // artworkPath must stay empty rather than pointing at a missing file.
+    // Case 2: an image row exists but the file it points to doesn't. The
+    // reader stats no artwork, so artworkPath is the path the catalog
+    // names, missing file or not: finding out is the consumer's job, once,
+    // rather than a stat per track in every read.
     // Also: NULL artist/key/djPlayCount all degrade to empty/unset rather
     // than a garbage value or a crash. No cues, no playlists.
     {
@@ -192,16 +194,17 @@ int main()
         assert(t->artist.empty());
         assert(t->key.empty());
         assert(!t->playCount.has_value());
-        assert(t->artworkPath.empty());
+        assert(t->artworkPath
+               == seabass::pathToUtf8(scratch / "PIONEER" / "Artwork" / "00002" / "missing.jpg"));
+        assert(!fs::exists(scratch / "PIONEER" / "Artwork" / "00002" / "missing.jpg"));
         assert(t->cues.empty());
         assert(t->playlists.empty());
 
-        std::cout << "case 2 (image row with a missing file leaves artworkPath empty) OK\n";
+        std::cout << "case 2 (image row with a missing file still names the catalog's artwork path) OK\n";
     }
 
-    // Case 3: no image row at all (image_id NULL) -- same empty-artworkPath
-    // outcome as case 2, but via the LEFT JOIN producing no row rather than
-    // a row whose file is missing.
+    // Case 3: no image row at all (image_id NULL): the LEFT JOIN produces
+    // no row, and there is no artwork to name.
     {
         fs::path scratch = freshScratch();
         fs::path pioneerRoot = scratch / "PIONEER";
@@ -214,7 +217,7 @@ int main()
         assert(t != nullptr);
         assert(t->artworkPath.empty());
 
-        std::cout << "case 3 (no image row at all also leaves artworkPath empty) OK\n";
+        std::cout << "case 3 (no image row at all leaves artworkPath empty) OK\n";
     }
 
     // Case 4: no exportLibrary.db present for this stick at all -- readAll()
