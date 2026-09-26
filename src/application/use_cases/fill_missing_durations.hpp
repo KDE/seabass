@@ -46,7 +46,8 @@ struct FillMissingDurationsResult
 };
 
 // Fills `durationSeconds` on every track that has none, from the cache
-// first and the probe second. Tracks that already have a length are left
+// first and the probe second, and marks each row it filled
+// `durationIsProbed` (the cache only ever holds probed lengths). Tracks that already have a length are left
 // completely alone -- the catalog's own value wins, both because it is
 // free and because re-deriving a value the catalog already agrees with
 // would only invite drift.
