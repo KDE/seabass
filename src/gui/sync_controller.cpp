@@ -118,15 +118,16 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         auto &catalogCache = LibraryCatalogCache::instance();
 
         if (hasRekordbox) {
-            // Cues, not Full: a sync compares cues and never a file size,
-            // and Full would wait for the size pass behind the cue pass.
+            // Full, not Cues: matching refuses to pair two tracks of one
+            // name while either length is unknown, and the lengths a
+            // catalog leaves out are probed in the Full stage.
             rekordboxTracks = catalogCache.tracksFor("rekordbox", rekordboxPath.toStdString(),
-                                                     LibraryCatalogCache::Detail::Cues, *reporter, cancel);
+                                                     LibraryCatalogCache::Detail::Full, *reporter, cancel);
             rekordboxMtime = fileMtime(pathToUtf8(pathFromQString(rekordboxPath) / "rekordbox" / "export.pdb"));
             hasOneLibrary = infrastructure::onelibrary::OneLibraryCueWriter::existsFor(rekordboxPath.toStdString());
         }
         if (hasEngine) {
-            engineTracks = catalogCache.tracksFor("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Cues, *reporter, cancel);
+            engineTracks = catalogCache.tracksFor("engine", enginePath.toStdString(), LibraryCatalogCache::Detail::Full, *reporter, cancel);
             // Streaming tracks (TIDAL) have no real local file. Never
             // sync cues onto/from one. See domain::Track::streamingSource's
             // own doc comment.
@@ -136,7 +137,7 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             engineMtime = fileMtime(pathToUtf8(pathFromQString(enginePath) / "Database2" / "m.db"));
         }
         if (hasOneLibrary) {
-            oneLibraryTracks = catalogCache.tracksFor("onelibrary", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Cues, *reporter, cancel);
+            oneLibraryTracks = catalogCache.tracksFor("onelibrary", rekordboxPath.toStdString(), LibraryCatalogCache::Detail::Full, *reporter, cancel);
             oneLibraryMtime =
                 fileMtime(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(rekordboxPath.toStdString()));
         }

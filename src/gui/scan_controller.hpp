@@ -111,11 +111,13 @@ private:
 // worker thread, with no access to the controller itself.
 struct ScanTaskResult
 {
-    // Which read this is: the catalog alone (Tracks), or the same tracks
-    // again with the cues a format keeps outside its catalog (Cues). The
-    // task's own result is a Cues result, a failure, or a cancel; a
-    // Tracks result returned from the task only means "that was all".
-    enum class Phase { Tracks, Cues };
+    // Which read this is: the catalog alone (Tracks), the same tracks
+    // again with the cues a format keeps outside its catalog (Cues), or
+    // once more with what the Full stage adds: the lengths a catalog
+    // left out and Seabass probed, and the sizes (Full). Tracks and Cues
+    // come through the relay; the task's own result is the Full result,
+    // a failure, or a cancel.
+    enum class Phase { Tracks, Cues, Full };
     Phase phase = Phase::Tracks;
     std::vector<domain::Track> tracks;
     // Only on the Tracks result: Engine rows' cover art borrowed from
@@ -328,6 +330,9 @@ signals:
     // rekordbox scan is cancelled between the two. cuesLanded: this is
     // the second one, the same rows updated where they stand.
     void tracksPublished(bool cuesLanded);
+    // The Full stage landed: rows that had no length show one now. The
+    // rows update where they stand; nothing else about the page changes.
+    void detailsPublished();
 
 private:
     void setBusy(bool busy);
@@ -343,6 +348,7 @@ private:
     void handleResult(ScanTaskResult &result);
     void publishTracks(ScanTaskResult &result);
     void publishCues(ScanTaskResult &result);
+    void publishDetails(ScanTaskResult &result);
 
     TrackListModel m_model;
     QFutureWatcher<ScanTaskResult> m_watcher;

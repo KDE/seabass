@@ -313,6 +313,44 @@ TestCase {
         compare(controller.tracks.trackAt(4).cueCount, 4);
     }
 
+    // And a third publish, with no bar and no note: the Full stage's
+    // lengths and sizes land in the rows where they stand, after the
+    // cues, and it is not a third cue publish.
+    function test_theFullStageLandsAfterTheCues() {
+        browseFixture.holdCues(12);
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const details = createTemporaryObject(signalSpyComponent, testCase,
+                                              {target: controller, signalName: "detailsPublished"});
+        const published = createTemporaryObject(signalSpyComponent, testCase,
+                                                {target: controller, signalName: "tracksPublished"});
+        controller.scan("rekordbox", "/nonexistent/HELD/PIONEER");
+        tryCompare(published, "count", 1);
+        compare(details.count, 0, "nothing beyond the list while the cues are held");
+        browseFixture.releaseCues();
+        tryCompare(published, "count", 2);
+        tryCompare(details, "count", 1);
+        compare(published.count, 2, "the Full stage is not a cue publish");
+        compare(controller.cuesPending, false);
+        compare(controller.tracks.trackCount(), 12);
+    }
+
+    // An Engine catalog holds its cues, so its scan publishes the list
+    // and then the Full stage, with no cue phase between.
+    function test_anEngineScanPublishesTheListThenItsDetails() {
+        browseFixture.holdCues(12);
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const details = createTemporaryObject(signalSpyComponent, testCase,
+                                              {target: controller, signalName: "detailsPublished"});
+        const published = createTemporaryObject(signalSpyComponent, testCase,
+                                                {target: controller, signalName: "tracksPublished"});
+        controller.scan("engine", "/nonexistent/HELD/Engine Library");
+        tryCompare(published, "count", 1);
+        tryCompare(details, "count", 1);
+        compare(published.count, 1, "no cue phase for a catalog that holds its cues");
+        compare(controller.cuesPending, false);
+        compare(controller.tracks.trackCount(), 12);
+    }
+
     function test_aScanCancelledBetweenThePhasesPublishesOnce() {
         browseFixture.holdCues(12);
         const controller = createTemporaryObject(controllerComponent, testCase);
