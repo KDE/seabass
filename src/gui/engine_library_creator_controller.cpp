@@ -4,6 +4,7 @@
 
 #include "engine_library_creator_controller.hpp"
 
+#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 #include "gui/sleep_inhibitor.hpp"
 
@@ -87,6 +88,18 @@ EngineLibraryCreationTaskResult runCreateTask(QString rekordboxPath, int schemaG
 
 }  // namespace
 
+EngineLibraryCreatorController::~EngineLibraryCreatorController()
+{
+    // A write still running is not abandoned and not waited for: it runs
+    // to its end, watched from the application, which gives its lock back
+    // then. It is not cancelled either: whether the worker has reached
+    // the copy to the stick, where stopping is not safe, is something
+    // this thread only learns from a signal still in flight.
+    if (m_busy) {
+        finishWriteDetached(m_watcher.future(), m_writeHold.handOver());
+    }
+}
+
 EngineLibraryCreatorController::EngineLibraryCreatorController(QObject *parent) : QObject(parent)
 {
     connect(&m_watcher, &QFutureWatcher<EngineLibraryCreationTaskResult>::finished, this,
@@ -135,15 +148,13 @@ void EngineLibraryCreatorController::create(const QString &rekordboxPath, int sc
         return;
     }
     // A direct write on the stick's library: the new folder joins it.
-    auto *registry = EditSessionRegistry::instance();
-    m_libraryId = registry->libraryIdForPath(rekordboxPath);
-    if (auto refusal = registry->enterDirectWrite(m_libraryId, stickLabel)) {
+    m_libraryId = EditSessionRegistry::instance()->libraryIdForPath(rekordboxPath);
+    if (auto refusal = m_writeHold.acquire({m_libraryId}, stickLabel)) {
         if (refusal->showsLockedDialog()) {
             emit lockRefused(refusal->holder);
         }
         return;
     }
-    m_holdsDirectWrite = true;
     setErrorMessage({});
     setStatusMessage({});
     m_phaseBaseline = 0;
@@ -167,10 +178,7 @@ void EngineLibraryCreatorController::onCreateFinished()
     if (!thrown.isEmpty()) {
         result.errorMessage = thrown;
     }
-    if (m_holdsDirectWrite) {
-        m_holdsDirectWrite = false;
-        EditSessionRegistry::instance()->leaveDirectWrite(m_libraryId);
-    }
+    m_writeHold.release();
     setBusy(false);
     emit cancellableChanged();
     if (!result.errorMessage.isEmpty()) {

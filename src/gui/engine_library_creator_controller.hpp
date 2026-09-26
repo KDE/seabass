@@ -6,6 +6,8 @@
 
 #include <QFutureWatcher>
 #include <QObject>
+
+#include "gui/edit/direct_write_hold.hpp"
 #include <QQmlEngine>
 
 #include <memory>
@@ -64,6 +66,7 @@ class EngineLibraryCreatorController : public QObject
 
 public:
     explicit EngineLibraryCreatorController(QObject *parent = nullptr);
+    ~EngineLibraryCreatorController() override;
 
     bool busy() const { return m_busy; }
     bool cancellable() const;
@@ -110,7 +113,13 @@ private:
 
     QFutureWatcher<EngineLibraryCreationTaskResult> m_watcher;
     bool m_busy = false;
-    bool m_holdsDirectWrite = false;
+    // The library's lock for the write, given back by the write's ending
+    // or, if the page goes first, by the destructor once the write is
+    // over. It was a bare enterDirectWrite() released only by the ending,
+    // which never ran for a page destroyed mid-create: the lock and
+    // anyWriting stayed on until the app quit.
+    DirectWriteHold m_writeHold;
+    // Which library the lock is for, for the locked dialog.
     QString m_libraryId;
     application::CancellationToken m_cancel;
     int m_scanCurrent = 0;

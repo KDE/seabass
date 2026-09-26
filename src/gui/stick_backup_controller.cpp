@@ -97,8 +97,6 @@ struct StickBackupController::RunResult
 
 StickBackupController::StickBackupController(QObject *parent) : QObject(parent)
 {
-    connect(&m_previewWatcher, &QFutureWatcher<std::shared_ptr<PreviewResult>>::finished, this,
-            &StickBackupController::onPreviewFinished);
     connect(&m_runWatcher, &QFutureWatcher<std::shared_ptr<RunResult>>::finished, this,
             &StickBackupController::onRunFinished);
 }
@@ -109,7 +107,6 @@ StickBackupController::~StickBackupController()
     // (= discard) on the next open; nothing to do here but let it go.
     m_cancel.cancel();
     awaitQuietly(m_runWatcher);
-    awaitQuietly(m_previewWatcher);
 }
 
 void StickBackupController::configure(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath,
@@ -165,21 +162,32 @@ BackupStickOptions StickBackupController::baseOptions() const
 
 void StickBackupController::refresh()
 {
+    refreshPreview(false);
+}
+
+void StickBackupController::refreshPreview(bool restart)
+{
     // busy() also covers backup/verify/compact -- refresh() used to guard
     // only against a second preview racing its own watcher, so a preview
     // during an actual run was reachable straight from the UI. Harmless
     // now that BackupStick/CompactStickBackup take an archive-level write
     // lock, but still wasted work and a stale-looking read while the
     // write it's about to report on is still in flight.
-    if (m_stickRoot.isEmpty() || m_previewWatcher.isRunning() || busy()) {
+    //
+    // A preview still running for another configuration is superseded,
+    // never waited on; one for this configuration answers this request,
+    // unless something just changed the backup (restart: a run, a delete,
+    // a rename), when what it read is out of date. A preview takes no
+    // token, so each one superseded runs out on its own: asking again for
+    // the same thing must not start another.
+    if (m_stickRoot.isEmpty() || busy()) {
         return;
     }
-    m_previewing = true;
-    emit busyChanged();
     BackupStickOptions options = baseOptions();
     QString label = m_stickLabel;
     QString root = m_stickRoot;
-    m_previewWatcher.setFuture(QtConcurrent::run([options, label, root]() mutable {
+    const QString key = m_archivePath + QLatin1Char('\n') + root + QLatin1Char('\n') + m_backupName;
+    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options, label, root](application::CancellationToken) mutable {
         auto result = std::make_shared<PreviewResult>();
         if (options.stickIdentifier.empty()) {
             auto info = infrastructure::system::readStickHardwareInfo(root.toStdString(), label.toStdString());
@@ -218,14 +226,21 @@ void StickBackupController::refresh()
         result->blockedBy = QString::fromStdString(infrastructure::system::conflictingDjSoftwareName());
         result->stickReadOnly = infrastructure::media::isMountedReadOnly(root.toStdString());
         return result;
-    }));
+    };
+    AsyncRequest<std::shared_ptr<PreviewResult>>::Ending ending{
+        [this](std::shared_ptr<PreviewResult> &&result) { onPreviewFinished(result, {}); },
+        [this](const QString &message) { onPreviewFinished(nullptr, message); },
+        nullptr,
+    };
+    if (restart) {
+        m_preview.restart(key, root, std::move(work), std::move(ending));
+    } else {
+        m_preview.start(key, root, std::move(work), std::move(ending));
+    }
 }
 
-void StickBackupController::onPreviewFinished()
+void StickBackupController::onPreviewFinished(const std::shared_ptr<PreviewResult> &result, const QString &thrown)
 {
-    QString thrown;
-    std::shared_ptr<PreviewResult> result = takeResult(m_previewWatcher, &thrown);
-    m_previewing = false;
     if (!thrown.isEmpty()) {
         setErrorMessage(QStringLiteral("Could not read the stick or its backup: ") + thrown);
     }
@@ -561,7 +576,7 @@ void StickBackupController::deleteBackup()
         setStatusMessage(QStringLiteral("Deleted the damaged backup. The next backup copies the whole stick again."));
         emit actionFeedback(m_statusMessage, false);
     }
-    refresh();
+    refreshPreview(true);
 }
 
 void StickBackupController::verify()
@@ -695,7 +710,7 @@ void StickBackupController::replaceCollidingBackup()
     m_archiveAttempt = 1;
     m_archivePath = colliding;
     emit configuredChanged();
-    refresh();
+    refreshPreview(true);
 }
 
 void StickBackupController::openChangelog()
@@ -786,7 +801,7 @@ void StickBackupController::onRunFinished()
     if (!thrown.isEmpty()) {
         setErrorMessage(thrown);
         emit actionFeedback(thrown, true);
-        refresh();
+        refreshPreview(true);
         return;
     }
     if (!result) {
@@ -795,7 +810,7 @@ void StickBackupController::onRunFinished()
     if (!result->refusal.isEmpty()) {
         setErrorMessage(result->refusal);
         emit actionFeedback(result->refusal, true);
-        refresh();
+        refreshPreview(true);
         return;
     }
     if (result->activity == QStringLiteral("backup") && result->backup) {
@@ -861,7 +876,7 @@ void StickBackupController::onRunFinished()
             break;
         }
     }
-    refresh();
+    refreshPreview(true);
 }
 
 void StickBackupController::setErrorMessage(const QString &message)
@@ -943,7 +958,7 @@ void StickBackupController::setBackupName(const QString &name)
         if (renameArchiveTo(target)) {
             m_archiveAttempt = 1;
             m_nameCollidedWith.clear();
-            refresh();
+            refreshPreview(true);
         }
     }
 }

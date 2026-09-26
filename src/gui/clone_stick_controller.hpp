@@ -13,6 +13,7 @@
 
 #include <memory>
 
+#include "gui/async_request.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/clone_stick.hpp"
 #include "gui/edit/direct_write_hold.hpp"
@@ -79,8 +80,8 @@ public:
     QString archivePath() const { return m_archivePath; }
     QVariantMap preview() const { return m_preview; }
     QString blockedBy() const { return m_blockedBy; }
-    bool busy() const { return m_previewing || m_cloning; }
-    bool previewing() const { return m_previewing; }
+    bool busy() const { return m_previewRequest.busy() || m_cloning; }
+    bool previewing() const { return m_previewRequest.busy(); }
     bool cloning() const { return m_cloning; }
     QString stage() const { return m_stage; }
     QString phase() const { return m_phase; }
@@ -134,7 +135,8 @@ private:
     struct RunResult;
 
     application::CloneStickOptions baseOptions() const;
-    void onPreviewFinished();
+    void refreshPreview(bool restart);
+    void onPreviewFinished(const std::shared_ptr<PreviewResult> &result, const QString &thrown);
     void onRunFinished();
     void applyProgress(const application::CloneProgress &progress);
     void resetProgress();
@@ -151,7 +153,6 @@ private:
     QString m_archivePath;
     QVariantMap m_preview;
     QString m_blockedBy;
-    bool m_previewing = false;
     bool m_cloning = false;
     QString m_stage;
     QString m_phase;
@@ -169,10 +170,14 @@ private:
     QVariantMap m_result;
     QString m_errorMessage;
     QString m_statusMessage;
-    bool m_refreshPending = false;
     application::CancellationToken m_cancel;
-    QFutureWatcher<std::shared_ptr<PreviewResult>> m_previewWatcher;
     QFutureWatcher<std::shared_ptr<RunResult>> m_runWatcher;
+
+    // The preview being read, under docs/async-requests.md: a refresh()
+    // supersedes it rather than queueing behind it, and leaving does not
+    // wait for it (it takes no token, and waiting froze the window).
+    // Last, so it is destroyed first.
+    AsyncRequest<std::shared_ptr<PreviewResult>> m_previewRequest{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

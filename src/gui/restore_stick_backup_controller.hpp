@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 
+#include "gui/async_request.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/restore_stick_backup.hpp"
 #include "gui/edit/direct_write_hold.hpp"
@@ -76,9 +77,9 @@ public:
     bool listingBackups() const { return m_listing; }
     QVariantMap archiveInfo() const { return m_archiveInfo; }
     QVariantMap preview() const { return m_preview; }
-    bool busy() const { return m_restoring || m_analyzing || m_mounting; }
+    bool busy() const { return m_restoring || m_analyze.busy() || m_mounting; }
     bool restoring() const { return m_restoring; }
-    bool analyzing() const { return m_analyzing; }
+    bool analyzing() const { return m_analyze.busy(); }
     bool mounting() const { return m_mounting; }
     QString phase() const { return m_phase; }
     qlonglong filesDone() const { return m_filesDone; }
@@ -151,7 +152,7 @@ private:
     struct RestoreResult;
     struct MountResult;
 
-    void onAnalyzeFinished();
+    void onAnalyzeFinished(const std::shared_ptr<AnalyzeResult> &result, const QString &thrown);
     void onRestoreFinished();
     void onListFinished();
     void onMountFinished();
@@ -176,7 +177,6 @@ private:
     // Set by restoreAnyway() for exactly one restore() call.
     bool m_targetChangeConfirmed = false;
     DirectWriteHold m_writeHold;
-    bool m_analyzing = false;
     bool m_mounting = false;
     QString m_phase;
     qlonglong m_filesDone = 0;
@@ -193,15 +193,19 @@ private:
     QString m_statusMessage;
     // An analyze() requested while one is running; re-run when it ends
     // rather than dropped (the archive or drive changed under it).
-    std::optional<QString> m_pendingAnalyzeTarget;
     application::CancellationToken m_cancel;
-    QFutureWatcher<std::shared_ptr<AnalyzeResult>> m_analyzeWatcher;
     QFutureWatcher<std::shared_ptr<RestoreResult>> m_restoreWatcher;
     QFutureWatcher<QVariantList> m_listWatcher;
     bool m_listing = false;
     // A refresh asked for while a listing ran: one more pass once it lands.
     bool m_refreshAgain = false;
     QFutureWatcher<std::shared_ptr<MountResult>> m_mountWatcher;
+
+    // The archive (and drive) being analyzed, under docs/async-requests.md:
+    // another archive or drive supersedes it, choosing another archive
+    // ends it, and leaving does not wait for it (a preview takes no token,
+    // and waiting froze the window). Last, so it is destroyed first.
+    AsyncRequest<std::shared_ptr<AnalyzeResult>> m_analyze{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui
