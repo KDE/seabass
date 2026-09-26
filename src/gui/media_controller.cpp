@@ -308,6 +308,9 @@ MediaController::MediaController(QObject *parent) : QObject(parent)
     m_debounceTimer.setSingleShot(true);
     m_debounceTimer.setInterval(500);
     connect(&m_debounceTimer, &QTimer::timeout, this, &MediaController::detect);
+    // A write finished after its page had gone (see StickEvents).
+    connect(&StickEvents::instance(), &StickEvents::stickContentsChanged, this, &MediaController::detect,
+            Qt::QueuedConnection);
 
     loadOpenedFolder();
     detect();

@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <stdexcept>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -68,30 +69,70 @@ public:
     }
 
     // `work` on a new thread, its answer (or what it threw) in the future.
+    // Never throws: a thread that cannot be had -- the system refused one,
+    // or too many are stuck already -- is a future that has already failed,
+    // which the request then ends in error (rule 2).
     template <typename Result>
     QFuture<Result> run(std::function<Result()> work)
     {
         auto promise = std::make_shared<QPromise<Result>>();
         QFuture<Result> future = promise->future();
         promise->start();
+        const auto refuse = [&promise](const std::exception_ptr &why) {
+            promise->setException(why);
+            promise->finish();
+        };
         {
             std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_live >= m_ceiling) {
+                refuse(std::make_exception_ptr(std::runtime_error(
+                    "Too many reads are stuck on a stick that stopped answering. Unplug it, or restart Seabass.")));
+                return future;
+            }
             ++m_live;
         }
-        std::thread([this, promise, work = std::move(work)]() {
-            try {
-                promise->addResult(work());
-            } catch (...) {
-                promise->setException(std::current_exception());
-            }
-            promise->finish();
+        try {
+            // The thread owns the only other reference to the work and the
+            // promise, and lets go of both before it says it is done, so
+            // waitForAll() never answers while a destructor of theirs runs.
+            auto state = std::make_shared<std::pair<std::shared_ptr<QPromise<Result>>, std::function<Result()>>>(
+                promise, std::move(work));
+            std::thread([this, state]() mutable {
+                {
+                    auto owned = std::move(*state);
+                    state.reset();
+                    try {
+                        owned.first->addResult(owned.second());
+                    } catch (...) {
+                        owned.first->setException(std::current_exception());
+                    }
+                    owned.first->finish();
+                }
+                {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    --m_live;
+                }
+                m_cv.notify_all();
+            }).detach();
+        } catch (...) {
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 --m_live;
             }
             m_cv.notify_all();
-        }).detach();
+            refuse(std::current_exception());
+        }
         return future;
+    }
+
+    // How many workers may be running at once before a new one is refused.
+    // A page asks for a handful; hundreds means reads are stuck on a device
+    // that stopped answering, and one more thread would not help.
+    static constexpr int DefaultCeiling = 256;
+    void setCeilingForTesting(int ceiling)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_ceiling = ceiling;
     }
 
     int live()
@@ -118,12 +159,15 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_cv;
     int m_live = 0;
+    int m_ceiling = DefaultCeiling;
     std::atomic<bool> m_shuttingDown{false};
 };
 
 // The last thing main() does, once the pages (and so every request) are
 // gone: waits a bounded moment for the workers they let go of, and if one
-// is still running, ends the process without running static destructors.
+// is still running, ends the process without running static destructors
+// (std::_Exit, after flushing: std::quick_exit is missing from Apple's C
+// library).
 // A worker stuck on a pulled stick may be inside LibraryCatalogCache or
 // the SQLite and Kaitai code under it; destroying those statics beneath
 // it is a use-after-destroy. Nothing is lost by skipping them: a read
@@ -133,7 +177,7 @@ inline int exitAfterAsyncWork(int result, std::chrono::milliseconds bound = std:
     AsyncWorkers::instance().beginShutdown();
     if (!AsyncWorkers::instance().waitForAll(bound)) {
         std::fflush(nullptr);
-        std::quick_exit(result);
+        std::_Exit(result);
     }
     return result;
 }
@@ -233,6 +277,8 @@ public:
     bool startOnSticks(const QString &key, const QStringList &stickRoots, Work work, Ending ending)
     {
         if (busy() && key == m_currentKey) {
+            // Served: a reporter taken for this request never speaks.
+            m_nextVoice.reset();
             return false;
         }
         restartOnSticks(key, stickRoots, std::move(work), std::move(ending));
@@ -244,10 +290,10 @@ public:
     // reporting until its worker notices, and must not move the bar. Take
     // it right before start() or restart(); it is never true for a request
     // that was served by the running one instead.
-    std::function<bool()> speaksForNext() const
+    std::function<bool()> speaksForNext()
     {
-        const std::uint64_t ticket = m_lastTicket + 1;
-        return [this, ticket]() { return m_current == ticket; };
+        m_nextVoice = std::make_shared<std::uint64_t>(0);
+        return [this, voice = m_nextVoice]() { return *voice != 0 && m_current == *voice; };
     }
 
     // start() without rule 3: supersedes even a request for the same key.
@@ -262,6 +308,10 @@ public:
     {
         supersede();
         const std::uint64_t ticket = ++m_lastTicket;
+        if (m_nextVoice) {
+            *m_nextVoice = ticket;
+            m_nextVoice.reset();
+        }
         application::CancellationToken cancel;
         auto *watcher = new QFutureWatcher<Result>();
         auto done = std::make_shared<Done>();
@@ -435,6 +485,9 @@ private:
     QStringList m_currentSticks;
     Ending m_ending;
     bool m_reportedBusy = false;
+    // The ticket slot handed out by speaksForNext(), filled by the start
+    // that follows it (or left empty for good if that start was served).
+    std::shared_ptr<std::uint64_t> m_nextVoice;
 };
 
 }  // namespace seabass::gui

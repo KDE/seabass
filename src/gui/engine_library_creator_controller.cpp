@@ -6,6 +6,8 @@
 
 #include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
+#include "gui/stick_events.hpp"
+#include "gui/async_request.hpp"
 #include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -92,11 +94,19 @@ EngineLibraryCreatorController::~EngineLibraryCreatorController()
 {
     // A write still running is not abandoned and not waited for: it runs
     // to its end, watched from the application, which gives its lock back
-    // then. It is not cancelled either: whether the worker has reached
-    // the copy to the stick, where stopping is not safe, is something
-    // this thread only learns from a signal still in flight.
+    // then. That is safe here, unlike for a stick backup: the worker owns
+    // everything it touches (the path, the schema, a shared reporter) and
+    // reaches into nothing of this object. It is not cancelled either:
+    // whether the worker has reached the copy to the stick, where stopping
+    // is not safe, is something this thread only learns from a signal
+    // still in flight. When it ends, the stick list is told to look again,
+    // which the page did on writeFinished and cannot any more.
     if (m_busy) {
-        finishWriteDetached(m_watcher.future(), m_writeHold.handOver());
+        const QString stickRoot = stickRootOf(m_rekordboxPath);
+        finishWriteDetached(m_watcher.future(), m_writeHold.handOver(), [stickRoot] {
+            LibraryCatalogCache::instance().invalidateEveryCatalogOn(stickRoot.toStdString());
+            StickEvents::instance().announceStickContentsChanged(stickRoot);
+        });
     }
 }
 
@@ -149,6 +159,7 @@ void EngineLibraryCreatorController::create(const QString &rekordboxPath, int sc
     }
     // A direct write on the stick's library: the new folder joins it.
     m_libraryId = EditSessionRegistry::instance()->libraryIdForPath(rekordboxPath);
+    m_rekordboxPath = rekordboxPath;
     if (auto refusal = m_writeHold.acquire({m_libraryId}, stickLabel)) {
         if (refusal->showsLockedDialog()) {
             emit lockRefused(refusal->holder);

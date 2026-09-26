@@ -18,8 +18,8 @@
 
 #include "gui/stick_backup_paths.hpp"
 #include "gui/edit/edit_session_registry.hpp"
-#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
+#include "gui/stick_events.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/engine/engine_restore_check.hpp"
 #include "infrastructure/media/media_factory.hpp"
@@ -128,19 +128,22 @@ RestoreStickBackupController::RestoreStickBackupController(QObject *parent) : QO
 
 RestoreStickBackupController::~RestoreStickBackupController()
 {
-    // A restore still going is asked to stop, as its own Cancel does (it
-    // rolls back), and handed on rather than waited for (see
-    // StickBackupController). When it returns the target's catalogs are
-    // forgotten, as onRestoreFinished() would have, and the locks go back.
+    // A restore still going is asked to stop (it rolls back) and waited
+    // for, freeze or not (docs/async-requests.md, "Writes are
+    // different"), and then what its finished handler would have done
+    // without the page: the target's catalogs are forgotten and the stick
+    // list is told to look again. So is a mount.
     //
-    // Not the backup listing and not a mount: they capture nothing of this
-    // object, run out on their own, and their answers go nowhere. Waiting
-    // for them froze the window for as long as they had left.
+    // Not the backup listing: it only reads the folder and captures
+    // nothing of this object, so it runs out on its own and its result is
+    // dropped with the watcher.
     m_cancel.cancel();
-    if (m_restoreWatcher.isRunning() || m_writeHold.held()) {
-        const std::string target = m_restoreTarget.toStdString();
-        finishWriteDetached(m_restoreWatcher.future(), m_writeHold.handOver(),
-                            [target] { LibraryCatalogCache::instance().invalidateEveryCatalogOn(target); });
+    const bool wasRestoring = m_restoreWatcher.isRunning();
+    awaitQuietly(m_restoreWatcher);
+    awaitQuietly(m_mountWatcher);
+    if (wasRestoring) {
+        LibraryCatalogCache::instance().invalidateEveryCatalogOn(m_restoreTarget.toStdString());
+        StickEvents::instance().announceStickContentsChanged(m_restoreTarget);
     }
 }
 

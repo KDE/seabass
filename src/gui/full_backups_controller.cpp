@@ -12,6 +12,7 @@
 #include "gui/backup_changelog_text.hpp"
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <exception>
 #include <filesystem>
 #include <string>
 
@@ -67,9 +68,25 @@ FullBackupsController::~FullBackupsController()
         }
     }
     if (!queued.isEmpty()) {
+        // Nobody is left to show the outcome, so it goes to the log, one
+        // line per backup, and one that fails (busy, gone, unreadable, or
+        // throwing) does not stop the others. The other views read the
+        // folder again when they are next shown (the backup advisor's
+        // reassessAll()), so none of them is left listing a deleted one.
         QtConcurrent::run([queued]() {
             for (const QString &path : queued) {
-                application::ManageStickBackups::remove(pathFromQString(path));
+                try {
+                    const auto result = application::ManageStickBackups::remove(pathFromQString(path));
+                    if (result.status == application::DeleteStickBackupResult::Status::Deleted) {
+                        qInfo("Deleted the backup %s, asked for before its page closed.", qUtf8Printable(path));
+                    } else {
+                        qWarning("Could not delete the backup %s, asked for before its page closed: %s",
+                                 qUtf8Printable(path), result.message.c_str());
+                    }
+                } catch (const std::exception &e) {
+                    qWarning("Could not delete the backup %s, asked for before its page closed: %s",
+                             qUtf8Printable(path), e.what());
+                }
             }
         });
     }

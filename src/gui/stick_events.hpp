@@ -24,9 +24,14 @@ public:
     static StickEvents &instance();
 
     void announceStickGone(const QString &mountPoint) { emit stickGone(mountPoint); }
+    // A write rewrote what is on a stick after the page that made it had
+    // gone, so nobody was left to ask for a re-detect. MediaController
+    // listens.
+    void announceStickContentsChanged(const QString &stickRoot) { emit stickContentsChanged(stickRoot); }
 
 signals:
     void stickGone(const QString &mountPoint);
+    void stickContentsChanged(const QString &stickRoot);
 
 private:
     StickEvents() = default;

@@ -121,6 +121,8 @@ private:
     DirectWriteHold m_writeHold;
     // Which library the lock is for, for the locked dialog.
     QString m_libraryId;
+    // The stick being written, for what the destructor hands on.
+    QString m_rekordboxPath;
     application::CancellationToken m_cancel;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;

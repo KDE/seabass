@@ -250,4 +250,66 @@ TestCase {
         compare(controller.sourceStickLabel, "SECOND");
         verifyIdleOnceNothingReads([controller]);
     }
+
+    // Reads a stick and stages its first proposal, ready to save.
+    function readAndStage(root) {
+        const controller = make();
+        controller.selectStick(root + "/PIONEER", "", "FIRST");
+        tryVerify(() => !controller.busy && controller.hasScanned, 10000, "the first stick must be read");
+        controller.toggleStagedForAdd(0);
+        return controller;
+    }
+
+    // A save that fails says so, even when a stick asked for during it is
+    // read straight after: the read used to clear the banner as it began.
+    function test_aFailedSaveStillSaysSoWhenTheNextStickIsRead() {
+        const first = stick();
+        const second = stick();
+        catalogGate.hold(3, true);
+        catalogGate.release();
+        const controller = readAndStage(first);
+        catalogGate.holdStore(true);
+        controller.save();
+        tryVerify(() => catalogGate.storeWaiting(), 5000, "the save must be writing");
+        controller.discardStagingAndSelectStick(second + "/PIONEER", "", "SECOND");
+        catalogGate.releaseStore();
+        tryVerify(() => !controller.busy && controller.sourceLibraryPath === second + "/PIONEER"
+                  && controller.hasScanned, 10000, "the second stick is read after the save");
+        verify(controller.errorMessage.indexOf("could not be written") >= 0,
+               "and the save's failure is still said: '" + controller.errorMessage + "'");
+        verifyIdleOnceNothingReads([controller]);
+    }
+
+    // The last choice made during a save wins. Going back to the store, or
+    // back to the stick being saved from, drops a stick asked for before.
+    function test_theLastChoiceDuringASaveWins_data() {
+        return [{tag: "store"}, {tag: "same stick"}];
+    }
+    function test_theLastChoiceDuringASaveWins(data) {
+        const first = stick();
+        const second = stick();
+        catalogGate.hold(3, true);
+        catalogGate.release();
+        const controller = readAndStage(first);
+        catalogGate.holdStore();
+        controller.save();
+        tryVerify(() => catalogGate.storeWaiting(), 5000, "the save must be writing");
+        controller.discardStagingAndSelectStick(second + "/PIONEER", "", "SECOND");
+        if (data.tag === "store") {
+            verify(controller.browseStore(), "back to the store");
+        } else {
+            verify(controller.selectStick(first + "/PIONEER", "", "FIRST"), "back to the first stick");
+        }
+        catalogGate.releaseStore();
+        tryVerify(() => !controller.busy, 10000, "the save and whatever follows must end");
+        verify(browseFixture.waitForScans(), "every worker must have returned");
+        wait(50);
+        tryVerify(() => !controller.busy, 5000);
+        if (data.tag === "store") {
+            verify(controller.browsingStore, "still showing the store, got " + controller.sourceLibraryPath);
+        } else {
+            compare(controller.sourceLibraryPath, first + "/PIONEER", "still showing the first stick");
+        }
+        verifyIdleOnceNothingReads([controller]);
+    }
 }
