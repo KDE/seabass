@@ -57,6 +57,10 @@ class AppSettingsController : public QObject
                    seabassHomeDirectoryChanged)
     Q_PROPERTY(QString lastPlaylistName READ lastPlaylistName WRITE setLastPlaylistName NOTIFY
                    lastPlaylistNameChanged)
+    // The tool group the home's rail last showed ("explore", "sync",
+    // "backup" or "maintain"), so the home opens where it was left. The
+    // stick is not remembered: which stick is in changes every time.
+    Q_PROPERTY(QString homeGroup READ homeGroup WRITE setHomeGroup NOTIFY homeGroupChanged)
     // Always present (even in a build compiled with SEABASS_EXPERIMENTAL
     // off) so QML can gate the whole Settings section on it.
     Q_PROPERTY(bool experimentalBuildSupported READ experimentalBuildSupported CONSTANT)
@@ -163,6 +167,8 @@ public:
     // playlist on the stick currently being browsed.
     QString lastPlaylistName() const { return m_lastPlaylistName; }
     void setLastPlaylistName(const QString &value);
+    QString homeGroup() const { return m_homeGroup; }
+    void setHomeGroup(const QString &value);
 
     // See docs/experimental-features.md for the convention this backs:
     // new non-trivial features default to hidden behind
@@ -195,6 +201,7 @@ signals:
     void stickBackupDirectoryChanged();
     void seabassHomeDirectoryChanged();
     void lastPlaylistNameChanged();
+    void homeGroupChanged();
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     void experimentalFeaturesEnabledChanged();
 #endif
@@ -217,6 +224,7 @@ private:
     QString m_stickBackupDirectory;
     QString m_seabassHomeDirectory;
     QString m_lastPlaylistName;
+    QString m_homeGroup;
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     bool m_experimentalFeaturesEnabled = false;
 #endif
