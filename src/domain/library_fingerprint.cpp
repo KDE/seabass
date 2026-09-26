@@ -151,7 +151,7 @@ std::uint64_t trackIdentityHash(const Track &track)
     return fnv1a(key);
 }
 
-LibraryFingerprint fingerprintLibrary(const std::vector<Track> &tracks)
+LibraryFingerprint fingerprintLibrary(const std::vector<Track> &tracks, bool cuesKnown)
 {
     std::set<std::uint64_t> trackHashes;
     std::set<std::uint64_t> cueHashes;
@@ -159,7 +159,7 @@ LibraryFingerprint fingerprintLibrary(const std::vector<Track> &tracks)
     for (const Track &track : tracks) {
         const std::uint64_t identity = trackIdentityHash(track);
         trackHashes.insert(identity);
-        if (!track.cues.empty()) {
+        if (cuesKnown && !track.cues.empty()) {
             std::vector<long long> positions;
             positions.reserve(track.cues.size());
             for (const CuePoint &cue : track.cues) {
@@ -183,11 +183,33 @@ LibraryFingerprint fingerprintLibrary(const std::vector<Track> &tracks)
     fingerprint.trackHashes = bottomK(std::move(trackHashes));
     fingerprint.cueHashes = bottomK(std::move(cueHashes));
     fingerprint.playlistHashes = bottomK(std::move(playlistHashes));
+    fingerprint.cuesKnown = cuesKnown;
     return fingerprint;
+}
+
+FingerprintMatch matchFingerprints(const LibraryFingerprint &a, const LibraryFingerprint &b)
+{
+    if (a.trackCount != b.trackCount || a.trackHashes != b.trackHashes || a.playlistCount != b.playlistCount
+        || a.playlistHashes != b.playlistHashes) {
+        return FingerprintMatch::Different;
+    }
+    if (!a.cuesKnown || !b.cuesKnown) {
+        return FingerprintMatch::IdenticalSoFar;
+    }
+    return a.cuedTrackCount == b.cuedTrackCount && a.cueHashes == b.cueHashes ? FingerprintMatch::Identical
+                                                                              : FingerprintMatch::Different;
+}
+
+bool LibraryFingerprint::operator==(const LibraryFingerprint &other) const
+{
+    return matchFingerprints(*this, other) != FingerprintMatch::Different;
 }
 
 std::string LibraryFingerprint::serialize() const
 {
+    if (!cuesKnown) {
+        return {};
+    }
     std::string out = "v" + std::to_string(Version);
     out += ';' + std::to_string(trackCount);
     out += ';' + std::to_string(cuedTrackCount);
@@ -241,6 +263,14 @@ FingerprintSimilarity compareFingerprints(const LibraryFingerprint &a, const Lib
     }
     if (similarity.trackOverlap < SameTrackThreshold) {
         similarity.verdict = FingerprintSimilarity::Verdict::Different;
+        return similarity;
+    }
+    // The tracks match; until both sides know their cues, that is all
+    // there is to go on.
+    if (!a.cuesKnown || !b.cuesKnown) {
+        similarity.cueOverlap = -1.0;
+        similarity.verdict = FingerprintSimilarity::Verdict::Same;
+        similarity.cuesPending = true;
         return similarity;
     }
     // Cue hashes embed the track hash, so a cue match is also a track

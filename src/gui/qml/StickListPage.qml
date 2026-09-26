@@ -716,6 +716,10 @@ Page {
                 // BackupAdvisorController); null until it has looked.
                 readonly property var advice: root.backupAdvisor.advice[mountPoint] || null
                 readonly property string adviceState: advice ? advice.state : ""
+                // The verdict stands unless the cues turn out different,
+                // and they are still being read: said beside the verdict,
+                // which stays readable, for the seconds that takes.
+                readonly property bool cuesPending: advice !== null && advice.cuesPending === true
                 // Another mounted stick whose library could be copied onto
                 // this empty one / is a newer copy of this stick's library.
                 readonly property var cloneSource: advice && advice.cloneSource && advice.cloneSource.kind === "stick"
@@ -1307,16 +1311,17 @@ Page {
                             // The advisor's verdict on the full stick backup
                             // leads when it has one; the generic line otherwise.
                             cardSubtitle: {
+                                const pending = delegateRoot.cuesPending ? " (checking cues)" : "";
                                 if (delegateRoot.updateSource !== null) {
-                                    return "Newer copy on " + delegateRoot.updateSource.label + ": update this stick from here";
+                                    return "Newer copy on " + delegateRoot.updateSource.label + ": update this stick from here" + pending;
                                 }
                                 switch (delegateRoot.adviceState) {
-                                case "outdated": return "Update the full stick backup: " + delegateRoot.advice.detail;
-                                case "behind-backup": return delegateRoot.advice.detail;
-                                case "current": return "Full stick backup is up to date";
+                                case "outdated": return "Update the full stick backup: " + delegateRoot.advice.detail + pending;
+                                case "behind-backup": return delegateRoot.advice.detail + pending;
+                                case "current": return "Full stick backup is up to date" + pending;
                                 case "back-up-new":
-                                case "no-backups": return "No full stick backup of this library yet";
-                                case "different-library": return delegateRoot.advice.detail + " Back it up as new.";
+                                case "no-backups": return "No full stick backup of this library yet" + pending;
+                                case "different-library": return delegateRoot.advice.detail + " Back it up as new." + pending;
                                 default: return "Back up the whole stick, and manage its backups on this computer";
                                 }
                             }

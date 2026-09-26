@@ -32,6 +32,14 @@ namespace seabass::gui
 // pure and cheap, so it is recomputed for every known stick whenever any
 // stick's facts change -- stick B's advice depends on stick A being
 // there.
+//
+// Each stick is read in two steps. The first reads the catalogs alone
+// (a fraction of a second) and publishes advice at once, starting the
+// catalog cache's prefetch of the rest; when a rekordbox catalog's cues
+// are still to come, that advice carries cuesPending, and a second step,
+// queued behind every other stick's first, waits for the cue pass and
+// publishes the final word. A verdict the cues cannot change (different
+// tracks or playlists) is never marked pending.
 class BackupAdvisorController : public QObject
 {
     Q_OBJECT
@@ -39,18 +47,24 @@ class BackupAdvisorController : public QObject
     Q_PROPERTY(QString backupDirectory READ backupDirectory WRITE setBackupDirectory NOTIFY backupDirectoryChanged)
     // mountPoint -> {state, matchedBy, backupPath, backupLabel,
     // backupCreatedAt, trackOverlap, cueOverlap, detail, cloneSource,
-    // updateSource, diverged}; see StickBackupAdvice for the state and
+    // updateSource, diverged, cuesPending}; see StickBackupAdvice for the state and
     // matchedBy values. cloneSource / updateSource are maps {kind
     // ("none" / "disk-backup" / "stick"), label, mountPoint, backupPath,
     // modifiedAt, enoughSpace, detail, rekordboxPath, enginePath} -- the
     // last two filled for stick sources so the list can open the clone
-    // page without another lookup.
+    // page without another lookup. cuesPending: the verdict is what it
+    // is if the cues have not changed, and they are still being read
+    // (this stick's or a peer's); shown beside the verdict, not instead.
     Q_PROPERTY(QVariantMap advice READ advice NOTIFY adviceChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     // The mount points whose advice is being gathered right now or is
     // queued to be: the running one first, then the queue in order. A
     // page about one stick waits on its own entry here, not on busy,
-    // which stays true until the slowest other stick has been read.
+    // which stays true until the slowest other stick has been read. Only
+    // the first step counts: a stick whose advice stands and whose cues
+    // are still being read is out of this list (advice.cuesPending says
+    // that), so no page hides a verdict behind a spinner for the seconds
+    // the cue pass takes. busy covers both steps.
     Q_PROPERTY(QStringList pending READ pending NOTIFY pendingChanged)
 
 public:
@@ -89,8 +103,17 @@ signals:
     void pendingChanged();
 
 private:
+    // Facts: everything about the stick, the fingerprint from the catalogs
+    // alone. Cues: the fingerprint again, once the cue pass is there; the
+    // rest of the facts stand.
+    enum class Step
+    {
+        Facts,
+        Cues,
+    };
     struct Request
     {
+        Step step = Step::Facts;
         QString stickLabel;
         QString mountPoint;
         QString rekordboxPath;
@@ -114,6 +137,7 @@ private:
 
     void startNext();
     void onFinished();
+    void enqueue(const Request &request);
     void recomputeAdvice();
     QVariantMap sourceToVariant(const application::StickBackupAdvice::SourceRef &source) const;
 
@@ -124,6 +148,7 @@ private:
     std::vector<application::StickBackupDescription> m_backups;  // as of the last gathering pass
     std::vector<Request> m_queue;
     QString m_running;  // the mount point being read: set before setFuture(), cleared once onFinished() has handled the result
+    Step m_runningStep = Step::Facts;
     QFutureWatcher<std::shared_ptr<Result>> m_watcher;
 };
 

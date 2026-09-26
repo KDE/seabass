@@ -114,6 +114,11 @@ Page {
     readonly property bool hasEngine: enginePath.length > 0
     readonly property var advice: root.backupAdvisor !== null && root.mountPoint.length > 0
         ? (root.backupAdvisor.advice[root.mountPoint] || null) : null
+    // The verdict below stands unless the cues turn out different, and
+    // they are still being read: said beside it, not over it. The scan
+    // overlay is for no verdict at all, and the advisor takes this stick
+    // out of `pending` as soon as it has one.
+    readonly property bool cuesPending: root.advice !== null && root.advice.cuesPending === true
     // A newer copy of this stick's library somewhere else -- see
     // BackupAdvisorController's advice map.
     // The full backup the advisor matched to this stick, by its library or
@@ -167,9 +172,9 @@ Page {
             objectName: "fullStickBackupCard"
             cardTitle: "Full Stick Backup"
             cardSubtitle: root.advice && root.advice.state === "outdated"
-                ? "Update the full stick backup: " + root.advice.detail
+                ? "Update the full stick backup: " + root.advice.detail + (root.cuesPending ? " (checking cues)" : "")
                 : (root.advice && root.advice.state === "current"
-                    ? "Full stick backup is up to date"
+                    ? "Full stick backup is up to date" + (root.cuesPending ? " (checking cues)" : "")
                     : "Back up the whole stick into one file on this computer")
             cardIcon: "archive-insert"
             // Graduated 2026-09-17 (docs/experimental-features.md), with
