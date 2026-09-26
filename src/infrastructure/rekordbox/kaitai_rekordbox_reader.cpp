@@ -8,6 +8,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <unordered_map>
 
@@ -187,12 +188,31 @@ std::vector<domain::CuePoint> readCues(const std::string &anlzBytes, const std::
     // The same parse: parsing the .EXT a second time for its legacy list
     // was half of this function's CPU, and every section, waveforms
     // included, is materialised by a parse.
-    appendLegacyCues(anlz, cues);
+    //
+    // The legacy lists add only what the modern list above does not
+    // already hold, so a damaged one costs nothing that matters: a
+    // section rekordbox's own PCO2 list covers. A real stick (WHALESHARK,
+    // 2026-09-26) carried two .DAT files whose memory PCOB claimed one
+    // entry that did not start with PCPT; kaitai threw, and until here
+    // that one exception threw away every cue of the track AND the whole
+    // library, since the caller stopped at the first track it could not
+    // read. The modern list is kept; the damaged legacy one is reported.
+    try {
+        appendLegacyCues(anlz, cues);
+    } catch (const std::exception &e) {
+        std::cerr << "warning: a legacy cue list could not be read, the modern list stands alone: " << e.what()
+                  << "\n";
+    }
     if (!datBytes.empty()) {
-        std::istringstream datStream(datBytes, std::ios::binary);
-        kaitai::kstream datKs(&datStream);
-        Anlz dat(&datKs);
-        appendLegacyCues(dat, cues);
+        try {
+            std::istringstream datStream(datBytes, std::ios::binary);
+            kaitai::kstream datKs(&datStream);
+            Anlz dat(&datKs);
+            appendLegacyCues(dat, cues);
+        } catch (const std::exception &e) {
+            std::cerr << "warning: a legacy cue list could not be read, the modern list stands alone: " << e.what()
+                      << "\n";
+        }
     }
     return cues;
 }
@@ -642,7 +662,17 @@ void KaitaiRekordboxReader::readAnalysis(std::vector<domain::Track> &tracks, app
                 // nothing.
                 const std::string datRelative = anlzRelativePath(analyzePath, /*wantExt=*/false);
                 auto datBytes = m_anlzSource->read(datRelative);
-                track.cues = readCues(*bytes, datBytes ? *datBytes : std::string());
+                // One track's analysis file that does not parse is that
+                // track's problem: its cues are not read and the warning
+                // names it. It used to abort the read of every other
+                // track in the library.
+                try {
+                    track.cues = readCues(*bytes, datBytes ? *datBytes : std::string());
+                } catch (const std::exception &e) {
+                    track.cues.clear();
+                    std::cerr << "warning: rekordbox track id=" << track.sourceId << ": analysis file " << extRelative
+                              << " unreadable, its cues were not read: " << e.what() << "\n";
+                }
             }
             // The track's own edit time: rekordbox keeps a track's cues in
             // its ANLZ .EXT file, so that file's mtime moves when this

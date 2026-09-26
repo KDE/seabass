@@ -3101,6 +3101,15 @@ add_test(NAME archive_anlz_source_test COMMAND archive_anlz_source_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(archive_anlz_source_test PROPERTIES LABELS "integration")
 
+# One analysis file whose legacy cue list does not parse costs that list
+# alone, never the library (WHALESHARK, 2026-09-26).
+add_executable(damaged_legacy_cue_list_test tests/damaged_legacy_cue_list_test.cpp)
+target_include_directories(damaged_legacy_cue_list_test PRIVATE src tests)
+target_compile_definitions(damaged_legacy_cue_list_test PRIVATE
+    SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(damaged_legacy_cue_list_test PRIVATE seabass_core)
+add_test(NAME damaged_legacy_cue_list_test COMMAND damaged_legacy_cue_list_test)
+
 # End to end: back a library up, open the backup, read it. Asserts the
 # cues match the original folder even though USBANLZ was never extracted.
 add_executable(backup_artwork_lookup_test tests/backup_artwork_lookup_test.cpp)
