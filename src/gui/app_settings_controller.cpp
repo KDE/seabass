@@ -55,6 +55,7 @@ AppSettingsController::AppSettingsController(QObject *parent)
     }
     infrastructure::paths::setLocalRootOverride(pathFromQString(m_seabassHomeDirectory));
     m_lastPlaylistName = m_settings.value("lastPlaylistName", "").toString();
+    m_homeGroup = m_settings.value("homeGroup", "explore").toString();
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     m_experimentalFeaturesEnabled = m_settings.value("experimentalFeaturesEnabled", false).toBool();
 #endif
@@ -240,6 +241,20 @@ void AppSettingsController::setLastPlaylistName(const QString &value)
     m_lastPlaylistName = value;
     m_settings.setValue("lastPlaylistName", value);
     emit lastPlaylistNameChanged();
+}
+
+void AppSettingsController::setHomeGroup(const QString &value)
+{
+    // One of the four groups or nothing: a stored value nobody recognises
+    // would leave the home with no group selected.
+    static const QStringList groups = {QStringLiteral("explore"), QStringLiteral("sync"),
+                                       QStringLiteral("backup"), QStringLiteral("maintain")};
+    if (!groups.contains(value) || m_homeGroup == value) {
+        return;
+    }
+    m_homeGroup = value;
+    m_settings.setValue("homeGroup", value);
+    emit homeGroupChanged();
 }
 
 #ifdef SEABASS_EXPERIMENTAL_BUILD
