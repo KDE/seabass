@@ -285,8 +285,11 @@ TestCase {
 
         // Played, the player carries the fallback too, from the queue.
         held.page.playRow(held.controller.tracks.trackAt(0));
-        compare(realPlayback.artworkPath, row.artworkPath);
-        compare(realPlayback.fallbackArtworkPath, row.fallbackArtworkPath);
+        // Settled at load: the player never carries a cover that is not on
+        // disk (MPRIS publishes its artworkPath as a fact), so the missing
+        // one gives way to the fallback, which is then the only cover.
+        compare(realPlayback.artworkPath, row.fallbackArtworkPath);
+        compare(realPlayback.fallbackArtworkPath, "");
         realPlayback.stop();
     }
 

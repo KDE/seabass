@@ -150,6 +150,24 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_hasTrack = true;
     m_fallbackArtworkPath = fallbackArtworkPath.isEmpty()
         ? queueValue(currentQueueRow(), "fallbackArtworkPath").toString() : fallbackArtworkPath;
+    // A catalog names its artwork without checking it is on the stick
+    // (that check is a stage of the catalog cache no page asks for just
+    // to play a track). Settled here, once, with one stat: the player
+    // bar, the ring and the watermark fall back on their own, but the
+    // MPRIS art URL and anything else that takes artworkPath as a fact
+    // must never be handed a file that is not there.
+    const auto onDisk = [](const QString &artwork) {
+        if (artwork.isEmpty()) {
+            return false;
+        }
+        const QUrl url(artwork);
+        const QString local = url.isLocalFile() ? url.toLocalFile() : artwork;
+        return QFile::exists(local);
+    };
+    if (!onDisk(m_artworkPath)) {
+        m_artworkPath = onDisk(m_fallbackArtworkPath) ? m_fallbackArtworkPath : QString();
+        m_fallbackArtworkPath.clear();
+    }
 
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));

@@ -222,6 +222,7 @@ Page {
     property string anchorKey: ""
     property double anchorBpm: 0
     property string anchorArtworkPath: ""
+    property string anchorFallbackArtworkPath: ""
     property var anchorPlaylistNames: []
 
     // Toggles: clicking edit on the row that's already the open panel's
@@ -240,6 +241,7 @@ Page {
         root.anchorKey = delegate.key;
         root.anchorBpm = delegate.bpm;
         root.anchorArtworkPath = delegate.artworkPath;
+        root.anchorFallbackArtworkPath = delegate.fallbackArtworkPath;
         root.anchorPlaylistNames = delegate.playlistNames;
         root.matchingPanelOpen = true;
     }
@@ -1103,6 +1105,7 @@ Page {
             anchorKey: root.anchorKey
             anchorBpm: root.anchorBpm
             anchorArtworkPath: root.anchorArtworkPath
+            anchorFallbackArtworkPath: root.anchorFallbackArtworkPath
             anchorPlaylistNames: root.anchorPlaylistNames
             onCloseRequested: root.matchingPanelOpen = false
         }
