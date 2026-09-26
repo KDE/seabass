@@ -4,7 +4,8 @@
 
 // application::fillFileSizes: the size of the file on disk for every row
 // that has none, 0 for a file that is not there, and a size the catalog
-// already gave (OneLibrary's) left as it is.
+// already gave (OneLibrary's) left as it is. And completeTracks(), which
+// the catalog cache's Full stage, ScanLibrary and the CLI all run.
 
 #include <cstdlib>
 #include <filesystem>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "application/use_cases/fill_file_sizes.hpp"
+#include "application/use_cases/scan_library.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
@@ -145,6 +147,48 @@ int main()
             threw = true;
         }
         check(threw && art.ticks == 3, "the artwork check stops within one image of a cancel");
+    }
+
+    // completeTracks(): the sizes, and a cover that is not on disk
+    // dropped on the Engine and OneLibrary rows, never on a rekordbox row
+    // (its reader never checked). ScanLibrary::execute() runs it after
+    // readAll(), so the CLI gets what the GUI's Full stage gets.
+    {
+        const fs::path cover = root / "Engine Library" / "art" / "here.jpg";
+        plant(cover, 10);
+        const std::string gone = seabass::pathToUtf8(root / "Engine Library" / "art" / "gone.jpg");
+        const auto withArt = [&](const std::string &format, const std::string &art) {
+            Track t = row(format, present);
+            t.format = format;
+            t.artworkPath = art;
+            return t;
+        };
+        const std::vector<Track> read{withArt("engine", seabass::pathToUtf8(cover)), withArt("engine", gone),
+                                      withArt("onelibrary", gone), withArt("rekordbox", gone)};
+
+        std::vector<Track> tracks = read;
+        seabass::application::completeTracks(tracks);
+        check(tracks[0].fileSizeBytes == 4321, "completeTracks fills the sizes");
+        check(tracks[0].artworkPath == seabass::pathToUtf8(cover), "a cover on disk is kept");
+        check(tracks[1].artworkPath.empty(), "a missing Engine cover is dropped");
+        check(tracks[2].artworkPath.empty(), "a missing OneLibrary cover is dropped");
+        check(tracks[3].artworkPath == gone, "a rekordbox row keeps the cover its catalog names");
+
+        class FixedReader : public seabass::application::LibraryReader
+        {
+        public:
+            explicit FixedReader(std::vector<Track> tracks) : m_tracks(std::move(tracks)) {}
+            std::vector<Track> readAll() override { return m_tracks; }
+
+        private:
+            std::vector<Track> m_tracks;
+        };
+        FixedReader reader(read);
+        const std::vector<Track> scanned = seabass::application::ScanLibrary(reader).execute();
+        check(scanned.size() == read.size() && scanned[0].fileSizeBytes == 4321, "ScanLibrary fills the sizes");
+        check(scanned[1].artworkPath.empty() && scanned[2].artworkPath.empty(),
+              "ScanLibrary drops the missing covers, as the GUI's Full stage does");
+        check(scanned[3].artworkPath == gone, "and leaves rekordbox's alone");
     }
 
     if (failures != 0) {

@@ -22,6 +22,7 @@
 #include <iostream>
 #include <string>
 
+#include "application/use_cases/fill_file_sizes.hpp"
 #include "application/use_cases/find_unreferenced_files.hpp"
 #include "infrastructure/cleanup/audio_file_walk.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
@@ -43,6 +44,7 @@ int main(int argc, char **argv)
     try {
         infrastructure::rekordbox::KaitaiRekordboxReader rb(root + "/PIONEER");
         catalogs.rekordbox = rb.readAll();
+        application::completeTracks(*catalogs.rekordbox);
         std::cerr << "rekordbox: " << catalogs.rekordbox->size() << " rows\n";
     } catch (const std::exception &e) {
         std::cerr << "rekordbox: not read (" << e.what() << ")\n";
@@ -50,6 +52,7 @@ int main(int argc, char **argv)
     try {
         infrastructure::engine::LibdjinteropEngineReader en(root + "/Engine Library");
         catalogs.engine = en.readAll();
+        application::completeTracks(*catalogs.engine);
         std::cerr << "engine: " << catalogs.engine->size() << " rows\n";
     } catch (const std::exception &e) {
         std::cerr << "engine: not read (" << e.what() << ")\n";
@@ -58,6 +61,7 @@ int main(int argc, char **argv)
     try {
         infrastructure::onelibrary::OneLibraryReader ol(root + "/PIONEER");
         catalogs.oneLibrary = ol.readAll();
+        application::completeTracks(*catalogs.oneLibrary);
         std::cerr << "onelibrary: " << catalogs.oneLibrary->size() << " rows\n";
     } catch (const std::exception &e) {
         std::cerr << "onelibrary: not read (" << e.what() << ")\n";

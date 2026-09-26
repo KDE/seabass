@@ -16,9 +16,11 @@ namespace seabass::application
 // Read-only use case: return every track (with cues and file sizes) found
 // in a library. Works against any LibraryReader adapter, so it's agnostic
 // to whether the source is a rekordbox USB export or an Engine Library.
-// The sizes are filled here because the readers no longer stat audio
-// files (that is a stage of its own in the GUI's catalog cache); the CLI
-// and the tools that go through this class get what they always got.
+// The sizes and the artwork check are done here (completeTracks())
+// because the readers no longer stat audio files or covers (that is the
+// Full stage of the GUI's catalog cache, which runs the same function);
+// the CLI and the tools that go through this class get what they always
+// got.
 class ScanLibrary
 {
 public:
@@ -27,7 +29,7 @@ public:
     std::vector<domain::Track> execute()
     {
         std::vector<domain::Track> tracks = m_reader.readAll();
-        fillFileSizes(tracks);
+        completeTracks(tracks);
         return tracks;
     }
 

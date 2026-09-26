@@ -759,21 +759,28 @@ int runDigestCommand(bool wantRekordbox, bool wantEngine, const std::optional<st
         ++printed;
     };
 
+    // What the GUI's Full stage and ScanLibrary do after a read: sizes and
+    // missing covers, so the two agree on a catalog.
+    const auto completed = [](std::vector<seabass::domain::Track> tracks) {
+        seabass::application::completeTracks(tracks);
+        return tracks;
+    };
+
     try {
         for (const auto &target : targets.rekordboxTargets) {
             emitDigest("rekordbox:" + target.path,
-                 seabass::infrastructure::rekordbox::KaitaiRekordboxReader(target.path).readAll());
+                 completed(seabass::infrastructure::rekordbox::KaitaiRekordboxReader(target.path).readAll()));
             // The other half of the same library, when this stick has
             // one. Named separately because it is a different file and
             // the whole point is to say WHICH catalog moved.
             if (seabass::infrastructure::onelibrary::OneLibraryCueWriter::existsFor(target.path)) {
                 emitDigest("onelibrary:" + target.path,
-                     seabass::infrastructure::onelibrary::OneLibraryReader(target.path).readAll());
+                     completed(seabass::infrastructure::onelibrary::OneLibraryReader(target.path).readAll()));
             }
         }
         for (const auto &target : targets.engineTargets) {
             emitDigest("engine:" + target.path,
-                 seabass::infrastructure::engine::LibdjinteropEngineReader(target.path).readAll());
+                 completed(seabass::infrastructure::engine::LibdjinteropEngineReader(target.path).readAll()));
         }
     } catch (const std::exception &e) {
         Console::error(std::string("could not read a catalog: ") + e.what());
