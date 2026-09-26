@@ -4,12 +4,17 @@
 
 #include "gui/library_catalog_cache.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 
 #include "application/path_key.hpp"
-#include "application/use_cases/scan_library.hpp"
+#include "application/ports/library_reader.hpp"
+#if __has_include("application/use_cases/fill_file_sizes.hpp")
+#include "application/use_cases/fill_file_sizes.hpp"
+#endif
 #include "infrastructure/audio/duration_fill.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/file_clock.hpp"
@@ -48,44 +53,76 @@ std::chrono::system_clock::time_point realMtime(const std::string &format, const
     return infrastructure::toSystemClock(fs::last_write_time(freshnessFile(format, path)));
 }
 
-std::vector<domain::Track> readCatalog(const std::string &format, const std::string &path,
-                                        application::ProgressReporter &progress,
-                                        application::CancellationToken cancel)
+std::unique_ptr<application::LibraryReader> makeReader(const std::string &format, const std::string &path)
 {
     if (format == "rekordbox") {
-        infrastructure::rekordbox::KaitaiRekordboxReader reader(path);
-        reader.setProgressReporter(progress);
-        reader.setCancellationToken(cancel);
-        return application::ScanLibrary(reader).execute();
+        return std::make_unique<infrastructure::rekordbox::KaitaiRekordboxReader>(path);
     }
     if (format == "engine") {
-        infrastructure::engine::LibdjinteropEngineReader reader(path);
-        reader.setProgressReporter(progress);
-        reader.setCancellationToken(cancel);
-        return application::ScanLibrary(reader).execute();
+        return std::make_unique<infrastructure::engine::LibdjinteropEngineReader>(path);
     }
     if (format == "onelibrary") {
-        infrastructure::onelibrary::OneLibraryReader reader(path);
-        reader.setProgressReporter(progress);
-        reader.setCancellationToken(cancel);
-        return application::ScanLibrary(reader).execute();
+        return std::make_unique<infrastructure::onelibrary::OneLibraryReader>(path);
     }
     throw std::invalid_argument("LibraryCatalogCache: unknown format \"" + format + "\"");
 }
 
-std::vector<domain::Track> realScan(const std::string &format, const std::string &path,
-                                     application::ProgressReporter &progress, application::CancellationToken cancel)
+void fillSizes(std::vector<domain::Track> &tracks)
 {
-    auto tracks = readCatalog(format, path, progress, cancel);
-    // Every GUI scan goes through here, so this is the one place the
-    // lengths neither catalog recorded get filled in -- duplicate
-    // detection needs them to tell a radio edit from an extended mix,
-    // and the results are cached on the stick so only the first scan
-    // pays for it. Doing it here rather than in each controller is
-    // deliberate: the fill was once wired into the CLI alone, and the
-    // GUI silently found fewer duplicates as a result.
-    infrastructure::audio::fillTrackDurations(tracks, path);
-    return tracks;
+#if __has_include("application/use_cases/fill_file_sizes.hpp")
+    application::fillFileSizes(tracks);
+#else
+    // Until the readers stop filling sizes themselves, readTracks() is
+    // readAll() and the sizes are already there.
+    (void)tracks;
+#endif
+}
+
+void realStage(LibraryCatalogCache::Detail stage, const std::string &format, const std::string &path,
+               std::vector<domain::Track> &tracks, application::ProgressReporter &progress,
+               application::CancellationToken cancel)
+{
+    switch (stage) {
+    case LibraryCatalogCache::Detail::Tracks: {
+        auto reader = makeReader(format, path);
+        reader->setProgressReporter(progress);
+        reader->setCancellationToken(cancel);
+        tracks = reader->readTracks();
+        // Every GUI scan goes through here, so this is the one place the
+        // lengths neither catalog recorded get filled in -- duplicate
+        // detection needs them to tell a radio edit from an extended mix,
+        // and the results are cached on the stick so only the first scan
+        // pays for it. Doing it here rather than in each controller is
+        // deliberate: the fill was once wired into the CLI alone, and the
+        // GUI silently found fewer duplicates as a result. In the Tracks
+        // stage, not a later one, so a track reads the same at every
+        // stage: a fingerprint taken from Tracks must equal one taken
+        // from Full.
+        infrastructure::audio::fillTrackDurations(tracks, path);
+        return;
+    }
+    case LibraryCatalogCache::Detail::Cues: {
+        auto reader = makeReader(format, path);
+        reader->setProgressReporter(progress);
+        reader->setCancellationToken(cancel);
+        reader->fillCues(tracks);
+        return;
+    }
+    case LibraryCatalogCache::Detail::Full:
+        cancel.throwIfCancelled();
+        fillSizes(tracks);
+        return;
+    }
+}
+
+int stageNumber(LibraryCatalogCache::Detail detail)
+{
+    return static_cast<int>(detail) + 1;
+}
+
+LibraryCatalogCache::Detail detailOf(int stageNumber)
+{
+    return static_cast<LibraryCatalogCache::Detail>(stageNumber - 1);
 }
 
 }  // namespace
@@ -96,11 +133,38 @@ LibraryCatalogCache &LibraryCatalogCache::instance()
     return cache;
 }
 
-LibraryCatalogCache::LibraryCatalogCache() : m_scanFn(realScan), m_mtimeFn(realMtime) {}
+LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime) {}
+
+LibraryCatalogCache::LibraryCatalogCache(StageFn stageFn, MtimeFn mtimeFn)
+    : m_stageFn(std::move(stageFn)), m_mtimeFn(std::move(mtimeFn))
+{
+}
 
 LibraryCatalogCache::LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn)
-    : m_scanFn(std::move(scanFn)), m_mtimeFn(std::move(mtimeFn))
+    : m_stageFn([scan = std::move(scanFn)](Detail stage, const std::string &format, const std::string &path,
+                                           std::vector<domain::Track> &tracks,
+                                           application::ProgressReporter &progress,
+                                           application::CancellationToken cancel) {
+          if (stage == Detail::Tracks) {
+              tracks = scan(format, path, progress, std::move(cancel));
+          }
+      }),
+      m_mtimeFn(std::move(mtimeFn))
 {
+}
+
+LibraryCatalogCache::~LibraryCatalogCache()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_stopping = true;
+        m_prefetchQueue.clear();
+        m_prefetchCancel.cancel();
+    }
+    m_prefetchCv.notify_all();
+    if (m_prefetchThread.joinable()) {
+        m_prefetchThread.join();
+    }
 }
 
 std::string LibraryCatalogCache::keyFor(const std::string &format, const std::string &path)
@@ -116,94 +180,194 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
                                                             application::ProgressReporter &progress,
                                                             application::CancellationToken cancel)
 {
+    return tracksFor(format, path, Detail::Full, progress, std::move(cancel));
+}
+
+std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &format, const std::string &path,
+                                                            Detail detail, application::ProgressReporter &progress,
+                                                            application::CancellationToken cancel)
+{
+    const int wanted = stageNumber(detail);
     const std::string key = keyFor(format, path);
     const auto currentMtime = m_mtimeFn(format, path);
 
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    // If another thread is already scanning this exact key, wait for it
-    // to finish rather than also triggering a scan -- the two most likely
-    // near-simultaneous callers (e.g. Stick Statistics kicking off three
-    // scans right as Sync Cue Points also opens) would otherwise both pay
-    // the real disk-read cost.
-    m_cv.wait(lock, [&] {
-        auto it = m_entries.find(key);
-        return it == m_entries.end() || !it->second.inProgress;
-    });
-
-    auto it = m_entries.find(key);
-    if (it != m_entries.end() && it->second.valid && it->second.mtime == currentMtime) {
-        return it->second.tracks;
+    // A stage this entry already has is served at once, whatever pass is
+    // running for it: the advisor's Tracks request must not sit behind
+    // the prefetch's eight-second cue pass. Anything else waits while a
+    // pass for this key is in flight, whether it is the stage this caller
+    // wants or an earlier one (passes run in order, so a later stage can
+    // only start once that one lands), rather than starting a second read
+    // of the same files.
+    for (;;) {
+        Entry &entry = m_entries[key];
+        const bool fresh = entry.stage > 0 && entry.mtime == currentMtime;
+        if (fresh && entry.stage >= wanted) {
+            return entry.tracks;
+        }
+        if (entry.passInFlight == 0) {
+            if (!fresh) {
+                // Nothing yet, or read from a catalog file that has changed
+                // since: start over from the catalog.
+                entry.tracks.clear();
+                entry.stage = 0;
+                entry.mtime = currentMtime;
+            }
+            break;
+        }
+        ++m_waiting;
+        m_cv.wait(lock);
+        --m_waiting;
     }
 
-    m_entries[key].inProgress = true;
-    // Captured before releasing the lock: if invalidate() runs on another
-    // thread while this scan is in flight (e.g. a write's own
-    // invalidate() landing while a different controller's already-started
-    // scan of the same catalog is still running), it bumps m_generation[key].
-    // The write-back below only commits if nothing bumped it in the
-    // meantime -- otherwise this scan's result (which may have read data
-    // from before whatever just invalidated it) would silently overwrite
-    // the invalidation with stale data the moment it finishes.
+    // The missing passes, in order, on this thread. Each works on a copy
+    // and commits only once it is complete, so a reader unwinding halfway
+    // leaves the previous stage in place and never a truncated one.
+    //
+    // The generation is captured before releasing the lock: if
+    // invalidate() runs on another thread while a pass is in flight (a
+    // write's own invalidate() landing while a different controller's
+    // already-started read of the same catalog is still running), it bumps
+    // m_generation[key] and erases the entry. A pass only commits if
+    // nothing bumped it in the meantime; otherwise its result (which may
+    // have read data from before whatever just invalidated it) would
+    // silently overwrite the invalidation with stale data. A superseded
+    // caller still finishes its own read and gets a real, if possibly
+    // momentarily stale, answer; only the cache skips it.
+    std::vector<domain::Track> work = m_entries[key].tracks;
+    int have = m_entries[key].stage;
     const std::uint64_t generationAtStart = m_generation[key];
-    lock.unlock();
+    bool committing = true;
+    while (have < wanted) {
+        const int next = have + 1;
+        if (committing) {
+            m_entries[key].passInFlight = next;
+        }
+        lock.unlock();
 
-    std::vector<domain::Track> tracks;
-    std::exception_ptr error;
-    try {
-        cancel.throwIfCancelled();
-        tracks = m_scanFn(format, path, progress, cancel);
-    } catch (...) {
-        error = std::current_exception();
-    }
+        std::exception_ptr error;
+        try {
+            cancel.throwIfCancelled();
+            m_stageFn(detailOf(next), format, path, work, progress, cancel);
+        } catch (...) {
+            error = std::current_exception();
+        }
 
-    lock.lock();
-    Entry &entry = m_entries[key];
-    entry.inProgress = false;
-    if (!error && m_generation[key] == generationAtStart) {
-        entry.tracks = tracks;
-        entry.mtime = currentMtime;
-        entry.valid = true;
+        lock.lock();
+        if (committing) {
+            if (m_generation[key] == generationAtStart) {
+                Entry &entry = m_entries[key];
+                entry.passInFlight = 0;
+                if (!error) {
+                    // Committed and the next pass claimed (at the top of
+                    // the loop) under one lock, so a caller waiting for
+                    // a later stage cannot slip in and read it twice.
+                    entry.tracks = work;
+                    entry.stage = next;
+                    entry.mtime = currentMtime;
+                }
+            } else {
+                // Invalidated mid pass: the entry this pass claimed is
+                // gone, and one that stands in its place now belongs to
+                // whoever created it. Leave it alone and finish uncached.
+                committing = false;
+            }
+            m_cv.notify_all();
+        }
+        if (error) {
+            lock.unlock();
+            std::rethrow_exception(error);
+        }
+        have = next;
     }
-    // On error, or a generation bump while this scan was running, entry
-    // is left exactly as it was: neither a failed re-scan nor a
-    // superseded one should evict a previously-good cached result (or
-    // resurrect an invalidated one) out from under a concurrent waiter
-    // that's about to read it. This call's own return value below is
-    // still whatever was actually just scanned -- only the *cache* skips
-    // it, the caller still gets a real (if possibly momentarily stale)
-    // answer rather than an error.
-    lock.unlock();
+    return work;
+}
+
+void LibraryCatalogCache::prefetch(const std::string &format, const std::string &path)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_stopping) {
+        return;
+    }
+    const std::string key = keyFor(format, path);
+    const auto sameCatalog = [&](const PrefetchJob &job) { return keyFor(job.format, job.path) == key; };
+    if ((m_prefetchCurrent && sameCatalog(*m_prefetchCurrent))
+        || std::any_of(m_prefetchQueue.begin(), m_prefetchQueue.end(), sameCatalog)) {
+        return;
+    }
+    m_prefetchQueue.push_back({format, path});
+    if (!m_prefetchThread.joinable()) {
+        m_prefetchThread = std::thread([this] { prefetchLoop(); });
+    }
+    m_prefetchCv.notify_all();
+}
+
+void LibraryCatalogCache::prefetchLoop()
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    for (;;) {
+        m_prefetchCv.wait(lock, [this] { return m_stopping || !m_prefetchQueue.empty(); });
+        if (m_stopping) {
+            return;
+        }
+        m_prefetchCurrent = std::move(m_prefetchQueue.front());
+        m_prefetchQueue.pop_front();
+        m_prefetchCancel = application::CancellationToken();
+        const PrefetchJob job = *m_prefetchCurrent;
+        const application::CancellationToken cancel = m_prefetchCancel;
+        lock.unlock();
+
+        try {
+            tracksFor(job.format, job.path, Detail::Full, application::NullProgressReporter::instance(), cancel);
+        } catch (...) {
+            // A pulled stick, a cancel, a catalog that does not parse:
+            // nothing is cached for the stage that failed, and whoever
+            // asks for it next reads it in the foreground and sees the
+            // error for itself.
+        }
+
+        lock.lock();
+        m_prefetchCurrent.reset();
+        m_prefetchCv.notify_all();
+    }
+}
+
+void LibraryCatalogCache::waitUntilPrefetchIdle()
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_prefetchCv.wait(lock, [this] { return m_prefetchQueue.empty() && !m_prefetchCurrent; });
+}
+
+int LibraryCatalogCache::waitingCallers()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_waiting;
+}
+
+std::uint64_t LibraryCatalogCache::invalidationCount(const std::string &format, const std::string &path)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto it = m_generation.find(keyFor(format, path));
+    return it == m_generation.end() ? 0 : it->second;
+}
+
+void LibraryCatalogCache::invalidateLocked(const std::string &key)
+{
+    // Bumped (never reset) so an in-flight pass of this same key started
+    // before this call can tell, once it finishes, that it's no longer
+    // safe to cache its result -- see tracksFor()'s own comment.
+    ++m_generation[key];
+    m_entries.erase(key);
+    // A caller waiting on the pass this erased would otherwise wait for a
+    // result the cache is no longer going to keep.
     m_cv.notify_all();
-
-    if (error) {
-        std::rethrow_exception(error);
-    }
-    return tracks;
-}
-
-std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &format, const std::string &path,
-                                                            Detail /*detail*/, application::ProgressReporter &progress,
-                                                            application::CancellationToken cancel)
-{
-    // Skeleton: every stage is Full until the staged cache lands.
-    return tracksFor(format, path, progress, cancel);
-}
-
-void LibraryCatalogCache::prefetch(const std::string & /*format*/, const std::string & /*path*/)
-{
-    // Skeleton: nothing is read ahead until the staged cache lands.
 }
 
 void LibraryCatalogCache::invalidate(const std::string &format, const std::string &path)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const std::string key = keyFor(format, path);
-    // Bumped (never reset) so an in-flight scan of this same key started
-    // before this call can tell, once it finishes, that it's no longer
-    // safe to cache its result -- see tracksFor()'s own comment.
-    ++m_generation[key];
-    m_entries.erase(key);
+    invalidateLocked(keyFor(format, path));
 }
 
 void LibraryCatalogCache::invalidateEveryCatalogOn(const std::string &stickRoot)
@@ -212,8 +376,24 @@ void LibraryCatalogCache::invalidateEveryCatalogOn(const std::string &stickRoot)
         return;
     }
     const fs::path root = pathFromUtf8(stickRoot);
-    invalidateWithOneLibraryMirror("rekordbox", pathToUtf8(root / "PIONEER"));
-    invalidate("engine", pathToUtf8(root / "Engine Library"));
+    const std::string pioneer = pathToUtf8(root / "PIONEER");
+    const std::string engine = pathToUtf8(root / "Engine Library");
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    // The background reads for this stick go first: a queued one would
+    // otherwise read the stick straight back in (or fail on a pulled
+    // one), and the one in flight stops at its next track.
+    const auto onThisStick = [&](const PrefetchJob &job) { return application::pathIsAtOrUnder(job.path, stickRoot); };
+    m_prefetchQueue.erase(std::remove_if(m_prefetchQueue.begin(), m_prefetchQueue.end(), onThisStick),
+                          m_prefetchQueue.end());
+    if (m_prefetchCurrent && onThisStick(*m_prefetchCurrent)) {
+        m_prefetchCancel.cancel();
+    }
+    m_prefetchCv.notify_all();
+
+    invalidateLocked(keyFor("rekordbox", pioneer));
+    invalidateLocked(keyFor("onelibrary", pioneer));
+    invalidateLocked(keyFor("engine", engine));
 }
 
 void LibraryCatalogCache::invalidateWithOneLibraryMirror(const std::string &format, const std::string &path)

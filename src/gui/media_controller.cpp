@@ -31,6 +31,7 @@
 #include "infrastructure/media/media_factory.hpp"
 #include "infrastructure/media/stick_root_scan.hpp"
 #include "gui/future_result.hpp"
+#include "gui/library_catalog_cache.hpp"
 #include "gui/qt_path.hpp"
 
 namespace seabass::gui
@@ -340,6 +341,40 @@ std::string MediaController::mountPointFor(const application::StickIdentity &ide
     return {};
 }
 
+namespace
+{
+
+// Every catalog cached from a stick that is no longer mounted where it
+// was, dropped along with any background read queued for it. A stick
+// pulled and plugged back in can come back with its cues changed on a
+// player and export.pdb's mtime untouched; the catalog cache compares
+// only that mtime, so without this the re-inserted stick was served
+// from RAM as it was before. Keyed on the mount point and the library
+// id together, so a different stick mounted at the same place in
+// between two refreshes counts as the first one gone. Every row counts:
+// a stick too anonymous to be announced by stickRemoved has its catalogs
+// cached all the same, and an opened folder that went away (an
+// unmounted share, a disk pulled) or was closed or replaced is the same
+// case as a pulled stick.
+void forgetCatalogsOfSticksGone(const std::vector<application::DetectedStick> &before,
+                                const std::vector<application::DetectedStick> &after)
+{
+    for (const application::DetectedStick &was : before) {
+        if (!was.mounted || was.mountPoint.empty()) {
+            continue;
+        }
+        const bool stillThere = std::any_of(after.begin(), after.end(), [&](const application::DetectedStick &is) {
+            return is.mounted && is.mountPoint == was.mountPoint
+                && is.identity.libraryId() == was.identity.libraryId();
+        });
+        if (!stillThere) {
+            LibraryCatalogCache::instance().invalidateEveryCatalogOn(was.mountPoint);
+        }
+    }
+}
+
+}  // namespace
+
 void MediaController::detect()
 {
     auto locator = infrastructure::media::createRemovableMediaLocator();
@@ -388,6 +423,7 @@ void MediaController::detect()
         }
     }
     m_openedFolderListed = folderListed;
+    forgetCatalogsOfSticksGone(m_model.sticks(), sticks);
     m_model.setSticks(std::move(sticks));
     std::vector<application::StickIdentity> present;
     for (const application::DetectedStick &stick : m_model.sticks()) {
