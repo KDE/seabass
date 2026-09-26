@@ -216,9 +216,15 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
             }
             break;
         }
+        // Woken by the pass finishing, an invalidation, or the caller's
+        // own token: a page left mid-wait must not keep a worker thread
+        // parked behind a cue pass that takes 8 s on a cold stick.
         ++m_waiting;
-        m_cv.wait(lock);
+        m_cv.wait_for(lock, std::chrono::milliseconds(100));
         --m_waiting;
+        if (cancel.cancelled()) {
+            throw application::OperationCancelled();
+        }
     }
 
     // The missing passes, in order, on this thread. Each works on a copy

@@ -440,6 +440,43 @@ void stagedCases()
         assert(static_cast<int>(reader.passes.size()) == passes && "the waiter's read is the cached one");
         std::cout << "stage 10 (an invalidation frees the waiters; the superseded pass commits nothing) OK\n";
     }
+
+    // Stage 11: a waiter's own token ends its wait. The Cues pass is held
+    // at a gate; a second Cues request is seen waiting, its token is
+    // cancelled, and it must leave with OperationCancelled while the
+    // gate is still shut. The pass still runs exactly once.
+    {
+        FakeReader reader;
+        Gate cuesGate;
+        reader.gates[{Detail::Cues, stick}] = &cuesGate;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+
+        auto first = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        cuesGate.waitUntilArrived();
+        CancellationToken token;
+        auto waiter = std::async(std::launch::async, [&] {
+            try {
+                cache.tracksFor("rekordbox", stick, Detail::Cues, seabass::application::NullProgressReporter::instance(),
+                                token);
+                return std::string("returned");
+            } catch (const seabass::application::OperationCancelled &) {
+                return std::string("cancelled");
+            }
+        });
+        while (cache.waitingCallers() == 0) {
+            std::this_thread::yield();
+        }
+        token.cancel();
+        const bool left = waiter.wait_for(5s) == std::future_status::ready;
+        const bool cuesStillHeld = !readyNow(first);
+        cuesGate.open();  // before asserting, so a failure cannot hang the process
+        assert(left && "a cancelled waiter must leave while the pass is still held");
+        assert(cuesStillHeld);
+        assert(waiter.get() == "cancelled");
+        first.get();
+        assert(reader.count(Detail::Cues, stick) == 1);
+        std::cout << "stage 11 (a cancelled waiter leaves the wait) OK\n";
+    }
 }
 
 }  // namespace
