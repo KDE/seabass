@@ -7,9 +7,12 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -54,6 +57,29 @@ namespace seabass::gui
 class LibraryCatalogCache
 {
 public:
+    // How much of a library a caller needs, in the order the cache reads
+    // it: Tracks is the catalog file alone (about 0.1 s cold on a stick),
+    // Cues adds rekordbox's ANLZ pass (8 s cold on a 1161-track stick),
+    // Full adds every audio file's size (3 s). A request for a stage the
+    // entry already has returns at once, whatever pass is in flight; a
+    // request for a stage being read waits for that pass rather than
+    // starting another; a request for a stage nobody is reading runs the
+    // missing passes itself, in order, on the caller's thread. The
+    // overload without a Detail is Full.
+    enum class Detail { Tracks, Cues, Full };
+
+    // One pass of a staged read. For Detail::Tracks, `tracks` arrives
+    // empty and the pass fills it from the catalog; for Cues and Full it
+    // arrives holding the previous stage's result and the pass adds to
+    // it in place. A pass that throws leaves the cache as it was: it
+    // works on a copy, so a reader unwinding halfway (a pulled stick, a
+    // cancel) never leaves a half-filled stage behind.
+    using StageFn = std::function<void(Detail stage, const std::string &format, const std::string &path,
+                                       std::vector<domain::Track> &tracks, application::ProgressReporter &progress,
+                                       application::CancellationToken cancel)>;
+    // The one-shot shape the cache had before it had stages, kept for the
+    // tests that only care about hit, miss and invalidation: the scan is
+    // the Tracks pass and the other two passes add nothing.
     using ScanFn = std::function<std::vector<domain::Track>(const std::string &format, const std::string &path,
                                                               application::ProgressReporter &progress,
                                                               application::CancellationToken cancel)>;
@@ -72,43 +98,61 @@ public:
     // ("rekordbox"/"engine"/"onelibrary") and stats that catalog's own
     // database file.
     LibraryCatalogCache();
-    // Test seam: inject fakes so cache hit/miss/invalidate/concurrency
-    // behavior can be verified without real stick data or real filesystem
-    // timestamps.
+    // Test seams: inject fakes so staging, hit/miss/invalidate and
+    // concurrency behavior can be verified without real stick data or
+    // real filesystem timestamps.
+    LibraryCatalogCache(StageFn stageFn, MtimeFn mtimeFn);
     LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn);
+    // Stops the prefetch worker: cancels the pass it is in and drops the
+    // queue.
+    ~LibraryCatalogCache();
 
-    // cancel: checked per track by the reader on a cache miss (a hit
-    // returns at once). A cancelled scan throws application::
-    // OperationCancelled and caches nothing -- the next call scans from
-    // scratch, never serving a truncated list. Other callers waiting on
-    // the same key are woken and scan for themselves.
+    LibraryCatalogCache(const LibraryCatalogCache &) = delete;
+    LibraryCatalogCache &operator=(const LibraryCatalogCache &) = delete;
+
+    // cancel: checked per track by the reader for the passes this call
+    // runs itself (a hit returns at once). A cancelled pass throws
+    // application::OperationCancelled and caches nothing for that stage:
+    // the next call runs it from scratch, never serving a truncated list.
+    // Other callers waiting on the same key are woken and run it for
+    // themselves.
     std::vector<domain::Track> tracksFor(const std::string &format, const std::string &path,
                                           application::ProgressReporter &progress =
                                               application::NullProgressReporter::instance(),
                                           application::CancellationToken cancel =
                                               application::CancellationToken::none());
 
-    // How much of a library a caller needs, in the order the cache reads
-    // it: Tracks is the catalog file alone (about 0.1 s cold on a stick),
-    // Cues adds rekordbox's ANLZ pass (8 s cold on a 1161-track stick),
-    // Full adds every audio file's size (3 s). A request for a stage the
-    // entry already has returns at once, whatever pass is in flight; a
-    // request for a stage being read waits for that pass rather than
-    // starting another. The overload above is Full.
-    enum class Detail { Tracks, Cues, Full };
     std::vector<domain::Track> tracksFor(const std::string &format, const std::string &path, Detail detail,
                                           application::ProgressReporter &progress =
                                               application::NullProgressReporter::instance(),
                                           application::CancellationToken cancel =
                                               application::CancellationToken::none());
 
-    // Reads the rest of this library in the background, Cues then Full,
-    // one stick at a time (the FAT driver and the USB queue serialise
-    // every read anyway): the prefetch for the features that need it. A
-    // foreground tracksFor() for a stage the prefetch is reading waits
-    // for it; one for a later stage runs after it. Dropped, with the
-    // entries, by invalidateEveryCatalogOn().
+    // Reads the rest of this library in the background, up to Full, one
+    // catalog at a time on one worker thread for the whole cache (the FAT
+    // driver and the USB queue serialise every read anyway): the prefetch
+    // for the features that need it. A foreground tracksFor() for a stage
+    // the prefetch is reading waits for it; one for a later stage runs
+    // after it. Asking again for a catalog already queued adds nothing.
+    // Dropped, with the entries, by invalidateEveryCatalogOn(). A pass
+    // that fails in the background is forgotten: the next foreground
+    // request runs it and sees the error itself.
     void prefetch(const std::string &format, const std::string &path);
+
+    // Blocks until the prefetch queue is empty and the worker is idle.
+    // For tests and for anything that must know the background reads are
+    // over; never needed for correctness, since tracksFor() waits for a
+    // pass in flight by itself.
+    void waitUntilPrefetchIdle();
+
+    // How many tracksFor() calls are waiting right now for a pass another
+    // thread is running. For tests, to prove a caller waits rather than
+    // reads, without sleeping.
+    int waitingCallers();
+
+    // Bumped by every invalidation of this catalog. For tests, to see
+    // that an event invalidated a catalog without reading one first.
+    std::uint64_t invalidationCount(const std::string &format, const std::string &path);
 
     // Call after writing to this catalog (Sync's apply()/applyOne(), Clean
     // Up writes, ...) so the next tracksFor() re-scans unconditionally
@@ -125,35 +169,61 @@ public:
     void invalidateWithOneLibraryMirror(const std::string &format, const std::string &path);
 
     // Every catalog on one stick at once, for a write that replaced files
-    // wholesale rather than editing one catalog: a backup restore, a
-    // stick clone, a format. Those all go through paths that never knew
-    // which formats they touched, and the mtime comparison alone is not
-    // enough -- a filesystem's timestamp granularity can be coarser than
-    // the gap between the write and the next read.
+    // wholesale rather than editing one catalog (a backup restore, a
+    // stick clone, a format) and for a stick that was pulled: a
+    // re-inserted stick whose cues changed elsewhere can keep its
+    // catalog's mtime, and must not be served from RAM. Also drops every
+    // queued prefetch for a catalog on that stick and cancels the one in
+    // flight, so nothing reads a stick that is gone or half rewritten.
+    // The mtime comparison alone is not enough: a filesystem's timestamp
+    // granularity can be coarser than the gap between the write and the
+    // next read.
     void invalidateEveryCatalogOn(const std::string &stickRoot);
 
 private:
     struct Entry
     {
+        // Holds everything up to and including `stage`.
         std::vector<domain::Track> tracks;
         std::chrono::system_clock::time_point mtime;
-        bool valid = false;
-        bool inProgress = false;
+        // 0 = nothing read yet, else 1 + Detail of the last stage read.
+        int stage = 0;
+        // 0 = no pass running, else 1 + Detail of the pass another
+        // thread is running for this key right now. Always stage + 1.
+        int passInFlight = 0;
+    };
+
+    struct PrefetchJob
+    {
+        std::string format;
+        std::string path;
     };
 
     static std::string keyFor(const std::string &format, const std::string &path);
+    void invalidateLocked(const std::string &key);
+    void prefetchLoop();
 
-    ScanFn m_scanFn;
+    StageFn m_stageFn;
     MtimeFn m_mtimeFn;
     std::mutex m_mutex;
     std::condition_variable m_cv;
     std::unordered_map<std::string, Entry> m_entries;
     // Per-key invalidation counter, incremented by invalidate() and never
-    // erased (unlike m_entries) -- lets tracksFor() detect an invalidate()
-    // that landed while its own scan was still running, so it doesn't
-    // write a since-stale result back into the cache. See tracksFor()'s
-    // own comment for the exact race this closes.
+    // erased (unlike m_entries) -- lets a pass detect an invalidate()
+    // that landed while it was still running, so it doesn't write a
+    // since-stale result back into the cache. See tracksFor()'s own
+    // comment for the exact race this closes.
     std::unordered_map<std::string, std::uint64_t> m_generation;
+    int m_waiting = 0;
+
+    // The prefetch worker, started by the first prefetch(). Guarded by
+    // m_mutex; m_prefetchCv wakes the worker and waitUntilPrefetchIdle().
+    std::condition_variable m_prefetchCv;
+    std::deque<PrefetchJob> m_prefetchQueue;
+    std::optional<PrefetchJob> m_prefetchCurrent;
+    application::CancellationToken m_prefetchCancel;
+    bool m_stopping = false;
+    std::thread m_prefetchThread;
 };
 
 }  // namespace seabass::gui

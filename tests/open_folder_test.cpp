@@ -24,6 +24,7 @@
 #include <string>
 
 #include "scratch_path.hpp"
+#include "gui/library_catalog_cache.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/media_controller.hpp"
 #include "gui/qt_path.hpp"
@@ -383,13 +384,29 @@ int main(int argc, char **argv)
         QObject::connect(&controller, &MediaController::stickReturned,
                          [&](const QString &, const QString &) { ++returned; });
 
+        // Its catalogs leave the catalog cache with it: whatever comes
+        // back at this path is read again, never served from RAM.
+        auto &catalogs = seabass::gui::LibraryCatalogCache::instance();
+        const std::string blipsPioneer = pathToUtf8(blips / "PIONEER");
+        const std::string blipsEngine = pathToUtf8(blips / "Engine Library");
+        const auto rekordboxBefore = catalogs.invalidationCount("rekordbox", blipsPioneer);
+        const auto oneLibraryBefore = catalogs.invalidationCount("onelibrary", blipsPioneer);
+        const auto engineBefore = catalogs.invalidationCount("engine", blipsEngine);
+        controller.detect();
+        assert(catalogs.invalidationCount("rekordbox", blipsPioneer) == rekordboxBefore
+               && "a refresh with nothing gone must leave the cache alone");
+
         fs::remove_all(blips);
         controller.detect();
         assert(removed == 1 && returned == 0);
+        assert(catalogs.invalidationCount("rekordbox", blipsPioneer) == rekordboxBefore + 1);
+        assert(catalogs.invalidationCount("onelibrary", blipsPioneer) == oneLibraryBefore + 1);
+        assert(catalogs.invalidationCount("engine", blipsEngine) == engineBefore + 1);
         // Still away: announced once, not once per refresh.
         controller.detect();
         controller.detect();
         assert(removed == 1);
+        assert(catalogs.invalidationCount("rekordbox", blipsPioneer) == rekordboxBefore + 1);
 
         makeStickShapedFolder(blips, true, false);
         controller.detect();
@@ -397,7 +414,7 @@ int main(int argc, char **argv)
         assert(rowForMountPoint(*controller.sticksModel(), pathToUtf8(blips)) >= 0);
         controller.detect();
         assert(returned == 1);
-        std::cout << "case 10 (going and returning are announced as a pair) OK\n";
+        std::cout << "case 10 (going and returning are announced as a pair, and the catalogs are dropped) OK\n";
     }
 
     // Opening another folder takes the first out of the list the way a

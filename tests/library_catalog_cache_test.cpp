@@ -2,10 +2,17 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
+#include <future>
 #include <iostream>
+#include <map>
+#include <mutex>
+#include <set>
+#include <stdexcept>
 #include <thread>
 
 #include "gui/library_catalog_cache.hpp"
@@ -23,6 +30,416 @@ std::vector<seabass::domain::Track> oneTrack(const std::string &sourceId)
     seabass::domain::Track t;
     t.sourceId = sourceId;
     return {t};
+}
+
+
+// A door a fake pass stands at until the test opens it, and a note that
+// it got there: the test decides the order of events, never a sleep.
+class Gate
+{
+public:
+    void open()
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_open = true;
+        }
+        m_cv.notify_all();
+    }
+    // Called by the fake pass: says it has arrived, then waits.
+    void arriveAndWait()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_arrived = true;
+        m_cv.notify_all();
+        m_cv.wait(lock, [&] { return m_open; });
+    }
+    void waitUntilArrived()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_cv.wait(lock, [&] { return m_arrived; });
+    }
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_open = false;
+    bool m_arrived = false;
+};
+
+using Detail = LibraryCatalogCache::Detail;
+
+// A fake staged reader: records every pass it runs, fills each stage with
+// something the test can tell apart (Tracks: two tracks named after the
+// path; Cues: one cue each; Full: a size), and can hold any pass of any
+// path at a gate.
+struct FakeReader
+{
+    std::mutex mutex;
+    std::vector<std::pair<Detail, std::string>> passes;
+    std::map<std::pair<Detail, std::string>, Gate *> gates;
+    // Set to make the next Cues pass of a path half-fill its copy and
+    // then throw, the way a reader does when the stick is pulled.
+    std::set<std::string> cuesThrowOnce;
+
+    int count(Detail stage, const std::string &path)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return static_cast<int>(std::count(passes.begin(), passes.end(), std::make_pair(stage, path)));
+    }
+    int countPath(const std::string &path)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return static_cast<int>(std::count_if(passes.begin(), passes.end(),
+                                              [&](const auto &pass) { return pass.second == path; }));
+    }
+
+    LibraryCatalogCache::StageFn stageFn()
+    {
+        return [this](Detail stage, const std::string &, const std::string &path,
+                      std::vector<seabass::domain::Track> &tracks, seabass::application::ProgressReporter &,
+                      CancellationToken cancel) {
+            Gate *gate = nullptr;
+            bool throwNow = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                passes.emplace_back(stage, path);
+                const auto it = gates.find({stage, path});
+                if (it != gates.end()) {
+                    gate = it->second;
+                }
+                if (stage == Detail::Cues && cuesThrowOnce.erase(path) > 0) {
+                    throwNow = true;
+                }
+            }
+            if (gate) {
+                gate->arriveAndWait();
+            }
+            switch (stage) {
+            case Detail::Tracks:
+                assert(tracks.empty());
+                tracks = oneTrack(path);
+                tracks.push_back(oneTrack(path + "#2").front());
+                break;
+            case Detail::Cues:
+                assert(tracks.size() == 2 && tracks[0].cues.empty());
+                for (auto &track : tracks) {
+                    // Per track, then a check, like a real reader.
+                    track.cues.push_back(seabass::domain::CuePoint{});
+                    if (throwNow) {
+                        throw std::runtime_error("stick pulled mid pass");
+                    }
+                    cancel.throwIfCancelled();
+                }
+                break;
+            case Detail::Full:
+                assert(tracks.size() == 2 && tracks[0].cues.size() == 1);
+                for (auto &track : tracks) {
+                    track.fileSizeBytes = 42;
+                }
+                break;
+            }
+        };
+    }
+};
+
+LibraryCatalogCache::MtimeFn fixedMtime()
+{
+    return [](const std::string &, const std::string &) { return std::chrono::system_clock::time_point{}; };
+}
+
+bool readyNow(std::future<std::vector<seabass::domain::Track>> &future)
+{
+    return future.wait_for(0s) == std::future_status::ready;
+}
+
+void stagedCases()
+{
+    const std::string stick = "/stick/PIONEER";
+
+    // Stage 1: each Detail reads only the passes it is missing, in
+    // order, and each result carries exactly its stage.
+    {
+        FakeReader reader;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+
+        auto tracks = cache.tracksFor("rekordbox", stick, Detail::Tracks);
+        assert(tracks.size() == 2 && tracks[0].cues.empty() && tracks[0].fileSizeBytes == 0);
+        auto cues = cache.tracksFor("rekordbox", stick, Detail::Cues);
+        assert(cues.size() == 2 && cues[0].cues.size() == 1 && cues[0].fileSizeBytes == 0);
+        auto full = cache.tracksFor("rekordbox", stick, Detail::Full);
+        assert(full.size() == 2 && full[0].cues.size() == 1 && full[0].fileSizeBytes == 42);
+        const std::vector<std::pair<Detail, std::string>> inOrder{
+            {Detail::Tracks, stick}, {Detail::Cues, stick}, {Detail::Full, stick}};
+        assert(reader.passes == inOrder);
+
+        // An earlier stage of a Full entry is a hit and holds everything.
+        auto again = cache.tracksFor("rekordbox", stick, Detail::Tracks);
+        assert(again[0].fileSizeBytes == 42);
+        // The overload without a Detail is Full: a hit now.
+        auto plain = cache.tracksFor("rekordbox", stick);
+        assert(plain[0].fileSizeBytes == 42 && reader.passes.size() == 3);
+
+        // Cold, a Full request runs all three passes itself, in order.
+        FakeReader cold;
+        LibraryCatalogCache coldCache(cold.stageFn(), fixedMtime());
+        auto coldFull = coldCache.tracksFor("rekordbox", stick);
+        assert(coldFull[0].fileSizeBytes == 42 && cold.passes == inOrder);
+        std::cout << "stage 1 (stages read in order, each only what it lacks; no Detail means Full) OK\n";
+    }
+
+    // Stage 2: a Tracks request while the Cues pass is running returns at
+    // once. The Cues pass is held at a gate that only opens AFTER the
+    // Tracks request has returned, so a Tracks request that waited for
+    // the pass could never return at all.
+    {
+        FakeReader reader;
+        Gate cuesGate;
+        reader.gates[{Detail::Cues, stick}] = &cuesGate;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+
+        auto cuesCall = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        cuesGate.waitUntilArrived();
+
+        const auto started = std::chrono::steady_clock::now();
+        auto tracksCall = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Tracks); });
+        const bool returned = tracksCall.wait_for(10s) == std::future_status::ready;
+        const auto took = std::chrono::steady_clock::now() - started;
+        const bool cuesStillHeld = !readyNow(cuesCall);
+        cuesGate.open();  // before asserting, so a failure cannot hang the process
+        assert(returned && "a Tracks request must not wait for the Cues pass");
+        assert(cuesStillHeld);
+        auto tracks = tracksCall.get();
+        assert(tracks.size() == 2 && tracks[0].cues.empty());
+        assert(reader.count(Detail::Tracks, stick) == 1);
+        auto cues = cuesCall.get();
+        assert(cues[0].cues.size() == 1 && reader.count(Detail::Cues, stick) == 1);
+        std::cout << "stage 2 (Tracks during the Cues pass returns at once, took "
+                  << std::chrono::duration_cast<std::chrono::microseconds>(took).count() << " us) OK\n";
+    }
+
+    // Stage 3: a Cues request during the Cues pass waits for that pass
+    // and gets its result; the pass runs once. The waiter is seen
+    // waiting (waitingCallers), not assumed to be.
+    {
+        FakeReader reader;
+        Gate cuesGate;
+        reader.gates[{Detail::Cues, stick}] = &cuesGate;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+
+        auto first = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        cuesGate.waitUntilArrived();
+        auto second = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        while (cache.waitingCallers() != 1) {
+            std::this_thread::yield();
+        }
+        assert(!readyNow(second) && !readyNow(first));
+        cuesGate.open();
+        auto a = first.get();
+        auto b = second.get();
+        assert(a.size() == 2 && b.size() == 2 && a[0].cues.size() == 1 && b[0].cues.size() == 1);
+        assert(a[0].sourceId == b[0].sourceId);
+        assert(reader.count(Detail::Tracks, stick) == 1);
+        assert(reader.count(Detail::Cues, stick) == 1 && "the waiter must not read the cues a second time");
+        assert(reader.count(Detail::Full, stick) == 0);
+        std::cout << "stage 3 (Cues during the Cues pass waits, one read) OK\n";
+    }
+
+    // Stage 4: a Full request during the Cues pass waits for it, then the
+    // Full pass runs once, after it.
+    {
+        FakeReader reader;
+        Gate cuesGate;
+        reader.gates[{Detail::Cues, stick}] = &cuesGate;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+
+        auto cuesCall = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        cuesGate.waitUntilArrived();
+        auto fullCall = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Full); });
+        while (cache.waitingCallers() != 1) {
+            std::this_thread::yield();
+        }
+        assert(reader.count(Detail::Full, stick) == 0);
+        cuesGate.open();
+        auto full = fullCall.get();
+        cuesCall.get();
+        assert(full[0].fileSizeBytes == 42);
+        const std::vector<std::pair<Detail, std::string>> inOrder{
+            {Detail::Tracks, stick}, {Detail::Cues, stick}, {Detail::Full, stick}};
+        assert(reader.passes == inOrder);
+        std::cout << "stage 4 (Full during the Cues pass runs after it, each pass once) OK\n";
+    }
+
+    // Stage 5: prefetch reads to Full in the background; a Full request
+    // afterwards reads nothing, and prefetching it again reads nothing.
+    {
+        FakeReader reader;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+        cache.prefetch("rekordbox", stick);
+        cache.waitUntilPrefetchIdle();
+        const std::vector<std::pair<Detail, std::string>> inOrder{
+            {Detail::Tracks, stick}, {Detail::Cues, stick}, {Detail::Full, stick}};
+        assert(reader.passes == inOrder);
+        auto full = cache.tracksFor("rekordbox", stick);
+        assert(full[0].fileSizeBytes == 42 && reader.passes.size() == 3);
+        cache.prefetch("rekordbox", stick);
+        cache.waitUntilPrefetchIdle();
+        assert(reader.passes.size() == 3);
+        std::cout << "stage 5 (prefetch reaches Full, a later Full request reads nothing) OK\n";
+    }
+
+    // Stage 6: a foreground request for the stage the prefetch is
+    // reading waits for the prefetch; one for an earlier stage does not.
+    {
+        FakeReader reader;
+        Gate cuesGate;
+        reader.gates[{Detail::Cues, stick}] = &cuesGate;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+        cache.prefetch("rekordbox", stick);
+        cuesGate.waitUntilArrived();
+
+        auto tracks = cache.tracksFor("rekordbox", stick, Detail::Tracks);
+        assert(tracks.size() == 2 && tracks[0].cues.empty());
+        auto cuesCall = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        while (cache.waitingCallers() != 1) {
+            std::this_thread::yield();
+        }
+        assert(!readyNow(cuesCall));
+        cuesGate.open();
+        auto cues = cuesCall.get();
+        assert(cues[0].cues.size() == 1);
+        cache.waitUntilPrefetchIdle();
+        assert(reader.count(Detail::Tracks, stick) == 1);
+        assert(reader.count(Detail::Cues, stick) == 1 && "the foreground must not re-read what the prefetch reads");
+        assert(reader.count(Detail::Full, stick) == 1);
+        std::cout << "stage 6 (a foreground request waits for the prefetch's pass, one read) OK\n";
+    }
+
+    // Stage 7: invalidateEveryCatalogOn() mid prefetch drops the queued
+    // work for that stick, cancels the pass in flight so it caches
+    // nothing, and leaves another stick's queued work alone.
+    {
+        FakeReader reader;
+        Gate cuesGate;
+        const std::string s1Pioneer = "/s1/PIONEER";
+        const std::string s1Engine = "/s1/Engine Library";
+        const std::string s2Pioneer = "/s2/PIONEER";
+        reader.gates[{Detail::Cues, s1Pioneer}] = &cuesGate;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+        cache.prefetch("rekordbox", s1Pioneer);
+        cache.prefetch("engine", s1Engine);
+        cache.prefetch("rekordbox", s2Pioneer);
+        cuesGate.waitUntilArrived();
+        const auto before = cache.invalidationCount("rekordbox", s1Pioneer);
+
+        cache.invalidateEveryCatalogOn("/s1");
+        // The pass in flight finds its token cancelled at its next track.
+        cuesGate.open();
+        cache.waitUntilPrefetchIdle();
+
+        assert(cache.invalidationCount("rekordbox", s1Pioneer) == before + 1);
+        assert(cache.invalidationCount("onelibrary", s1Pioneer) >= 1);
+        assert(cache.invalidationCount("engine", s1Engine) >= 1);
+        assert(reader.countPath(s1Engine) == 0 && "queued work for the invalidated stick must be dropped");
+        assert(reader.count(Detail::Full, s1Pioneer) == 0 && "a cancelled prefetch must not go on");
+        assert(reader.count(Detail::Full, s2Pioneer) == 1 && "another stick's queue must be untouched");
+        // Nothing of s1 is cached: not the cancelled Cues pass, and not
+        // the Tracks stage read before the invalidation either.
+        const int tracksBefore = reader.count(Detail::Tracks, s1Pioneer);
+        auto again = cache.tracksFor("rekordbox", s1Pioneer, Detail::Cues);
+        assert(again[0].cues.size() == 1);
+        assert(reader.count(Detail::Tracks, s1Pioneer) == tracksBefore + 1);
+        // s2 was prefetched to Full and still is.
+        const auto s2Passes = reader.countPath(s2Pioneer);
+        cache.tracksFor("rekordbox", s2Pioneer);
+        assert(reader.countPath(s2Pioneer) == s2Passes);
+        std::cout << "stage 7 (invalidation mid prefetch drops the stick's queue and its pass) OK\n";
+    }
+
+    // Stage 8: a pass that throws halfway (the stick pulled) leaves the
+    // previous stage exactly as it was: never a truncated one. In the
+    // background the worker survives it and goes on to the next catalog.
+    {
+        FakeReader reader;
+        reader.cuesThrowOnce.insert(stick);
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+
+        bool threw = false;
+        try {
+            cache.tracksFor("rekordbox", stick, Detail::Cues);
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        assert(threw);
+        auto tracks = cache.tracksFor("rekordbox", stick, Detail::Tracks);
+        assert(tracks.size() == 2 && tracks[0].cues.empty() && "the half-filled Cues copy must not leak in");
+        assert(reader.count(Detail::Tracks, stick) == 1);
+        auto cues = cache.tracksFor("rekordbox", stick, Detail::Cues);
+        assert(cues[0].cues.size() == 1 && cues[1].cues.size() == 1);
+        assert(reader.count(Detail::Cues, stick) == 2);
+
+        FakeReader background;
+        const std::string other = "/other/PIONEER";
+        background.cuesThrowOnce.insert(stick);
+        LibraryCatalogCache bgCache(background.stageFn(), fixedMtime());
+        bgCache.prefetch("rekordbox", stick);
+        bgCache.prefetch("rekordbox", other);
+        bgCache.waitUntilPrefetchIdle();
+        assert(background.count(Detail::Full, stick) == 0);
+        assert(background.count(Detail::Full, other) == 1);
+        auto bgTracks = bgCache.tracksFor("rekordbox", stick, Detail::Tracks);
+        assert(bgTracks[0].cues.empty() && background.count(Detail::Tracks, stick) == 1);
+        std::cout << "stage 8 (a pass that throws caches nothing for its stage) OK\n";
+    }
+
+    // Stage 9: a catalog file that changed since the read starts over at
+    // Tracks, whatever stage the entry had reached.
+    {
+        FakeReader reader;
+        std::atomic<int> seconds{0};
+        auto mtimeFn = [&](const std::string &, const std::string &) {
+            return std::chrono::system_clock::time_point{} + std::chrono::seconds(seconds.load());
+        };
+        LibraryCatalogCache cache(reader.stageFn(), mtimeFn);
+        cache.tracksFor("rekordbox", stick, Detail::Cues);
+        seconds = 1;
+        cache.tracksFor("rekordbox", stick, Detail::Tracks);
+        assert(reader.count(Detail::Tracks, stick) == 2);
+        assert(reader.count(Detail::Cues, stick) == 1);
+        cache.tracksFor("rekordbox", stick, Detail::Cues);
+        assert(reader.count(Detail::Cues, stick) == 2);
+        std::cout << "stage 9 (a changed catalog file starts over at Tracks) OK\n";
+    }
+
+    // Stage 10: an invalidation while a waiter sits behind a pass frees
+    // the waiter to read for itself, and the superseded pass commits
+    // nothing.
+    {
+        FakeReader reader;
+        Gate cuesGate;
+        reader.gates[{Detail::Cues, stick}] = &cuesGate;
+        LibraryCatalogCache cache(reader.stageFn(), fixedMtime());
+        auto first = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        cuesGate.waitUntilArrived();
+        {
+            std::lock_guard<std::mutex> lock(reader.mutex);
+            reader.gates.clear();  // the waiter's own read must not stop at the gate
+        }
+        auto second = std::async(std::launch::async, [&] { return cache.tracksFor("rekordbox", stick, Detail::Cues); });
+        while (cache.waitingCallers() != 1 && !readyNow(second)) {
+            std::this_thread::yield();
+        }
+        cache.invalidate("rekordbox", stick);
+        auto b = second.get();  // returns while the first pass is still held
+        assert(b[0].cues.size() == 1);
+        assert(!readyNow(first));
+        cuesGate.open();
+        first.get();
+        const int passes = static_cast<int>(reader.passes.size());
+        cache.tracksFor("rekordbox", stick, Detail::Cues);
+        assert(static_cast<int>(reader.passes.size()) == passes && "the waiter's read is the cached one");
+        std::cout << "stage 10 (an invalidation frees the waiters; the superseded pass commits nothing) OK\n";
+    }
 }
 
 }  // namespace
@@ -270,8 +687,7 @@ int main()
         std::cout << "case 8 (a cancelled scan caches nothing and frees its waiters) OK\n";
     }
 
-    std::cout << "All library_catalog_cache tests passed.\n";
-    // Case 7: one entry for every spelling of a catalog path. A page hands
+    // Case 7b: one entry for every spelling of a catalog path. A page hands
     // the native form on Windows, a session derives its sibling with a
     // slash, and a trailing separator is the same place: all of them hit
     // the one cache line, and invalidating under any spelling clears it.
@@ -292,8 +708,11 @@ int main()
         cache.invalidate("rekordbox", "/stick/PIONEER/");
         cache.tracksFor("rekordbox", "/stick/PIONEER");
         assert(scanCount == 2);
-        std::cout << "case 7 (one entry per catalog, whatever the spelling) OK\n";
+        std::cout << "case 7b (one entry per catalog, whatever the spelling) OK\n";
     }
 
+    stagedCases();
+
+    std::cout << "All library_catalog_cache tests passed.\n";
     return 0;
 }

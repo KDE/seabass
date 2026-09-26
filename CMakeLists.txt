@@ -2056,6 +2056,7 @@ if(TARGET seabass_edit)
 
     add_executable(stick_list_order_test
         src/gui/media_controller.cpp
+        src/gui/library_catalog_cache.cpp
         tests/stick_list_order_test.cpp
     )
     target_include_directories(stick_list_order_test PRIVATE src)
@@ -2064,6 +2065,7 @@ if(TARGET seabass_edit)
 
     add_executable(open_folder_test
         src/gui/media_controller.cpp
+        src/gui/library_catalog_cache.cpp
         tests/open_folder_test.cpp
     )
     target_include_directories(open_folder_test PRIVATE src)
