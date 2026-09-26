@@ -214,6 +214,20 @@ int main(int argc, char **argv)
                   << target->label << "\", " << target->capacityBytes << " bytes\n";
         std::cout << "asked for: " << domain::usbFilesystemName(filesystem) << ", label \"" << label << "\"\n";
 
+        // Sebastian's working sticks and the other reference are never
+        // formatted, whatever the script handed this. The same list as
+        // rig-platform.sh's is_protected_label: a label starting with
+        // WHALESHARK or CORSAIR, in any case.
+        {
+            std::string upper = target->label;
+            for (char &c : upper) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            if (upper.rfind("WHALESHARK", 0) == 0 || upper.rfind("CORSAIR", 0) == 0) {
+                std::cout << "\"" << target->label << "\" is a stick the rig never formats\nRIG RESULT: FAIL\n";
+                return 1;
+            }
+        }
         if (target->isFolder || target->isBrowsedBackup) {
             std::cout << "that is a folder library, not a drive\nRIG RESULT: FAIL\n";
             return 1;

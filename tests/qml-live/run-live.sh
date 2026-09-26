@@ -27,6 +27,8 @@ shots="${3:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 . "$root/tools/rig-platform.sh"
+# Never beside a working stick or a reference (see rig-platform.sh).
+refuse_if_protected_sticks_inserted
 . "$root/tools/rig-parts.sh"
 # Builds usually live outside the repository: SEABASS_BUILD_DIR says where.
 build="${SEABASS_BUILD_DIR:-$root/build}"

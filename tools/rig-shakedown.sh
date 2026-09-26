@@ -130,6 +130,17 @@ else
     B="${RIG_STICK_B:-/media/sebas/A4-128GB}"
     deviceB="${RIG_DEVICE_B:-/dev/sdc1}"
 fi
+# Before anything touches a stick: no round while a working stick or a
+# reference is plugged in, and never one pointed at it (rig-platform.sh).
+# The reference BACKUPS below keep those names; they are zip files on
+# this machine, only ever read.
+refuse_if_protected_sticks_inserted
+for stick in "$A" "$B"; do
+    if is_protected_label "$(basename "$stick")" || is_protected_label "$(stick_label "$stick")"; then
+        echo "REFUSED: $stick is a stick the rig never writes. Nothing was written." >&2
+        exit 1
+    fi
+done
 refA="${RIG_REFERENCE_A:-$HOME/Seabass/e2e/backups/CORSAIR.zip}"
 refB="${RIG_REFERENCE_B:-$HOME/Seabass/e2e/backups/WHALESHARK2.zip}"
 prints="${RIG_REFERENCE_PRINTS:-$HOME/Seabass/e2e/reference-fingerprints.txt}"

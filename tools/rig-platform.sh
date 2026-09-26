@@ -188,6 +188,53 @@ stick_label() {  # <mount point>
     fi
 }
 
+# Sticks no rig script ever writes, formats or restores over, whatever
+# it is handed. WHALESHARK and WHALESHARK2 are sticks Sebastian DJs
+# from (DJ hardware writes them, and that is expected); CORSAIR is the
+# other reference. A round is also refused while one of them is merely
+# plugged in: the rig picks sticks by mount point and device name, D2
+# formats "the smallest stick", and device names move between
+# insertions. On 2026-09-26 a round's plan named /dev/sdc1 as its
+# stick A while WHALESHARK2 sat on sdc.
+rig_protected_label_pattern='^(WHALESHARK|CORSAIR)'
+
+is_protected_label() {  # <label>
+    printf '%s\n' "$1" | grep -qiE "$rig_protected_label_pattern"
+}
+
+# Every volume label on this machine's drives, mounted or not: a stick
+# the desktop has not mounted is still one a format could be pointed at.
+inserted_volume_labels() {
+    if [ "$rig_os" = "Darwin" ]; then
+        diskutil info -all 2>/dev/null | awk -F': *' '/^ *Volume Name:/ {print $2}'
+    elif rig_is_windows; then
+        powershell.exe -NoProfile -Command 'Get-Volume | ForEach-Object { $_.FileSystemLabel }' 2>/dev/null \
+            | tr -d '\r'
+    else
+        lsblk -rno LABEL 2>/dev/null | sed 's/\\x20/ /g'
+    fi
+}
+
+# Exits the calling script when a protected stick is plugged in, or when
+# the drives cannot be listed at all: an empty listing would read as
+# "none plugged in", the one answer this must never give by accident.
+refuse_if_protected_sticks_inserted() {
+    local labels found
+    labels="$(inserted_volume_labels)"
+    if [ -z "$(printf '%s' "$labels" | tr -d '[:space:]')" ]; then
+        echo "REFUSED: could not list this machine's drives, so it is unknown whether WHALESHARK," >&2
+        echo "WHALESHARK2 or CORSAIR is plugged in. Nothing was written." >&2
+        exit 1
+    fi
+    found="$(printf '%s\n' "$labels" | grep -iE "$rig_protected_label_pattern" | sort -u | tr '\n' ' ')"
+    if [ -n "$found" ]; then
+        echo "REFUSED: a stick the rig never writes is plugged in: ${found% }" >&2
+        echo "WHALESHARK and WHALESHARK2 are Sebastian's working sticks, and CORSAIR is a reference." >&2
+        echo "Unplug it, tell Sebastian it was in, and start the round again. Nothing was written." >&2
+        exit 1
+    fi
+}
+
 # The device node behind a mount point (/dev/sdc1, /dev/disk6s1).
 stick_device() {  # <mount point>
     if [ "$rig_os" = "Darwin" ]; then
