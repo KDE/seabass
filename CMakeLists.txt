@@ -277,6 +277,13 @@ target_include_directories(kaitai_cpp_stl_runtime PUBLIC
     third_party/kaitai_struct_cpp_stl_runtime
 )
 target_compile_definitions(kaitai_cpp_stl_runtime PUBLIC KS_STR_ENCODING_ICONV)
+# Optimised even in a Debug build: the generated parsers and this runtime
+# are the whole cost of reading a stick's analysis files, and at -O0 that
+# read took 6 s of CPU on a 1161-track stick against 0.2 s optimised
+# (measured 2026-09-26). Nobody steps through generated code; the reader
+# that calls it stays at the build's own level.
+set(SEABASS_PARSER_DEBUG_OPTIMISE "$<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-O2>")
+target_compile_options(kaitai_cpp_stl_runtime PRIVATE "${SEABASS_PARSER_DEBUG_OPTIMISE}")
 if(WIN32)
     # Neither mingw-w64 nor MSVC ship <endian.h> or <byteswap.h>
     # (Linux/BSD-only) -- see third_party/mingw-compat/endian.h for the
@@ -330,6 +337,7 @@ target_include_directories(rekordbox_format PUBLIC
     src/infrastructure/rekordbox/generated
 )
 target_link_libraries(rekordbox_format PUBLIC kaitai_cpp_stl_runtime)
+target_compile_options(rekordbox_format PRIVATE "${SEABASS_PARSER_DEBUG_OPTIMISE}")
 
 # --- seabass_core: domain -> application -> infrastructure, shared by ---
 # --- both the CLI (src/cli/) and the Qt GUI (src/gui/) composition roots ---
