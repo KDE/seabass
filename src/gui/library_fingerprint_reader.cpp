@@ -16,7 +16,7 @@ namespace seabass::gui
 {
 
 std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &rekordboxPath, const QString &enginePath,
-                                                                 FingerprintPass pass)
+                                                                 FingerprintPass pass, application::CancellationToken cancel)
 {
     // The fingerprint wants titles, artists, durations, playlists and cue
     // positions: never a file size, so never the Full stage.
@@ -33,8 +33,8 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
             // The stage comes with the tracks, from one look at the entry:
             // asked for separately, a cue pass committing in between made
             // a list without cues claim its cues were known.
-            LibraryCatalogCache::StagedTracks read =
-                LibraryCatalogCache::instance().stagedTracksFor(format, path.toStdString(), detail);
+            LibraryCatalogCache::StagedTracks read = LibraryCatalogCache::instance().stagedTracksFor(
+                format, path.toStdString(), detail, application::NullProgressReporter::instance(), cancel);
             tracks.insert(tracks.end(), read.tracks.begin(), read.tracks.end());
             anyRead = true;
             if (std::string_view(format) == "rekordbox") {
@@ -44,7 +44,11 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
                 rekordboxCuesMissing = read.stage < LibraryCatalogCache::Detail::Cues;
             }
         } catch (const std::exception &) {
-            // Unreadable catalog: the other one may still do.
+            // A catalog that is there and could not be read (or a cancel):
+            // no fingerprint at all. The other catalog alone is half the
+            // library, and compared against a backup of the whole it
+            // reads as a different one.
+            return std::nullopt;
         }
     }
     if (!anyRead) {
@@ -60,20 +64,10 @@ std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &
 std::optional<domain::LibraryFingerprint> fingerprintAfterCuesPass(const std::optional<domain::LibraryFingerprint> &first,
                                                                    const std::optional<domain::LibraryFingerprint> &second)
 {
-    if (!second || !second->cuesKnown) {
-        return first;
-    }
-    if (!first) {
+    if (second && second->cuesKnown) {
         return second;
     }
-    // The cue pass adds cues and nothing else: the same catalogs read
-    // whole give the same tracks and playlists as the first read. Anything
-    // else is a read that came back short (one catalog of two unreadable
-    // by then) or a stick that changed in between, and either way this is
-    // not the whole fingerprint of the library the first read saw.
-    const bool sameLibrary = second->trackCount == first->trackCount && second->playlistCount == first->playlistCount
-        && second->trackHashes == first->trackHashes && second->playlistHashes == first->playlistHashes;
-    return sameLibrary ? second : first;
+    return first;
 }
 
 std::optional<domain::LibraryFingerprint> readLibraryFingerprintUncached(const QString &rekordboxPath,
