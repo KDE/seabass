@@ -322,23 +322,34 @@ ScanTaskResult runScanTask(LibraryCatalogCache *catalogCache, QString format, QS
         tracksResult.generation = generation;
         emit relay->tracksRead(std::make_shared<ScanTaskResult>(std::move(tracksResult)));
         tracksPublished = true;
-        if (!cuesOutsideCatalog) {
-            return report({});
+        if (cuesOutsideCatalog) {
+            // The cues: waits for the prefetch's cue pass when it is
+            // reading this catalog already, runs the pass here otherwise.
+            // No progress reported: the list is up, and the page says the
+            // cues are on their way without a bar over it.
+            ScanTaskResult cuesResult;
+            cuesResult.phase = ScanTaskResult::Phase::Cues;
+            cuesResult.tracks = catalogCache->tracksFor(catalog, path.toStdString(), LibraryCatalogCache::Detail::Cues,
+                                                        application::NullProgressReporter::instance(), cancel);
+            // Checked again: a wait on another thread's pass does not see
+            // the cancel, and a page that has let go of this scan must not
+            // get its cues after all.
+            cancel.throwIfCancelled();
+            cuesResult.generation = generation;
+            emit relay->tracksRead(std::make_shared<ScanTaskResult>(std::move(cuesResult)));
         }
 
-        // The cues: waits for the prefetch's cue pass when it is reading
-        // this catalog already, runs the pass here otherwise. No progress
-        // reported: the list is up, and the page says the cues are on
-        // their way without a bar over it.
-        ScanTaskResult cuesResult;
-        cuesResult.phase = ScanTaskResult::Phase::Cues;
-        cuesResult.tracks = catalogCache->tracksFor(catalog, path.toStdString(), LibraryCatalogCache::Detail::Cues,
+        // And the rest: a catalog that records no length for a track (an
+        // Engine 3.x library leaves most of them out) gets it from the
+        // Full stage, which probes the file, so a list that showed those
+        // rows without a length fills them in. Waits for the prefetch's
+        // Full pass or runs it here, like the cues.
+        ScanTaskResult fullResult;
+        fullResult.phase = ScanTaskResult::Phase::Full;
+        fullResult.tracks = catalogCache->tracksFor(catalog, path.toStdString(), LibraryCatalogCache::Detail::Full,
                                                     application::NullProgressReporter::instance(), cancel);
-        // Checked again: a wait on another thread's pass does not see the
-        // cancel, and a page that has let go of this scan must not get
-        // its cues after all.
         cancel.throwIfCancelled();
-        return report(std::move(cuesResult));
+        return report(std::move(fullResult));
     } catch (const application::OperationCancelled &) {
         ScanTaskResult cancelled;
         cancelled.phase = tracksPublished ? ScanTaskResult::Phase::Cues : ScanTaskResult::Phase::Tracks;
@@ -471,11 +482,27 @@ void ScanController::handleResult(ScanTaskResult &result)
         setBusy(false);
         return;
     }
-    if (result.phase == ScanTaskResult::Phase::Tracks) {
+    switch (result.phase) {
+    case ScanTaskResult::Phase::Tracks:
         publishTracks(result);
-    } else {
+        break;
+    case ScanTaskResult::Phase::Cues:
         publishCues(result);
+        break;
+    case ScanTaskResult::Phase::Full:
+        publishDetails(result);
+        break;
     }
+}
+
+void ScanController::publishDetails(ScanTaskResult &result)
+{
+    // The same tracks with the lengths and sizes the Full stage added.
+    // Nothing about the page's state changes: the rows update where
+    // they stand, and only a listener that cares hears about it.
+    m_allTracks = std::move(result.tracks);
+    applyFilters(true);
+    emit detailsPublished();
 }
 
 void ScanController::publishTracks(ScanTaskResult &result)
