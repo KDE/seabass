@@ -113,34 +113,60 @@ function fileExists(absolutePath) {
     }
 }
 
-// StickListPage's list and rows, by the objectNames the page gives them
-// ("stickList", "stickRow:<mount point>" -- or the device path for a
-// stick that is not mounted), and a row's cards by their title, the
-// ActionCard's own cardTitle: tst_StickListPage and tst_LiveLock share
-// these, so one place knows how the page is built.
-function stickList(page) {
-    return findByObjectName(page, "stickList");
+// StickListPage's stick section and its cards. The home shows one stick
+// at a time, beside the rail: the selected stick's row, the selected
+// group's heading and that group's cards, all under one section named
+// "stickRow:<mount point>" (or the device path for a stick that is not
+// mounted). Reaching a stick's section selects that stick first, and
+// reaching a card selects the group that shows it, the way a click on the
+// rail would, so a test reads what is on screen. tst_StickListPage and
+// tst_LiveLock share these, so one place knows how the page is built.
+//
+// Selecting here sets the page's properties directly rather than going
+// through its selectGroup(), which would also remember the group in the
+// settings: a live run must not change what the next real start shows.
+function homeRail(page) {
+    return findByObjectName(page, "homeRail");
+}
+// The keys of every stick the page lists, in the model's order.
+function stickKeys(page) {
+    return page.stickKeys();
+}
+function selectStick(page, mountPointOrDevice) {
+    return page.selectStick(mountPointOrDevice);
 }
 function stickRow(page, mountPointOrDevice) {
+    if (!selectStick(page, mountPointOrDevice)) {
+        return null;
+    }
     return findByObjectName(page, "stickRow:" + mountPointOrDevice);
 }
-// Every row the list has built -- a ListView instantiates only the rows
-// near its viewport -- in no particular order.
-function stickRows(page) {
-    return findAll(page, function(item) {
-        return typeof item.objectName === "string" && item.objectName.indexOf("stickRow:") === 0;
-    });
-}
-// An ActionCard by its exact title under a row.
+// An ActionCard by its exact title under a section, whether or not its
+// group is the one showing.
 function cardIn(row, title) {
     return find(row, function(item) { return item.cardTitle !== undefined && String(item.cardTitle) === title; });
 }
+// A stick's card by its title, with the stick and the card's group
+// selected so the card is on screen. A card this stick does not offer is
+// handed back hidden (visible false), with the group left as it was.
 function cardInRow(page, mountPointOrDevice, title) {
-    var row = stickRow(page, mountPointOrDevice);
-    return row ? cardIn(row, title) : null;
+    const row = stickRow(page, mountPointOrDevice);
+    const card = row ? cardIn(row, title) : null;
+    if (!card || card.visible) {
+        return card;
+    }
+    const before = page.selectedGroup;
+    for (let g = 0; g < page.groupKeys.length; ++g) {
+        page.selectedGroup = page.groupKeys[g];
+        if (card.visible) {
+            return card;
+        }
+    }
+    page.selectedGroup = before;
+    return card;
 }
-// A row's own control (eject, close) by objectName.
+// A stick's own control (eject, close) by objectName.
 function objectInRow(page, mountPointOrDevice, objectName) {
-    var row = stickRow(page, mountPointOrDevice);
+    const row = stickRow(page, mountPointOrDevice);
     return row ? findByObjectName(row, objectName) : null;
 }

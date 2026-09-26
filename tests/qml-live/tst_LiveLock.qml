@@ -80,57 +80,45 @@ TestCase {
             backupAdvisor: createTemporaryObject(advisor, testCase),
         });
         // Both test sticks are plugged in during a round, and the page
-        // lists them in udev's enumeration order -- which a replug
-        // changes. Round 4 took the first Housekeeping card on the page,
-        // RV2's, and found it (rightly) not locked while the lock was on
-        // A4-128GB's. So the cards are found under the row of the library
-        // this test locked, never by title alone; and the row is put on
-        // screen first, because a ListView only instantiates the rows
-        // near its viewport, and because a click at the centre of a card
-        // below a 900 px window lands outside it and opens nothing (the
-        // round's first re-run).
-        var list = null;
-        tryVerify(function() { list = Live.stickList(page); return list !== null && list.count > 0; }, 30000,
-                  "the page lists the sticks");
-        // The row comes from the model, not from the rows the ListView
-        // has instantiated (only those near its viewport), and the list
-        // is positioned once: waitForRendering() on a list that does not
-        // move waits out a whole frame interval, seconds under offscreen.
-        var row = -1;
-        tryVerify(function() { row = rowIndexOf(media, list, libraryId); return row >= 0; }, 30000,
-                  "the locked library is in the stick model (" + list.count + " listed)");
-        // The rows are named by the mount point as the model spells it.
-        const lockedMount = String(media.sticks.get(row).mountPoint);
-        list.positionViewAtIndex(row, ListView.Center);
-        waitForRendering(list);
-        var card = null;
-        tryVerify(function() { card = Live.cardInRow(page, lockedMount, "Housekeeping"); return card !== null; }, 30000,
-                  "the locked stick's row has a Housekeeping card");
-        keepInsideList(list, card);
-        // Every row built, whatever the window holds: a ListView keeps
-        // only the rows near its viewport (plus 320 px), and a third
-        // medium would sit outside that.
-        list.cacheBuffer = Math.max(list.cacheBuffer, list.contentHeight);
-        // Rows in the buffer incubate asynchronously, one per frame or so:
-        // wait for them rather than count what happens to exist.
-        tryVerify(function() { return Live.stickRows(page).length === list.count; }, 30000,
-                  "every stick's row is built");
-        var rows = Live.stickRows(page);
-        console.log("  sticks listed: " + rows.map(function(r) { return r.label; }).join(", ") + "; locked: " + stickLabel);
+        // lists them in udev's enumeration order, which a replug changes.
+        // Round 4 took the first Housekeeping card on the page, RV2's, and
+        // found it (rightly) not locked while the lock was on A4-128GB's.
+        // So the card is found under the section of the library this test
+        // locked, never by title alone: the home shows one stick at a
+        // time beside its rail, and Live.cardInRow selects that stick and
+        // the card's group (Maintain) first, as a click on the rail would.
+        tryVerify(function() { return Live.stickKeys(page).length > 0; }, 30000, "the page lists the sticks");
+        let lockedKey = "";
+        tryVerify(function() { lockedKey = lockedStickKey(page); return lockedKey.length > 0; }, 30000,
+                  "the locked library is in the stick model (" + Live.stickKeys(page).length + " listed)");
+        const keys = Live.stickKeys(page);
+        console.log("  sticks listed: " + keys.join(", ") + "; locked: " + stickLabel);
+        let card = null;
+        tryVerify(function() { card = Live.cardInRow(page, lockedKey, "Housekeeping"); return card !== null && card.visible; },
+                  30000, "the locked stick's section shows a Housekeeping card");
         tryCompare(card, "readOnly", true, 10000);
         compare(findChild(card, "readOnlyBadge").visible, true);
-        compare(Live.cardInRow(page, lockedMount, "Browse Library").readOnly, false);
+        compare(Live.cardInRow(page, lockedKey, "Browse Library").readOnly, false);
         // The lock is this library's alone: any other stick's cards stay
         // writable, which the first-card version could never have told.
-        rows.filter(function(r) { return String(r.mountPoint) !== lockedMount; }).forEach(function(r) {
-            compare(Live.cardIn(r, "Housekeeping").readOnly, false, r.label + "'s Housekeeping card stays writable");
+        keys.filter(function(key) { return key !== lockedKey; }).forEach(function(key) {
+            const other = Live.cardInRow(page, key, "Housekeeping");
+            verify(other !== null, key + " has a Housekeeping card, shown or not");
+            compare(other.readOnly, false, key + "'s Housekeeping card stays writable");
         });
+        // Back to the locked stick's card, on screen: a click at the centre
+        // of a card outside the window lands nowhere and opens nothing.
+        card = Live.cardInRow(page, lockedKey, "Housekeeping");
+        waitForRendering(page);
+        const inPage = card.mapToItem(page, 0, 0);
+        verify(card.visible && inPage.y >= 0 && inPage.y + card.height <= page.height,
+               "the card is inside the window (y " + inPage.y + ", height " + card.height + ")");
         shot(page, "live-stick-list-read-only");
 
-        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "duplicateTracksHubRequested"});
+        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "duplicateTracksHubRequested"});
         mouseClick(card);
         compare(spy.count, 0);
-        var dialog = findChild(page, "lockedDialog");
+        const dialog = findChild(page, "lockedDialog");
         tryCompare(dialog, "opened", true, 5000);
         verify(findChild(dialog, "holderLabel").text.indexOf(String(holder.hostname)) >= 0);
         shot(page, "live-stick-list-locked-dialog");
@@ -139,33 +127,18 @@ TestCase {
         EditSessionRegistry.mediaController = null;
     }
 
-    // The model row of the locked library, whether or not the list has
-    // built it: by library id, so however the stick's path was spelled on
-    // the command line (a symlink, a trailing slash) the row is found.
-    function rowIndexOf(media, list, libraryId) {
-        for (var i = 0; i < list.count; ++i) {
-            const mountPoint = String(media.sticks.get(i).mountPoint);
-            if (mountPoint.length > 0 && EditSessionRegistry.libraryIdForPath(mountPoint + "/PIONEER") === libraryId) {
-                return i;
+    // The key of the locked library's stick, whatever the order the page
+    // lists them in: by library id, so however the stick's path was spelled
+    // on the command line (a symlink, a trailing slash) it is found.
+    // Mounted sticks are keyed by their mount point.
+    function lockedStickKey(page) {
+        const keys = Live.stickKeys(page);
+        for (let i = 0; i < keys.length; ++i) {
+            if (keys[i].length > 0 && EditSessionRegistry.libraryIdForPath(keys[i] + "/PIONEER") === libraryId) {
+                return keys[i];
             }
         }
-        return -1;
-    }
-    // A click can only be trusted on a card inside the list's viewport
-    // (it clips, below the page header): a card between the two is drawn
-    // nowhere and a click on it goes nowhere. A row taller than the
-    // viewport gets the card itself centred.
-    function keepInsideList(list, card) {
-        var inList = card.mapToItem(list, 0, 0);
-        if (inList.y < 0 || inList.y + card.height > list.height) {
-            var y = card.mapToItem(list.contentItem, 0, 0).y;
-            list.contentY = Math.max(0, Math.min(y - (list.height - card.height) / 2, list.contentHeight - list.height));
-            waitForRendering(list);
-            inList = card.mapToItem(list, 0, 0);
-        }
-        verify(inList.y >= 0 && inList.y + card.height <= list.height,
-               "the card is inside the list's viewport (y " + inList.y + ", height " + card.height
-               + ", viewport " + list.height + ")");
+        return "";
     }
 
     function test_02_firstStageRefusedThenRemoveLock() {
@@ -180,7 +153,7 @@ TestCase {
         tryVerify(function() { return refused.count > 0; }, 5000);
         compare(s.pendingCount, 0);
         compare(s.lockHeld, false);
-        var dialog = findChild(page, "lockedDialog");
+        const dialog = findChild(page, "lockedDialog");
         tryCompare(dialog, "opened", true, 5000);
         shot(page, "live-settings-lock-refused");
 
