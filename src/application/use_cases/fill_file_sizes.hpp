@@ -4,12 +4,25 @@
 
 #pragma once
 
+#include <cstdint>
+#include <optional>
+#include <string>
 #include <vector>
 
+#include "application/ports/cancellation_token.hpp"
+#include "application/ports/progress_reporter.hpp"
 #include "domain/track.hpp"
 
 namespace seabass::application
 {
+
+// The size of one file on disk, or nothing when it is not there or its
+// path cannot be opened on this platform (on Windows, pathFromUtf8 throws
+// for bytes that are not valid UTF-8, which a raw catalog column can
+// hold). The one place a track's file is sized: fillFileSizes() and
+// measureRealFileSizes() both ask here, so a fix to how a path reaches
+// the filesystem reaches both.
+std::optional<std::uint64_t> fileSizeOnDisk(const std::string &utf8Path);
 
 // Sets Track::fileSizeBytes from the audio file on disk, for the callers
 // that need a size. The readers used to stat every audio file while they
@@ -29,14 +42,24 @@ namespace seabass::application
 // spellings can be two files, and on a case insensitive one the second
 // stat answers the same, so the exact string is right on both.
 //
-// Checks nothing else and throws nothing: a size is supplementary, and a
-// stick pulled halfway leaves the rest at 0, which reads as "unknown".
-void fillFileSizes(std::vector<domain::Track> &tracks);
+// Checks nothing else: a size is supplementary, and a stick pulled
+// halfway leaves the rest at 0, which reads as "unknown". The one thing it
+// throws is OperationCancelled: `cancel` is checked before every file, so
+// a stick pulled mid-pass (the catalog cache cancels its prefetch) costs
+// at most the one stat already under way, not the rest of the library's.
+// `progress` ticks once per file stat'd, with the count so far.
+void fillFileSizes(std::vector<domain::Track> &tracks,
+                   CancellationToken cancel = CancellationToken::none(),
+                   ProgressReporter &progress = NullProgressReporter::instance());
 
 // Clears artworkPath on every track whose image is not on disk: one stat
 // per distinct path. The Engine and OneLibrary readers used to do this
 // inside every read; it is a stage of its own now, with the sizes, so a
 // page that only wants titles does not pay ~1500 stats on a stick.
-void dropMissingArtwork(std::vector<domain::Track> &tracks);
+// `cancel` and `progress` as for fillFileSizes(): checked before, and
+// ticked after, every image looked for.
+void dropMissingArtwork(std::vector<domain::Track> &tracks,
+                        CancellationToken cancel = CancellationToken::none(),
+                        ProgressReporter &progress = NullProgressReporter::instance());
 
 }  // namespace seabass::application

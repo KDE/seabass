@@ -14,41 +14,51 @@
 namespace seabass::application
 {
 
-void fillFileSizes(std::vector<domain::Track> &tracks)
+std::optional<std::uint64_t> fileSizeOnDisk(const std::string &utf8Path)
+{
+    if (utf8Path.empty()) {
+        return std::nullopt;
+    }
+    try {
+        std::error_code ec;
+        const auto onDisk = std::filesystem::file_size(pathFromUtf8(utf8Path), ec);
+        if (!ec) {
+            return static_cast<std::uint64_t>(onDisk);
+        }
+    } catch (const std::exception &) {
+    }
+    return std::nullopt;
+}
+
+void fillFileSizes(std::vector<domain::Track> &tracks, CancellationToken cancel, ProgressReporter &progress)
 {
     std::unordered_map<std::string, std::uint64_t> sizeByPath;
+    size_t statted = 0;
     for (auto &track : tracks) {
         if (track.fileSizeBytes != 0 || track.filePath.empty()) {
             continue;
         }
         auto known = sizeByPath.find(track.filePath);
         if (known == sizeByPath.end()) {
-            std::uint64_t size = 0;
-            // pathFromUtf8 can throw on Windows for bytes that are not
-            // valid UTF-8 (a raw catalog column): that row stays unknown.
-            try {
-                std::error_code ec;
-                const auto onDisk = std::filesystem::file_size(pathFromUtf8(track.filePath), ec);
-                if (!ec) {
-                    size = static_cast<std::uint64_t>(onDisk);
-                }
-            } catch (const std::exception &) {
-            }
-            known = sizeByPath.emplace(track.filePath, size).first;
+            cancel.throwIfCancelled();
+            known = sizeByPath.emplace(track.filePath, fileSizeOnDisk(track.filePath).value_or(0)).first;
+            progress.tick(++statted);
         }
         track.fileSizeBytes = known->second;
     }
 }
 
-void dropMissingArtwork(std::vector<domain::Track> &tracks)
+void dropMissingArtwork(std::vector<domain::Track> &tracks, CancellationToken cancel, ProgressReporter &progress)
 {
     std::unordered_map<std::string, bool> presentByPath;
+    size_t looked = 0;
     for (auto &track : tracks) {
         if (track.artworkPath.empty()) {
             continue;
         }
         auto known = presentByPath.find(track.artworkPath);
         if (known == presentByPath.end()) {
+            cancel.throwIfCancelled();
             bool present = false;
             try {
                 std::error_code ec;
@@ -56,6 +66,7 @@ void dropMissingArtwork(std::vector<domain::Track> &tracks)
             } catch (const std::exception &) {
             }
             known = presentByPath.emplace(track.artworkPath, present).first;
+            progress.tick(++looked);
         }
         if (!known->second) {
             track.artworkPath.clear();
