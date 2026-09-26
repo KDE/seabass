@@ -52,6 +52,7 @@ Page {
 
     ScanController {
         id: scanController
+        objectName: "scanController"
         // playlistNames only becomes available once the (async) scan
         // finishes, so restoring the last-selected playlist has to wait
         // for this rather than happening at Component.onCompleted
@@ -478,6 +479,16 @@ Page {
                 spacing: 8
                 Label { text: ""; Layout.preferredWidth: Theme.iconSizeNormal }
                 TableHeaderLabel { label: "Title"; Layout.fillWidth: true; visible: root.browseTier >= 1 }
+                // Out of the Title column's fill, so the columns after it
+                // stay where the rows have them. Says why the Cues column
+                // below is empty for now; the list itself is usable.
+                Label {
+                    objectName: "cuesPendingNote"
+                    visible: scanController.cuesPending && root.browseTier >= 2
+                    text: "Reading cues..."
+                    color: Theme.textMuted
+                    font.pointSize: Theme.fontTiny
+                }
                 TableHeaderLabel { label: "Key"; Layout.preferredWidth: 50; visible: root.browseTier >= 2 }
                 TableHeaderLabel { label: "BPM"; Layout.preferredWidth: 50; visible: root.browseTier >= 2 }
                 TableHeaderLabel { label: "Time"; Layout.preferredWidth: 60; visible: root.browseTier >= 2 }
@@ -542,6 +553,7 @@ Page {
                     required property int bitrate
                     required property string comment
                     required property string album
+                    required property string fallbackArtworkPath
 
                     readonly property bool isPlaying: playbackController.hasTrack
                         && playbackController.currentFormat === root.format
@@ -626,11 +638,13 @@ Page {
                             Layout.preferredWidth: Theme.iconSizeNormal
                             Layout.preferredHeight: Theme.iconSizeNormal
                             color: Theme.surface
-                            Image {
+                            // An Engine row's own art first, the same song's
+                            // rekordbox art when that does not load.
+                            ArtworkImage {
+                                objectName: "rowArtwork"
                                 anchors.fill: parent
-                                visible: artworkPath.length > 0
-                                source: artworkPath
-                                fillMode: Image.PreserveAspectCrop
+                                source: trackDelegate.artworkPath
+                                fallbackSource: trackDelegate.fallbackArtworkPath
                             }
                             // Play, direct from the row -- the rest of the
                             // row (below) now opens the track detail page
@@ -738,7 +752,14 @@ Page {
                             text: root.formatDuration(durationSeconds)
                             Layout.preferredWidth: 60
                         }
-                        Label { visible: root.browseTier >= 2; text: cueCount; Layout.preferredWidth: 50 }
+                        // Empty while the cue pass runs, rather than a 0
+                        // that would read as "this track has no cues".
+                        Label {
+                            objectName: "cueCountLabel"
+                            visible: root.browseTier >= 2
+                            text: scanController.cuesPending ? "" : cueCount
+                            Layout.preferredWidth: 50
+                        }
                         Label {
                             visible: root.browseTier >= 2
                             text: playCount >= 0 ? playCount : "--"
@@ -1078,6 +1099,19 @@ Page {
     Connections {
         target: scanController
         function onScanCancelled() { root.StackView.view.pop(); }
+        // The cues have landed in the rows (they update where they stand);
+        // the details pane holds a copy of its track's, taken when it was
+        // opened, so it is handed the real ones too. Only the cues: a cue
+        // being placed there stays.
+        function onTracksPublished(cuesLanded) {
+            if (!cuesLanded || !root.trackPanelOpen || trackDetailPanel.trackSourceId.length === 0) {
+                return;
+            }
+            const row = scanController.tracks.indexOfSourceId(trackDetailPanel.trackSourceId);
+            if (row >= 0) {
+                trackDetailPanel.trackCues = scanController.tracks.trackAt(row).cues;
+            }
+        }
     }
 
     BusyOverlay {

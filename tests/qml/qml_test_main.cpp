@@ -38,7 +38,12 @@
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "gui/library_consistency_controller.hpp"
+#include "gui/scan_controller.hpp"
+#include <QColor>
+#include <QFile>
+#include <QImage>
 #include <QSettings>
+#include <QThreadPool>
 #include <QString>
 #include <QStringList>
 #include <QQuickStyle>
@@ -47,7 +52,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
+#include <mutex>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -314,6 +321,146 @@ public:
 
 private:
     QStringList m_roots;
+};
+
+// Browse's two phases without a stick. While held, every ScanController
+// scans through a cache of its own: a rekordbox catalog of made-up tracks
+// whose cue pass waits for releaseCues() (or a cancel), and an Engine
+// catalog of the same songs whose art is named but missing, beside a
+// rekordbox catalog whose art for them is a real image. The caches live
+// until the fixture does, because a cancelled scan can still be finishing
+// in one after its test is over.
+class BrowseFixture : public QObject
+{
+    Q_OBJECT
+
+    struct Gate
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool released = false;
+        std::atomic<int> cuePasses{0};
+        std::atomic<int> waiting{0};
+    };
+
+    std::shared_ptr<Gate> m_gate;
+    std::vector<std::unique_ptr<seabass::gui::LibraryCatalogCache>> m_caches;
+    QTemporaryDir m_artDir;
+
+public:
+    using QObject::QObject;
+    ~BrowseFixture() override
+    {
+        restore();
+        QThreadPool::globalInstance()->waitForDone();
+    }
+
+    // A real cover on disk, for the fallback to find.
+    Q_INVOKABLE QString presentArtwork()
+    {
+        const QString file = m_artDir.filePath(QStringLiteral("cover.png"));
+        if (!QFile::exists(file)) {
+            QImage image(8, 8, QImage::Format_RGB32);
+            image.fill(QColor(200, 40, 40));
+            image.save(file);
+        }
+        return file;
+    }
+
+    Q_INVOKABLE QString missingArtwork() const { return m_artDir.filePath(QStringLiteral("not-there.jpg")); }
+
+    Q_INVOKABLE void holdCues(int trackCount)
+    {
+        restore();
+        auto gate = std::make_shared<Gate>();
+        const std::string present = presentArtwork().toStdString();
+        const std::string missing = missingArtwork().toStdString();
+        auto stage = [gate, trackCount, present, missing](seabass::gui::LibraryCatalogCache::Detail detail,
+                                                          const std::string &format, const std::string &,
+                                                          std::vector<seabass::domain::Track> &tracks,
+                                                          seabass::application::ProgressReporter &,
+                                                          seabass::application::CancellationToken cancel) {
+            using Detail = seabass::gui::LibraryCatalogCache::Detail;
+            if (detail == Detail::Tracks) {
+                tracks.clear();
+                for (int i = 0; i < trackCount; ++i) {
+                    seabass::domain::Track track;
+                    track.format = format;
+                    track.sourceId = std::to_string(i + 1);
+                    track.title = "Held Track " + std::to_string(1000 + i);
+                    track.artist = "Held Artist";
+                    track.durationSeconds = 200 + i;
+                    track.playlists.push_back({"Held Playlist", i});
+                    // Engine names art that is not on the stick; the
+                    // rekordbox copy of the same song has a real one.
+                    track.artworkPath = format == "engine" ? missing : present;
+                    if (format == "engine") {
+                        // Engine keeps its cues in the catalog.
+                        seabass::domain::CuePoint cue;
+                        cue.kind = seabass::domain::CuePoint::Kind::Hot;
+                        cue.hotCueNumber = 1;
+                        track.cues.push_back(cue);
+                    }
+                    tracks.push_back(std::move(track));
+                }
+                return;
+            }
+            if (detail == Detail::Cues && format == "rekordbox") {
+                ++gate->cuePasses;
+                ++gate->waiting;
+                {
+                    std::unique_lock<std::mutex> lock(gate->mutex);
+                    while (!gate->released && !cancel.cancelled()) {
+                        gate->cv.wait_for(lock, std::chrono::milliseconds(5));
+                    }
+                }
+                --gate->waiting;
+                cancel.throwIfCancelled();
+                // Track i gets i % 5 hot cues: sorting by cues reorders.
+                for (size_t i = 0; i < tracks.size(); ++i) {
+                    for (size_t n = 0; n < i % 5; ++n) {
+                        seabass::domain::CuePoint cue;
+                        cue.kind = seabass::domain::CuePoint::Kind::Hot;
+                        cue.hotCueNumber = static_cast<int>(n) + 1;
+                        cue.positionMs = 1000.0 * static_cast<double>(n);
+                        tracks[i].cues.push_back(cue);
+                    }
+                }
+            }
+        };
+        auto mtime = [](const std::string &, const std::string &) { return std::chrono::system_clock::time_point{}; };
+        m_caches.push_back(std::make_unique<seabass::gui::LibraryCatalogCache>(stage, mtime));
+        m_gate = gate;
+        seabass::gui::ScanController::setCatalogCacheForTesting(m_caches.back().get());
+    }
+
+    Q_INVOKABLE void releaseCues()
+    {
+        if (!m_gate) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_gate->mutex);
+            m_gate->released = true;
+        }
+        m_gate->cv.notify_all();
+    }
+
+    // How many cue passes the held cache has started, and whether one is
+    // waiting at the gate right now.
+    Q_INVOKABLE int cuePasses() const { return m_gate ? m_gate->cuePasses.load() : 0; }
+    Q_INVOKABLE bool cuePassWaiting() const { return m_gate && m_gate->waiting.load() > 0; }
+
+    // Every scan task has returned, and so has everything it reported
+    // (delivery still needs the event loop to run).
+    Q_INVOKABLE bool waitForScans() { return QThreadPool::globalInstance()->waitForDone(10000); }
+
+    Q_INVOKABLE void restore()
+    {
+        releaseCues();
+        m_gate.reset();
+        seabass::gui::ScanController::setCatalogCacheForTesting(nullptr);
+    }
 };
 
 // Test seams on controllers whose real work touches hardware: a
@@ -1352,6 +1499,7 @@ void seedMetadataStoreForTests()
         engine->rootContext()->setContextProperty(QStringLiteral("artworkFixture"), new ArtworkFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("stickFixture"), new StickFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("controllerFixture"), new ControllerFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("browseFixture"), new BrowseFixture(engine));
     }
 };
 

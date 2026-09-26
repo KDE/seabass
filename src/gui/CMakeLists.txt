@@ -56,6 +56,7 @@ set_source_files_properties(qml/CamelotWheelPosition.qml PROPERTIES QT_QML_SINGL
 # what tests/qml-live/ drives against a real stick.
 set(SEABASS_GUI_QML_FILES
     qml/common/ActionCard.qml
+    qml/common/ArtworkImage.qml
     qml/common/BackBreadcrumb.qml
     qml/common/BigScrollBar.qml
     qml/common/BusyOverlay.qml

@@ -11,6 +11,10 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
@@ -18,6 +22,12 @@
 
 namespace seabass::gui
 {
+
+class LibraryCatalogCache;
+
+// Cover art borrowed from another catalog, by the borrowing track's
+// sourceId: an Engine row's fallback is the same song's rekordbox art.
+using FallbackArtwork = std::unordered_map<std::string, std::string>;
 
 // Read-only Qt list model over the tracks ScanController last read.
 class TrackListModel : public QAbstractListModel
@@ -45,6 +55,7 @@ public:
         BitrateRole,
         CommentRole,
         AlbumRole,
+        FallbackArtworkPathRole,
     };
 
     explicit TrackListModel(QObject *parent = nullptr);
@@ -54,6 +65,18 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     void setTracks(std::vector<domain::Track> tracks);
+
+    // The same rows again with more in them (Browse's cue pass landing):
+    // rows the list already shows are updated where they stand, moved
+    // rather than rebuilt when the sort order changed, so the view keeps
+    // its delegates, its scroll position and its current row. Anything
+    // but the same set of tracks is a new list, and resets like
+    // setTracks().
+    void updateTracks(std::vector<domain::Track> tracks);
+
+    // Served as fallbackArtworkPath, and as artworkPath for a row whose
+    // own catalog names no art. Kept until the next call.
+    void setFallbackArtwork(std::shared_ptr<const FallbackArtwork> fallbackArtwork);
 
     // Random-access read of one row, by index into *this currently
     // displayed* (filtered/sorted) list -- not the full unfiltered
@@ -70,8 +93,17 @@ public:
     // no-argument form callers outside a ListView binding actually need.
     Q_INVOKABLE int trackCount() const { return rowCount(); }
 
+    // The row showing this track now, or -1.
+    Q_INVOKABLE int indexOfSourceId(const QString &sourceId) const;
+
+    // The artworkPath and fallbackArtworkPath roles of a track from this
+    // scan, as URLs, for the lists that are built outside the model.
+    QString artworkFor(const domain::Track &track) const;
+    QString fallbackArtworkFor(const domain::Track &track) const;
+
 private:
     std::vector<domain::Track> m_tracks;
+    std::shared_ptr<const FallbackArtwork> m_fallbackArtwork;
 };
 
 // Result of a background scan task, see ScanController::scan(). Kept
@@ -79,17 +111,51 @@ private:
 // worker thread, with no access to the controller itself.
 struct ScanTaskResult
 {
+    // Which read this is: the catalog alone (Tracks), or the same tracks
+    // again with the cues a format keeps outside its catalog (Cues). The
+    // task's own result is a Cues result, a failure, or a cancel; a
+    // Tracks result returned from the task only means "that was all".
+    enum class Phase { Tracks, Cues };
+    Phase phase = Phase::Tracks;
     std::vector<domain::Track> tracks;
+    // Only on the Tracks result: Engine rows' cover art borrowed from
+    // the sibling rekordbox catalog, by sourceId.
+    std::shared_ptr<const FallbackArtwork> fallbackArtwork;
+    // Only on the Tracks result: a Cues result follows.
+    bool cuesPending = false;
     QString errorMessage;  // empty on success
     bool cancelled = false;  // stopped via cancelScan(); tracks is empty, errorMessage too
+    // The scan() this belongs to, so a result from a scan that has since
+    // been replaced or cancelled is dropped.
+    std::uint64_t generation = 0;
 };
 
-// Wraps ScanLibrary for QML: reads every track (with cues) out of a
-// rekordbox or Engine library path, exposed as `tracks`. The read itself
+// Carries a scan's first publication (the Tracks result) from its
+// worker thread to the controller, while the task goes on to read the
+// cues; the second arrives as the task's own result. Owned by the task,
+// like its progress reporter, so a controller that is gone is never
+// touched: its connection went with it.
+class ScanPhaseRelay : public QObject
+{
+    Q_OBJECT
+
+signals:
+    void tracksRead(std::shared_ptr<seabass::gui::ScanTaskResult> result);
+};
+
+// Wraps the catalog cache for QML: reads every track out of a rekordbox,
+// Engine or OneLibrary library path, exposed as `tracks`. The read itself
 // runs on a background thread (via QtConcurrent) since it can take several
 // seconds for a large library, scan() returns immediately, and `busy`/
 // `scanCurrent`/`scanTotal` track progress for a UI-thread progress bar
 // that can actually render while the work happens.
+//
+// In two phases for rekordbox, whose cues live in per-track ANLZ files
+// outside its catalog: the catalog first (a tenth of a second on a stick),
+// published at once, then the cues (seconds, cold), published again into
+// the same rows. `busy` covers the first phase only; `cuesPending` the
+// second. Engine and OneLibrary keep their cues in the catalog, so they
+// publish once. Browse never needs file sizes and never asks for them.
 class ScanController : public QObject
 {
     Q_OBJECT
@@ -106,9 +172,21 @@ class ScanController : public QObject
     Q_PROPERTY(QStringList playlistNames READ playlistNames NOTIFY playlistNamesChanged)
     Q_PROPERTY(QVariantMap playlistTrackCounts READ playlistTrackCounts NOTIFY playlistNamesChanged)
     Q_PROPERTY(int totalTrackCount READ totalTrackCount NOTIFY playlistNamesChanged)
+    // True between the two publications of a rekordbox scan: the list is
+    // there, its cue counts are not yet. Sorting by cues meanwhile sorts
+    // what is known.
+    Q_PROPERTY(bool cuesPending READ cuesPending NOTIFY cuesPendingChanged)
 
 public:
     explicit ScanController(QObject *parent = nullptr);
+    // Stops a scan still running for this page, cue phase included,
+    // without waiting for it: the task holds nothing of this controller.
+    ~ScanController() override;
+
+    // Test seam: every ScanController scans through this cache rather
+    // than LibraryCatalogCache::instance() while it is set. nullptr
+    // restores the real one. Taken at scan() time.
+    static void setCatalogCacheForTesting(LibraryCatalogCache *cache);
 
     TrackListModel *tracksModel() { return &m_model; }
     bool busy() const { return m_busy; }
@@ -118,13 +196,16 @@ public:
     QStringList playlistNames() const { return m_playlistNames; }
     QVariantMap playlistTrackCounts() const { return m_playlistTrackCounts; }
     int totalTrackCount() const { return static_cast<int>(m_allTracks.size()); }
+    bool cuesPending() const { return m_cuesPending; }
 
     // format is "rekordbox" or "engine"; path is the corresponding
     // DetectedStick.rekordboxPath / .enginePath. siblingRekordboxPath (only
-    // used when format is "engine") lets Engine tracks borrow cover art
-    // from the same song's rekordbox copy, matched by title+artist, since
-    // libdjinterop has no usable cover art API of its own. A scan already
-    // in progress is ignored rather than overlapped.
+    // used when format is "engine") gives Engine tracks the same song's
+    // rekordbox art, matched by title+artist, as fallbackArtworkPath: shown
+    // when the Engine art does not load, and as the art itself for a track
+    // its Engine catalog names none for. A scan whose first phase is
+    // still running is ignored rather than overlapped; one in its cue
+    // phase is stopped and replaced.
     Q_INVOKABLE void scan(const QString &format, const QString &path, const QString &siblingRekordboxPath = QString());
 
     // True if exportLibrary.db (OneLibrary) exists for the stick at this
@@ -230,6 +311,9 @@ public:
     Q_INVOKABLE void setHideStreamingTracks(bool hide);
 
     bool scanCancellable() const { return m_busy; }
+    // Also stops the cue phase: scanCancelled() fires at once and the
+    // cues never land, even while the read itself is still finishing on
+    // its thread.
     Q_INVOKABLE void cancelScan();
 
 signals:
@@ -238,17 +322,32 @@ signals:
     void errorMessageChanged();
     void playlistNamesChanged();
     void scanCancelled();
+    void cuesPendingChanged();
+    // Each time the list is published: once for Engine and OneLibrary,
+    // twice for rekordbox (the catalog, then its cues), once when a
+    // rekordbox scan is cancelled between the two. cuesLanded: this is
+    // the second one, the same rows updated where they stand.
+    void tracksPublished(bool cuesLanded);
 
 private:
     void setBusy(bool busy);
+    void setCuesPending(bool pending);
     void setScanProgress(int current, int total);
     void setErrorMessage(const QString &message);
-    void applyFilters();
+    // inPlace: the same tracks with more in them, see
+    // TrackListModel::updateTracks().
+    void applyFilters(bool inPlace = false);
+    void onTracksRead(std::shared_ptr<ScanTaskResult> result);
     void onScanFinished();
+    // Both publications and the task's failures end here.
+    void handleResult(ScanTaskResult &result);
+    void publishTracks(ScanTaskResult &result);
+    void publishCues(ScanTaskResult &result);
 
     TrackListModel m_model;
     QFutureWatcher<ScanTaskResult> m_watcher;
     application::CancellationToken m_scanCancel;  // fresh per scan(), so a stale cancel never hits a new scan
+    std::uint64_t m_scanGeneration = 0;
     std::vector<domain::Track> m_allTracks;
     QStringList m_playlistNames;
     QVariantMap m_playlistTrackCounts;
@@ -258,6 +357,7 @@ private:
     bool m_sortAscending = true;
     bool m_hideStreamingTracks = false;
     bool m_busy = false;
+    bool m_cuesPending = false;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
     QString m_errorMessage;
