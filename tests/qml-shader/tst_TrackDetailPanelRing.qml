@@ -64,7 +64,7 @@ TestCase {
         return {sourceId: sourceId, title: "Major Tom (Reworked 2024)", artist: "DJ Amador",
                 cues: [{kind: "hot", hotCueNumber: 1, positionMs: 32000, isLoop: false, loopEndMs: 0, color: "#ffcc00", comment: ""}],
                 durationSeconds: 372, playlistNames: [], streamingSource: "", rating: 4, bpm: 126.5, key: "Fm",
-                bitrate: 320, playCount: 17, artworkPath: "file:///covers/major-tom.jpg", comment: "", album: "",
+                bitrate: 320, playCount: 17, artworkPath: "file://" + browseFixture.presentArtwork(), comment: "", album: "",
                 filePath: "/music/major-tom.mp3"};
     }
 

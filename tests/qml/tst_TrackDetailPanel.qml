@@ -46,7 +46,8 @@ TestCase {
                 cues: [{kind: "hot", hotCueNumber: 1, positionMs: 32000, isLoop: false, loopEndMs: 0, color: "#ffcc00", comment: ""}],
                 durationSeconds: 372, playlistNames: ["Peaktime", "Warm-up"], streamingSource: "",
                 rating: 4, bpm: 126.5, key: "Fm", bitrate: 320, playCount: 17,
-                artworkPath: "file:///covers/major-tom.jpg",
+                // A real file: art the stick does not have is not shown.
+                artworkPath: "file://" + browseFixture.presentArtwork(),
                 comment: "Big room, drop at 1:04", album: "Sounds From The Deep"};
     }
 
@@ -143,11 +144,67 @@ TestCase {
         // Passed straight through, never re-prefixed: the role already
         // hands over a file:// URL, and prefixing it again produced
         // "file://file:///..." and an image that silently did not load.
-        compare(panel.trackArtworkPath, "file:///covers/major-tom.jpg");
+        compare(panel.trackArtworkPath, "file://" + browseFixture.presentArtwork());
         compare(panel.pendingPositionMs, -1);
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(panel).save(screenshotDir + "/track-panel.png");
         }
+    }
+
+    // A cover the catalog names and the stick does not have: the sleeve
+    // is not drawn at all (no empty frame, no broken image), as for a
+    // track with no art. The rekordbox copy's art, where the row carries
+    // it, is shown instead.
+    function test_aMissingCoverShowsNothingOrItsFallback() {
+        const panel = makePanel();
+        const delegate = makeDelegate();
+        delegate.artworkPath = "file://" + browseFixture.missingArtwork();
+        panel.showFor(delegate);
+        const box = findChild(panel, "trackArtwork");
+        const image = findChild(panel, "trackArtworkImage");
+        tryCompare(image, "sourceFailed", true);
+        compare(image.showing, "");
+        compare(box.visible, false, "no frame for a cover that is not there");
+        waitForRendering(panel);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(panel).save(screenshotDir + "/track-panel-missing-art.png");
+        }
+
+        delegate.fallbackArtworkPath = "file://" + browseFixture.presentArtwork();
+        panel.showFor(delegate);
+        tryCompare(image, "showing", "fallback");
+        compare(box.visible, true, "the fallback cover is shown in its place");
+    }
+
+    // The artist's other tracks: same rule, per row.
+    function test_anArtistRowFallsBackToTheRekordboxArt() {
+        const panel = makePanel();
+        panel.scanController = {
+            tracksByArtist: function(artist, exclude) {
+                return [{sourceId: "7", title: "Other", durationSeconds: 300, bpm: 124, key: "8A", cueCount: 0,
+                         artworkPath: "file://" + browseFixture.missingArtwork(),
+                         fallbackArtworkPath: "file://" + browseFixture.presentArtwork(), playlistNames: []},
+                        {sourceId: "8", title: "Neither", durationSeconds: 300, bpm: 124, key: "8A", cueCount: 0,
+                         artworkPath: "file://" + browseFixture.missingArtwork(), playlistNames: []}];
+            }
+        };
+        panel.showFor(makeDelegate());
+        tryVerify(() => findChild(panel, "artistTrackArtwork") !== null);
+        const arts = [];
+        (function collect(item) {
+            if (item.objectName === "artistTrackArtwork") {
+                arts.push(item);
+            }
+            for (let i = 0; i < item.children.length; ++i) {
+                collect(item.children[i]);
+            }
+        })(panel);
+        compare(arts.length, 2);
+        const byFallback = arts[0].fallbackSource.toString().length > 0 ? arts : [arts[1], arts[0]];
+        tryCompare(byFallback[0], "showing", "fallback");
+        tryCompare(byFallback[1], "sourceFailed", true);
+        compare(byFallback[1].showing, "");
+        compare(findChild(byFallback[1], "artworkImage").visible, false, "nothing drawn, not a broken image");
     }
 
     function test_closeButtonAsksThePage() {

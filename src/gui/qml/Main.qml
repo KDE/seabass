@@ -373,8 +373,9 @@ ApplicationWindow {
         playbackController: playbackCtrl
         onShowsChanged: window.updateWatermark()
     }
-    // What the two image layers were last asked to show; "" for nothing,
-    // which is what they show while the ring has the corner.
+    // What the two image layers were last asked to show, the cover and
+    // its fallback; an empty cover for nothing, which is what they show
+    // while the ring has the corner.
     property string watermarkSource: "unset"
 
     function updateWatermark() {
@@ -386,23 +387,30 @@ ApplicationWindow {
         // When it ran first, this read back the *previous* value, one
         // track behind. A direct property read here always gets the
         // live current value regardless of connection order.
-        var isArt = playbackCtrl.hasTrack && playbackCtrl.artworkPath.length > 0;
-        var src = watermarkRing.shows ? ""
+        // A cover that does not load (named by the catalog, not on the
+        // stick) is the layer's to find out: it tries the fallback and
+        // then shows the brand mark, as for a track with no art.
+        const isArt = playbackCtrl.hasTrack && playbackCtrl.artworkPath.length > 0;
+        const fallback = isArt ? playbackCtrl.fallbackArtworkPath || "" : "";
+        const src = watermarkRing.shows ? ""
             : isArt ? playbackCtrl.artworkPath
             : "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg";
-        var front = watermarkFrontIsA ? watermarkLayerA : watermarkLayerB;
-        var back = watermarkFrontIsA ? watermarkLayerB : watermarkLayerA;
-        if (window.watermarkSource === src) {
+        const front = watermarkFrontIsA ? watermarkLayerA : watermarkLayerB;
+        const back = watermarkFrontIsA ? watermarkLayerB : watermarkLayerA;
+        if (window.watermarkSource === src + "\n" + fallback) {
             return;
         }
-        window.watermarkSource = src;
+        window.watermarkSource = src + "\n" + fallback;
         if (src === "") {
             // The ring fades in over this corner by itself.
             front.opacity = 0;
             return;
         }
-        back.source = src;
         back.isArtwork = isArt;
+        back.fallbackSource = fallback;
+        back.source = src;
+        // Asked afresh even when the layer held this same cover before.
+        back.artworkFailures = 0;
         back.opacity = 0.18;
         front.opacity = 0;
         watermarkFrontIsA = !watermarkFrontIsA;

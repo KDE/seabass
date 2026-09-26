@@ -52,4 +52,31 @@ TestCase {
         mouseClick(close);
         verify(bar.controller.calls.indexOf("stop") >= 0, "closing must stop playback");
     }
+
+    // A cover the stick does not have: the fallback where there is one,
+    // and where there is none no square at all, not an empty one.
+    function test_aMissingCoverFallsBackOrLeavesNoGap() {
+        const controller = fakeController();
+        controller.artworkPath = "file://" + browseFixture.missingArtwork();
+        controller.fallbackArtworkPath = "file://" + browseFixture.presentArtwork();
+        const bar = createTemporaryObject(barComponent, testCase, {controller: controller});
+        verify(bar !== null);
+        const art = findChild(bar, "playerArtwork");
+        tryCompare(art, "showing", "fallback");
+        compare(art.visible, true);
+        bar.destroy();
+        wait(0);
+
+        const bare = fakeController();
+        bare.artworkPath = "file://" + browseFixture.missingArtwork();
+        const noArt = createTemporaryObject(barComponent, testCase, {controller: bare});
+        const missing = findChild(noArt, "playerArtwork");
+        tryCompare(missing, "sourceFailed", true);
+        compare(missing.showing, "");
+        compare(missing.visible, false, "no empty square before the title");
+        waitForRendering(noArt);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(noArt).save(screenshotDir + "/player-bar-missing-art.png");
+        }
+    }
 }

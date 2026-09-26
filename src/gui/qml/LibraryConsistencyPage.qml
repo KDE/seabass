@@ -585,11 +585,10 @@ HealthCheckPage {
                                         Layout.preferredWidth: Theme.iconSizeNormal
                                         Layout.preferredHeight: Theme.iconSizeNormal
                                         color: Theme.surface
-                                        Image {
+                                        ArtworkImage {
+                                            objectName: "issueTrackArtwork"
                                             anchors.fill: parent
-                                            visible: trackFrame.modelData.artworkPath.length > 0
-                                            source: trackFrame.modelData.artworkPath
-                                            fillMode: Image.PreserveAspectCrop
+                                            source: trackFrame.modelData.artworkPath || ""
                                         }
                                     }
                                     Label {

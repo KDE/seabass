@@ -25,8 +25,27 @@ import QtQuick.Effects
 Item {
     id: layer
 
-    property alias source: img.source
+    property url source
     property bool isArtwork: false
+    // Cover art to try when `source` (art) does not load: an Engine
+    // track's rekordbox sibling's cover. When neither loads the layer
+    // shows the brand mark, as for a track with no art at all: a cover
+    // the catalog names and the stick lacks is no cover.
+    property url fallbackSource
+    readonly property url brandMark: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+    // How many of source and fallbackSource have failed to load.
+    property int artworkFailures: 0
+    onSourceChanged: layer.artworkFailures = 0
+    onFallbackSourceChanged: layer.artworkFailures = 0
+    function noteArtworkFailed() {
+        if (img.status === Image.Error && layer.drawsArtwork) {
+            layer.artworkFailures += 1;
+        }
+    }
+    readonly property bool hasFallback: layer.fallbackSource.toString().length > 0
+    // Whether cover art is what is drawn: asked for, and not given up on.
+    readonly property bool drawsArtwork: layer.isArtwork
+        && layer.artworkFailures < (layer.hasFallback ? 2 : 1)
 
     // Cover art fills its square edge to edge, so it is simply pulled out
     // past the corner and allowed to bleed off it.
@@ -56,10 +75,10 @@ Item {
     // pixels, so a reshaped mark fails a test rather than losing a nose.
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    anchors.rightMargin: isArtwork ? -width * artworkBleed
-                                   : width * (markInsetX - markPadX)
-    anchors.bottomMargin: isArtwork ? -height * artworkBleed
-                                    : height * (markInsetY - markPadY)
+    anchors.rightMargin: drawsArtwork ? -width * artworkBleed
+                                      : width * (markInsetX - markPadX)
+    anchors.bottomMargin: drawsArtwork ? -height * artworkBleed
+                                       : height * (markInsetY - markPadY)
     width: Math.min(parent.width, parent.height) * 0.75
     height: width
     opacity: 0
@@ -70,6 +89,17 @@ Item {
 
     Image {
         id: img
+        objectName: "watermarkImage"
+        source: !layer.isArtwork ? layer.source
+            : !layer.drawsArtwork ? layer.brandMark
+            : layer.artworkFailures === 0 ? layer.source : layer.fallbackSource
+        // After the assignment, not inside it: a local file fails
+        // synchronously, and moving on right there is a binding loop.
+        onStatusChanged: {
+            if (img.status === Image.Error && layer.drawsArtwork) {
+                Qt.callLater(layer.noteArtworkFailed);
+            }
+        }
         // Drawn directly for the brand mark, and only handed to the
         // MultiEffect below when there is artwork to blur. The effect was
         // previously in the path for both, with its blur switched off for
@@ -77,7 +107,7 @@ Item {
         // software renderer cannot run at all, so the mark rendered as
         // nothing under QT_QPA_PLATFORM=offscreen. The two must never be
         // visible at once or the source is drawn twice.
-        visible: !layer.isArtwork
+        visible: !layer.drawsArtwork
         anchors.fill: parent
         fillMode: Image.PreserveAspectFit
         smooth: true
@@ -103,7 +133,7 @@ Item {
     // brand SVG watermark is vector and crisp at any size, so it
     // skips this entirely and draws itself above.
     MultiEffect {
-        visible: layer.isArtwork
+        visible: layer.drawsArtwork
         // Fills this layer (its actual parent). Anchoring straight
         // to the Image sibling-of-a-different-item instead is not a
         // legal QML anchor target (only parent/sibling) and was

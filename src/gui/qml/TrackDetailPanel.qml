@@ -71,6 +71,9 @@ Pane {
     property var trackPlaylistNames: []
     property string trackStreamingSource: ""
     property string trackArtworkPath: ""
+    // The row's fallbackArtworkPath: an Engine row's rekordbox sibling's
+    // cover, shown when the row's own is not on the stick.
+    property string trackFallbackArtworkPath: ""
     property string trackFilePath: ""
     property int trackRating: -1      // -1 is "unrated", distinct from 0 stars
     property double trackBpm: 0
@@ -105,6 +108,7 @@ Pane {
             return delegate[name] !== undefined && delegate[name] !== null ? delegate[name] : fallback;
         }
         panel.trackArtworkPath = value("artworkPath", "");
+        panel.trackFallbackArtworkPath = value("fallbackArtworkPath", "");
         panel.trackFilePath = value("filePath", "");
         panel.trackRating = value("rating", -1);
         panel.trackBpm = value("bpm", 0);
@@ -408,7 +412,10 @@ Pane {
                 Layout.preferredHeight: 154
                 Layout.alignment: Qt.AlignTop | Qt.AlignRight
                 // The ring above carries the cover while it is showing.
-                visible: panel.trackArtworkPath.length > 0 && !ringRow.showsRing
+                // Shown only once a cover has loaded: art the catalog
+                // names but the stick does not have is no art, as it was
+                // when the readers still looked for the file.
+                visible: artworkImage.showing.length > 0 && !ringRow.showsRing
 
                 // Only a track with a local file can play: a streaming
                 // row's path names a cache on another machine, so it gets
@@ -416,7 +423,9 @@ Pane {
                 readonly property bool playable: panel.trackFilePath.length > 0
                     && panel.trackStreamingSource.length === 0
 
-                Image {
+                ArtworkImage {
+                    id: artworkImage
+                    objectName: "trackArtworkImage"
                     anchors.fill: parent
                     // Assigned straight through: ArtworkPathRole already
                     // comes back as a file:// URL (toLocalFileUrl in
@@ -424,12 +433,12 @@ Pane {
                     // "file://file:///..." and an image that silently did
                     // not load.
                     source: panel.trackArtworkPath
+                    fallbackSource: panel.trackFallbackArtworkPath
                     fillMode: Image.PreserveAspectCrop
                     // Decoded at twice the display size, so it stays
                     // sharp on a hidpi screen without holding a
                     // full-resolution sleeve in memory.
-                    sourceSize.width: 308
-                    sourceSize.height: 308
+                    sourceSize: Qt.size(308, 308)
                     // Synchronous: one small image, and loading it in the
                     // background made it pop in a frame or two after the
                     // rest of the panel. It also made the panel
@@ -465,7 +474,7 @@ Pane {
                     cursorShape: artwork.playable ? Qt.PointingHandCursor : Qt.ArrowCursor
                     onClicked: panel.playbackController.load(panel.format, panel.libraryPath,
                         panel.trackSourceId, panel.trackFilePath, panel.trackTitle, panel.trackArtist,
-                        panel.trackArtworkPath, panel.trackCues)
+                        panel.trackArtworkPath, panel.trackCues, panel.trackFallbackArtworkPath)
                 }
             }
         }
@@ -751,14 +760,12 @@ Pane {
                             Layout.preferredHeight: Theme.iconSizeSmall
                             color: Theme.surface
                             radius: 2
-                            Image {
+                            ArtworkImage {
                                 objectName: "artistTrackArtwork"
                                 anchors.fill: parent
                                 source: artistTrackRow.modelData.artworkPath || ""
-                                visible: source.toString().length > 0
-                                fillMode: Image.PreserveAspectCrop
-                                sourceSize.width: 64
-                                sourceSize.height: 64
+                                fallbackSource: artistTrackRow.modelData.fallbackArtworkPath || ""
+                                sourceSize: Qt.size(64, 64)
                                 // In the background: one row per track by the
                                 // artist, rebuilt on every track shown.
                                 asynchronous: true

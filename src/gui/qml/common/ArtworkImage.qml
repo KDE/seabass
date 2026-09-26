@@ -18,6 +18,8 @@ Item {
     property url fallbackSource
     property int fillMode: Image.PreserveAspectCrop
     property alias sourceSize: image.sourceSize
+    property alias asynchronous: image.asynchronous
+    property alias smooth: image.smooth
 
     // Which one is on screen: "source", "fallback", or "" while neither
     // has loaded (or neither can).
@@ -27,6 +29,11 @@ Item {
     // Set when `source` failed to load, cleared when it changes.
     property bool sourceFailed: false
     onSourceChanged: artwork.sourceFailed = false
+    function noteSourceFailed() {
+        if (image.status === Image.Error && image.source === artwork.source) {
+            artwork.sourceFailed = true;
+        }
+    }
 
     Image {
         id: image
@@ -35,9 +42,13 @@ Item {
         fillMode: artwork.fillMode
         visible: image.status === Image.Ready
         source: artwork.source.toString().length > 0 && !artwork.sourceFailed ? artwork.source : artwork.fallbackSource
+        // A local file loads synchronously, so its Error arrives while
+        // `source` is still being assigned; switching to the fallback
+        // right there is a binding loop that leaves the source as it was.
+        // Noted after the assignment instead.
         onStatusChanged: {
             if (image.status === Image.Error && image.source === artwork.source) {
-                artwork.sourceFailed = true;
+                Qt.callLater(artwork.noteSourceFailed);
             }
         }
     }

@@ -17,6 +17,7 @@ TrackRing {
     cueData: root.playbackController.cues || []
     trackDurationMs: root.playbackController.duration || 0
     artworkSource: root.playbackController.artworkPath || ""
+    fallbackArtworkSource: root.playbackController.fallbackArtworkPath || ""
     progress: root.playbackController.duration > 0
         ? root.playbackController.position / root.playbackController.duration : 0
     playing: root.playbackController.playing === true
