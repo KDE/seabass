@@ -91,6 +91,7 @@ struct FakeReader
                 cv.wait_for(lock, std::chrono::milliseconds(5));
             }
             endedByCancel[k] = cancel.cancelled();
+            cv.notify_all();
         }
         if (cancel.cancelled()) {
             return std::nullopt;
@@ -220,7 +221,12 @@ void forgetCancelsTheCuesStep(const fs::path &root)
     waitUntilIdle(controller);
     const qint64 elapsed = timer.elapsed();
     {
-        std::lock_guard<std::mutex> lock(fake.mutex);
+        // The advisor lets go of the step at once (docs/async-requests.md)
+        // and the step's own read stops a moment later, at its next look
+        // at the token; waited for here, since the check is that it was
+        // told, not that it had already listened.
+        std::unique_lock<std::mutex> lock(fake.mutex);
+        fake.cv.wait_for(lock, std::chrono::seconds(5), [&] { return fake.endedByCancel.count(aCues) > 0; });
         assert(fake.endedByCancel[aCues] && "forget() cancels the Cues step it is running");
     }
     assert(elapsed < 5000 && "and the advisor is free again at once, not after the pass");
