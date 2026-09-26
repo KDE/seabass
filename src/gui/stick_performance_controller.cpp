@@ -351,7 +351,9 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
             std::set<std::string> seen;
             auto &catalogCache = LibraryCatalogCache::instance();
             auto collect = [&](const char *format, const QString &path) {
-                auto tracks = catalogCache.tracksFor(format, path.toStdString(), noProgress, cancel);
+                // Tracks: this page reads file paths and nothing else.
+                auto tracks = catalogCache.tracksFor(format, path.toStdString(), LibraryCatalogCache::Detail::Tracks,
+                                                     noProgress, cancel);
                 for (const auto &t : tracks) {
                     if (!t.streamingSource.empty() || t.filePath.empty()) {
                         continue;

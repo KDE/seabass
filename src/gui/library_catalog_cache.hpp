@@ -110,7 +110,9 @@ public:
     LibraryCatalogCache(const LibraryCatalogCache &) = delete;
     LibraryCatalogCache &operator=(const LibraryCatalogCache &) = delete;
 
-    // cancel: checked per track by the reader for the passes this call
+    // cancel: also checked every 100 ms while this call waits for another
+    // thread's pass (it then throws OperationCancelled), and per track by
+    // the reader for the passes this call
     // runs itself (a hit returns at once). A cancelled pass throws
     // application::OperationCancelled and caches nothing for that stage:
     // the next call runs it from scratch, never serving a truncated list.
