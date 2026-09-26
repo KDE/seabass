@@ -43,6 +43,10 @@ Button {
     property bool readOnly: false
     property string readOnlyReason: "Another Seabass instance is editing this library"
     signal readOnlyClicked()
+    // The home screen's bigger tile, two to a row beside the rail: a
+    // bigger icon and title, more room around them and a taller floor.
+    // Off everywhere else, where the card is exactly what it was.
+    property bool large: false
     visible: !experimental || experimentalFeaturesEnabled
     Layout.fillWidth: true
     // A minimum, not a fixed height: a long title next to a badge (a
@@ -51,14 +55,25 @@ Button {
     // line instead of eliding, and GridLayout equalizes every card in
     // that row to match, so the row stays aligned rather than only the
     // wrapped card growing on its own.
-    Layout.minimumHeight: 68
+    Layout.minimumHeight: card.large ? 84 : 68
+    // Bindings rather than `padding: large ? ... : ...`: the style sets
+    // the button's padding, and an ordinary card has to keep the style's
+    // value, which only restoring the original binding gives back. All
+    // four sides, because a style that sets a side of its own (KDE's
+    // does) wins over `padding`, and the large card's text has to sit
+    // exactly cardPadding plus its icon in from the edge for the home
+    // pane's one left line.
+    Binding { target: card; property: "leftPadding"; value: Theme.cardPadding; when: card.large }
+    Binding { target: card; property: "rightPadding"; value: Theme.cardPadding; when: card.large }
+    Binding { target: card; property: "topPadding"; value: Theme.cardPadding; when: card.large }
+    Binding { target: card; property: "bottomPadding"; value: Theme.cardPadding; when: card.large }
 
     contentItem: RowLayout {
         spacing: 10
         SeabassIcon {
             objectName: "cardIcon"
             iconName: card.cardIcon
-            size: Theme.iconSizeSmall
+            size: card.large ? Theme.iconSizeNormal : Theme.iconSizeSmall
             color: card.enabled && !card.readOnly ? Theme.textMuted : Qt.darker(Theme.textMuted, 1.6)
             Layout.alignment: Qt.AlignVCenter
         }
@@ -69,10 +84,11 @@ Button {
                 Layout.fillWidth: true
                 spacing: 6
                 Label {
+                    objectName: "cardTitleLabel"
                     text: card.cardTitle
                     font.family: Theme.titleFamily
                     font.weight: Theme.cardTitleWeight
-                    font.pointSize: Theme.cardTitleSize
+                    font.pointSize: card.large ? Theme.cardTitleSize * 1.1 : Theme.cardTitleSize
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
