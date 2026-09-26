@@ -121,6 +121,15 @@ struct Track
     // therefore proposes no file deletion at all from such a group.
     // Catalog rows carry a stored length and leave this false.
     bool durationIsEstimated = false;
+    // True when durationSeconds was not in the catalog but filled in
+    // afterwards, from a probe of the audio file or from the stick's
+    // duration cache (which only ever holds probed lengths): see
+    // application::fillMissingDurations. Such a length arrives at a
+    // different stage of a staged read depending on what the cache knew,
+    // so the library fingerprint leaves it out of a track's identity
+    // (trackIdentityHash) and a track reads the same at every stage.
+    // Catalog rows leave this false.
+    bool durationIsProbed = false;
     double bpm = 0.0;
     std::string key;  // human-readable, e.g. "Fm" or "F#m", empty if unknown
     std::vector<CuePoint> cues;

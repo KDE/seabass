@@ -147,7 +147,16 @@ std::uint64_t trackIdentityHash(const Track &track)
     key.push_back('\x1f');
     key += normalize(track.artist);
     key.push_back('\x1f');
-    key += std::to_string(static_cast<long long>(std::llround(track.durationSeconds)));
+    // The catalog's own length only. A length filled in after the read
+    // (probed, or taken from the stick's duration cache) depends on what
+    // that cache knew and on which stage of a staged read served the
+    // track: the same unchanged stick then hashed one way before its
+    // first Full read and another after. No length and a filled-in
+    // length therefore read the same, and a catalog length of 0 is no
+    // length.
+    if (track.durationSeconds > 0.0 && !track.durationIsProbed) {
+        key += std::to_string(static_cast<long long>(std::llround(track.durationSeconds)));
+    }
     return fnv1a(key);
 }
 

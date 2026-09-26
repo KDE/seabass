@@ -157,8 +157,16 @@ int main()
         assert(parsed.has_value());
         assert(*parsed == original);
         assert(!LibraryFingerprint::parse("").has_value());
-        assert(!LibraryFingerprint::parse("v2;1;1;1;;;").has_value());
-        assert(!LibraryFingerprint::parse("v1;1;1;1;zz;;").has_value());
+        assert(!LibraryFingerprint::parse("v99;1;1;1;;;").has_value());
+        assert(!LibraryFingerprint::parse("v2;1;1;1;zz;;").has_value());
+        // A version 1 fingerprint, written into a backup's manifest before
+        // probed lengths left the track identity, was hashed differently:
+        // it parses as nothing, so the advisor has no fingerprint for that
+        // backup rather than calling it a different library.
+        std::string versionOne = text;
+        versionOne.replace(0, versionOne.find(';'), "v1");
+        assert(text.rfind("v2;", 0) == 0 && versionOne.rfind("v1;", 0) == 0);
+        assert(!LibraryFingerprint::parse(versionOne).has_value() && "an old-version manifest parses as nullopt");
         LibraryFingerprint empty = fingerprintLibrary({});
         assert(LibraryFingerprint::parse(empty.serialize()) == empty);
     }
@@ -175,6 +183,34 @@ int main()
         assert(trackIdentityHash(a) == trackIdentityHash(b));
         b.artist = "Deadmau5 & Kaskade";
         assert(trackIdentityHash(a) != trackIdentityHash(b));
+    }
+
+    // A catalog's own length is part of the identity; one filled in after
+    // the read (probed, or from the stick's duration cache) is not, and
+    // reads the same as no length at all: which stage of a staged read
+    // served the track must not change what it hashes to.
+    {
+        Track catalog;
+        catalog.title = "Strobe";
+        catalog.artist = "deadmau5";
+        catalog.durationSeconds = 634.2;
+        Track longer = catalog;
+        longer.durationSeconds = 400.0;
+        assert(trackIdentityHash(catalog) != trackIdentityHash(longer) && "a catalog length is kept");
+
+        Track unknown = catalog;
+        unknown.durationSeconds = 0.0;
+        Track probed = catalog;
+        probed.durationIsProbed = true;
+        Track probedElse = probed;
+        probedElse.durationSeconds = 401.0;
+        assert(trackIdentityHash(probed) == trackIdentityHash(unknown) && "a probed length is ignored");
+        assert(trackIdentityHash(probedElse) == trackIdentityHash(unknown));
+        assert(trackIdentityHash(probed) != trackIdentityHash(catalog));
+
+        std::vector<Track> before{unknown};
+        std::vector<Track> after{probed};
+        assert(fingerprintLibrary(before) == fingerprintLibrary(after));
     }
 
     // The two-step read: a fingerprint from the catalogs alone, before the

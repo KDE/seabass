@@ -61,6 +61,7 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
         if (seen != resolvedThisRun.end()) {
             if (seen->second.seconds) {
                 track.durationSeconds = *seen->second.seconds;
+                track.durationIsProbed = true;
                 count(seen->second.origin);
             } else {
                 result.unreadable++;
@@ -76,6 +77,7 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
                 unverified ? cache->lookupUnverified(track.filePath) : cache->lookup(track.filePath);
             if (cached) {
                 track.durationSeconds = *cached;
+                track.durationIsProbed = true;
                 resolvedThisRun[track.filePath] = {cached, Resolved::Origin::Cache};
                 count(Resolved::Origin::Cache);
                 if (unverified) {
@@ -97,6 +99,7 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
         }
         resolvedThisRun[track.filePath] = {probed, Resolved::Origin::Probe};
         track.durationSeconds = *probed;
+        track.durationIsProbed = true;
         result.probed++;
         if (cache) {
             cache->store(track.filePath, *probed);

@@ -22,7 +22,8 @@ namespace seabass::domain
 // smallest hashes of each set, so two libraries sample the same members
 // rather than random ones):
 //
-//   tracks:    normalized title + artist + duration in whole seconds
+//   tracks:    normalized title + artist + the catalog's duration in
+//              whole seconds (a length probed after the read is left out)
 //   cues:      per track, its sorted cue positions rounded to 50 ms
 //              (the personal part: two DJs rarely place identical cues)
 //   playlists: normalized playlist paths
@@ -39,7 +40,10 @@ namespace seabass::domain
 // cue sample that would read as "no cues at all".
 struct LibraryFingerprint
 {
-    static constexpr int Version = 1;
+    // 2: a track's duration counts only when its catalog gave it (see
+    // trackIdentityHash). A version 1 fingerprint, hashed with probed
+    // lengths in, parses as nothing rather than as a different library.
+    static constexpr int Version = 2;
     static constexpr std::size_t SampleSize = 256;
 
     std::vector<std::uint64_t> trackHashes;     // sorted ascending, at most SampleSize

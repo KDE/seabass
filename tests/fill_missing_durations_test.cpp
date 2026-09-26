@@ -284,6 +284,14 @@ int main()
         assert(result.probed == 2);
         assert(result.unreadable == 2);
         everyTrackAccountedFor(result, tracks.size());
+
+        // Every filled length says it was filled in, from the cache or
+        // the probe alike; the catalog's own and an unknown one do not.
+        // The library fingerprint leaves the marked ones out.
+        assert(!tracks[0].durationIsProbed && "the catalog's own length");
+        assert(tracks[1].durationIsProbed && "from the cache");
+        assert(tracks[2].durationIsProbed && tracks[3].durationIsProbed && "probed, and its second row");
+        assert(!tracks[4].durationIsProbed && !tracks[5].durationIsProbed && "still unknown");
     }
 
     // Unverified: a cached length is taken through lookupUnverified(),
