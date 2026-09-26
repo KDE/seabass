@@ -14,6 +14,7 @@
 #include <functional>
 #include <memory>
 
+#include "gui/async_request.hpp"
 #include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/backup_stick.hpp"
 #include "application/use_cases/compact_stick_backup.hpp"
@@ -91,7 +92,7 @@ public:
     bool renameArchiveTo(const QString &target);
     bool busy() const { return !m_activity.isEmpty(); }
     bool backingUp() const { return m_activity == QStringLiteral("backup"); }
-    bool previewing() const { return m_previewing; }
+    bool previewing() const { return m_preview.busy(); }
     QString activity() const { return m_activity; }
     QString phase() const { return m_phase; }
     qlonglong filesDone() const { return m_filesDone; }
@@ -181,7 +182,8 @@ private:
     void applyProgress(const application::BackupProgress &progress);
     void applySimpleProgress(const QString &phase, qlonglong bytesDone, qlonglong bytesTotal);
     void resetProgress();
-    void onPreviewFinished();
+    void refreshPreview(bool restart);
+    void onPreviewFinished(const std::shared_ptr<PreviewResult> &result, const QString &thrown);
     void onRunFinished();
     void finishOutcome(const application::BackupStickOutcome &outcome);
 
@@ -210,7 +212,6 @@ private:
     QString m_rekordboxPath;
     QString m_enginePath;
     QString m_activity;
-    bool m_previewing = false;
     QString m_phase;
     qlonglong m_filesDone = 0;
     qlonglong m_filesTotal = 0;
@@ -231,8 +232,14 @@ private:
     QString m_statusMessage;
     application::CancellationToken m_cancel;
     std::unique_ptr<application::PendingBackup> m_pending;
-    QFutureWatcher<std::shared_ptr<PreviewResult>> m_previewWatcher;
     QFutureWatcher<std::shared_ptr<RunResult>> m_runWatcher;
+
+    // The preview being read, under docs/async-requests.md: every
+    // refresh() is a fresh one that supersedes it, so a preview taken
+    // before a backup can no longer land after the backup's own refresh
+    // (that refresh used to be dropped while the old preview ran), and
+    // leaving does not wait for it. Last, so it is destroyed first.
+    AsyncRequest<std::shared_ptr<PreviewResult>> m_preview{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

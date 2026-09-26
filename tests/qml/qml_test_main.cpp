@@ -319,6 +319,20 @@ public:
         return !ec;
     }
 
+    // A small file at `file`, for a test that needs one to exist.
+    Q_INVOKABLE bool touchNew(const QString &file)
+    {
+        std::ofstream(seabass::gui::pathFromQString(file)) << "x";
+        return QFile::exists(file);
+    }
+
+    Q_INVOKABLE bool makeDirectory(const QString &directory)
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(seabass::gui::pathFromQString(directory), ec);
+        return !ec;
+    }
+
     Q_INVOKABLE double trackDatabaseParses() const
     {
         return static_cast<double>(seabass::infrastructure::WorkCounters::instance().snapshot().trackDatabaseParses);

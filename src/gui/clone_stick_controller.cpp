@@ -103,8 +103,6 @@ struct CloneStickController::RunResult
 
 CloneStickController::CloneStickController(QObject *parent) : QObject(parent)
 {
-    connect(&m_previewWatcher, &QFutureWatcher<std::shared_ptr<PreviewResult>>::finished, this,
-            &CloneStickController::onPreviewFinished);
     connect(&m_runWatcher, &QFutureWatcher<std::shared_ptr<RunResult>>::finished, this,
             &CloneStickController::onRunFinished);
 }
@@ -113,7 +111,6 @@ CloneStickController::~CloneStickController()
 {
     m_cancel.cancel();
     awaitQuietly(m_runWatcher);
-    awaitQuietly(m_previewWatcher);
 }
 
 void CloneStickController::configure(const QString &sourceLabel, const QString &sourceRekordboxPath,
@@ -144,29 +141,40 @@ CloneStickOptions CloneStickController::baseOptions() const
 
 void CloneStickController::refresh()
 {
+    refreshPreview(false);
+}
+
+void CloneStickController::refreshPreview(bool restart)
+{
     if (m_sourceRoot.isEmpty() || m_targetRoot.isEmpty() || m_cloning) {
         return;
     }
-    if (m_previewWatcher.isRunning()) {
-        m_refreshPending = true;
-        return;
-    }
-    m_previewing = true;
-    emit busyChanged();
+    // A preview still running for another configuration is superseded,
+    // not queued behind; one for this configuration answers, unless a
+    // clone just changed what it read (restart). It takes no token, so a
+    // request for the same thing must not start another.
     const CloneStickOptions options = baseOptions();
-    m_previewWatcher.setFuture(QtConcurrent::run([options]() {
+    const QString key = m_archivePath + QLatin1Char('\n') + m_sourceRoot + QLatin1Char('\n') + m_targetRoot;
+    AsyncRequest<std::shared_ptr<PreviewResult>>::Work work = [options](application::CancellationToken) {
         auto result = std::make_shared<PreviewResult>();
         result->blockedBy = QString::fromStdString(infrastructure::system::conflictingDjSoftwareName());
         result->preview = CloneStick::preview(options);
         return result;
-    }));
+    };
+    AsyncRequest<std::shared_ptr<PreviewResult>>::Ending ending{
+        [this](std::shared_ptr<PreviewResult> &&result) { onPreviewFinished(result, {}); },
+        [this](const QString &message) { onPreviewFinished(nullptr, message); },
+        nullptr,
+    };
+    if (restart) {
+        m_previewRequest.restart(key, m_sourceRoot, std::move(work), std::move(ending));
+    } else {
+        m_previewRequest.start(key, m_sourceRoot, std::move(work), std::move(ending));
+    }
 }
 
-void CloneStickController::onPreviewFinished()
+void CloneStickController::onPreviewFinished(const std::shared_ptr<PreviewResult> &result, const QString &thrown)
 {
-    QString thrown;
-    std::shared_ptr<PreviewResult> result = takeResult(m_previewWatcher, &thrown);
-    m_previewing = false;
     if (!thrown.isEmpty()) {
         setErrorMessage(QStringLiteral("Could not read the source stick or its backup: ") + thrown);
     }
@@ -197,11 +205,6 @@ void CloneStickController::onPreviewFinished()
         setErrorMessage(QString::fromStdString(p.error));
     }
     emit previewChanged();
-    emit busyChanged();
-    if (m_refreshPending) {
-        m_refreshPending = false;
-        refresh();
-    }
 }
 
 void CloneStickController::resetProgress()
@@ -380,7 +383,7 @@ void CloneStickController::onRunFinished()
     if (!thrown.isEmpty()) {
         setErrorMessage(thrown);
         emit actionFeedback(thrown, true);
-        refresh();
+        refreshPreview(true);
         return;
     }
     if (!result) {
@@ -389,7 +392,7 @@ void CloneStickController::onRunFinished()
     if (!result->refusal.isEmpty()) {
         setErrorMessage(result->refusal);
         emit actionFeedback(result->refusal, true);
-        refresh();
+        refreshPreview(true);
         return;
     }
     const CloneStickOutcome &o = result->outcome;
@@ -449,7 +452,7 @@ void CloneStickController::onRunFinished()
         emit actionFeedback(m_errorMessage, true);
         break;
     }
-    refresh();
+    refreshPreview(true);
 }
 
 void CloneStickController::setErrorMessage(const QString &message)

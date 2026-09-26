@@ -116,8 +116,6 @@ struct RestoreStickBackupController::MountResult
 
 RestoreStickBackupController::RestoreStickBackupController(QObject *parent) : QObject(parent)
 {
-    connect(&m_analyzeWatcher, &QFutureWatcher<std::shared_ptr<AnalyzeResult>>::finished, this,
-            &RestoreStickBackupController::onAnalyzeFinished);
     connect(&m_restoreWatcher, &QFutureWatcher<std::shared_ptr<RestoreResult>>::finished, this,
             &RestoreStickBackupController::onRestoreFinished);
     connect(&m_listWatcher, &QFutureWatcher<QVariantList>::finished, this,
@@ -131,7 +129,6 @@ RestoreStickBackupController::~RestoreStickBackupController()
 {
     m_cancel.cancel();
     awaitQuietly(m_restoreWatcher);
-    awaitQuietly(m_analyzeWatcher);
     // Not the backup listing: it only reads the folder and captures
     // nothing of this object, so it runs out on its own and its result is
     // dropped with the watcher (no finished() reaches a controller that is
@@ -162,6 +159,10 @@ void RestoreStickBackupController::setArchivePath(const QString &path)
     m_archiveInfo.clear();
     m_preview.clear();
     m_result.clear();
+    // An analysis of the archive being left is over: its answer would
+    // describe that archive under this one's name. Ended after the old
+    // description is gone, so its ending announces an empty one.
+    m_analyze.cancel();
     emit archivePathChanged();
     emit archiveInfoChanged();
     emit previewChanged();
@@ -298,17 +299,14 @@ void RestoreStickBackupController::analyze(const QString &targetRoot)
     if (m_archivePath.isEmpty() || m_restoring) {
         return;
     }
-    if (m_analyzeWatcher.isRunning()) {
-        m_pendingAnalyzeTarget = targetRoot;
-        return;
-    }
-    m_analyzing = true;
-    emit busyChanged();
+    // The same archive and drive again is answered by the analysis
+    // running; another supersedes it (AsyncRequest).
     RestoreOptions options;
     options.archivePath = pathFromQString(m_archivePath);
     options.targetRoot = pathFromQString(targetRoot);
     bool targetGiven = !targetRoot.isEmpty();
-    m_analyzeWatcher.setFuture(QtConcurrent::run([options, targetGiven, targetRoot]() {
+    m_analyze.start(m_archivePath + QLatin1Char('\n') + targetRoot, targetRoot,
+                    [options, targetGiven, targetRoot](application::CancellationToken) {
         auto result = std::make_shared<AnalyzeResult>();
         result->targetGiven = targetGiven;
         if (targetGiven) {
@@ -321,14 +319,20 @@ void RestoreStickBackupController::analyze(const QString &targetRoot)
         }
         result->preview = RestoreStickBackup::preview(options);
         return result;
-    }));
+    },
+                    {
+                        [this](std::shared_ptr<AnalyzeResult> &&result) { onAnalyzeFinished(result, {}); },
+                        [this](const QString &message) { onAnalyzeFinished(nullptr, message); },
+                        [this]() {
+                            emit archiveInfoChanged();
+                            emit previewChanged();
+                        },
+                    });
 }
 
-void RestoreStickBackupController::onAnalyzeFinished()
+void RestoreStickBackupController::onAnalyzeFinished(const std::shared_ptr<AnalyzeResult> &result,
+                                                     const QString &thrown)
 {
-    QString thrown;
-    std::shared_ptr<AnalyzeResult> result = takeResult(m_analyzeWatcher, &thrown);
-    m_analyzing = false;
     if (!thrown.isEmpty()) {
         setErrorMessage(QStringLiteral("Could not read the backup: ") + thrown);
     }
@@ -370,12 +374,6 @@ void RestoreStickBackupController::onAnalyzeFinished()
     }
     emit archiveInfoChanged();
     emit previewChanged();
-    emit busyChanged();
-    if (m_pendingAnalyzeTarget) {
-        const QString target = *m_pendingAnalyzeTarget;
-        m_pendingAnalyzeTarget.reset();
-        analyze(target);
-    }
 }
 
 void RestoreStickBackupController::applyProgress(const RestoreProgress &progress)

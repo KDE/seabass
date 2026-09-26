@@ -55,7 +55,11 @@ public:
     // refresh() has announced it, and isRunning() then reported "not
     // listing" in the very busyChanged that says it started.
     bool listing() const { return m_listing; }
-    bool deleting() const { return m_deleteWatcher.isRunning(); }
+    // From the moment a delete is asked for until its result is handled,
+    // never isRunning(): that goes false before the result lands, which
+    // re-enabled Delete in a window where a second delete replaced the
+    // first one's future and its result (and backupDeleted) was lost.
+    bool deleting() const { return !m_deletingPath.isEmpty(); }
     QString errorMessage() const { return m_errorMessage; }
     QString statusMessage() const { return m_statusMessage; }
 
@@ -91,6 +95,8 @@ private:
     QString m_errorMessage;
     QString m_statusMessage;
     QString m_deletingPath;
+    // Deletes asked for while one runs, done in turn: each is answered.
+    QStringList m_deleteQueue;
     bool m_refreshAgain = false;
     bool m_listing = false;
     QFutureWatcher<QVariantList> m_listWatcher;

@@ -180,7 +180,14 @@ void FullBackupsController::openChangelog(const QString &archivePath)
 
 void FullBackupsController::deleteBackup(const QString &archivePath)
 {
-    if (m_deleteWatcher.isRunning() || archivePath.isEmpty()) {
+    if (archivePath.isEmpty()) {
+        return;
+    }
+    if (deleting()) {
+        const QString queued = canonical(archivePath);
+        if (queued != m_deletingPath && !m_deleteQueue.contains(queued)) {
+            m_deleteQueue << queued;
+        }
         return;
     }
     const QString path = canonical(archivePath);
@@ -213,6 +220,10 @@ void FullBackupsController::onDeleteFinished()
     }
     emit busyChanged();
     refresh();
+    // One refused (open for browsing) must not strand the rest.
+    while (!m_deleteQueue.isEmpty() && !deleting()) {
+        deleteBackup(m_deleteQueue.takeFirst());
+    }
 }
 
 QString FullBackupsController::browsedArchiveFor(const QString &libraryRoot) const
