@@ -11,6 +11,7 @@
 //   catalog_stage_timing rekordbox /media/sebas/STICK/PIONEER
 //   catalog_stage_timing engine "/media/sebas/STICK/Engine Library"
 //   catalog_stage_timing onelibrary /media/sebas/STICK/PIONEER
+//   catalog_stage_timing engine "/media/sebas/STICK/Engine Library" tracks   (that stage alone)
 
 #include <chrono>
 #include <iostream>
@@ -21,10 +22,12 @@
 
 int main(int argc, char **argv)
 {
-    if (argc != 3) {
-        std::cerr << "usage: catalog_stage_timing <rekordbox|engine|onelibrary> <catalog path>\n";
+    if (argc != 3 && argc != 4) {
+        std::cerr << "usage: catalog_stage_timing <rekordbox|engine|onelibrary> <catalog path> [tracks|cues|full]\n";
         return 2;
     }
+    // An optional last stage, so one stage can be traced on its own.
+    const std::string upTo = argc == 4 ? argv[3] : "full";
     const std::string format = argv[1];
     const std::string path = argv[2];
     using seabass::gui::LibraryCatalogCache;
@@ -53,7 +56,13 @@ int main(int argc, char **argv)
                   << withSizes << " with a size)\n";
     };
     stage("Tracks", Detail::Tracks);
+    if (upTo == "tracks") {
+        return 0;
+    }
     stage("Cues  ", Detail::Cues);
+    if (upTo == "cues") {
+        return 0;
+    }
     stage("Full  ", Detail::Full);
     return 0;
 }
