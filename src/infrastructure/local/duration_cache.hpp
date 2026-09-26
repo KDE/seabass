@@ -43,6 +43,10 @@ public:
     // nullopt when absent or stale (size/mtime changed).
     std::optional<double> lookup(const std::string &absoluteFilePath) const override;
 
+    // Cached duration by path alone: never touches the file. See
+    // DurationCachePort::lookupUnverified for what a caller then owes.
+    std::optional<double> lookupUnverified(const std::string &absoluteFilePath) const override;
+
     // Records a duration. Nothing is written to disk until save().
     void store(const std::string &absoluteFilePath, double durationSeconds) override;
 

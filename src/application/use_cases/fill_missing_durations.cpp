@@ -25,7 +25,8 @@ struct Resolved
 }  // namespace
 
 FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &tracks, TrackDurationProbe &probe,
-                                                 DurationCachePort *cache)
+                                                 DurationCachePort *cache, CachedDurations trust,
+                                                 CancellationToken cancel)
 {
     FillMissingDurationsResult result;
 
@@ -34,9 +35,13 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
     // so remember what this run already resolved and never pay twice.
     std::map<std::string, Resolved> resolvedThisRun;
 
-    auto count = [&result](Resolved::Origin origin) {
+    const bool unverified = trust == CachedDurations::Unverified;
+    auto count = [&result, unverified](Resolved::Origin origin) {
         if (origin == Resolved::Origin::Cache) {
             result.fromCache++;
+            if (unverified) {
+                result.fromCacheUnverified++;
+            }
         } else {
             result.probed++;
         }
@@ -63,11 +68,19 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
             continue;
         }
 
+        // Once per file, before it is looked at or opened: a pulled
+        // stick stops the fill here rather than after every other file.
+        cancel.throwIfCancelled();
         if (cache) {
-            if (auto cached = cache->lookup(track.filePath)) {
+            const auto cached =
+                unverified ? cache->lookupUnverified(track.filePath) : cache->lookup(track.filePath);
+            if (cached) {
                 track.durationSeconds = *cached;
                 resolvedThisRun[track.filePath] = {cached, Resolved::Origin::Cache};
-                result.fromCache++;
+                count(Resolved::Origin::Cache);
+                if (unverified) {
+                    result.unverifiedPaths.push_back(track.filePath);
+                }
                 continue;
             }
         }
@@ -90,6 +103,42 @@ FillMissingDurationsResult fillMissingDurations(std::vector<domain::Track> &trac
         }
     }
 
+    return result;
+}
+
+VerifyCachedDurationsResult verifyCachedDurations(std::vector<domain::Track> &tracks,
+                                                   const std::vector<std::string> &paths, TrackDurationProbe &probe,
+                                                   DurationCachePort &cache, CancellationToken cancel)
+{
+    VerifyCachedDurationsResult result;
+    for (const std::string &path : paths) {
+        cancel.throwIfCancelled();
+        const std::optional<double> taken = cache.lookupUnverified(path);
+        if (!taken) {
+            continue;  // nothing was taken from the cache for this file
+        }
+        if (cache.lookup(path)) {
+            result.confirmed++;
+            continue;
+        }
+        // Changed or gone since it was probed: what a Verified fill would
+        // have done for it, a probe, and the cache corrected.
+        const std::optional<double> probed = probe.durationSeconds(path);
+        double now = 0.0;
+        if (probed && *probed > 0.0) {
+            now = *probed;
+            cache.store(path, *probed);
+            result.reprobed++;
+        } else {
+            result.unreadable++;
+        }
+        for (auto &track : tracks) {
+            if (track.filePath == path && track.durationSeconds == *taken) {
+                track.durationSeconds = now;
+                result.tracksUpdated++;
+            }
+        }
+    }
     return result;
 }
 

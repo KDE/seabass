@@ -286,6 +286,74 @@ int main()
         everyTrackAccountedFor(result, tracks.size());
     }
 
+    // Unverified: a cached length is taken through lookupUnverified(),
+    // never lookup(), counted as from the cache and as unverified, and
+    // its file listed once however many rows name it. A miss is probed
+    // exactly as when Verified.
+    {
+        class TwoWayCache : public MemoryCache
+        {
+        public:
+            mutable int unverifiedLookups = 0;
+            std::optional<double> lookupUnverified(const std::string &path) const override
+            {
+                unverifiedLookups++;
+                const auto found = entries.find(path);
+                return found == entries.end() ? std::optional<double>{} : found->second;
+            }
+        };
+        CountingProbe probe;
+        probe.answers["/stick/new.mp3"] = 321.0;
+        TwoWayCache cache;
+        cache.entries["/stick/cached.mp3"] = 111.0;
+        std::vector<Track> tracks{trackAt("/stick/cached.mp3"), trackAt("/stick/cached.mp3"),
+                                  trackAt("/stick/new.mp3"), trackAt("/stick/known.mp3", 50.0)};
+        const auto result = fillMissingDurations(tracks, probe, &cache, seabass::application::CachedDurations::Unverified);
+        assert(cache.lookups == 0 && "Unverified never looks at a file through lookup()");
+        assert(cache.unverifiedLookups == 2);
+        assert(result.fromCache == 2 && result.fromCacheUnverified == 2);
+        assert(result.unverifiedPaths == std::vector<std::string>{"/stick/cached.mp3"});
+        assert(result.probed == 1 && result.alreadyKnown == 1);
+        assert(tracks[0].durationSeconds == 111.0 && tracks[1].durationSeconds == 111.0);
+        assert(tracks[2].durationSeconds == 321.0 && cache.stores == 1);
+        everyTrackAccountedFor(result, tracks.size());
+
+        // Verified, the default: never lookupUnverified(), nothing listed.
+        std::vector<Track> again{trackAt("/stick/cached.mp3")};
+        TwoWayCache verifiedCache;
+        verifiedCache.entries["/stick/cached.mp3"] = 111.0;
+        const auto verified = fillMissingDurations(again, probe, &verifiedCache);
+        assert(verifiedCache.unverifiedLookups == 0 && verifiedCache.lookups == 1);
+        assert(verified.fromCache == 1 && verified.fromCacheUnverified == 0 && verified.unverifiedPaths.empty());
+    }
+
+    // Cancelled: checked before every file, so a cancel stops the fill
+    // before it probes anything more, and throws.
+    {
+        CountingProbe probe;
+        MemoryCache cache;
+        std::vector<Track> tracks{trackAt("/stick/1.mp3"), trackAt("/stick/2.mp3"), trackAt("/stick/3.mp3")};
+        seabass::application::CancellationToken cancel;
+        cancel.cancel();
+        bool threw = false;
+        try {
+            fillMissingDurations(tracks, probe, &cache, seabass::application::CachedDurations::Unverified, cancel);
+        } catch (const seabass::application::OperationCancelled &) {
+            threw = true;
+        }
+        assert(threw && probe.totalCalls() == 0 && cache.lookups == 0);
+
+        // And verifyCachedDurations() likewise.
+        cache.entries["/stick/1.mp3"] = 10.0;
+        threw = false;
+        try {
+            seabass::application::verifyCachedDurations(tracks, {"/stick/1.mp3"}, probe, cache, cancel);
+        } catch (const seabass::application::OperationCancelled &) {
+            threw = true;
+        }
+        assert(threw && probe.totalCalls() == 0 && cache.lookups == 0);
+    }
+
     std::cout << "fill_missing_durations_test passed\n";
     return 0;
 }

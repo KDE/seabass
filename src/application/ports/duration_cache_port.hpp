@@ -23,7 +23,19 @@ class DurationCachePort
 {
 public:
     virtual ~DurationCachePort() = default;
+    // The cached length, only while the file still matches what was
+    // recorded when it was probed: this looks at the file.
     virtual std::optional<double> lookup(const std::string &absoluteFilePath) const = 0;
+    // The cached length by path alone, without looking at the file: for a
+    // read that must not touch the audio files (a stick's Tracks stage,
+    // where a stat per file is seconds cold). Whoever takes an answer from
+    // here owes a lookup() of the same path later, before the length is
+    // relied on for anything final; see verifyCachedDurations(). A cache
+    // that cannot answer without looking answers as lookup() does.
+    virtual std::optional<double> lookupUnverified(const std::string &absoluteFilePath) const
+    {
+        return lookup(absoluteFilePath);
+    }
     virtual void store(const std::string &absoluteFilePath, double durationSeconds) = 0;
 };
 
