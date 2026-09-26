@@ -30,6 +30,10 @@ ColumnLayout {
     required property string anchorKey
     required property double anchorBpm
     required property string anchorArtworkPath
+    // The anchor row's fallbackArtworkPath, for an Engine row whose own
+    // art is not on the stick. Not required: a caller without one leaves
+    // it empty and the anchor shows its own art or nothing.
+    property string anchorFallbackArtworkPath: ""
     // Every playlist the anchor track already belongs to -- shown as
     // quick picks at the top of the This Playlist combo (see
     // playlistComboModel below).
@@ -266,11 +270,11 @@ ColumnLayout {
                         Layout.preferredWidth: Theme.iconSizeSmall
                         Layout.preferredHeight: Theme.iconSizeSmall
                         color: Theme.groupBackground
-                        Image {
+                        ArtworkImage {
+                            objectName: "anchorArtwork"
                             anchors.fill: parent
-                            visible: root.anchorArtworkPath.length > 0
                             source: root.anchorArtworkPath
-                            fillMode: Image.PreserveAspectCrop
+                            fallbackSource: root.anchorFallbackArtworkPath
                         }
                     }
                     ColumnLayout {
@@ -624,11 +628,11 @@ ColumnLayout {
                     Layout.preferredWidth: Theme.iconSizeSmall
                     Layout.preferredHeight: Theme.iconSizeSmall
                     color: Theme.groupBackground
-                    Image {
+                    ArtworkImage {
+                        objectName: "candidateArtwork"
                         anchors.fill: parent
-                        visible: candidateDelegate.modelData.artworkPath.length > 0
-                        source: candidateDelegate.modelData.artworkPath
-                        fillMode: Image.PreserveAspectCrop
+                        source: candidateDelegate.modelData.artworkPath || ""
+                        fallbackSource: candidateDelegate.modelData.fallbackArtworkPath || ""
                     }
                 }
                 ColumnLayout {
@@ -745,6 +749,7 @@ ColumnLayout {
         property string infoTitle: ""
         property string infoArtist: ""
         property string infoArtworkPath: ""
+        property string infoFallbackArtworkPath: ""
         property string infoKey: ""
         property double infoBpm: 0
         property int infoRating: -1
@@ -756,6 +761,7 @@ ColumnLayout {
             candidateInfoPopup.infoTitle = candidate.title;
             candidateInfoPopup.infoArtist = candidate.artist;
             candidateInfoPopup.infoArtworkPath = candidate.artworkPath;
+            candidateInfoPopup.infoFallbackArtworkPath = candidate.fallbackArtworkPath || "";
             candidateInfoPopup.infoKey = candidate.key;
             candidateInfoPopup.infoKeyRelation = candidate.keyRelation;
             candidateInfoPopup.infoBpm = candidate.bpm;
@@ -776,11 +782,10 @@ ColumnLayout {
                     Layout.preferredWidth: Theme.iconSizeLarge
                     Layout.preferredHeight: Theme.iconSizeLarge
                     color: Theme.groupBackground
-                    Image {
+                    ArtworkImage {
                         anchors.fill: parent
-                        visible: candidateInfoPopup.infoArtworkPath.length > 0
                         source: candidateInfoPopup.infoArtworkPath
-                        fillMode: Image.PreserveAspectCrop
+                        fallbackSource: candidateInfoPopup.infoFallbackArtworkPath
                     }
                 }
                 ColumnLayout {

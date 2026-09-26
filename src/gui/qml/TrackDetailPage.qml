@@ -142,11 +142,11 @@ Page {
                 Layout.preferredWidth: Theme.iconSizeLarge * 2
                 Layout.preferredHeight: Theme.iconSizeLarge * 2
                 color: Theme.surface
-                Image {
+                ArtworkImage {
+                    objectName: "trackPageArtwork"
                     anchors.fill: parent
-                    visible: root.track && root.track.artworkPath.length > 0
-                    source: root.track ? root.track.artworkPath : ""
-                    fillMode: Image.PreserveAspectCrop
+                    source: root.track && root.track.artworkPath ? root.track.artworkPath : ""
+                    fallbackSource: root.track && root.track.fallbackArtworkPath ? root.track.fallbackArtworkPath : ""
                 }
             }
 
@@ -180,13 +180,14 @@ Page {
                 text: "Play"
                 icon.source: Theme.iconUrl("media-playback-start")
                 icon.color: enabled ? Theme.text : Theme.textMuted
-                enabled: root.track && root.track.filePath.length > 0
+                enabled: !!root.track && root.track.filePath.length > 0
                 ToolTip.visible: hovered
                 ToolTip.text: root.track && root.track.filePath.length === 0
                     ? "Streaming track - no local file, can't be played."
                     : "Play this track"
                 onClicked: root.playbackController.load(root.format, root.libraryPath, root.track.sourceId,
-                    root.track.filePath, root.track.title, root.track.artist, root.track.artworkPath, root.track.cues)
+                    root.track.filePath, root.track.title, root.track.artist, root.track.artworkPath, root.track.cues,
+                    root.track.fallbackArtworkPath || "")
             }
         }
 

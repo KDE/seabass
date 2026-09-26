@@ -126,7 +126,8 @@ void PlaybackController::setVolume(qreal volume)
 
 void PlaybackController::load(const QString &format, const QString &libraryPath, const QString &sourceId,
                                const QString &filePath, const QString &title, const QString &artist,
-                               const QString &artworkPath, const QVariantList &cues)
+                               const QString &artworkPath, const QVariantList &cues,
+                               const QString &fallbackArtworkPath)
 {
     m_player.stop();
     setErrorMessage({});
@@ -147,6 +148,8 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_artworkPath = artworkPath;
     m_cues = cues;
     m_hasTrack = true;
+    m_fallbackArtworkPath = fallbackArtworkPath.isEmpty()
+        ? queueValue(currentQueueRow(), "fallbackArtworkPath").toString() : fallbackArtworkPath;
 
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         setErrorMessage("audio file not found" + (filePath.isEmpty() ? QString() : (": " + filePath)));
@@ -166,7 +169,22 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     }
 
     emit trackChanged();
+    emit cuesChanged();
     emit queueChanged();
+}
+
+bool PlaybackController::takeCues(const QString &format, const QString &libraryPath, const QString &sourceId,
+                                  const QVariantList &cues)
+{
+    if (!m_hasTrack || format != m_currentFormat || libraryPath != m_currentLibraryPath ||
+        sourceId != m_currentSourceId) {
+        return false;
+    }
+    if (cues != m_cues) {
+        m_cues = cues;
+        emit cuesChanged();
+    }
+    return true;
 }
 
 QVariantList PlaybackController::waveformFor(const QString &format, const QString &libraryPath,
@@ -328,7 +346,7 @@ void PlaybackController::loadQueueRow(int row)
     load(m_queueFormat, m_queueLibraryPath, queueValue(row, "sourceId").toString(),
          queueValue(row, "filePath").toString(), queueValue(row, "title").toString(),
          queueValue(row, "artist").toString(), queueValue(row, "artworkPath").toString(),
-         queueValue(row, "cues").toList());
+         queueValue(row, "cues").toList(), queueValue(row, "fallbackArtworkPath").toString());
     emit advanced(previousSourceId);
 }
 
@@ -444,6 +462,7 @@ void PlaybackController::stop()
     m_beatNumbers.clear();
     m_cues.clear();
     emit trackChanged();
+    emit cuesChanged();
     emit queueChanged();
 }
 

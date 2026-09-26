@@ -49,8 +49,14 @@ class PlaybackController : public QObject
     Q_PROPERTY(QString title READ title NOTIFY trackChanged)
     Q_PROPERTY(QString artist READ artist NOTIFY trackChanged)
     Q_PROPERTY(QString artworkPath READ artworkPath NOTIFY trackChanged)
+    // Art to show when artworkPath names a file that is not there: an
+    // Engine row's rekordbox sibling's cover (see TrackListModel's
+    // fallbackArtworkPath role). Empty when there is none.
+    Q_PROPERTY(QString fallbackArtworkPath READ fallbackArtworkPath NOTIFY trackChanged)
     Q_PROPERTY(QVariantList waveform READ waveform NOTIFY trackChanged)
-    Q_PROPERTY(QVariantList cues READ cues NOTIFY trackChanged)
+    // Its own signal, not trackChanged: the cues of the loaded track can
+    // arrive after it (see takeCues()), and that is not a new track.
+    Q_PROPERTY(QVariantList cues READ cues NOTIFY cuesChanged)
     // The loaded track's beat grid as rekordbox or Engine analysed it:
     // when each beat falls, in milliseconds, and its place in the bar (1
     // to 4, 1 the downbeat, 0 unknown), index for index. Empty for a
@@ -111,6 +117,7 @@ public:
     QString title() const { return m_title; }
     QString artist() const { return m_artist; }
     QString artworkPath() const { return m_artworkPath; }
+    QString fallbackArtworkPath() const { return m_fallbackArtworkPath; }
     QVariantList waveform() const { return m_waveform; }
     QVariantList cues() const { return m_cues; }
     QList<qreal> beatTimesMs() const { return m_beatTimesMs; }
@@ -136,9 +143,22 @@ public:
     // format is "rekordbox" or "engine"; libraryPath is the corresponding
     // DetectedStick.rekordboxPath / .enginePath; sourceId/filePath/title/
     // artist come straight from the track row being played.
+    // fallbackArtworkPath is the row's own; left out, it is looked up in
+    // the queue when the track is in it (Browse offers its list as the
+    // queue before it plays a row), and is empty otherwise.
     Q_INVOKABLE void load(const QString &format, const QString &libraryPath, const QString &sourceId,
                            const QString &filePath, const QString &title, const QString &artist,
-                           const QString &artworkPath, const QVariantList &cues);
+                           const QString &artworkPath, const QVariantList &cues,
+                           const QString &fallbackArtworkPath = QString());
+
+    // The loaded track's cues, read after it was loaded: Browse lists a
+    // rekordbox stick before its cue pass is done, and a track played in
+    // that time was loaded with none. Taken only when format, library
+    // and sourceId name the loaded track; playback, position and
+    // everything else about it stay as they are. Returns whether they
+    // were taken.
+    Q_INVOKABLE bool takeCues(const QString &format, const QString &libraryPath, const QString &sourceId,
+                              const QVariantList &cues);
 
     // Reads a track's waveform preview without touching playback state --
     // for a read-only preview (e.g. the Library page's per-track info
@@ -191,6 +211,7 @@ public:
 
 signals:
     void trackChanged();
+    void cuesChanged();
     void durationChanged();
     void positionChanged();
     void playingChanged();
@@ -234,6 +255,7 @@ private:
     QString m_title;
     QString m_artist;
     QString m_artworkPath;
+    QString m_fallbackArtworkPath;
     QVariantList m_waveform;
     QVariantList m_cues;
     QPointer<QAbstractItemModel> m_queue;

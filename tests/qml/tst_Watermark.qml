@@ -147,4 +147,26 @@ TestCase {
                         : "no shader runs here, so the mark stays away");
         compare(mark.visible, canDraw);
     }
+
+    // A cover the stick does not have is no cover: the fallback when
+    // there is one, the brand mark when not, and never an empty corner.
+    function test_aMissingCoverFallsBackThenShowsTheMark() {
+        const host = createTemporaryObject(windowLike, testCase, {});
+        verify(host !== null);
+        const layer = host.watermark;
+        const image = findChild(layer, "watermarkImage");
+        layer.isArtwork = true;
+        layer.fallbackSource = "file://" + browseFixture.presentArtwork();
+        layer.source = "file://" + browseFixture.missingArtwork();
+        tryCompare(image, "status", Image.Ready);
+        compare(image.source.toString(), "file://" + browseFixture.presentArtwork());
+        compare(layer.drawsArtwork, true);
+
+        layer.fallbackSource = "";
+        layer.source = "file://" + browseFixture.missingArtwork() + ".png";
+        tryCompare(layer, "drawsArtwork", false);
+        compare(image.source.toString(), brandMark);
+        tryCompare(image, "status", Image.Ready);
+        compare(image.visible, true, "the mark is drawn as itself, not through the blur");
+    }
 }

@@ -20,6 +20,9 @@ Item {
     property var cueData: []        // [{positionMs, color}]
     property real trackDurationMs: 0
     property string artworkSource: ""
+    // Tried when artworkSource does not load: an Engine track's rekordbox
+    // sibling's cover, for art its catalog names and the stick lacks.
+    property string fallbackArtworkSource: ""
     property real progress: -1      // 0..1 played; below 0 for "no playhead"
     property bool playing: false
     property color fallbackColor: Theme.accent
@@ -300,10 +303,38 @@ Item {
     // aNN_m.jpg next to it, and the library names the small one. A disc
     // this size wants the large one; if it is not there the small one
     // will do.
-    readonly property string largeArtworkSource: /\/Artwork\/.*\/a\d+\.jpg$/.test(root.artworkSource)
-        ? root.artworkSource.replace(/\.jpg$/, "_m.jpg") : ""
-    property bool largeArtworkMissing: false
-    onArtworkSourceChanged: root.largeArtworkMissing = false
+    function largeArtworkFor(source) {
+        return /\/Artwork\/.*\/a\d+\.jpg$/.test(source) ? source.replace(/\.jpg$/, "_m.jpg") : "";
+    }
+    readonly property string largeArtworkSource: root.largeArtworkFor(root.artworkSource)
+    // Every cover worth asking for, best first: the track's own, large
+    // then as named, then the fallback's the same way. The disc shows the
+    // first that loads; the last is kept even when it fails, so what the
+    // library named stays what was asked for.
+    readonly property var artworkCandidates: {
+        const list = [];
+        for (const source of [root.artworkSource, root.fallbackArtworkSource]) {
+            if (source.length === 0) {
+                continue;
+            }
+            const large = root.largeArtworkFor(source);
+            if (large.length > 0) {
+                list.push(large);
+            }
+            list.push(source);
+        }
+        return list;
+    }
+    property int artworkAttempt: 0
+    onArtworkCandidatesChanged: root.artworkAttempt = 0
+    // Called after the failed assignment, not inside it: a local file
+    // fails synchronously, and moving on right there is a binding loop.
+    function tryNextArtwork() {
+        if (artImage.status === Image.Error && root.artworkAttempt < root.artworkCandidates.length - 1) {
+            root.artworkAttempt += 1;
+        }
+    }
+    readonly property bool largeArtworkMissing: root.largeArtworkSource.length > 0 && root.artworkAttempt > 0
 
     implicitWidth: Theme.iconSizeLarge * 6
     implicitHeight: implicitWidth
@@ -346,13 +377,13 @@ Item {
     Image {
         id: artImage
         objectName: "ringArtwork"
-        source: root.largeArtworkSource.length > 0 && !root.largeArtworkMissing
-            ? root.largeArtworkSource : root.artworkSource
+        source: root.artworkCandidates.length > 0
+            ? root.artworkCandidates[Math.min(root.artworkAttempt, root.artworkCandidates.length - 1)] : ""
         visible: false
         sourceSize: Qt.size(512, 512)
         onStatusChanged: {
-            if (status === Image.Error && source.toString() === root.largeArtworkSource) {
-                root.largeArtworkMissing = true;
+            if (status === Image.Error) {
+                Qt.callLater(root.tryNextArtwork);
             }
         }
     }

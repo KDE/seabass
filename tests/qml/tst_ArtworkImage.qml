@@ -64,8 +64,8 @@ TestCase {
     function test_bothMissingShowNothing() {
         const art = make(fileUrl(browseFixture.missingArtwork()), fileUrl(browseFixture.missingArtwork() + ".png"));
         const image = findChild(art, "artworkImage");
+        tryCompare(art, "sourceFailed", true, 5000, "the source was tried first");
         tryCompare(image, "status", Image.Error);
-        compare(art.sourceFailed, true, "the source was tried first");
         compare(image.source.toString(), fileUrl(browseFixture.missingArtwork() + ".png"), "then the fallback");
         compare(image.visible, false);
         compare(art.showing, "");

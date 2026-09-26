@@ -208,6 +208,64 @@ TestCase {
         compare(pane.trackCues.length, 2, "track 8 has 7 % 5 cues");
     }
 
+    // A track played before its cues were read was loaded with none; when
+    // they land the player takes them, without a new track (no reload,
+    // playback not interrupted).
+    function test_thePlayerTakesTheCuesWhenTheyLand() {
+        const held = makeHeldPage(20);
+        held.page.playRow(held.controller.tracks.trackAt(7));
+        compare(realPlayback.currentSourceId, "8");
+        compare(realPlayback.cues.length, 0, "loaded before the cues were read");
+        const reloads = createTemporaryObject(signalSpyComponent, testCase,
+                                              {target: realPlayback, signalName: "trackChanged"});
+        browseFixture.releaseCues();
+        tryCompare(held.controller, "cuesPending", false);
+        const rowCues = held.controller.tracks.trackAt(held.controller.tracks.indexOfSourceId("8")).cues;
+        compare(rowCues.length, 2, "track 8 has 7 % 5 cues");
+        tryVerify(() => realPlayback.cues.length === 2, 5000, "the player took the row's cues");
+        for (let i = 0; i < rowCues.length; ++i) {
+            compare(realPlayback.cues[i].positionMs, rowCues[i].positionMs);
+            compare(realPlayback.cues[i].hotCueNumber, rowCues[i].hotCueNumber);
+        }
+        compare(reloads.count, 0, "the same track, not loaded again");
+        compare(realPlayback.currentSourceId, "8");
+        realPlayback.stop();
+    }
+
+    // Only the loaded track's own row hands its cues over.
+    function test_anotherRowsCuesDoNotReachThePlayer() {
+        const held = makeHeldPage(20);
+        held.page.playRow(held.controller.tracks.trackAt(5));
+        compare(realPlayback.currentSourceId, "6");
+        browseFixture.releaseCues();
+        tryCompare(held.controller, "cuesPending", false);
+        verify(held.controller.tracks.trackAt(held.controller.tracks.indexOfSourceId("8")).cues.length > 0,
+               "other rows have cues now");
+        wait(0);
+        compare(realPlayback.cues.length, 0, "track 6 has 5 % 5 cues, and keeps none");
+        realPlayback.stop();
+    }
+
+    // takeCues() itself: the format, the library and the id must all be
+    // the loaded track's.
+    function test_takeCuesOnlyTakesTheLoadedTracksCues() {
+        const cues = [{kind: "hot", hotCueNumber: 1, positionMs: 5000, isLoop: false, loopEndMs: 0,
+                       color: "#ffcc00", comment: ""}];
+        realPlayback.load("rekordbox", "/nonexistent/A/PIONEER", "3", "/nonexistent/a.mp3", "T", "A", "", []);
+        verify(!realPlayback.takeCues("rekordbox", "/nonexistent/A/PIONEER", "4", cues), "another id");
+        verify(!realPlayback.takeCues("engine", "/nonexistent/A/PIONEER", "3", cues), "another format");
+        verify(!realPlayback.takeCues("rekordbox", "/nonexistent/B/PIONEER", "3", cues), "another library");
+        compare(realPlayback.cues.length, 0);
+        const changed = createTemporaryObject(signalSpyComponent, testCase,
+                                              {target: realPlayback, signalName: "cuesChanged"});
+        verify(realPlayback.takeCues("rekordbox", "/nonexistent/A/PIONEER", "3", cues));
+        compare(realPlayback.cues.length, 1);
+        compare(realPlayback.cues[0].positionMs, 5000);
+        compare(changed.count, 1);
+        realPlayback.stop();
+        verify(!realPlayback.takeCues("rekordbox", "/nonexistent/A/PIONEER", "3", cues), "nothing loaded");
+    }
+
     // An Engine row names art the stick does not have; the rekordbox copy
     // of the same song has art, and the row shows that instead.
     function test_anEngineRowFallsBackToTheRekordboxArt() {
@@ -224,6 +282,12 @@ TestCase {
         tryCompare(art, "showing", "fallback");
         compare(findChild(art, "artworkImage").visible, true);
         compare(row.cues.length, 1, "with its own cues from the start");
+
+        // Played, the player carries the fallback too, from the queue.
+        held.page.playRow(held.controller.tracks.trackAt(0));
+        compare(realPlayback.artworkPath, row.artworkPath);
+        compare(realPlayback.fallbackArtworkPath, row.fallbackArtworkPath);
+        realPlayback.stop();
     }
 
     // The scan itself, without the page: a rekordbox scan publishes the

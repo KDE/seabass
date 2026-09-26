@@ -174,6 +174,21 @@ Page {
         }
     }
 
+    // The loaded track's row, if it is this library's and in the list
+    // as filtered now, hands the player the cues it holds.
+    function handThePlayerItsCues() {
+        const player = root.playbackController;
+        if (!player.hasTrack || player.currentFormat !== root.format
+                || player.currentLibraryPath !== root.currentPath()) {
+            return;
+        }
+        const row = scanController.tracks.indexOfSourceId(player.currentSourceId);
+        if (row >= 0) {
+            player.takeCues(root.format, root.currentPath(), player.currentSourceId,
+                scanController.tracks.trackAt(row).cues);
+        }
+    }
+
     // Plays a row's track and turns the details pane to it. The pane is
     // where the playing track is shown as a ring, so a track played from
     // the list while the pane was shut, or on another track, played with
@@ -1102,9 +1117,14 @@ Page {
         // The cues have landed in the rows (they update where they stand);
         // the details pane holds a copy of its track's, taken when it was
         // opened, so it is handed the real ones too. Only the cues: a cue
-        // being placed there stays.
+        // being placed there stays. So does the player, for a track
+        // played before they landed: it takes them without stopping.
         function onTracksPublished(cuesLanded) {
-            if (!cuesLanded || !root.trackPanelOpen || trackDetailPanel.trackSourceId.length === 0) {
+            if (!cuesLanded) {
+                return;
+            }
+            root.handThePlayerItsCues();
+            if (!root.trackPanelOpen || trackDetailPanel.trackSourceId.length === 0) {
                 return;
             }
             const row = scanController.tracks.indexOfSourceId(trackDetailPanel.trackSourceId);

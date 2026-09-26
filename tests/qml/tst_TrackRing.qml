@@ -342,4 +342,14 @@ TestCase {
         compare(ring.largeArtworkSource, "");
         compare(findChild(ring, "ringArtwork").source.toString(), "file:///nowhere/Engine Library/cover-12.jpg");
     }
+
+    // An Engine track whose cover is not on the stick: the ring tries
+    // its own art, then the rekordbox copy's, large first.
+    function test_aMissingCoverFallsBackToTheRekordboxArt() {
+        const present = "file://" + browseFixture.presentArtwork();
+        const ring = make({artworkSource: "file://" + browseFixture.missingArtwork(), fallbackArtworkSource: present});
+        const art = findChild(ring, "ringArtwork");
+        tryCompare(art, "status", Image.Ready);
+        compare(art.source.toString(), present);
+    }
 }

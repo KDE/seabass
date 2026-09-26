@@ -222,13 +222,13 @@ Rectangle {
                 Layout.preferredHeight: Theme.iconSizeNormal
                 radius: 3
                 color: Theme.groupBackground
-                Image {
+                // A cover the catalog names but the stick does not have
+                // draws nothing; the tile behind it shows.
+                ArtworkImage {
+                    objectName: "rowArtwork"
                     anchors.fill: parent
                     source: delegate.artworkUrl
-                    visible: delegate.artworkUrl.length > 0
-                    fillMode: Image.PreserveAspectCrop
                     asynchronous: true
-                    cache: true
                 }
             }
 

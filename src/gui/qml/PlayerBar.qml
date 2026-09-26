@@ -73,12 +73,17 @@ Frame {
             }
         }
 
-        Image {
+        // Its square only while there is art to show in it: a cover the
+        // stick does not have leaves no empty gap before the title.
+        ArtworkImage {
+            id: playerArtwork
+            objectName: "playerArtwork"
             Layout.preferredWidth: 64
             Layout.preferredHeight: 64
             fillMode: Image.PreserveAspectFit
-            visible: root.controller.artworkPath.length > 0
+            visible: playerArtwork.showing.length > 0
             source: root.controller.artworkPath
+            fallbackSource: root.controller.fallbackArtworkPath || ""
         }
 
         ColumnLayout {
