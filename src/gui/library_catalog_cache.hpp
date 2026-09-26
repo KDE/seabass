@@ -88,6 +88,28 @@ public:
                                           application::CancellationToken cancel =
                                               application::CancellationToken::none());
 
+    // How much of a library a caller needs, in the order the cache reads
+    // it: Tracks is the catalog file alone (about 0.1 s cold on a stick),
+    // Cues adds rekordbox's ANLZ pass (8 s cold on a 1161-track stick),
+    // Full adds every audio file's size (3 s). A request for a stage the
+    // entry already has returns at once, whatever pass is in flight; a
+    // request for a stage being read waits for that pass rather than
+    // starting another. The overload above is Full.
+    enum class Detail { Tracks, Cues, Full };
+    std::vector<domain::Track> tracksFor(const std::string &format, const std::string &path, Detail detail,
+                                          application::ProgressReporter &progress =
+                                              application::NullProgressReporter::instance(),
+                                          application::CancellationToken cancel =
+                                              application::CancellationToken::none());
+
+    // Reads the rest of this library in the background, Cues then Full,
+    // one stick at a time (the FAT driver and the USB queue serialise
+    // every read anyway): the prefetch for the features that need it. A
+    // foreground tracksFor() for a stage the prefetch is reading waits
+    // for it; one for a later stage runs after it. Dropped, with the
+    // entries, by invalidateEveryCatalogOn().
+    void prefetch(const std::string &format, const std::string &path);
+
     // Call after writing to this catalog (Sync's apply()/applyOne(), Clean
     // Up writes, ...) so the next tracksFor() re-scans unconditionally
     // instead of trusting a possibly-stale mtime comparison.

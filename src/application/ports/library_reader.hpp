@@ -22,6 +22,21 @@ public:
     virtual ~LibraryReader() = default;
     virtual std::vector<domain::Track> readAll() = 0;
 
+    // Progressive reading, for a stick that has just been plugged in.
+    // readTracks() is everything the catalog file alone holds: title,
+    // artist, duration, playlists, artwork and file paths, and for a
+    // format that keeps its cues in the catalog (Engine, OneLibrary) the
+    // cues too. fillCues() adds what takes another file per track:
+    // rekordbox's cues live in its ANLZ files, one folder per track, and
+    // on a stick that read is fifty times the catalog's. readAll() is the
+    // two in one, and stays what every existing caller gets. File sizes
+    // are not the reader's to fill any more: application::fillFileSizes()
+    // stats the audio files for the callers that need a size.
+    //
+    // The defaults are for a reader whose catalog holds everything.
+    virtual std::vector<domain::Track> readTracks() { return readAll(); }
+    virtual void fillCues(std::vector<domain::Track> &) {}
+
     void setProgressReporter(ProgressReporter &reporter) { m_progress = &reporter; }
     // Readers check the token once per track, next to their progress
     // tick, and unwind with OperationCancelled.
