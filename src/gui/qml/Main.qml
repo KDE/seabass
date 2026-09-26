@@ -421,6 +421,14 @@ ApplicationWindow {
         function onTrackChanged() { window.updateWatermark(); }
     }
 
+    // A pulled stick's advice goes with it: otherwise it stays a peer the
+    // advisor can offer as a clone or update source, and its queued cue
+    // pass runs against a path that is gone.
+    Connections {
+        target: mediaCtrl
+        function onStickGone(mountPoint) { backupAdvisorCtrl.forget(mountPoint); }
+    }
+
     Component.onCompleted: {
         EditSessionRegistry.mediaController = mediaCtrl;
         window.updateWatermark();

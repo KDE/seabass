@@ -139,6 +139,11 @@ public:
     // request runs it and sees the error itself.
     void prefetch(const std::string &format, const std::string &path);
 
+    // The stage the cached entry for this catalog has reached, or nothing
+    // when there is no entry. A reader that asked for Tracks can tell
+    // from this that the cues are already in hand.
+    std::optional<Detail> stageReached(const std::string &format, const std::string &path);
+
     // Blocks until the prefetch queue is empty and the worker is idle.
     // For tests and for anything that must know the background reads are
     // over; never needed for correctness, since tracksFor() waits for a

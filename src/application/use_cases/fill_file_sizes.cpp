@@ -40,4 +40,27 @@ void fillFileSizes(std::vector<domain::Track> &tracks)
     }
 }
 
+void dropMissingArtwork(std::vector<domain::Track> &tracks)
+{
+    std::unordered_map<std::string, bool> presentByPath;
+    for (auto &track : tracks) {
+        if (track.artworkPath.empty()) {
+            continue;
+        }
+        auto known = presentByPath.find(track.artworkPath);
+        if (known == presentByPath.end()) {
+            bool present = false;
+            try {
+                std::error_code ec;
+                present = std::filesystem::exists(pathFromUtf8(track.artworkPath), ec);
+            } catch (const std::exception &) {
+            }
+            known = presentByPath.emplace(track.artworkPath, present).first;
+        }
+        if (!known->second) {
+            track.artworkPath.clear();
+        }
+    }
+}
+
 }  // namespace seabass::application

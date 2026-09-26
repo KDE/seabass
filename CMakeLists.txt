@@ -527,6 +527,7 @@ add_library(seabass_core_testing STATIC
     src/application/path_key.cpp
     src/application/ports/progress_reporter.cpp
     src/application/use_cases/backup_stick.cpp
+    src/application/use_cases/fill_file_sizes.cpp
     src/application/use_cases/compact_stick_backup.cpp
     src/application/use_cases/restore_stick_backup.cpp
     src/domain/duplicate_cue_consolidation.cpp

@@ -33,4 +33,10 @@ namespace seabass::application
 // stick pulled halfway leaves the rest at 0, which reads as "unknown".
 void fillFileSizes(std::vector<domain::Track> &tracks);
 
+// Clears artworkPath on every track whose image is not on disk: one stat
+// per distinct path. The Engine and OneLibrary readers used to do this
+// inside every read; it is a stage of its own now, with the sizes, so a
+// page that only wants titles does not pay ~1500 stats on a stick.
+void dropMissingArtwork(std::vector<domain::Track> &tracks);
+
 }  // namespace seabass::application

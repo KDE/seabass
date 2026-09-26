@@ -274,6 +274,12 @@ signals:
     // StickIdentity::strengthName() of the match, so the UI can say how
     // sure "the same stick" is.
     void stickRemoved(const QString &libraryId, const QString &label);
+    // A mounted stick or opened folder that is no longer where it was,
+    // by mount point (the form every QString path has). Every such row,
+    // announced or not: the catalog cache has already forgotten it, and
+    // the backup advisor should too, or a pulled stick stays a peer that
+    // can be offered as a clone source.
+    void stickGone(const QString &mountPoint);
     void stickReturned(const QString &libraryId, const QString &identityStrength);
     // Every stick newly visible since the last detect(), including one
     // that was already plugged in at startup and one seen for the first

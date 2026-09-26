@@ -128,7 +128,10 @@ bool backupMatchesCopy(const std::map<std::string, std::string> &databaseFingerp
     if (!stored) {
         return databasesChecked;
     }
-    return fingerprint && *stored == *fingerprint;
+    // Not ==: while a side's cues are still being read, equal tracks and
+    // playlists are the best answer there is, and "outdated" for every
+    // rekordbox stick until its cue pass lands would be the wrong one.
+    return fingerprint && domain::matchFingerprints(*stored, *fingerprint) != domain::FingerprintMatch::Different;
 }
 
 bool backupIsCurrent(const StickBackupAdviceInput &input, const StickBackupDescription &backup)
@@ -152,7 +155,8 @@ bool peerInSync(const StickBackupAdviceInput &input, const PeerStick &peer)
     if (!input.liveDatabaseFingerprints.empty() && input.liveDatabaseFingerprints != peer.databaseFingerprints) {
         return false;
     }
-    return input.liveFingerprint && peer.fingerprint && *input.liveFingerprint == *peer.fingerprint;
+    return input.liveFingerprint && peer.fingerprint
+        && domain::matchFingerprints(*input.liveFingerprint, *peer.fingerprint) != domain::FingerprintMatch::Different;
 }
 
 bool peerHasSameLibrary(const StickBackupAdviceInput &input, const PeerStick &peer)

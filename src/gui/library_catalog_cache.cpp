@@ -12,9 +12,7 @@
 
 #include "application/path_key.hpp"
 #include "application/ports/library_reader.hpp"
-#if __has_include("application/use_cases/fill_file_sizes.hpp")
 #include "application/use_cases/fill_file_sizes.hpp"
-#endif
 #include "infrastructure/audio/duration_fill.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/file_clock.hpp"
@@ -67,15 +65,17 @@ std::unique_ptr<application::LibraryReader> makeReader(const std::string &format
     throw std::invalid_argument("LibraryCatalogCache: unknown format \"" + format + "\"");
 }
 
-void fillSizes(std::vector<domain::Track> &tracks)
+// What the readers used to do inside every read and do not any more: a
+// stat per audio file for its size, and for Engine and OneLibrary a stat
+// per artwork to drop the ones not on disk (rekordbox never checked its
+// artwork, and still does not, so a Full read is what it always was for
+// every format).
+void fillSizesAndVerifyArtwork(const std::string &format, std::vector<domain::Track> &tracks)
 {
-#if __has_include("application/use_cases/fill_file_sizes.hpp")
     application::fillFileSizes(tracks);
-#else
-    // Until the readers stop filling sizes themselves, readTracks() is
-    // readAll() and the sizes are already there.
-    (void)tracks;
-#endif
+    if (format != "rekordbox") {
+        application::dropMissingArtwork(tracks);
+    }
 }
 
 void realStage(LibraryCatalogCache::Detail stage, const std::string &format, const std::string &path,
@@ -110,7 +110,7 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
     }
     case LibraryCatalogCache::Detail::Full:
         cancel.throwIfCancelled();
-        fillSizes(tracks);
+        fillSizesAndVerifyArtwork(format, tracks);
         return;
     }
 }
@@ -343,6 +343,17 @@ int LibraryCatalogCache::waitingCallers()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_waiting;
+}
+
+std::optional<LibraryCatalogCache::Detail> LibraryCatalogCache::stageReached(const std::string &format,
+                                                                             const std::string &path)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto it = m_entries.find(keyFor(format, path));
+    if (it == m_entries.end() || it->second.stage == 0) {
+        return std::nullopt;
+    }
+    return detailOf(it->second.stage);
 }
 
 std::uint64_t LibraryCatalogCache::invalidationCount(const std::string &format, const std::string &path)
