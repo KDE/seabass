@@ -679,6 +679,20 @@ public:
         seabass::gui::FormatUsbController::setFormatTaskForTesting({});
     }
 
+    // The next filesystem repair succeeds, after `ms`: long enough for a
+    // test to start a scan while it runs.
+    Q_INVOKABLE void makeFilesystemRepairSucceedAfter(int ms)
+    {
+        seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting(
+            [ms](const std::string &) -> seabass::infrastructure::media::FilesystemRepairResult {
+                std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+                seabass::infrastructure::media::FilesystemRepairResult result;
+                result.repaired = true;
+                result.message = "Repaired.";
+                return result;
+            });
+    }
+
     // The next filesystem repair throws `message` from its worker thread.
     Q_INVOKABLE void makeFilesystemRepairThrow(const QString &message)
     {

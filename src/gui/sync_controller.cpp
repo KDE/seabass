@@ -232,7 +232,6 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
 
 SyncController::SyncController(QObject *parent) : StagedCueEditController(parent)
 {
-    connect(&m_watcher, &QFutureWatcher<SyncTaskResult>::finished, this, &SyncController::onAnalyzeFinished);
     // Every count the page shows is derived from the rows, and the rows
     // change from many places: a scan, the search, a tick, a staged mark,
     // a row leaving once its change is saved. The model announces all of
@@ -242,45 +241,48 @@ SyncController::SyncController(QObject *parent) : StagedCueEditController(parent
 
 void SyncController::analyze(const QString &rekordboxPath, const QString &enginePath, const QString &playlistName)
 {
-    // Recorded even on the early return below: the QML picker is already
-    // disabled while busy (SyncPage.qml), so this path shouldn't be
-    // reachable from user interaction, but the fields must never go stale
-    // relative to the most recently *requested* scope regardless -- the
-    // next analyze() this controller issues itself (onWriteFinished()'s
-    // own post-write re-analyze) reads them, and silently keeping a
-    // superseded value there would resurrect this exact bug for any
-    // future caller that isn't gated by that one QML property.
-    m_currentPlaylistName = playlistName;
+    startAnalysis(rekordboxPath, enginePath, playlistName, false);
+}
 
-    if (busy()) {
-        return;  // never overlap two analyses
+void SyncController::startAnalysis(const QString &rekordboxPath, const QString &enginePath,
+                                   const QString &playlistName, bool restart)
+{
+    // Every request is answered now (docs/async-requests.md): the same
+    // scope again by the analysis already running, another scope by a new
+    // one that supersedes it. The scope is recorded here, for the request
+    // that is actually read -- it used to be recorded before a busy check
+    // that then dropped the request, so the page named one playlist over
+    // another's plans.
+    const QString key = rekordboxPath + QLatin1Char('\n') + enginePath + QLatin1Char('\n') + playlistName;
+    if (!restart && scanServes(key)) {
+        return;
     }
+    m_currentPlaylistName = playlistName;
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
     attachSession();
     setErrorMessage({});
     setStatusMessage({});
     setScanProgress(0, 0);
-    m_watcher.setFuture(QtConcurrent::run(runAnalyzeTask, rekordboxPath, enginePath, playlistName, makeReporter(),
-                                          beginScan()));
+    const QString catalog = rekordboxPath.isEmpty() ? enginePath : rekordboxPath;
+    auto reporter = makeReporter();
+    startScan<SyncTaskResult>(
+        key,
+        pathToQString(pathFromQString(catalog).parent_path()), restart,
+        [rekordboxPath, enginePath, playlistName, reporter](application::CancellationToken cancel) {
+            return runAnalyzeTask(rekordboxPath, enginePath, playlistName, reporter, cancel);
+        },
+        [this](SyncTaskResult &&result) { onAnalyzeFinished(std::move(result)); });
 }
 
-void SyncController::onAnalyzeFinished()
+void SyncController::onAnalyzeFinished(SyncTaskResult &&result)
 {
-    QString thrown;
-    SyncTaskResult result = takeResult(m_watcher, &thrown);
-    if (!thrown.isEmpty()) {
-        result.errorMessage = thrown;
-    }
-
     if (result.cancelled) {
-        setBusy(false);
         emit scanCancelled();
         return;
     }
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
-        setBusy(false);
         return;
     }
 
@@ -303,7 +305,6 @@ void SyncController::onAnalyzeFinished()
         }
     }
     emit analysisChanged();
-    setBusy(false);
 }
 
 void SyncController::search(const QString &query)

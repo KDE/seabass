@@ -155,16 +155,18 @@ signals:
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
-    void reanalyzeAfterUndo() override { analyze(m_rekordboxPath, m_enginePath, m_currentPlaylistName); }
+    // After an undo what a running analysis read is out of date: restart.
+    void reanalyzeAfterUndo() override { startAnalysis(m_rekordboxPath, m_enginePath, m_currentPlaylistName, true); }
+    void startAnalysis(const QString &rekordboxPath, const QString &enginePath, const QString &playlistName,
+                       bool restart);
 
 private:
-    void onAnalyzeFinished();
+    void onAnalyzeFinished(SyncTaskResult &&result);
     void attachSession();
     void stagePlan(int index);
     bool wouldStage(int planIndex, bool matchingSearchOnly) const;
 
     SyncPlanListModel m_model;
-    QFutureWatcher<SyncTaskResult> m_watcher;
     QString m_rekordboxPath;
     QString m_enginePath;
     // The playlistName analyze() was last called with -- so the automatic

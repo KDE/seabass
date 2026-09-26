@@ -4,6 +4,7 @@
 
 #include "infrastructure/paths/seabass_paths.hpp"
 
+#include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "cleanup_controller.hpp"
@@ -859,9 +860,24 @@ CleanupTaskResult runManualMergeTask(QString format, QString path, QString sourc
 
 }  // namespace
 
+CleanupController::~CleanupController()
+{
+    // There was no destructor: a page left mid-scan kept reading and
+    // probing audio for nobody, and one left mid-delete (the stick-gone
+    // dialog pops past the disabled Back button) never gave the library's
+    // lock back. The scan is m_scan's to cancel. The delete is a write:
+    // asked to stop between files, as its own Cancel does, and then
+    // watched from the application, which gives the lock back when it
+    // returns, rather than waited for here, where a delete stuck on a
+    // stick that is gone would freeze the window.
+    if (m_deleting) {
+        m_pendingDeleteCancel.cancel();
+        finishWriteDetached(m_pendingWriteWatcher.future(), m_writeHold.handOver());
+    }
+}
+
 CleanupController::CleanupController(QObject *parent) : QObject(parent)
 {
-    connect(&m_watcher, &QFutureWatcher<CleanupTaskResult>::finished, this, &CleanupController::onRescanFinished);
     connect(&m_pendingWriteWatcher, &QFutureWatcher<PendingDeletionApplyResult>::finished, this,
             &CleanupController::onDeletePendingFinished);
 }
@@ -948,7 +964,7 @@ void CleanupController::loadPendingDeletionsOnly(const QString &format, const QS
 void CleanupController::planManualMerge(const QString &format, const QString &path, const QString &sourceIdA,
                                          const QString &sourceIdB)
 {
-    if (m_busy) {
+    if (m_deleting) {
         return;
     }
     m_format = format;
@@ -960,32 +976,68 @@ void CleanupController::planManualMerge(const QString &format, const QString &pa
     // one's leftover success message hide this new plan's own preview
     // (see ScanPage.qml's Repeater, gated on statusMessage being empty).
     setStatusMessage({});
+    // A plan for another pair supersedes one still being worked out: the
+    // Resolve popup used to open on pair Y while the dropped request left
+    // pair X's plan to land under Y's names.
+    const QString key = QStringLiteral("merge\n%1\n%2\n%3\n%4").arg(format, path, sourceIdA, sourceIdB);
+    if (m_scan.busy() && m_scan.key() == key) {
+        return;  // that plan is being worked out already; it answers this
+    }
     setScanProgress(0, 0);
-    setBusy(true);
-
-    m_scanCancel = application::CancellationToken();
-    m_watcher.setFuture(
-        QtConcurrent::run(runManualMergeTask, format, path, sourceIdA, sourceIdB, makeReporter(), m_scanCancel));
+    auto reporter = makeReporter();
+    startScanRequest(key, false,
+                     [format, path, sourceIdA, sourceIdB, reporter](application::CancellationToken cancel) {
+                         return runManualMergeTask(format, path, sourceIdA, sourceIdB, reporter, cancel);
+                     });
 }
 
-void CleanupController::rescan()
+void CleanupController::rescan(bool restart)
 {
-    if (m_busy) {
+    if (m_deleting) {
+        // Reading while files are deleted would list what is about to
+        // go. Asked for again once the write is over, never dropped.
+        m_rescanAfterWrite = true;
+        return;
+    }
+    const QString format = m_format;
+    const QString path = m_path;
+    const QString playlist = m_playlistName;
+    const QString search = m_searchQuery;
+    const QString key = QStringLiteral("scan\n%1\n%2\n%3\n%4").arg(format, path, playlist, search);
+    // The same scope again is served by the scan running, whose progress
+    // bar stays its own.
+    if (!restart && m_scan.busy() && m_scan.key() == key) {
         return;
     }
     setErrorMessage({});
     setScanProgress(0, 0);
-    setBusy(true);
+    auto reporter = makeReporter();
+    startScanRequest(key, restart,
+                     [format, path, playlist, search, reporter](application::CancellationToken cancel) {
+                         return runRescanTask(format, path, playlist, search, reporter, cancel);
+                     });
+}
 
-    m_scanCancel = application::CancellationToken();
-    m_watcher.setFuture(QtConcurrent::run(runRescanTask, m_format, m_path, m_playlistName, m_searchQuery,
-                                          makeReporter(), m_scanCancel));
+void CleanupController::startScanRequest(const QString &key, bool restart,
+                                         AsyncRequest<CleanupTaskResult>::Work work)
+{
+    AsyncRequest<CleanupTaskResult>::Ending ending{
+        [this](CleanupTaskResult &&result) { onRescanFinished(std::move(result)); },
+        [this](const QString &message) { setErrorMessage(message); },
+        [this]() { emit scanCancelled(); },
+    };
+    const QString stickRoot = pathToQString(pathFromQString(m_path).parent_path());
+    if (restart) {
+        m_scan.restart(key, stickRoot, std::move(work), std::move(ending));
+    } else {
+        m_scan.start(key, stickRoot, std::move(work), std::move(ending));
+    }
 }
 
 void CleanupController::cancelScan()
 {
     if (scanCancellable()) {
-        m_scanCancel.cancel();
+        m_scan.cancel();
     }
 }
 
@@ -1011,30 +1063,32 @@ void CleanupController::search(const QString &query)
 
 std::shared_ptr<QtProgressReporter> CleanupController::makeReporter()
 {
+    // Each reporter speaks for the request made right after it, and only
+    // while that request (or the delete, which has no scan) is current.
     auto reporter = std::make_shared<QtProgressReporter>();
-    connect(reporter.get(), &QtProgressReporter::started, this,
-            [this](const QString &, int total) { setScanProgress(0, total); });
-    connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this](int current) { setScanProgress(current, m_scanTotal); });
+    const quint64 serial = ++m_scanSerial;
+    const auto current = [this, serial]() { return serial == m_scanSerial; };
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
+        if (current()) {
+            setScanProgress(0, total);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::progressed, this, [this, current](int done) {
+        if (current()) {
+            setScanProgress(done, m_scanTotal);
+        }
+    });
     return reporter;
 }
 
-void CleanupController::onRescanFinished()
+void CleanupController::onRescanFinished(CleanupTaskResult &&result)
 {
-    QString thrown;
-    CleanupTaskResult result = takeResult(m_watcher, &thrown);
-    if (!thrown.isEmpty()) {
-        result.errorMessage = thrown;
-    }
-
     if (result.cancelled) {
-        setBusy(false);
         emit scanCancelled();
         return;
     }
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
-        setBusy(false);
         return;
     }
 
@@ -1072,7 +1126,6 @@ void CleanupController::onRescanFinished()
             m_model.setStaged(static_cast<size_t>(index), true, info.description);
         }
     }
-    setBusy(false);
     emit plansChanged();
     emit includedChanged();
     refreshPendingDeletions();
@@ -1128,7 +1181,7 @@ void CleanupController::attachSession()
             connect(m_session, &LibraryEditSession::canUndoChanged, this, &CleanupController::canUndoChanged);
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 if (changeId == QStringLiteral("undo:last-save")) {
-                    rescan();  // prior file bytes are back; the plan list is stale
+                    rescan(true);  // prior file bytes are back; the plan list is stale
                     return;
                 }
                 for (auto it = m_stagedBySurvivor.begin(); it != m_stagedBySurvivor.end(); ++it) {
@@ -1237,7 +1290,7 @@ void CleanupController::stagePlan(size_t rawIndex)
 // Does NOT delete any audio file, see the class comment.
 void CleanupController::apply(bool matchingSearchOnly)
 {
-    if (m_busy) {
+    if (busy()) {
         return;
     }
     setErrorMessage({});
@@ -1305,7 +1358,7 @@ void CleanupController::unstage(int row)
 
 void CleanupController::undoLastOperation()
 {
-    if (m_busy || !m_session) {
+    if (busy() || !m_session) {
         return;
     }
     setErrorMessage({});
@@ -1368,7 +1421,7 @@ void CleanupController::setAllPendingDeletionIncluded(bool included)
 
 void CleanupController::deleteSelectedPendingFiles()
 {
-    if (m_busy) {
+    if (busy()) {
         return;
     }
     auto selected = m_pendingModel.includedEntries();
@@ -1378,21 +1431,19 @@ void CleanupController::deleteSelectedPendingFiles()
 
     // A direct write on the library: same lock the staged edits take,
     // held for exactly this run.
-    auto *registry = EditSessionRegistry::instance();
-    const QString libraryId = registry->libraryIdForPath(m_path);
-    if (auto refusal = registry->enterDirectWrite(libraryId, QString())) {
+    const QString libraryId = EditSessionRegistry::instance()->libraryIdForPath(m_path);
+    if (auto refusal = m_writeHold.acquire({libraryId}, QString())) {
         if (refusal->showsLockedDialog()) {
             emit lockRefused(refusal->holder);
         }
         return;
     }
-    m_holdsDirectWrite = true;
 
     setErrorMessage({});
     setStatusMessage({});
     setScanProgress(0, 0);
     m_pendingDeleteCancel = application::CancellationToken();
-    setBusy(true);
+    setDeleting(true);
     setWriting(true);
 
     // Awake while files are deleted from the stick: see SleepInhibitor.
@@ -1420,19 +1471,22 @@ void CleanupController::onDeletePendingFinished()
     if (!thrown.isEmpty()) {
         result.errorMessage = thrown;
     }
-    if (m_holdsDirectWrite) {
-        m_holdsDirectWrite = false;
-        EditSessionRegistry::instance()->leaveDirectWrite(EditSessionRegistry::instance()->libraryIdForPath(m_path));
-    }
+    m_writeHold.release();
 
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
     } else {
         setStatusMessage(result.statusMessage);
     }
-    setBusy(false);
+    setDeleting(false);
     setWriting(false);
     refreshPendingDeletions();
+    if (m_rescanAfterWrite) {
+        // Asked for while the files went; what a scan would have read
+        // then is gone now, so this one starts afresh.
+        m_rescanAfterWrite = false;
+        rescan(true);
+    }
     emit pendingDeletionsWriteFinished(QVariantMap{
         {"written", result.deleted},
         {"total", result.total},
@@ -1443,12 +1497,12 @@ void CleanupController::onDeletePendingFinished()
     });
 }
 
-void CleanupController::setBusy(bool busy)
+void CleanupController::setDeleting(bool deleting)
 {
-    if (m_busy == busy) {
+    if (m_deleting == deleting) {
         return;
     }
-    m_busy = busy;
+    m_deleting = deleting;
     emit busyChanged();
 }
 

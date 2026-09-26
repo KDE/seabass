@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/async_request.hpp"
+#include "gui/edit/direct_write_hold.hpp"
 #include "application/use_cases/real_file_sizes.hpp"
 #include "domain/duplicate_cleanup.hpp"
 #include "gui/qt_progress_reporter.hpp"
@@ -343,9 +345,12 @@ class CleanupController : public QObject
 
 public:
     explicit CleanupController(QObject *parent = nullptr);
+    ~CleanupController() override;
 
     CleanupPlanListModel *plansModel() { return &m_model; }
-    bool busy() const { return m_busy; }
+    // A scan or merge plan outstanding (docs/async-requests.md), or the
+    // pending-deletion write running.
+    bool busy() const { return m_scan.busy() || m_deleting; }
     bool writing() const;
     int stagedCount() const { return static_cast<int>(m_stagedBySurvivor.size()); }
     int scanCurrent() const { return m_scanCurrent; }
@@ -452,7 +457,7 @@ public:
     Q_INVOKABLE void cancelWrite();
     bool writeCancellable() const { return m_writing && !m_pendingDeleteCancel.cancelled(); }
 
-    bool scanCancellable() const { return m_busy && !writing() && m_watcher.isRunning(); }
+    bool scanCancellable() const { return m_scan.busy() && !writing(); }
     Q_INVOKABLE void cancelScan();
 
 signals:
@@ -473,14 +478,17 @@ signals:
     void lockRefused(const QVariantMap &holder);
 
 private:
-    void rescan();
-    void onRescanFinished();
+    // restart: supersede even a scan of the same scope, because what it
+    // read is out of date (after an undo or a write).
+    void rescan(bool restart = false);
+    void startScanRequest(const QString &key, bool restart, AsyncRequest<CleanupTaskResult>::Work work);
+    void onRescanFinished(CleanupTaskResult &&result);
     void onDeletePendingFinished();
     void attachSession();
     void stagePlan(size_t rawIndex);
     int cleanupItemCountHint() const;
     int indexOfSurvivor(const std::string &survivorSourceId) const;
-    void setBusy(bool busy);
+    void setDeleting(bool deleting);
     void setWriting(bool writing);
     void setScanProgress(int current, int total);
     void setErrorMessage(const QString &message);
@@ -495,11 +503,16 @@ private:
 
     CleanupPlanListModel m_model;
     PendingDeletionListModel m_pendingModel;
-    QFutureWatcher<CleanupTaskResult> m_watcher;
     StrayFileSummary m_strays;
-    application::CancellationToken m_scanCancel;  // fresh per rescan()/planManualMerge()
     application::CancellationToken m_pendingDeleteCancel;  // fresh per deleteSelectedPendingFiles()
-    bool m_holdsDirectWrite = false;
+    // The library's lock for the pending-deletion write, released by the
+    // write's own ending or, whatever happens to that, by this going away.
+    // It names the library it took, so a scope change mid-write cannot
+    // make it give back another one's.
+    DirectWriteHold m_writeHold;
+    // A scan asked for while the write ran, answered once it is over.
+    bool m_rescanAfterWrite = false;
+    quint64 m_scanSerial = 0;
     QPointer<LibraryEditSession> m_session;
     struct StagedInfo
     {
@@ -513,7 +526,7 @@ private:
     QStringList m_playlistNames;
     QString m_searchQuery;
     QString m_path;
-    bool m_busy = false;
+    bool m_deleting = false;
     bool m_writing = false;
     int m_scanCurrent = 0;
     int m_scanTotal = 0;
@@ -521,6 +534,9 @@ private:
     QString m_statusMessage;
     QString m_audioComparisonNote;
     bool m_statusIsAboutStaging = false;
+
+    // Last, so it is destroyed first: it cancels a scan and lets it go.
+    AsyncRequest<CleanupTaskResult> m_scan{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

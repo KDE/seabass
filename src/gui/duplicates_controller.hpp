@@ -84,7 +84,7 @@ private:
     std::vector<QString> m_stagedDescriptions;  // empty = not staged; parallel to m_plans
 };
 
-// Result of a background rescan task -- see DuplicatesController::rescan().
+// Result of a background rescan task -- see DuplicatesController::startRescan().
 // Built entirely on a worker thread, with no access to the controller.
 struct DuplicatesTaskResult
 {
@@ -174,21 +174,21 @@ signals:
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
-    void reanalyzeAfterUndo() override { rescan(); }
+    // After an undo what a running scan read is out of date: restart.
+    void reanalyzeAfterUndo() override { startRescan(true); }
     void onStagedChangeApplied(bool) override { emit plansChanged(); }
     void onStagedCleared() override { emit plansChanged(); }
 
 private:
     QString m_audioComparisonNote;
 
-    void rescan();
-    void onRescanFinished();
+    void startRescan(bool restart);
+    void onRescanFinished(DuplicatesTaskResult &&result);
     void setAudioComparisonNote(const DuplicatesTaskResult &result);
     void attachSession();
     void stageCopy(int index, const DuplicatesCopyOp &op);
 
     ConsolidationPlanListModel m_model;
-    QFutureWatcher<DuplicatesTaskResult> m_watcher;
     QString m_format;
     QString m_path;
 };

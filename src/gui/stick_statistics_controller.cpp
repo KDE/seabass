@@ -250,38 +250,34 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
 
 }  // namespace
 
-StickStatisticsController::StickStatisticsController(QObject *parent) : QObject(parent)
-{
-    connect(&m_watcher, &QFutureWatcher<StickStatisticsScanResult>::finished, this,
-            &StickStatisticsController::onScanFinished);
-}
+StickStatisticsController::StickStatisticsController(QObject *parent) : QObject(parent) {}
 
 void StickStatisticsController::scan(const QString &stickLabel, const QString &rekordboxPath, const QString &enginePath)
 {
-    if (m_busy) {
-        return;
-    }
+    // Answered either way (docs/async-requests.md): the same stick again
+    // by the scan running, another by a new one that supersedes it.
     setErrorMessage({});
-    setBusy(true);
-    m_scanCancel = application::CancellationToken();
-    m_watcher.setFuture(QtConcurrent::run(runScanTask, stickLabel, rekordboxPath, enginePath, m_scanCancel));
+    const QString catalog = rekordboxPath.isEmpty() ? enginePath : rekordboxPath;
+    m_scan.start(
+        stickLabel + QLatin1Char('\n') + rekordboxPath + QLatin1Char('\n') + enginePath,
+        pathToQString(pathFromQString(catalog).parent_path()),
+        [stickLabel, rekordboxPath, enginePath](application::CancellationToken cancel) {
+            return runScanTask(stickLabel, rekordboxPath, enginePath, cancel);
+        },
+        {
+            [this](StickStatisticsScanResult &&result) { onScanFinished(std::move(result)); },
+            [this](const QString &message) { setErrorMessage(message); },
+            [this]() { emit scanCancelled(); },
+        });
 }
 
 void StickStatisticsController::cancelScan()
 {
-    if (m_busy) {
-        m_scanCancel.cancel();
-    }
+    m_scan.cancel();
 }
 
-void StickStatisticsController::onScanFinished()
+void StickStatisticsController::onScanFinished(StickStatisticsScanResult &&result)
 {
-    QString thrown;
-    StickStatisticsScanResult result = takeResult(m_watcher, &thrown);
-    if (!thrown.isEmpty()) {
-        result.errorMessage = thrown;
-    }
-    setBusy(false);
     if (result.cancelled) {
         emit scanCancelled();
         return;
@@ -296,15 +292,6 @@ void StickStatisticsController::onScanFinished()
     m_oneLibraryStats = result.oneLibraryStats;
     m_diskUsage = result.diskUsage;
     emit resultsChanged();
-}
-
-void StickStatisticsController::setBusy(bool busy)
-{
-    if (m_busy == busy) {
-        return;
-    }
-    m_busy = busy;
-    emit busyChanged();
 }
 
 void StickStatisticsController::setErrorMessage(const QString &message)

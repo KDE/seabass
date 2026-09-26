@@ -563,8 +563,6 @@ LibraryConsistencyScanResult runScanTask(QString format, QString path, QString p
 
 LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QObject(parent)
 {
-    connect(&m_watcher, &QFutureWatcher<LibraryConsistencyScanResult>::finished, this,
-            &LibraryConsistencyController::onScanFinished);
     connect(&m_repairWatcher, &QFutureWatcher<infrastructure::media::FilesystemRepairResult>::finished, this,
             &LibraryConsistencyController::onFilesystemRepairFinished);
     // Where this computer keeps full stick backups: read once, the same
@@ -598,9 +596,9 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
 // window closing under it.
 LibraryConsistencyController::~LibraryConsistencyController()
 {
-    m_scanCancel.cancel();
+    // The scan is m_scan's: cancelled and let go. The repair is a write,
+    // and is waited for.
     m_pendingScanFormats.clear();
-    awaitQuietly(m_watcher);
     awaitQuietly(m_repairWatcher);
 }
 
@@ -611,11 +609,21 @@ int LibraryConsistencyController::runningScanTasksForTesting()
 
 std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
 {
+    // Speaks only for the leg started right after it, while that leg is
+    // the one outstanding: a superseded leg reports until it notices.
     auto reporter = std::make_shared<QtProgressReporter>();
-    connect(reporter.get(), &QtProgressReporter::started, this,
-            [this](const QString &, int total) { setScanProgress(0, total); });
-    connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this](int current) { setScanProgress(current, m_scanTotal); });
+    const quint64 serial = ++m_scanSerial;
+    const auto current = [this, serial]() { return serial == m_scanSerial && busy(); };
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
+        if (current()) {
+            setScanProgress(0, total);
+        }
+    });
+    connect(reporter.get(), &QtProgressReporter::progressed, this, [this, current](int done) {
+        if (current()) {
+            setScanProgress(done, m_scanTotal);
+        }
+    });
     return reporter;
 }
 
@@ -663,9 +671,27 @@ int LibraryConsistencyController::artworkBrokenRowCount() const
 void LibraryConsistencyController::scan(const QString &rekordboxPath, const QString &enginePath,
                                           const QString &playlistName)
 {
-    if (m_busy) {
+    startScanChain(rekordboxPath, enginePath, playlistName, false);
+}
+
+void LibraryConsistencyController::rescanAfterWrite()
+{
+    // What a scan still running read is from before the write: this one
+    // starts afresh rather than being answered by it. It used to be
+    // dropped when a scan was running, with the rescan flag already
+    // cleared, and the page showed issues the save had just fixed.
+    startScanChain(m_rekordboxPath, m_enginePath, m_currentPlaylistName, true);
+}
+
+void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, const QString &enginePath,
+                                                  const QString &playlistName, bool restart)
+{
+    const QString scope = rekordboxPath + QLatin1Char('\n') + enginePath + QLatin1Char('\n') + playlistName;
+    // The same scope again while it is read: that scan answers it.
+    if (!restart && busy() && scope == m_scanScope) {
         return;
     }
+    m_scanScope = scope;
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
     m_currentPlaylistName = playlistName;
@@ -731,7 +757,6 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
     setStatusMessage({});
     setScanProgress(0, 0);
 
-    m_scanCancel = application::CancellationToken();
     attachSession();
     m_pendingScanFormats.clear();
     if (!rekordboxPath.isEmpty()) {
@@ -745,45 +770,69 @@ void LibraryConsistencyController::scan(const QString &rekordboxPath, const QStr
         m_pendingScanFormats.push_back("onelibrary");
     }
 
-    setBusy(true);
-    scanNextPendingFormat();
+    // A scan still running for another scope is superseded by the first
+    // leg of this one; its answer, whenever it comes, is dropped.
+    scanNextPendingFormat(restart);
 }
 
-void LibraryConsistencyController::scanNextPendingFormat()
+void LibraryConsistencyController::scanNextPendingFormat(bool restart)
 {
     if (m_pendingScanFormats.empty()) {
         setScanningFormat({});
-        setBusy(false);
         return;
     }
     QString format = m_pendingScanFormats.front();
     m_pendingScanFormats.erase(m_pendingScanFormats.begin());
     setScanningFormat(format);
-    m_watcher.setFuture(QtConcurrent::run(runScanTask, format, pathForFormat(format), m_currentPlaylistName,
-                                          makeReporter(), m_scanCancel, m_artSources, m_backupDirectory));
+    const QString path = pathForFormat(format);
+    const QString playlist = m_currentPlaylistName;
+    const auto artSources = m_artSources;
+    const QString backupDirectory = m_backupDirectory;
+    auto reporter = makeReporter();
+    AsyncRequest<LibraryConsistencyScanResult>::Work work =
+        [format, path, playlist, reporter, artSources, backupDirectory](application::CancellationToken cancel) {
+            return runScanTask(format, path, playlist, reporter, cancel, artSources, backupDirectory);
+        };
+    AsyncRequest<LibraryConsistencyScanResult>::Ending ending{
+        [this](LibraryConsistencyScanResult &&result) { onScanFinished(std::move(result)); },
+        // The read itself failed or its stick went away: the legs still
+        // queued would read the same stick, so they go too.
+        [this](const QString &message) {
+            m_pendingScanFormats.clear();
+            setScanningFormat({});
+            setErrorMessage(message);
+        },
+        [this]() { endScanCancelled(); },
+    };
+    const QString key = m_scanScope + QLatin1Char('\n') + format;
+    const QString stickRoot = pathToQString(pathFromQString(path).parent_path());
+    if (restart) {
+        m_scan.restart(key, stickRoot, std::move(work), std::move(ending));
+    } else {
+        m_scan.start(key, stickRoot, std::move(work), std::move(ending));
+    }
 }
 
 void LibraryConsistencyController::cancelScan()
 {
     if (scanCancellable()) {
-        m_scanCancel.cancel();
+        m_scan.cancel();
     }
 }
 
-void LibraryConsistencyController::onScanFinished()
+void LibraryConsistencyController::endScanCancelled()
 {
-    QString thrown;
-    LibraryConsistencyScanResult result = takeResult(m_watcher, &thrown);
-    if (!thrown.isEmpty()) {
-        result.errorMessage = thrown;
-    }
+    // Whatever earlier formats contributed stays on screen (it is
+    // complete for those formats); the rest of the queue is dropped.
+    m_pendingScanFormats.clear();
+    setScanningFormat({});
+    emit scanCancelled();
+}
+
+void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &&result)
+{
     if (result.cancelled) {
-        // Whatever earlier formats contributed stays on screen (it is
-        // complete for those formats); the rest of the queue is dropped.
-        m_pendingScanFormats.clear();
-        setScanningFormat({});
-        setBusy(false);
-        emit scanCancelled();
+        endScanCancelled();
         return;
     }
     if (!result.errorMessage.isEmpty()) {
@@ -837,7 +886,7 @@ void LibraryConsistencyController::onScanFinished()
         mergePlaylistSummary(result.playlistNames, result.playlistTrackCounts);
         emit issuesChanged();
     }
-    scanNextPendingFormat();
+    scanNextPendingFormat(false);
 }
 
 void LibraryConsistencyController::mergePlaylistSummary(const QStringList &names, const QVariantMap &counts)
@@ -940,7 +989,7 @@ void LibraryConsistencyController::attachSession()
                     &LibraryConsistencyController::canUndoChanged);
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 if (changeId == QStringLiteral("undo:last-save")) {
-                    scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
+                    rescanAfterWrite();
                     return;
                 }
                 if (changeId == MarkRekordboxImportedChange::idFor()) {
@@ -1027,7 +1076,7 @@ void LibraryConsistencyController::attachSession()
             connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &) {
                 if (m_rescanAfterSave) {
                     m_rescanAfterSave = false;
-                    scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
+                    rescanAfterWrite();
                 }
             });
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
@@ -1117,7 +1166,7 @@ void LibraryConsistencyController::stageIssue(int index)
 
 void LibraryConsistencyController::repairAll()
 {
-    if (m_busy) {
+    if (busy()) {
         return;
     }
     setErrorMessage({});
@@ -1143,7 +1192,7 @@ void LibraryConsistencyController::repairAll()
 
 void LibraryConsistencyController::repairOne(int index)
 {
-    if (m_busy) {
+    if (busy()) {
         return;
     }
     setErrorMessage({});
@@ -1153,7 +1202,7 @@ void LibraryConsistencyController::repairOne(int index)
 
 void LibraryConsistencyController::deleteOrphan(int index)
 {
-    if (m_busy) {
+    if (busy()) {
         return;
     }
     setErrorMessage({});
@@ -1227,7 +1276,7 @@ void LibraryConsistencyController::stageJunkCue(int index)
 
 void LibraryConsistencyController::removeJunkCue(int index)
 {
-    if (m_busy) {
+    if (busy()) {
         return;
     }
     setErrorMessage({});
@@ -1237,7 +1286,7 @@ void LibraryConsistencyController::removeJunkCue(int index)
 
 void LibraryConsistencyController::removeAllJunkCues()
 {
-    if (m_busy) {
+    if (busy()) {
         return;
     }
     setErrorMessage({});
@@ -1296,7 +1345,7 @@ void LibraryConsistencyController::setFilesystemRepairForTesting(
 
 void LibraryConsistencyController::repairStickFilesystem()
 {
-    if (m_repairingFilesystem || m_busy) {
+    if (m_repairingFilesystem || busy()) {
         return;
     }
     const std::string stickRoot =
@@ -1342,7 +1391,7 @@ void LibraryConsistencyController::onFilesystemRepairFinished()
         setStatusMessage(m_filesystemMessage);
         // Everything found before was found on a stick that could not be
         // written to; read it again now that it can.
-        scan(m_rekordboxPath, m_enginePath, m_currentPlaylistName);
+        rescanAfterWrite();
     } else {
         setErrorMessage(m_filesystemMessage);
     }
@@ -1350,7 +1399,7 @@ void LibraryConsistencyController::onFilesystemRepairFinished()
 
 void LibraryConsistencyController::repairArtwork()
 {
-    if (m_busy || artworkRepairStaged()) {
+    if (busy() || artworkRepairStaged()) {
         return;
     }
     setErrorMessage({});
@@ -1405,7 +1454,7 @@ void LibraryConsistencyController::repairArtwork()
 
 void LibraryConsistencyController::fillSampleRates()
 {
-    if (m_busy || m_sampleRateFillStaged) {
+    if (busy() || m_sampleRateFillStaged) {
         return;
     }
     setErrorMessage({});
@@ -1449,7 +1498,7 @@ void LibraryConsistencyController::fillSampleRates()
 
 void LibraryConsistencyController::markRekordboxImported()
 {
-    if (m_busy || m_importMarkStaged || !m_importState.playerWillOfferImport()) {
+    if (busy() || m_importMarkStaged || !m_importState.playerWillOfferImport()) {
         return;
     }
     setErrorMessage({});
@@ -1534,7 +1583,7 @@ QVariantList LibraryConsistencyController::cleanupLeftoversHeldBack() const
 
 void LibraryConsistencyController::finishCleanupLeftovers()
 {
-    if (m_busy || m_cleanupLeftoverFixStaged) {
+    if (busy() || m_cleanupLeftoverFixStaged) {
         return;
     }
     setErrorMessage({});
@@ -1655,7 +1704,7 @@ void LibraryConsistencyController::ignoreAllJunkCues()
 
 void LibraryConsistencyController::undoLastOperation()
 {
-    if (m_busy || !m_session) {
+    if (busy() || !m_session) {
         return;
     }
     setErrorMessage({});
@@ -1663,14 +1712,6 @@ void LibraryConsistencyController::undoLastOperation()
     m_session->undoLastSave();
 }
 
-void LibraryConsistencyController::setBusy(bool busy)
-{
-    if (m_busy == busy) {
-        return;
-    }
-    m_busy = busy;
-    emit busyChanged();
-}
 
 void LibraryConsistencyController::setScanProgress(int current, int total)
 {

@@ -9,6 +9,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include <QVariantMap>
 
+#include <memory>
 #include <functional>
 #include <optional>
 
@@ -43,6 +44,17 @@ public:
                                    std::function<void()> retry = {});
     void release();
     bool held() const { return !m_held.isEmpty(); }
+
+    // The locks held, handed to a new hold; this one holds none after.
+    // For a write that outlives the page that started it: the page goes,
+    // the write and its locks do not (see detached_write.hpp).
+    std::unique_ptr<DirectWriteHold> handOver()
+    {
+        auto next = std::make_unique<DirectWriteHold>();
+        next->m_held = std::move(m_held);
+        m_held.clear();
+        return next;
+    }
 
     // The library id the last acquire() was refused on.
     QString refusedLibraryId() const { return m_refusedLibraryId; }

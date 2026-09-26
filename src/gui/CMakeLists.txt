@@ -205,6 +205,7 @@ set(SEABASS_GUI_SOURCES
     async_request.hpp
     stick_events.hpp
     stick_events.cpp
+    detached_write.hpp
     staged_plan_model.hpp
     staged_cue_edit_controller.hpp
     staged_cue_edit_controller.cpp
