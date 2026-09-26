@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/async_request.hpp"
 #include "domain/metadata_backup_plan.hpp"
 #include "gui/metadata_backup_proposal_model.hpp"
 #include "gui/qt_progress_reporter.hpp"
@@ -238,7 +239,8 @@ public:
     explicit MetadataBackupController(QObject *parent = nullptr);
     ~MetadataBackupController() override;
 
-    bool busy() const { return m_busy; }
+    // A scan outstanding (see AsyncRequest) or a save running.
+    bool busy() const { return m_scan.busy() || m_saving; }
     int progressCurrent() const { return m_progressCurrent; }
     int progressTotal() const { return m_progressTotal; }
     QString currentPhase() const { return m_currentPhase; }
@@ -389,29 +391,33 @@ signals:
 private:
     void startScan(const QString &libraryPath, const QString &libraryId, const QString &stickLabel);
     void beginSave();
-    void onScanFinished();
+    void onScanFinished(MetadataBackupScanResult &&result);
+    void endScanWithoutAPlan(const QString &errorMessage);
     void onSaveFinished();
     // False when the store could not be opened or the delete threw,
     // in which case the marks are deliberately left standing.
     bool applyStagedDeletions();
-    void setBusy(bool busy);
+    void setSaving(bool saving);
     void setWriting(bool writing);
     void setProgress(int current, int total);
     void setCurrentPhase(const QString &phase);
     void setErrorMessage(const QString &message);
-    std::shared_ptr<QtProgressReporter> makeReporter();
+    // serial: the scan this reporter belongs to, or 0 for the save.
+    std::shared_ptr<QtProgressReporter> makeReporter(quint64 serial = 0);
     // Opened lazily, on the UI thread, for browsing only. A scan and a
     // save each open their own connection on their own thread.
     infrastructure::local::MetadataStore *store();
 
-    QFutureWatcher<MetadataBackupScanResult> m_scanWatcher;
     QFutureWatcher<MetadataBackupTaskResult> m_saveWatcher;
     StoredTrackListModel m_browseModel;
     BackupProposalListModel m_proposalModel;
     std::unique_ptr<infrastructure::local::MetadataStore> m_store;
     application::CancellationToken m_cancel;
 
-    bool m_busy = false;
+    bool m_saving = false;
+    // Which scan the progress bar belongs to: a superseded or cancelled
+    // scan still reports until its worker notices, and must not move it.
+    quint64 m_scanSerial = 0;
     bool m_writing = false;
     bool m_hasResult = false;
     bool m_hasScanned = false;
@@ -448,6 +454,10 @@ private:
     QString m_sourceStickLabel;
     // The last scan's whole stick reading; see MetadataBackupScanResult.
     std::vector<domain::Track> m_stickTracks;
+
+    // Last, so it is destroyed first: its destructor cancels the scan and
+    // lets its worker go before anything the endings touch is gone.
+    AsyncRequest<MetadataBackupScanResult> m_scan{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

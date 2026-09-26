@@ -393,8 +393,6 @@ QStringList StoredTrackListModel::stagedDescriptions() const
 
 MetadataBackupController::MetadataBackupController(QObject *parent) : QObject(parent)
 {
-    connect(&m_scanWatcher, &QFutureWatcher<MetadataBackupScanResult>::finished, this,
-            &MetadataBackupController::onScanFinished);
     connect(&m_saveWatcher, &QFutureWatcher<MetadataBackupTaskResult>::finished, this,
             &MetadataBackupController::onSaveFinished);
     refresh();
@@ -410,7 +408,7 @@ MetadataBackupController::~MetadataBackupController()
     // (see future_result.hpp); every other controller here uses it.
     // isRunning() is dropped with it -- awaitQuietly() on a watcher with
     // no future is a no-op, and the check invited the raw call back.
-    awaitQuietly(m_scanWatcher);
+    // The scan is m_scan's: it cancels its worker and lets it go.
     awaitQuietly(m_saveWatcher);
 }
 
@@ -499,7 +497,18 @@ void MetadataBackupController::discardStagingAndSelectStick(const QString &libra
 void MetadataBackupController::startScan(const QString &libraryPath, const QString &libraryId,
                                           const QString &stickLabel)
 {
-    if (m_busy) {
+    // A save is writing the store; the rescan after it is started from
+    // its own ending, once it is over.
+    if (m_saving) {
+        return;
+    }
+    // Already reading this stick: that read answers this request too.
+    // Starting again would throw away a read half done for the same
+    // answer.
+    if (!m_browsingStore && m_scan.busy() && m_scan.key() == libraryPath) {
+        m_sourceLibraryId = libraryId;
+        m_sourceStickLabel = stickLabel;
+        emit sourceChanged();
         return;
     }
     setErrorMessage({});
@@ -526,9 +535,22 @@ void MetadataBackupController::startScan(const QString &libraryPath, const QStri
     m_currentPhaseTotal = 0;
     setProgress(0, 0);
     setCurrentPhase(QStringLiteral("Reading this stick"));
-    m_cancel = application::CancellationToken();
-    setBusy(true);
-    m_scanWatcher.setFuture(QtConcurrent::run(runScanTask, libraryPath, makeReporter(), m_cancel));
+    // Any other read still outstanding is superseded by this one: its
+    // worker is told to stop and whatever it returns is dropped, so a
+    // list for the stick the page left can never land under this one.
+    const quint64 serial = ++m_scanSerial;
+    auto reporter = makeReporter(serial);
+    const QString stickRoot = pathToQString(pathFromQString(libraryPath).parent_path());
+    m_scan.start(
+        libraryPath, stickRoot,
+        [libraryPath, reporter](application::CancellationToken cancel) {
+            return runScanTask(libraryPath, reporter, cancel);
+        },
+        {
+            [this](MetadataBackupScanResult &&result) { onScanFinished(std::move(result)); },
+            [this](const QString &message) { endScanWithoutAPlan(message); },
+            [this]() { endScanWithoutAPlan({}); },
+        });
 }
 
 bool MetadataBackupController::browseStore()
@@ -545,6 +567,9 @@ bool MetadataBackupController::browseStore()
 
 void MetadataBackupController::discardStagingAndBrowseStore()
 {
+    // A stick still being read is not what the list shows any more; its
+    // plan must not land over the store's rows.
+    m_scan.cancel();
     clearAllStaging();
     m_browsingStore = true;
     m_hasScanned = false;
@@ -565,35 +590,37 @@ void MetadataBackupController::discardStagingAndBrowseStore()
 
 void MetadataBackupController::cancel()
 {
+    if (m_scan.busy()) {
+        // Over at once for the page, whatever the worker is in the middle
+        // of; see AsyncRequest.
+        m_scan.cancel();
+        return;
+    }
     m_cancel.cancel();
 }
 
-void MetadataBackupController::onScanFinished()
+void MetadataBackupController::endScanWithoutAPlan(const QString &errorMessage)
 {
-    QString thrown;
-    MetadataBackupScanResult result = takeResult(m_scanWatcher, &thrown);
-    if (!thrown.isEmpty()) {
-        result.errorMessage = thrown;
-    }
-    setBusy(false);
     setCurrentPhase({});
-    m_stickTracks = result.stickTracks;
-    if (!result.errorMessage.isEmpty()) {
-        setErrorMessage(result.errorMessage);
-        m_scanCancelled = true;  // there is no plan, and the page must not pretend one is coming
-        emit analysisChanged();
+    m_stickTracks.clear();
+    if (!errorMessage.isEmpty()) {
+        setErrorMessage(errorMessage);
+    }
+    // There is no plan, and the page must not pretend one is coming:
+    // without this hasScanned stayed false with the stick still selected,
+    // and the page sat on "Reading X..." with an empty list, looking hung.
+    m_scanCancelled = true;
+    emit analysisChanged();
+}
+
+void MetadataBackupController::onScanFinished(MetadataBackupScanResult &&result)
+{
+    if (!result.errorMessage.isEmpty() || result.cancelled) {
+        endScanWithoutAPlan(result.errorMessage);
         return;
     }
-    if (result.cancelled) {
-        // Cancelling left no plan. Saying so is the whole fix: without
-        // it hasScanned stayed false with the stick still selected, so
-        // the page sat on "Reading X..." with an empty list and no busy
-        // indicator, looking hung, and the empty-state label stayed
-        // suppressed because it waits for hasScanned.
-        m_scanCancelled = true;
-        emit analysisChanged();
-        return;
-    }
+    setCurrentPhase({});
+    m_stickTracks = std::move(result.stickTracks);
 
     // Catalogs that are on the stick but could not be read. Not an error
     // -- what was read is still worth storing -- but the tracks only the
@@ -678,7 +705,7 @@ void MetadataBackupController::clearAllStaging()
 
 void MetadataBackupController::save()
 {
-    if (m_busy || !dirty()) {
+    if (busy() || !dirty()) {
         return;
     }
     if (stagedForDeletionCount() > 0) {
@@ -693,7 +720,7 @@ void MetadataBackupController::save()
 
 void MetadataBackupController::saveConfirmed()
 {
-    if (m_busy || !dirty()) {
+    if (busy() || !dirty()) {
         return;
     }
     beginSave();
@@ -721,7 +748,7 @@ void MetadataBackupController::beginSave()
     setProgress(0, 0);
     setCurrentPhase(QStringLiteral("Storing"));
     m_cancel = application::CancellationToken();
-    setBusy(true);
+    setSaving(true);
     setWriting(true);
     // Awake for the whole backup: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Backing up metadata to this computer"));
@@ -740,7 +767,7 @@ void MetadataBackupController::onSaveFinished()
     if (!thrown.isEmpty()) {
         result.errorMessage = thrown;
     }
-    setBusy(false);
+    setSaving(false);
     setWriting(false);
     setCurrentPhase({});
     if (!result.succeeded) {
@@ -964,30 +991,39 @@ QString MetadataBackupController::mergeRuleHelp() const
 
 // ---- progress and state ----------------------------------------------
 
-std::shared_ptr<QtProgressReporter> MetadataBackupController::makeReporter()
+std::shared_ptr<QtProgressReporter> MetadataBackupController::makeReporter(quint64 serial)
 {
+    // A scan's reporter speaks only while its scan is the current one.
+    const auto current = [this, serial]() { return serial == 0 || (serial == m_scanSerial && m_scan.busy()); };
     auto reporter = std::make_shared<QtProgressReporter>();
     // Each phase (one per catalog read, then the store write) reports
     // its own 0..N. Adding the previous phases' totals as a baseline
     // keeps one bar moving forward instead of several restarting, which
     // is the only shape that reads as progress.
-    connect(reporter.get(), &QtProgressReporter::started, this, [this](const QString &label, int total) {
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
+        if (!current()) {
+            return;
+        }
         m_phaseBaseline += m_currentPhaseTotal;
         m_currentPhaseTotal = total;
         setCurrentPhase(label);
         setProgress(m_phaseBaseline, m_phaseBaseline + total);
     });
     connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this](int current) { setProgress(m_phaseBaseline + current, m_phaseBaseline + m_currentPhaseTotal); });
+            [this, current](int done) {
+                if (current()) {
+                    setProgress(m_phaseBaseline + done, m_phaseBaseline + m_currentPhaseTotal);
+                }
+            });
     return reporter;
 }
 
-void MetadataBackupController::setBusy(bool busy)
+void MetadataBackupController::setSaving(bool saving)
 {
-    if (m_busy == busy) {
+    if (m_saving == saving) {
         return;
     }
-    m_busy = busy;
+    m_saving = saving;
     emit busyChanged();
 }
 

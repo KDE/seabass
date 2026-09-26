@@ -32,6 +32,7 @@
 #include "infrastructure/media/stick_root_scan.hpp"
 #include "gui/future_result.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/stick_events.hpp"
 #include "gui/qt_path.hpp"
 
 namespace seabass::gui
@@ -429,6 +430,8 @@ void MediaController::detect()
     m_openedFolderListed = folderListed;
     for (const std::string &mountPoint : forgetCatalogsOfSticksGone(m_model.sticks(), sticks)) {
         emit stickGone(qtPathFromUtf8(mountPoint));
+        // Every page still reading it ends that read (AsyncRequest).
+        StickEvents::instance().announceStickGone(qtPathFromUtf8(mountPoint));
     }
     m_model.setSticks(std::move(sticks));
     std::vector<application::StickIdentity> present;

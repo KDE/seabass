@@ -150,16 +150,11 @@ void MetadataRestoreController::noteAnalysisChanged()
 
 MetadataRestoreController::MetadataRestoreController(QObject *parent) : QObject(parent)
 {
-    connect(&m_watcher, &QFutureWatcher<MetadataRestoreTaskResult>::finished, this,
-            &MetadataRestoreController::onScanFinished);
 }
 
 MetadataRestoreController::~MetadataRestoreController()
 {
-    m_cancel.cancel();
-    // See MetadataBackupController's destructor, and future_result.hpp:
-    // waitForFinished() rethrows in a noexcept context.
-    awaitQuietly(m_watcher);
+    // m_scan cancels its read and lets it go.
 }
 
 bool MetadataRestoreController::writing() const
@@ -169,7 +164,9 @@ bool MetadataRestoreController::writing() const
 
 void MetadataRestoreController::scan(const QString &libraryPath)
 {
-    if (m_busy) {
+    // The same stick again is answered by the read already under way;
+    // another supersedes it (AsyncRequest).
+    if (m_scan.busy() && m_scan.key() == libraryPath) {
         return;
     }
     m_libraryPath = libraryPath;
@@ -178,24 +175,29 @@ void MetadataRestoreController::scan(const QString &libraryPath)
     m_currentPhaseTotal = 0;
     setProgress(0, 0);
     setCurrentPhase(QStringLiteral("Reading this stick"));
-    m_cancel = application::CancellationToken();
-    setBusy(true);
-    m_watcher.setFuture(QtConcurrent::run(runScanTask, libraryPath, makeReporter(), m_cancel));
+    auto reporter = makeReporter(++m_scanSerial);
+    m_scan.start(
+        libraryPath, pathToQString(pathFromQString(libraryPath).parent_path()),
+        [libraryPath, reporter](application::CancellationToken cancel) {
+            return runScanTask(libraryPath, reporter, cancel);
+        },
+        {
+            [this](MetadataRestoreTaskResult &&result) { onScanFinished(std::move(result)); },
+            [this](const QString &message) {
+                setCurrentPhase({});
+                setErrorMessage(message);
+            },
+            [this]() { setCurrentPhase({}); },
+        });
 }
 
 void MetadataRestoreController::cancelScan()
 {
-    m_cancel.cancel();
+    m_scan.cancel();
 }
 
-void MetadataRestoreController::onScanFinished()
+void MetadataRestoreController::onScanFinished(MetadataRestoreTaskResult &&result)
 {
-    QString thrown;
-    MetadataRestoreTaskResult result = takeResult(m_watcher, &thrown);
-    if (!thrown.isEmpty()) {
-        result.errorMessage = thrown;
-    }
-    setBusy(false);
     setCurrentPhase({});
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
@@ -666,27 +668,28 @@ void MetadataRestoreController::unstageIndices(const std::vector<int> &indices)
     noteAnalysisChanged();
 }
 
-std::shared_ptr<QtProgressReporter> MetadataRestoreController::makeReporter()
+std::shared_ptr<QtProgressReporter> MetadataRestoreController::makeReporter(quint64 serial)
 {
     auto reporter = std::make_shared<QtProgressReporter>();
-    connect(reporter.get(), &QtProgressReporter::started, this, [this](const QString &label, int total) {
+    // Only the scan outstanding moves the bar: a superseded or cancelled
+    // one reports until its worker notices.
+    const auto current = [this, serial]() { return serial == m_scanSerial && m_scan.busy(); };
+    connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
+        if (!current()) {
+            return;
+        }
         m_phaseBaseline += m_currentPhaseTotal;
         m_currentPhaseTotal = total;
         setCurrentPhase(label);
         setProgress(m_phaseBaseline, m_phaseBaseline + total);
     });
     connect(reporter.get(), &QtProgressReporter::progressed, this,
-            [this](int current) { setProgress(m_phaseBaseline + current, m_phaseBaseline + m_currentPhaseTotal); });
+            [this, current](int done) {
+                if (current()) {
+                    setProgress(m_phaseBaseline + done, m_phaseBaseline + m_currentPhaseTotal);
+                }
+            });
     return reporter;
-}
-
-void MetadataRestoreController::setBusy(bool busy)
-{
-    if (m_busy == busy) {
-        return;
-    }
-    m_busy = busy;
-    emit busyChanged();
 }
 
 void MetadataRestoreController::setProgress(int current, int total)

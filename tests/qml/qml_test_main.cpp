@@ -40,6 +40,8 @@
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "gui/library_consistency_controller.hpp"
 #include "gui/scan_controller.hpp"
+#include "gui/async_request.hpp"
+#include "gui/stick_events.hpp"
 #include <QColor>
 #include <QFile>
 #include <QImage>
@@ -56,6 +58,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <memory>
 #include <stdexcept>
@@ -491,13 +494,171 @@ public:
 
     // Every scan task has returned, and so has everything it reported
     // (delivery still needs the event loop to run).
-    Q_INVOKABLE bool waitForScans() { return QThreadPool::globalInstance()->waitForDone(10000); }
+    Q_INVOKABLE bool waitForScans()
+    {
+        // A page's read runs on AsyncRequest's own pool, the rest on the
+        // global one.
+        const bool global = QThreadPool::globalInstance()->waitForDone(10000);
+        return seabass::gui::asyncRequestPool().waitForDone(10000) && global;
+    }
 
     Q_INVOKABLE void restore()
     {
         releaseCues();
         m_gate.reset();
         seabass::gui::ScanController::setCatalogCacheForTesting(nullptr);
+    }
+};
+
+// Every page that reads a stick through the catalog cache, run against
+// one whose rekordbox read a test holds at a gate: the rule of
+// docs/async-requests.md is about what a page does while a read is
+// still going, and a real read of the fixture is over before a test can
+// do anything in the middle of it. hold() puts the stand-in in place of
+// LibraryCatalogCache::instance(); the other formats read as empty at
+// once. `honourCancel` false is a read stuck where it cannot look at
+// its token (a hung stick, a slow folder): the page must still be able
+// to let go. The caches live as long as the fixture, because a worker a
+// test let go of can still be finishing in one.
+class CatalogGateFixture : public QObject
+{
+    Q_OBJECT
+
+    struct Gate
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool released = false;
+        std::atomic<int> passes{0};
+        std::atomic<int> waiting{0};
+        // Track counts by catalog path, for a test that needs to tell
+        // two sticks' answers apart; the rest get hold()'s count.
+        std::map<std::string, int> counts;
+    };
+
+    std::shared_ptr<Gate> m_gate;
+    std::vector<std::unique_ptr<seabass::gui::LibraryCatalogCache>> m_caches;
+
+public:
+    using QObject::QObject;
+    ~CatalogGateFixture() override
+    {
+        restore();
+        QThreadPool::globalInstance()->waitForDone();
+        seabass::gui::asyncRequestPool().waitForDone();
+    }
+
+    Q_INVOKABLE void hold(int trackCount, bool honourCancel)
+    {
+        restore();
+        auto gate = std::make_shared<Gate>();
+        auto stage = [gate, trackCount, honourCancel](seabass::gui::LibraryCatalogCache::Detail detail,
+                                                      const std::string &format, const std::string &path,
+                                                      std::vector<seabass::domain::Track> &tracks,
+                                                      seabass::gui::LibraryCatalogCache::StageNotes &,
+                                                      seabass::application::ProgressReporter &progress,
+                                                      seabass::application::CancellationToken cancel) {
+            if (detail != seabass::gui::LibraryCatalogCache::Detail::Tracks || format != "rekordbox") {
+                return;
+            }
+            // Some progress before the gate, as a real read reports it,
+            // so a test can see whose bar is moving.
+            progress.start("Reading the gated catalog", 10);
+            progress.tick(1);
+            int count = trackCount;
+            {
+                std::lock_guard<std::mutex> lock(gate->mutex);
+                const auto found = gate->counts.find(seabass::pathToGenericUtf8(seabass::pathFromUtf8(path)));
+                if (found != gate->counts.end()) {
+                    count = found->second;
+                }
+            }
+            ++gate->passes;
+            ++gate->waiting;
+            {
+                std::unique_lock<std::mutex> lock(gate->mutex);
+                while (!gate->released && !(honourCancel && cancel.cancelled())) {
+                    gate->cv.wait_for(lock, std::chrono::milliseconds(5));
+                }
+            }
+            --gate->waiting;
+            cancel.throwIfCancelled();
+            tracks.clear();
+            for (int i = 0; i < count; ++i) {
+                seabass::domain::Track track;
+                track.format = format;
+                track.sourceId = std::to_string(i + 1);
+                track.title = "Gated Track " + std::to_string(1000 + i);
+                track.artist = "Gated Artist";
+                track.filePath = "/Contents/gated/" + std::to_string(i + 1) + ".mp3";
+                track.durationSeconds = 200 + i;
+                seabass::domain::CuePoint cue;
+                cue.kind = seabass::domain::CuePoint::Kind::Hot;
+                cue.hotCueNumber = 1;
+                cue.positionMs = 1000.0;
+                track.cues.push_back(cue);
+                tracks.push_back(std::move(track));
+            }
+        };
+        auto mtime = [](const std::string &, const std::string &) { return std::chrono::system_clock::time_point{}; };
+        m_caches.push_back(std::make_unique<seabass::gui::LibraryCatalogCache>(stage, mtime));
+        m_gate = gate;
+        seabass::gui::LibraryCatalogCache::setInstanceForTesting(m_caches.back().get());
+    }
+
+    Q_INVOKABLE void release()
+    {
+        if (!m_gate) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_gate->mutex);
+            m_gate->released = true;
+        }
+        m_gate->cv.notify_all();
+    }
+
+    // The number of tracks the catalog at `catalogPath` reads as.
+    Q_INVOKABLE void setTrackCountFor(const QString &catalogPath, int count)
+    {
+        if (!m_gate) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_gate->mutex);
+        m_gate->counts[seabass::pathToGenericUtf8(seabass::gui::pathFromQString(catalogPath))] = count;
+    }
+
+    // Reads that reached the gate, and reads standing at it now.
+    Q_INVOKABLE int passes() const { return m_gate ? m_gate->passes.load() : 0; }
+    Q_INVOKABLE int waiting() const { return m_gate ? m_gate->waiting.load() : 0; }
+
+    // Opens the gate from another thread after `ms`, for a test whose
+    // UI thread may itself be what is stuck waiting on the gated read.
+    Q_INVOKABLE void releaseAfter(int ms)
+    {
+        std::thread([gate = m_gate, ms]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            if (gate) {
+                {
+                    std::lock_guard<std::mutex> lock(gate->mutex);
+                    gate->released = true;
+                }
+                gate->cv.notify_all();
+            }
+        }).detach();
+    }
+
+    // What MediaController says when a stick is pulled.
+    Q_INVOKABLE void announceStickGone(const QString &mountPoint)
+    {
+        seabass::gui::StickEvents::instance().announceStickGone(mountPoint);
+    }
+
+    Q_INVOKABLE void restore()
+    {
+        release();
+        m_gate.reset();
+        seabass::gui::LibraryCatalogCache::setInstanceForTesting(nullptr);
     }
 };
 
@@ -1560,6 +1721,7 @@ void seedMetadataStoreForTests()
         engine->rootContext()->setContextProperty(QStringLiteral("stickFixture"), new StickFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("controllerFixture"), new ControllerFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("browseFixture"), new BrowseFixture(engine));
+        engine->rootContext()->setContextProperty(QStringLiteral("catalogGate"), new CatalogGateFixture(engine));
     }
 };
 

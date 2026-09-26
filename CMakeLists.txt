@@ -2112,6 +2112,7 @@ if(TARGET seabass_edit)
 
     add_executable(stick_list_order_test
         src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
         src/gui/library_catalog_cache.cpp
         tests/stick_list_order_test.cpp
     )
@@ -2125,14 +2126,25 @@ if(TARGET seabass_edit)
         src/gui/backup_advisor_controller.cpp
         src/gui/library_fingerprint_reader.cpp
         src/gui/library_catalog_cache.cpp
+        src/gui/stick_events.cpp
         tests/backup_advisor_controller_test.cpp
     )
     target_include_directories(backup_advisor_controller_test PRIVATE src tests)
     target_link_libraries(backup_advisor_controller_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME backup_advisor_controller_test COMMAND backup_advisor_controller_test)
 
+    # docs/async-requests.md's seven rules, against gui::AsyncRequest.
+    add_executable(async_request_test
+        src/gui/stick_events.cpp
+        tests/async_request_test.cpp
+    )
+    target_include_directories(async_request_test PRIVATE src)
+    target_link_libraries(async_request_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
+    add_test(NAME async_request_test COMMAND async_request_test)
+
     add_executable(open_folder_test
         src/gui/media_controller.cpp
+        src/gui/stick_events.cpp
         src/gui/library_catalog_cache.cpp
         tests/open_folder_test.cpp
     )
