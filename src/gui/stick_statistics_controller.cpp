@@ -21,6 +21,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "storageprobe/walk_tree.hpp"
+#include "application/use_cases/fill_file_sizes.hpp"
 
 namespace seabass::gui
 {
@@ -202,11 +203,7 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
         for (const auto &t : combinedTracks) {
             audioBytes += t.fileSizeBytes;
             if (!t.artworkPath.empty() && distinctArtwork.insert(t.artworkPath).second) {
-                std::error_code ec;
-                auto size = fs::file_size(pathFromUtf8(t.artworkPath), ec);
-                if (!ec) {
-                    artworkBytes += size;
-                }
+                artworkBytes += application::fileSizeOnDisk(t.artworkPath).value_or(0);
             }
         }
 

@@ -11,6 +11,7 @@
 
 #include "infrastructure/long_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "application/use_cases/fill_file_sizes.hpp"
 
 namespace seabass::infrastructure::cleanup
 {
@@ -121,12 +122,11 @@ AudioFileWalkResult walkAudioFiles(const std::string &root, const application::C
 
             application::AudioFileOnDisk file;
             file.filePath = path;
-            std::error_code sizeEc;
-            const auto size = fs::file_size(child, sizeEc);
             // fs::file_size reports failure as (uintmax_t)-1, so a caller
             // adding it up without checking turns one bad file into a
-            // nonsense total. Leave it at 0 instead.
-            file.fileSizeBytes = sizeEc ? 0 : static_cast<std::uint64_t>(size);
+            // nonsense total: fileSizeOnDisk() says nothing instead, and
+            // that is 0 here.
+            file.fileSizeBytes = application::fileSizeOnDisk(path).value_or(0);
             result.files.push_back(std::move(file));
         }
         if (nextEc) {

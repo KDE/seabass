@@ -57,6 +57,7 @@
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "gui/edit/changes/cleanup_group_change.hpp"
 #include "gui/qt_path.hpp"
+#include "application/use_cases/fill_file_sizes.hpp"
 
 namespace seabass::gui
 {
@@ -1336,11 +1337,7 @@ void CleanupController::refreshPendingDeletions()
         // not a guess. 0 if the file's already gone; still worth listing
         // (deleteSelectedPendingFiles() clears an already-absent entry
         // from the manifest instead of erroring).
-        std::error_code ec;
-        entry.fileSizeBytes = fs::file_size(pathFromUtf8(entry.filePath), ec);
-        if (ec) {
-            entry.fileSizeBytes = 0;
-        }
+        entry.fileSizeBytes = application::fileSizeOnDisk(entry.filePath).value_or(0);
         filtered.push_back(std::move(entry));
     }
     m_pendingModel.setEntries(std::move(filtered));
