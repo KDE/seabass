@@ -20,6 +20,7 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "domain/metadata_restore.hpp"
+#include "gui/async_request.hpp"
 #include "gui/metadata_restore_proposal_model.hpp"
 #include "gui/qt_progress_reporter.hpp"
 
@@ -116,7 +117,7 @@ public:
     explicit MetadataRestoreController(QObject *parent = nullptr);
     ~MetadataRestoreController() override;
 
-    bool busy() const { return m_busy; }
+    bool busy() const { return m_scan.busy(); }
     bool writing() const;
     int progressCurrent() const { return m_progressCurrent; }
     int progressTotal() const { return m_progressTotal; }
@@ -208,7 +209,7 @@ signals:
     void actionFeedback(const QString &message, bool isError);
 
 private:
-    void onScanFinished();
+    void onScanFinished(MetadataRestoreTaskResult &&result);
     void attachSession();
     // attachSession() when there is none yet; false, with the page told
     // why, when this stick's library cannot be identified.
@@ -217,11 +218,10 @@ private:
     // per catalog that lists the file, none for one already staged, out
     // of scope, or offering nothing.
     std::vector<std::unique_ptr<PendingChange>> changesFor(int index, int itemCountHint) const;
-    void setBusy(bool busy);
     void setProgress(int current, int total);
     void setCurrentPhase(const QString &phase);
     void setErrorMessage(const QString &message);
-    std::shared_ptr<QtProgressReporter> makeReporter();
+    std::shared_ptr<QtProgressReporter> makeReporter(quint64 serial);
     void applyScope(domain::MetadataRestoreScope scope);
     // The picker entries and every scoped count, from the proposals and
     // the scope as they are now.
@@ -245,13 +245,12 @@ private:
     QSet<QString> m_appliedChanges;
     bool m_takeAppliedQueued = false;
 
-    QFutureWatcher<MetadataRestoreTaskResult> m_watcher;
     RestoreProposalListModel m_model;
     QPointer<LibraryEditSession> m_session;
-    application::CancellationToken m_cancel;
+    // Which scan the progress bar belongs to; see MetadataBackupController.
+    quint64 m_scanSerial = 0;
 
     QString m_libraryPath;
-    bool m_busy = false;
     bool m_hasScanned = false;
     int m_progressCurrent = 0;
     int m_progressTotal = 0;
@@ -268,6 +267,9 @@ private:
     QVariantMap m_playlistTrackCounts;
     QString m_currentPhase;
     QString m_errorMessage;
+
+    // Last, so it is destroyed first. See docs/async-requests.md.
+    AsyncRequest<MetadataRestoreTaskResult> m_scan{this, [this]() { emit busyChanged(); }};
 };
 
 }  // namespace seabass::gui

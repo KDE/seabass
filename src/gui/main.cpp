@@ -10,6 +10,8 @@
 #include <QStandardPaths>
 #include <QThreadPool>
 
+#include "gui/async_request.hpp"
+
 #include "gui/app_color_scheme.hpp"
 #include "gui/style_color_scheme.hpp"
 #include "gui/controls_style.hpp"
@@ -214,5 +216,9 @@ int main(int argc, char **argv)
     // process exit over) rather than let the process tear down mid-write
     // to a stick.
     QThreadPool::globalInstance()->waitForDone(15000);
+    // And the reads pages were waiting for (see AsyncRequest), briefly:
+    // they write nothing, and one stuck on a pulled stick must not hold
+    // the process up.
+    seabass::gui::asyncRequestPool().waitForDone(2000);
     return result;
 }

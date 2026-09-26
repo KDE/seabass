@@ -5,6 +5,7 @@
 #include "gui/library_catalog_cache.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <exception>
 #include <filesystem>
 #include <memory>
@@ -141,10 +142,23 @@ LibraryCatalogCache::Detail detailOf(int stageNumber)
 
 }  // namespace
 
+namespace
+{
+std::atomic<LibraryCatalogCache *> s_instanceForTesting{nullptr};
+}
+
 LibraryCatalogCache &LibraryCatalogCache::instance()
 {
+    if (LibraryCatalogCache *stand = s_instanceForTesting.load()) {
+        return *stand;
+    }
     static LibraryCatalogCache cache;
     return cache;
+}
+
+void LibraryCatalogCache::setInstanceForTesting(LibraryCatalogCache *cache)
+{
+    s_instanceForTesting.store(cache);
 }
 
 LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime) {}

@@ -117,6 +117,10 @@ public:
     // what is, from any one controller's point of view, a passive,
     // stateless-looking dependency.
     static LibraryCatalogCache &instance();
+    // Test seam: instance() hands out `cache` instead until called again
+    // with nullptr, so a page's controller can be run against a catalog
+    // whose passes a test holds at a gate. Never set in the app.
+    static void setInstanceForTesting(LibraryCatalogCache *cache);
 
     // Real behavior: constructs the matching infrastructure reader
     // ("rekordbox"/"engine"/"onelibrary") and stats that catalog's own
