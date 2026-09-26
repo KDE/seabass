@@ -36,6 +36,18 @@ enum class FingerprintPass
 std::optional<domain::LibraryFingerprint> readLibraryFingerprint(const QString &rekordboxPath, const QString &enginePath,
                                                                  FingerprintPass pass = FingerprintPass::Cues);
 
+// What the advisor keeps once its second, Cues, read of a stick is back:
+// that read's fingerprint when it came back whole, with its cues, and
+// with the tracks and playlists the first read saw; otherwise the first read's, cuesKnown still false, so the verdict it
+// gave stands, still marked as waiting on the cues. A second read that
+// failed (a stick pulled between the two, a catalog briefly unreadable)
+// returns nothing, or, on a stick with both catalogs, only Engine's
+// fingerprint: taking either would turn "up to date" into "no backup of
+// this library yet" or "a different library" about a stick nobody
+// changed.
+std::optional<domain::LibraryFingerprint> fingerprintAfterCuesPass(const std::optional<domain::LibraryFingerprint> &first,
+                                                                   const std::optional<domain::LibraryFingerprint> &second);
+
 // The same, but guaranteed to have read the catalogs rather than a cached
 // copy of them. For the one caller whose answer is written down and
 // compared against later -- a backup's manifest header -- where a stale

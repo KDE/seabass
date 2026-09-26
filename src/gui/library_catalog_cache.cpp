@@ -70,17 +70,21 @@ std::unique_ptr<application::LibraryReader> makeReader(const std::string &format
 // per artwork to drop the ones not on disk (rekordbox never checked its
 // artwork, and still does not, so a Full read is what it always was for
 // every format).
-void fillSizesAndVerifyArtwork(const std::string &format, std::vector<domain::Track> &tracks)
+// Checked per file, so a stick pulled mid pass (invalidateEveryCatalogOn()
+// cancels the prefetch) stops within one stat rather than after every
+// other file on it.
+void fillSizesAndVerifyArtwork(const std::string &format, std::vector<domain::Track> &tracks,
+                               const application::CancellationToken &cancel)
 {
-    application::fillFileSizes(tracks);
+    application::fillFileSizes(tracks, cancel);
     if (format != "rekordbox") {
-        application::dropMissingArtwork(tracks);
+        application::dropMissingArtwork(tracks, cancel);
     }
 }
 
 void realStage(LibraryCatalogCache::Detail stage, const std::string &format, const std::string &path,
-               std::vector<domain::Track> &tracks, application::ProgressReporter &progress,
-               application::CancellationToken cancel)
+               std::vector<domain::Track> &tracks, LibraryCatalogCache::StageNotes &notes,
+               application::ProgressReporter &progress, application::CancellationToken cancel)
 {
     switch (stage) {
     case LibraryCatalogCache::Detail::Tracks: {
@@ -98,7 +102,17 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
         // stage, not a later one, so a track reads the same at every
         // stage: a fingerprint taken from Tracks must equal one taken
         // from Full.
-        infrastructure::audio::fillTrackDurations(tracks, path);
+        //
+        // Unverified: a cached length is taken by path, without the stat
+        // per audio file that checking it costs (on a stick with 1200
+        // tracks the catalog does not time, that stat was 2.5 s cold of a
+        // stage meant to take a tenth of that). The Full stage checks
+        // them, after its own size stats have brought those files'
+        // metadata into memory. A file the cache does not know is still
+        // probed here.
+        notes.unverifiedDurationPaths =
+            infrastructure::audio::fillTrackDurations(tracks, path, application::CachedDurations::Unverified, cancel)
+                .unverifiedPaths;
         return;
     }
     case LibraryCatalogCache::Detail::Cues: {
@@ -110,7 +124,12 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
     }
     case LibraryCatalogCache::Detail::Full:
         cancel.throwIfCancelled();
-        fillSizesAndVerifyArtwork(format, tracks);
+        fillSizesAndVerifyArtwork(format, tracks, cancel);
+        // The cached lengths the Tracks stage took on trust: a file that
+        // changed since it was probed is probed again, and its rows get
+        // the new length.
+        infrastructure::audio::verifyTrackDurations(tracks, path, notes.unverifiedDurationPaths, cancel);
+        notes.unverifiedDurationPaths.clear();
         return;
     }
 }
@@ -142,7 +161,7 @@ LibraryCatalogCache::LibraryCatalogCache(StageFn stageFn, MtimeFn mtimeFn)
 
 LibraryCatalogCache::LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn)
     : m_stageFn([scan = std::move(scanFn)](Detail stage, const std::string &format, const std::string &path,
-                                           std::vector<domain::Track> &tracks,
+                                           std::vector<domain::Track> &tracks, StageNotes &,
                                            application::ProgressReporter &progress,
                                            application::CancellationToken cancel) {
           if (stage == Detail::Tracks) {
@@ -187,6 +206,14 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
                                                             Detail detail, application::ProgressReporter &progress,
                                                             application::CancellationToken cancel)
 {
+    return stagedTracksFor(format, path, detail, progress, std::move(cancel)).tracks;
+}
+
+LibraryCatalogCache::StagedTracks LibraryCatalogCache::stagedTracksFor(const std::string &format,
+                                                                       const std::string &path, Detail detail,
+                                                                       application::ProgressReporter &progress,
+                                                                       application::CancellationToken cancel)
+{
     const int wanted = stageNumber(detail);
     const std::string key = keyFor(format, path);
     const auto currentMtime = m_mtimeFn(format, path);
@@ -204,13 +231,15 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
         Entry &entry = m_entries[key];
         const bool fresh = entry.stage > 0 && entry.mtime == currentMtime;
         if (fresh && entry.stage >= wanted) {
-            return entry.tracks;
+            // The stage with the tracks, under this one lock.
+            return {entry.tracks, detailOf(entry.stage)};
         }
         if (entry.passInFlight == 0) {
             if (!fresh) {
                 // Nothing yet, or read from a catalog file that has changed
                 // since: start over from the catalog.
                 entry.tracks.clear();
+                entry.notes = {};
                 entry.stage = 0;
                 entry.mtime = currentMtime;
             }
@@ -242,6 +271,7 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
     // caller still finishes its own read and gets a real, if possibly
     // momentarily stale, answer; only the cache skips it.
     std::vector<domain::Track> work = m_entries[key].tracks;
+    StageNotes notes = m_entries[key].notes;
     int have = m_entries[key].stage;
     const std::uint64_t generationAtStart = m_generation[key];
     bool committing = true;
@@ -255,7 +285,7 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
         std::exception_ptr error;
         try {
             cancel.throwIfCancelled();
-            m_stageFn(detailOf(next), format, path, work, progress, cancel);
+            m_stageFn(detailOf(next), format, path, work, notes, progress, cancel);
         } catch (...) {
             error = std::current_exception();
         }
@@ -270,6 +300,7 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
                     // the loop) under one lock, so a caller waiting for
                     // a later stage cannot slip in and read it twice.
                     entry.tracks = work;
+                    entry.notes = notes;
                     entry.stage = next;
                     entry.mtime = currentMtime;
                 }
@@ -287,7 +318,7 @@ std::vector<domain::Track> LibraryCatalogCache::tracksFor(const std::string &for
         }
         have = next;
     }
-    return work;
+    return {std::move(work), detailOf(have)};
 }
 
 void LibraryCatalogCache::prefetch(const std::string &format, const std::string &path)
@@ -349,17 +380,6 @@ int LibraryCatalogCache::waitingCallers()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_waiting;
-}
-
-std::optional<LibraryCatalogCache::Detail> LibraryCatalogCache::stageReached(const std::string &format,
-                                                                             const std::string &path)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    const auto it = m_entries.find(keyFor(format, path));
-    if (it == m_entries.end() || it->second.stage == 0) {
-        return std::nullopt;
-    }
-    return detailOf(it->second.stage);
 }
 
 std::uint64_t LibraryCatalogCache::invalidationCount(const std::string &format, const std::string &path)

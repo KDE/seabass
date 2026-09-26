@@ -278,8 +278,9 @@ void BackupAdvisorController::onFinished()
     // pass just keeps whatever advice it had (or none) rather than
     // interrupting anything.
     //
-    // A second step whose task failed leaves the first step's advice up,
-    // marked pending, until the next assessment of that stick.
+    // A second step whose read failed leaves the first step's advice up,
+    // marked pending, until the next assessment of that stick: only a
+    // whole fingerprint, cues included, replaces the first step's.
     const std::shared_ptr<Result> result = takeResult(m_watcher);
     if (result && result->request.step == Step::Facts) {
         m_facts[result->mountPoint] = result->facts;
@@ -301,7 +302,7 @@ void BackupAdvisorController::onFinished()
         // steps means the stick is gone.
         const auto facts = m_facts.find(result->mountPoint);
         if (facts != m_facts.end()) {
-            facts->fingerprint = result->facts.fingerprint;
+            facts->fingerprint = fingerprintAfterCuesPass(facts->fingerprint, result->facts.fingerprint);
             recomputeAdvice();
         }
     }
