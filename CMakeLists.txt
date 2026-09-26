@@ -926,6 +926,13 @@ if(SEABASS_GUI AND Qt6_FOUND)
     # indirection (staged_save_bench -> seabass_edit -> seabass_core).
     target_link_libraries(staged_save_bench PRIVATE seabass_edit Qt6::Core SQLite::SQLite3)
 
+    # Times a catalog read stage by stage (Tracks, Cues, Full) through the
+    # GUI's own cache against a real stick, read-only. The evidence for the
+    # progressive read: what a page pays before it can show a track.
+    add_executable(catalog_stage_timing tools/catalog_stage_timing.cpp src/gui/library_catalog_cache.cpp)
+    target_include_directories(catalog_stage_timing PRIVATE src)
+    target_link_libraries(catalog_stage_timing PRIVATE seabass_core Threads::Threads SQLite::SQLite3)
+
     add_subdirectory(src/gui)
     if(TARGET seabass_audio_qt)
         target_link_libraries(seabass PRIVATE seabass_audio_qt)
