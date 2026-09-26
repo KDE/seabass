@@ -43,9 +43,10 @@ CheckBox {
             visible: control.checked
             iconName: "checkmark"
             size: parent.side * 0.8
-            // Dark on the accent in either theme: the accent does not
-            // change with it, and a light mark on it reads at barely 2:1.
-            color: "#0b1f2a"
+            // Theme's ink for anything drawn on the accent: dark in either
+            // theme, since the accent does not change with it, and a light
+            // mark on it reads at barely 2:1.
+            color: Theme.accentInk
         }
     }
 }
