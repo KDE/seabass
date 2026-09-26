@@ -98,20 +98,19 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
         // and the results are cached on the stick so only the first scan
         // pays for it. Doing it here rather than in each controller is
         // deliberate: the fill was once wired into the CLI alone, and the
-        // GUI silently found fewer duplicates as a result. In the Tracks
-        // stage, not a later one, so a track reads the same at every
-        // stage: a fingerprint taken from Tracks must equal one taken
-        // from Full.
+        // GUI silently found fewer duplicates as a result.
         //
-        // Unverified: a cached length is taken by path, without the stat
-        // per audio file that checking it costs (on a stick with 1200
-        // tracks the catalog does not time, that stat was 2.5 s cold of a
-        // stage meant to take a tenth of that). The Full stage checks
-        // them, after its own size stats have brought those files'
-        // metadata into memory. A file the cache does not know is still
-        // probed here.
+        // Here, the cached lengths only, taken by path: no stat to check
+        // them (on a stick with 1200 tracks the catalog does not time,
+        // that stat was 2.5 s cold of a stage meant to take a tenth of
+        // that) and no probe for a file the cache does not know, which
+        // keeps 0 until the Full stage. The Full stage checks the taken
+        // ones and probes the rest. A filled-in length is not part of a
+        // track's fingerprint, so a fingerprint reads the same at every
+        // stage.
         notes.unverifiedDurationPaths =
-            infrastructure::audio::fillTrackDurations(tracks, path, application::CachedDurations::Unverified, cancel)
+            infrastructure::audio::fillTrackDurations(tracks, path, application::DurationFill::CachedByPathOnly,
+                                                      cancel)
                 .unverifiedPaths;
         return;
     }
@@ -125,9 +124,15 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
     case LibraryCatalogCache::Detail::Full:
         cancel.throwIfCancelled();
         fillSizesAndVerifyArtwork(format, tracks, cancel);
-        // The cached lengths the Tracks stage took on trust: a file that
-        // changed since it was probed is probed again, and its rows get
-        // the new length.
+        // The lengths the Tracks stage left out: every file the cache did
+        // not know is probed now (and cached for the next insertion).
+        // Rows the Tracks stage filled already have a length and are not
+        // looked at again here.
+        infrastructure::audio::fillTrackDurations(tracks, path, application::DurationFill::Complete, cancel);
+        // And the cached lengths it took on trust: a file that changed
+        // since it was probed is probed again and its rows get the new
+        // length. After the fill above, so a file that no longer gives a
+        // length is probed once, here, not twice.
         infrastructure::audio::verifyTrackDurations(tracks, path, notes.unverifiedDurationPaths, cancel);
         notes.unverifiedDurationPaths.clear();
         return;

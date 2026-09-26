@@ -66,6 +66,17 @@ public:
     // starting another; a request for a stage nobody is reading runs the
     // missing passes itself, in order, on the caller's thread. The
     // overload without a Detail is Full.
+    //
+    // Where a track's durationSeconds comes from, by stage: at Tracks, the
+    // catalog's own length, or else the length the stick's duration cache
+    // holds for that file, taken by path without looking at the file; a
+    // file the cache does not know reads 0. Cues adds no lengths. Full
+    // probes every file still at 0 (and caches the answer on the stick),
+    // and checks each length the Tracks stage took from the cache against
+    // its file, probing again the ones that changed. So only Full has
+    // every length there is; a page that groups or compares by length
+    // (Duplicates, Clean Up) asks for Full. Filled-in lengths are marked
+    // Track::durationIsProbed and are not part of the library fingerprint.
     enum class Detail { Tracks, Cues, Full };
 
     // What a pass leaves for a later pass of the same entry, kept with the
