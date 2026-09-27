@@ -2299,13 +2299,23 @@ if(TARGET seabass_edit)
     if(NOT WIN32)
         target_link_libraries(damage_filesystem_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
-    add_test(NAME damage_filesystem_test COMMAND damage_filesystem_test)
     # Needs mkfs.fat to build a real FAT32 volume. Without it the cases
     # that matter cannot run, and the test says so rather than passing.
-    set_tests_properties(damage_filesystem_test PROPERTIES SKIP_RETURN_CODE 77)
-    # Taking search permission off a directory is the only portable way to
-    # make exists() fail, and it does nothing as root or on a filesystem
-    # that ignores the mode. The test says so and exits 77 rather than
+    #
+    # Not on Windows at all: it builds the image through a POSIX shell (dd,
+    # mkfs.fat, `command -v`), which std::system() there does not have, so
+    # every Windows round recorded it as a skip -- a red that says nothing
+    # about the command, which is itself Linux-only (see its own "On macOS
+    # and Windows" message, and the rig's H1, left out on Windows for the
+    # same reason). Built everywhere, registered where it can run.
+    if(NOT WIN32)
+        add_test(NAME damage_filesystem_test COMMAND damage_filesystem_test)
+        set_tests_properties(damage_filesystem_test PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+    # Taking the right to look away is what makes exists() fail: search
+    # permission off a directory on POSIX, deny ACEs on Windows (see the
+    # test's lockOut()). It does nothing as root or on a filesystem that
+    # ignores the mode; the test says so and exits 77 rather than
     # reporting a pass it did not earn.
     set_tests_properties(pending_deletion_unreadable_test PROPERTIES SKIP_RETURN_CODE 77)
 
