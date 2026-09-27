@@ -201,6 +201,7 @@ Item {
                 objectName: "browseLibraryCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Browse Library"
                 cardSubtitle: "View tracks, playlists and cues"
@@ -213,6 +214,7 @@ Item {
                 objectName: "statisticsCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Library Statistics"
                 cardSubtitle: "Filesystem, library stats, and disk usage"
@@ -225,6 +227,7 @@ Item {
                 objectName: "deviceProfileCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Device Profile"
                 readOnly: root.lockedByOther
@@ -239,6 +242,7 @@ Item {
                 objectName: "stickPerformanceCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "USB Stick Performance"
                 cardSubtitle: "Measure the stick the way a player reads it, per player generation"
@@ -258,6 +262,7 @@ Item {
                 objectName: "syncCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Sync Cue Points"
                 readOnly: root.lockedByOther || root.stickReadOnly
@@ -273,6 +278,7 @@ Item {
                 objectName: "createEngineLibraryCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Create Engine Library"
                 readOnly: root.lockedByOther || root.stickReadOnly
@@ -297,6 +303,7 @@ Item {
                 objectName: "backupsCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Backups"
                 readOnly: root.lockedByOther
@@ -328,6 +335,7 @@ Item {
                 objectName: "metadataBackupCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Metadata Backup"
                 cardSubtitle: "Copy this stick's cues, ratings and comments to this computer"
@@ -343,6 +351,7 @@ Item {
                 objectName: "restoreMetadataCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Restore Metadata"
                 readOnly: root.lockedByOther || root.stickReadOnly
@@ -360,6 +369,7 @@ Item {
                 objectName: "createBackupStickCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Create Backup USB Stick"
                 readOnly: root.lockedByOther || root.stickReadOnly
@@ -387,6 +397,7 @@ Item {
                 objectName: "restoreBackupCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Restore Backup"
                 readOnly: root.lockedByOther || root.stickReadOnly
@@ -408,6 +419,7 @@ Item {
                 objectName: "housekeepingCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Housekeeping"
                 readOnly: root.lockedByOther || root.stickReadOnly
@@ -423,6 +435,7 @@ Item {
                 objectName: "libraryHealthCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Library Health"
                 // Not read-only on a read-only stick: this is where that
@@ -439,6 +452,7 @@ Item {
                 objectName: "formatUsbCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
                 cardTitle: "Format USB Stick"
                 cardSubtitle: "Erase and prepare this drive for CDJs, XDJs, and Denon Engine players"
