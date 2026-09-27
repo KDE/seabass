@@ -376,6 +376,12 @@ unchanged_catalogs() {  # stick -- against the baseline taken after the restores
             # only Seabass can read out of a SQLCipher database.
             local digests_now; digests_now=$(catalog_digests "$1")
             local matched=0 compared=0
+            # Its own name and digest: without `local` this loop's `name`
+            # is check()'s, up the call chain (bash scopes dynamically), and
+            # the check that reached this branch was recorded under an
+            # empty name (round 10, F5: "--- : FAIL", a summary row with no
+            # check, and the board never heard of it).
+            local name digest
             while IFS=$'\t' read -r name digest; do
                 [ -n "$name" ] || continue
                 local was; was=$(awk -F'\t' -v n="$name" '$1 == n {print $2}' \
