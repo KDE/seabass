@@ -61,6 +61,9 @@ class AppSettingsController : public QObject
     // "backup" or "maintain"), so the home opens where it was left. The
     // stick is not remembered: which stick is in changes every time.
     Q_PROPERTY(QString homeGroup READ homeGroup WRITE setHomeGroup NOTIFY homeGroupChanged)
+    // The groups homeGroup may be, in the rail's order. The rail's own
+    // list is HomeModel.js; tst_HomeRail checks the two are the same.
+    Q_PROPERTY(QStringList homeGroupKeys READ homeGroupKeys CONSTANT)
     // Always present (even in a build compiled with SEABASS_EXPERIMENTAL
     // off) so QML can gate the whole Settings section on it.
     Q_PROPERTY(bool experimentalBuildSupported READ experimentalBuildSupported CONSTANT)
@@ -169,6 +172,7 @@ public:
     void setLastPlaylistName(const QString &value);
     QString homeGroup() const { return m_homeGroup; }
     void setHomeGroup(const QString &value);
+    static const QStringList &homeGroupKeys();
 
     // See docs/experimental-features.md for the convention this backs:
     // new non-trivial features default to hidden behind

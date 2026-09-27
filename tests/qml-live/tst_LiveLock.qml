@@ -107,8 +107,11 @@ TestCase {
             compare(other.readOnly, false, key + "'s Housekeeping card stays writable");
         });
         // Back to the locked stick's card, on screen: a click at the centre
-        // of a card outside the window lands nowhere and opens nothing.
+        // of a card outside the window lands nowhere and opens nothing, so
+        // the pane is scrolled to it first (a 900 px window with a banner
+        // showing puts Maintain's cards below the fold).
         card = Live.cardInRow(page, lockedKey, "Housekeeping");
+        verify(Live.scrollIntoView(page, card), "the pane scrolls the card into view");
         waitForRendering(page);
         const inPage = card.mapToItem(page, 0, 0);
         verify(card.visible && inPage.y >= 0 && inPage.y + card.height <= page.height,

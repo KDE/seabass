@@ -55,7 +55,13 @@ AppSettingsController::AppSettingsController(QObject *parent)
     }
     infrastructure::paths::setLocalRootOverride(pathFromQString(m_seabassHomeDirectory));
     m_lastPlaylistName = m_settings.value("lastPlaylistName", "").toString();
-    m_homeGroup = m_settings.value("homeGroup", "explore").toString();
+    // Checked as setHomeGroup checks it: a settings file edited by hand
+    // or written by another build can hold anything, and every reader of
+    // homeGroup may rely on it being one of the groups.
+    m_homeGroup = m_settings.value("homeGroup").toString();
+    if (!homeGroupKeys().contains(m_homeGroup)) {
+        m_homeGroup = homeGroupKeys().constFirst();
+    }
 #ifdef SEABASS_EXPERIMENTAL_BUILD
     m_experimentalFeaturesEnabled = m_settings.value("experimentalFeaturesEnabled", false).toBool();
 #endif
@@ -243,13 +249,19 @@ void AppSettingsController::setLastPlaylistName(const QString &value)
     emit lastPlaylistNameChanged();
 }
 
+const QStringList &AppSettingsController::homeGroupKeys()
+{
+    // The first is the default.
+    static const QStringList keys = {QStringLiteral("explore"), QStringLiteral("sync"), QStringLiteral("backup"),
+                                     QStringLiteral("maintain")};
+    return keys;
+}
+
 void AppSettingsController::setHomeGroup(const QString &value)
 {
     // One of the four groups or nothing: a stored value nobody recognises
     // would leave the home with no group selected.
-    static const QStringList groups = {QStringLiteral("explore"), QStringLiteral("sync"),
-                                       QStringLiteral("backup"), QStringLiteral("maintain")};
-    if (!groups.contains(value) || m_homeGroup == value) {
+    if (!homeGroupKeys().contains(value) || m_homeGroup == value) {
         return;
     }
     m_homeGroup = value;

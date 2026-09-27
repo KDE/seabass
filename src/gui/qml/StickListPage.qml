@@ -7,6 +7,7 @@ import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import SeabassGui
+import "common/HomeModel.js" as HomeModel
 
 // A Page, not a plain Item, specifically so it gets the same
 // Material-style implicit background every other page in this app gets
@@ -38,9 +39,9 @@ Page {
     // Returns whether the way is clear.
     function releaseOpenedFolder() {
         const model = root.sticksModel;
-        const count = root.modelRowCount(model);
+        const count = HomeModel.rowCount(model);
         for (let i = 0; i < count; ++i) {
-            const row = root.modelRowAt(model, i);
+            const row = HomeModel.rowAt(model, i);
             if (!row.isFolder) {
                 continue;
             }
@@ -88,24 +89,13 @@ Page {
     //
     // MediaController's DetectedStickListModel (count, get(i), inserts,
     // removes, dataChanged), a ListModel, or a plain array of stick
-    // objects in the tests: every row is read through these two.
+    // objects in the tests: every row is read through HomeModel, which
+    // the rail reads them through too.
     readonly property var sticksModel: root.mediaController.sticks !== undefined ? root.mediaController.sticks : null
-    function modelRowCount(model) {
-        if (model === null || model === undefined) {
-            return 0;
-        }
-        if (model.length !== undefined) {
-            return model.length;
-        }
-        return model.count !== undefined ? model.count : model.rowCount();
-    }
-    function modelRowAt(model, i) {
-        return model.length !== undefined ? model[i] : model.get(i);
-    }
     // The roles the pane reads, copied out of the model into a plain
     // object: a get(i) result does not follow later changes, so the page
-    // takes a fresh copy of every row whenever the model says something
-    // changed, and the stick row and the cards get the new object.
+    // takes a fresh copy of a row whenever the model says it changed, and
+    // the stick row and the cards get the new object.
     readonly property var rowRoles: ["label", "mountPoint", "devicePath", "mounted", "hasRekordbox", "hasEngine",
         "hasOneLibrary", "rekordboxPath", "enginePath", "isSdCard", "isFolder", "isBrowsedBackup", "libraryId",
         "safeToUnplug", "readOnly", "capacityBytes"]
@@ -119,32 +109,51 @@ Page {
     // mountPoint when there is one, else devicePath: the key the rail
     // and the pane's stick section are named by.
     function keyOf(row) {
-        if (!row) {
-            return "";
-        }
-        const mountPoint = String(row.mountPoint || "");
-        return mountPoint.length > 0 ? mountPoint : String(row.devicePath || "");
+        return HomeModel.keyOf(row);
     }
     function stickKeys() {
         return root.rows.map((row) => root.keyOf(row));
     }
+    function copyRow(model, i) {
+        const source = HomeModel.rowAt(model, i);
+        const copy = {};
+        for (let r = 0; r < root.rowRoles.length; ++r) {
+            copy[root.rowRoles[r]] = source[root.rowRoles[r]];
+        }
+        return copy;
+    }
     function copyRows() {
         const model = root.sticksModel;
-        const count = root.modelRowCount(model);
+        const count = HomeModel.rowCount(model);
         const copies = [];
         for (let i = 0; i < count; ++i) {
-            const source = root.modelRowAt(model, i);
-            const copy = {};
-            for (let r = 0; r < root.rowRoles.length; ++r) {
-                copy[root.rowRoles[r]] = source[root.rowRoles[r]];
-            }
-            copies.push(copy);
+            copies.push(root.copyRow(model, i));
         }
         return copies;
     }
+    // Every row copied afresh: on load, and whenever rows come, go or move.
     function refreshRows() {
+        root.applyRows(root.copyRows());
+    }
+    // Only rows first to last changed: those are copied again and every
+    // other row keeps its object, so the selected stick's row stays the
+    // one the pane holds when some other stick changes. Anything that
+    // does not add up (a range outside the rows copied) copies them all.
+    function refreshChangedRows(first, last) {
+        const model = root.sticksModel;
+        const count = HomeModel.rowCount(model);
+        if (count !== root.rows.length || first < 0 || last < first || last >= count) {
+            root.refreshRows();
+            return;
+        }
+        const next = root.rows.slice();
+        for (let i = first; i <= last; ++i) {
+            next[i] = root.copyRow(model, i);
+        }
+        root.applyRows(next);
+    }
+    function applyRows(next) {
         const previous = root.rows;
-        const next = root.copyRows();
         root.rows = next;
         root.assessNewlyMounted(next);
         root.reconcileSelection(previous, next);
@@ -172,10 +181,9 @@ Page {
         root.mountedAtLastCopy = mountedNow;
     }
     Component.onCompleted: {
-        const saved = root.appSettingsController.homeGroup;
-        if (saved !== undefined && root.groupKeys.indexOf(String(saved)) >= 0) {
-            root.selectedGroup = String(saved);
-        }
+        // Always one of the four: the settings refuse anything else, when
+        // it is set and when it is read back.
+        root.selectedGroup = root.appSettingsController.homeGroup;
         root.refreshRows();
     }
     onSticksModelChanged: {
@@ -188,7 +196,9 @@ Page {
         // copied again when it is replaced (onSticksModelChanged).
         target: root.sticksModel !== null && typeof root.sticksModel.get === "function" ? root.sticksModel : null
         ignoreUnknownSignals: true
-        function onDataChanged() { root.refreshRows(); }
+        function onDataChanged(topLeft, bottomRight) {
+            root.refreshChangedRows(topLeft.row, bottomRight.row);
+        }
         function onRowsInserted() { root.refreshRows(); }
         function onRowsRemoved() { root.refreshRows(); }
         function onRowsMoved() { root.refreshRows(); }
@@ -275,16 +285,10 @@ Page {
     }
 
     // The group is remembered across runs (AppSettingsController.homeGroup).
-    readonly property var groupKeys: ["explore", "sync", "backup", "maintain"]
+    // The groups themselves, and the rail's order, are HomeModel's.
+    readonly property var groupKeys: HomeModel.groupKeys()
     property string selectedGroup: "explore"
-    function groupInfo(group) {
-        switch (group) {
-        case "sync": return {name: "Sync", description: "Keep the catalogs in step"};
-        case "backup": return {name: "Backup", description: "Keep a copy on this computer"};
-        case "maintain": return {name: "Maintain", description: "Find and fix what is wrong"};
-        default: return {name: "Explore", description: "See what is on the stick"};
-        }
-    }
+    readonly property var selectedGroupInfo: HomeModel.group(root.selectedGroup)
     function selectGroup(group) {
         if (root.groupKeys.indexOf(group) < 0) {
             return;
@@ -298,10 +302,10 @@ Page {
     // A narrow window: the rail wraps into rows above the pane, and the
     // cards go one to a row.
     readonly property bool compact: root.width < Theme.scaled(820)
-    // Where the pane's text starts, from the pane's left edge: the stick's
-    // name, the group heading and every card title share this line (see
-    // StickHeaderRow.textInset and StickToolCards.textInset).
-    readonly property real paneTextInset: Theme.cardPadding + Theme.iconSizeNormal + Theme.rowSpacing
+    // Where the pane's text starts, from the pane's left edge: the cards'
+    // titles, and with them the stick's name and the group heading (see
+    // StickToolCards.textInset, which reads its cards' own).
+    readonly property real paneTextInset: toolCards.textInset
 
     function isLockedByOther(libraryId) {
         return libraryId.length > 0 && root.editRegistry !== null && root.editRegistry !== undefined
@@ -381,9 +385,9 @@ Page {
     }
     function browsedBackupRow() {
         const model = root.sticksModel;
-        const count = root.modelRowCount(model);
+        const count = HomeModel.rowCount(model);
         for (let i = 0; i < count; ++i) {
-            const row = root.modelRowAt(model, i);
+            const row = HomeModel.rowAt(model, i);
             if (row.isBrowsedBackup) {
                 return row;
             }
@@ -844,8 +848,8 @@ Page {
                         }
 
                         GroupHeading {
-                            groupName: root.groupInfo(root.selectedGroup).name
-                            groupDescription: root.groupInfo(root.selectedGroup).description
+                            groupName: root.selectedGroupInfo.name
+                            groupDescription: root.selectedGroupInfo.description
                             textInset: root.paneTextInset
                         }
 
@@ -896,8 +900,8 @@ Page {
                     GroupHeading {
                         objectName: "noStickHeading"
                         visible: root.selectedRow === null
-                        groupName: root.groupInfo(root.selectedGroup).name
-                        groupDescription: root.groupInfo(root.selectedGroup).description
+                        groupName: root.selectedGroupInfo.name
+                        groupDescription: root.selectedGroupInfo.description
                         textInset: root.paneTextInset
                     }
                     Label {

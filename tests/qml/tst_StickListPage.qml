@@ -313,10 +313,84 @@ TestCase {
         compare(findByName(page, "groupHeadingName").text, "Sync");
         compare(findByName(page, "groupHeadingDescription").text, "Keep the catalogs in step");
         compare(findCard(page, "/media/MAIN", "Sync Cue Points").visible, true);
+    }
 
-        const odd = fakeAppSettings();
-        odd.homeGroup = "bogus";
-        compare(makePage([makeStick({})], {}, {appSettingsController: odd}).selectedGroup, "explore");
+    Component {
+        id: realAppSettingsComponent
+        AppSettingsController {}
+    }
+
+    // What the page is handed is a group it knows: the settings refuse a
+    // stored value nobody recognises when they read it, as they do when
+    // it is set, so a hand-edited or foreign settings file opens the home
+    // on Explore rather than on no group at all.
+    function test_aStoredGroupNobodyKnowsReadsAsExplore() {
+        const before = controllerFixture.storeRawSetting("homeGroup", "sync");
+        try {
+            // The store the fixture wrote is the one the controller reads:
+            // otherwise "explore" below would only be the default.
+            compare(createTemporaryObject(realAppSettingsComponent, testCase).homeGroup, "sync");
+            controllerFixture.storeRawSetting("homeGroup", "bogus");
+            const settings = createTemporaryObject(realAppSettingsComponent, testCase);
+            compare(settings.homeGroup, "explore");
+            const page = makePage([makeStick({})], {}, {appSettingsController: settings});
+            compare(page.selectedGroup, "explore");
+            // Gone before the settings are: a page outliving its
+            // controller reads null in its bindings on the way out.
+            page.destroy();
+            wait(0);
+        } finally {
+            controllerFixture.storeRawSetting("homeGroup", before);
+        }
+    }
+
+    // A dataChanged about one stick re-copies that stick's row alone: the
+    // selected stick's row stays the very object the pane was handed, so
+    // nothing bound to it is worked out again for another stick's change.
+    function test_anotherStickChangingKeepsTheSelectedRow() {
+        const model = makeModel([makeStick({}), noLibrary({})]);
+        const page = makePage(model, {});
+        compare(page.selectedStickKey, "/media/MAIN");
+        const selected = page.selectedRow;
+        const spare = page.rows[1];
+        verify(selected !== null);
+
+        model.setProperty(1, "label", "RENAMED");
+        compare(page.rows[1].label, "RENAMED", "the changed row is copied again");
+        verify(page.rows[1] !== spare, "as a new object");
+        verify(page.selectedRow === selected, "the selected row is the same object");
+        verify(page.rows[0] === selected);
+        compare(findByName(page, "railStick:/media/SPARE").text, "RENAMED");
+
+        // Its own change does reach it.
+        model.setProperty(0, "label", "MAIN2");
+        verify(page.selectedRow !== selected);
+        compare(page.selectedRow.label, "MAIN2");
+        compare(findByName(page, "stickLabel").text, "MAIN2");
+    }
+
+    // A card below the fold is scrolled into view before a test clicks
+    // it (Live.scrollIntoView): a click at the centre of a card outside
+    // the pane lands on nothing. A short window, as a laptop with the
+    // update banner showing has, puts Backup's second row out of sight.
+    function test_aCardBelowTheFoldIsScrolledIntoView() {
+        const page = makePage([makeStick({})], {}, {height: 420});
+        const pane = findByName(page, "homePane");
+        const card = findCard(page, "/media/MAIN", "Restore Metadata");
+        verify(card !== null && card.visible);
+        const inPane = () => card.mapToItem(pane, 0, 0).y;
+        verify(inPane() + card.height > pane.height,
+               "the card starts out below the pane's bottom edge (y " + inPane() + ", pane " + pane.height + ")");
+
+        verify(Live.scrollIntoView(page, card), "scrolled into view");
+        waitForRendering(page);
+        verify(inPane() >= 0 && inPane() + card.height <= pane.height,
+               "inside the pane (y " + inPane() + ", height " + card.height + ", pane " + pane.height + ")");
+        const inPage = card.mapToItem(page, 0, 0).y;
+        verify(inPage >= 0 && inPage + card.height <= page.height, "and so inside the window");
+        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "metadataRestoreRequested"});
+        mouseClick(card);
+        compare(spy.count, 1, "a click at its centre reaches it");
     }
 
     // One left line for the page and one for the pane: the rail's pills
