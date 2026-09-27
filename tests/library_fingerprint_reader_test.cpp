@@ -198,8 +198,11 @@ void durationStageCases(const fs::path &fixture)
     assert(!untimed.empty() && "the fixture has Engine tracks without a catalog length");
     for (const std::string &path : untimed) {
         // Only ever inside the scratch stick.
-        const std::string under = seabass::pathToUtf8(stick) + "/";
-        assert(path.rfind(under, 0) == 0 && path.find("/../") == std::string::npos);
+        // As paths, not strings: the cache hands back the platform's own
+        // spelling (backslashes on Windows), so no one separator in a
+        // string prefix matches everywhere.
+        const fs::path inside = seabass::pathFromUtf8(path).lexically_normal().lexically_relative(stick);
+        assert(!inside.empty() && *inside.begin() != "..");
         fs::create_directories(seabass::pathFromUtf8(path).parent_path());
         seabass::test_fixture::mp3::writeMp3(seabass::pathFromUtf8(path), 400, true);
     }
