@@ -160,13 +160,20 @@ int main()
         assert(!LibraryFingerprint::parse("v99;1;1;1;;;").has_value());
         assert(!LibraryFingerprint::parse("v2;1;1;1;zz;;").has_value());
         // A version 1 fingerprint, written into a backup's manifest before
-        // probed lengths left the track identity, was hashed differently:
-        // it parses as nothing, so the advisor has no fingerprint for that
-        // backup rather than calling it a different library.
+        // probed lengths left the track identity, has the same layout and
+        // still reads: Manage Backups keeps its track counts, and the
+        // advisor compares it (a probed length hashed differently, which
+        // reads as a changed library, the safe direction). Round 10
+        // (2026-09-27) went red on every reference backup when it did not.
         std::string versionOne = text;
         versionOne.replace(0, versionOne.find(';'), "v1");
         assert(text.rfind("v2;", 0) == 0 && versionOne.rfind("v1;", 0) == 0);
-        assert(!LibraryFingerprint::parse(versionOne).has_value() && "an old-version manifest parses as nullopt");
+        std::optional<LibraryFingerprint> oldManifest = LibraryFingerprint::parse(versionOne);
+        assert(oldManifest.has_value() && "a version 1 manifest still parses");
+        assert(oldManifest->trackCount == original.trackCount && *oldManifest == original);
+        assert(!LibraryFingerprint::parse("v0;1;1;1;;;").has_value() && "before the first version is garbage");
+        assert(!LibraryFingerprint::parse("v3;1;1;1;;;").has_value() && "a future version is not guessed at");
+        assert(!LibraryFingerprint::parse("vx;1;1;1;;;").has_value());
         LibraryFingerprint empty = fingerprintLibrary({});
         assert(LibraryFingerprint::parse(empty.serialize()) == empty);
     }

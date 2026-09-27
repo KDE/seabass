@@ -247,7 +247,12 @@ std::optional<LibraryFingerprint> LibraryFingerprint::parse(std::string_view tex
         }
         start = semicolon + 1;
     }
-    if (parts.size() != 7 || parts[0] != "v" + std::to_string(Version)) {
+    if (parts.size() != 7 || parts[0].size() < 2 || parts[0][0] != 'v') {
+        return std::nullopt;
+    }
+    std::size_t version = 0;
+    if (!parseCount(parts[0].substr(1), version) || version < static_cast<std::size_t>(OldestReadableVersion)
+        || version > static_cast<std::size_t>(Version)) {
         return std::nullopt;
     }
     LibraryFingerprint fingerprint;
