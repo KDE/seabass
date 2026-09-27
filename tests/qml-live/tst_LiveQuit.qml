@@ -51,11 +51,11 @@ TestCase {
         if (page) {
             var pageScan = Live.findByType(page, "LibraryConsistencyController");
             verify(pageScan !== null, "the page has its consistency controller");
-            tryVerify(function() { return pageScan.busy === false; }, 300000);
+            tryVerify(function() { return Live.settled(pageScan); }, 300000);
         }
         var rekordbox = createTemporaryObject(scanController, testCase);
         rekordbox.scan("rekordbox", rekordboxPath);
-        tryVerify(function() { return rekordbox.busy === false; }, 300000);
+        tryVerify(function() { return Live.settled(rekordbox); }, 300000);
         var target = null;
         for (var j = 0; j < rekordbox.tracks.trackCount() && target === null; ++j) {
             var t = rekordbox.tracks.trackAt(j);

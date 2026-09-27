@@ -46,7 +46,7 @@ TestCase {
         // fills, and a skip here proves nothing.
         var rekordbox = createTemporaryObject(scanController, testCase);
         rekordbox.scan("rekordbox", rekordboxPath);
-        tryVerify(function() { return rekordbox.busy === false; }, 300000);
+        tryVerify(function() { return Live.settled(rekordbox); }, 300000);
         var target = null;
         for (var j = 0; j < rekordbox.tracks.trackCount() && target === null; ++j) {
             var t = rekordbox.tracks.trackAt(j);
@@ -126,7 +126,7 @@ TestCase {
         // The catalogs must still read, whatever happened.
         var readBack = createTemporaryObject(scanController, testCase);
         readBack.scan("rekordbox", rekordboxPath);
-        tryVerify(function() { return readBack.busy === false; }, 300000);
+        tryVerify(function() { return Live.settled(readBack); }, 300000);
         verify(readBack.tracks.trackCount() > 0, "the catalogs still read after the attempt");
         console.log("  catalogs still read: " + readBack.tracks.trackCount() + " tracks");
 
@@ -153,7 +153,7 @@ TestCase {
             // stick is not left half-written.
             var afterUndo = createTemporaryObject(scanController, testCase);
             afterUndo.scan("rekordbox", rekordboxPath);
-            tryVerify(function() { return afterUndo.busy === false; }, 300000);
+            tryVerify(function() { return Live.settled(afterUndo); }, 300000);
             verify(afterUndo.tracks.trackCount() > 0, "the catalogs still read after the undo");
         }
         EditSessionRegistry.closeSession(testCase.libraryId);
@@ -188,7 +188,7 @@ TestCase {
 
         var readBack = createTemporaryObject(scanController, testCase);
         readBack.scan("rekordbox", rekordboxPath);
-        tryVerify(function() { return readBack.busy === false; }, 300000);
+        tryVerify(function() { return Live.settled(readBack); }, 300000);
         verify(readBack.tracks.trackCount() > 0, "the catalogs still read after the undo");
         console.log("  catalogs still read: " + readBack.tracks.trackCount() + " tracks");
 
