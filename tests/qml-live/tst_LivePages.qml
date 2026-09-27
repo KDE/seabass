@@ -42,7 +42,7 @@ TestCase {
     Component { id: stickBackupPage; StickBackupPage { width: 1100; height: 820 } }
 
     function waitIdle(controller, timeout) {
-        tryVerify(function() { return controller.busy === false; }, timeout === undefined ? 600000 : timeout);
+        tryVerify(function() { return Live.settled(controller); }, timeout === undefined ? 600000 : timeout);
     }
 
     function test_01_statisticsLoads() {

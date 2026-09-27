@@ -26,6 +26,17 @@ function findByType(root, typeName) {
     });
 }
 
+// A scan that has finished for the purposes of a test that reads cues.
+// Since the progressive read (2026-09-26) a ScanController clears `busy`
+// when the Tracks stage lands, and rekordbox's cues follow seconds later
+// with cuesPending true in between. A test that picked "a track without
+// cues" at that moment picked any track (round 10, W2), so wait for
+// both. Controllers without a cue pass have no cuesPending and settle on
+// busy alone.
+function settled(controller) {
+    return controller.busy === false && controller.cuesPending !== true;
+}
+
 function summaryLine(summary) {
     return summary.written + " of " + summary.total + " " + summary.unit + " " + (summary.verb || "written")
         + (summary.cancelled ? " (cancelled)" : "") + (summary.error ? " error: " + summary.error : "")

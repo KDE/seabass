@@ -78,7 +78,7 @@ TestCase {
     }
 
     function waitIdle(controller, timeoutMs) {
-        tryVerify(function() { return controller.busy === false; }, timeoutMs || 120000);
+        tryVerify(function() { return Live.settled(controller); }, timeoutMs || 120000);
     }
 
     // A save on the session, waited for; returns the summary map.
