@@ -22,11 +22,14 @@
 // below for exactly the same reason, and audio_file_walk.cpp already
 // writes "|| ec".
 //
-// The unreadable case is made here by taking search permission off the
-// parent directory, which is what a stick with a failing cell or a
-// directory Seabass cannot enter looks like from inside exists().
+// The unreadable case is made here by taking away the right to look --
+// search permission off the parent directory on POSIX, a deny ACE on the
+// directory and the file on Windows (see lockOut()) -- which is what a
+// stick with a failing cell or a directory Seabass cannot enter looks
+// like from inside exists().
 
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -67,6 +70,54 @@ Stick makeStick(const std::string &name)
     return s;
 }
 
+// Takes away, and gives back, the right to look at `hidden` from inside
+// `locked`.
+//
+// POSIX: search permission off the directory is enough. Windows ignores
+// the mode (fs::permissions only flips the read-only attribute), and a
+// deny on the directory alone is not enough either: every account holds
+// "bypass traverse checking", so a file is still examined by its full
+// path, and NTFS grants read-attributes on a file to anyone who may list
+// its directory. Denying read on BOTH is what makes GetFileAttributesEx,
+// and so exists(), fail with ERROR_ACCESS_DENIED -- measured on Windows 11
+// with MSVC's std::filesystem, where either deny alone still answers
+// exists=true.
+#ifdef _WIN32
+int icacls(const std::wstring &args)
+{
+    return _wsystem((L"icacls " + args + L" >nul").c_str());
+}
+
+std::wstring quoted(const fs::path &p)
+{
+    return L"\"" + p.wstring() + L"\"";
+}
+#endif
+
+void lockOut(const Stick &s)
+{
+#ifdef _WIN32
+    // *S-1-1-0 is Everyone, named by SID so a localized Windows finds it.
+    icacls(quoted(s.locked) + L" /deny *S-1-1-0:(RX)");
+    icacls(quoted(s.hidden) + L" /deny *S-1-1-0:(R)");
+#else
+    std::error_code ec;
+    fs::permissions(s.locked, fs::perms::none, fs::perm_options::replace, ec);
+    assert(!ec);
+#endif
+}
+
+void letIn(const Stick &s)
+{
+#ifdef _WIN32
+    icacls(quoted(s.locked) + L" /remove:d *S-1-1-0");
+    icacls(quoted(s.hidden) + L" /remove:d *S-1-1-0");
+#else
+    std::error_code ec;
+    fs::permissions(s.locked, fs::perms::owner_all, fs::perm_options::replace, ec);
+#endif
+}
+
 PendingDeletion entryFor(const fs::path &file)
 {
     PendingDeletion e;
@@ -89,19 +140,18 @@ int main()
     manifest.append(entryFor(stick.plain));
     assert(manifest.list().size() == 2);
 
-    // No search permission: exists() on anything inside now fails with a
+    // No permission to look: exists() on the file inside now fails with a
     // real error rather than answering "not there".
     std::error_code ec;
-    fs::permissions(stick.locked, fs::perms::none, fs::perm_options::replace, ec);
-    assert(!ec);
+    lockOut(stick);
     {
         std::error_code probe;
         const bool seen = fs::exists(stick.hidden, probe);
         if (!probe) {
             // Running as root, or a filesystem that ignores the mode.
             // Say so and stop rather than "pass" having tested nothing.
-            fs::permissions(stick.locked, fs::perms::owner_all, fs::perm_options::replace, ec);
-            std::cerr << "this environment still resolves a file inside a mode-000 directory (exists="
+            letIn(stick);
+            std::cerr << "this environment still resolves a file it was denied access to (exists="
                       << seen << "), so the unreadable case cannot be built here and this test would\n"
                          "prove nothing. Not reporting a pass.\n";
             return 77;
@@ -110,7 +160,7 @@ int main()
 
     const std::vector<PendingDeletion> safeToDelete = {entryFor(stick.hidden), entryFor(stick.plain)};
     const auto outcomes = applyPendingDeletions(safeToDelete, seabass::pathToUtf8(stick.root), manifest);
-    fs::permissions(stick.locked, fs::perms::owner_all, fs::perm_options::replace, ec);
+    letIn(stick);
 
     assert(outcomes.size() == 2);
 

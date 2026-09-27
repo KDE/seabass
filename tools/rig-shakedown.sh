@@ -1442,6 +1442,25 @@ check X3-file-failures-as-issues "$build/rig_file_failure" "$B"
 
 check D1-format-preflight "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a"
 check D2-format-stick-A "$build/rig_format" "$A" "$(stick_fstype "$A")" "$a" --execute
+# A stick that has just been formatted is mounted again wherever the
+# system puts it, and on Windows that is not where it was: Round 9's SD8
+# went in as F: and came back as D:. The restore below then asked for
+# F:/, found no such directory, and failed, leaving the stick empty for
+# the next round -- a red that said nothing about the format or the
+# restore. rig_format already reports where the stick came back ("back
+# at <mount point>"), so the restore follows it there. Linux and macOS
+# mount by label and report the same path, which leaves A unchanged.
+formatted_at="$(sed -n 's/^back at \(.*\), label ".*"$/\1/p' "$out/D2-format-stick-A.log" 2>/dev/null | tail -n 1)"
+if [ -n "$formatted_at" ]; then
+    if rig_is_windows && command -v cygpath >/dev/null 2>&1; then
+        formatted_at="$(cygpath -u "$formatted_at")"
+    fi
+    formatted_at="${formatted_at%/}"
+    if [ -d "$formatted_at" ] && [ "$formatted_at" != "${A%/}" ]; then
+        echo "stick A came back from the format at $formatted_at, not $A; the restore follows it there"
+        A="$formatted_at"
+    fi
+fi
 # Whatever D2 decided: a stick left empty is worse than a failed format,
 # and the next round starts from the references.
 check D2-restore-A-after-format "$build/rig_restore" "$refA" "$A" --execute
