@@ -41,9 +41,14 @@ namespace seabass::domain
 struct LibraryFingerprint
 {
     // 2: a track's duration counts only when its catalog gave it (see
-    // trackIdentityHash). A version 1 fingerprint, hashed with probed
-    // lengths in, parses as nothing rather than as a different library.
+    // trackIdentityHash). A version 1 fingerprint, the same layout hashed
+    // with probed lengths in, still parses: its counts are right, and its
+    // hashes agree with version 2 for every track whose catalog gave a
+    // length. Only a track whose length Seabass probed itself hashes
+    // differently, so an old manifest can read as a changed library, and
+    // never as an unchanged one.
     static constexpr int Version = 2;
+    static constexpr int OldestReadableVersion = 1;
     static constexpr std::size_t SampleSize = 256;
 
     std::vector<std::uint64_t> trackHashes;     // sorted ascending, at most SampleSize
