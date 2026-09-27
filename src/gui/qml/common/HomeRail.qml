@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "HomeModel.js" as HomeModel
 
 // The home screen's rail: which stick, and which kind of tool. Two
 // sections, "Sticks" (one line per row of the stick model) and "Tools"
@@ -41,43 +42,21 @@ FocusScope {
     signal stickActivated(string key)
     signal groupActivated(string group)
 
-    readonly property var groups: [
-        {key: "explore", name: "Explore", icon: "view-media-track"},
-        {key: "sync", name: "Sync", icon: "exchange-positions"},
-        {key: "backup", name: "Backup", icon: "backup"},
-        {key: "maintain", name: "Maintain", icon: "kt-check-data"},
-    ]
+    // The tool groups, shared with the page (HomeModel.js).
+    readonly property var groups: HomeModel.groups()
 
     implicitWidth: Theme.scaled(200)
     implicitHeight: flow.implicitHeight
 
     // ---- the model, whichever shape it comes in ---------------------
     //
-    // A plain array in the tests has `length` and indexes; the real
-    // model (and a ListModel) has `count` and get(i). The Repeater below
-    // copes with both on its own; these are for what reads rows directly.
-    function rowCount() {
-        const model = root.sticks;
-        if (model === null || model === undefined) {
-            return 0;
-        }
-        return model.length !== undefined ? model.length : model.count;
-    }
-    function rowAt(i) {
-        const model = root.sticks;
-        return model.length !== undefined ? model[i] : model.get(i);
-    }
-    function keyOf(row) {
-        if (!row) {
-            return "";
-        }
-        const mountPoint = row.mountPoint || "";
-        return mountPoint.length > 0 ? mountPoint : (row.devicePath || "");
-    }
+    // The Repeater below copes with an array and a model on its own;
+    // HomeModel reads rows directly for what needs them, the same way
+    // the page does.
     function hasKey(key) {
-        const count = root.rowCount();
+        const count = HomeModel.rowCount(root.sticks);
         for (let i = 0; i < count; ++i) {
-            if (root.keyOf(root.rowAt(i)) === key) {
+            if (HomeModel.keyOf(HomeModel.rowAt(root.sticks, i)) === key) {
                 return true;
             }
         }
@@ -109,11 +88,19 @@ FocusScope {
     // present when the rail is built do not bounce, and a model that
     // replaces itself wholesale (a plain array reassigned) rebuilds its
     // delegates without every stick looking new.
+    //
+    // A stick goes by two keys over its life, its device path until it
+    // is mounted and its mount point after, and each row remembers every
+    // key it has had (ownKeys), so a stick that leaves is forgotten under
+    // all of them: plugged in again, under either, it arrives again.
     property bool ready: false
     property var seenKeys: ({})
-    function noteKey(key) {
+    function noteKey(key, entry) {
         const isNew = root.ready && key.length > 0 && root.seenKeys[key] !== true;
         root.seenKeys[key] = true;
+        if (key.length > 0 && entry.ownKeys.indexOf(key) < 0) {
+            entry.ownKeys.push(key);
+        }
         return isNew;
     }
     Component.onCompleted: root.ready = true
@@ -172,6 +159,8 @@ FocusScope {
                 required property bool isSdCard
                 required property bool isFolder
                 readonly property string key: mountPoint.length > 0 ? mountPoint : devicePath
+                // Every key this row has gone by (see noteKey).
+                property var ownKeys: []
 
                 objectName: "railStick:" + key
                 isStick: true
@@ -187,7 +176,7 @@ FocusScope {
                 onActivated: root.stickActivated(stickEntry.key)
 
                 Component.onCompleted: {
-                    if (root.noteKey(key)) {
+                    if (root.noteKey(key, stickEntry)) {
                         // Set before the first frame, not on the
                         // animation's first tick: otherwise the row is
                         // drawn once at full size before it arrives.
@@ -205,7 +194,7 @@ FocusScope {
                 property bool created: false
                 onKeyChanged: {
                     if (stickEntry.created) {
-                        root.noteKey(key);
+                        root.noteKey(key, stickEntry);
                     }
                 }
 
@@ -230,7 +219,9 @@ FocusScope {
                 if (!root.ready || root.hasKey(item.key)) {
                     return;
                 }
-                delete root.seenKeys[item.key];
+                for (let i = 0; i < item.ownKeys.length; ++i) {
+                    delete root.seenKeys[item.ownKeys[i]];
+                }
                 root.noteMovement();
                 ghostComponent.createObject(ghostLayer, {
                     objectName: "railStickLeaving:" + item.key,

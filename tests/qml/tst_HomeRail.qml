@@ -5,6 +5,7 @@
 import QtQuick
 import QtTest
 import SeabassGui
+import "../../src/gui/qml/common/HomeModel.js" as HomeModel
 
 // The home screen's rail on its own: what it shows as selected in each
 // section, both shapes of stick model, the column and the compact form,
@@ -185,8 +186,8 @@ TestCase {
         }
         const frame = makeFrame(model, {selectedStickKey: "/dev/sdc1"});
         const rail = frame.rail;
-        compare(rail.rowCount(), 3);
-        compare(rail.keyOf(rail.rowAt(1)), "/media/CARD");
+        compare(HomeModel.rowCount(rail.sticks), 3);
+        compare(HomeModel.keyOf(HomeModel.rowAt(rail.sticks, 1)), "/media/CARD");
         verify(rail.hasKey("/dev/sdc1"));
         verify(!rail.hasKey("/media/GONE"));
         const unmounted = findChild(rail, "railStick:/dev/sdc1");
@@ -197,8 +198,29 @@ TestCase {
 
         // And the plain array shape answers the same.
         const arrayFrame = makeFrame(threeSticks(), {});
-        compare(arrayFrame.rail.rowCount(), 3);
-        compare(arrayFrame.rail.keyOf(arrayFrame.rail.rowAt(2)), "/dev/sdc1");
+        compare(HomeModel.rowCount(arrayFrame.rail.sticks), 3);
+        compare(HomeModel.keyOf(HomeModel.rowAt(arrayFrame.rail.sticks, 2)), "/dev/sdc1");
+        verify(arrayFrame.rail.hasKey("/dev/sdc1"));
+    }
+
+    Component {
+        id: appSettingsComponent
+        AppSettingsController {}
+    }
+
+    // The rail's groups are the ones the settings accept as the group to
+    // remember, in the same order: HomeModel.js on the QML side and
+    // AppSettingsController::homeGroupKeys on the C++ side each spell
+    // them out once, and this is what keeps the two from drifting.
+    function test_theGroupsAreTheOnesTheSettingsAccept() {
+        const frame = makeFrame([], {});
+        const keys = frame.rail.groups.map((group) => group.key);
+        compare(keys.length, 4);
+        const settings = createTemporaryObject(appSettingsComponent, testCase);
+        compare(JSON.stringify(Array.from(settings.homeGroupKeys)), JSON.stringify(keys));
+        for (let i = 0; i < keys.length; ++i) {
+            verify(findChild(frame.rail, "railGroup:" + keys[i]) !== null, keys[i] + " is on the rail");
+        }
     }
 
     // A click reports the entry; it does not change the selection itself.
@@ -297,7 +319,7 @@ TestCase {
 
         // A null model (no controller yet) is the same, not an error.
         rail.sticks = null;
-        compare(rail.rowCount(), 0);
+        compare(HomeModel.rowCount(rail.sticks), 0);
         compare(none.visible, true);
     }
 
@@ -390,6 +412,44 @@ TestCase {
         model.setProperty(1, "mountPoint", "/media/LATE");
         compare(late.objectName, "railStick:/media/LATE");
         compare(late.opacity, 1);
+    }
+
+    // A stick is known by two keys over its life, its device path until
+    // it is mounted and its mount point after: pulling it forgets both,
+    // so plugging it in again is an arrival, however it was keyed when
+    // it went.
+    function test_aRepluggedStickArrivesAgain() {
+        const model = createTemporaryObject(listModelComponent, testCase);
+        model.append(makeStick({}));
+        const frame = makeFrame(model, {selectedStickKey: "/media/MAIN"});
+        const rail = frame.rail;
+
+        model.append(makeStick({label: "PLUG", mountPoint: "", devicePath: "/dev/sdg1"}));
+        const plugged = findChild(rail, "railStick:/dev/sdg1");
+        verify(plugged.opacity < 1, "plugged in: it arrives");
+        tryCompare(plugged, "opacity", 1, Theme.arrivalTransitionDuration * 4);
+        model.setProperty(1, "mountPoint", "/media/PLUG");
+        compare(plugged.objectName, "railStick:/media/PLUG");
+        model.remove(1);
+        tryVerify(() => findChild(rail, "railStickLeaving:/media/PLUG") === null,
+                  Theme.departureTransitionDuration * 6, "pulled: it has gone");
+
+        model.append(makeStick({label: "PLUG", mountPoint: "", devicePath: "/dev/sdg1"}));
+        const again = findChild(rail, "railStick:/dev/sdg1");
+        verify(again !== null);
+        verify(again.opacity < 1, "plugged in again under its device key: it arrives again");
+        tryCompare(again, "opacity", 1, Theme.arrivalTransitionDuration * 4);
+
+        // And the other way round: unmounted before it is pulled, then
+        // mounted by the system as it comes back.
+        model.setProperty(1, "mountPoint", "/media/PLUG");
+        model.setProperty(1, "mountPoint", "");
+        model.remove(1);
+        tryVerify(() => findChild(rail, "railStickLeaving:/dev/sdg1") === null,
+                  Theme.departureTransitionDuration * 6, "pulled again: gone");
+        model.append(makeStick({label: "PLUG", mountPoint: "/media/PLUG", devicePath: "/dev/sdg1"}));
+        verify(findChild(rail, "railStick:/media/PLUG").opacity < 1,
+               "back already mounted, under the key it had before: it arrives");
     }
 
     function test_aReplacedArrayIsNotAnArrival() {
