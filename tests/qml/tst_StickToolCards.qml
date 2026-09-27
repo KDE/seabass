@@ -402,6 +402,19 @@ TestCase {
 
     // USB Stick Performance needs no library: an empty mounted stick gets
     // the card, and it carries the mount point the page measures at.
+    // A group with a single card keeps that card at one column's width:
+    // an only card stretched across the pane read as a different thing.
+    function test_aLoneCardKeepsItsColumnWidth() {
+        const two = makeCards(makeStick({}), "explore", {});
+        const columnWidth = shownCards(two)[0].width;
+        const cards = makeCards(emptyStick(), "explore", {"/media/SPARE": makeAdvice({})});
+        const shown = shownCards(cards);
+        compare(shown.length, 1);
+        verify(Math.abs(shown[0].width - columnWidth) < 1,
+               "one card, one column: " + shown[0].width + " against " + columnWidth);
+        verify(shown[0].width * 2 < cards.width + 1, "never the whole pane");
+    }
+
     function test_emptyStickCanBeMeasured() {
         const cards = makeCards(emptyStick(), "explore", {"/media/SPARE": makeAdvice({})});
         compare(JSON.stringify(shownTitles(cards)), JSON.stringify(["USB Stick Performance"]));
