@@ -141,7 +141,15 @@ Page {
             // ---- Appearance -------------------------------------------
             SectionHeader { text: "Appearance" }
 
+            // Not offered for now: "Match System Theme" is broken (the
+            // Material palette it switches to does not carry the app's own
+            // colours through), so the choice is hidden rather than handed
+            // to someone who cannot make it work. The code stays for when
+            // it does; AppSettingsController stops applying the stored
+            // value meanwhile.
             ColumnLayout {
+                objectName: "themeSetting"
+                visible: false
                 spacing: Theme.scaled(6)
                 Subtitle { text: "Theme" }
                 ButtonGroup { id: themeGroup }

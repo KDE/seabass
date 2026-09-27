@@ -58,6 +58,28 @@ TestCase {
     // The page must never be wider than the window it is in. Before the
     // fix the column took its width from its widest child, so this grew
     // without bound and there was no horizontal scroll to get it back.
+    Component {
+        id: freshSettingsComponent
+        AppSettingsController {}
+    }
+
+    // The theme choice is hidden until it works: no radio button offers
+    // "Match System Theme", and a value someone stored while it was
+    // offered is not applied.
+    function test_the_theme_setting_is_not_offered() {
+        const page = make(900, 700);
+        const block = findChild(page, "themeSetting");
+        verify(block !== null, "the block is still there, for later");
+        compare(block.visible, false);
+    }
+
+    function test_a_stored_system_theme_is_not_applied() {
+        const before = controllerFixture.storeRawSetting("useSystemTheme", true);
+        const fresh = createTemporaryObject(freshSettingsComponent, testCase);
+        controllerFixture.storeRawSetting("useSystemTheme", before);
+        compare(fresh.useSystemTheme, false, "a stored true reads back as the app's own palette");
+    }
+
     function test_content_never_exceeds_the_window_width() {
         var page = make(700, 700);
         var scroll = findChild(page, "settingsScroll");
