@@ -47,7 +47,10 @@ Item {
 
     // How far a card's text sits from this item's left edge, so the pane
     // can put the stick's name and the group heading on the same line.
-    readonly property real textInset: Theme.cardPadding + Theme.iconSizeNormal + Theme.rowSpacing
+    // The cards sit at this item's left edge and are all alike, so any
+    // one's inset is every one's; Browse Library's exists for every row,
+    // shown or not.
+    readonly property real textInset: browseLibraryCard.textInset
 
     signal browseRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
@@ -198,6 +201,7 @@ Item {
 
             // ---- Explore
             ActionCard {
+                id: browseLibraryCard
                 objectName: "browseLibraryCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth

@@ -165,6 +165,26 @@ function cardInRow(page, mountPointOrDevice, title) {
     page.selectedGroup = before;
     return card;
 }
+// Scrolls the home's pane (the Flickable beside the rail) so that item,
+// a card or anything else in it, is wholly in view, and says whether it
+// is. A card below the fold is laid out and visible, but a click at its
+// centre lands outside the window: a short window, or the update banner
+// taking room, is enough. Centred when it has to move, as far as the
+// pane's content allows.
+function scrollIntoView(page, item) {
+    const pane = findByObjectName(page, "homePane");
+    if (!pane || !item) {
+        return false;
+    }
+    const top = item.mapToItem(pane, 0, 0).y;
+    if (top < 0 || top + item.height > pane.height) {
+        const inContent = item.mapToItem(pane.contentItem, 0, 0).y;
+        pane.contentY = Math.max(0, Math.min(inContent - (pane.height - item.height) / 2,
+                                             pane.contentHeight - pane.height));
+    }
+    const after = item.mapToItem(pane, 0, 0).y;
+    return after >= 0 && after + item.height <= pane.height;
+}
 // A stick's own control (eject, close) by objectName.
 function objectInRow(page, mountPointOrDevice, objectName) {
     const row = stickRow(page, mountPointOrDevice);

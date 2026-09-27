@@ -495,6 +495,23 @@ public:
         seabass::gui::LibraryConsistencyController::setFilesystemRepairForTesting({});
     }
 
+    // A value put straight into the settings store (the sandbox this
+    // binary made), past every setter's validation: what a settings file
+    // edited by hand, or written by another build, can hold. An invalid
+    // QVariant removes the key. Hands back what was there before.
+    Q_INVOKABLE QVariant storeRawSetting(const QString &key, const QVariant &value)
+    {
+        QSettings settings = seabass::gui::openSeabassSettings();
+        const QVariant before = settings.value(key);
+        if (value.isValid()) {
+            settings.setValue(key, value);
+        } else {
+            settings.remove(key);
+        }
+        settings.sync();
+        return before;
+    }
+
     // What an edit session knows about its stick's catalogs after a page
     // named one of them: {rekordbox, engine}. A fresh stick is made under
     // the scratch root with export.pdb and/or Engine's m.db present --

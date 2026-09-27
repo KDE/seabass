@@ -68,9 +68,17 @@ Button {
     Binding { target: card; property: "topPadding"; value: Theme.cardPadding; when: card.large }
     Binding { target: card; property: "bottomPadding"; value: Theme.cardPadding; when: card.large }
 
+    // How far the title sits from the card's left edge: the padding, the
+    // icon and the gap after it, read off the very values that place it,
+    // so a page lining other text up with the cards' titles follows
+    // whatever the card does (the home pane's one left line).
+    readonly property real textInset: card.leftPadding + cardIconItem.size + cardRow.spacing
+
     contentItem: RowLayout {
-        spacing: 10
+        id: cardRow
+        spacing: Theme.rowSpacing
         SeabassIcon {
+            id: cardIconItem
             objectName: "cardIcon"
             iconName: card.cardIcon
             size: card.large ? Theme.iconSizeNormal : Theme.iconSizeSmall

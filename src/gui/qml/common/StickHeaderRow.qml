@@ -40,22 +40,26 @@ Rectangle {
     signal closeFolderRequested(string mountPoint)
 
     // How far the stick's name sits from this row's left edge, so the
-    // pane can put its group heading and cards on the same line.
-    readonly property real textInset: Theme.cardPadding + Theme.iconSizeNormal + Theme.rowSpacing
+    // pane can put its group heading and cards on the same line: read off
+    // the margin, the icon and the gap that place the name.
+    readonly property real textInset: contentColumn.anchors.leftMargin + stickIcon.size + rowContent.spacing
 
-    readonly property string label: root.row ? String(root.row.label || "") : ""
-    readonly property string mountPoint: root.row ? String(root.row.mountPoint || "") : ""
-    readonly property string devicePath: root.row ? String(root.row.devicePath || "") : ""
-    readonly property bool mounted: root.row !== null && root.row !== undefined && root.row.mounted === true
-    readonly property bool hasRekordbox: root.row !== null && root.row !== undefined && root.row.hasRekordbox === true
-    readonly property bool hasEngine: root.row !== null && root.row !== undefined && root.row.hasEngine === true
-    readonly property bool hasOneLibrary: root.row !== null && root.row !== undefined && root.row.hasOneLibrary === true
-    readonly property bool isSdCard: root.row !== null && root.row !== undefined && root.row.isSdCard === true
-    readonly property bool isFolder: root.row !== null && root.row !== undefined && root.row.isFolder === true
-    readonly property bool safeToUnplug: root.row !== null && root.row !== undefined && root.row.safeToUnplug === true
+    // ---- The row, read defensively: a fake row may lack a role, and the
+    // pane has no row at all while no stick is selected.
+    readonly property bool hasRow: root.row !== null && root.row !== undefined
+    readonly property string label: root.hasRow ? String(root.row.label || "") : ""
+    readonly property string mountPoint: root.hasRow ? String(root.row.mountPoint || "") : ""
+    readonly property string devicePath: root.hasRow ? String(root.row.devicePath || "") : ""
+    readonly property bool mounted: root.hasRow && root.row.mounted === true
+    readonly property bool hasRekordbox: root.hasRow && root.row.hasRekordbox === true
+    readonly property bool hasEngine: root.hasRow && root.row.hasEngine === true
+    readonly property bool hasOneLibrary: root.hasRow && root.row.hasOneLibrary === true
+    readonly property bool isSdCard: root.hasRow && root.row.isSdCard === true
+    readonly property bool isFolder: root.hasRow && root.row.isFolder === true
+    readonly property bool safeToUnplug: root.hasRow && root.row.safeToUnplug === true
     // Hidden rather than shown as "0 B" when the locator could not read
     // a capacity, which happens for a drive with no partition table.
-    readonly property real capacityBytes: root.row && root.row.capacityBytes ? Number(root.row.capacityBytes) : 0
+    readonly property real capacityBytes: root.hasRow && root.row.capacityBytes ? Number(root.row.capacityBytes) : 0
     readonly property bool hasKnownLibrary: root.hasRekordbox || root.hasEngine
 
     // One size for the icons in this row, the header's size.
@@ -118,6 +122,7 @@ Rectangle {
                     spacing: Theme.rowSpacing
 
                     UsbStickIcon {
+                        id: stickIcon
                         objectName: "stickIcon"
                         size: Theme.iconSizeNormal
                         Layout.alignment: Qt.AlignVCenter
