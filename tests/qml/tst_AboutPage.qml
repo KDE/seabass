@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 
@@ -125,5 +126,22 @@ TestCase {
         waitForRendering(page);
         wait(150);
         grabImage(page).save(screenshotDir + "/AboutPage.png");
+    }
+
+    // Escape goes back, as the breadcrumb does.
+    Component {
+        id: stackComponent
+        StackView { width: 900; height: 700 }
+    }
+    Component { id: homeComponent; Item {} }
+
+    function test_escapeGoesBack() {
+        const stack = createTemporaryObject(stackComponent, testCase);
+        stack.push(homeComponent);
+        stack.push(pageComponent, {updateChecker: fakeChecker()});
+        tryCompare(stack, "busy", false);
+        compare(stack.depth, 2);
+        keyClick(Qt.Key_Escape);
+        tryCompare(stack, "depth", 1);
     }
 }

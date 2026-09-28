@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 
@@ -387,4 +388,54 @@ TestCase {
         verify(version.text.indexOf("<a ") < 0);
     }
 
+    // Escape goes back. Settings apply as they are changed, so Escape
+    // with any changed on this visit asks to keep them or put them back.
+    Component {
+        id: stackComponent
+        StackView { width: 900; height: 700 }
+    }
+    Component { id: homeComponent; Item {} }
+
+    function pushed() {
+        const stack = createTemporaryObject(stackComponent, testCase);
+        stack.push(homeComponent);
+        const page = stack.push(pageComponent);
+        tryCompare(stack, "busy", false);
+        compare(stack.depth, 2);
+        return {stack: stack, page: page};
+    }
+
+    function test_escapeWithNothingChangedGoesBack() {
+        const s = pushed();
+        keyClick(Qt.Key_Escape);
+        tryCompare(s.stack, "depth", 1);
+    }
+
+    function test_escapeAfterAChangeAsksAndResetPutsItBack() {
+        const was = settings.keyNotation;
+        const s = pushed();
+        settings.keyNotation = was === "camelot" ? "traditional" : "camelot";
+        keyClick(Qt.Key_Escape);
+        const dialog = findChild(s.page, "changedOnLeaveDialog");
+        tryCompare(dialog, "opened", true);
+        compare(s.stack.depth, 2, "nothing left yet: the question is open");
+        verify(dialog.message.indexOf("changed a setting") >= 0, dialog.message);
+        findChild(dialog, "discardButton").clicked();
+        tryCompare(s.stack, "depth", 1);
+        compare(settings.keyNotation, was, "Reset puts it back the way the page found it");
+    }
+
+    function test_escapeAfterAChangeKeepKeepsIt() {
+        const was = settings.keyNotation;
+        const now = was === "camelot" ? "traditional" : "camelot";
+        const s = pushed();
+        settings.keyNotation = now;
+        keyClick(Qt.Key_Escape);
+        const dialog = findChild(s.page, "changedOnLeaveDialog");
+        tryCompare(dialog, "opened", true);
+        findChild(dialog, "saveButton").clicked();
+        tryCompare(s.stack, "depth", 1);
+        compare(settings.keyNotation, now, "Keep leaves the change in place");
+        settings.keyNotation = was;
+    }
 }
