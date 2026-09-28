@@ -1509,6 +1509,12 @@ if(TARGET seabass_taglib)
     target_link_libraries(taglib_duration_probe_test PRIVATE seabass_taglib)
     add_test(NAME taglib_duration_probe_test COMMAND taglib_duration_probe_test)
 
+    # The cover inside a track's own tags, one hand-built file per format.
+    add_executable(embedded_artwork_test tests/embedded_artwork_test.cpp)
+    target_include_directories(embedded_artwork_test PRIVATE src)
+    target_link_libraries(embedded_artwork_test PRIVATE seabass_taglib)
+    add_test(NAME embedded_artwork_test COMMAND embedded_artwork_test)
+
     # The whole unreferenced-file scan, composed the way the GUI
     # composes it -- which is only meaningful with a real probe behind
     # it, hence inside this same if().
