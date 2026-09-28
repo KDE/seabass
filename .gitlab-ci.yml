@@ -680,6 +680,8 @@ linux:coverage:
     # --merge-mode-functions=separate because a template or a lambda in a
     # header is one function on several lines across translation units,
     # which gcovr's strict default refuses to merge.
+    # gcovr writes into the directory but does not make it.
+    - mkdir -p build-cov/coverage
     - gcovr --root . --object-directory build-cov
       --filter 'src/' --exclude 'src/infrastructure/rekordbox/generated/'
       --exclude-throw-branches --exclude-unreachable-branches
