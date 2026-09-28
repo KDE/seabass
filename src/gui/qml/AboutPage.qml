@@ -93,73 +93,91 @@ Page {
             y: 32
             spacing: 20
 
-            Image {
-                source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
-                Layout.preferredWidth: 96
-                Layout.preferredHeight: 96
+            // The mark and the name side by side, the mark as tall as the
+            // block it stands beside: name, tagline, address, version.
+            RowLayout {
+                objectName: "aboutHead"
                 Layout.alignment: Qt.AlignHCenter
-                fillMode: Image.PreserveAspectFit
-            }
+                spacing: Theme.rowSpacing * 2
+                Image {
+                    objectName: "aboutLogo"
+                    source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
+                    Layout.preferredWidth: headBlock.implicitHeight
+                    Layout.preferredHeight: headBlock.implicitHeight
+                    Layout.alignment: Qt.AlignVCenter
+                    sourceSize.width: Math.ceil(headBlock.implicitHeight)
+                    sourceSize.height: Math.ceil(headBlock.implicitHeight)
+                    fillMode: Image.PreserveAspectFit
+                }
 
-            ColumnLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: 2
-                Label {
-                    text: "Seabass"
-                    font.family: Theme.titleFamily
-                    font.weight: Theme.titleWeight
-                    font.pointSize: Theme.titleLarge
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                Label {
-                    text: "Your DJ toolbox"
-                    font.pointSize: Theme.baseFontPointSize * 1.3
-                    color: Qt.lighter(Theme.accent, 1.3)
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                // The site's address, readable and clickable, right under
-                // the name: the one line to remember when telling someone
-                // else where to get this.
-                Label {
-                    objectName: "aboutWebsiteLink"
-                    text: "<a href=\"" + root.websiteUrl + "\">vizzzion.org/seabass</a>"
-                    textFormat: Text.StyledText
-                    linkColor: Theme.accent
-                    font.pointSize: Theme.baseFontPointSize
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: 4
-                    onLinkActivated: link => Qt.openUrlExternally(link)
-                    HoverHandler { cursorShape: Qt.PointingHandCursor }
-                }
-            }
+                ColumnLayout {
+                    id: headBlock
+                    Layout.alignment: Qt.AlignVCenter
+                    // Takes what the mark leaves: on a narrow page the
+                    // build line wraps rather than running off the edge.
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    spacing: 2
+                    Label {
+                        text: "Seabass"
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        font.family: Theme.titleFamily
+                        font.weight: Theme.titleWeight
+                        font.pointSize: Theme.titleLarge
+                    }
+                    Label {
+                        text: "Your DJ toolbox"
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        font.pointSize: Theme.baseFontPointSize * 1.3
+                        color: Qt.lighter(Theme.accent, 1.3)
+                    }
+                    // The site's address, readable and clickable, right
+                    // under the name: the one line to remember when telling
+                    // someone else where to get this.
+                    Label {
+                        objectName: "aboutWebsiteLink"
+                        text: "<a href=\"" + root.websiteUrl + "\">vizzzion.org/seabass</a>"
+                        textFormat: Text.StyledText
+                        linkColor: Theme.accent
+                        font.pointSize: Theme.baseFontPointSize
+                        Layout.topMargin: 4
+                        onLinkActivated: link => Qt.openUrlExternally(link)
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                    }
 
-            // Which Seabass this is, first thing under the name: the
-            // question a bug report starts with, and the one About is
-            // opened to answer. The build line is selectable so it can be
-            // copied into one whole.
-            ColumnLayout {
-                objectName: "aboutVersionBlock"
-                visible: root.versionNumber.length > 0
-                Layout.alignment: Qt.AlignHCenter
-                spacing: 2
-                Label {
-                    objectName: "aboutVersion"
-                    text: "Version " + root.versionNumber
-                    font.pointSize: Theme.baseFontPointSize * 1.5
-                    font.weight: Font.DemiBold
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                TextEdit {
-                    objectName: "aboutBuild"
-                    text: root.buildLine
-                    visible: text.length > 0
-                    readOnly: true
-                    selectByMouse: true
-                    color: Theme.textMuted
-                    selectionColor: Theme.accent
-                    font.family: Theme.dataFamily
-                    font.pointSize: Theme.fontSmall
-                    Layout.alignment: Qt.AlignHCenter
+                    // Which Seabass this is, right under the name: the
+                    // question a bug report starts with, and the one About
+                    // is opened to answer. The build line is selectable so
+                    // it can be copied into one whole.
+                    ColumnLayout {
+                        objectName: "aboutVersionBlock"
+                        visible: root.versionNumber.length > 0
+                        spacing: 2
+                        Layout.topMargin: 10
+                        Label {
+                            objectName: "aboutVersion"
+                            text: "Version " + root.versionNumber
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            font.pointSize: Theme.baseFontPointSize * 1.5
+                            font.weight: Font.DemiBold
+                        }
+                        TextEdit {
+                            objectName: "aboutBuild"
+                            text: root.buildLine
+                            visible: text.length > 0
+                            wrapMode: TextEdit.Wrap
+                            Layout.fillWidth: true
+                            readOnly: true
+                            selectByMouse: true
+                            color: Theme.textMuted
+                            selectionColor: Theme.accent
+                            font.family: Theme.dataFamily
+                            font.pointSize: Theme.fontSmall
+                        }
+                    }
                 }
             }
 
@@ -169,6 +187,7 @@ Page {
                     + "library that is already on your USB stick, keeping the Rekordbox and Engine DJ "
                     + "copies of it in step. Seabass provides the tools that others forgot to hand to you."
                 wrapMode: Text.WordWrap
+                font.italic: true
                 font.pointSize: Theme.baseFontPointSize * 1.1
                 Layout.fillWidth: true
             }

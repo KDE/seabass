@@ -93,6 +93,15 @@ TestCase {
         const logo = findChild(page, "aboutKdeLogo");
         tryCompare(logo, "status", Image.Ready);
         verify(logo.width >= 40 && logo.height >= 40, "the logo is drawn at its size: " + logo.width);
+        // The mark stands beside the name block and is as tall as it.
+        const mark = findChild(page, "aboutLogo");
+        const head = findChild(page, "aboutHead");
+        verify(mark !== null && head !== null, "the mark and the head block exist");
+        const version = findChild(page, "aboutVersion");
+        verify(mark.mapToItem(page, mark.width, 0).x <= version.mapToItem(page, 0, 0).x + 0.5,
+               "the mark is left of the name block");
+        verify(Math.abs(mark.height - head.height) <= 1, "as tall as the block: " + mark.height + " vs " + head.height);
+        verify(findChild(page, "aboutIntro").font.italic, "the introduction is in italics");
         const text = findChild(page, "aboutKdeText");
         verify(text.text.indexOf("KDE") >= 0, "it names KDE");
         verify(text.text.indexOf(page.kdeUrl) >= 0 && text.text.indexOf(page.sourceUrl) >= 0,
