@@ -3322,6 +3322,16 @@ target_compile_definitions(damaged_legacy_cue_list_test PRIVATE
 target_link_libraries(damaged_legacy_cue_list_test PRIVATE seabass_core)
 add_test(NAME damaged_legacy_cue_list_test COMMAND damaged_legacy_cue_list_test)
 
+# RekordboxCueWriter over every real analysis file in the fixture, each
+# written twice and parsed strictly after each write (the WHALESHARK
+# memory-list damage of 2026-09-26 is the shape it looks for).
+add_executable(rekordbox_cue_writer_every_track_test tests/rekordbox_cue_writer_every_track_test.cpp)
+target_include_directories(rekordbox_cue_writer_every_track_test PRIVATE src tests)
+target_link_libraries(rekordbox_cue_writer_every_track_test PRIVATE seabass_core rekordbox_format kaitai_cpp_stl_runtime)
+add_test(NAME rekordbox_cue_writer_every_track_test COMMAND rekordbox_cue_writer_every_track_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(rekordbox_cue_writer_every_track_test PROPERTIES LABELS "integration")
+
 # End to end: back a library up, open the backup, read it. Asserts the
 # cues match the original folder even though USBANLZ was never extracted.
 add_executable(backup_artwork_lookup_test tests/backup_artwork_lookup_test.cpp)
