@@ -888,42 +888,21 @@ TestCase {
         tryCompare(findChild(page, "openFolderError"), "visible", true);
     }
 
-    // Backups and folders on this computer sit behind one menu button in
-    // the header, where the folder button used to be, rather than as two
-    // header buttons and a row of buttons under the list.
-    function test_theHomeMenuOffersBackupsAndFolders() {
+    // The window's header row (menu, About, Preferences, Support) lies
+    // over this header; the page names its place and keeps the room the
+    // row asks for. tst_AppHeaderOverlay covers the row itself.
+    function test_thePageNamesItsPlaceAndKeepsRoomForTheHeaderRow() {
         const page = makePage([], {});
-        const button = findChild(page, "homeMenuButton");
-        verify(button !== null, "the menu button must be in the header");
-        compare(button.visible, true);
-        compare(findChild(page, "openBackupButton"), null, "the separate backup button is gone");
-        compare(findChild(page, "openFolderButton"), null, "the separate folder button is gone");
-        compare(findChild(page, "browseBackupsRow"), null, "the row under the list is gone");
-
-        const menu = findChild(page, "homeMenu");
-        verify(menu !== null, "the button must carry the menu");
-        mouseClick(button);
-        tryCompare(menu, "opened", true);
-        const full = findChild(page, "browseFullBackupItem");
-        const folder = findChild(page, "openFolderItem");
-        verify(full !== null && folder !== null, "both entries must be in the menu");
-        compare(menu.count, 2, "two entries: what the no-stick Backup group cannot offer");
-        // Manage Backups and Browse Metadata Backups are cards of the
-        // no-stick Backup group now, and were redundant here (Sebastian,
-        // 2026-09-28).
-        compare(findChild(page, "manageBackupsItem"), null);
-        compare(findChild(page, "browseMetadataBackupsItem"), null);
-        compare(folder.text, "Open a Library From a Folder…");
-        // Every entry at its full length: the menu is as wide as its
-        // longest one, not the style's default width with the text elided.
-        for (const entry of [full, folder]) {
-            verify(entry.implicitWidth <= entry.width,
-                   entry.text + " needs " + entry.implicitWidth + " px and got " + entry.width);
-        }
-        // And the button closes what it opened: a press on it no longer
-        // closes the menu only for the click to open it again.
-        mouseClick(button);
-        tryCompare(menu, "visible", false);
+        compare(page.appHeaderPlace, "home");
+        compare(findChild(page, "homeMenuButton"), null, "the menu button is the window's now");
+        compare(findChild(page, "aboutButton"), null);
+        const space = findChild(page, "appHeaderSpace");
+        verify(space !== null, "the header keeps a space at its right");
+        page.appHeaderReserve = 120;
+        tryCompare(space, "width", 120);
+        const lockup = findByName(page, "brandLockup");
+        verify(lockup.mapToItem(page, lockup.width, 0).x <= space.mapToItem(page, 0, 0).x + 0.5,
+               "the brand ends before the reserved space");
     }
 
     // Finds the first descendant with `objectName`, anywhere on the page.
@@ -959,39 +938,6 @@ TestCase {
         page.selectGroup("backup");
         compare(findByName(page, "noStickBackupTools").visible, true,
                 "an opened folder must not count as a stick being in");
-    }
-
-    function test_theHeaderIconsAreBundledAndTheHeartIsFilled() {
-        var page = makePage([], {});
-        var menu = findByName(page, "homeMenuButton");
-        verify(menu !== null, "the menu button must exist");
-        var donate = findByName(page, "donateButton");
-        verify(donate !== null, "the donate button must exist");
-        // Drawn, not a theme icon: Breeze's heart ("love") is an outline.
-        var heart = findByName(page, "donateHeart");
-        verify(heart !== null, "the donate button must draw the filled heart");
-        compare(donate.contentItem, heart);
-        compare(heart.color, Qt.color("#aa0000"));
-        // Every icon in the header one size, the menu's included -- and the
-        // heart DRAWN at it, not merely asking for it: a button stretches
-        // its contentItem, and under KDE's style the heart filled the button.
-        verify(page.headerIconSize > 0);
-        compare(menu.icon.width, page.headerIconSize);
-        compare(menu.icon.height, page.headerIconSize);
-        compare(heart.drawnSize, page.headerIconSize);
-        var buttons = [{name: "homeMenuButton", icon: "application-menu"}, {name: "aboutButton", icon: "help-about"},
-                       {name: "preferencesButton", icon: "configure"}];
-        for (var i = 0; i < buttons.length; ++i) {
-            var button = findByName(page, buttons[i].name);
-            verify(button !== null, buttons[i].name + " must exist");
-            // A bundled Breeze icon, not a theme lookup (nothing to find on
-            // Windows or macOS), flat in the text colour like the rest.
-            compare(button.icon.name, "", buttons[i].name + " must not look the icon up in the theme");
-            compare(button.icon.source.toString(), Theme.iconUrl(buttons[i].icon));
-            compare(button.icon.color, Theme.text, buttons[i].name + " must be tinted flat");
-            compare(button.icon.width, page.headerIconSize, buttons[i].name + " must be the menu icon's size");
-            compare(button.icon.height, page.headerIconSize);
-        }
     }
 
     // A narrow window: the rail wraps into rows above the pane instead

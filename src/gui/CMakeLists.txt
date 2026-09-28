@@ -58,6 +58,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/ActionCard.qml
     qml/common/ArtworkImage.qml
     qml/common/AppHeaderButtons.qml
+    qml/common/AppHeaderOverlay.qml
     qml/common/BackBreadcrumb.qml
     qml/common/BigScrollBar.qml
     qml/common/BusyOverlay.qml

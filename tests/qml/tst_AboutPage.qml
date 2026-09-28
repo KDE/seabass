@@ -67,18 +67,17 @@ TestCase {
         compare(findChild(page, "aboutVersionBlock").visible, false);
     }
 
-    // The header keeps the home's About, Preferences and Support buttons,
-    // with About itself off: one can go straight to the other two.
-    function test_theHeaderCarriesTheAppButtons() {
+    // The window's header row lies over this header (tst_AppHeaderOverlay):
+    // the page names its place and keeps the room the row asks for.
+    function test_thePageNamesItsPlaceAndKeepsRoomForTheHeaderRow() {
         const page = make(700, 900);
         waitForRendering(page);
-        const buttons = findChild(page, "appHeaderButtons");
-        verify(buttons !== null, "the header has the app buttons");
-        compare(buttons.current, "about");
-        compare(findChild(page, "aboutButton").enabled, false);
-        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "preferencesRequested"});
-        mouseClick(findChild(page, "preferencesButton"));
-        compare(spy.count, 1);
+        compare(page.appHeaderPlace, "about");
+        compare(findChild(page, "aboutButton"), null, "the buttons are the window's now");
+        const space = findChild(page, "appHeaderSpace");
+        verify(space !== null, "the header keeps a space at its right");
+        page.appHeaderReserve = 120;
+        tryCompare(space, "width", 120);
     }
 
     function test_links_are_present() {
@@ -109,13 +108,17 @@ TestCase {
         verify(logo.width >= 40 && logo.height >= 40, "the logo is drawn at its size: " + logo.width);
         // The mark stands beside the name block and is as tall as it.
         const mark = findChild(page, "aboutLogo");
-        const head = findChild(page, "aboutHead");
-        verify(mark !== null && head !== null, "the mark and the head block exist");
+        const head = findChild(page, "aboutNameBlock");
+        verify(mark !== null && head !== null, "the mark and the name block exist");
         const version = findChild(page, "aboutVersion");
         verify(mark.mapToItem(page, mark.width, 0).x <= version.mapToItem(page, 0, 0).x + 0.5,
                "the mark is left of the name block");
         verify(Math.abs(mark.height - head.height) <= 1, "as tall as the block: " + mark.height + " vs " + head.height);
         verify(findChild(page, "aboutIntro").font.italic, "the introduction is in italics");
+        // The introduction is in the name's column, under the version.
+        const intro = findChild(page, "aboutIntro");
+        compare(Math.round(intro.mapToItem(page, 0, 0).x), Math.round(version.mapToItem(page, 0, 0).x),
+                "the introduction starts where the name does");
         const text = findChild(page, "aboutKdeText");
         verify(text.text.indexOf("KDE") >= 0, "it names KDE");
         verify(text.text.indexOf(page.kdeUrl) >= 0 && text.text.indexOf(page.sourceUrl) >= 0,

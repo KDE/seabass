@@ -452,6 +452,32 @@ ApplicationWindow {
         backupDirectory: appSettingsCtrl.stickBackupDirectory
     }
 
+    // The window's own header row: the home's menu, About, Preferences
+    // and Support, laid over the page stack so it stays still while pages
+    // slide. From the home a button pushes its page; from one of those
+    // pages it replaces it, so Back still leads home.
+    AppHeaderOverlay {
+        id: appHeader
+        objectName: "appHeader"
+        stackView: stackView
+        anchors.top: stackView.top
+        anchors.right: stackView.right
+        anchors.topMargin: Theme.pageMargin + (Theme.headerBackButtonSize - height) / 2
+        anchors.rightMargin: Theme.pageMargin
+        function go(component) {
+            if (appHeader.place === "home") {
+                stackView.push(component);
+            } else {
+                stackView.replace(component);
+            }
+        }
+        onAboutRequested: appHeader.go(aboutPageComponent)
+        onPreferencesRequested: appHeader.go(appSettingsPageComponent)
+        onSupportRequested: appHeader.go(donationPageComponent)
+        onBrowseFullBackupRequested: stackView.get(0).browseFullBackup()
+        onOpenFolderRequested: stackView.get(0).openFolder()
+    }
+
     Component {
         id: stickListPageComponent
         StickListPage {
@@ -762,10 +788,6 @@ ApplicationWindow {
             updateChecker: updateCtrl
             appSettingsController: appSettingsCtrl
             onAnonymizeLibraryRequested: stackView.push(anonymizeLibraryPageComponent)
-            // The header's buttons: the page in place of this one, so
-            // Back still leads home.
-            onAboutRequested: stackView.replace(aboutPageComponent)
-            onDonationRequested: stackView.replace(donationPageComponent)
         }
     }
 
@@ -935,15 +957,11 @@ ApplicationWindow {
         AboutPage {
             updateChecker: updateCtrl
             onDonationRequested: stackView.push(donationPageComponent)
-            onPreferencesRequested: stackView.replace(appSettingsPageComponent)
         }
     }
 
     Component {
         id: donationPageComponent
-        DonationPage {
-            onAboutRequested: stackView.replace(aboutPageComponent)
-            onPreferencesRequested: stackView.replace(appSettingsPageComponent)
-        }
+        DonationPage {}
     }
 }

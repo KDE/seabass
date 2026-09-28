@@ -83,7 +83,14 @@ Page {
     // One size for every icon in the header, the menu's included. Set, not
     // read off the menu button: KDE's ToolButton never sets icon.width, so
     // binding to it gave 0 there and the heart filled its whole button.
-    readonly property int headerIconSize: Math.round(Theme.scaled(22))
+    // The window's header row (AppHeaderOverlay) shows over this page's
+    // header, with the home's menu: it names this place and sets how much
+    // of the header's right to keep clear.
+    readonly property string appHeaderPlace: "home"
+    property real appHeaderReserve: 0
+    // The menu's two entries, called by the window.
+    function browseFullBackup() { openBackupDialog.open(); }
+    function openFolder() { openFolderDialog.open(); }
 
     // ---- the stick model, read as plain rows ---------------------------
     //
@@ -483,6 +490,9 @@ Page {
 
         RowLayout {
             Layout.fillWidth: true
+            // As tall as the other pages' Back button: the window's header
+            // row centres on that height on every page.
+            Layout.minimumHeight: Theme.headerBackButtonSize
 
             // The app's own name where every other page has a page
             // title, because this page's subject IS the app: it is the
@@ -528,78 +538,12 @@ Page {
             }
             Item { Layout.fillWidth: true }
 
-            // What opens a library from this computer rather than from a
-            // stick, behind one button: each is used now and then, and as
-            // two header buttons plus a row under the list they crowded a
-            // page whose subject is the sticks.
-            ToolButton {
-                id: homeMenuButton
-                objectName: "homeMenuButton"
-                icon.source: Theme.iconUrl("application-menu")
-                icon.color: Theme.text
-                icon.width: root.headerIconSize
-                icon.height: root.headerIconSize
-                display: AbstractButton.IconOnly
-                text: "Backups and folders"
-                ToolTip.visible: hovered && !homeMenu.visible
-                ToolTip.text: "Backups and folders on this computer"
-                onClicked: homeMenu.visible ? homeMenu.close() : homeMenu.open()
-
-                Menu {
-                    id: homeMenu
-                    objectName: "homeMenu"
-                    // A press on the button itself does not close the menu,
-                    // so its click can: otherwise the press closed it and the
-                    // click opened it again, under every style but KDE's.
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-                    // Opens down and to the left, so it stays in the window
-                    // from a button near the right edge.
-                    x: homeMenuButton.width - width
-                    y: homeMenuButton.height
-                    // As wide as its longest entry. A Menu keeps the style's
-                    // own width, 200 px, whatever its items hold, and elided
-                    // "Browse a Full Stick Backup…" with the window half
-                    // empty. Rounded up for the reason BackBreadcrumb's
-                    // crumbs are: a fraction short of the text elides it.
-                    width: {
-                        var widest = 0;
-                        for (var i = 0; i < count; ++i) {
-                            var item = itemAt(i);
-                            if (item) widest = Math.max(widest, item.implicitWidth);
-                        }
-                        return Math.max(implicitWidth, Math.ceil(widest) + 1 + leftPadding + rightPadding);
-                    }
-                    MenuItem {
-                        objectName: "browseFullBackupItem"
-                        text: "Browse a Full Stick Backup…"
-                        icon.source: Theme.iconUrl("backup")
-                        icon.color: enabled ? Theme.text : Theme.textMuted
-                        onTriggered: openBackupDialog.open()
-                    }
-                    MenuItem {
-                        objectName: "openFolderItem"
-                        text: "Open a Library From a Folder…"
-                        icon.source: Theme.iconUrl("folder-open")
-                        icon.color: enabled ? Theme.text : Theme.textMuted
-                        onTriggered: openFolderDialog.open()
-                    }
-                }
-            }
-            // Bundled Breeze icons, flat in the text colour like every
-            // other icon in the app (see SeabassIcon): a theme lookup
-            // finds nothing on Windows or macOS, and colour icons next to
-            // flat ones read as two different sets. Sized like the menu
-            // icon beside them. The heart after them stays red: it is
-            // the one button asking for something.
-            //
-            // text is set on each despite IconOnly: it never renders,
-            // and it is what an assistive reader announces.
-            AppHeaderButtons {
-                objectName: "appHeaderButtons"
-                iconSize: root.headerIconSize
-                onAboutRequested: root.aboutRequested()
-                onPreferencesRequested: root.appSettingsRequested()
-                onSupportRequested: root.donationRequested()
+            // Room for the window's header row (AppHeaderOverlay), which
+            // lies over this header and sets this width itself.
+            Item {
+                objectName: "appHeaderSpace"
+                Layout.preferredWidth: root.appHeaderReserve
+                Layout.minimumWidth: root.appHeaderReserve
             }
         }
 
