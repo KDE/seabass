@@ -549,6 +549,96 @@ One design point worth knowing if you're touching the anonymizer: the same real 
   than for the page. `ctest -R seabass_qml_tests` is the one that
   answers the question asked.
 
+## The storm
+
+`seabass_qml_storm_tests` (label `storm`, `tests/qml-storm/`) walks the
+real `Main.qml`, with every real controller, through what a person and
+the OS do to it, many times over, and checks after every step that
+nothing has gone wrong in between. It exists for the one class of bug
+the per-controller request tests (`docs/async-requests.md`) cannot
+reach: two things happening at once that nobody thought to put side by
+side.
+
+```
+ctest -R seabass_qml_storm_tests                       # 3 seeds of 150 steps, a few minutes
+SEABASS_STORM_FIRST_SEED=17 SEABASS_STORM_SEEDS=1 SEABASS_STORM_VERBOSE=1 \
+    ctest -R seabass_qml_storm_tests -V                # replay one seed, step by step
+tools/storm-hunt.sh <build> <out> 1 200 4              # a hunt: 200 seeds in 4 processes
+ctest -LE storm                                        # everything else
+```
+
+A bare `ctest` runs it, as it runs everything (see above); its default
+fits the ten minutes it is given, which is also why a hunt does not go
+through `ctest` (a `TIMEOUT` property is not raised by `ctest --timeout`).
+`tools/storm-hunt.sh` runs the same binary with the environment ctest
+gives the test, read from `ctest -N -V`, and refuses to start if that
+environment lets real sticks in. `SEABASS_STORM_STEPS` sets the walk's
+length, `SEABASS_STORM_QUIT_STEPS` the quit leg's (0 leaves the leg
+out), and `SEABASS_STORM_FAILURES=<file>` appends one line per failing
+seed.
+
+**The sticks** are copies of the anonymized fixture, three per seed. They
+reach the app the way a real stick does, never by a side door: the media
+factory's locator lists them and a hotplug is announced through its
+monitor (`setStandInSticksForTesting()`, `announceMediaChangeForTesting()`
+in `media_factory.hpp`), after which MediaController re-detects on its
+own debounce and says `stickGone` through `StickEvents`. Both seams act
+only while `SEABASS_IGNORE_REMOVABLE_MEDIA` is set, so they can put a
+stand-in into an empty list and never let a real stick into it; the test
+refuses to start without the variable. A pull renames the stick's
+directory away, so its mount point is gone and every open by path fails;
+a re-plug renames it back, sometimes with its catalogs rewritten in
+between, as a player would.
+
+**The reads** are the real readers, through a catalog cache whose passes
+the weather wraps (`LibraryCatalogCache::realStageForTesting()`): most
+pass, some are slowed, some held until the stick "answers" (a later
+step, or a rest), some of those cannot see their cancel token, and some
+fail as an unreadable file. Every track read gets its stick's tag at the
+end of its title (`[S1]`), which is how a page showing another stick's
+tracks is caught.
+
+**The walk** is picked by a seeded PRNG: insert, pull, quick re-plug;
+open any page that reads a stick from the home page, and the pages those
+open (two pages on one stick); Cancel, Back, Home, re-enter at once;
+another playlist, format or stick; answer whatever dialog is up; stage
+what a page offers and save it, with the stick pulled in the middle half
+the time; wait. The weather changes now and then.
+
+**What has to hold**, after every step: no QML warning or error (the
+anonymized fixture's missing cover images excepted); the page in front
+shows no track of a stick other than its own. Every 25 steps and at the
+end the storm rests: calm weather, every held read answered, and then
+within a bound nothing may say it is busy. Busy for three seconds with no
+worker, read or write, running anywhere is a failure of its own: that is
+the page stuck on "scanning" with nothing behind it. At rest no stick's
+write lock is held unless its session still has staged work or is
+writing, and a stick that carries a save that never finished has a
+session that says so. A save that ends with its stick in leaves no lock
+and no note of a save in progress. The window is closed at the end
+within five seconds.
+
+**The quit leg**: the same binary is started again as the app
+(`seabass_qml_tests --storm-quit`), walks the seed for a while, closes
+the window the way a person does (a save running keeps it open; staged
+changes are thrown away when asked) and then ends the way `main()` does,
+through `endProcess()`. The parent wants it gone within a minute with
+exit code 0, as `async_request_exit_test` does for the helper alone.
+
+**Replaying a seed.** The walk and the weather are decided by the seed
+(the weather by each read's own key and count), so a seed walks the same
+way again. What is not the seed's to decide is timing: which of two
+threads gets somewhere first. A failure prints its seed and its steps; a
+seed that fails once and passes on a replay is still a race, and the
+steps say where to look. The minimised test goes into `tests/qml/` or a
+C++ test, never into the storm.
+
+**Running many at once** is what `tools/storm-hunt.sh` does: disjoint
+seed ranges side by side, each with its own `SEABASS_HOME` and
+`XDG_CONFIG_HOME` (the metadata store and the settings live there), under
+its own `xvfb-run -a`, started a few seconds apart so two do not pick the
+same display, from a frozen copy of the binary and of `tests/qml-storm`.
+
 ## Live tests against a real stick
 
 `tests/qml-live/` drives the real pages with their real controllers

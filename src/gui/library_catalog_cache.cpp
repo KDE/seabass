@@ -163,6 +163,16 @@ void LibraryCatalogCache::setInstanceForTesting(LibraryCatalogCache *cache)
 
 LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime) {}
 
+LibraryCatalogCache::StageFn LibraryCatalogCache::realStageForTesting()
+{
+    return realStage;
+}
+
+LibraryCatalogCache::MtimeFn LibraryCatalogCache::realMtimeForTesting()
+{
+    return realMtime;
+}
+
 LibraryCatalogCache::LibraryCatalogCache(StageFn stageFn, MtimeFn mtimeFn)
     : m_stageFn(std::move(stageFn)), m_mtimeFn(std::move(mtimeFn))
 {

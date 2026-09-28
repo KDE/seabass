@@ -974,7 +974,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # (see the -input arg on the add_test() call below), so editing/
         # adding a test doesn't need a rebuild, only the components-under-
         # test do.
-        qt_add_executable(seabass_qml_tests tests/qml/qml_test_main.cpp)
+        qt_add_executable(seabass_qml_tests tests/qml/qml_test_main.cpp tests/qml/storm_fixture.hpp)
         # Must run before qt_add_qml_module() -- it reads this property at
         # call time (see src/gui/CMakeLists.txt's own comment on the exact
         # same ordering requirement for the real seabass target). Set
@@ -1274,6 +1274,26 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 message(STATUS "org.kde.desktop not found: the desktop-style QML lane is not registered. "
                     "Install kf6-qqc2-desktop-style to run the suite under the style the Linux build ships.")
             endif()
+        endif()
+
+        # The storm (tests/qml-storm, docs/testing.md "The storm"): the
+        # real Main.qml walked through sticks going in and out, pages
+        # opened, cancelled and left, reads held or failing, and saves a
+        # stick is pulled out of, seed by seed, then quit in a process of
+        # its own. Same binary and display as the suite above. A bare ctest
+        # runs it with a small default (3 seeds of 150 steps);
+        # SEABASS_STORM_SEEDS, SEABASS_STORM_STEPS and
+        # SEABASS_STORM_FIRST_SEED in the environment scale it for a
+        # nightly or a hunt, and -LE storm leaves it out.
+        if(SEABASS_XVFB_RUN)
+            add_test(NAME seabass_qml_storm_tests
+                COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
+                    $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm)
+            set_tests_properties(seabass_qml_storm_tests PROPERTIES
+                ENVIRONMENT "${_seabass_qml_test_env}"
+                LABELS "storm"
+                TIMEOUT 600
+                RESOURCE_LOCK xvfb)
         endif()
 
         # What a shader draws, pixel by pixel. Same display as the suite

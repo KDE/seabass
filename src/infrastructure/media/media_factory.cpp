@@ -4,7 +4,9 @@
 
 #include "infrastructure/media/media_factory.hpp"
 
+#include <algorithm>
 #include <cstdlib>
+#include <mutex>
 #include <string_view>
 
 #if defined(_WIN32)
@@ -40,10 +42,68 @@ namespace
 // SEABASS_IGNORE_REMOVABLE_MEDIA set (CMakeLists.txt, the QML lanes) and
 // every locator this factory hands out then answers empty. The live suite
 // (tests/qml-live) wants the real sticks and does not set it.
+class StandInMonitor;
+
+struct StandIns
+{
+    std::mutex mutex;
+    std::function<std::vector<application::DetectedStick>()> sticks;
+    std::vector<StandInMonitor *> monitors;
+};
+
+StandIns &standIns()
+{
+    // Never destroyed: a detect on a worker may outlive main().
+    static StandIns *standIns = new StandIns();
+    return *standIns;
+}
+
+// Finds nothing, or what a test stood in for a stick
+// (setStandInSticksForTesting): never a real one.
 class NoRemovableMediaLocator : public application::RemovableMediaLocator
 {
 public:
-    std::vector<application::DetectedStick> detect() override { return {}; }
+    std::vector<application::DetectedStick> detect() override
+    {
+        std::function<std::vector<application::DetectedStick>()> sticks;
+        {
+            std::lock_guard<std::mutex> lock(standIns().mutex);
+            sticks = standIns().sticks;
+        }
+        return sticks ? sticks() : std::vector<application::DetectedStick>{};
+    }
+};
+
+// Hears no device at all, only announceMediaChangeForTesting().
+class StandInMonitor : public application::RemovableMediaMonitor
+{
+public:
+    ~StandInMonitor() override { stop(); }
+    void start(std::function<void()> onChange) override
+    {
+        std::lock_guard<std::mutex> lock(standIns().mutex);
+        m_onChange = std::move(onChange);
+        auto &monitors = standIns().monitors;
+        if (std::find(monitors.begin(), monitors.end(), this) == monitors.end()) {
+            monitors.push_back(this);
+        }
+    }
+    void stop() override
+    {
+        std::lock_guard<std::mutex> lock(standIns().mutex);
+        auto &monitors = standIns().monitors;
+        monitors.erase(std::remove(monitors.begin(), monitors.end(), this), monitors.end());
+        m_onChange = {};
+    }
+    void changed()
+    {
+        if (m_onChange) {
+            m_onChange();
+        }
+    }
+
+private:
+    std::function<void()> m_onChange;
 };
 
 }  // namespace
@@ -68,8 +128,28 @@ std::unique_ptr<application::RemovableMediaLocator> createRemovableMediaLocator(
 #endif
 }
 
+void setStandInSticksForTesting(std::function<std::vector<application::DetectedStick>()> sticks)
+{
+    std::lock_guard<std::mutex> lock(standIns().mutex);
+    standIns().sticks = std::move(sticks);
+}
+
+void announceMediaChangeForTesting()
+{
+    if (!removableMediaIgnored()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(standIns().mutex);
+    for (StandInMonitor *monitor : standIns().monitors) {
+        monitor->changed();
+    }
+}
+
 std::unique_ptr<application::RemovableMediaMonitor> createRemovableMediaMonitor()
 {
+    if (removableMediaIgnored()) {
+        return std::make_unique<StandInMonitor>();
+    }
 #if defined(_WIN32)
     return std::make_unique<WindowsRemovableMediaMonitor>();
 #elif defined(__APPLE__)
