@@ -39,8 +39,20 @@ const auto IncludeTestingKey = QStringLiteral("updates/includeTesting");
 const auto TestingRevealedKey = QStringLiteral("updates/testingOptionRevealed");
 }  // namespace
 
+RunningBuild RunningBuild::thisBuild()
+{
+    return RunningBuild{QString::fromLatin1(version::Number), QString::fromLatin1(version::Channel),
+                        QString::fromLatin1(version::Commit)};
+}
+
 UpdateChecker::UpdateChecker(QObject *parent)
+    : UpdateChecker(RunningBuild::thisBuild(), parent)
+{
+}
+
+UpdateChecker::UpdateChecker(RunningBuild build, QObject *parent)
     : QObject(parent)
+    , m_build(std::move(build))
     , m_feedUrl(FeedUrl)
 {
     QSettings settings = openSeabassSettings();
@@ -71,17 +83,17 @@ UpdateChecker::~UpdateChecker() = default;
 
 QString UpdateChecker::currentVersion() const
 {
-    return QString::fromLatin1(version::Number);
+    return m_build.version;
 }
 
 QString UpdateChecker::currentChannel() const
 {
-    return QString::fromLatin1(version::Channel);
+    return m_build.channel;
 }
 
 QString UpdateChecker::currentCommit() const
 {
-    return QString::fromLatin1(version::Commit);
+    return m_build.commit;
 }
 
 QString UpdateChecker::downloadPage() const
@@ -190,7 +202,7 @@ void UpdateChecker::checkNow()
     if (m_state == QLatin1String("checking")) {
         return;
     }
-    if (!version::isRelease()) {
+    if (!m_build.isRelease()) {
         // A build from a working tree is not any published version.
         // Comparing it to one would either nag forever or claim it is up
         // to date, and both are lies.
