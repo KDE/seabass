@@ -62,6 +62,7 @@ Item {
         property var then: null
         repeat: false
         onTriggered: {
+            stormFixture.beat(runner.seed, runner.step);
             const next = clock.then;
             clock.then = null;
             if (next && !runner.done) {
@@ -108,6 +109,7 @@ Item {
     function note(text) {
         const line = runner.step + ": " + text;
         runner.log.push(line);
+        stormFixture.noteStep(line);
         if (stormFixture.env("SEABASS_STORM_VERBOSE").length > 0) {
             stormFixture.log("storm " + runner.seed + " " + line);
         }
@@ -122,6 +124,7 @@ Item {
     }
 
     function finish() {
+        stormFixture.disarm();
         runner.done = true;
         clock.stop();
         runner.finished();
@@ -142,6 +145,9 @@ Item {
         }
         stormFixture.startCapture();
         stormFixture.takeWarnings();
+        stormFixture.clearSteps();
+        stormFixture.takeFreeze();
+        stormFixture.beat(runner.seed, 0);
         runner.window = mainComponent.createObject(null);
         if (!runner.window) {
             runner.fail("Main.qml did not build");
@@ -780,6 +786,14 @@ Item {
     // ---- invariants ----
 
     function checkStep() {
+        const freeze = stormFixture.takeFreeze();
+        if (freeze.length > 0) {
+            runner.fail(freeze);
+            return false;
+        }
+        for (const written of stormFixture.takeWrittenWhileOut()) {
+            runner.note("written to a pulled stick's mount point: " + written);
+        }
         const warnings = stormFixture.takeWarnings().filter(w => runner.warningCounts(w));
         if (warnings.length > 0) {
             runner.fail("QML warned:\n  " + warnings.join("\n  "));
@@ -897,10 +911,18 @@ Item {
                 runner.fail("at rest, S" + i + "'s write lock is held with nothing staged or writing");
                 return;
             }
+            // A save the stick was pulled out of, whose record can be
+            // restored, has to be something the session can undo. A session
+            // that still holds the backups of an earlier save offers that
+            // undo instead: a save that lost its stick before changing
+            // anything leaves its note behind with nothing to undo, which is
+            // stale but harmless (the save changes nothing before its record
+            // is whole).
             const notes = stormFixture.interruptedSave(root, true);
-            if (notes.length > 0 && session && !session.writing && !session.interruptedSave) {
-                runner.fail("S" + i + " carries a save that never finished (" + notes.length
-                            + " records), and its session does not say so");
+            if (notes.length > 0 && session && !session.writing && !session.canUndo) {
+                runner.fail("S" + i + " carries a save that never finished (" + notes.join(", ")
+                            + "), and its session offers no undo (interruptedSave "
+                            + session.interruptedSave + ", dirty " + session.dirty + ")");
                 return;
             }
         }
@@ -934,6 +956,8 @@ Item {
     // until it goes; staged changes are thrown away when asked.
     function quit() {
         runner.note("quit");
+        // From here the parent's bound is the watch: closing may wait for a save.
+        stormFixture.disarm();
         stormFixture.log("STORM QUIT LEG WALKED seed " + runner.seed + " to step " + runner.step);
         const tryClose = () => {
             if (!runner.window) {

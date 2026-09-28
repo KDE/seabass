@@ -117,6 +117,10 @@ public:
 
     ~StormFixture() override
     {
+        m_stopWatch.store(true);
+        if (m_watchdog.joinable()) {
+            m_watchdog.join();
+        }
         stopCapture();
         seabass::infrastructure::media::setStandInSticksForTesting(nullptr);
         seabass::gui::LibraryCatalogCache::setInstanceForTesting(nullptr);
@@ -171,9 +175,13 @@ public:
             }
             world->sticks.push_back(stick);
         }
+        mediaWritable(base / "media", false);
         m_base = base;
         m_world = world;
-        m_worlds.push_back(world);
+        {
+            std::lock_guard<std::mutex> lock(m_worldsMutex);
+            m_worlds.push_back(world);
+        }
 
         seabass::infrastructure::media::setStandInSticksForTesting([world]() {
             std::vector<seabass::application::DetectedStick> found;
@@ -308,7 +316,9 @@ public:
             if (!stick.plugged) {
                 return false;
             }
+            mediaWritable(stick.root.parent_path(), true);
             std::filesystem::rename(stick.root, stick.outside, ec);
+            mediaWritable(stick.root.parent_path(), false);
             if (ec) {
                 std::fprintf(stderr, "storm: could not pull %s: %s\n", stick.label.c_str(), ec.message().c_str());
                 return false;
@@ -332,7 +342,23 @@ public:
             if (stick.plugged) {
                 return false;
             }
+            mediaWritable(stick.root.parent_path(), true);
+            if (std::filesystem::exists(stick.root)) {
+                // Something wrote to the mount point while the stick was out.
+                std::string what;
+                std::error_code walkEc;
+                int n = 0;
+                for (auto it = std::filesystem::recursive_directory_iterator(stick.root, walkEc);
+                     !walkEc && it != std::filesystem::recursive_directory_iterator() && n < 12; it.increment(walkEc), ++n) {
+                    what += " " + seabass::pathToUtf8(std::filesystem::relative(it->path(), stick.root));
+                }
+                std::fprintf(stderr, "storm: written to %s while it was out:%s\n", stick.label.c_str(), what.c_str());
+                m_writtenWhileOut << QString::fromStdString(stick.label + ":" + what);
+                std::filesystem::rename(stick.root,
+                                        stick.outside.parent_path() / (stick.label + ".written-" + std::to_string(++m_prepares)), ec);
+            }
             std::filesystem::rename(stick.outside, stick.root, ec);
+            mediaWritable(stick.root.parent_path(), false);
             if (ec) {
                 std::fprintf(stderr, "storm: could not insert %s: %s\n", stick.label.c_str(), ec.message().c_str());
                 return false;
@@ -341,6 +367,55 @@ public:
         }
         seabass::infrastructure::media::announceMediaChangeForTesting();
         return true;
+    }
+
+    // The watchdog: the walk beats on every tick of its clock, and a window
+    // that has not beaten for `freezeMs` is frozen -- the GUI thread stuck
+    // waiting for something, which no invariant checked from that thread
+    // can see. The watchdog then says so with the steps that led there,
+    // and lets every held read go, as a hung stick that finally answers
+    // would; if that thaws the window, the walk fails the seed on its next
+    // tick (takeFreeze()). A window still frozen `freezeMs` later ends the
+    // process, with the seed on record, rather than the whole run's time.
+    Q_INVOKABLE void beat(int seed, int step)
+    {
+        m_lastBeat.store(std::chrono::steady_clock::now().time_since_epoch().count());
+        m_beatSeed.store(seed);
+        m_beatStep.store(step);
+        if (!m_watchdog.joinable()) {
+            m_watchdog = std::thread([this]() { watch(); });
+        }
+    }
+    // Between walks nothing beats, and nothing is frozen.
+    Q_INVOKABLE void disarm() { m_lastBeat.store(0); }
+    Q_INVOKABLE void noteStep(const QString &line)
+    {
+        std::lock_guard<std::mutex> lock(m_stepsMutex);
+        m_steps << line;
+        if (m_steps.size() > 60) {
+            m_steps.removeFirst();
+        }
+    }
+    Q_INVOKABLE void clearSteps()
+    {
+        std::lock_guard<std::mutex> lock(m_stepsMutex);
+        m_steps.clear();
+    }
+    Q_INVOKABLE QString takeFreeze()
+    {
+        std::lock_guard<std::mutex> lock(m_stepsMutex);
+        const QString freeze = m_freeze;
+        m_freeze.clear();
+        return freeze;
+    }
+
+    // What was written to a stick's mount point while it was out, since
+    // the last call: a write aimed at a stick that is gone.
+    Q_INVOKABLE QStringList takeWrittenWhileOut()
+    {
+        QStringList taken = m_writtenWhileOut;
+        m_writtenWhileOut.clear();
+        return taken;
     }
 
     // What a player does to a stick while it is out: its catalogs are
@@ -406,6 +481,7 @@ public:
     // Every held pass goes on, and none is held until the weather says so again.
     Q_INVOKABLE void releaseAll()
     {
+        std::lock_guard<std::mutex> worldsLock(m_worldsMutex);
         for (const auto &world : m_worlds) {
             auto gate = world->gate;
             {
@@ -591,7 +667,97 @@ public:
     }
 
 private:
+    // The directory the sticks are mounted in is not writable, as /media
+    // and /Volumes are not: a write aimed at a pulled stick's mount point
+    // fails there, where it would otherwise quietly make the directory
+    // again (and the stick could not go back in). Opened only for the
+    // moment a stick goes in or out.
+    static void mediaWritable(const std::filesystem::path &media, bool writable)
+    {
+        std::error_code ec;
+        std::filesystem::permissions(media,
+                                     writable ? std::filesystem::perms::owner_all | std::filesystem::perms::group_read
+                                                    | std::filesystem::perms::group_exec
+                                              : std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec
+                                                    | std::filesystem::perms::group_read | std::filesystem::perms::group_exec,
+                                     std::filesystem::perm_options::replace, ec);
+    }
+
     bool valid(int i) const { return m_world && i >= 0 && static_cast<size_t>(i) < m_world->sticks.size(); }
+
+    void watch()
+    {
+        const auto freezeAfter = std::chrono::milliseconds(envMs("SEABASS_STORM_FREEZE_MS", 30000));
+        bool reported = false;
+        std::chrono::steady_clock::time_point reportedAt;
+        while (!m_stopWatch.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            const auto beat = m_lastBeat.load();
+            if (beat == 0) {
+                reported = false;
+                continue;
+            }
+            const auto last = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(beat));
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last < freezeAfter) {
+                reported = false;
+                continue;
+            }
+            if (!reported) {
+                reported = true;
+                reportedAt = now;
+                QString steps;
+                {
+                    std::lock_guard<std::mutex> lock(m_stepsMutex);
+                    steps = m_steps.join(QStringLiteral("\n    "));
+                    m_freeze = QStringLiteral("the window froze for %1 s at step %2 (released every held read to see "
+                                              "whether it thaws)")
+                                   .arg(freezeAfter.count() / 1000)
+                                   .arg(m_beatStep.load());
+                }
+                std::fprintf(stderr, "STORM FROZEN seed %d at step %d, the last steps:\n    %s\n", m_beatSeed.load(),
+                             m_beatStep.load(), qPrintable(steps));
+                std::fflush(stderr);
+                releaseAllFromAnyThread();
+            } else if (now - reportedAt > freezeAfter) {
+                std::fprintf(stderr, "STORM FAILED seed %d, step %d: the window is still frozen with every read "
+                             "released; ending the process\n",
+                             m_beatSeed.load(), m_beatStep.load());
+                recordFailure(QStringLiteral("seed %1: the window froze at step %2 and did not thaw")
+                                  .arg(m_beatSeed.load())
+                                  .arg(m_beatStep.load()));
+                std::fflush(nullptr);
+                std::_Exit(3);
+            }
+        }
+    }
+
+    static int envMs(const char *name, int fallback)
+    {
+        bool ok = false;
+        const int value = qEnvironmentVariableIntValue(name, &ok);
+        return ok ? value : fallback;
+    }
+
+    // releaseAll() for the watchdog, which cannot touch m_worlds while the
+    // GUI thread might.
+    void releaseAllFromAnyThread()
+    {
+        std::vector<std::shared_ptr<World>> worlds;
+        {
+            std::lock_guard<std::mutex> lock(m_worldsMutex);
+            worlds = m_worlds;
+        }
+        for (const auto &world : worlds) {
+            auto gate = world->gate;
+            {
+                std::lock_guard<std::mutex> lock(gate->mutex);
+                gate->held.clear();
+                gate->releaseEverything = true;
+            }
+            gate->cv.notify_all();
+        }
+    }
 
     static std::uint64_t fnv(const std::string &text)
     {
@@ -774,6 +940,7 @@ private:
             return;
         }
         std::error_code ec;
+        mediaWritable(m_base / "media", true);
         std::filesystem::remove_all(m_base, ec);
         m_base.clear();
     }
@@ -808,4 +975,14 @@ private:
     std::filesystem::path m_base;
     int m_prepares = 0;
     bool m_quitLeg = false;
+    QStringList m_writtenWhileOut;
+    std::mutex m_worldsMutex;
+    std::thread m_watchdog;
+    std::atomic<bool> m_stopWatch{false};
+    std::atomic<std::chrono::steady_clock::duration::rep> m_lastBeat{0};
+    std::atomic<int> m_beatSeed{0};
+    std::atomic<int> m_beatStep{0};
+    std::mutex m_stepsMutex;
+    QStringList m_steps;
+    QString m_freeze;
 };
