@@ -19,6 +19,24 @@ class QNetworkReply;
 namespace seabass::gui
 {
 
+// The build a checker speaks for: what it compares the feed against and
+// names in its messages. The app's checker is always this binary
+// (thisBuild); a test names another, because the test binary is itself a
+// development build, which never fetches anything, and every decision
+// past that point would be out of its reach.
+struct RunningBuild
+{
+    QString version;  // "0.7.12"
+    QString channel;  // alpha, beta, stable, or dev
+    QString commit;   // git describe, or empty
+
+    // From seabass_version.hpp, set when this binary was configured.
+    static RunningBuild thisBuild();
+    // Not a working-tree build: one a published release could be
+    // compared with.
+    bool isRelease() const { return channel != QLatin1String("dev"); }
+};
+
 // Asks the website whether there is a newer Seabass, when the user has
 // said it may.
 //
@@ -82,6 +100,8 @@ class UpdateChecker : public QObject
 
 public:
     explicit UpdateChecker(QObject *parent = nullptr);
+    // For tests: a checker for some other build than this one.
+    explicit UpdateChecker(RunningBuild build, QObject *parent = nullptr);
     ~UpdateChecker() override;
 
     bool automatic() const { return m_automatic; }
@@ -142,6 +162,7 @@ private:
     void setState(const QString &state);
     void rememberTesting(bool include, bool revealed);
 
+    RunningBuild m_build;
     QNetworkAccessManager *m_network = nullptr;
     QTimer m_daily;
     QString m_feedUrl;
