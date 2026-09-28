@@ -36,6 +36,15 @@ Page {
 
     readonly property string websiteUrl: "https://vizzzion.org/seabass/"
 
+    // Escape goes back, as the breadcrumb does. Only while this page is
+    // the one showing: under the support page it pushes, that page's own
+    // Escape is the one that fires.
+    Shortcut {
+        sequence: StandardKey.Cancel
+        enabled: root.StackView.status === StackView.Active
+        onActivated: root.StackView.view.pop()
+    }
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
         // and nothing else. `padding` alone does not do it: styles set

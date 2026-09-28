@@ -43,6 +43,87 @@ Page {
 
     signal anonymizeLibraryRequested()
 
+    // Escape goes back, as the breadcrumb does. Every setting here takes
+    // effect the moment it is changed, so Escape -- "back out of this" --
+    // first asks whether to keep what was changed on this visit or put it
+    // back the way it was when the page opened (Sebastian, 2026-09-28).
+    // The breadcrumb's Back keeps them, as it always did.
+    readonly property var appSettingKeys: ["keyNotation", "hideStreamingTracks", "exactMatchSeconds",
+        "compareAudioSeconds", "ignoreCuesAtStart", "seabassHomeDirectory", "stickBackupDirectory",
+        "useSystemTheme", "experimentalFeaturesEnabled"]
+    readonly property var updateSettingKeys: ["automatic", "includeTesting"]
+    property var openedWith: ({})
+
+    function settingSources() {
+        const sources = [{prefix: "app:", object: root.appSettingsController, keys: root.appSettingKeys}];
+        if (root.updateChecker !== null) {
+            sources.push({prefix: "update:", object: root.updateChecker, keys: root.updateSettingKeys});
+        }
+        return sources;
+    }
+    function rememberSettings() {
+        const remembered = {};
+        for (const source of settingSources()) {
+            for (const key of source.keys) {
+                if (source.object[key] !== undefined) {
+                    remembered[source.prefix + key] = source.object[key];
+                }
+            }
+        }
+        root.openedWith = remembered;
+    }
+    // What differs from when the page opened, as {object, key, was}.
+    function changedSettings() {
+        const changed = [];
+        for (const source of settingSources()) {
+            for (const key of source.keys) {
+                const id = source.prefix + key;
+                if (id in root.openedWith && source.object[key] !== root.openedWith[id]) {
+                    changed.push({object: source.object, key: key, was: root.openedWith[id]});
+                }
+            }
+        }
+        return changed;
+    }
+    function resetSettings() {
+        for (const setting of changedSettings()) {
+            setting.object[setting.key] = setting.was;
+        }
+    }
+    function leaveOnEscape() {
+        const count = changedSettings().length;
+        if (count === 0) {
+            root.StackView.view.pop();
+            return;
+        }
+        changedOnLeaveDialog.message = count === 1
+            ? "You changed a setting on this page. Keep it, or put it back the way it was?"
+            : "You changed " + count + " settings on this page. Keep them, or put them back the way they were?";
+        changedOnLeaveDialog.open();
+    }
+
+    Component.onCompleted: root.rememberSettings()
+
+    Shortcut {
+        sequence: StandardKey.Cancel
+        enabled: root.StackView.status === StackView.Active && !changedOnLeaveDialog.visible
+        onActivated: root.leaveOnEscape()
+    }
+
+    UnsavedChangesDialog {
+        id: changedOnLeaveDialog
+        objectName: "changedOnLeaveDialog"
+        anchors.centerIn: Overlay.overlay
+        title: "Changed settings"
+        saveText: "Keep Changes"
+        discardText: "Reset Settings"
+        onSaveRequested: root.StackView.view.pop()
+        onDiscardRequested: {
+            root.resetSettings();
+            root.StackView.view.pop();
+        }
+    }
+
     // A named group of settings: "Appearance", "Music", "Data
     // locations", "More settings". One step above the Subtitle each
     // individual setting carries, because the page had grown to seven

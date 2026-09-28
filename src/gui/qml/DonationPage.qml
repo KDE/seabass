@@ -16,6 +16,14 @@ import SeabassGui
 Page {
     id: root
 
+    // Escape goes back, as the breadcrumb does, while this page is the
+    // one showing.
+    Shortcut {
+        sequence: StandardKey.Cancel
+        enabled: root.StackView.status === StackView.Active
+        onActivated: root.StackView.view.pop()
+    }
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
         // and nothing else. `padding` alone does not do it: styles set
