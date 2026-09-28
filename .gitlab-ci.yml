@@ -612,6 +612,93 @@ linux:build-test:
 # test build (SEABASS_TESTS on, channel "dev"), and a release package has
 # to carry the channel it was tagged with, because the app shows it and
 # the update check compares against it.
+# Line coverage of the C++ the Linux lane's suite exercises, for the
+# pipeline and MR widgets (the `coverage:` figure), the MR diff view
+# (the Cobertura report) and a browsable report in the job's artifacts
+# (build-cov/coverage/index.html).
+#
+# Its own build, because --coverage changes every object: -O0 so a line
+# counts where it is written, and a ccache key of its own so it never
+# hands instrumented objects to linux:build-test or takes plain ones from
+# it. Too slow for every push, like the rest of the full lane: nightly
+# and tags run it, anything else gets a button.
+#
+# A red test does not stop the report. Correctness is linux:build-test's
+# verdict; this job's is how much of the code the suite reaches, and a
+# failure halfway would throw away the figure for everything that did
+# run. The ctest result is still printed, and the job says so.
+#
+# What it measures is C++ only: the QML tests reach C++ through the
+# controllers and count there, but QML lines themselves are not
+# instrumented -- Qt has no coverage tool for them that works in CI.
+linux:coverage:
+  stage: build
+  image: ubuntu:26.04
+  timeout: 3h
+  variables:
+    CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
+    CCACHE_MAXSIZE: "3G"
+    CCACHE_COMPILERCHECK: content
+  cache:
+    key: linux-coverage-ccache-v1
+    paths:
+      - .ccache
+  before_script: *linux_packages
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_TAG'
+    - when: manual
+      allow_failure: true
+  script:
+    - apt-get install -y -qq --no-install-recommends gcovr
+    - cmake -S . -B build-cov -G Ninja -DCMAKE_BUILD_TYPE=Debug
+      -DSEABASS_LIBDJINTEROP_TESTS=OFF
+      -DCMAKE_C_FLAGS_DEBUG="-O0 -g --coverage"
+      -DCMAKE_CXX_FLAGS_DEBUG="-O0 -g --coverage"
+      -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+      -DCMAKE_SHARED_LINKER_FLAGS="--coverage"
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    - |
+      QUOTA=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo "max 100000")
+      set -- $QUOTA
+      if [ "$1" = "max" ]; then JOBS=$(nproc); else JOBS=$(( ($1 + $2 - 1) / $2 )); fi
+      [ "$JOBS" -lt 1 ] && JOBS=1
+      echo "building with -j$JOBS"
+      cmake --build build-cov -j"$JOBS"
+    - ccache --show-stats
+    - useradd -m runner
+    - chown -R runner build-cov
+    - |
+      if su runner -c "cd build-cov && ctest --output-on-failure"; then
+        echo "ctest: every test passed"
+      else
+        echo "ctest: some tests failed (linux:build-test is the verdict on that); the coverage below is of what ran"
+      fi
+    # Only the project's own sources: not the tests, not the vendored
+    # libraries, not the Kaitai parsers generated from specs/.
+    # --merge-mode-functions=separate because a template or a lambda in a
+    # header is one function on several lines across translation units,
+    # which gcovr's strict default refuses to merge.
+    - gcovr --root . --object-directory build-cov
+      --filter 'src/' --exclude 'src/infrastructure/rekordbox/generated/'
+      --exclude-throw-branches --exclude-unreachable-branches
+      --merge-mode-functions=separate
+      --cobertura build-cov/coverage.xml
+      --html-details build-cov/coverage/index.html
+      --print-summary
+  coverage: '/^lines: (\d+(?:\.\d+)?)%/'
+  artifacts:
+    expire_in: 2 weeks
+    when: always
+    expose_as: "Cpp coverage"
+    paths:
+      - build-cov/coverage/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: build-cov/coverage.xml
+
 linux:package:
   stage: package
   # Not interruptible: this runs on release tags only and publishes. See
