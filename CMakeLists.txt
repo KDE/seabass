@@ -2046,6 +2046,68 @@ target_include_directories(removable_media_ignored_test PRIVATE src)
 target_link_libraries(removable_media_ignored_test PRIVATE seabass_core)
 add_test(NAME removable_media_ignored_test COMMAND removable_media_ignored_test)
 
+# seabass-cli's read path, run against the anonymized fixture: the counts
+# its reports must give (the same ones corpus_test records in
+# SET-EXPECTATIONS.txt), its exit codes, and that reading leaves every
+# catalog of the fixture byte for byte as it was. tests/cli_expect.cmake
+# checks exit code and output together, which neither
+# PASS_REGULAR_EXPRESSION nor WILL_FAIL can. "|" separates list items.
+set(_cli_fixture "${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library")
+set(_cli_rekordbox "${_cli_fixture}/rekordbox")
+set(_cli_engine "${_cli_fixture}/engine")
+set(_cli_catalogs
+    "${_cli_rekordbox}/rekordbox/export.pdb|${_cli_rekordbox}/rekordbox/exportLibrary.db|${_cli_rekordbox}/rekordbox/exportLibrary.db-wal|${_cli_rekordbox}/rekordbox/exportLibrary.db-shm|${_cli_engine}/Database2/m.db")
+set(_cli_rekordbox_counts "tracks:           1161\\n|tracks with cues: 222\\n|total cues:       317\\n")
+set(_cli_engine_counts "tracks:           1564\\n|tracks with cues: 125\\n|total cues:       219\\n")
+function(seabass_cli_test name)
+    cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT" "ARGS;EXPECT;FORBID")
+    list(JOIN cli_ARGS "|" _args)
+    list(JOIN cli_EXPECT "|" _expect)
+    list(JOIN cli_FORBID "|" _forbid)
+    add_test(NAME ${name}
+        COMMAND ${CMAKE_COMMAND} "-DCLI=$<TARGET_FILE:seabass-cli>" "-DARGS=${_args}" "-DEXIT=${cli_EXIT}"
+                "-DEXPECT=${_expect}" "-DFORBID=${_forbid}" "-DUNCHANGED=${_cli_catalogs}"
+                -P ${CMAKE_SOURCE_DIR}/tests/cli_expect.cmake)
+    # A bare flag with no PATH would look for a real stick.
+    set_tests_properties(${name} PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+endfunction()
+
+seabass_cli_test(cli_help EXIT 0 ARGS --help
+    EXPECT "Usage" "seabass-cli scan .--rekordbox" "seabass-cli sync --rekordbox")
+seabass_cli_test(cli_no_command EXIT 1 ARGS --verbose EXPECT "Usage")
+seabass_cli_test(cli_unknown_command EXIT 1 ARGS frobnicate EXPECT "unknown command: frobnicate" "Usage")
+seabass_cli_test(cli_unknown_option EXIT 1 ARGS scan --bogus EXPECT "unknown option: --bogus")
+seabass_cli_test(cli_option_missing_value EXIT 1 ARGS scan --track EXPECT "--track requires a name to search for")
+seabass_cli_test(cli_scan_rekordbox EXIT 0 ARGS scan --rekordbox ${_cli_rekordbox}
+    EXPECT ${_cli_rekordbox_counts} "\\n9b55b1 Track \\(Artist 228\\) .503s."
+    FORBID "\\nengine\\n" "duplicate")
+seabass_cli_test(cli_scan_engine EXIT 0 ARGS scan --engine ${_cli_engine}
+    EXPECT ${_cli_engine_counts} "\\n8f6acc Track \\(Artist 001\\) .332s." "1 warning\\(s\\) hidden"
+    FORBID "\\nrekordbox\\n" "duplicate")
+# Verbose shows what the default hides: each track's id and file, and the
+# warning the Engine reader raised. No duplicate groups in this fixture.
+seabass_cli_test(cli_scan_verbose EXIT 0 ARGS scan --verbose --rekordbox ${_cli_rekordbox} --engine ${_cli_engine}
+    EXPECT ${_cli_rekordbox_counts} ${_cli_engine_counts} "  id=[0-9]+ file="
+           "track id=690: read field by field"
+    FORBID "hidden" "duplicate")
+seabass_cli_test(cli_scan_track EXIT 0 ARGS scan --rekordbox ${_cli_rekordbox} --track "Artist 228"
+    EXPECT ${_cli_rekordbox_counts} "\\n9b55b1 Track \\(Artist 228\\) .503s.\\n  plays: 0\\n  playlist: Playlist 022 \\(position 2\\)")
+seabass_cli_test(cli_scan_track_no_match EXIT 0 ARGS scan --rekordbox ${_cli_rekordbox} --track zzzzqqqq
+    EXPECT "no tracks matching \"zzzzqqqq\"")
+seabass_cli_test(cli_scan_needs_cues EXIT 0 ARGS scan --rekordbox ${_cli_rekordbox} --needs-cues 3
+    EXPECT "\\n40a472 Track \\(Artist 3\\) .439s.\\n  plays: 3\\n"
+    FORBID "hot [0-9]+ @" "mem [0-9]+ @")
+seabass_cli_test(cli_scan_no_stick EXIT 1 ARGS scan --rekordbox
+    EXPECT "no rekordbox USB stick found")
+seabass_cli_test(cli_sync_dry_run EXIT 0 ARGS sync --dry-run --rekordbox ${_cli_rekordbox} --engine ${_cli_engine}
+    EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1469\\n" "onelibrary tracks: 1644\\n"
+           "matched tracks:    2427\\n" "Would copy cues to Engine for 213 track\\(s\\)"
+           "Would copy cues to rekordbox for 9 track\\(s\\)" "Would copy cues to OneLibrary for 29 track\\(s\\)"
+           "--dry-run: no changes made."
+    FORBID "Apply the" "backed up")
+seabass_cli_test(cli_sync_one_catalog EXIT 1 ARGS sync --engine ${_cli_engine}
+    EXPECT "sync needs at least two catalogs, found: no rekordbox, engine, no onelibrary")
+
 # A stick pulled mid-save leaves a hot SQLite journal; this makes one and
 # rolls it back (#48).
 add_executable(sqlite_pending_journal_test tests/sqlite_pending_journal_test.cpp)
