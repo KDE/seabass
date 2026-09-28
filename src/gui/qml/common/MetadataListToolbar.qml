@@ -99,8 +99,14 @@ RowLayout {
         }
     }
 
+    // Gives way before anything beside it does: with only a maximum width
+    // the label kept its natural width when the row lost room (the Undo
+    // button appearing on Sync at 1100 px) and ran under the buttons.
     Label {
         objectName: "listSummary"
+        Layout.fillWidth: true
+        Layout.minimumWidth: 0
+        Layout.preferredWidth: implicitWidth
         Layout.maximumWidth: 320
         text: root.summary
         color: Theme.textMuted
