@@ -121,6 +121,7 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
             text: root.label
+            color: Theme.text  // see PageTitle: not the style's palette
             font.bold: true
             font.pointSize: Theme.fontLarge
         }
