@@ -2639,6 +2639,17 @@ target_include_directories(zip_archive_writer_test PRIVATE src)
 target_link_libraries(zip_archive_writer_test PRIVATE ZLIB::ZLIB)
 add_test(NAME zip_archive_writer_test COMMAND zip_archive_writer_test)
 
+# The reader's refusals, one malformed field at a time, and its
+# path-traversal guard.
+add_executable(zip_archive_reader_refusals_test
+    src/infrastructure/zip_archive_writer.cpp
+    src/infrastructure/zip_archive_reader.cpp
+    tests/zip_archive_reader_refusals_test.cpp
+)
+target_include_directories(zip_archive_reader_refusals_test PRIVATE src)
+target_link_libraries(zip_archive_reader_refusals_test PRIVATE ZLIB::ZLIB)
+add_test(NAME zip_archive_reader_refusals_test COMMAND zip_archive_reader_refusals_test)
+
 # --- stick backup (docs/stick-backup-plan.md) ---
 
 add_executable(sha256_test
