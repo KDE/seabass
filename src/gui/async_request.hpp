@@ -116,6 +116,29 @@ public:
         return future;
     }
 
+    // A read on a thread this class did not start -- the catalog cache's
+    // prefetch worker -- counted with the rest while it runs, so the end of
+    // the process waits for it, or ends without static destructors, exactly
+    // as for any other read. False once the process is ending: the caller
+    // then starts no read at all. Every true is matched by one leaveRead().
+    bool enterRead()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_shuttingDown.load()) {
+            return false;
+        }
+        ++m_live;
+        return true;
+    }
+    void leaveRead()
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            --m_live;
+        }
+        m_cv.notify_all();
+    }
+
     // How many workers may be running at once before a new one is refused.
     // A page asks for a handful; hundreds means reads are stuck on a device
     // that stopped answering, and one more thread would not help.

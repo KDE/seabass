@@ -4,6 +4,8 @@
 
 #include "gui/library_catalog_cache.hpp"
 
+#include "gui/async_request.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <exception>
@@ -367,6 +369,15 @@ void LibraryCatalogCache::prefetchLoop()
         if (m_stopping) {
             return;
         }
+        // A pass is a read like any page's, and the end of the process has
+        // to know it is running: static destructors under it (the null
+        // reporter it reports to, the readers' statics) are a use after
+        // destroy. Once the process is ending, no pass starts at all.
+        if (!AsyncWorkers::instance().enterRead()) {
+            m_prefetchQueue.clear();
+            m_prefetchCv.notify_all();
+            continue;
+        }
         m_prefetchCurrent = std::move(m_prefetchQueue.front());
         m_prefetchQueue.pop_front();
         m_prefetchCancel = application::CancellationToken();
@@ -382,6 +393,7 @@ void LibraryCatalogCache::prefetchLoop()
             // asks for it next reads it in the foreground and sees the
             // error for itself.
         }
+        AsyncWorkers::instance().leaveRead();
 
         lock.lock();
         m_prefetchCurrent.reset();
