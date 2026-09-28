@@ -22,25 +22,21 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
-#include <exception>
 #include <filesystem>
 #include <map>
 #include <optional>
 #include <set>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "infrastructure/media/stick_root_scan.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
-#include "infrastructure/process/run_command.hpp"
 
 namespace seabass::infrastructure::media
 {
 
 using application::DetectedStick;
-using process::runCommand;
 
 namespace
 {
@@ -85,48 +81,86 @@ struct UsbDiskInfo
     bool blank = false;  // PartitionStyle == "RAW" -- no partition table at all
 };
 
-// Every USB-attached whole disk, keyed by disk number -- includes disks
-// with no partition table (invisible to the drive-letter-based loop
-// below, which is why this exists: see the Format USB Stick plan's own
-// "current stick detection can't see blank/unpartitioned drives" gap).
-// Uses PowerShell's Storage module (Get-Disk), confirmed via real testing
-// on Windows hardware to enumerate fully without elevation -- the same
-// module WindowsUsbFormatter uses (elevated) for the actual format, so
-// enumeration and formatting share one consistent API.
+// A descriptor string at `offset` in an IOCTL_STORAGE_QUERY_PROPERTY
+// reply, trimmed; empty when the device reports none. The buffer keeps a
+// trailing NUL past what the driver may write, so strnlen cannot run off
+// the end.
+std::string descriptorString(const std::vector<char> &buffer, DWORD offset, DWORD bytesReturned)
+{
+    if (offset == 0 || offset >= bytesReturned) {
+        return {};
+    }
+    const char *start = buffer.data() + offset;
+    std::string text(start, ::strnlen(start, buffer.size() - offset));
+    auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+    text.erase(text.begin(), std::find_if(text.begin(), text.end(), notSpace));
+    text.erase(std::find_if(text.rbegin(), text.rend(), notSpace).base(), text.end());
+    return text;
+}
+
+// Every USB-attached whole disk that has media in it, keyed by disk
+// number -- includes disks with no partition table (invisible to the
+// drive-letter-based loop below, which is why this exists: see the Format
+// USB Stick plan's own "current stick detection can't see
+// blank/unpartitioned drives" gap).
+//
+// Asked of each \\.\PhysicalDriveN directly, with access 0 and so no
+// elevation, through IOCTLs defined FILE_ANY_ACCESS. It used to run
+// PowerShell's Get-Disk: 1.5 s per call on the shakedown laptop, and
+// detect() runs on the UI thread every time the drive set changes, so
+// every hotplug and every eject froze the window for as long -- the
+// Eject button's stutter (issue #26).
+//
+// A disk with no media is left out. A stick ejected through the app
+// (WindowsRemovableMediaMounter: IOCTL_STORAGE_EJECT_MEDIA) stays
+// attached as a disk with no media until it is pulled, and Get-Disk
+// reported it as PartitionStyle RAW, size 0 -- which read as a blank
+// drive, offered for formatting.
 std::map<int, UsbDiskInfo> queryUsbDisks()
 {
     std::map<int, UsbDiskInfo> disks;
-    auto result = runCommand({
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Get-Disk | Where-Object { $_.BusType -eq 'USB' } | ForEach-Object { "
-        "\"{0}|{1}|{2}|{3}\" -f $_.Number, $_.Size, $_.FriendlyName, $_.PartitionStyle }",
-    });
-    if (result.exitCode != 0) {
-        return disks;
-    }
-
-    std::istringstream lines(result.output);
-    std::string line;
-    while (std::getline(lines, line)) {
-        std::istringstream fields(line);
-        std::string numberStr, sizeStr, friendlyName, partitionStyle;
-        if (!std::getline(fields, numberStr, '|') || !std::getline(fields, sizeStr, '|') ||
-            !std::getline(fields, friendlyName, '|') || !std::getline(fields, partitionStyle)) {
+    for (int number = 0; number < 64; ++number) {
+        const std::string path = "\\\\.\\PhysicalDrive" + std::to_string(number);
+        HANDLE handle = ::CreateFileW(pathFromUtf8(path).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                       OPEN_EXISTING, 0, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            continue;  // numbers need not be contiguous
+        }
+        STORAGE_PROPERTY_QUERY query = {};
+        query.PropertyId = StorageDeviceProperty;
+        query.QueryType = PropertyStandardQuery;
+        std::vector<char> buffer(4096, '\0');
+        DWORD bytesReturned = 0;
+        const BOOL described = ::DeviceIoControl(handle, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query),
+                                                 buffer.data(), static_cast<DWORD>(buffer.size() - 1),
+                                                 &bytesReturned, nullptr);
+        const auto *descriptor = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR *>(buffer.data());
+        if (!described || bytesReturned < sizeof(STORAGE_DEVICE_DESCRIPTOR) || descriptor->BusType != BusTypeUsb) {
+            ::CloseHandle(handle);
             continue;
         }
-        try {
-            int number = std::stoi(numberStr);
-            UsbDiskInfo info;
-            info.sizeBytes = std::stoull(sizeStr);
-            info.friendlyName = friendlyName;
-            info.blank = partitionStyle == "RAW";
-            disks[number] = std::move(info);
-        } catch (const std::exception &) {
-            continue;  // a malformed line is skipped, not fatal to the rest of detection
+        DWORD ignored = 0;
+        const BOOL hasMedia =
+            ::DeviceIoControl(handle, IOCTL_STORAGE_CHECK_VERIFY2, nullptr, 0, nullptr, 0, &ignored, nullptr);
+        DISK_GEOMETRY_EX geometry = {};
+        const BOOL sized = hasMedia
+            && ::DeviceIoControl(handle, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX, nullptr, 0, &geometry,
+                                 sizeof(geometry), &ignored, nullptr);
+        PARTITION_INFORMATION_EX partition = {};
+        const BOOL styled = hasMedia
+            && ::DeviceIoControl(handle, IOCTL_DISK_GET_PARTITION_INFO_EX, nullptr, 0, &partition,
+                                 sizeof(partition), &ignored, nullptr);
+        ::CloseHandle(handle);
+        if (!hasMedia || !sized || geometry.DiskSize.QuadPart <= 0) {
+            continue;
         }
+        UsbDiskInfo info;
+        info.sizeBytes = static_cast<std::uint64_t>(geometry.DiskSize.QuadPart);
+        const std::string vendor = descriptorString(buffer, descriptor->VendorIdOffset, bytesReturned);
+        const std::string product = descriptorString(buffer, descriptor->ProductIdOffset, bytesReturned);
+        info.friendlyName = vendor.empty() ? product : product.empty() ? vendor : vendor + " " + product;
+        info.blank = styled && partition.PartitionStyle == PARTITION_STYLE_RAW;
+        disks[number] = std::move(info);
     }
     return disks;
 }
@@ -164,17 +198,7 @@ std::string storageSerialNumber(const std::string &devicePath)
         return {};
     }
     const auto *descriptor = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR *>(buffer.data());
-    if (descriptor->SerialNumberOffset == 0 || descriptor->SerialNumberOffset >= bytesReturned) {
-        return {};
-    }
-    // The buffer keeps a trailing NUL past what the driver may write, so
-    // strnlen can never run off the end.
-    const char *start = buffer.data() + descriptor->SerialNumberOffset;
-    std::string serial(start, ::strnlen(start, buffer.size() - descriptor->SerialNumberOffset));
-    auto notSpace = [](unsigned char c) { return !std::isspace(c); };
-    serial.erase(serial.begin(), std::find_if(serial.begin(), serial.end(), notSpace));
-    serial.erase(std::find_if(serial.rbegin(), serial.rend(), notSpace).base(), serial.end());
-    return serial;
+    return descriptorString(buffer, descriptor->SerialNumberOffset, bytesReturned);
 }
 
 // The volume serial number GetVolumeInformation reports, formatted the
@@ -211,6 +235,24 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
             continue;
         }
 
+        // The wide call: a volume label is the user's own text, and the
+        // narrow one would hand it back through the ANSI code page.
+        wchar_t volumeName[MAX_PATH + 1] = {};
+        DWORD volumeSerial = 0;
+        const BOOL readable = ::GetVolumeInformationW(rootDirectory.c_str(), volumeName, MAX_PATH + 1,
+                                                      &volumeSerial, nullptr, nullptr, nullptr, 0);
+        // A letter with no media behind it is not a stick. Windows keeps
+        // the letter of a stick ejected through the app until it is
+        // pulled, and it was listed as mounted, under its bare letter,
+        // with no library and the tools still offered (issue #26). What
+        // the eject promised -- it is safe to pull -- is that it is gone.
+        if (!readable) {
+            const DWORD error = ::GetLastError();
+            if (error == ERROR_NOT_READY || error == ERROR_NO_MEDIA_IN_DRIVE) {
+                continue;
+            }
+        }
+
         DetectedStick stick;
         stick.devicePath = rootPath;
         stick.mountPoint = rootPath;
@@ -232,12 +274,7 @@ std::vector<DetectedStick> WindowsRemovableMediaLocator::detect()
         // Windows has actually assigned, and it never assigns one to an
         // empty slot in the first place, so there's nothing to filter.
 
-        // The wide call: a volume label is the user's own text, and the
-        // narrow one would hand it back through the ANSI code page.
-        wchar_t volumeName[MAX_PATH + 1] = {};
-        DWORD volumeSerial = 0;
-        if (::GetVolumeInformationW(rootDirectory.c_str(), volumeName, MAX_PATH + 1, &volumeSerial, nullptr,
-                                     nullptr, nullptr, 0)) {
+        if (readable) {
             stick.label = volumeName[0] != L'\0' ? seabass::pathToUtf8(std::filesystem::path(volumeName)) : rootPath;
             if (volumeSerial != 0) {
                 stick.identity.filesystemUuid = volumeSerialString(volumeSerial);
