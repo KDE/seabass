@@ -649,11 +649,16 @@ TestCase {
         waitForRendering(page);
         saveScreenshot(page, "stick-list-no-stick-explore");
 
+        // Prominent: the stick's icon, a title and the hint, centred.
+        compare(findByName(page, "noStickIcon").visible, true);
+        compare(findByName(page, "noStickTitle").text, "No USB stick");
+        compare(findByName(page, "noStickHint").horizontalAlignment, Text.AlignHCenter);
+
         page.selectGroup("backup");
         compare(findByName(page, "noStickNothingHere").visible, false);
-        var restoreCard = findByName(page, "generalRestoreCard");
-        verify(restoreCard !== null);
-        compare(restoreCard.visible, true);
+        // No Restore a Stick Backup: with no stick there is no drive to
+        // restore onto, and the card led to a page with nothing to pick.
+        compare(findChild(page, "generalRestoreCard"), null);
         // Local Cue Backup is gone: Metadata Backup and Restore replaced it.
         compare(findChild(page, "generalLocalCueCard"), null);
         // The header menu's entries as cards, with the menu's enabled rules.
@@ -669,13 +674,6 @@ TestCase {
         }
         waitForRendering(page);
         saveScreenshot(page, "stick-list-no-stick");
-
-        var restoreSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "restoreStickBackupRequested"});
-        restoreCard.clicked();
-        compare(restoreSpy.count, 1);
-        compare(restoreSpy.signalArguments[0][0], "");
-        // Not about any one stick, so no stick in the breadcrumb either.
-        compare(restoreSpy.signalArguments[0][3], "");
     }
 
     // The card is visible unconditionally for a blank stick (it is also
