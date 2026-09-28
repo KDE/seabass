@@ -10,14 +10,12 @@ import SeabassGui
 // The short version of vizzzion.org/seabass, and a way to get to the
 // long one.
 //
-// This page used to carry the full story of the three catalogs and a
-// paragraph on streaming tracks, which is reference material rather than
-// an introduction: nobody opens About to read a format explanation. The
-// detail that belongs next to a control now lives next to that control
-// (LibrarySourceToggle's own tooltip, Preferences' streaming setting),
-// the rest is a click away on the website, and what stays here is what
-// someone opening About actually wants: what this is, what it does, what
-// it will not do, and who made it.
+// The words are the website's own, from its home page: the introduction
+// and "Why it exists" as they stand there, reviewed once and not written
+// a second time here. What the site's feature list says belongs next to
+// the tools themselves and on the site. About says what this is, why it
+// exists, under whose roof it is built and who made it, and it warns
+// about the beta the way the site does.
 Page {
     id: root
 
@@ -28,19 +26,23 @@ Page {
     readonly property string versionNumber: root.updateChecker !== null ? root.updateChecker.currentVersion : ""
     readonly property string buildLine: {
         if (root.updateChecker === null) return "";
-        var channel = root.updateChecker.currentChannel;
-        var names = {dev: "Development build", alpha: "Alpha", beta: "Beta", stable: "Stable release"};
-        var commit = root.updateChecker.currentCommit;
+        const channel = root.updateChecker.currentChannel;
+        const names = {dev: "Development build", alpha: "Alpha", beta: "Beta", stable: "Stable release"};
+        const commit = root.updateChecker.currentCommit;
         return (names[channel] || channel) + (commit.length > 0 ? " · " + commit : "");
     }
 
     readonly property string websiteUrl: "https://vizzzion.org/seabass/"
+    readonly property string sourceUrl: "https://invent.kde.org/multimedia/seabass"
+    readonly property string kdeUrl: "https://kde.org/"
 
     // Escape goes back, as the breadcrumb does. Only while this page is
     // the one showing: under the support page it pushes, that page's own
     // Escape is the one that fires.
     Shortcut {
-        sequence: StandardKey.Cancel
+        // sequences, plural: Cancel maps to more than one key on some
+        // platforms, and binding only the first logs a warning per page.
+        sequences: [StandardKey.Cancel]
         enabled: root.StackView.status === StackView.Active
         onActivated: root.StackView.view.pop()
     }
@@ -72,6 +74,7 @@ Page {
     }
 
     Flickable {
+        objectName: "aboutScroll"
         anchors.fill: parent
         contentWidth: width
         contentHeight: content.implicitHeight + 64
@@ -109,10 +112,24 @@ Page {
                     Layout.alignment: Qt.AlignHCenter
                 }
                 Label {
-                    text: "Your DJ Toolbox"
+                    text: "Your DJ toolbox"
                     font.pointSize: Theme.baseFontPointSize * 1.3
                     color: Qt.lighter(Theme.accent, 1.3)
                     Layout.alignment: Qt.AlignHCenter
+                }
+                // The site's address, readable and clickable, right under
+                // the name: the one line to remember when telling someone
+                // else where to get this.
+                Label {
+                    objectName: "aboutWebsiteLink"
+                    text: "<a href=\"" + root.websiteUrl + "\">vizzzion.org/seabass</a>"
+                    textFormat: Text.StyledText
+                    linkColor: Theme.accent
+                    font.pointSize: Theme.baseFontPointSize
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: 4
+                    onLinkActivated: link => Qt.openUrlExternally(link)
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
                 }
             }
 
@@ -148,26 +165,42 @@ Page {
 
             Label {
                 objectName: "aboutIntro"
-                text: "Move between the Pioneer and Denon worlds with confidence. Seabass works on the "
-                    + "library already on your USB stick: it keeps the Rekordbox and Engine DJ copies of "
-                    + "it in step, and tells you the truth about what is on there."
+                text: "Confidently move between Pioneer and Denon DJ ecosystems. Seabass works on the "
+                    + "library that is already on your USB stick, keeping the Rekordbox and Engine DJ "
+                    + "copies of it in step. Seabass provides the tools that others forgot to hand to you."
                 wrapMode: Text.WordWrap
                 font.pointSize: Theme.baseFontPointSize * 1.1
                 Layout.fillWidth: true
             }
 
             ColumnLayout {
-                spacing: 6
+                objectName: "aboutWhy"
+                spacing: 10
                 Layout.fillWidth: true
-                Subtitle { text: "What it does" }
+                Subtitle { text: "Why it exists" }
                 Label {
-                    text: "• Backs up a whole stick into one file on this computer, and restores it onto any drive\n"
-                        + "• Backs up cue points, ratings, comments and play counts, and puts them back when they go missing\n"
-                        + "• Carries hot cues, memory cues and loops between the catalogs on one stick, and asks when they disagree\n"
-                        + "• Browses every catalog: tracks, playlists, BPM, key, and playback with a real waveform\n"
-                        + "• Finds duplicate copies, merges what they each carry, and reclaims the space\n"
-                        + "• Checks the catalogs against each other and against the files on disk\n"
-                        + "• Measures how a stick performs, the way a player reads it"
+                    text: "I created Seabass to make it easier to switch between Denon and Pioneer hardware. "
+                        + "A DJ's library (usually on a USB stick) is their most precious asset, and we need "
+                        + "better tools to maintain it, fix it and to make sure we don't lose it."
+                    wrapMode: Text.WordWrap
+                    font.pointSize: Theme.baseFontPointSize * 1.1
+                    color: Theme.textMuted
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: "Seabass empowers you, it doesn't baby you. It gives you powerful tools and it is "
+                        + "designed to work transparently. While its tools allow you to also shoot yourself in "
+                        + "the foot, it does its best to guide you in avoiding it, and if things go south, it "
+                        + "allows you to get your precious data back."
+                    wrapMode: Text.WordWrap
+                    font.pointSize: Theme.baseFontPointSize * 1.1
+                    color: Theme.textMuted
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: "Finally, I think quality software should be available to everyone. Therefore I made "
+                        + "Seabass Free Software. No spying, no phoning home, no ads, just a modest "
+                        + "encouragement to support its development. Whatever you may be able to spare."
                     wrapMode: Text.WordWrap
                     font.pointSize: Theme.baseFontPointSize * 1.1
                     color: Theme.textMuted
@@ -175,18 +208,49 @@ Page {
                 }
             }
 
-            ColumnLayout {
-                spacing: 6
+            // Under whose roof: KDE's, with its mark. The source lives on
+            // KDE's own forge, and that is where the link goes.
+            Rectangle {
+                objectName: "aboutKdeNote"
                 Layout.fillWidth: true
-                Subtitle { text: "What it does not do" }
-                Label {
-                    text: "Seabass never analyzes audio to produce new analysis data. Beatgridding, BPM and "
-                        + "key detection and waveform analysis all happen in Rekordbox or Engine DJ first. "
-                        + "Seabass reads and moves around the results, and never recomputes them."
-                    wrapMode: Text.WordWrap
-                    font.pointSize: Theme.baseFontPointSize * 1.1
-                    color: Theme.textMuted
-                    Layout.fillWidth: true
+                color: Theme.groupBackground
+                border.color: Theme.borderSubtle
+                border.width: 1
+                radius: 4
+                implicitHeight: kdeRow.implicitHeight + 24
+                RowLayout {
+                    id: kdeRow
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: Theme.rowSpacing
+                    Image {
+                        objectName: "aboutKdeLogo"
+                        source: "qrc:/qt/qml/SeabassGui/qml/icons/kde.svg"
+                        sourceSize.width: 48
+                        sourceSize.height: 48
+                        Layout.preferredWidth: 48
+                        Layout.preferredHeight: 48
+                        Layout.alignment: Qt.AlignVCenter
+                        fillMode: Image.PreserveAspectFit
+                        TapHandler { onTapped: Qt.openUrlExternally(root.kdeUrl) }
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                    }
+                    Label {
+                        objectName: "aboutKdeText"
+                        text: "Seabass is developed under the <a href=\"" + root.kdeUrl + "\">KDE</a> umbrella. "
+                            + "Its source code is published on <a href=\"" + root.sourceUrl + "\">KDE's Invent</a> "
+                            + "for you to look at, to share it and to modify it."
+                        textFormat: Text.StyledText
+                        linkColor: Theme.accent
+                        wrapMode: Text.WordWrap
+                        font.pointSize: Theme.baseFontPointSize
+                        Layout.fillWidth: true
+                        onLinkActivated: link => Qt.openUrlExternally(link)
+                        HoverHandler {
+                            enabled: parent.hoveredLink.length > 0
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                    }
                 }
             }
 

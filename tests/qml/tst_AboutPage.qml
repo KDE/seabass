@@ -76,6 +76,30 @@ TestCase {
         verify(findChild(page, "aboutSupportButton") !== null, "the support button exists");
     }
 
+    // The site's address is on the page as a link, right under the name,
+    // and the KDE note is there with its logo drawn (an image that failed
+    // to load has status Error and no size) and links to KDE and to the
+    // source on Invent.
+    function test_websiteLinkAndKdeNote() {
+        const page = make(700, 900);
+        waitForRendering(page);
+        const link = findChild(page, "aboutWebsiteLink");
+        verify(link !== null && link.visible, "the website link is on the page");
+        verify(link.text.indexOf(page.websiteUrl) >= 0, "it links to the website: " + link.text);
+        verify(link.mapToItem(page, 0, 0).y < findChild(page, "aboutIntro").mapToItem(page, 0, 0).y,
+               "above the introduction");
+        const note = findChild(page, "aboutKdeNote");
+        verify(note !== null && note.visible, "the KDE note is on the page");
+        const logo = findChild(page, "aboutKdeLogo");
+        tryCompare(logo, "status", Image.Ready);
+        verify(logo.width >= 40 && logo.height >= 40, "the logo is drawn at its size: " + logo.width);
+        const text = findChild(page, "aboutKdeText");
+        verify(text.text.indexOf("KDE") >= 0, "it names KDE");
+        verify(text.text.indexOf(page.kdeUrl) >= 0 && text.text.indexOf(page.sourceUrl) >= 0,
+               "it links to KDE and to the source");
+        verify(page.sourceUrl.indexOf("https://invent.kde.org/") === 0, "the source is on Invent: " + page.sourceUrl);
+    }
+
     // Clicking Support must reach the page's own signal. Checked by
     // listening for it rather than by pushing a StackView, so the test
     // fails on a disconnected button and not on anything about
@@ -122,10 +146,17 @@ TestCase {
         if (!screenshotDir) {
             skip("SEABASS_SCREENSHOT_DIR not set");
         }
-        var page = make(700, 900);
+        const page = make(700, 900);
         waitForRendering(page);
         wait(150);
         grabImage(page).save(screenshotDir + "/AboutPage.png");
+        // And the rest of it, scrolled to the end: the KDE note and the
+        // buttons sit below the fold at this height, and a grab only
+        // holds what the window shows.
+        const scroll = findChild(page, "aboutScroll");
+        scroll.contentY = Math.max(0, scroll.contentHeight - scroll.height);
+        wait(150);
+        grabImage(page).save(screenshotDir + "/AboutPage-end.png");
     }
 
     // Escape goes back, as the breadcrumb does.
