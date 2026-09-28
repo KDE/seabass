@@ -605,4 +605,47 @@ TestCase {
         compare(crumb.middleIsLink, data.link);
         compare(crumb.title, "Library Health");
     }
+
+    // A check that finishes with something to offer shows its button beside
+    // the summary, and the layout never finds the button's cell taken on the
+    // way ("QGridLayoutEngine::addItem: Can't add ..."). The storm saw that
+    // warning each time the hub came back from under a check page: the
+    // summary's span followed the button's visibility, the parents' included,
+    // one step behind it. The last step below is the one that went red.
+    function test_a_check_that_ends_with_an_action_lays_out_cleanly() {
+        failOnWarning(/QGridLayoutEngine/);
+        const card = createTemporaryObject(cardComponent, testCase, {
+            title: "Missing files", summary: "Checking...", running: true, width: 700,
+        });
+        verify(card);
+        waitForRendering(card);
+        card.actionLabel = "Review";
+        card.summary = "3 tracks point at files that are not on the stick.";
+        card.running = false;
+        waitForRendering(card);
+        const action = findChild(card, "checkAction");
+        verify(action.visible, "the button shows once the check is over");
+        const summary = findChild(card, "checkSummary");
+        verify(summary.x + summary.width <= action.x, "and the summary stays left of it");
+        card.running = true;
+        waitForRendering(card);
+        card.running = false;
+        waitForRendering(card);
+        // And a card that is built with its action already there, as a
+        // page opened after the scan builds its cards.
+        const built = createTemporaryObject(cardComponent, testCase, {
+            title: "Cues at 0:00", summary: "2 cues sit at 0:00.", actionLabel: "Remove", width: 700,
+        });
+        verify(built);
+        waitForRendering(built);
+        verify(findChild(built, "checkAction").visible);
+        // A page under another one in the StackView is hidden and shown
+        // again, and an item's visible is its parents' as well: the button
+        // goes and comes back with the page.
+        built.visible = false;
+        waitForRendering(testCase);
+        built.visible = true;
+        waitForRendering(built);
+        verify(findChild(built, "checkAction").visible);
+    }
 }
