@@ -45,7 +45,7 @@ FocusScope {
     // The tool groups, shared with the page (HomeModel.js).
     readonly property var groups: HomeModel.groups()
 
-    implicitWidth: Theme.scaled(200)
+    implicitWidth: Theme.homeRailWidth
     implicitHeight: flow.implicitHeight
 
     // ---- the model, whichever shape it comes in ---------------------

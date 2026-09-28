@@ -306,9 +306,16 @@ Page {
         }
     }
 
-    // A narrow window: the rail wraps into rows above the pane, and the
-    // cards go one to a row.
-    readonly property bool compact: root.width < Theme.scaled(820)
+    // The home's three forms, by the window's width (see Theme's
+    // homeWideWidth and homeMediumWidth): "wide", the rail a column and
+    // the cards two to a row; "medium", the rail a column and the cards
+    // one to a row; "narrow", the rail as chips above the pane and the
+    // cards one to a row. The stick's row and the group's heading are
+    // the same in all three.
+    readonly property string homeForm: root.width >= Theme.homeWideWidth ? "wide"
+        : root.width >= Theme.homeMediumWidth ? "medium" : "narrow"
+    readonly property bool compact: root.homeForm === "narrow"
+    readonly property int cardColumns: root.homeForm === "wide" ? 2 : 1
     // Where the pane's text starts, from the pane's left edge: the cards'
     // titles, and with them the stick's name and the group heading (see
     // StickToolCards.textInset, which reads its cards' own).
@@ -643,9 +650,9 @@ Page {
 
         // The rail beside the pane: which stick and which kind of tool
         // down the left, and on the right the selected stick's row, the
-        // selected group's heading and that group's cards. In a narrow
-        // window the rail wraps into rows of chips above the pane and the
-        // cards go one to a row.
+        // selected group's heading and that group's cards. In the medium
+        // form the cards go one to a row; in the narrow one the rail also
+        // becomes a grid of chips above the pane.
         GridLayout {
             objectName: "homeBody"
             Layout.fillWidth: true
@@ -740,7 +747,7 @@ Page {
                             appSettingsController: root.appSettingsController
                             backupAdvisor: root.backupAdvisor
                             editRegistry: root.editRegistry
-                            columns: root.compact ? 1 : 2
+                            columns: root.cardColumns
                             onBrowseRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.browseRequested(stickLabel, rekordboxPath, enginePath)
                             onDuplicateTracksHubRequested: (stickLabel, rekordboxPath, enginePath) =>
@@ -853,7 +860,7 @@ Page {
                         GridLayout {
                             id: computerGrid
                             Layout.fillWidth: true
-                            columns: root.compact ? 1 : 2
+                            columns: root.cardColumns
                             columnSpacing: Theme.rowSpacing
                             rowSpacing: Theme.rowSpacing
                             // Every column the same width, as the stick's

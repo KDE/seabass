@@ -464,6 +464,27 @@ QtObject {
     // bare labels never joined.
     readonly property real cardTextInset: 20
 
+    // ---- The home screen's three forms, by the window's width -------
+    //
+    // Wide: the rail as a column at the left, the cards two to a row.
+    // Medium: the rail still a column, the cards one to a row. Narrow:
+    // the rail as a grid of chips above the pane, the cards one to a row.
+    //
+    // The rail column's width (HomeRail's implicitWidth).
+    readonly property real homeRailWidth: scaled(200)
+    // The narrowest a home card may be: its padding, icon and gap (66 px
+    // at 10 pt), the widest standard title on one line ("Create Backup
+    // USB Stick", 202 px at 10 pt), the right padding, and room enough
+    // that the long subtitles take two lines rather than three or four.
+    readonly property real homeCardMinWidth: scaled(300)
+    // From this width up, the medium form: the page margins, the rail
+    // column, the gap beside it and one card column of the narrowest
+    // width. Below it, the narrow form.
+    readonly property real homeMediumWidth: 2 * pageMargin + homeRailWidth + pageMargin + homeCardMinWidth
+    // From this width up, the wide form: the medium form plus a second
+    // card column and the gap between the two.
+    readonly property real homeWideWidth: homeMediumWidth + rowSpacing + homeCardMinWidth
+
     // ---- Titles -- a dedicated (non-bold) display face + scale, set once
     // here and consumed only via PageTitle.qml, so every page title stays
     // consistent. Falls back to the platform's default sans if "Manrope"

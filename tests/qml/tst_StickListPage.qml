@@ -999,30 +999,101 @@ TestCase {
                 "an opened folder must not count as a stick being in");
     }
 
-    // A narrow window: the rail wraps into rows above the pane instead
-    // of standing beside it, and the cards go one to a row.
-    function test_aNarrowWindowPutsTheRailAboveThePane() {
-        const wide = makePage([makeStick({})], {"/media/MAIN": makeAdvice({})});
-        compare(wide.compact, false);
-        const wideRail = findByName(wide, "homeRail");
-        const widePane = findByName(wide, "homePane");
-        compare(wideRail.compact, false);
-        verify(widePane.mapToItem(wide, 0, 0).x > wideRail.mapToItem(wide, 0, 0).x + wideRail.width - 1,
-               "the pane stands beside the rail");
-        compare(findByName(wide, "actionGrid").columns, 2);
+    // Every visible item under `item` whose right edge lies past the
+    // page's, or whose left edge lies left of it: the walk goes down the
+    // visual tree only, and not into what is hidden.
+    function itemsPastTheEdges(page, item, out) {
+        if (!item || item.visible === false) {
+            return out;
+        }
+        if (item.width > 0 && item !== page) {
+            const left = item.mapToItem(page, 0, 0).x;
+            if (left + item.width > page.width + 0.5 || left < -0.5) {
+                out.push((item.objectName || String(item)) + " spans " + left + " to " + (left + item.width));
+            }
+        }
+        for (let i = 0; i < item.children.length; ++i) {
+            itemsPastTheEdges(page, item.children[i], out);
+        }
+        return out;
+    }
 
-        const narrow = makePage([makeStick({}), makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1"})],
-                                {"/media/MAIN": makeAdvice({})}, {width: Theme.scaled(820) - 40});
-        compare(narrow.compact, true);
-        const rail = findByName(narrow, "homeRail");
-        const pane = findByName(narrow, "homePane");
-        compare(rail.compact, true);
-        compare(Math.round(pane.mapToItem(narrow, 0, 0).x), Math.round(rail.mapToItem(narrow, 0, 0).x),
-                "the pane starts on the rail's line");
-        verify(pane.mapToItem(narrow, 0, 0).y >= rail.mapToItem(narrow, 0, 0).y + rail.height,
-               "the pane is under the rail");
-        compare(findByName(narrow, "actionGrid").columns, 1);
-        saveScreenshot(narrow, "stick-list-compact");
+    // The home's three forms by the window's width, on both sides of each
+    // threshold: the rail a column and the cards two to a row (wide), the
+    // rail a column and the cards one to a row (medium), the rail above
+    // the pane and the cards one to a row (narrow). The stick's row and
+    // the group heading stay what they are, and nothing reaches past the
+    // page's right edge in any of them.
+    function test_theHomeHasThreeForms_data() {
+        return [
+            {tag: "wide plus 10", width: Theme.homeWideWidth + 10, form: "wide", railColumn: true, columns: 2},
+            {tag: "wide at the threshold", width: Theme.homeWideWidth, form: "wide", railColumn: true, columns: 2},
+            {tag: "wide minus 10", width: Theme.homeWideWidth - 10, form: "medium", railColumn: true, columns: 1},
+            {tag: "medium", width: 700, form: "medium", railColumn: true, columns: 1},
+            {tag: "medium plus 10", width: Theme.homeMediumWidth + 10, form: "medium", railColumn: true, columns: 1},
+            {tag: "medium at the threshold", width: Theme.homeMediumWidth, form: "medium", railColumn: true, columns: 1},
+            {tag: "medium minus 10", width: Theme.homeMediumWidth - 10, form: "narrow", railColumn: false, columns: 1},
+            // Not narrower: below about 490 px the header's own row (the
+            // wordmark, the slogan and four buttons) is wider than the
+            // window, whatever the form.
+            {tag: "narrow", width: 500, form: "narrow", railColumn: false, columns: 1},
+        ];
+    }
+    function test_theHomeHasThreeForms(data) {
+        const sticks = [makeStick({hasEngine: false, enginePath: ""}),
+                        makeStick({label: "SPARE", mountPoint: "/media/SPARE", devicePath: "/dev/sdc1"})];
+        const page = makePage(sticks, {"/media/MAIN": makeAdvice({})}, {width: data.width});
+        compare(page.homeForm, data.form);
+        compare(page.compact, !data.railColumn);
+        const rail = findByName(page, "homeRail");
+        const pane = findByName(page, "homePane");
+        compare(rail.compact, !data.railColumn);
+        const railX = rail.mapToItem(page, 0, 0).x;
+        const paneX = pane.mapToItem(page, 0, 0).x;
+        if (data.railColumn) {
+            compare(rail.width, Theme.homeRailWidth, "the rail is a column of its own width");
+            verify(paneX >= railX + rail.width, "the pane stands beside the rail");
+        } else {
+            compare(Math.round(paneX), Math.round(railX), "the pane starts on the rail's line");
+            verify(pane.mapToItem(page, 0, 0).y >= rail.mapToItem(page, 0, 0).y + rail.height,
+                   "the pane is under the rail");
+        }
+        const grid = findByName(page, "actionGrid");
+        compare(grid.columns, data.columns);
+        // No standard title wraps on a card at the narrowest a form lets it
+        // be, and the stick row and the heading are there as ever.
+        for (const group of page.groupKeys) {
+            page.selectGroup(group);
+            waitForRendering(page);
+            for (let i = 0; i < grid.children.length; ++i) {
+                const card = grid.children[i];
+                if (!card.visible || card.cardTitle === undefined) {
+                    continue;
+                }
+                verify(card.width >= Theme.homeCardMinWidth - 0.5 || data.form === "narrow",
+                       card.cardTitle + " is " + card.width + " wide");
+                if (!card.experimental) {
+                    compare(findChild(card, "cardTitleLabel").lineCount, 1, card.cardTitle + " stays on one line");
+                }
+            }
+            compare(findByName(page, "stickHeader").visible, true);
+            compare(findByName(page, "groupHeading").visible, true);
+            const past = itemsPastTheEdges(page, page, []);
+            compare(past.length, 0, group + ": " + past.join("; "));
+        }
+        page.selectGroup("backup");
+        waitForRendering(page);
+        const names = {"wide plus 10": "home-form-wide-plus10", "wide minus 10": "home-form-wide-minus10",
+                       "medium plus 10": "home-form-medium-plus10", "medium minus 10": "home-form-medium-minus10"};
+        if (names[data.tag] !== undefined) {
+            saveScreenshot(page, names[data.tag]);
+        }
+        if (data.tag === "medium") {
+            saveScreenshot(page, "home-rail-medium");
+        }
+        if (data.tag === "narrow") {
+            saveScreenshot(page, "stick-list-compact");
+        }
     }
 
     // The order of a stick's cards in each group, left to right and
