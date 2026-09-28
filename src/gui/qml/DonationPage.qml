@@ -16,9 +16,6 @@ import SeabassGui
 Page {
     id: root
 
-    signal aboutRequested()
-    signal preferencesRequested()
-
     // Escape goes back, as the breadcrumb does, while this page is the
     // one showing.
     Shortcut {
@@ -26,6 +23,12 @@ Page {
         enabled: root.StackView.status === StackView.Active
         onActivated: root.StackView.view.pop()
     }
+
+    // The window's header row (AppHeaderOverlay) shows over this page's
+    // header: it names this place and sets how much of the header's
+    // right to keep clear.
+    readonly property string appHeaderPlace: "support"
+    property real appHeaderReserve: 0
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
@@ -50,11 +53,12 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
             }
             Item { Layout.fillWidth: true }
-            AppHeaderButtons {
-                objectName: "appHeaderButtons"
-                current: "support"
-                onAboutRequested: root.aboutRequested()
-                onPreferencesRequested: root.preferencesRequested()
+            // Room for the window's header row (AppHeaderOverlay), which
+            // lies over this header and sets this width itself.
+            Item {
+                objectName: "appHeaderSpace"
+                Layout.preferredWidth: root.appHeaderReserve
+                Layout.minimumWidth: root.appHeaderReserve
             }
         }
     }

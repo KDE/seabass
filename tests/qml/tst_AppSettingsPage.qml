@@ -426,24 +426,25 @@ TestCase {
         compare(settings.keyNotation, was, "Reset puts it back the way the page found it");
     }
 
-    // The header's About and Support buttons go through the same
-    // question as Escape when a setting changed: the move happens once it
-    // is answered, and Preferences' own button is off.
-    function test_theHeaderButtonsAskBeforeLeavingWithAChange() {
+    // The window's header row asks this page through leaveTo() before it
+    // moves on: with a change, the question first, the move after.
+    function test_leaveToAsksBeforeLeavingWithAChange() {
         const was = settings.keyNotation;
         const s = pushed();
-        compare(findChild(s.page, "appHeaderButtons").current, "preferences");
-        compare(findChild(s.page, "preferencesButton").enabled, false);
-        const spy = createTemporaryObject(spyComponent, testCase, {target: s.page, signalName: "aboutRequested"});
+        compare(s.page.appHeaderPlace, "preferences");
+        verify(findChild(s.page, "appHeaderSpace") !== null);
+        let left = 0;
         settings.keyNotation = was === "camelot" ? "traditional" : "camelot";
-        mouseClick(findChild(s.page, "aboutButton"));
+        s.page.leaveTo(() => { left += 1; });
         const dialog = findChild(s.page, "changedOnLeaveDialog");
         tryCompare(dialog, "opened", true);
-        compare(spy.count, 0, "not left yet: the question is open");
+        compare(left, 0, "not left yet: the question is open");
         findChild(dialog, "discardButton").clicked();
-        tryCompare(spy, "count", 1);
+        tryCompare(s.stack, "depth", 2, 5000, "the move is the caller's, not a pop");
+        compare(left, 1, "and it follows the answer");
         compare(settings.keyNotation, was, "Reset put it back before leaving");
-        compare(s.stack.depth, 2, "the page did not pop by itself: Main replaces it");
+        s.page.leaveTo(() => { left += 1; });
+        compare(left, 2, "nothing changed: straight through");
     }
 
     function test_escapeAfterAChangeKeepKeepsIt() {

@@ -20,7 +20,6 @@ Page {
     id: root
 
     signal donationRequested()
-    signal preferencesRequested()
     // The running build's version, channel and commit (UpdateChecker; a
     // fake in tests). Optional so the page still opens without one.
     property var updateChecker: null
@@ -48,6 +47,12 @@ Page {
         onActivated: root.StackView.view.pop()
     }
 
+    // The window's header row (AppHeaderOverlay) shows over this page's
+    // header: it names this place and sets how much of the header's
+    // right to keep clear.
+    readonly property string appHeaderPlace: "about"
+    property real appHeaderReserve: 0
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
         // and nothing else. `padding` alone does not do it: styles set
@@ -71,11 +76,12 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
             }
             Item { Layout.fillWidth: true }
-            AppHeaderButtons {
-                objectName: "appHeaderButtons"
-                current: "about"
-                onPreferencesRequested: root.preferencesRequested()
-                onSupportRequested: root.donationRequested()
+            // Room for the window's header row (AppHeaderOverlay), which
+            // lies over this header and sets this width itself.
+            Item {
+                objectName: "appHeaderSpace"
+                Layout.preferredWidth: root.appHeaderReserve
+                Layout.minimumWidth: root.appHeaderReserve
             }
         }
     }
@@ -101,102 +107,111 @@ Page {
             spacing: 20
 
             // The mark and the name side by side, the mark as tall as the
-            // block it stands beside: name, tagline, address, version.
+            // name block it stands beside (name, tagline, address, version);
+            // the website's introduction runs on under both, in the name's
+            // column, where it fits (Sebastian, 2026-09-28). The block
+            // takes what the row gives it and never widens the page.
             RowLayout {
                 objectName: "aboutHead"
-                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
                 spacing: Theme.rowSpacing * 2
                 Image {
                     objectName: "aboutLogo"
                     source: "qrc:/qt/qml/SeabassGui/qml/icons/seabass_soundbass.svg"
-                    Layout.preferredWidth: headBlock.implicitHeight
-                    Layout.preferredHeight: headBlock.implicitHeight
-                    Layout.alignment: Qt.AlignVCenter
-                    sourceSize.width: Math.ceil(headBlock.implicitHeight)
-                    sourceSize.height: Math.ceil(headBlock.implicitHeight)
+                    Layout.preferredWidth: nameBlock.implicitHeight
+                    Layout.preferredHeight: nameBlock.implicitHeight
+                    Layout.alignment: Qt.AlignTop
+                    sourceSize.width: Math.ceil(nameBlock.implicitHeight)
+                    sourceSize.height: Math.ceil(nameBlock.implicitHeight)
                     fillMode: Image.PreserveAspectFit
                 }
 
                 ColumnLayout {
                     id: headBlock
-                    Layout.alignment: Qt.AlignVCenter
-                    // Takes what the mark leaves: on a narrow page the
-                    // build line wraps rather than running off the edge.
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    spacing: 2
-                    Label {
-                        text: "Seabass"
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        font.family: Theme.titleFamily
-                        font.weight: Theme.titleWeight
-                        font.pointSize: Theme.titleLarge
-                    }
-                    Label {
-                        text: "Your DJ toolbox"
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        font.pointSize: Theme.baseFontPointSize * 1.3
-                        color: Qt.lighter(Theme.accent, 1.3)
-                    }
-                    // The site's address, readable and clickable, right
-                    // under the name: the one line to remember when telling
-                    // someone else where to get this.
-                    Label {
-                        objectName: "aboutWebsiteLink"
-                        text: "<a href=\"" + root.websiteUrl + "\">vizzzion.org/seabass</a>"
-                        textFormat: Text.StyledText
-                        linkColor: Theme.accent
-                        font.pointSize: Theme.baseFontPointSize
-                        Layout.topMargin: 4
-                        onLinkActivated: link => Qt.openUrlExternally(link)
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                    }
+                    Layout.preferredWidth: 0
+                    spacing: 10
 
-                    // Which Seabass this is, right under the name: the
-                    // question a bug report starts with, and the one About
-                    // is opened to answer. The build line is selectable so
-                    // it can be copied into one whole.
                     ColumnLayout {
-                        objectName: "aboutVersionBlock"
-                        visible: root.versionNumber.length > 0
+                        id: nameBlock
+                        objectName: "aboutNameBlock"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         spacing: 2
-                        Layout.topMargin: 10
                         Label {
-                            objectName: "aboutVersion"
-                            text: "Version " + root.versionNumber
+                            text: "Seabass"
                             Layout.fillWidth: true
                             elide: Text.ElideRight
-                            font.pointSize: Theme.baseFontPointSize * 1.5
-                            font.weight: Font.DemiBold
+                            font.family: Theme.titleFamily
+                            font.weight: Theme.titleWeight
+                            font.pointSize: Theme.titleLarge
                         }
-                        TextEdit {
-                            objectName: "aboutBuild"
-                            text: root.buildLine
-                            visible: text.length > 0
-                            wrapMode: TextEdit.Wrap
+                        Label {
+                            text: "Your DJ toolbox"
                             Layout.fillWidth: true
-                            readOnly: true
-                            selectByMouse: true
-                            color: Theme.textMuted
-                            selectionColor: Theme.accent
-                            font.family: Theme.dataFamily
-                            font.pointSize: Theme.fontSmall
+                            elide: Text.ElideRight
+                            font.pointSize: Theme.baseFontPointSize * 1.3
+                            color: Qt.lighter(Theme.accent, 1.3)
+                        }
+                        // The site's address, readable and clickable, right
+                        // under the name: the one line to remember when telling
+                        // someone else where to get this.
+                        Label {
+                            objectName: "aboutWebsiteLink"
+                            text: "<a href=\"" + root.websiteUrl + "\">vizzzion.org/seabass</a>"
+                            textFormat: Text.StyledText
+                            linkColor: Theme.accent
+                            font.pointSize: Theme.baseFontPointSize
+                            Layout.topMargin: 4
+                            onLinkActivated: link => Qt.openUrlExternally(link)
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        }
+
+                        // Which Seabass this is, right under the name: the
+                        // question a bug report starts with, and the one About
+                        // is opened to answer. The build line is selectable so
+                        // it can be copied into one whole.
+                        ColumnLayout {
+                            objectName: "aboutVersionBlock"
+                            visible: root.versionNumber.length > 0
+                            spacing: 2
+                            Layout.topMargin: 10
+                            Label {
+                                objectName: "aboutVersion"
+                                text: "Version " + root.versionNumber
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                font.pointSize: Theme.baseFontPointSize * 1.5
+                                font.weight: Font.DemiBold
+                            }
+                            TextEdit {
+                                objectName: "aboutBuild"
+                                text: root.buildLine
+                                visible: text.length > 0
+                                wrapMode: TextEdit.Wrap
+                                Layout.fillWidth: true
+                                readOnly: true
+                                selectByMouse: true
+                                color: Theme.textMuted
+                                selectionColor: Theme.accent
+                                font.family: Theme.dataFamily
+                                font.pointSize: Theme.fontSmall
+                            }
                         }
                     }
-                }
-            }
 
-            Label {
-                objectName: "aboutIntro"
-                text: "Confidently move between Pioneer and Denon DJ ecosystems. Seabass works on the "
-                    + "library that is already on your USB stick, keeping the Rekordbox and Engine DJ "
-                    + "copies of it in step. Seabass provides the tools that others forgot to hand to you."
-                wrapMode: Text.WordWrap
-                font.italic: true
-                font.pointSize: Theme.baseFontPointSize * 1.1
-                Layout.fillWidth: true
+                    Label {
+                        objectName: "aboutIntro"
+                        text: "Confidently move between Pioneer and Denon DJ ecosystems. Seabass works on the "
+                            + "library that is already on your USB stick, keeping the Rekordbox and Engine DJ "
+                            + "copies of it in step. Seabass provides the tools that others forgot to hand to you."
+                        wrapMode: Text.WordWrap
+                        font.italic: true
+                        font.pointSize: Theme.baseFontPointSize * 1.1
+                        Layout.fillWidth: true
+                    }
+                }
             }
 
             ColumnLayout {

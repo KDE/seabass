@@ -42,8 +42,6 @@ Page {
     }
 
     signal anonymizeLibraryRequested()
-    signal aboutRequested()
-    signal donationRequested()
 
     // Escape goes back, as the breadcrumb does. Every setting here takes
     // effect the moment it is changed, so Escape -- "back out of this" --
@@ -167,6 +165,12 @@ Page {
         }
     }
 
+    // The window's header row (AppHeaderOverlay) shows over this page's
+    // header: it names this place and sets how much of the header's
+    // right to keep clear.
+    readonly property string appHeaderPlace: "preferences"
+    property real appHeaderReserve: 0
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
         // and nothing else. `padding` alone does not do it: styles set
@@ -196,11 +200,12 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
             }
             Item { Layout.fillWidth: true }
-            AppHeaderButtons {
-                objectName: "appHeaderButtons"
-                current: "preferences"
-                onAboutRequested: root.leaveTo(() => root.aboutRequested())
-                onSupportRequested: root.leaveTo(() => root.donationRequested())
+            // Room for the window's header row (AppHeaderOverlay), which
+            // lies over this header and sets this width itself.
+            Item {
+                objectName: "appHeaderSpace"
+                Layout.preferredWidth: root.appHeaderReserve
+                Layout.minimumWidth: root.appHeaderReserve
             }
         }
     }
