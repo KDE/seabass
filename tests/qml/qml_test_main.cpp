@@ -1851,7 +1851,7 @@ int runStormQuitLeg(int argc, char **argv, const char *driver)
     QObject::connect(
         engine.get(), &QQmlApplicationEngine::objectCreationFailed, &app, []() { QCoreApplication::exit(-1); },
         Qt::QueuedConnection);
-    engine->load(QUrl(QString::fromLocal8Bit(driver)));
+    engine->load(QUrl(QString::fromUtf8(driver)));
     const int result = app.exec();
     seabass::gui::AsyncWorkers::instance().beginShutdown();
     engine.reset();
