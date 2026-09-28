@@ -243,7 +243,7 @@ ran=""
 # into $RIG_PARTS (tools/rig-parts.sh, tools/rig_parts.hpp) and those
 # lines go into the summary in place of its own single verdict, so the
 # board can say which test failed instead of reddening all of them.
-RIG_BUNDLES="R1-R3-read-A R1-R3-read-B R2-R5-pages W1-W3-W4-F1-F2-F3-live W2-W5-W6-edits FB1-FB2-backup-A C1-C5-backup-usb-stick E1-create-engine-library"
+RIG_BUNDLES="R1-R3-read-A R1-R3-read-B R2-R5-pages W1-W3-W4-F1-F2-F3-live W2-W5-W6-edits F6-interrupted-save FB1-FB2-backup-A C1-C5-backup-usb-stick E1-create-engine-library"
 
 check() {
     local name="$1"; shift
@@ -1221,6 +1221,13 @@ check W2-W5-W6-edits "$root/tools/rig-edits.sh" "$B" "$out/catalog-baseline.txt"
 # consistency-repair, each with the pre-restore copy its undo takes --
 # and the reference restore leaves none.
 check W9-saves-left-backups "$build/rig_save_backups" "$B" --expect-at-least 3
+# F6, issue #48: a save killed mid-write leaves B as a pull leaves it, a
+# fresh session reads it and undoes the save, and the catalogs are the
+# baseline again. After W9, because it starts by restoring B from its
+# reference, which takes the records W9 counts with it; and it ends with
+# that restore too, so W7 below finds B at its reference.
+check F6-interrupted-save "$root/tools/rig-interrupted-save.sh" "$B" "$deviceB" "$out/shots" \
+    "$out/catalog-baseline.txt" "$out/catalog-digest-baseline.txt"
 check W7-metadata-between-sticks metadata_between_sticks
 check F5-quit-with-unsaved-changes quit_with_changes
 

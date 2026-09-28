@@ -724,6 +724,17 @@ The pieces run on their own too, each ending in `RIG RESULT: PASS` or
   a Library Health repair, each saved and undone (`rig_plant_repairable`
   plants the repairable issue and puts the file back).
 - `tools/rig-clones.sh`: the two-stick Backup USB Stick checks.
+- `tools/rig-interrupted-save.sh <stick> <device or ""> [shots] [baseline] [digests]`:
+  check F6, issue #48. `tst_LiveInterruptedSave` starts a Sync save and
+  the script SIGKILLs it once the first track is written (`taskkill /F` on
+  Windows), then unmounts and mounts the stick where the platform can:
+  the files a pull leaves are the files a crashed writer leaves, and an
+  unmount cannot stand in for a pull, since a lazy unmount lets the
+  writer finish. `rig_journal_state` lists what the save left (journals
+  and whether their header is live, logs, the save's note), a fresh
+  process must read every catalog, offer Undo Last Save and take it, and
+  the catalogs must be the baseline again. The stick is restored from
+  `RIG_REFERENCE_B` before and after. The manual P3 (a real pull) stays.
 
 The live QML tests carry the checks that need real pages rather than a
 tool, one test function per process (a bare `TestCase` name makes the
