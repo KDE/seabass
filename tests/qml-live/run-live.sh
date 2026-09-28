@@ -221,10 +221,11 @@ wait
 # it -- and the round neither runs it nor claims it passed.
 if rig_is_windows; then
     echo "=== LiveStickPull is a by-hand check on Windows: ejecting works, but Windows cannot bring the stick back without a physical reinsertion, see docs/manual-testing.md"
-    # Recorded as failed, not quietly left out: the board's own rule is
-    # that a check nobody ran has not passed. It is blocked rather than
-    # broken, and the board says so when a person marks it that way.
-    rig_part live-stick-pulled FAIL
+    # Recorded, not quietly left out, and as PENDING rather than FAIL: on
+    # Windows this is a manual check (rig_manual_ids), shown on the
+    # board's manual tab as still to do until a person has pulled the
+    # stick with this test running and reported how it went.
+    rig_part live-stick-pulled PENDING
 elif [ -n "$device" ]; then
     ( sleep 12; unmount_device "$device" && echo "--- unmounted $device"
       sleep 15; mount_device "$device" && echo "--- mounted $device again" ) &
