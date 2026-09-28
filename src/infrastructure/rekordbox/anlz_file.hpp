@@ -47,6 +47,10 @@ public:
     // write/rename fails.
     void writeRaw(const std::string &path) const;
 
+    // The file as writeRaw() would write it, len_file recomputed. For a
+    // file just read, exactly the bytes that were read.
+    std::string toBytes() const;
+
     std::string headerBytes;
     std::vector<AnlzRawSection> sections;
 

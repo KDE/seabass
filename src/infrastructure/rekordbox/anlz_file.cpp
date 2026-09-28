@@ -91,6 +91,16 @@ AnlzFile AnlzFile::readRaw(const std::string &path)
     return result;
 }
 
+std::string AnlzFile::toBytes() const
+{
+    std::string out = headerBytes;
+    for (const auto &section : sections) {
+        out += section.rawBytes;
+    }
+    writeU32BE(out, 8, static_cast<uint32_t>(out.size()));
+    return out;
+}
+
 void AnlzFile::writeRaw(const std::string &path) const
 {
     // Staleness check: only meaningful when writing back to the same
@@ -106,11 +116,7 @@ void AnlzFile::writeRaw(const std::string &path) const
         }
     }
 
-    std::string out = headerBytes;
-    for (const auto &section : sections) {
-        out += section.rawBytes;
-    }
-    writeU32BE(out, 8, static_cast<uint32_t>(out.size()));
+    const std::string out = toBytes();
 
     // A bug in this class producing a broken file must never reach
     // disk -- confirm the reassembled bytes are still a valid ANLZ file
