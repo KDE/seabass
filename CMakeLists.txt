@@ -1207,6 +1207,10 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # somebody remembers the variable.
         file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots")
         list(APPEND _seabass_qml_test_env "SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots")
+        # No lane may see a stick plugged into this computer: the home page
+        # under test scans the first one it is given and its Full read
+        # writes a duration cache onto the stick (media_factory.cpp).
+        list(APPEND _seabass_qml_test_env "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
         if(MSVC)
             list(APPEND _seabass_qml_test_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
         endif()
@@ -1264,7 +1268,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 # no pixels.
                 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style")
                 set_tests_properties(seabass_qml_desktop_style_tests PROPERTIES
-                    ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config;SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style"
+                    ENVIRONMENT "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-desktop-style-config;SEABASS_SCREENSHOT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screenshots-desktop-style;SEABASS_IGNORE_REMOVABLE_MEDIA=1"
                     RESOURCE_LOCK xvfb)
             else()
                 message(STATUS "org.kde.desktop not found: the desktop-style QML lane is not registered. "
@@ -1280,7 +1284,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 COMMAND ${SEABASS_XVFB_RUN} -a -s "-screen 0 1280x1024x24"
                     $<TARGET_FILE:seabass_qml_tests> -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-shader)
             set_tests_properties(seabass_qml_shader_tests PROPERTIES ENVIRONMENT
-                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=Basic;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config")
+                "QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;QT_QUICK_CONTROLS_STYLE=Basic;SEABASS_SHADER_EXPECTED=1;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/qml-test-config;SEABASS_IGNORE_REMOVABLE_MEDIA=1")
             # Both suites start their own `xvfb-run -a`, whose search for
             # a free display and the lock it then takes are not one
             # atomic step: run in parallel they can choose the same
@@ -2016,6 +2020,14 @@ add_test(NAME stick_presence_diff_test COMMAND stick_presence_diff_test)
 add_executable(mount_unless_mounted_test tests/mount_unless_mounted_test.cpp)
 target_include_directories(mount_unless_mounted_test PRIVATE src)
 add_test(NAME mount_unless_mounted_test COMMAND mount_unless_mounted_test)
+
+# The environment variable that keeps the test suites off the real sticks
+# (see media_factory.cpp) is itself tested: a guard nobody reads is no
+# guard.
+add_executable(removable_media_ignored_test tests/removable_media_ignored_test.cpp)
+target_include_directories(removable_media_ignored_test PRIVATE src)
+target_link_libraries(removable_media_ignored_test PRIVATE seabass_core)
+add_test(NAME removable_media_ignored_test COMMAND removable_media_ignored_test)
 
 # A stick pulled mid-save leaves a hot SQLite journal; this makes one and
 # rolls it back (#48).

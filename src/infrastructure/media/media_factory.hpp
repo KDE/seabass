@@ -18,6 +18,12 @@ namespace seabass::infrastructure::media
 // get a concrete removable-media adapter from -- so which OS-specific class
 // backs each port is decided exactly once, not re-selected (or, worse,
 // hardcoded to the Linux one) at every call site.
+// True when SEABASS_IGNORE_REMOVABLE_MEDIA is set (and not "0"): the
+// locators this factory hands out then find nothing. The test suites set
+// it so that no test ever reads or writes a stick plugged into this
+// computer.
+bool removableMediaIgnored();
+
 std::unique_ptr<application::RemovableMediaLocator> createRemovableMediaLocator();
 std::unique_ptr<application::RemovableMediaMonitor> createRemovableMediaMonitor();
 std::unique_ptr<application::RemovableMediaMounter> createRemovableMediaMounter();

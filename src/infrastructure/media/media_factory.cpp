@@ -4,6 +4,9 @@
 
 #include "infrastructure/media/media_factory.hpp"
 
+#include <cstdlib>
+#include <string_view>
+
 #if defined(_WIN32)
 #include "infrastructure/media/windows_removable_media_locator.hpp"
 #include "infrastructure/media/windows_removable_media_monitor.hpp"
@@ -24,8 +27,38 @@
 namespace seabass::infrastructure::media
 {
 
+namespace
+{
+
+// A locator that finds nothing, for a process that must not see the
+// sticks plugged into this computer: the test suites. tst_PagesCompile
+// builds the home page on the real MediaController, and the home page
+// scans the first stick it sees, whose Full read then wrote a duration
+// cache onto two rig sticks in the middle of a shakedown (2026-09-28).
+// A test suite that reads or writes whatever happens to be inserted is
+// one plugged-in DJ stick away from a real loss, so the suites run with
+// SEABASS_IGNORE_REMOVABLE_MEDIA set (CMakeLists.txt, the QML lanes) and
+// every locator this factory hands out then answers empty. The live suite
+// (tests/qml-live) wants the real sticks and does not set it.
+class NoRemovableMediaLocator : public application::RemovableMediaLocator
+{
+public:
+    std::vector<application::DetectedStick> detect() override { return {}; }
+};
+
+}  // namespace
+
+bool removableMediaIgnored()
+{
+    const char *value = std::getenv("SEABASS_IGNORE_REMOVABLE_MEDIA");
+    return value != nullptr && *value != '\0' && std::string_view(value) != "0";
+}
+
 std::unique_ptr<application::RemovableMediaLocator> createRemovableMediaLocator()
 {
+    if (removableMediaIgnored()) {
+        return std::make_unique<NoRemovableMediaLocator>();
+    }
 #if defined(_WIN32)
     return std::make_unique<WindowsRemovableMediaLocator>();
 #elif defined(__APPLE__)
