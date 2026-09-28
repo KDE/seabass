@@ -65,6 +65,7 @@ Item {
                 visible: root.title.length > 0
                 wrapMode: Text.WordWrap
                 text: root.title
+                color: Theme.text  // see PageTitle: not the style's palette
                 font.bold: true
                 font.pointSize: Theme.fontLarge
             }

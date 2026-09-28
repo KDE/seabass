@@ -46,7 +46,8 @@ Frame {
         spacing: 6
         RowLayout {
             Layout.fillWidth: true
-            Label { font.bold: true; text: "Result" }
+            // Theme's ink, not the style's palette: see PageTitle.
+            Label { font.bold: true; color: Theme.text; text: "Result" }
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "startOverButton"
@@ -69,6 +70,7 @@ Frame {
             text: resultFrame.errorMessage.length > 0 ? resultFrame.errorMessage : resultFrame.statusMessage
         }
         Label {
+            color: Theme.text
             font.family: Theme.dataFamily
             // "held back" appears only when there is something to hold
             // back. It is a restore-only outcome (a database set whose

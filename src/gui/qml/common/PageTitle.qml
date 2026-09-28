@@ -16,6 +16,12 @@ Label {
     id: root
     property string level: "section"  // "page" | "section" | "crumb"
 
+    // Theme's ink, not the palette's: under a style that keeps its own
+    // palette (ControlsStyle.inksFromPalette false) that palette does not
+    // follow Theme, and with the system theme on a light session a title
+    // with no colour of its own was drawn in the style's light ink on
+    // Theme's light background -- 1.10:1 in tst_InkContrast.
+    color: Theme.text
     font.family: Theme.titleFamily
     font.weight: Theme.titleWeight
     font.pointSize: root.level === "page" ? Theme.titleLarge
