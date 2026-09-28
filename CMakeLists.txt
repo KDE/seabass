@@ -3126,6 +3126,14 @@ target_compile_definitions(engine_reader_paths_test PRIVATE SEABASS_SOURCE_DIR="
 target_link_libraries(engine_reader_paths_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME engine_reader_paths_test COMMAND engine_reader_paths_test)
 
+# #48, found by rig check F6: the Engine reader keeps a copy of a database
+# and its hot journal before anything rolls the journal back.
+add_executable(engine_pending_journal_test tests/engine_pending_journal_test.cpp)
+target_include_directories(engine_pending_journal_test PRIVATE src)
+target_compile_definitions(engine_pending_journal_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(engine_pending_journal_test PRIVATE seabass_core SQLite::SQLite3)
+add_test(NAME engine_pending_journal_test COMMAND engine_pending_journal_test)
+
 # Browsing a stick backup in place: cues read through the archive must
 # match cues read off the folder, byte for byte, with nothing extracted.
 # Real fixture data, both compression methods -- see the test's own header.
