@@ -7,9 +7,14 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
+#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/rekordbox/anlz_cue_codec.hpp"
 #include "infrastructure/rekordbox/anlz_legacy_cue_codec.hpp"
 #include "infrastructure/rekordbox/anlz_file.hpp"
@@ -119,8 +124,13 @@ std::vector<LegacyCueEntry> existingLegacyCues(const AnlzFile &file, uint32_t li
 // Same rule writeCueList() follows for PCO2: replace the section if the
 // file has one, append one if it does not and there is something to
 // write, and leave a file that has neither and needs neither untouched.
-void writeLegacyCueList(AnlzFile &file, uint32_t listType, const std::vector<LegacyCueEntry> &entries)
-{
+//
+// `path` is the file's, for the message when the codec refuses the list:
+// every list is built before anything is written, so that message can
+// say nothing was.
+void writeLegacyCueList(AnlzFile &file, uint32_t listType, const std::vector<LegacyCueEntry> &entries,
+                        const std::string &path)
+try {
     auto sectionIt = std::find_if(file.sections.begin(), file.sections.end(),
                                    [listType](const AnlzRawSection &s) {
                                        return isLegacyCueListSection(s, listType);
@@ -143,6 +153,8 @@ void writeLegacyCueList(AnlzFile &file, uint32_t listType, const std::vector<Leg
     } else {
         file.sections.push_back({PcobFourcc, AnlzLegacyCueCodec::encodeCues(entries, listType)});
     }
+} catch (const std::exception &e) {
+    throw std::runtime_error(path + ": " + e.what() + "; nothing was written for this track");
 }
 
 // A cue whose bytes the file already had is written back unchanged; one
@@ -161,6 +173,63 @@ std::optional<LegacyCueEntry> carryOverLegacy(const LegacyCueEntry &wanted, std:
         return taken;
     }
     return std::nullopt;
+}
+
+// Called after each file is written and before it is read back, so a
+// test can stand in for whatever corrupts a file between the two.
+std::function<void(const std::string &)> &afterWriteHook()
+{
+    static std::function<void(const std::string &)> hook;
+    return hook;
+}
+
+// Why the file at `path` is not what was written, or nothing when it is.
+std::optional<std::string> readBackProblem(const std::string &path, const std::string &intended)
+{
+    if (afterWriteHook()) {
+        afterWriteHook()(path);
+    }
+    std::ifstream in(pathFromUtf8(path), std::ios::binary);
+    if (!in.is_open()) {
+        return std::string("it could not be opened again");
+    }
+    const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (onDisk != intended) {
+        return "it reads back as " + std::to_string(onDisk.size()) + " bytes that differ from the "
+            + std::to_string(intended.size()) + " written";
+    }
+    size_t pos = onDisk.size() >= 8 ? readU32BE(onDisk, 4) : onDisk.size();
+    while (pos + 12 <= onDisk.size()) {
+        const uint32_t lenTag = readU32BE(onDisk, pos + 8);
+        if (lenTag < 12 || pos + lenTag > onDisk.size()) {
+            return "its section at offset " + std::to_string(pos) + " has an impossible length";
+        }
+        if (readU32BE(onDisk, pos) == PcobFourcc) {
+            try {
+                AnlzLegacyCueCodec::checkSection(onDisk.substr(pos, lenTag));
+            } catch (const std::exception &e) {
+                return "its legacy cue list at offset " + std::to_string(pos) + " is malformed: " + e.what();
+            }
+        }
+        pos += lenTag;
+    }
+    return std::nullopt;
+}
+
+// Puts each file back as it was read and says what happened, for the
+// exception that fails the track.
+std::string restoreAfterFailedReadBack(const std::vector<std::pair<std::string, std::string>> &originals,
+                                       const std::string &failedPath, const std::string &problem)
+{
+    std::string message = failedPath + " failed its check after writing (" + problem + ")";
+    for (const auto &[path, bytes] : originals) {
+        if (infrastructure::writeFileDurablyAtomic(path, bytes)) {
+            message += "; " + path + " was put back as it was";
+        } else {
+            message += "; " + path + " could NOT be put back and needs restoring from the backup";
+        }
+    }
+    return message;
 }
 
 }  // namespace
@@ -198,6 +267,7 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
     std::string extPath = extAnlzPath(m_pioneerRoot, *analyzePath);
 
     auto file = AnlzFile::readRaw(extPath);
+    const std::string extBefore = file.toBytes();
 
     // Whatever the file holds now, with each entry's exact bytes. A cue
     // in the new list that matches one of these (same slot or time, same
@@ -308,39 +378,87 @@ void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const st
 
     // Hot cues 4-8 and nothing else go in the .EXT file's own PCOB.
     writeLegacyCueList(file, CueListTypeHot,
-                        carriedOver(legacyOf(true, 4, 8), existingLegacyCues(file, CueListTypeHot)));
-    file.writeRaw(extPath);
+                        carriedOver(legacyOf(true, 4, 8), existingLegacyCues(file, CueListTypeHot)), extPath);
 
     // Hot cues 1-3 and the memory cues go in the .DAT file's. A track
-    // whose .DAT is missing keeps working: the .EXT above is already
-    // written, and a player that reads only .DAT had nothing to read
-    // for this track in the first place.
+    // whose .DAT is missing keeps working: the .EXT is written all the
+    // same, and a player that reads only .DAT had nothing to read for
+    // this track in the first place.
+    //
+    // Both files are built before either is written, so a list the codec
+    // refuses to encode stops the track with nothing on the stick
+    // changed, instead of leaving an .EXT that disagrees with its .DAT.
     const std::string datPath = datAnlzPath(m_pioneerRoot, *analyzePath);
-    if (!std::filesystem::exists(pathFromUtf8(datPath))) {
-        return;
-    }
-    auto datFile = AnlzFile::readRaw(datPath);
-    auto legacySectionBytes = [&datFile]() {
-        std::string joined;
-        for (const auto &section : datFile.sections) {
-            if (section.fourcc == PcobFourcc) {
-                joined += section.rawBytes;
+    std::optional<AnlzFile> datFile;
+    std::string datBefore;
+    if (std::filesystem::exists(pathFromUtf8(datPath))) {
+        datFile = AnlzFile::readRaw(datPath);
+        datBefore = datFile->toBytes();
+        auto legacySectionBytes = [&datFile]() {
+            std::string joined;
+            for (const auto &section : datFile->sections) {
+                if (section.fourcc == PcobFourcc) {
+                    joined += section.rawBytes;
+                }
             }
+            return joined;
+        };
+        const std::string before = legacySectionBytes();
+        writeLegacyCueList(*datFile, CueListTypeHot,
+                            carriedOver(legacyOf(true, 1, 3), existingLegacyCues(*datFile, CueListTypeHot)), datPath);
+        writeLegacyCueList(*datFile, CueListTypeMemory,
+                            carriedOver(legacyOf(false, 0, 0), existingLegacyCues(*datFile, CueListTypeMemory)),
+                            datPath);
+        // Only when something actually moved. Most saves change hot cues
+        // in slots this file does not hold, and rewriting it anyway would
+        // cost a durable write per track and put every .DAT on the stick
+        // into the next incremental backup for nothing.
+        if (legacySectionBytes() == before) {
+            datFile.reset();
         }
-        return joined;
-    };
-    const std::string before = legacySectionBytes();
-    writeLegacyCueList(datFile, CueListTypeHot,
-                        carriedOver(legacyOf(true, 1, 3), existingLegacyCues(datFile, CueListTypeHot)));
-    writeLegacyCueList(datFile, CueListTypeMemory,
-                        carriedOver(legacyOf(false, 0, 0), existingLegacyCues(datFile, CueListTypeMemory)));
-    // Only when something actually moved. Most saves change hot cues in
-    // slots this file does not hold, and rewriting it anyway would cost
-    // a durable write per track and put every .DAT on the stick into the
-    // next incremental backup for nothing.
-    if (legacySectionBytes() != before) {
-        datFile.writeRaw(datPath);
     }
+
+    // Then each file is written and read back. The read-back is the
+    // discipline the OneLibrary writer keeps with its m_verifyDb: what
+    // is on disk now must be byte for byte what was meant, and every
+    // legacy list in it must pass the codec's strict check. A file that
+    // fails is put back as it was read, and so is the .EXT when it is
+    // the .DAT that failed, so the two never disagree; then the track
+    // fails with the file named. A write that fails outright is not
+    // restored: writeRaw() leaves the old file in place when it throws,
+    // and when its staleness check is what threw, the file on disk is
+    // someone else's and not ours to put back. The .EXT already written
+    // is ours, though, and goes back when the .DAT write throws.
+    //
+    // What this cannot see: the read comes through the page cache, so it
+    // proves the bytes the kernel holds, not the bytes the medium does.
+    const std::string extAfter = file.toBytes();
+    file.writeRaw(extPath);
+    if (auto problem = readBackProblem(extPath, extAfter)) {
+        throw std::runtime_error(restoreAfterFailedReadBack({{extPath, extBefore}}, extPath, *problem));
+    }
+    if (datFile) {
+        const std::string datAfter = datFile->toBytes();
+        try {
+            datFile->writeRaw(datPath);
+        } catch (const std::exception &e) {
+            // The .DAT is untouched (or someone else's); the .EXT is ours,
+            // and put back so the two lists do not disagree.
+            const bool restored = infrastructure::writeFileDurablyAtomic(extPath, extBefore);
+            throw std::runtime_error(std::string(e.what()) + "; " + extPath
+                                     + (restored ? " was put back as it was"
+                                                 : " could NOT be put back and needs restoring from the backup"));
+        }
+        if (auto problem = readBackProblem(datPath, datAfter)) {
+            throw std::runtime_error(
+                restoreAfterFailedReadBack({{datPath, datBefore}, {extPath, extBefore}}, datPath, *problem));
+        }
+    }
+}
+
+void RekordboxCueWriter::setAfterWriteForTesting(std::function<void(const std::string &path)> hook)
+{
+    afterWriteHook() = std::move(hook);
 }
 
 }  // namespace seabass::infrastructure::rekordbox

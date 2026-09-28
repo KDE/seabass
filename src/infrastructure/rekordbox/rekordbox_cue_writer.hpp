@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -52,7 +53,16 @@ public:
     // single-shot callers (the command line, the waveform reader) want.
     RekordboxCueWriter(std::string pioneerRoot, const AnlzPathIndex *pathIndex);
 
+    // Writes the .EXT and, when its lists change, the .DAT, reading each
+    // back afterwards. A file that does not read back as written, or
+    // holds a legacy list outside the surveyed shape, is put back as it
+    // was (with the .EXT too, when the .DAT failed) and the call throws
+    // naming it.
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
+
+    // Runs after each file is written, before it is read back, so a test
+    // can damage a file there. Empty to turn it off.
+    static void setAfterWriteForTesting(std::function<void(const std::string &path)> hook);
 
 private:
     std::optional<std::string> analyzePathFor(uint32_t trackId) const;
