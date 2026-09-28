@@ -190,6 +190,20 @@ TestCase {
         StackView { width: 900; height: 800 }
     }
     Component { id: homeComponent; Item {} }
+    Component { id: spyComponent; SignalSpy {} }
+
+    // The header keeps the home's App buttons, with Support itself off.
+    function test_theHeaderCarriesTheAppButtons() {
+        const page = createTemporaryObject(pageComponent, testCase, {width: 900, height: 700});
+        waitForRendering(page);
+        const buttons = findChild(page, "appHeaderButtons");
+        verify(buttons !== null, "the header has the app buttons");
+        compare(buttons.current, "support");
+        compare(findChild(page, "donateButton").enabled, false);
+        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "aboutRequested"});
+        mouseClick(findChild(page, "aboutButton"));
+        compare(spy.count, 1);
+    }
 
     function test_escapeGoesBack() {
         const stack = createTemporaryObject(stackComponent, testCase);

@@ -67,6 +67,20 @@ TestCase {
         compare(findChild(page, "aboutVersionBlock").visible, false);
     }
 
+    // The header keeps the home's About, Preferences and Support buttons,
+    // with About itself off: one can go straight to the other two.
+    function test_theHeaderCarriesTheAppButtons() {
+        const page = make(700, 900);
+        waitForRendering(page);
+        const buttons = findChild(page, "appHeaderButtons");
+        verify(buttons !== null, "the header has the app buttons");
+        compare(buttons.current, "about");
+        compare(findChild(page, "aboutButton").enabled, false);
+        const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "preferencesRequested"});
+        mouseClick(findChild(page, "preferencesButton"));
+        compare(spy.count, 1);
+    }
+
     function test_links_are_present() {
         var page = make(700, 620);
         waitForRendering(page);

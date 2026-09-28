@@ -762,6 +762,10 @@ ApplicationWindow {
             updateChecker: updateCtrl
             appSettingsController: appSettingsCtrl
             onAnonymizeLibraryRequested: stackView.push(anonymizeLibraryPageComponent)
+            // The header's buttons: the page in place of this one, so
+            // Back still leads home.
+            onAboutRequested: stackView.replace(aboutPageComponent)
+            onDonationRequested: stackView.replace(donationPageComponent)
         }
     }
 
@@ -931,11 +935,15 @@ ApplicationWindow {
         AboutPage {
             updateChecker: updateCtrl
             onDonationRequested: stackView.push(donationPageComponent)
+            onPreferencesRequested: stackView.replace(appSettingsPageComponent)
         }
     }
 
     Component {
         id: donationPageComponent
-        DonationPage {}
+        DonationPage {
+            onAboutRequested: stackView.replace(aboutPageComponent)
+            onPreferencesRequested: stackView.replace(appSettingsPageComponent)
+        }
     }
 }

@@ -20,6 +20,7 @@ Page {
     id: root
 
     signal donationRequested()
+    signal preferencesRequested()
     // The running build's version, channel and commit (UpdateChecker; a
     // fake in tests). Optional so the page still opens without one.
     property var updateChecker: null
@@ -70,6 +71,12 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
             }
             Item { Layout.fillWidth: true }
+            AppHeaderButtons {
+                objectName: "appHeaderButtons"
+                current: "about"
+                onPreferencesRequested: root.preferencesRequested()
+                onSupportRequested: root.donationRequested()
+            }
         }
     }
 
