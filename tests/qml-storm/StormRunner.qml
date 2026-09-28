@@ -959,9 +959,28 @@ Item {
         // From here the parent's bound is the watch: closing may wait for a save.
         stormFixture.disarm();
         stormFixture.log("STORM QUIT LEG WALKED seed " + runner.seed + " to step " + runner.step);
+        const started = Date.now();
+        let answered = false;
+        let pulled = false;
         const tryClose = () => {
             if (!runner.window) {
                 return;
+            }
+            // A save keeps the window open, and a save can be waiting on a
+            // stick that does not answer. The person waits, then the stick
+            // answers after all, or they pull it: the save ends either way.
+            if (!answered && Date.now() - started > 10000) {
+                answered = true;
+                stormFixture.log("storm: the window is still open 10 s after closing it; every held read answers");
+                stormFixture.setWeather(0, 0, 0, 0, 0);
+                stormFixture.releaseAll();
+            }
+            if (!pulled && Date.now() - started > 20000) {
+                pulled = true;
+                stormFixture.log("storm: the window is still open 20 s after closing it; every stick is pulled");
+                for (const i of runner.pluggedSticks()) {
+                    stormFixture.pull(i);
+                }
             }
             const popups = runner.answerablePopups();
             for (const popup of popups) {

@@ -20,6 +20,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <deque>
 #include <filesystem>
@@ -126,7 +127,12 @@ public:
         seabass::gui::LibraryCatalogCache::setInstanceForTesting(nullptr);
         if (m_quitLeg) {
             // The end of the process decides what happens to a read still
-            // held: nothing here may wait for it, or free what it uses.
+            // held: nothing here may wait for it, or free what it uses. The
+            // scratch tree is removed at exit, when there is one, and needs
+            // the sticks' directory writable for that.
+            if (!m_base.empty()) {
+                mediaWritable(m_base / "media", true);
+            }
             return;
         }
         releaseAll();
@@ -147,8 +153,18 @@ public:
         releaseAll();
         // What the last seed let go of has to be over before its sticks go.
         QThreadPool::globalInstance()->waitForDone();
-        seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
+        const bool nothingRuns = seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
         removeSticks();
+        // The last seed's cache holds three sticks' catalogs; a hunt of a
+        // hundred seeds in one process kept every one of them. Freed only
+        // when no read is running, since one let go of may still be in it.
+        seabass::gui::LibraryCatalogCache::setInstanceForTesting(nullptr);
+        if (nothingRuns) {
+            for (seabass::gui::LibraryCatalogCache *cache : m_caches) {
+                delete cache;
+            }
+            m_caches.clear();
+        }
         auto world = std::make_shared<World>();
         world->seed = static_cast<std::uint64_t>(seed);
         const fs::path base = seabass::testing::scratchRoot()
@@ -221,9 +237,10 @@ public:
                 }
             }
         };
-        // Never freed: a worker let go of may still be in it.
+        // Freed by a later prepare() once nothing reads, never before.
         auto *cache = new seabass::gui::LibraryCatalogCache(stage,
                                                             seabass::gui::LibraryCatalogCache::realMtimeForTesting());
+        m_caches.push_back(cache);
         seabass::gui::LibraryCatalogCache::setInstanceForTesting(cache);
         return {};
     }
@@ -718,6 +735,7 @@ private:
                 std::fprintf(stderr, "STORM FROZEN seed %d at step %d, the last steps:\n    %s\n", m_beatSeed.load(),
                              m_beatStep.load(), qPrintable(steps));
                 std::fflush(stderr);
+                dumpStacks();
                 releaseAllFromAnyThread();
             } else if (now - reportedAt > freezeAfter) {
                 std::fprintf(stderr, "STORM FAILED seed %d, step %d: the window is still frozen with every read "
@@ -730,6 +748,25 @@ private:
                 std::_Exit(3);
             }
         }
+    }
+
+    // Where every thread of this process is while the window is frozen,
+    // through gdb when there is one (and ptrace lets it attach), into a
+    // file beside SEABASS_STORM_FAILURES, or the scratch tree.
+    void dumpStacks()
+    {
+#if !defined(_WIN32)
+        const QString failures = qEnvironmentVariable("SEABASS_STORM_FAILURES");
+        const std::string dir = failures.isEmpty() ? seabass::pathToUtf8(seabass::testing::scratchRoot())
+                                                   : seabass::pathToUtf8(std::filesystem::path(failures.toStdString()).parent_path());
+        const std::string file = dir + "/frozen-seed" + std::to_string(m_beatSeed.load()) + "-step"
+            + std::to_string(m_beatStep.load()) + "-pid" + std::to_string(QCoreApplication::applicationPid()) + ".stacks";
+        const std::string command = "gdb -p " + std::to_string(QCoreApplication::applicationPid())
+            + " -batch -ex 'thread apply all bt 30' > '" + file + "' 2>&1";
+        if (std::system(command.c_str()) == 0) {
+            std::fprintf(stderr, "STORM FROZEN stacks: %s\n", file.c_str());
+        }
+#endif
     }
 
     static int envMs(const char *name, int fallback)
@@ -976,6 +1013,7 @@ private:
     int m_prepares = 0;
     bool m_quitLeg = false;
     QStringList m_writtenWhileOut;
+    std::vector<seabass::gui::LibraryCatalogCache *> m_caches;
     std::mutex m_worldsMutex;
     std::thread m_watchdog;
     std::atomic<bool> m_stopWatch{false};
