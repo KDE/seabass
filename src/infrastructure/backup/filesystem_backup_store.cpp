@@ -148,10 +148,22 @@ Manifest readManifest(const fs::path &dir)
         manifest.readable = false;
         return manifest;
     }
+    // Every line writeManifest() writes is "key<TAB>value<NEWLINE>". A
+    // last line without its newline is a manifest cut short, and its
+    // value a prefix of the real one: an entry whose recorded path is
+    // "PIONEER/rekordbox/export" restored the file under that name and
+    // reported success, with export.pdb left as it was. A line without a
+    // tab is not something this build wrote either. Both make the
+    // manifest unreadable rather than read around.
+    bool damaged = false;
     std::string line;
     while (std::getline(in, line)) {
+        if (in.eof()) {
+            damaged = true;  // no newline after this line
+        }
         size_t tab = line.find('\t');
         if (tab == std::string::npos) {
+            damaged = true;
             continue;
         }
         std::string key = line.substr(0, tab);
@@ -164,7 +176,7 @@ Manifest readManifest(const fs::path &dir)
             manifest.entries.emplace_back(std::move(key), std::move(value));
         }
     }
-    manifest.readable = !in.bad() && (!in.fail() || in.eof());
+    manifest.readable = !damaged && !in.bad() && (!in.fail() || in.eof());
     return manifest;
 }
 
@@ -512,6 +524,11 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     if (manifest.version != ManifestFormatVersion) {
         throw std::runtime_error("backup " + id + " is not a record this build wrote");
     }
+    if (!manifest.readable) {
+        // Rewritten whole below from what was parsed, so appending would
+        // make the damage permanent under a manifest that reads as whole.
+        throw std::runtime_error("the manifest of backup " + id + " is damaged, so nothing is added to it");
+    }
 
     // An append that fails part-way (the stick fills up on the second
     // file of a label) leaves the new entry's bytes after the old
@@ -524,6 +541,14 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     std::error_code sizeEc;
     std::uintmax_t archiveBefore = fs::file_size(archivePath, sizeEc);
     if (sizeEc == std::errc::no_such_file_or_directory) {
+        // backup() always leaves an archive, even for a record of no
+        // files, so a manifest naming entries without one is a record
+        // that lost its archive. Starting a fresh one here would hold
+        // only the new entries under a manifest naming the old ones too:
+        // a record that reads as restorable and is not.
+        if (!manifest.entries.empty()) {
+            throw std::runtime_error("the archive of backup " + id + " is missing, so nothing is added to it");
+        }
         archiveBefore = 0;
     } else if (sizeEc) {
         // Refused before anything is written: a length taken from a
@@ -816,7 +841,7 @@ bool FilesystemBackupStore::isRestorable(const std::string &id) const
         return false;
     }
     const Manifest manifest = readManifest(dir);
-    return !manifest.entries.empty() && manifest.version == ManifestFormatVersion
+    return manifest.readable && !manifest.entries.empty() && manifest.version == ManifestFormatVersion
            && fs::is_regular_file(dir / ArchiveFileName, ec);
 }
 
@@ -839,6 +864,12 @@ bool FilesystemBackupStore::restore(const std::string &id)
         // Not a shape this build wrote: refuse rather than misinterpret
         // it. This is the only reason the version line still exists.
         m_lastRestoreError = "backup " + id + " is not a record this build wrote";
+        return false;
+    }
+    if (!manifest.readable) {
+        // Restoring from the lines that did parse would put back fewer
+        // files than were backed up, or put one back under a cut name.
+        m_lastRestoreError = "the manifest of backup " + id + " is damaged";
         return false;
     }
 
