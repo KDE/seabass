@@ -2262,6 +2262,17 @@ if(TARGET seabass_edit)
     target_link_libraries(backup_advisor_controller_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent Qt6::Qml)
     add_test(NAME backup_advisor_controller_test COMMAND backup_advisor_controller_test)
 
+    # The catalog cache's prefetch worker at the end of the process: a
+    # pass running then is waited for like any read, and no other starts.
+    add_executable(prefetch_at_exit_test
+        src/gui/library_catalog_cache.cpp
+        src/gui/stick_events.cpp
+        tests/prefetch_at_exit_test.cpp
+    )
+    target_include_directories(prefetch_at_exit_test PRIVATE src)
+    target_link_libraries(prefetch_at_exit_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
+    add_test(NAME prefetch_at_exit_test COMMAND prefetch_at_exit_test)
+
     # docs/async-requests.md's seven rules, against gui::AsyncRequest.
     add_executable(async_request_test
         src/gui/stick_events.cpp

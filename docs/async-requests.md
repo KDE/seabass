@@ -187,6 +187,16 @@ a moment later, and a static that aborts if it is destroyed while a
 worker runs. The child has to exit cleanly, and the write has to have
 given its lock back first.
 
+The catalog cache's prefetch worker is one thread the cache starts
+itself, not an `AsyncWorkers` thread, and it reads the next stages of
+every stick the backup advisor looks at. Each of its passes counts as a
+read all the same (`AsyncWorkers::enterRead()`/`leaveRead()`): the end
+of the process waits for a pass running then, like any other read, and
+once the process is ending no pass starts. Before this the storm quit
+the app with a Full pass running, nothing waited for it, and it died on
+a pure virtual call to a reporter the static destructors had already
+taken (`prefetch_at_exit_test`).
+
 A worker has let go of what it captured before it counts as done, so
 "no worker running" really means none: no reporter or reader handle is
 still being destroyed on a worker thread while the statics go.
