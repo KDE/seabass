@@ -8,8 +8,10 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 
+#include "infrastructure/compression/zlib_compressor.hpp"
 #include "infrastructure/local/local_cue_store.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 
@@ -22,6 +24,17 @@ namespace fs = std::filesystem;
 
 namespace
 {
+
+// Open file descriptors, where the platform lists them (-1 elsewhere):
+// how a connection left open by a constructor that threw is seen.
+long openDescriptors()
+{
+#if defined(__linux__)
+    return static_cast<long>(std::distance(fs::directory_iterator("/proc/self/fd"), fs::directory_iterator()));
+#else
+    return -1;
+#endif
+}
 
 Track makeTrack(std::string id, std::string filename, std::string title, std::string artist, double duration,
                  std::vector<CuePoint> cues)
@@ -202,6 +215,246 @@ int main()
         assert(p == seabass::infrastructure::paths::localMetadataDir() / "cues.db");
         assert(p.is_absolute());
         std::cout << "case 9 (defaultPath() resolves to a real, non-empty path) OK\n";
+    }
+
+    // Every character the snapshot format escapes, all at once, in every
+    // free-text field it writes: tab and newline (the format's own field
+    // and line separators), carriage return, and backslash (its escape
+    // character) -- including a literal backslash followed by a letter
+    // the escape scheme uses, which must come back as those two
+    // characters and not as the control character, and one at the very
+    // end of a field. Plus a loop, which only format 2 carries.
+    {
+        const std::string hostile = "a\tb\nc\rd\\e \\t not a tab, \\n not a newline, ends in\\";
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
+        CuePoint loop{CuePoint::Kind::Memory, 0, 32000.0, hostile, hostile};
+        loop.isLoop = true;
+        loop.loopEndMs = 36000.0;
+        Track track = makeTrack(hostile, hostile + ".mp3", hostile, hostile, 321.5, {loop});
+        const auto id = store.createSnapshot({track}, "engine", "WHALESHARK2");
+
+        const auto restored = store.readSnapshot(id);
+        assert(restored.size() == 1);
+        assert(restored[0].sourceId == hostile);
+        assert(restored[0].filename == hostile + ".mp3");
+        assert(restored[0].title == hostile);
+        assert(restored[0].artist == hostile);
+        assert(restored[0].durationSeconds == 321.5);
+        assert(restored[0].cues.size() == 1);
+        assert(restored[0].cues[0].kind == CuePoint::Kind::Memory);
+        assert(restored[0].cues[0].color == hostile);
+        assert(restored[0].cues[0].comment == hostile);
+        assert(restored[0].cues[0].isLoop);
+        assert(restored[0].cues[0].loopEndMs == 36000.0);
+        std::cout << "case 10 (every escaped character, in every text field, round-trips) OK\n";
+    }
+
+    // A snapshot written in format 1, before loops existed, still reads
+    // back through format 1's own parser: planted here as the bytes that
+    // format wrote, escapes included, around lines the parser must pass
+    // over (a blank one, a cue before any track, short lines, an unknown
+    // record type).
+    {
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
+        const auto id = store.createSnapshot(
+            {makeTrack("placeholder", "p.mp3", "P", "P", 1.0, {hotCue})}, "rekordbox", "OLD STICK");
+        const std::string v1 =
+            "C\thot\t1\t10\t\t\n"                               // a cue with no track yet: dropped
+            "\n"                                                 // blank
+            "T\tv1-id\tback\\\\slash\\ttab.mp3\tOld\\nTitle\tOld Artist\t180.25\n"
+            "C\thot\t2\t4500\t#FF8800\tline\\none\\rtwo\n"
+            "C\tmemory\t0\t9000.5\t\tplain\n"
+            "C\thot\t3\n"                                         // too short: dropped
+            "T\tshort\n"                                          // too short: dropped
+            "X\tsomething\telse\tentirely\tthat\tno parser\tknows\n";
+        const std::string compressed = seabass::infrastructure::compression::compress(v1);
+
+        sqlite3 *rawDb = nullptr;
+        const std::string dbPathUtf8 = seabass::pathToUtf8(dbPath);
+        const int openRc = sqlite3_open(dbPathUtf8.c_str(), &rawDb);
+        assert(openRc == SQLITE_OK);
+        static_cast<void>(openRc);
+        sqlite3_stmt *stmt = nullptr;
+        sqlite3_prepare_v2(rawDb,
+                           "UPDATE backup_sessions SET schema_version = 1, data = ?, uncompressed_size_bytes = ? "
+                           "WHERE id = ?",
+                           -1, &stmt, nullptr);
+        sqlite3_bind_blob(stmt, 1, compressed.data(), static_cast<int>(compressed.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(v1.size()));
+        sqlite3_bind_int64(stmt, 3, id);
+        const int stepRc = sqlite3_step(stmt);
+        assert(stepRc == SQLITE_DONE);
+        static_cast<void>(stepRc);
+        sqlite3_finalize(stmt);
+        sqlite3_close(rawDb);
+
+        const auto restored = store.readSnapshot(id);
+        assert(restored.size() == 1);
+        assert(restored[0].sourceId == "v1-id");
+        assert(restored[0].filename == "back\\slash\ttab.mp3");
+        assert(restored[0].title == "Old\nTitle");
+        assert(restored[0].durationSeconds == 180.25);
+        assert(restored[0].cues.size() == 2);
+        assert(restored[0].cues[0].kind == CuePoint::Kind::Hot);
+        assert(restored[0].cues[0].hotCueNumber == 2);
+        assert(restored[0].cues[0].positionMs == 4500.0);
+        assert(restored[0].cues[0].color == "#FF8800");
+        assert(restored[0].cues[0].comment == "line\none\rtwo");
+        assert(!restored[0].cues[0].isLoop);
+        assert(restored[0].cues[1].kind == CuePoint::Kind::Memory);
+        assert(restored[0].cues[1].positionMs == 9000.5);
+        std::cout << "case 11 (a format-1 snapshot reads back through format 1's parser) OK\n";
+    }
+
+    // The refusals say what they refuse: an unknown format version names
+    // the version, and a session that is not there names its id.
+    {
+        LocalCueStore store(seabass::pathToUtf8(dbPath));
+        const auto summaries = store.listSnapshots();
+        std::int64_t future = 0;
+        for (const auto &summary : summaries) {
+            if (summary.schemaVersion == 999) {
+                future = summary.id;
+            }
+        }
+        assert(future != 0);  // case 8's
+        std::string message;
+        try {
+            store.readSnapshot(future);
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message.find("format version 999") != std::string::npos);
+        assert(message.find("doesn't know how to read") != std::string::npos);
+
+        message.clear();
+        try {
+            store.readSnapshot(987654);
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message == "local cue store: no such backup session 987654");
+        std::cout << "case 12 (an unknown format and a missing session are refused by name) OK\n";
+    }
+
+    // A store from before snapshots recorded their format, and before
+    // cues had loops: opening it adds both columns, and the snapshot it
+    // already held reads as format 1, which is what it was written in.
+    {
+        const fs::path oldPath = dbPath.parent_path() / "seabass_local_cue_store_test_old.db";
+        fs::remove(oldPath);
+        const std::string v1 = "T\told\told.mp3\tOld\tArtist\t200\nC\thot\t1\t1000\t#FF0000\tdrop\n";
+        const std::string compressed = seabass::infrastructure::compression::compress(v1);
+        {
+            sqlite3 *rawDb = nullptr;
+            const std::string oldPathUtf8 = seabass::pathToUtf8(oldPath);
+            const int openRc = sqlite3_open(oldPathUtf8.c_str(), &rawDb);
+            assert(openRc == SQLITE_OK);
+            static_cast<void>(openRc);
+            const int createRc = sqlite3_exec(rawDb, R"sql(
+                CREATE TABLE tracks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, filename_normalized TEXT NOT NULL,
+                    filename TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', artist TEXT NOT NULL DEFAULT '',
+                    title_artist_key TEXT, duration_seconds REAL NOT NULL DEFAULT 0,
+                    source_format TEXT NOT NULL, source_label TEXT NOT NULL, backed_up_at TEXT NOT NULL);
+                CREATE TABLE cues (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL, hot_cue_number INTEGER NOT NULL DEFAULT 0, position_ms REAL NOT NULL,
+                    color TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '');
+                CREATE TABLE backup_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, stick_label TEXT NOT NULL,
+                    source_format TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                    track_count INTEGER NOT NULL, cue_count INTEGER NOT NULL,
+                    uncompressed_size_bytes INTEGER NOT NULL, compressed_size_bytes INTEGER NOT NULL,
+                    data BLOB NOT NULL);
+            )sql", nullptr, nullptr, nullptr);
+            assert(createRc == SQLITE_OK);
+            static_cast<void>(createRc);
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(rawDb,
+                               "INSERT INTO backup_sessions (created_at, stick_label, source_format, track_count, "
+                               "cue_count, uncompressed_size_bytes, compressed_size_bytes, data) "
+                               "VALUES ('2025-01-01T00:00:00Z', 'OLD', 'engine', 1, 1, ?, ?, ?)",
+                               -1, &stmt, nullptr);
+            sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(v1.size()));
+            sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(compressed.size()));
+            sqlite3_bind_blob(stmt, 3, compressed.data(), static_cast<int>(compressed.size()), SQLITE_TRANSIENT);
+            const int stepRc = sqlite3_step(stmt);
+            assert(stepRc == SQLITE_DONE);
+            static_cast<void>(stepRc);
+            sqlite3_finalize(stmt);
+            sqlite3_close(rawDb);
+        }
+
+        LocalCueStore store(seabass::pathToUtf8(oldPath));
+        const auto summaries = store.listSnapshots();
+        assert(summaries.size() == 1);
+        assert(summaries[0].schemaVersion == 1);
+        const auto restored = store.readSnapshot(summaries[0].id);
+        assert(restored.size() == 1 && restored[0].title == "Old" && restored[0].cues.size() == 1);
+        assert(restored[0].cues[0].comment == "drop");
+
+        // The loop columns arrived too: a loop upserted now reads back.
+        CuePoint loop{CuePoint::Kind::Memory, 0, 2000.0, "", ""};
+        loop.isLoop = true;
+        loop.loopEndMs = 4000.0;
+        store.upsert({makeTrack("n", "new.mp3", "New", "Artist", 100.0, {loop})}, "engine", "OLD");
+        const auto all = store.readAll();
+        assert(all.size() == 1 && all[0].cues.size() == 1);
+        assert(all[0].cues[0].isLoop && all[0].cues[0].loopEndMs == 4000.0);
+        fs::remove(oldPath);
+        std::cout << "case 13 (a store from before format versions and loops is brought up to date) OK\n";
+    }
+
+    // A database this code cannot bring up to date is refused, loudly,
+    // with SQLite's own reason, rather than half-opened: here the table a
+    // column has to be added to is a view.
+    {
+        const fs::path oddPath = dbPath.parent_path() / "seabass_local_cue_store_test_odd.db";
+        fs::remove(oddPath);
+        {
+            sqlite3 *rawDb = nullptr;
+            const std::string oddPathUtf8 = seabass::pathToUtf8(oddPath);
+            const int openRc = sqlite3_open(oddPathUtf8.c_str(), &rawDb);
+            assert(openRc == SQLITE_OK);
+            static_cast<void>(openRc);
+            const int createRc =
+                sqlite3_exec(rawDb, "CREATE VIEW backup_sessions AS SELECT 1 AS id;", nullptr, nullptr, nullptr);
+            assert(createRc == SQLITE_OK);
+            static_cast<void>(createRc);
+            sqlite3_close(rawDb);
+        }
+        std::string message;
+        const long fdsBefore = openDescriptors();
+        try {
+            LocalCueStore store(seabass::pathToUtf8(oddPath));
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message.rfind("local cue store: ", 0) == 0);
+        assert(message.find("view") != std::string::npos);
+        // No destructor runs for a constructor that threw, so the
+        // connection it opened has to be closed on the way out.
+        assert(openDescriptors() == fdsBefore);
+        fs::remove(oddPath);
+        std::cout << "case 14 (a schema that cannot be migrated is refused with the reason) OK\n";
+    }
+
+    // A path that cannot be a database at all -- a directory -- is
+    // refused by the constructor, not discovered by the first query.
+    {
+        const fs::path dirPath = dbPath.parent_path() / "seabass_local_cue_store_test_dir.db";
+        fs::create_directories(dirPath);
+        std::string message;
+        try {
+            LocalCueStore store(seabass::pathToUtf8(dirPath));
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message.rfind("local cue store: ", 0) == 0);
+        fs::remove_all(dirPath);
+        std::cout << "case 15 (a directory in the database's place is refused) OK\n";
     }
 
     fs::remove(dbPath);
