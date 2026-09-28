@@ -2326,6 +2326,14 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME save_backup_discard_under_lock_test COMMAND save_backup_discard_under_lock_test)
 
+    # SaveContext's records on a scratch stick: one archive per label per
+    # save, what a failed or discarded backup leaves, space release, and
+    # the finish hooks.
+    add_executable(save_context_archive_test tests/save_context_archive_test.cpp)
+    target_include_directories(save_context_archive_test PRIVATE src)
+    target_link_libraries(save_context_archive_test PRIVATE seabass_edit Qt6::Core)
+    add_test(NAME save_context_archive_test COMMAND save_context_archive_test)
+
     add_executable(junk_cue_mirror_failure_test tests/junk_cue_mirror_failure_test.cpp)
     target_include_directories(junk_cue_mirror_failure_test PRIVATE src)
     target_compile_definitions(junk_cue_mirror_failure_test PRIVATE
