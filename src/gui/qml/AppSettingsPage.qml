@@ -42,6 +42,8 @@ Page {
     }
 
     signal anonymizeLibraryRequested()
+    signal aboutRequested()
+    signal donationRequested()
 
     // Escape goes back, as the breadcrumb does. Every setting here takes
     // effect the moment it is changed, so Escape -- "back out of this" --
@@ -85,17 +87,30 @@ Page {
         }
         return changed;
     }
+    function runPendingLeave() {
+        const leave = root.pendingLeave || (() => root.StackView.view.pop());
+        root.pendingLeave = null;
+        leave();
+    }
     function resetSettings() {
         for (const setting of changedSettings()) {
             setting.object[setting.key] = setting.was;
         }
     }
+    // What happens once the changed-settings question is answered: a pop
+    // for Escape and the breadcrumb, a move to another page for the
+    // header's buttons.
+    property var pendingLeave: null
     function leaveOnEscape() {
+        root.leaveTo(() => root.StackView.view.pop());
+    }
+    function leaveTo(leave) {
         const count = changedSettings().length;
         if (count === 0) {
-            root.StackView.view.pop();
+            leave();
             return;
         }
+        root.pendingLeave = leave;
         changedOnLeaveDialog.message = count === 1
             ? "You changed a setting on this page. Keep it, or put it back the way it was?"
             : "You changed " + count + " settings on this page. Keep them, or put them back the way they were?";
@@ -117,10 +132,10 @@ Page {
         title: "Changed settings"
         saveText: "Keep Changes"
         discardText: "Reset Settings"
-        onSaveRequested: root.StackView.view.pop()
+        onSaveRequested: root.runPendingLeave()
         onDiscardRequested: {
             root.resetSettings();
-            root.StackView.view.pop();
+            root.runPendingLeave();
         }
     }
 
@@ -181,6 +196,12 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
             }
             Item { Layout.fillWidth: true }
+            AppHeaderButtons {
+                objectName: "appHeaderButtons"
+                current: "preferences"
+                onAboutRequested: root.leaveTo(() => root.aboutRequested())
+                onSupportRequested: root.leaveTo(() => root.donationRequested())
+            }
         }
     }
 

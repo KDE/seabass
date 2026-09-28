@@ -16,6 +16,9 @@ import SeabassGui
 Page {
     id: root
 
+    signal aboutRequested()
+    signal preferencesRequested()
+
     // Escape goes back, as the breadcrumb does, while this page is the
     // one showing.
     Shortcut {
@@ -47,6 +50,12 @@ Page {
                 onHomeRequested: root.StackView.view.pop(null)
             }
             Item { Layout.fillWidth: true }
+            AppHeaderButtons {
+                objectName: "appHeaderButtons"
+                current: "support"
+                onAboutRequested: root.aboutRequested()
+                onPreferencesRequested: root.preferencesRequested()
+            }
         }
     }
 

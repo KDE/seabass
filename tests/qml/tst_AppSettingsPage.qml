@@ -395,6 +395,7 @@ TestCase {
         StackView { width: 900; height: 700 }
     }
     Component { id: homeComponent; Item {} }
+    Component { id: spyComponent; SignalSpy {} }
 
     function pushed() {
         const stack = createTemporaryObject(stackComponent, testCase);
@@ -423,6 +424,26 @@ TestCase {
         findChild(dialog, "discardButton").clicked();
         tryCompare(s.stack, "depth", 1);
         compare(settings.keyNotation, was, "Reset puts it back the way the page found it");
+    }
+
+    // The header's About and Support buttons go through the same
+    // question as Escape when a setting changed: the move happens once it
+    // is answered, and Preferences' own button is off.
+    function test_theHeaderButtonsAskBeforeLeavingWithAChange() {
+        const was = settings.keyNotation;
+        const s = pushed();
+        compare(findChild(s.page, "appHeaderButtons").current, "preferences");
+        compare(findChild(s.page, "preferencesButton").enabled, false);
+        const spy = createTemporaryObject(spyComponent, testCase, {target: s.page, signalName: "aboutRequested"});
+        settings.keyNotation = was === "camelot" ? "traditional" : "camelot";
+        mouseClick(findChild(s.page, "aboutButton"));
+        const dialog = findChild(s.page, "changedOnLeaveDialog");
+        tryCompare(dialog, "opened", true);
+        compare(spy.count, 0, "not left yet: the question is open");
+        findChild(dialog, "discardButton").clicked();
+        tryCompare(spy, "count", 1);
+        compare(settings.keyNotation, was, "Reset put it back before leaving");
+        compare(s.stack.depth, 2, "the page did not pop by itself: Main replaces it");
     }
 
     function test_escapeAfterAChangeKeepKeepsIt() {

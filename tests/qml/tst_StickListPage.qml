@@ -892,47 +892,38 @@ TestCase {
     // the header, where the folder button used to be, rather than as two
     // header buttons and a row of buttons under the list.
     function test_theHomeMenuOffersBackupsAndFolders() {
-        var page = makePage([], {});
-        var button = findChild(page, "homeMenuButton");
+        const page = makePage([], {});
+        const button = findChild(page, "homeMenuButton");
         verify(button !== null, "the menu button must be in the header");
         compare(button.visible, true);
         compare(findChild(page, "openBackupButton"), null, "the separate backup button is gone");
         compare(findChild(page, "openFolderButton"), null, "the separate folder button is gone");
         compare(findChild(page, "browseBackupsRow"), null, "the row under the list is gone");
 
-        var menu = findChild(page, "homeMenu");
+        const menu = findChild(page, "homeMenu");
         verify(menu !== null, "the button must carry the menu");
         mouseClick(button);
         tryCompare(menu, "opened", true);
-        var full = findChild(page, "browseFullBackupItem");
-        var manage = findChild(page, "manageBackupsItem");
-        var meta = findChild(page, "browseMetadataBackupsItem");
-        var folder = findChild(page, "openFolderItem");
-        verify(full !== null && manage !== null && meta !== null && folder !== null, "all four entries must be in the menu");
+        const full = findChild(page, "browseFullBackupItem");
+        const folder = findChild(page, "openFolderItem");
+        verify(full !== null && folder !== null, "both entries must be in the menu");
+        compare(menu.count, 2, "two entries: what the no-stick Backup group cannot offer");
+        // Manage Backups and Browse Metadata Backups are cards of the
+        // no-stick Backup group now, and were redundant here (Sebastian,
+        // 2026-09-28).
+        compare(findChild(page, "manageBackupsItem"), null);
+        compare(findChild(page, "browseMetadataBackupsItem"), null);
         compare(folder.text, "Open a Library From a Folder…");
         // Every entry at its full length: the menu is as wide as its
         // longest one, not the style's default width with the text elided.
-        var entries = [full, manage, meta, folder];
-        for (var i = 0; i < entries.length; ++i) {
-            verify(entries[i].implicitWidth <= entries[i].width,
-                   entries[i].text + " needs " + entries[i].implicitWidth + " px and got " + entries[i].width);
+        for (const entry of [full, folder]) {
+            verify(entry.implicitWidth <= entry.width,
+                   entry.text + " needs " + entry.implicitWidth + " px and got " + entry.width);
         }
         // And the button closes what it opened: a press on it no longer
         // closes the menu only for the click to open it again.
         mouseClick(button);
         tryCompare(menu, "visible", false);
-        // Off, not missing, while there is nothing to browse; and wired
-        // to the page's request when there is.
-        compare(meta.enabled, page.homeBackupsMetadataCount > 0);
-        var spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "metadataBackupRequested"});
-        meta.triggered();
-        compare(spy.count, 1);
-        // Manage Backups works with no stick at all: off while there is
-        // no full backup, otherwise straight to the page.
-        compare(manage.enabled, page.homeBackupsFullCount > 0);
-        var manageSpy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "manageBackupsRequested"});
-        manage.triggered();
-        compare(manageSpy.count, 1);
     }
 
     // Finds the first descendant with `objectName`, anywhere on the page.

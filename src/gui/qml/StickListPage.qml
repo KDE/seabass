@@ -577,27 +577,6 @@ Page {
                         onTriggered: openBackupDialog.open()
                     }
                     MenuItem {
-                        objectName: "manageBackupsItem"
-                        text: homeBackups.fullBackupCount > 0 ? "Manage Full Stick Backups…"
-                                                              : "Manage Full Stick Backups (none yet)"
-                        icon.source: Theme.iconUrl("deep-history")
-                        icon.color: enabled ? Theme.text : Theme.textMuted
-                        enabled: homeBackups.fullBackupCount > 0
-                        onTriggered: root.manageBackupsRequested()
-                    }
-                    MenuItem {
-                        objectName: "browseMetadataBackupsItem"
-                        // Off rather than missing while the store is empty:
-                        // the entry says the feature exists.
-                        text: homeBackups.metadataTrackCount > 0 ? "Browse Metadata Backups"
-                                                                 : "Browse Metadata Backups (none yet)"
-                        icon.source: Theme.iconUrl("view-list-details")
-                        icon.color: enabled ? Theme.text : Theme.textMuted
-                        enabled: homeBackups.metadataTrackCount > 0
-                        // No stick: the page opens on its browse half.
-                        onTriggered: root.metadataBackupRequested("", "", "", "")
-                    }
-                    MenuItem {
                         objectName: "openFolderItem"
                         text: "Open a Library From a Folder…"
                         icon.source: Theme.iconUrl("folder-open")
@@ -615,69 +594,15 @@ Page {
             //
             // text is set on each despite IconOnly: it never renders,
             // and it is what an assistive reader announces.
-            ToolButton {
-                objectName: "aboutButton"
-                icon.source: Theme.iconUrl("help-about")
-                icon.color: Theme.text
-                icon.width: root.headerIconSize
-                icon.height: root.headerIconSize
-                display: AbstractButton.IconOnly
-                text: "About Seabass"
-                ToolTip.visible: hovered
-                ToolTip.text: "About Seabass"
-                onClicked: root.aboutRequested()
-            }
-            ToolButton {
-                objectName: "preferencesButton"
-                icon.source: Theme.iconUrl("configure")
-                icon.color: Theme.text
-                icon.width: root.headerIconSize
-                icon.height: root.headerIconSize
-                display: AbstractButton.IconOnly
-                text: "Preferences"
-                ToolTip.visible: hovered
-                ToolTip.text: "Preferences"
-                onClicked: root.appSettingsRequested()
-            }
-            ToolButton {
-                id: donateButton
-                objectName: "donateButton"
-                // The only button in the header asking for something
-                // rather than offering something.
-                //
-                // A filled heart, drawn. Breeze's own "love" is an outline,
-                // and a red outline still reads as a grey button with a red
-                // edge. HeartIcon fills that icon's outer contour.
-                contentItem: HeartIcon {
-                    objectName: "donateHeart"
-                    iconSize: root.headerIconSize
-                    color: "#aa0000"
-                }
-                display: AbstractButton.IconOnly
-                text: "Support Seabass"
-                ToolTip.visible: hovered
-                ToolTip.text: "Support Seabass"
-                onClicked: root.donationRequested()
-
-                // A slight, infrequent heartbeat -- a soft "lub-dub"
-                // every six seconds or so, not a continuous throb -- so
-                // it reads as a subtle living detail rather than a
-                // distracting animated icon. The movement itself lives in
-                // Heartbeat.qml, shared with the page this button opens,
-                // whose heart beats the same way every three seconds.
-                Heartbeat {
-                    target: donateButton
-                    period: 6230
-                }
+            AppHeaderButtons {
+                objectName: "appHeaderButtons"
+                iconSize: root.headerIconSize
+                onAboutRequested: root.aboutRequested()
+                onPreferencesRequested: root.appSettingsRequested()
+                onSupportRequested: root.donationRequested()
             }
         }
 
-        // Word of a newer Seabass, under the title and above everything
-        // else on the page, because it is worth putting there and the
-        // rest of the time it takes no room at all. Louder, in the danger
-        // colours, when the build being used has been withdrawn. The
-        // check is off until somebody turns it on (gui/update_checker.hpp),
-        // so most people never see this.
         Rectangle {
             id: updateBanner
             objectName: "updateBanner"
