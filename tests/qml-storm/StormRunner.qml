@@ -745,11 +745,17 @@ Item {
         const started = Date.now();
         const poll = () => {
             if (!session.writing) {
+                const ended = session.lastSummary || {};
                 if (!wasPulled() && stormFixture.plugged(i)) {
                     const root = stormFixture.stickRoot(i);
+                    // A save that finished takes the note with it. One that
+                    // failed before it changed anything leaves an earlier
+                    // interrupted save's note where it was, on purpose: that
+                    // save is still the one to undo.
                     const notes = stormFixture.interruptedSave(root);
-                    if (notes.length > 0) {
-                        runner.fail("a save that ended with S" + i + " in left a note of a save in progress: " + notes);
+                    if (notes.length > 0 && !ended.error && !ended.cancelled) {
+                        runner.fail("a save that finished with S" + i + " in left a note of a save in progress: "
+                                    + notes);
                         return;
                     }
                     if (!session.dirty && stormFixture.lockHeld(root)) {
