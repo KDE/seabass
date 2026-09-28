@@ -432,6 +432,8 @@ Page {
                     id: sortCombo
                     objectName: "sortCombo"
                     Layout.preferredWidth: 140
+                    // As tall as the library picker above it.
+                    implicitHeight: Theme.compactControlHeight
                     textRole: "text"
                     valueRole: "value"
                     model: root.sortOptions

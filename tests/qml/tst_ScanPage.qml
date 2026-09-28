@@ -38,6 +38,18 @@ TestCase {
         return page;
     }
 
+    // The sort combo stands in the same page as the library picker, one
+    // row down, and is as tall as it.
+    function test_theSortComboIsAsTallAsTheLibraryPicker() {
+        const page = makePage();
+        const combo = findChild(page, "sortCombo");
+        const toggle = findChild(page, "librarySourceToggle");
+        verify(combo !== null && toggle !== null);
+        verify(toggle.height > 0);
+        compare(toggle.height, Theme.compactControlHeight);
+        compare(combo.height, toggle.height);
+    }
+
     // One left line: the search field and the list below it -- the
     // playlist column, which is the list's left edge -- start at the same
     // x. The list used to run to the window edge, 16 px left of the search.

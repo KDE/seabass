@@ -24,6 +24,9 @@ import SeabassGui
 // costs one label.
 ComboBox {
     id: root
+    objectName: "librarySourceToggle"
+    // Not the style's height: see Theme.compactControlHeight.
+    implicitHeight: Theme.compactControlHeight
     property string current: "rekordbox"
     property bool hasRekordbox: true
     property bool hasEngine: true
