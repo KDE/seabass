@@ -6,13 +6,17 @@
 
 #include "infrastructure/paths/utf8_path.hpp"
 
+#include <taglib/aifffile.h>
 #include <taglib/attachedpictureframe.h>
 #include <taglib/flacfile.h>
 #include <taglib/flacpicture.h>
 #include <taglib/id3v2tag.h>
 #include <taglib/mp4file.h>
 #include <taglib/mpegfile.h>
+#include <taglib/opusfile.h>
 #include <taglib/tfile.h>
+#include <taglib/vorbisfile.h>
+#include <taglib/wavfile.h>
 #include <taglib/tstring.h>
 #include <taglib/xiphcomment.h>
 
@@ -94,9 +98,28 @@ std::string readEmbeddedArtwork(const std::string &audioFile)
     // fs::path's c_str() is the wchar_t* its other constructor takes.
     const std::filesystem::path path = pathFromUtf8(audioFile);
 
-    if (endsWith(".mp3") || endsWith(".aiff") || endsWith(".aif") || endsWith(".wav")) {
+    if (endsWith(".mp3")) {
         TagLib::MPEG::File file(path.c_str(), false);
         if (file.isValid()) {
+            return fromId3(file.ID3v2Tag());
+        }
+        return {};
+    }
+    // AIFF and WAV keep their ID3v2 tag in a chunk of the file ("ID3 " /
+    // "id3 "), not at its start, so each needs its own container reader.
+    // Read through MPEG::File, as they were, an AIFF's cover was never
+    // found (embedded_artwork_test, case 13); a WAV's was, but by way of
+    // a reader for a different format.
+    if (endsWith(".aiff") || endsWith(".aif")) {
+        TagLib::RIFF::AIFF::File file(path.c_str(), false);
+        if (file.isValid() && file.hasID3v2Tag()) {
+            return fromId3(file.tag());
+        }
+        return {};
+    }
+    if (endsWith(".wav")) {
+        TagLib::RIFF::WAV::File file(path.c_str(), false);
+        if (file.isValid() && file.hasID3v2Tag()) {
             return fromId3(file.ID3v2Tag());
         }
         return {};
@@ -130,11 +153,20 @@ std::string readEmbeddedArtwork(const std::string &audioFile)
         }
         return {};
     }
-    if (endsWith(".ogg") || endsWith(".opus")) {
-        TagLib::Ogg::XiphComment comment;
-        TagLib::FLAC::File file(path.c_str(), false);
-        if (file.isValid() && file.hasXiphComment() && file.xiphComment() != nullptr) {
-            return fromPictures(file.xiphComment()->pictureList());
+    // Ogg Vorbis and Opus carry the cover as a METADATA_BLOCK_PICTURE
+    // comment. These were opened as FLAC::File, which looks for "fLaC"
+    // where an Ogg stream has "OggS", so no Ogg file ever gave a cover.
+    if (endsWith(".ogg")) {
+        TagLib::Ogg::Vorbis::File file(path.c_str(), false);
+        if (file.isValid() && file.tag() != nullptr) {
+            return fromPictures(file.tag()->pictureList());
+        }
+        return {};
+    }
+    if (endsWith(".opus")) {
+        TagLib::Ogg::Opus::File file(path.c_str(), false);
+        if (file.isValid() && file.tag() != nullptr) {
+            return fromPictures(file.tag()->pictureList());
         }
         return {};
     }
