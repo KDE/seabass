@@ -7,28 +7,32 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
 
-// Replaces the old "‹" ToolButton + separate PageTitle pair every
-// section page's header used to duplicate. Up to four segments:
-// "[home] › [stick] › [middle] › this page", where the house always
+// A section page's header: one round Back button, and beside it two
+// lines, the path as a small uppercase eyebrow and the page's own name
+// as the title under it.
+//
+//     (‹)  ⌂ › MY-STICK › HOUSEKEEPING
+//          Clean Up Duplicates
+//
+// It used to be one line, "[home] › [stick] › [middle] › this page",
+// with every crumb set at the title's size and only greyer, so the path
+// competed with the name of the page it led to. The path is context,
+// and is drawn as context now: a caption above the title. The Back
+// button does what the hub crumb does (one level up), or goes Home when
+// there is no hub to go to, and it is the one Tab stop of the bar. The
+// eyebrow's crumbs keep their clicks for the mouse: the house always
 // jumps back to the StackView's very first item in one click (pop(null),
-// not a single pop()) no matter how deep the current page sits. The
-// stick segment names the stick the page is about; the middle segment,
-// when present, is one level up -- the hub page for a page nested inside
-// one, or (on pages that predate the stick segment and pass the stick's
-// name as middleLabel) the stick itself for a page pushed directly from
-// Home.
-// Every clickable segment uses Theme.rowHover/rowPressed -- the same
-// tint tokens list rows already use -- rather than inventing its own
-// hover color, so this is also the fix for hover feedback being
-// inconsistent button-to-button across the app: one shared
-// background/contentItem means every page's back affordance now hovers
-// identically.
+// not a single pop()) no matter how deep the current page sits.
+//
+// Every clickable part uses Theme.rowHover/rowPressed, the same tint
+// tokens list rows already use, rather than inventing its own hover
+// colour.
 RowLayout {
     id: root
     // The stick this page works on. Always context, never a link: Home
     // is the stick list, so there is no page in the stack that IS the
-    // stick, and a click on its name could only ever land on Home -- the
-    // house to its left already does that. Empty omits it (a page with no
+    // stick, and a click on its name could only ever land on Home, which
+    // the house to its left already does. Empty omits it (a page with no
     // stick of its own, e.g. Manage Backups opened from Home).
     property string stickLabel: ""
     // Empty omits the middle segment entirely (a page pushed directly
@@ -39,7 +43,7 @@ RowLayout {
     property string backDisabledTooltip: "Wait for the write to finish before leaving this page"
     // The page's own StackView, handed in as `stack: root.StackView.view`
     // (the attached property exists on the pushed page, not on anything
-    // inside it). Only used to answer one question -- see below.
+    // inside it). Only used to answer one question, see below.
     property var stack: null
     // Whether the middle segment's click would land on Home anyway.
     //
@@ -48,128 +52,127 @@ RowLayout {
     // wearing the stick's name: you click "MY-STICK" expecting the stick
     // and get the page you could already reach from the crumb to its
     // left. Pages that sit one below Home therefore show the name as
-    // plain context text instead of as a link. Nothing to configure --
+    // plain context text instead of as a link. Nothing to configure:
     // the same page pushed from Home and from a hub (SyncPage is, from
     // Home and from Library Statistics) gets it right both times.
     readonly property bool middleLeadsHome: stack ? stack.depth <= 2 : false
     readonly property bool middleClickable: middleLabel.length > 0 && !middleLeadsHome
 
-    // Who gives way, and in what order, when the row is narrower than
-    // its natural width: the stick first, then the middle segment, then
-    // the page's own name, each down to a floor. When even the floors do
-    // not fit, the stick goes altogether, and then the title elides below
-    // its floor: the row is never wider than it was given.
+    // Who gives way, and in what order, when the bar is narrower than its
+    // natural width.
     //
-    // A RowLayout alone cannot say "first". Squeezed below the preferred
-    // widths it shares the shortfall out among every segment in
-    // proportion to how far each can shrink, so all three elided at once
-    // -- "MY-ST... > Houseke... > Clean Up Dupl..." -- and none of them
-    // could be read. Instead each segment's minimum is worked out here
-    // from the shortfall, so that the minimums add up to exactly the width
-    // the row was given and the layout has nothing left to share out: the
-    // stick is handed all of the shortfall it can absorb, the middle the
-    // rest, and the title only what neither could take.
+    // The two lines share the width and nothing else: each has the whole
+    // column beside the Back button to itself. So the title elides only
+    // when its own line is short, and the eyebrow's arithmetic is about
+    // the eyebrow alone. There, from the left: the stick drops first,
+    // whole, and a "…" takes its place so the path still says a level was
+    // there; then the hub elides to a floor; and past the floor it keeps
+    // eliding rather than reach past the bar's right edge. With no hub the
+    // stick is the path's last crumb and is the one that elides, since
+    // "⌂ › …" would say nothing at all.
     //
-    // The floors used to be the end of it, and they are Theme.scaled, so
-    // they grow with the system font: at macOS's 13pt the floors, the
-    // house, the separators and the gaps came to more than a 380 page and
-    // Clean Up's title ran 72px past its edge (round 9). Dropping the
-    // stick is the first thing past the floors because it is context
-    // only, never a link, and the reader picked it on Home a moment ago.
+    // A RowLayout alone cannot say "first": squeezed, it shares the
+    // shortfall out among every segment at once, and "MY-ST… › Houseke…"
+    // reads as neither. So each segment's minimum is worked out here from
+    // the shortfall, the minimums add up to exactly the width the row was
+    // given, and the layout has nothing left to share out.
     //
     // No binding loop: everything here is worked out from the segments'
     // own natural widths, which do not depend on whether they are shown,
-    // and never from the row's implicit width, which does -- dropping the
-    // stick changes that, and a shortfall read from it would bring the
-    // stick straight back. A minimum is never set above a preferred
-    // width either, which is the one way a minimum could feed back.
+    // and from the width the bar was given, never from the bar's implicit
+    // width, which does depend on them.
     readonly property bool hasStick: stickLabel.length > 0
     readonly property bool hasMiddle: middleLabel.length > 0
     readonly property real stickNatural: hasStick ? stickText.naturalWidth : 0
     readonly property real middleNatural: !hasMiddle ? 0
         : middleClickable ? middleCrumb.naturalWidth : middleText.naturalWidth
     readonly property real titleNatural: titleText.naturalWidth
-    // A segment with its separator and the two gaps it brings, whole
-    // pixels up, as the layout hands them out.
-    function segmentCost(natural, separator) {
-        return natural + Math.ceil(separator.implicitWidth) + 2 * spacing;
+    // A crumb with the chevron before it and the two gaps around that.
+    function segmentCost(natural) {
+        return natural + Math.ceil(stickSep.implicitWidth) + 2 * eyebrow.spacing;
     }
-    readonly property real stickCost: hasStick ? segmentCost(stickNatural, stickSep) : 0
-    // The row's natural width with every segment it has, the stick
+    // The eyebrow's natural width with every crumb it has, the stick
     // included whether or not it is showing.
-    readonly property real fullNatural: homeCrumb.naturalWidth + stickCost
-        + (hasMiddle ? segmentCost(middleNatural, middleSep) : 0)
-        + segmentCost(titleNatural, titleSep)
-    // Floors, clamped to the natural width so that a short name is never
-    // padded out to one.
-    readonly property real stickFloor: Math.min(Theme.scaled(64), stickNatural)
+    readonly property real eyebrowNatural: homeCrumb.naturalWidth
+        + (hasStick ? segmentCost(stickNatural) : 0)
+        + (hasMiddle ? segmentCost(middleNatural) : 0)
+    // The column beside the Back button, plus the pill padding the
+    // eyebrow reaches back into (see its leftMargin).
+    readonly property real eyebrowAvailable: Math.max(0, width - backButton.implicitWidth - spacing
+                                                      + eyebrowPillPadding)
     readonly property real middleFloor: Math.min(Theme.scaled(64), middleNatural)
-    readonly property real titleFloor: Math.min(Theme.scaled(120), titleNatural)
-    readonly property bool stickDropped: hasStick
-        && fullNatural - (stickNatural - stickFloor) - (middleNatural - middleFloor)
-               - (titleNatural - titleFloor) > width
-    readonly property real shortfall: Math.max(0, fullNatural - (stickDropped ? stickCost : 0) - width)
-    readonly property real stickShortfall: stickDropped ? 0 : Math.min(shortfall, stickNatural - stickFloor)
-    readonly property real middleShortfall: Math.min(shortfall - stickShortfall, middleNatural - middleFloor)
-    // Past its floor the title keeps giving, down to nothing: an ellipsis
-    // is a title cut short, where overflowing is a title cut off by the
-    // window edge, and then the hub below its floor as well.
-    readonly property real titleShortfall: Math.min(shortfall - stickShortfall - middleShortfall, titleNatural)
-    readonly property real middleBelowFloor: Math.min(shortfall - stickShortfall - middleShortfall
-                                                      - titleShortfall, middleFloor)
+    readonly property bool stickDropped: hasStick && hasMiddle && eyebrowNatural > eyebrowAvailable
+    readonly property real eyebrowShown: eyebrowNatural
+        - (stickDropped ? stickNatural - droppedMark.naturalWidth : 0)
+    readonly property real eyebrowShortfall: Math.max(0, eyebrowShown - eyebrowAvailable)
+    // Whatever is last in the path takes the rest, the hub when there is
+    // one and otherwise the stick. Down to the floor first; below it only
+    // when nothing else is left to give.
+    readonly property real middleShortfall: hasMiddle ? Math.min(eyebrowShortfall, middleNatural - middleFloor) : 0
+    readonly property real middleBelowFloor: hasMiddle ? Math.min(eyebrowShortfall - middleShortfall, middleFloor) : 0
+    readonly property real stickShortfall: !hasMiddle ? Math.min(eyebrowShortfall, stickNatural) : 0
+    readonly property real columnNatural: Math.max(eyebrowNatural - eyebrowPillPadding, titleNatural)
+
+    // The eyebrow's hover pills: small, so the chevrons between crumbs
+    // keep a caption's rhythm rather than a toolbar's.
+    readonly property real eyebrowPillPadding: Theme.scaled(4)
+    // Tracking of a tenth of the eyebrow's own size. letterSpacing is in
+    // pixels and the size is in points, so it is read off a probe set in
+    // the same face (the probe carries no spacing of its own, so there is
+    // nothing for the measurement to chase).
+    readonly property real eyebrowTracking: eyebrowProbe.fontInfo.pixelSize * 0.1
+    // The house in the eyebrow. Breeze draws it inside a margin of its
+    // own square, so a square the size of the capitals drew a house a
+    // third smaller than them (breadcrumb.png); a square about the size
+    // of the eyebrow's em puts the roof level with the capitals.
+    readonly property real eyebrowIconSize: Math.ceil(eyebrowProbe.fontInfo.pixelSize * 1.1)
+    // On a page with no stick and no hub the house is the whole path, and
+    // alone it read as a stray speck above the title (AboutPage.png). It
+    // says its name there, as the path's one crumb.
+    readonly property bool homeNamed: !hasStick && !hasMiddle
+
     signal homeRequested()
     signal backRequested()
 
-    spacing: Theme.scaled(4)
-    // The segments are hover pills with their own left padding, so the
-    // text inside the first one starts that much further right than the
-    // row does. Pulled back by exactly that, so a page's title lines up
-    // with the body beneath it instead of sitting a pill's padding to
-    // the right of it. Every header gets this without asking.
-    Layout.leftMargin: -Theme.crumbTextInset
-    // And it may be made narrower than its natural width.
+    spacing: Theme.rowSpacing
+    // The Back button's ring is what sits on the page's left line: it is
+    // the first thing on the row and the edge the eye runs down from the
+    // body. The two lines of text then share a left edge of their own,
+    // one button and one gap in.
     //
-    // Without this the breadcrumb was the hard floor under every page
-    // that has one. A RowLayout child cannot be laid out below its
-    // implicit width unless a minimum says so, and a ColumnLayout gives
-    // ALL its fill-width children the widest such floor among them --
-    // so on Clean Up, whose title is long, one unshrinkable breadcrumb
-    // pinned the entire header at 701px and every row in it overflowed
-    // any window narrower than that, whatever those rows did about their
-    // own sizing. Measured in tests/qml/tst_CleanupPage.qml: the filter
-    // row was 701 wide at page widths of 960, 700, 520 and 380 alike.
+    // And the bar may be made narrower than its natural width. Without
+    // this it was the hard floor under every page that has one: a
+    // ColumnLayout gives ALL its fill-width children the widest such
+    // floor among them, so on Clean Up, whose title is long, one
+    // unshrinkable breadcrumb pinned the entire header at 701px
+    // (tests/qml/tst_CleanupPage.qml).
     Layout.minimumWidth: 0
 
+    // A crumb in the eyebrow that goes somewhere. Not a Tab stop: the
+    // Back button is the bar's one, and it already goes where the hub
+    // does.
     component Crumb: AbstractButton {
         id: crumb
         enabled: root.backEnabled
         hoverEnabled: true
-        // Each segment gives way in turn rather than the row refusing to
-        // shrink. The label already elides; eliding needs to be allowed
-        // to happen, which is what a zero minimum says.
+        focusPolicy: Qt.NoFocus
         Layout.minimumWidth: 0
         // Ceilings, not the raw implicit width, and on the PREFERRED
-        // width as well as the maximum. A layout hands out whole pixels,
-        // so a segment asking for 264.37 was given 264 -- and a Text a
-        // third of a pixel short of its natural width elides, producing
-        // "TESTSTI..." on an 868px row two thirds empty. The ellipsis was
-        // never about running out of room; it was about the fraction. A
-        // maximum alone does not fix it: a maximum only caps growth, it
-        // never asks for the extra pixel, so the preferred width is what
-        // gets assigned -- and the layout floors that to whole pixels,
-        // which is why the ceiling needs the +1 rather than standing on
-        // its own. Measured in tests/qml/tst_BackBreadcrumb.qml: without
-        // it the segment is handed 264 for a 264.37 name.
+        // width as well as the maximum. A layout hands out whole
+        // pixels, so a segment asking for 264.37 was given 264, and a
+        // Text a third of a pixel short of its natural width elides:
+        // "TESTSTI…" on a row two thirds empty. The +1 is the pixel the
+        // layout's flooring takes back.
         readonly property real naturalWidth: Math.ceil(implicitWidth) + 1
         Layout.preferredWidth: naturalWidth
         Layout.maximumWidth: naturalWidth
 
         ToolTip.visible: hovered
 
-        leftPadding: Theme.scaled(8)
-        rightPadding: Theme.scaled(8)
-        topPadding: Theme.scaled(4)
-        bottomPadding: Theme.scaled(4)
+        leftPadding: root.eyebrowPillPadding
+        rightPadding: root.eyebrowPillPadding
+        topPadding: Theme.scaled(2)
+        bottomPadding: Theme.scaled(2)
 
         background: Rectangle {
             radius: Theme.scaled(4)
@@ -179,8 +182,7 @@ RowLayout {
         }
         // Draws HomeIcon rather than a word. Not a font glyph: a symbol
         // font that lacks the character silently falls back to whatever
-        // fontconfig picks, or to tofu, and this is the only way back on
-        // the six pages that have no middle segment.
+        // fontconfig picks, or to tofu.
         property bool showsIcon: false
         contentItem: Loader {
             sourceComponent: crumb.showsIcon ? iconContent : textContent
@@ -188,66 +190,55 @@ RowLayout {
 
         Component {
             id: textContent
-            Label {
+            EyebrowText {
                 text: crumb.text
-                font.family: Theme.titleFamily
-                font.weight: Theme.titleWeight
-                // The words step down a size; the icon below keeps the
-                // bigger one. See Theme.titleCrumb for why they part
-                // company here.
-                font.pointSize: Theme.titleCrumb
-                color: Theme.textMuted
                 opacity: crumb.enabled ? 1.0 : 0.5
-                elide: Text.ElideRight
             }
         }
 
         Component {
             id: iconContent
-            HomeIcon {
-                // A quarter larger than its own default: the one crumb
-                // that is a picture, and the way back to the start.
-                size: Theme.iconSizeSmall * 0.875
-                color: Theme.textMuted
-                opacity: crumb.enabled ? 1.0 : 0.5
+            Row {
+                spacing: root.eyebrowPillPadding
+                HomeIcon {
+                    id: homeIcon
+                    anchors.verticalCenter: parent.verticalCenter
+                    size: root.eyebrowIconSize
+                    color: Theme.textMuted
+                    opacity: crumb.enabled ? 1.0 : 0.5
+                }
+                EyebrowText {
+                    objectName: "homeWord"
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.homeNamed
+                    text: "Home"
+                    opacity: crumb.enabled ? 1.0 : 0.5
+                }
             }
         }
     }
 
-    component Sep: Label {
-        text: "›"
-        color: Theme.textMuted
-        font.pointSize: Theme.titleCrumb
-    }
-
-    // A house, not the word "Home". The word cost this row about four
-    // characters of width on every page that has a breadcrumb, and the
-    // row it was spending them on is the one whose stick's name gives
-    // way first when the header runs out of room. Breeze's own go-home,
-    // so the button a KDE user reaches for looks like the one they
-    // already know.
-    Crumb {
-        id: homeCrumb
-        objectName: "homeCrumb"
-        showsIcon: true
-        onClicked: root.homeRequested()
-        ToolTip.text: root.backEnabled ? "Back to Home" : root.backDisabledTooltip
-    }
-
-    // A segment that leads nowhere new: context, not a link. No hover
-    // pill and no click, but it still elides and still says its full
-    // name on hover when it has had to.
-    component Context: Label {
-        id: context
+    component EyebrowText: Label {
         font.family: Theme.titleFamily
-        font.weight: Theme.titleWeight
-        font.pointSize: Theme.titleCrumb
+        font.weight: Font.Medium
+        font.pointSize: Theme.fontSmall
+        font.capitalization: Font.AllUppercase
+        font.letterSpacing: root.eyebrowTracking
         color: Theme.textMuted
         elide: Text.ElideRight
+    }
+
+    // A crumb that leads nowhere new: context, not a link. No hover
+    // pill and no click, but it still elides and still says its full
+    // name on hover when it has had to.
+    component Context: EyebrowText {
+        id: context
         // Matches the hover pill's padding on either side so the
-        // separators around it sit where they do around a Crumb.
-        leftPadding: Theme.scaled(8)
-        rightPadding: Theme.scaled(8)
+        // chevrons around it sit where they do around a Crumb.
+        leftPadding: root.eyebrowPillPadding
+        rightPadding: root.eyebrowPillPadding
+        topPadding: Theme.scaled(2)
+        bottomPadding: Theme.scaled(2)
         readonly property real naturalWidth: Math.ceil(implicitWidth) + 1
         Layout.fillWidth: true
         Layout.preferredWidth: naturalWidth
@@ -258,88 +249,183 @@ RowLayout {
         ToolTip.text: context.text
     }
 
-    Sep {
-        id: stickSep
-        visible: root.hasStick && !root.stickDropped
+    // A chevron drawn from the bundled Breeze set, not a "›" glyph:
+    // the glyph's size and weight came from whichever face answered,
+    // and it sat on the text's baseline instead of its middle.
+    component Sep: SeabassIcon {
+        objectName: "eyebrowSep"
+        iconName: "arrow-right"
+        size: Theme.scaled(9)
+        color: Theme.textMuted
+        opacity: 0.6
+        Layout.alignment: Qt.AlignVCenter
     }
 
-    // The stick. The segment that gives way first: it is the one the
-    // reader can most easily do without, having picked it on Home a
-    // moment ago. With a floor, though. Squeezed to zero it left "Home >
-    // > Clean Up Duplicates" -- a gap and a dangling separator, which
-    // reads as a bug rather than as an abbreviation. A few characters and
-    // an ellipsis still say a name was here.
-    Context {
-        id: stickText
-        objectName: "stickSegment"
-        visible: root.hasStick && !root.stickDropped
-        text: root.stickLabel
-        Layout.minimumWidth: naturalWidth - root.stickShortfall
+    Text {
+        id: eyebrowProbe
+        visible: false
+        text: "M"
+        font.family: Theme.titleFamily
+        font.weight: Font.Medium
+        font.pointSize: Theme.fontSmall
+    }
+    FontMetrics {
+        id: eyebrowMetrics
+        font: eyebrowProbe.font
     }
 
-    Sep {
-        id: middleSep
-        visible: root.hasMiddle
+    // One level up: to the hub when there is one to go to, Home when
+    // there is not. The disabled button still says why on hover: a
+    // disabled control gets no hover events of its own, so the handler
+    // sits on the slot around it.
+    Item {
+        id: backSlot
+        implicitWidth: backButton.implicitWidth
+        implicitHeight: backButton.implicitHeight
+        Layout.alignment: Qt.AlignVCenter
+
+        AbstractButton {
+            id: backButton
+            objectName: "backButton"
+            anchors.fill: parent
+            implicitWidth: Theme.headerBackButtonSize
+            implicitHeight: Theme.headerBackButtonSize
+            enabled: root.backEnabled
+            hoverEnabled: true
+            focusPolicy: Qt.StrongFocus
+            opacity: enabled ? 1.0 : 0.5
+            readonly property string tip: !root.backEnabled ? root.backDisabledTooltip
+                : root.middleClickable ? ("Back to " + root.middleLabel)
+                : "Back to Home"
+            Accessible.name: tip
+            ToolTip.visible: backHover.hovered
+            ToolTip.text: tip
+            onClicked: root.middleClickable ? root.backRequested() : root.homeRequested()
+
+            background: Rectangle {
+                radius: width / 2
+                color: backButton.pressed ? Theme.rowPressed
+                    : backButton.hovered ? Theme.rowHover
+                    : "transparent"
+                border.width: 1
+                border.color: backButton.visualFocus ? Theme.accent : Theme.border
+            }
+            contentItem: Item {
+                SeabassIcon {
+                    anchors.centerIn: parent
+                    iconName: "go-previous"
+                    size: Theme.scaled(16)
+                    color: Theme.text
+                }
+            }
+        }
+        HoverHandler { id: backHover }
     }
 
-    Crumb {
-        id: middleCrumb
-        objectName: "middleLink"
-        visible: root.middleClickable
-        // Gives way second. "Home > Hou... > Clean Up Duplicates" tells a
-        // reader what page they are on; "Home > Housekeeping > Clea..."
-        // tells them where it sits and leaves them guessing what it is.
-        // The middle is also the one they can most easily infer, being
-        // one click behind them. Same floor as the stick, for the same
-        // reason.
+    ColumnLayout {
+        id: lines
+        spacing: 0
         Layout.fillWidth: true
-        Layout.minimumWidth: naturalWidth - root.middleShortfall - root.middleBelowFloor
-        text: root.middleLabel
-        onClicked: root.backRequested()
-        // Names itself in full when it has been shortened -- an
-        // abbreviation the reader cannot expand is just a missing word.
-        ToolTip.text: !root.backEnabled ? root.backDisabledTooltip
-            // contentItem is the Loader; the Label that elides is its item.
-            : (contentItem.item && contentItem.item.truncated) ? (root.middleLabel + ": back to it")
-            : ("Back to " + root.middleLabel)
-    }
+        Layout.minimumWidth: 0
+        Layout.preferredWidth: root.columnNatural
+        Layout.maximumWidth: root.columnNatural
+        Layout.alignment: Qt.AlignVCenter
 
-    // The same segment when it leads nowhere new.
-    Context {
-        id: middleText
-        objectName: "middleSegment"
-        visible: root.middleLabel.length > 0 && !root.middleClickable
-        text: root.middleLabel
-        Layout.minimumWidth: naturalWidth - root.middleShortfall - root.middleBelowFloor
-    }
+        RowLayout {
+            id: eyebrow
+            objectName: "eyebrow"
+            spacing: Theme.scaled(2)
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            // The pill's padding reaches back into the gap beside the Back
+            // button, so the house itself starts on the title's left edge.
+            Layout.leftMargin: -root.eyebrowPillPadding
 
-    Sep { id: titleSep }
+            Crumb {
+                id: homeCrumb
+                objectName: "homeCrumb"
+                showsIcon: true
+                onClicked: root.homeRequested()
+                ToolTip.text: root.backEnabled ? "Back to Home" : root.backDisabledTooltip
+            }
 
-    // The page's own name. fillWidth as well, because measurement says
-    // an item without it does not shrink here at all -- a minimum of 0
-    // is not enough on its own, and the title kept its full 307px
-    // inside a 345px row and simply hung out of it.
-    //
-    // It gives way last, and only to 120 against the others' 64: the
-    // page's own name is still readable when both of them have been
-    // spent. Below that only once the stick has gone and the row still
-    // does not fit, and then it elides as far as it has to. See
-    // `shortfall` above for how the order is enforced.
-    PageTitle {
-        id: titleText
-        objectName: "titleSegment"
-        text: root.title
-        level: "crumb"
-        elide: Text.ElideRight
-        readonly property real naturalWidth: Math.ceil(implicitWidth) + 1
-        Layout.fillWidth: true
-        Layout.preferredWidth: naturalWidth
-        Layout.minimumWidth: naturalWidth - root.titleShortfall
+            Sep {
+                id: stickSep
+                visible: root.hasStick
+            }
 
-        // Same bargain as the middle segment: it may be shortened, but
-        // only if hovering it gives the whole name back.
-        HoverHandler { id: titleHover }
-        ToolTip.visible: titleHover.hovered && titleText.truncated
-        ToolTip.text: root.title
+            // The stick. The crumb that gives way first: the reader picked
+            // it on Home a moment ago and can most easily do without it.
+            Context {
+                id: stickText
+                objectName: "stickSegment"
+                visible: root.hasStick && !root.stickDropped
+                text: root.stickLabel
+                Layout.minimumWidth: naturalWidth - root.stickShortfall
+            }
+
+            // What stands in for the stick once it has gone: a level is
+            // still there, it just is not spelled out.
+            Context {
+                id: droppedMark
+                objectName: "droppedMark"
+                visible: root.stickDropped
+                text: "…"
+                Layout.minimumWidth: naturalWidth
+                ToolTip.visible: false
+            }
+
+            Sep {
+                id: middleSep
+                visible: root.hasMiddle
+            }
+
+            Crumb {
+                id: middleCrumb
+                objectName: "middleLink"
+                visible: root.middleClickable
+                Layout.fillWidth: true
+                Layout.minimumWidth: naturalWidth - root.middleShortfall - root.middleBelowFloor
+                text: root.middleLabel
+                onClicked: root.backRequested()
+                // Names itself in full when it has been shortened: an
+                // abbreviation the reader cannot expand is just a missing
+                // word.
+                ToolTip.text: !root.backEnabled ? root.backDisabledTooltip
+                    // contentItem is the Loader; the Label that elides is its item.
+                    : (contentItem.item && contentItem.item.truncated) ? (root.middleLabel + ": back to it")
+                    : ("Back to " + root.middleLabel)
+            }
+
+            // The same segment when it leads nowhere new.
+            Context {
+                id: middleText
+                objectName: "middleSegment"
+                visible: root.hasMiddle && !root.middleClickable
+                text: root.middleLabel
+                Layout.minimumWidth: naturalWidth - root.middleShortfall - root.middleBelowFloor
+            }
+        }
+
+        // The page's own name, on a line of its own, in full ink.
+        PageTitle {
+            id: titleText
+            objectName: "titleSegment"
+            text: root.title
+            level: "crumb"
+            font.weight: Font.DemiBold
+            elide: Text.ElideRight
+            readonly property real naturalWidth: Math.ceil(implicitWidth) + 1
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            Layout.preferredWidth: naturalWidth
+            Layout.maximumWidth: naturalWidth
+
+            // It may be shortened, but only if hovering it gives the whole
+            // name back.
+            HoverHandler { id: titleHover }
+            ToolTip.visible: titleHover.hovered && titleText.truncated
+            ToolTip.text: root.title
+        }
     }
 }

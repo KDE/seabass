@@ -287,10 +287,11 @@ TestCase {
         var controller = createTemporaryObject(controllerComponent, testCase);
         var page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
         waitForRendering(page);
-        var home = findChild(page.header, "homeCrumb");
-        var body = findChild(page, "healthCheckBody");
+        // The Back button's ring is the header's edge on the page's line.
+        const home = findChild(page.header, "backButton");
+        const body = findChild(page, "healthCheckBody");
         verify(home !== null && body !== null);
-        compare(home.contentItem.mapToItem(page, 0, 0).x, body.mapToItem(page, 0, 0).x,
+        compare(home.mapToItem(page, 0, 0).x, body.mapToItem(page, 0, 0).x,
                 "breadcrumb and body must share a left edge");
         compare(body.mapToItem(page, 0, 0).x, Theme.pageMargin);
         page.destroy();

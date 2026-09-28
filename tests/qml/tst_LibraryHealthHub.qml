@@ -535,11 +535,11 @@ TestCase {
         function walk(item) {
             for (var i = 0; i < item.children.length; ++i) {
                 var child = item.children[i];
-                // By objectName: the crumb draws Breeze's go-home icon
-                // now, so it has no text to match against. Its content
-                // item is what has to line up with the body.
-                if (child.objectName === "homeCrumb") {
-                    crumbText = child.contentItem;
+                // The header's edge on the page's line is the round
+                // Back button's ring, so the button itself is what has
+                // to line up with the body.
+                if (child.objectName === "backButton") {
+                    crumbText = child;
                 }
                 walk(child);
             }
