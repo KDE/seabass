@@ -57,8 +57,8 @@ TestCase {
     // and where there is none no square at all, not an empty one.
     function test_aMissingCoverFallsBackOrLeavesNoGap() {
         const controller = fakeController();
-        controller.artworkPath = "file://" + browseFixture.missingArtwork();
-        controller.fallbackArtworkPath = "file://" + browseFixture.presentArtwork();
+        controller.artworkPath = browseFixture.missingArtworkUrl();
+        controller.fallbackArtworkPath = browseFixture.presentArtworkUrl();
         const bar = createTemporaryObject(barComponent, testCase, {controller: controller});
         verify(bar !== null);
         const art = findChild(bar, "playerArtwork");
@@ -68,7 +68,7 @@ TestCase {
         wait(0);
 
         const bare = fakeController();
-        bare.artworkPath = "file://" + browseFixture.missingArtwork();
+        bare.artworkPath = browseFixture.missingArtworkUrl();
         const noArt = createTemporaryObject(barComponent, testCase, {controller: bare});
         const missing = findChild(noArt, "playerArtwork");
         tryCompare(missing, "sourceFailed", true);

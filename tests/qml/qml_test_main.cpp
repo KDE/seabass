@@ -45,6 +45,7 @@
 #include <QImage>
 #include <QSettings>
 #include <QThreadPool>
+#include <QUrl>
 #include <QString>
 #include <QStringList>
 #include <QQuickStyle>
@@ -369,6 +370,14 @@ public:
     }
 
     Q_INVOKABLE QString missingArtwork() const { return m_artDir.filePath(QStringLiteral("not-there.jpg")); }
+
+    // The same two as the file:// URLs an Image takes, spelled the way the
+    // app spells them (gui/local_file_url.hpp). "file://" + path is only
+    // right for a path that starts with "/": on Windows it gives
+    // file://C:/..., which Qt reads as host "c", and every cover test
+    // there failed on an image that could not be opened.
+    Q_INVOKABLE QString presentArtworkUrl() { return QUrl::fromLocalFile(presentArtwork()).toString(); }
+    Q_INVOKABLE QString missingArtworkUrl() const { return QUrl::fromLocalFile(missingArtwork()).toString(); }
 
     Q_INVOKABLE void holdCues(int trackCount)
     {

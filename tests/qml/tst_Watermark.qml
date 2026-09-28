@@ -156,14 +156,14 @@ TestCase {
         const layer = host.watermark;
         const image = findChild(layer, "watermarkImage");
         layer.isArtwork = true;
-        layer.fallbackSource = "file://" + browseFixture.presentArtwork();
-        layer.source = "file://" + browseFixture.missingArtwork();
+        layer.fallbackSource = browseFixture.presentArtworkUrl();
+        layer.source = browseFixture.missingArtworkUrl();
         tryCompare(image, "status", Image.Ready);
-        compare(image.source.toString(), "file://" + browseFixture.presentArtwork());
+        compare(image.source.toString(), browseFixture.presentArtworkUrl());
         compare(layer.drawsArtwork, true);
 
         layer.fallbackSource = "";
-        layer.source = "file://" + browseFixture.missingArtwork() + ".png";
+        layer.source = browseFixture.missingArtworkUrl() + ".png";
         tryCompare(layer, "drawsArtwork", false);
         compare(image.source.toString(), brandMark);
         tryCompare(image, "status", Image.Ready);
