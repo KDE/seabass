@@ -1992,6 +1992,17 @@ target_include_directories(filesystem_backup_store_test PRIVATE src)
 target_link_libraries(filesystem_backup_store_test PRIVATE ZLIB::ZLIB)
 add_test(NAME filesystem_backup_store_test COMMAND filesystem_backup_store_test)
 
+# The store's refusals: a record whose manifest is missing or damaged, an
+# archive gone or replaced by a directory, writes the filesystem refuses.
+add_executable(filesystem_backup_store_error_paths_test
+    ${SEABASS_STICK_BACKUP_FORMAT_SOURCES}
+    tests/filesystem_backup_store_error_paths_test.cpp
+)
+target_link_libraries(filesystem_backup_store_error_paths_test PRIVATE seabass_core_testing)
+target_include_directories(filesystem_backup_store_error_paths_test PRIVATE src)
+target_link_libraries(filesystem_backup_store_error_paths_test PRIVATE ZLIB::ZLIB)
+add_test(NAME filesystem_backup_store_error_paths_test COMMAND filesystem_backup_store_error_paths_test)
+
 add_executable(stick_write_lock_test
     tests/stick_write_lock_test.cpp
 )
