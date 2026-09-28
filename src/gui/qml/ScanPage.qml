@@ -216,6 +216,45 @@ Page {
     // get squeezed illegibly thin at once.
     readonly property int browseTier: trackListView.width >= 620 ? 2 : (trackListView.width >= 340 ? 1 : 0)
 
+    // The list's sort, held here so the column headers and the Sort by
+    // combo show one state. A header click sorts by its column, ascending
+    // for a new column and flipped for the sorted one; the combo picks
+    // the field and keeps the direction. Playlist Order and Artist have
+    // no column, so no header shows their direction: they always sort
+    // ascending, and the direction the headers last showed is kept for
+    // the next column sort rather than applied where nobody can see it.
+    readonly property var sortOptions: [
+        { text: "Playlist Order", value: "playlist" },
+        { text: "Title", value: "title" },
+        { text: "Artist", value: "artist" },
+        { text: "Key", value: "key" },
+        { text: "BPM", value: "bpm" },
+        { text: "Duration", value: "duration" },
+        { text: "Cues", value: "cues" },
+        { text: "Plays", value: "plays" },
+    ]
+    readonly property var columnSortKeys: ["title", "key", "bpm", "duration", "cues", "plays"]
+    property string sortField: "playlist"
+    property bool sortAscending: true
+    readonly property bool sortedByColumn: root.columnSortKeys.indexOf(root.sortField) >= 0
+
+    function applySort() {
+        scanController.setSort(root.sortField, root.sortedByColumn ? root.sortAscending : true);
+    }
+    function sortByColumn(key) {
+        if (root.sortField === key) {
+            root.sortAscending = !root.sortAscending;
+        } else {
+            root.sortField = key;
+            root.sortAscending = true;
+        }
+        root.applySort();
+    }
+    function sortByField(key) {
+        root.sortField = key;
+        root.applySort();
+    }
+
     property string anchorSourceId: ""
     property string anchorTitle: ""
     property string anchorArtist: ""
@@ -386,39 +425,18 @@ Page {
                 }
                 Item { Layout.fillWidth: true }
                 Label { text: "Sort by" }
+                // The only way to Playlist Order and Artist, which have no
+                // column; the direction is the column headers' (see
+                // root.sortField).
                 ComboBox {
                     id: sortCombo
+                    objectName: "sortCombo"
                     Layout.preferredWidth: 140
                     textRole: "text"
                     valueRole: "value"
-                    model: [
-                        { text: "Playlist Order", value: "playlist" },
-                        { text: "Title", value: "title" },
-                        { text: "Artist", value: "artist" },
-                        { text: "Key", value: "key" },
-                        { text: "BPM", value: "bpm" },
-                        { text: "Duration", value: "duration" },
-                        { text: "Cues", value: "cues" },
-                        { text: "Plays", value: "plays" },
-                    ]
-                    onActivated: scanController.setSort(currentValue, sortDirectionButton.checked)
-                }
-                // The direction as an icon, named in its tooltip: the words
-                // cost the header a column of width for what the arrow
-                // already says at a glance.
-                ToolButton {
-                    id: sortDirectionButton
-                    objectName: "sortDirectionButton"
-                    checkable: true
-                    checked: true
-                    display: AbstractButton.IconOnly
-                    icon.source: Theme.iconUrl(checked ? "view-sort-ascending" : "view-sort-descending")
-                    icon.color: Theme.text
-                    text: checked ? "Ascending" : "Descending"
-                    ToolTip.visible: hovered
-                    ToolTip.text: checked ? "Sorted ascending. Click to sort descending"
-                                          : "Sorted descending. Click to sort ascending"
-                    onCheckedChanged: scanController.setSort(sortCombo.currentValue, checked)
+                    model: root.sortOptions
+                    currentIndex: root.sortOptions.findIndex(option => option.value === root.sortField)
+                    onActivated: (index) => root.sortByField(root.sortOptions[index].value)
                 }
             }
         }
@@ -495,7 +513,19 @@ Page {
                 Layout.bottomMargin: 4
                 spacing: 8
                 Label { text: ""; Layout.preferredWidth: Theme.iconSizeNormal }
-                TableHeaderLabel { label: "Title"; Layout.fillWidth: true; visible: root.browseTier >= 1 }
+                // Each header with a sort key sorts by it (see
+                // root.sortByColumn); the artwork column and the trailing
+                // action columns have none.
+                SortableTableHeader {
+                    objectName: "sortHeader_title"
+                    label: "Title"
+                    sortKey: "title"
+                    sortField: root.sortField
+                    sortAscending: root.sortAscending
+                    onSortRequested: (key) => root.sortByColumn(key)
+                    Layout.fillWidth: true
+                    visible: root.browseTier >= 1
+                }
                 // Out of the Title column's fill, so the columns after it
                 // stay where the rows have them. Says why the Cues column
                 // below is empty for now; the list itself is usable.
@@ -506,11 +536,29 @@ Page {
                     color: Theme.textMuted
                     font.pointSize: Theme.fontTiny
                 }
-                TableHeaderLabel { label: "Key"; Layout.preferredWidth: 50; visible: root.browseTier >= 2 }
-                TableHeaderLabel { label: "BPM"; Layout.preferredWidth: 50; visible: root.browseTier >= 2 }
-                TableHeaderLabel { label: "Time"; Layout.preferredWidth: 60; visible: root.browseTier >= 2 }
-                TableHeaderLabel { label: "Cues"; Layout.preferredWidth: 50; visible: root.browseTier >= 2 }
-                TableHeaderLabel { label: "Plays"; Layout.preferredWidth: 50; visible: root.browseTier >= 2 }
+                // The widths are the row delegate's own, column for column.
+                Repeater {
+                    model: [
+                        { label: "Key", key: "key", width: 50 },
+                        { label: "BPM", key: "bpm", width: 50 },
+                        { label: "Time", key: "duration", width: 60 },
+                        { label: "Cues", key: "cues", width: 50 },
+                        { label: "Plays", key: "plays", width: 60 },
+                    ]
+                    // Plays is 60, not 50: its label and the sort arrow
+                    // after it do not fit in 50 at the default font size.
+                    delegate: SortableTableHeader {
+                        required property var modelData
+                        objectName: "sortHeader_" + modelData.key
+                        label: modelData.label
+                        sortKey: modelData.key
+                        sortField: root.sortField
+                        sortAscending: root.sortAscending
+                        onSortRequested: (key) => root.sortByColumn(key)
+                        Layout.preferredWidth: modelData.width
+                        visible: root.browseTier >= 2
+                    }
+                }
                 // Theme.iconSizeSmall (merge button), the one trailing
                 // ToolButton in the delegate below -- two when Matching
                 // (Experimental) is on, since the find-matching button
@@ -780,7 +828,7 @@ Page {
                         Label {
                             visible: root.browseTier >= 2
                             text: playCount >= 0 ? playCount : "--"
-                            Layout.preferredWidth: 50
+                            Layout.preferredWidth: 60
                         }
                         ToolButton {
                             display: AbstractButton.IconOnly

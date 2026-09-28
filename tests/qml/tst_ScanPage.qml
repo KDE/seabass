@@ -38,20 +38,6 @@ TestCase {
         return page;
     }
 
-    // An arrow, not the words: the direction is an icon, named in its
-    // tooltip and to an assistive reader.
-    function test_sortDirectionIsAnIcon() {
-        var page = makePage();
-        var button = findChild(page, "sortDirectionButton");
-        verify(button !== null, "the sort direction button must exist");
-        compare(button.display, AbstractButton.IconOnly);
-        compare(button.icon.source.toString(), Theme.iconUrl("view-sort-ascending"));
-        compare(button.text, "Ascending");
-        button.checked = false;
-        compare(button.icon.source.toString(), Theme.iconUrl("view-sort-descending"));
-        compare(button.text, "Descending");
-    }
-
     // One left line: the search field and the list below it -- the
     // playlist column, which is the list's left edge -- start at the same
     // x. The list used to run to the window edge, 16 px left of the search.
@@ -165,6 +151,173 @@ TestCase {
         compare(browseFixture.cuePasses(), 1, "one cue pass");
         waitForRendering(held.page);
         saveScreenshot(held.page, "browse-cues-settled");
+    }
+
+    // ---- Sorting by the column headers ----
+
+    function header(page, key) {
+        const item = findChild(page, "sortHeader_" + key);
+        verify(item !== null, "a header for " + key);
+        return item;
+    }
+
+    function titles(controller) {
+        const result = [];
+        for (let i = 0; i < controller.tracks.trackCount(); ++i) {
+            result.push(controller.tracks.trackAt(i).title);
+        }
+        return result;
+    }
+
+    // The one header that shows an arrow, and which way it points; every
+    // other sortable header shows none.
+    function compareIndicators(page, activeKey, ascending) {
+        for (const key of ["title", "key", "bpm", "duration", "cues", "plays"]) {
+            const arrow = findChild(header(page, key), "sortIndicator");
+            verify(arrow !== null);
+            compare(arrow.visible, key === activeKey, "the arrow on " + key);
+            if (key === activeKey) {
+                compare(arrow.iconName, ascending ? "arrow-up" : "arrow-down");
+            }
+        }
+    }
+
+    // A click on a header sorts the list by its column, ascending; a
+    // second click on the same header reverses it.
+    function test_aHeaderClickSortsByItsColumn() {
+        const held = makeHeldPage(12);
+        const scanOrder = titles(held.controller);
+        const reversed = scanOrder.slice().reverse();
+        const title = header(held.page, "title");
+        compare(title.visible, true);
+        // Scan order is title order in the fixture; sort the other way
+        // first so the ascending click has something to do.
+        held.page.sortByColumn("title");
+        held.page.sortByColumn("title");
+        compare(titles(held.controller), reversed, "descending");
+
+        mouseClick(header(held.page, "duration"));
+        compare(held.page.sortField, "duration");
+        compare(held.page.sortAscending, true, "a new column sorts ascending");
+        compare(titles(held.controller), scanOrder, "longer tracks later");
+
+        mouseClick(header(held.page, "duration"));
+        compare(held.page.sortAscending, false, "the sorted column flips");
+        compare(titles(held.controller), reversed, "longest first");
+        const durations = [];
+        for (let i = 0; i < held.controller.tracks.trackCount(); ++i) {
+            durations.push(held.controller.tracks.trackAt(i).durationSeconds);
+        }
+        for (let i = 1; i < durations.length; ++i) {
+            verify(durations[i] <= durations[i - 1], "sorted by length, descending, at row " + i);
+        }
+        compare(findChild(held.page, "sortCombo").currentText, "Duration", "the combo shows the field");
+    }
+
+    // The arrow: on the sorted header only, up for ascending and down for
+    // descending; the header says so in its tooltip, and takes Space and
+    // Enter as a click. Replaces the separate direction button the header
+    // row used to carry.
+    function test_theSortedHeaderShowsItsDirection() {
+        const held = makeHeldPage(8);
+        verify(findChild(held.page, "sortDirectionButton") === null, "no direction button any more");
+        compareIndicators(held.page, "", true);
+        for (const key of ["title", "key", "bpm", "duration", "cues", "plays"]) {
+            compare(findChild(header(held.page, key), "sortHeaderLabel").truncated, false,
+                    "the " + key + " label whole beside the room for its arrow");
+        }
+
+        const cues = header(held.page, "cues");
+        compare(cues.toolTipText, "Sort by Cues");
+        const widthBefore = cues.implicitWidth;
+        mouseClick(cues);
+        compareIndicators(held.page, "cues", true);
+        compare(cues.toolTipText, "Sorted by Cues, ascending. Click to sort descending");
+        compare(cues.implicitWidth, widthBefore, "the header keeps its width when the arrow shows");
+        const arrow = findChild(cues, "sortIndicator");
+        compare(arrow.color, Theme.text);
+        verify(arrow.x + arrow.width <= cues.width + 1, "the arrow inside its column");
+
+        cues.forceActiveFocus();
+        keyClick(Qt.Key_Space);
+        compareIndicators(held.page, "cues", false);
+        compare(cues.toolTipText, "Sorted by Cues, descending. Click to sort ascending");
+        keyClick(Qt.Key_Return);
+        compareIndicators(held.page, "cues", true);
+
+        header(held.page, "key").forceActiveFocus();
+        keyClick(Qt.Key_Enter);
+        compareIndicators(held.page, "key", true);
+    }
+
+    // The combo and the headers show one sort. A header click moves the
+    // combo; a column field picked in the combo lights its header and
+    // keeps the direction; Playlist Order and Artist, which have no
+    // column, light none and sort ascending.
+    function test_theComboAndTheHeadersShowOneSort() {
+        const held = makeHeldPage(10);
+        const combo = findChild(held.page, "sortCombo");
+        compare(combo.currentText, "Playlist Order");
+
+        mouseClick(header(held.page, "bpm"));
+        mouseClick(header(held.page, "bpm"));
+        compare(combo.currentText, "BPM");
+        compareIndicators(held.page, "bpm", false);
+
+        combo.activated(held.page.sortOptions.findIndex(option => option.value === "cues"));
+        compare(combo.currentText, "Cues");
+        compareIndicators(held.page, "cues", false);
+
+        combo.activated(held.page.sortOptions.findIndex(option => option.value === "artist"));
+        compare(combo.currentText, "Artist");
+        compareIndicators(held.page, "", true);
+
+        // Title order is scan order in the fixture: back to a column
+        // through the combo, the kept direction applies again.
+        combo.activated(held.page.sortOptions.findIndex(option => option.value === "title"));
+        compareIndicators(held.page, "title", false);
+        verify(titles(held.controller)[0] > titles(held.controller)[1], "title, descending");
+
+        combo.activated(held.page.sortOptions.findIndex(option => option.value === "playlist"));
+        compareIndicators(held.page, "", true);
+        verify(titles(held.controller)[0] < titles(held.controller)[1],
+               "playlist order ascending, whatever the headers last showed");
+    }
+
+    // The page at its usual width, sorted by Cues, most first.
+    function test_screenshot_sortedByCuesDescending() {
+        const held = makeHeldPage(40);
+        browseFixture.releaseCues();
+        tryCompare(held.controller, "cuesPending", false);
+        mouseClick(header(held.page, "cues"));
+        mouseClick(header(held.page, "cues"));
+        compareIndicators(held.page, "cues", false);
+        compare(held.controller.tracks.trackAt(0).cueCount, 4, "most cues first");
+        waitForRendering(held.page);
+        saveScreenshot(held.page, "browse-sorted");
+    }
+
+    // A narrow page drops the numeric columns; the header row that stays
+    // keeps inside the page.
+    function test_aNarrowPageKeepsTheHeaderRowInside() {
+        const held = makeHeldPage(6);
+        held.page.width = 420;
+        waitForRendering(held.page);
+        compare(held.page.browseTier, 1);
+        const title = header(held.page, "title");
+        compare(title.visible, true);
+        for (const key of ["key", "bpm", "duration", "cues", "plays"]) {
+            compare(header(held.page, key).visible, false, key + " is dropped");
+        }
+        const row = title.parent;
+        const right = row.mapToItem(held.page, row.width, 0).x;
+        verify(right <= held.page.width - Theme.pageMargin, "the header row ends inside the page: " + right);
+        mouseClick(title);
+        compareIndicators(held.page, "title", true);
+        const arrow = findChild(title, "sortIndicator");
+        verify(arrow.mapToItem(held.page, arrow.width, 0).x <= held.page.width - Theme.pageMargin,
+               "the arrow inside the page");
+        saveScreenshot(held.page, "browse-sorted-narrow");
     }
 
     // Sorting by cues while they are read sorts what is known (nothing

@@ -89,6 +89,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/StickToolCards.qml
     qml/common/Subtitle.qml
     qml/common/TableHeaderLabel.qml
+    qml/common/SortableTableHeader.qml
     qml/common/ThemePalette.qml
     qml/common/ExperimentalBadge.qml
     qml/common/TransferProgressFrame.qml
@@ -268,6 +269,7 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/archive-insert.svg
     qml/icons/breeze/arrow-down.svg
     qml/icons/breeze/arrow-right.svg
+    qml/icons/breeze/arrow-up.svg
     qml/icons/breeze/backup.svg
     qml/icons/breeze/bookmarks.svg
     qml/icons/breeze/checkmark.svg
@@ -315,8 +317,6 @@ set(SEABASS_GUI_ICONS
     qml/icons/breeze/view-media-equalizer.svg
     qml/icons/breeze/view-media-track.svg
     qml/icons/breeze/view-refresh.svg
-    qml/icons/breeze/view-sort-ascending.svg
-    qml/icons/breeze/view-sort-descending.svg
     qml/icons/breeze/window-close.svg
 )
 # The three catalog glyphs (LibrarySourceToggle, FormatToggle), subset
