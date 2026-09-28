@@ -71,6 +71,9 @@ Some refinements:
 - A request that reads more than one stick names all of them
   (`startOnSticks()`). Clone's preview reads its source and its target,
   and pulling either one ends it.
+- Stick Performance's measurement is a read and follows the rule; the
+  same measurement on scratch files, the write test and the wear check
+  write to the stick or post to the controller, and are waited for.
 - A worker that can look at a token does. The Stick Backup, Clone and
   Restore previews take none of their own, so they stop at the start and
   between phases, and hand the token to the walk inside.
