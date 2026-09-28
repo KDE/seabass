@@ -321,6 +321,33 @@ public:
         return static_cast<double>(seabass::infrastructure::WorkCounters::instance().snapshot().trackDatabaseParses);
     }
 
+    // tests/qml-live/tst_LiveInterruptedSave.qml: the marker that tells
+    // tools/rig-interrupted-save.sh a save has started writing, and what
+    // the first test read, handed to the second through the same file.
+    // Written whole and flushed before this returns: the script polls for
+    // the file and kills this process the moment it sees it.
+    Q_INVOKABLE bool writeText(const QString &file, const QString &text)
+    {
+        QFile out(file);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return false;
+        }
+        const QByteArray bytes = text.toUtf8();
+        return out.write(bytes) == bytes.size() && out.flush();
+    }
+
+    // The file's text, or empty when it cannot be read.
+    Q_INVOKABLE QString readText(const QString &file) const
+    {
+        QFile in(file);
+        if (!in.open(QIODevice::ReadOnly)) {
+            return {};
+        }
+        return QString::fromUtf8(in.readAll());
+    }
+
+    Q_INVOKABLE bool fileExists(const QString &file) const { return QFile::exists(file); }
+
 private:
     QStringList m_roots;
 };
@@ -1481,6 +1508,11 @@ void seedMetadataStoreForTests()
                                                   qgetenv("SEABASS_ACCEPT_DISK_IMAGES") == "1");
         engine->rootContext()->setContextProperty(QStringLiteral("liveStickPullRun"),
                                                   qEnvironmentVariableIsSet("SEABASS_LIVE_STICK_PULL"));
+        // tools/rig-interrupted-save.sh, F6: where tst_LiveInterruptedSave
+        // writes its marker once a save is under way (the script kills the
+        // process when it appears). Empty: that file skips itself.
+        engine->rootContext()->setContextProperty(QStringLiteral("liveKillMarker"),
+                                                  qEnvironmentVariable("SEABASS_LIVE_KILL_MARKER"));
         // tools/rig-clones.sh: where tst_LiveEditMode::test_11_rigKeepCue
         // adds a memory cue it keeps, in ms (0: the test skips itself).
         engine->rootContext()->setContextProperty(QStringLiteral("liveRigKeepCueMs"),

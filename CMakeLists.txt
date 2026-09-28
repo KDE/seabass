@@ -3060,6 +3060,14 @@ add_executable(rig_save_backups tools/rig_save_backups.cpp)
 target_include_directories(rig_save_backups PRIVATE src)
 target_link_libraries(rig_save_backups PRIVATE seabass_core)
 
+# Release rig: what an interrupted save left on the stick -- journals, logs
+# and the save's note -- for check F6 (tools/rig-interrupted-save.sh).
+# Reads bytes only, so a hot journal is described before anything rolls it
+# back.
+add_executable(rig_journal_state tools/rig_journal_state.cpp)
+target_include_directories(rig_journal_state PRIVATE src)
+target_link_libraries(rig_journal_state PRIVATE seabass_core)
+
 # A process the DJ-software guard recognises, for the rig's refusal checks
 # (see tools/rig_fake_dj.cpp): named for what the detector matches.
 add_executable(rig_fake_dj tools/rig_fake_dj.cpp)
