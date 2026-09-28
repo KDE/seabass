@@ -339,12 +339,15 @@ LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath
 
 std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 {
+    // Before anything opens a database here, database_exists() included:
+    // that one opens m.db read-write, and SQLite rolled a journal a pulled
+    // stick left behind back right there, silently, before a copy of it
+    // was kept (rig check F6, 2026-09-28). The read-only opens below
+    // (artwork, streaming sources, edit times) need it done first too.
+    recoverEnginePendingJournals(m_engineLibraryPath);
     if (!djinterop::engine::database_exists(m_engineLibraryPath)) {
         throw std::runtime_error("no Engine Library found at " + m_engineLibraryPath);
     }
-    // Before any of the read-only opens below (artwork, streaming
-    // sources, edit times) meets a journal a pulled stick left behind.
-    recoverEnginePendingJournals(m_engineLibraryPath);
 
     auto db = djinterop::engine::load_database(m_engineLibraryPath);
     auto allTracks = db.tracks();
