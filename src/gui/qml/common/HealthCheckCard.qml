@@ -169,8 +169,13 @@ Rectangle {
             objectName: "checkSummary"
             Layout.row: 1
             Layout.column: 0
-            // The whole width when there is no action beside it.
-            Layout.columnSpan: action.visible ? 1 : 2
+            // The whole width when there is no action beside it, without a
+            // span that follows the button: a GridLayout skips an invisible
+            // cell, so column 1 is nothing while the button is hidden. A span
+            // bound to action.visible followed the button one step behind,
+            // and visible is the parents' too, so each time the hub came back
+            // from under a check page the layout found the button's cell
+            // taken ("QGridLayoutEngine::addItem: Can't add ...").
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignLeft | Qt.AlignTop
             text: card.summary
