@@ -11,7 +11,8 @@ import "HomeModel.js" as HomeModel
 // The home screen's rail: which stick, and which kind of tool. Two
 // sections, "USB Sticks" (one line per row of the stick model) and "Tools"
 // (Explore, Sync, Backup, Maintain), down the left of the page, or, in
-// a narrow window (compact), wrapped rows of chips above the pane.
+// a narrow window (compact), a grid of chips above the pane: two columns
+// when two of the widest chip fit side by side, one below that.
 //
 // It shows the selection and reports clicks; it does not keep the
 // selection itself. The page owns selectedStickKey and selectedGroup and
@@ -36,8 +37,32 @@ FocusScope {
     property string selectedStickKey: ""
     // "explore", "sync", "backup" or "maintain".
     property string selectedGroup: "explore"
-    // A narrow window: wrapped rows of chips rather than a column.
+    // A narrow window: a grid of chips rather than a column.
     property bool compact: false
+    // The chip grid's columns: two when two chips as wide as the widest
+    // (a stick's label or a group's name, with its icon and padding) fit
+    // side by side, else one. Always one in the column form.
+    readonly property real widestChip: {
+        let widest = 0;
+        for (let i = 0; i < stickRepeater.count; ++i) {
+            const item = stickRepeater.itemAt(i);
+            if (item) {
+                widest = Math.max(widest, item.implicitWidth);
+            }
+        }
+        for (let i = 0; i < groupRepeater.count; ++i) {
+            const item = groupRepeater.itemAt(i);
+            if (item) {
+                widest = Math.max(widest, item.implicitWidth);
+            }
+        }
+        return widest;
+    }
+    readonly property int chipColumns: root.compact && root.width >= 2 * root.widestChip + Theme.tightSpacing ? 2 : 1
+    // Every chip's width: its column's, whole pixels, so two of them and
+    // the gap between never add up to a hair more than the row.
+    readonly property real chipWidth: Math.floor((root.width - (root.chipColumns - 1) * Theme.tightSpacing)
+                                                 / root.chipColumns)
 
     signal stickActivated(string key)
     signal groupActivated(string group)
@@ -165,7 +190,7 @@ FocusScope {
                 objectName: "railStick:" + key
                 isStick: true
                 compact: root.compact
-                columnWidth: flow.width
+                columnWidth: root.compact ? root.chipWidth : flow.width
                 text: label
                 stickIsSdCard: isSdCard
                 stickIsFolder: isFolder
@@ -268,7 +293,7 @@ FocusScope {
                 required property var modelData
                 objectName: "railGroup:" + modelData.key
                 compact: root.compact
-                columnWidth: flow.width
+                columnWidth: root.compact ? root.chipWidth : flow.width
                 text: modelData.name
                 iconName: modelData.icon
                 fontSize: Theme.fontNormal
@@ -319,16 +344,16 @@ FocusScope {
     //
     // Each section is one tab stop: Tab reaches the sticks, then the
     // tools, then whatever follows the rail (the cards). Up and Down
-    // move a cursor within the focused section, and Enter or Space
+    // move a cursor a row within the focused section, and Enter or Space
     // activates the entry under it, exactly as a click would. In the
-    // compact form, where the entries run across, Left and Right do the
-    // same. The cursor starts on the selected entry.
+    // chip grid, Left and Right move between the columns of a row. The
+    // cursor starts on the selected entry.
     component SectionKeys: Item {
         id: keys
         property int cursor: 0
         property int count: 0
-        // Entries run across (the compact form): Left and Right move too.
-        property bool across: false
+        // The chip grid's columns (one in the column form).
+        property int columns: 1
         signal activate(int index)
         signal focusEntered()
         onActiveFocusChanged: {
@@ -338,11 +363,31 @@ FocusScope {
         }
         onCountChanged: keys.cursor = Math.max(0, Math.min(keys.cursor, keys.count - 1))
         Keys.onPressed: (event) => {
-            const back = event.key === Qt.Key_Up || (keys.across && event.key === Qt.Key_Left);
-            const forward = event.key === Qt.Key_Down || (keys.across && event.key === Qt.Key_Right);
-            if (back || forward) {
-                keys.cursor = Math.max(0, Math.min(keys.count - 1, keys.cursor + (forward ? 1 : -1)));
+            const columns = Math.max(1, keys.columns);
+            const row = Math.floor(keys.cursor / columns);
+            const lastRow = Math.floor((keys.count - 1) / columns);
+            const column = keys.cursor % columns;
+            if (event.key === Qt.Key_Up) {
+                if (row > 0) {
+                    keys.cursor -= columns;
+                }
                 event.accepted = true;
+            } else if (event.key === Qt.Key_Down) {
+                // Into the row below, or onto its last entry when that row
+                // is shorter than this one.
+                if (row < lastRow) {
+                    keys.cursor = Math.min(keys.count - 1, keys.cursor + columns);
+                }
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                if (columns > 1) {
+                    if (event.key === Qt.Key_Left && column > 0) {
+                        keys.cursor -= 1;
+                    } else if (event.key === Qt.Key_Right && column < columns - 1 && keys.cursor + 1 < keys.count) {
+                        keys.cursor += 1;
+                    }
+                    event.accepted = true;
+                }
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
                        || event.key === Qt.Key_Space) {
                 if (keys.count > 0) {
@@ -357,7 +402,7 @@ FocusScope {
         id: stickKeys
         objectName: "railStickKeys"
         activeFocusOnTab: stickRepeater.count > 0
-        across: root.compact
+        columns: root.chipColumns
         count: stickRepeater.count
         onFocusEntered: cursor = Math.max(0, root.stickIndex(root.selectedStickKey))
         onActivate: (index) => {
@@ -372,7 +417,7 @@ FocusScope {
         id: toolKeys
         objectName: "railToolKeys"
         activeFocusOnTab: true
-        across: root.compact
+        columns: root.chipColumns
         count: root.groups.length
         onFocusEntered: cursor = Math.max(0, root.groupIndex(root.selectedGroup))
         onActivate: (index) => root.groupActivated(root.groups[index].key)
@@ -380,8 +425,8 @@ FocusScope {
 
     // ---- one entry --------------------------------------------------
     //
-    // A pill, full width in the column and as wide as its text in the
-    // compact form. Selected: the group background, full-strength
+    // A pill, full width in the column and as wide as its grid column in
+    // the compact form, its icon and text on the left either way. Selected: the group background, full-strength
     // DemiBold text, the accent bar at its left edge and an accent icon,
     // stick and tool alike (the stick used to get only the pill, and read
     // as less selected than the tool beside it; Sebastian, 2026-09-28).
@@ -404,7 +449,7 @@ FocusScope {
         property real columnWidth: 0
         signal activated()
 
-        width: entry.compact ? implicitWidth : entry.columnWidth
+        width: entry.columnWidth
         implicitWidth: content.implicitWidth + 2 * Theme.crumbTextInset
         implicitHeight: content.implicitHeight + 2 * entry.verticalPadding
 

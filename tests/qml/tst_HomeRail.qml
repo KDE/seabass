@@ -277,35 +277,76 @@ TestCase {
         compare(rail.implicitHeight, lastBottom);
     }
 
-    // Narrow window: wrapped rows of chips, the sticks first, then the four
-    // groups, each section starting on a new line under its label.
+    // Narrow window: a grid of chips, the sticks first, then the four
+    // groups, each section starting on a new line under its label. Two
+    // columns when two chips as wide as the widest fit side by side, each
+    // chip filling its column with its text on the left after its icon.
     function test_theCompactForm() {
         const frame = makeFrame(threeSticks(), {selectedStickKey: "/media/MAIN", selectedGroup: "sync", compact: true});
         frame.width = 640;
         waitForRendering(frame);
         const rail = frame.rail;
+        compare(rail.chipColumns, 2);
         const main = findChild(rail, "railStick:/media/MAIN");
         const card = findChild(rail, "railStick:/media/CARD");
+        const unmounted = findChild(rail, "railStick:/dev/sdc1");
         const explore = findChild(rail, "railGroup:explore");
+        const sync = findChild(rail, "railGroup:sync");
+        const backup = findChild(rail, "railGroup:backup");
         const maintain = findChild(rail, "railGroup:maintain");
-        verify(main.width < rail.width / 2, "a chip is as wide as its text");
-        compare(card.y, main.y, "the sticks run across");
-        verify(card.x > main.x);
-        compare(maintain.y, explore.y, "the tools run across");
-        verify(maintain.x > explore.x);
-        verify(explore.y > main.y + main.height, "the tools come after the sticks");
+        const cell = Math.floor((rail.width - Theme.tightSpacing) / 2);
+        for (const chip of [main, card, unmounted, explore, sync, backup, maintain]) {
+            compare(chip.width, cell, chip.objectName + " fills its column");
+            verify(chip.x + chip.width <= rail.width, chip.objectName + " stays inside the rail");
+            compare(Math.round(text(chip).parent.mapToItem(chip, 0, 0).x), Math.round(Theme.crumbTextInset),
+                    chip.objectName + "'s icon and text start on the left");
+        }
+        compare(main.x, 0);
+        compare(card.y, main.y, "two sticks to a row");
+        compare(card.x, cell + Theme.tightSpacing, "the second in the second column");
+        compare(unmounted.x, 0, "the third starts the next row");
+        verify(unmounted.y > main.y);
+        verify(explore.y > unmounted.y + unmounted.height, "the tools come after the sticks");
         compare(explore.x, 0, "the tools start their own line");
+        compare(sync.y, explore.y);
+        compare(sync.x, card.x, "the columns line up across the two sections");
+        compare(backup.x, 0);
+        verify(backup.y > explore.y);
+        compare(maintain.y, backup.y);
         compare(findChild(rail, "railToolsLabel").width, rail.width, "each label takes a line of its own");
         compare(findChild(card, "railPill").border.width, 1, "an unselected chip has an edge");
         compare(findChild(main, "railPill").border.width, 0, "the selected one is its fill");
-        compare(findChild(findChild(rail, "railGroup:sync"), "railAccentBar").visible, true);
+        compare(findChild(sync, "railAccentBar").visible, true);
         saveScreenshot(frame, "home-rail-compact");
 
-        // And wraps when the row runs out.
-        frame.width = 260;
+        // Two of the widest chip side by side decide it, at the pixel.
+        frame.width = 2 * rail.widestChip + Theme.tightSpacing + 2 * Theme.pageMargin;
         waitForRendering(frame);
-        verify(maintain.y > explore.y, "the tools wrap onto a second line in a narrow rail");
-        saveScreenshot(frame, "home-rail-compact-wrapped");
+        compare(rail.chipColumns, 2, "room for exactly two of the widest");
+        frame.width -= 1;
+        waitForRendering(frame);
+        compare(rail.chipColumns, 1, "a pixel short of two");
+        let lastBottom = -1;
+        for (const chip of [main, card, unmounted, explore, sync, backup, maintain]) {
+            compare(chip.x, 0, chip.objectName + " is in the one column");
+            compare(chip.width, rail.width, chip.objectName + " fills it");
+            verify(chip.y >= lastBottom, chip.objectName + " is below the one before");
+            lastBottom = chip.y + chip.height;
+        }
+        saveScreenshot(frame, "home-rail-compact-narrow");
+
+        // A long stick name widens every chip's claim: one column, even in
+        // a rail that took two for the short names.
+        frame.width = 640;
+        waitForRendering(frame);
+        compare(rail.chipColumns, 2);
+        frame.sticks = [makeStick({label: "A STICK WITH A VERY LONG NAME INDEED, TOO LONG TO SHARE"})];
+        waitForRendering(frame);
+        verify(2 * rail.widestChip + Theme.tightSpacing > rail.width, "the long name is wider than half the rail");
+        compare(rail.chipColumns, 1);
+        // Never in the column form.
+        rail.compact = false;
+        compare(rail.chipColumns, 1);
     }
 
     // No stick: one muted line where the sticks were, the tools as ever,
@@ -370,15 +411,56 @@ TestCase {
         keyClick(Qt.Key_Enter);
         compare(groupSpy.count, 1);
         compare(groupSpy.signalArguments[0][0], "backup");
-        // Left and Right belong to the compact form only.
+        // Left and Right belong to the chip grid only.
         keyClick(Qt.Key_Right);
         compare(toolKeys.cursor, 2);
+        // The grid, two columns: Explore Sync / Backup Maintain. Left and
+        // Right move between the columns of a row and stop at its ends;
+        // Up and Down move a row, and stay in the section.
         rail.compact = true;
+        waitForRendering(frame);
+        compare(rail.chipColumns, 2);
+        compare(toolKeys.columns, 2);
         keyClick(Qt.Key_Right);
-        compare(toolKeys.cursor, 3);
+        compare(toolKeys.cursor, 3, "Backup to Maintain, across the row");
+        keyClick(Qt.Key_Right);
+        compare(toolKeys.cursor, 3, "the row ends at Maintain");
         keyClick(Qt.Key_Left);
         compare(toolKeys.cursor, 2);
+        keyClick(Qt.Key_Left);
+        compare(toolKeys.cursor, 2, "and starts at Backup");
+        keyClick(Qt.Key_Up);
+        compare(toolKeys.cursor, 0, "Up goes to Explore, above Backup");
+        keyClick(Qt.Key_Up);
+        compare(toolKeys.cursor, 0, "and no further");
+        keyClick(Qt.Key_Right);
+        keyClick(Qt.Key_Down);
+        compare(toolKeys.cursor, 3, "Down goes from Sync to Maintain");
+        keyClick(Qt.Key_Down);
+        compare(toolKeys.cursor, 3, "and no further: the sticks are another section");
         saveScreenshot(frame, "home-rail-keyboard");
+
+        // Three sticks in two columns: Down from the second lands on the
+        // third, the shorter row's only chip.
+        keyClick(Qt.Key_Backtab);
+        verify(stickKeys.activeFocus);
+        compare(stickKeys.columns, 2);
+        stickKeys.cursor = 1;
+        keyClick(Qt.Key_Down);
+        compare(stickKeys.cursor, 2);
+        keyClick(Qt.Key_Right);
+        compare(stickKeys.cursor, 2, "nothing beside it");
+        keyClick(Qt.Key_Up);
+        compare(stickKeys.cursor, 0);
+
+        // One column: Left and Right have nowhere to go.
+        frame.width = 2 * rail.widestChip + Theme.tightSpacing + 2 * Theme.pageMargin - 1;
+        waitForRendering(frame);
+        compare(stickKeys.columns, 1);
+        keyClick(Qt.Key_Right);
+        compare(stickKeys.cursor, 0);
+        keyClick(Qt.Key_Down);
+        compare(stickKeys.cursor, 1, "Down is the next chip in one column");
     }
 
     // A stick plugged in arrives visibly; one pulled out shrinks away. The
