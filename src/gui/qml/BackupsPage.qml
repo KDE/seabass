@@ -169,7 +169,7 @@ Page {
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
-        // and nothing else -- see BackupsHubPage.qml's header.
+        // and nothing else -- see StickBackupPage.qml's header.
         leftPadding: 0
         rightPadding: 0
         topPadding: 0
@@ -181,10 +181,10 @@ Page {
             anchors.margins: Theme.pageMargin
             BackBreadcrumb {
                 stack: root.StackView.view
-                // Opened from a stick's Backups page it names both; opened
-                // from Home's menu it has neither, and is one below Home.
+                // Opened from a stick's Backup group it names the stick;
+                // opened from Home's menu it names none, since it is then
+                // about every stick's backups.
                 stickLabel: root.stickLabel
-                middleLabel: root.stickLabel.length > 0 ? "Backups" : ""
                 title: "Manage Backups"
                 backEnabled: root.controller.deleting !== true
                 onHomeRequested: root.StackView.view.pop(null)

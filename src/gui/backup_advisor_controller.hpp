@@ -81,7 +81,7 @@ public:
     QVariantMap advice() const { return m_advice; }
     // Until the queue has drained, not merely while one stick is being
     // read: between two sticks the watcher is idle for a moment, and a
-    // page waiting on the advice (BackupsHubPage's scanning overlay) must
+    // page waiting on the advice (the home's Full Stick Backup card) must
     // not see that moment as "done".
     //
     // m_running, not a watcher's isRunning(): the latter reads the worker's

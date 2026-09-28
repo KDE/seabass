@@ -396,18 +396,19 @@ TestCase {
         }
     }
 
-    // From a stick's Backups page it names both; from Home's menu,
-    // neither, since it is then about every stick's backups.
-    function test_breadcrumbFromAStickNamesTheStickAndTheHub() {
-        const page = pushOnStack(2, {controller: makeController(), stickLabel: "MAIN",
+    // From a stick's Backup group on Home it names the stick and nothing
+    // between; from Home's menu, no stick, since it is then about every
+    // stick's backups.
+    function test_breadcrumbFromAStickNamesTheStick() {
+        const page = pushOnStack(1, {controller: makeController(), stickLabel: "MAIN",
                                      currentArchivePath: "/home/u/Backups/MAIN.zip"});
         waitForRendering(page);
         const crumb = Breadcrumb.read(page);
         compare(crumb.stick, "MAIN");
-        compare(crumb.middle, "Backups");
-        verify(crumb.middleIsLink);
+        compare(crumb.middle, "");
+        compare(crumb.middleIsLink, false);
         compare(crumb.title, "Manage Backups");
-        saveCrumbShot(page, "manage-backups-from-hub");
+        saveCrumbShot(page, "manage-backups-from-stick");
     }
 
     function test_breadcrumbFromHomeNamesNoStick() {

@@ -437,15 +437,17 @@ Page {
         }
     }
     signal browseRequested(string stickLabel, string rekordboxPath, string enginePath)
-    signal manageBackupsRequested()
-    // Deduplication and Backups are hub pages now (see
-    // DuplicatesHubPage.qml / BackupsHubPage.qml), each fanning out to two
-    // sub-pages that used to be separate top-level cards here
-    // (Deduplication + Clean Up Duplicates; Local Cue Backup + Manage
-    // Backups). Library Health used to be a card inside the Deduplication
-    // hub too, but it isn't a duplicate-tracks concern (it spans all three
-    // catalogs looking for missing files, not just consolidating copies),
-    // so it got promoted to its own top-level entry instead.
+    // Every full stick backup on this computer. From a stick's Backup
+    // group, with its label and the backup the advisor matched to it
+    // (listed first); from the no-stick pane, both empty.
+    signal manageBackupsRequested(string stickLabel, string currentArchivePath)
+    // Housekeeping is a hub page (DuplicatesHubPage.qml), fanning out to
+    // the sub-pages that used to be separate top-level cards here. Library
+    // Health used to be a card inside it too, but it isn't a
+    // duplicate-tracks concern (it spans all three catalogs looking for
+    // missing files, not just consolidating copies), so it got promoted to
+    // its own top-level entry instead. Backups had a hub page as well;
+    // its cards are the Backup group's own now.
     signal duplicateTracksHubRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
@@ -454,7 +456,7 @@ Page {
     signal settingsRequested(string stickLabel, string pioneerRoot)
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal appSettingsRequested()
-    signal backupsHubRequested(string stickLabel, string rekordboxPath, string enginePath, string mountPoint, string devicePath)
+    signal fullStickBackupRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal aboutRequested()
     signal donationRequested()
     signal formatUsbRequested()
@@ -754,8 +756,10 @@ Page {
                             onSettingsRequested: (stickLabel, pioneerRoot) => root.settingsRequested(stickLabel, pioneerRoot)
                             onSyncRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.syncRequested(stickLabel, rekordboxPath, enginePath)
-                            onBackupsHubRequested: (stickLabel, rekordboxPath, enginePath, mountPoint, devicePath) =>
-                                root.backupsHubRequested(stickLabel, rekordboxPath, enginePath, mountPoint, devicePath)
+                            onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.fullStickBackupRequested(stickLabel, rekordboxPath, enginePath)
+                            onManageBackupsRequested: (stickLabel, currentArchivePath) =>
+                                root.manageBackupsRequested(stickLabel, currentArchivePath)
                             onFormatUsbRequested: root.formatUsbRequested()
                             onRestoreStickBackupRequested: (mountPoint, devicePath, archivePath, stickLabel) =>
                                 root.restoreStickBackupRequested(mountPoint, devicePath, archivePath, stickLabel)
@@ -878,7 +882,7 @@ Page {
                                     : "None yet"
                                 cardIcon: "deep-history"
                                 enabled: homeBackups.fullBackupCount > 0
-                                onClicked: root.manageBackupsRequested()
+                                onClicked: root.manageBackupsRequested("", "")
                             }
                             ActionCard {
                                 objectName: "browseMetadataBackupsCard"
