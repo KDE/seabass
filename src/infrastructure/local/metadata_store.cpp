@@ -304,6 +304,14 @@ int schemaVersionOf(const fs::path &databasePath)
         if (sqlite3_step(stmt) == SQLITE_ROW) {
             version = sqlite3_column_int(stmt, 0);
         }
+    } else if (sqlite3_errcode(db) == SQLITE_NOTADB) {
+        // The open above cannot tell: SQLite opens any file and reads it
+        // only when asked something. A file that is not a database is
+        // found out here, and it is the case the -1 above is for. Taken
+        // for "no schema_version table" instead, it was opened in place
+        // and every launch refused the store with "file is not a
+        // database" for as long as the file was there.
+        version = -1;
     }
     sqlite3_finalize(stmt);
     sqlite3_close(db);
