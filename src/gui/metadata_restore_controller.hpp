@@ -27,6 +27,7 @@ namespace seabass::gui
 {
 
 class LibraryEditSession;
+class PendingChange;
 
 struct MetadataRestoreTaskResult
 {
@@ -209,6 +210,13 @@ signals:
 private:
     void onScanFinished();
     void attachSession();
+    // attachSession() when there is none yet; false, with the page told
+    // why, when this stick's library cannot be identified.
+    bool ensureSession();
+    // What stageOne() and stageAll() stage for one proposal: one change
+    // per catalog that lists the file, none for one already staged, out
+    // of scope, or offering nothing.
+    std::vector<std::unique_ptr<PendingChange>> changesFor(int index, int itemCountHint) const;
     void setBusy(bool busy);
     void setProgress(int current, int total);
     void setCurrentPhase(const QString &phase);

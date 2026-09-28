@@ -477,31 +477,27 @@ void MetadataRestoreController::stage(int row)
 // decides whether the catalog is worth copying to local scratch first.
 // stageAll() knows that number; a single row's tick box does not, and
 // does not need to.
-void MetadataRestoreController::stageOne(int index, int itemCountHint)
+// The changes one proposal stages, or none when it is not one to stage:
+// already staged, out of scope, or offering nothing.
+std::vector<std::unique_ptr<PendingChange>> MetadataRestoreController::changesFor(int index, int itemCountHint) const
 {
+    std::vector<std::unique_ptr<PendingChange>> changes;
     const auto &proposals = m_model.proposals();
     if (index < 0 || static_cast<std::size_t>(index) >= proposals.size()) {
-        return;
+        return changes;
     }
     const MetadataRestoreProposal &proposal = proposals[static_cast<std::size_t>(index)];
     if (m_model.isStaged(index)) {
-        return;
+        return changes;
     }
     // Only what the stick and playlist pickers include. Every caller
     // passes an in-scope index today; this is what keeps the next one
     // from staging a track the page says it is not restoring.
     if (!m_model.inScope(index)) {
-        return;
+        return changes;
     }
     if (!proposal.offersAnything()) {
-        return;
-    }
-    if (!m_session) {
-        attachSession();
-        if (!m_session) {
-            setErrorMessage(QStringLiteral("This stick's library could not be identified; nothing was changed."));
-            return;
-        }
+        return changes;
     }
 
     // One change per catalog that lists this file. OneLibrary is skipped
@@ -514,15 +510,37 @@ void MetadataRestoreController::stageOne(int index, int itemCountHint)
             hasRekordbox = true;
         }
     }
-
-    QStringList staged;
     for (const auto &row : proposal.stickTrack.catalogRows) {
         if (row.format == "onelibrary" && hasRekordbox) {
             continue;
         }
-        auto change = std::make_unique<RestoreMetadataChange>(
+        changes.push_back(std::make_unique<RestoreMetadataChange>(
             QString::fromStdString(row.format), catalogQtPathForFormat(m_libraryPath, row.format),
-            QString::fromStdString(row.sourceId), proposal, itemCountHint);
+            QString::fromStdString(row.sourceId), proposal, itemCountHint));
+    }
+    return changes;
+}
+
+bool MetadataRestoreController::ensureSession()
+{
+    if (!m_session) {
+        attachSession();
+        if (!m_session) {
+            setErrorMessage(QStringLiteral("This stick's library could not be identified; nothing was changed."));
+            return false;
+        }
+    }
+    return true;
+}
+
+void MetadataRestoreController::stageOne(int index, int itemCountHint)
+{
+    auto changes = changesFor(index, itemCountHint);
+    if (changes.empty() || !ensureSession()) {
+        return;
+    }
+    QStringList staged;
+    for (auto &change : changes) {
         const QString changeId = change->id();
         if (!m_session->stage(std::move(change))) {
             // Refused: the session reports why and the page shows it.
@@ -561,16 +579,44 @@ void MetadataRestoreController::stageAll()
         return;
     }
 
+    // Staged in one call, as Library Health's Fix Cover Art does and for
+    // the same reason. One stage() per change was quadratic twice over --
+    // a duplicate-id scan per change, and a pendingChanged() per change
+    // that has QML rebuild the Save button's whole pending list -- and
+    // Select All on a real restore froze the window: 2,796 changes took
+    // 306 s in tst_MetadataRestorePage's real-scale case on Windows, about
+    // 110 ms each on the UI thread. What could refuse a batch -- another
+    // page's edits, the lock, a browsed backup, a save running -- refuses
+    // every change alike, which is what stopping at the first refusal
+    // amounted to before.
+    const int hint = static_cast<int>(toStage.size());
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    std::vector<std::pair<int, QStringList>> stagedByIndex;
+    for (const int index : toStage) {
+        QStringList ids;
+        for (auto &change : changesFor(index, hint)) {
+            ids << change->id();
+            changes.push_back(std::move(change));
+        }
+        if (!ids.isEmpty()) {
+            stagedByIndex.emplace_back(index, ids);
+        }
+    }
+    if (changes.empty() || !ensureSession()) {
+        return;
+    }
+    if (!m_session->stageAll(std::move(changes))) {
+        return;  // the session reported why; the page shows it
+    }
+
     // No confirmation afterwards: the toolbar already says how many are
     // staged, and a popup for what the button's own name promised is one
     // more thing to dismiss.
     AnalysisBatch batch(*this);
-    for (const int index : toStage) {
-        stageOne(index, static_cast<int>(toStage.size()));
-        if (m_session && !m_session->lockHeld()) {
-            return;  // refused at the first one; no point trying the rest
-        }
+    for (const auto &[index, ids] : stagedByIndex) {
+        m_model.setStagedChanges(index, ids);
     }
+    noteAnalysisChanged();
 }
 
 void MetadataRestoreController::unstageAll()
