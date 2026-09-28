@@ -4,7 +4,7 @@
 
 #include "gui/library_catalog_cache.hpp"
 
-#include "gui/async_request.hpp"
+#include "gui/running_reads.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -373,7 +373,7 @@ void LibraryCatalogCache::prefetchLoop()
         // to know it is running: static destructors under it (the null
         // reporter it reports to, the readers' statics) are a use after
         // destroy. Once the process is ending, no pass starts at all.
-        if (!AsyncWorkers::instance().enterRead()) {
+        if (!RunningReads::instance().enterUnlessEnding()) {
             m_prefetchQueue.clear();
             m_prefetchCv.notify_all();
             continue;
@@ -393,7 +393,7 @@ void LibraryCatalogCache::prefetchLoop()
             // asks for it next reads it in the foreground and sees the
             // error for itself.
         }
-        AsyncWorkers::instance().leaveRead();
+        RunningReads::instance().leave();
 
         lock.lock();
         m_prefetchCurrent.reset();

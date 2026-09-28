@@ -32,6 +32,7 @@
 #include "application/ports/cancellation_token.hpp"
 #include "gui/future_result.hpp"
 #include "gui/qt_path.hpp"
+#include "gui/running_reads.hpp"
 #include "gui/stick_events.hpp"
 #include "gui/stick_path.hpp"
 
@@ -73,14 +74,10 @@ public:
             promise->setException(why);
             promise->finish();
         };
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            if (m_live >= m_ceiling) {
-                refuse(std::make_exception_ptr(std::runtime_error(
-                    "Too many reads are stuck on a stick that stopped answering. Unplug it, or restart Seabass.")));
-                return future;
-            }
-            ++m_live;
+        if (!m_reads.enterBelow(m_ceiling.load())) {
+            refuse(std::make_exception_ptr(std::runtime_error(
+                "Too many reads are stuck on a stick that stopped answering. Unplug it, or restart Seabass.")));
+            return future;
         }
         try {
             // The thread owns the only other reference to the work and the
@@ -99,82 +96,36 @@ public:
                     }
                     owned.first->finish();
                 }
-                {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    --m_live;
-                }
-                m_cv.notify_all();
+                m_reads.leave();
             }).detach();
         } catch (...) {
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                --m_live;
-            }
-            m_cv.notify_all();
+            m_reads.leave();
             refuse(std::current_exception());
         }
         return future;
-    }
-
-    // A read on a thread this class did not start -- the catalog cache's
-    // prefetch worker -- counted with the rest while it runs, so the end of
-    // the process waits for it, or ends without static destructors, exactly
-    // as for any other read. False once the process is ending: the caller
-    // then starts no read at all. Every true is matched by one leaveRead().
-    bool enterRead()
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_shuttingDown.load()) {
-            return false;
-        }
-        ++m_live;
-        return true;
-    }
-    void leaveRead()
-    {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            --m_live;
-        }
-        m_cv.notify_all();
     }
 
     // How many workers may be running at once before a new one is refused.
     // A page asks for a handful; hundreds means reads are stuck on a device
     // that stopped answering, and one more thread would not help.
     static constexpr int DefaultCeiling = 256;
-    void setCeilingForTesting(int ceiling)
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_ceiling = ceiling;
-    }
+    void setCeilingForTesting(int ceiling) { m_ceiling.store(ceiling); }
 
-    int live()
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_live;
-    }
+    int live() { return m_reads.live(); }
 
     // True once no worker is running, false if `timeout` passed first.
-    bool waitForAll(std::chrono::milliseconds timeout)
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_cv.wait_for(lock, timeout, [this] { return m_live == 0; });
-    }
+    bool waitForAll(std::chrono::milliseconds timeout) { return m_reads.waitForAll(timeout); }
 
     // From here on a request going away does not wait for its worker at
     // all: the process is ending, every page is being torn down one after
     // the other, and endProcess() waits once for all of them.
-    void beginShutdown() { m_shuttingDown.store(true); }
-    bool shuttingDown() const { return m_shuttingDown.load(); }
+    void beginShutdown() { m_reads.beginShutdown(); }
+    bool shuttingDown() const { return m_reads.shuttingDown(); }
 
 private:
     AsyncWorkers() = default;
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
-    int m_live = 0;
-    int m_ceiling = DefaultCeiling;
-    std::atomic<bool> m_shuttingDown{false};
+    RunningReads &m_reads = RunningReads::instance();
+    std::atomic<int> m_ceiling{DefaultCeiling};
 };
 
 // A read that is not a page's request (a folder listing, a mount, a
