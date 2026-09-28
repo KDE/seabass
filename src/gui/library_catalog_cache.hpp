@@ -121,6 +121,11 @@ public:
     // with nullptr, so a page's controller can be run against a catalog
     // whose passes a test holds at a gate. Never set in the app.
     static void setInstanceForTesting(LibraryCatalogCache *cache);
+    // The passes and the freshness check the real cache runs, for a test
+    // cache that wraps them (slows, holds or fails a real read) rather
+    // than standing in for the stick altogether.
+    static StageFn realStageForTesting();
+    static MtimeFn realMtimeForTesting();
 
     // Real behavior: constructs the matching infrastructure reader
     // ("rekordbox"/"engine"/"onelibrary") and stats that catalog's own

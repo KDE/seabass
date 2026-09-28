@@ -44,6 +44,11 @@
 #include "gui/scan_controller.hpp"
 #include "gui/async_request.hpp"
 #include "gui/stick_events.hpp"
+#include "gui/process_end.hpp"
+#include "storm_fixture.hpp"
+#include <QGuiApplication>
+#include <QQmlApplicationEngine>
+#include <cstring>
 #include <QColor>
 #include <QFile>
 #include <QImage>
@@ -1810,6 +1815,12 @@ void seedMetadataStoreForTests()
             bundledIcons.append(file.chopped(4));
         }
         engine->rootContext()->setContextProperty(QStringLiteral("bundledIcons"), bundledIcons);
+        engine->rootContext()->setContextProperty(QStringLiteral("stormFixture"), new StormFixture(engine));
+        if (s_stormQuitLeg) {
+            // The storm's quit leg is the app's ending on trial: fixtures
+            // whose teardown waits for the workers would stand in for it.
+            return;
+        }
         engine->rootContext()->setContextProperty(QStringLiteral("syncPageFixture"), new SyncPageFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("metadataRestoreFixture"),
                                                   new MetadataRestoreFixture(engine));
@@ -1819,8 +1830,42 @@ void seedMetadataStoreForTests()
         engine->rootContext()->setContextProperty(QStringLiteral("browseFixture"), new BrowseFixture(engine));
         engine->rootContext()->setContextProperty(QStringLiteral("catalogGate"), new CatalogGateFixture(engine));
     }
+
+public:
+    static inline bool s_stormQuitLeg = false;
 };
 
-QUICK_TEST_MAIN_WITH_SETUP(SeabassGuiQmlTests, Setup)
+// The storm's quit leg (tests/qml-storm/StormQuitDriver.qml): this binary
+// run as the app is, a QML file in place of Main.qml, and main()'s own
+// ending after the event loop -- the pages torn down, then endProcess() --
+// so the parent can see the process end by itself, as async_request_exit_test
+// does for the helper alone.
+int runStormQuitLeg(int argc, char **argv, const char *driver)
+{
+    QGuiApplication app(argc, argv);
+    Setup::s_stormQuitLeg = true;
+    Setup setup;
+    setup.applicationAvailable();
+    auto engine = std::make_unique<QQmlApplicationEngine>();
+    setup.qmlEngineAvailable(engine.get());
+    QObject::connect(
+        engine.get(), &QQmlApplicationEngine::objectCreationFailed, &app, []() { QCoreApplication::exit(-1); },
+        Qt::QueuedConnection);
+    engine->load(QUrl(QString::fromLocal8Bit(driver)));
+    const int result = app.exec();
+    seabass::gui::AsyncWorkers::instance().beginShutdown();
+    engine.reset();
+    return seabass::gui::endProcess(result);
+}
+
+int main(int argc, char **argv)
+{
+    if (argc >= 3 && std::strcmp(argv[1], "--storm-quit") == 0) {
+        return runStormQuitLeg(1, argv, argv[2]);
+    }
+    QTEST_SET_MAIN_SOURCE_PATH
+    Setup setup;
+    return quick_test_main_with_setup(argc, argv, "SeabassGuiQmlTests", nullptr, &setup);
+}
 
 #include "qml_test_main.moc"
