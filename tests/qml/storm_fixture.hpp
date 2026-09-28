@@ -758,7 +758,7 @@ private:
 #if !defined(_WIN32)
         const QString failures = qEnvironmentVariable("SEABASS_STORM_FAILURES");
         const std::string dir = failures.isEmpty() ? seabass::pathToUtf8(seabass::testing::scratchRoot())
-                                                   : seabass::pathToUtf8(std::filesystem::path(failures.toStdString()).parent_path());
+                                                   : seabass::pathToUtf8(seabass::gui::pathFromQString(failures).parent_path());
         const std::string file = dir + "/frozen-seed" + std::to_string(m_beatSeed.load()) + "-step"
             + std::to_string(m_beatStep.load()) + "-pid" + std::to_string(QCoreApplication::applicationPid()) + ".stacks";
         const std::string command = "gdb -p " + std::to_string(QCoreApplication::applicationPid())
