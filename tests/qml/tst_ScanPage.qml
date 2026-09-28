@@ -184,6 +184,13 @@ TestCase {
     // The one header that shows an arrow, and which way it points; every
     // other sortable header shows none.
     function compareIndicators(page, activeKey, ascending) {
+        // The active arrow is waited for: under a parallel ctest load the
+        // click's effect reached the scene a frame late once (the Races
+        // session, 2026-09-28) and a synchronous read called it absent.
+        // A click that never landed still fails here, after the wait.
+        if (activeKey.length > 0) {
+            tryCompare(findChild(header(page, activeKey), "sortIndicator"), "visible", true, 5000);
+        }
         for (const key of ["title", "key", "bpm", "duration", "cues", "plays"]) {
             const arrow = findChild(header(page, key), "sortIndicator");
             verify(arrow !== null);
@@ -242,6 +249,7 @@ TestCase {
         const cues = header(held.page, "cues");
         compare(cues.toolTipText, "Sort by Cues");
         const widthBefore = cues.implicitWidth;
+        waitForRendering(cues);
         mouseClick(cues);
         compareIndicators(held.page, "cues", true);
         compare(cues.toolTipText, "Sorted by Cues, ascending. Click to sort descending");
