@@ -750,8 +750,17 @@ Item {
                         runner.fail("a save that ended with nothing staged left S" + i + "'s write lock held");
                         return;
                     }
+                    // What a save wrote can be undone: its backups are the journal.
+                    const summary = session.lastSummary || {};
+                    if (!summary.error && !summary.cancelled && summary.written > 0 && !session.canUndo) {
+                        runner.fail("a save on S" + i + " wrote " + summary.written + " and cannot be undone");
+                        return;
+                    }
                 }
-                runner.note("the save ended" + (session.lastSummary ? "" : ""));
+                const summary = session.lastSummary || {};
+                runner.note("the save ended: " + (summary.written || 0) + " written"
+                            + (summary.error ? ", error: " + summary.error : "")
+                            + (summary.cancelled ? ", cancelled" : ""));
                 runner.endStep();
                 return;
             }
@@ -798,7 +807,7 @@ Item {
             || w.indexOf("ReferenceError") >= 0 || w.indexOf("Binding loop") >= 0) {
             return true;
         }
-        if (w.indexOf("ASSERT") >= 0 || w.indexOf("QObject::") >= 0 || w.indexOf("QFutureWatcher") >= 0
+        if (w.indexOf("ASSERT") >= 0 || w.indexOf("QObject::") >= 0 || w.indexOf("QGridLayoutEngine") >= 0 || w.indexOf("QFutureWatcher") >= 0
             || w.indexOf("QThread") >= 0 || w.indexOf("QBasicTimer") >= 0) {
             return true;
         }
