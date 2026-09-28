@@ -246,6 +246,17 @@ TestCase {
         }
     }
 
+    // The suite must never see a stick plugged into this computer: the
+    // home page built below scans the first stick it is given, and a
+    // scan's Full read writes a duration cache onto the stick. The lanes
+    // set SEABASS_IGNORE_REMOVABLE_MEDIA (CMakeLists.txt) and the media
+    // factory then finds nothing; with two rig sticks inserted this went
+    // red until it did (2026-09-28).
+    function test_theSuiteSeesNoRealSticks() {
+        compare(realMedia.sticks.count, 0, "the real MediaController lists no stick under the suite");
+        compare(realMedia.sticks.removableCount, 0);
+    }
+
     function test_everyPageCompiles() {
         var names = pageSpecs().map(function(spec) { return spec.name; }).concat(windowPages);
         var failures = [];
