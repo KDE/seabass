@@ -420,10 +420,11 @@ QtObject {
     //
     // pageMargin insets a page's body AND its header, which is what
     // puts the breadcrumb and the first line of content on one vertical
-    // line. BackBreadcrumb subtracts crumbTextInset for itself: its
-    // segments are hover pills with their own padding, so the row has
-    // to start that much further left for the text inside to land on
-    // the line.
+    // line. On the header that line is the edge of BackBreadcrumb's
+    // round Back button; the eyebrow and title beside it share a left
+    // edge of their own, one button and one gap in. crumbTextInset is
+    // the hover pill's padding where a list of pills (the home rail)
+    // has to put the text inside them on a line.
     //
     // Unscaled on purpose. These are gaps between things, not type, and
     // the pages already in the tree use these same numbers literally --
@@ -441,6 +442,10 @@ QtObject {
     readonly property real rowSpacing: 10       // between controls across a row
     readonly property real tightSpacing: 6      // a label and the thing it labels
     readonly property real crumbTextInset: scaled(8)
+    // The round Back button at the start of every section page's header
+    // (BackBreadcrumb): a circle this wide, sized with the type so it
+    // stays a comfortable target beside the title it sits next to.
+    readonly property real headerBackButtonSize: scaled(34)
     // How far a card's TEXT sits from the card's own left edge, and
     // therefore how far anything outside a card has to be inset to line
     // up with it. Named because two places have to agree: HealthCheckCard
