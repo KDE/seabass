@@ -9,7 +9,7 @@ import SeabassGui
 import "HomeModel.js" as HomeModel
 
 // The home screen's rail: which stick, and which kind of tool. Two
-// sections, "Sticks" (one line per row of the stick model) and "Tools"
+// sections, "USB Sticks" (one line per row of the stick model) and "Tools"
 // (Explore, Sync, Backup, Maintain), down the left of the page, or, in
 // a narrow window (compact), wrapped rows of chips above the pane.
 //
@@ -140,7 +140,7 @@ FocusScope {
 
         TableHeaderLabel {
             objectName: "railSticksLabel"
-            label: "Sticks"
+            label: "USB Sticks"
             width: flow.width
             leftPadding: Theme.crumbTextInset
             bottomPadding: Theme.tightSpacing
