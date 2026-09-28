@@ -102,6 +102,16 @@ struct LegacyCueEntry
 class AnlzLegacyCueCodec
 {
 public:
+    // Throws std::runtime_error, naming what is wrong, unless the section
+    // has exactly the shape every one of the 7968 surveyed sections has:
+    // len_header 24, len_tag = its size = 24 + 56 * num_cues, a zero
+    // field before num_cues, and every entry a checkEntry() entry.
+    static void checkSection(const std::string &pcobSectionBytes);
+    // The same for one entry: 56 bytes, PCPT, len_header 28, len_entry 56.
+    static void checkEntry(const std::string &entryBytes);
+
+    // Throws unless checkSection() passes: a list in any other shape is
+    // damaged, and nothing in it is carried anywhere.
     static std::vector<LegacyCueEntry> decodeCues(const std::string &pcobSectionBytes);
 
     // The section's memory_count as it stands, for a caller replacing
@@ -109,7 +119,9 @@ public:
     static uint32_t memoryCountOf(const std::string &pcobSectionBytes);
 
     // `memoryCount` unset means "this section is new": see the note
-    // above for what is then written.
+    // above for what is then written. Throws rather than return a
+    // section that fails checkSection(), and in particular refuses an
+    // entry whose carried-over rawBytes are not a 56-byte PCPT entry.
     static std::string encodeCues(const std::vector<LegacyCueEntry> &cues, uint32_t listType,
                                    std::optional<uint32_t> memoryCount = std::nullopt);
 };
