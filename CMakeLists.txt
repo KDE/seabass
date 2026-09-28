@@ -3332,6 +3332,15 @@ add_test(NAME rekordbox_cue_writer_every_track_test COMMAND rekordbox_cue_writer
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(rekordbox_cue_writer_every_track_test PROPERTIES LABELS "integration")
 
+# The writer handed legacy cue lists rekordbox never writes: whatever it
+# finds, what it leaves must be strictly well formed.
+add_executable(rekordbox_cue_writer_malformed_lists_test tests/rekordbox_cue_writer_malformed_lists_test.cpp)
+target_include_directories(rekordbox_cue_writer_malformed_lists_test PRIVATE src tests)
+target_link_libraries(rekordbox_cue_writer_malformed_lists_test PRIVATE seabass_core rekordbox_format kaitai_cpp_stl_runtime)
+add_test(NAME rekordbox_cue_writer_malformed_lists_test COMMAND rekordbox_cue_writer_malformed_lists_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(rekordbox_cue_writer_malformed_lists_test PROPERTIES LABELS "integration")
+
 # End to end: back a library up, open the backup, read it. Asserts the
 # cues match the original folder even though USBANLZ was never extracted.
 add_executable(backup_artwork_lookup_test tests/backup_artwork_lookup_test.cpp)

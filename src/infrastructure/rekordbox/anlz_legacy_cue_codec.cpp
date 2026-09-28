@@ -18,6 +18,7 @@ namespace
 
 // Every value here is what real rekordbox-written files hold; see the
 // survey in anlz_legacy_cue_codec.hpp for the counts behind each.
+constexpr uint32_t PcobFourcc = 0x50434f42;  // "PCOB"
 constexpr uint32_t PcptFourcc = 0x50435054;  // "PCPT"
 constexpr uint32_t SectionHeaderSize = 24;
 constexpr uint32_t EntryHeaderSize = 28;
@@ -71,25 +72,61 @@ std::string encodeEntry(const LegacyCueEntry &cue)
 
 }  // namespace
 
+void AnlzLegacyCueCodec::checkEntry(const std::string &entryBytes)
+{
+    if (entryBytes.size() != EntrySize) {
+        throw std::runtime_error("PCOB entry of " + std::to_string(entryBytes.size()) + " bytes, not 56");
+    }
+    if (readU32BE(entryBytes, 0) != PcptFourcc) {
+        throw std::runtime_error("PCOB entry does not start with PCPT");
+    }
+    if (readU32BE(entryBytes, 4) != EntryHeaderSize || readU32BE(entryBytes, 8) != EntrySize) {
+        throw std::runtime_error("PCOB entry declares len_header " + std::to_string(readU32BE(entryBytes, 4))
+                                 + " and len_entry " + std::to_string(readU32BE(entryBytes, 8)) + ", not 28 and 56");
+    }
+}
+
+void AnlzLegacyCueCodec::checkSection(const std::string &pcobSectionBytes)
+{
+    const std::string &s = pcobSectionBytes;
+    if (s.size() < SectionHeaderSize || readU32BE(s, 0) != PcobFourcc) {
+        throw std::runtime_error("not a PCOB section");
+    }
+    if (readU32BE(s, 4) != SectionHeaderSize) {
+        throw std::runtime_error("PCOB len_header is " + std::to_string(readU32BE(s, 4)) + ", not 24");
+    }
+    const uint16_t numCues = readU16BE(s, 18);
+    const uint64_t expected = SectionHeaderSize + uint64_t(EntrySize) * numCues;
+    if (readU32BE(s, 8) != expected || s.size() != expected) {
+        throw std::runtime_error("PCOB of " + std::to_string(numCues) + " entries is " + std::to_string(s.size())
+                                 + " bytes with len_tag " + std::to_string(readU32BE(s, 8)) + ", not "
+                                 + std::to_string(expected));
+    }
+    if (readU16BE(s, 16) != 0) {
+        throw std::runtime_error("PCOB has a nonzero field before num_cues");
+    }
+    for (uint16_t i = 0; i < numCues; ++i) {
+        checkEntry(s.substr(SectionHeaderSize + size_t(EntrySize) * i, EntrySize));
+    }
+}
+
 std::vector<LegacyCueEntry> AnlzLegacyCueCodec::decodeCues(const std::string &pcobSectionBytes)
 {
     std::vector<LegacyCueEntry> result;
     if (pcobSectionBytes.size() < SectionHeaderSize) {
         return result;
     }
+    // Only a section in the shape rekordbox writes is read at all. This
+    // used to take each entry's own len_entry on trust and never look at
+    // its magic, so a damaged list decoded into entries whose rawBytes
+    // were not PCPT entries -- and the writer, carrying an entry over on
+    // slot and time, wrote those bytes back verbatim. A section that
+    // fails here is one the caller treats as damaged and rebuilds.
+    checkSection(pcobSectionBytes);
     const uint16_t numCues = readU16BE(pcobSectionBytes, 18);
 
-    size_t offset = SectionHeaderSize;
     for (uint16_t i = 0; i < numCues; ++i) {
-        if (offset + EntryHeaderSize > pcobSectionBytes.size()) {
-            throw std::runtime_error("PCOB section truncated while decoding cue entries");
-        }
-        const uint32_t lenEntry = readU32BE(pcobSectionBytes, offset + 8);
-        // Widened before adding, as in the PCO2 codec beside this one.
-        if (lenEntry < EntryHeaderSize
-            || static_cast<std::uint64_t>(offset) + lenEntry > pcobSectionBytes.size()) {
-            throw std::runtime_error("PCOB cue entry declares a length the section cannot hold");
-        }
+        const size_t offset = SectionHeaderSize + size_t(EntrySize) * i;
         LegacyCueEntry entry;
         entry.hotCueNumber = readU32BE(pcobSectionBytes, offset + 12);
         const unsigned char entryType = static_cast<unsigned char>(pcobSectionBytes[offset + 28]);
@@ -100,9 +137,8 @@ std::vector<LegacyCueEntry> AnlzLegacyCueCodec::decodeCues(const std::string &pc
         // Kept whole, so an entry nobody edited is written back byte for
         // byte -- including the fields this struct does not model and the
         // older writer generation's own values for the ones it does.
-        entry.rawBytes = pcobSectionBytes.substr(offset, lenEntry);
+        entry.rawBytes = pcobSectionBytes.substr(offset, EntrySize);
         result.push_back(std::move(entry));
-        offset += lenEntry;
     }
     return result;
 }
@@ -129,12 +165,21 @@ std::string AnlzLegacyCueCodec::encodeCues(const std::vector<LegacyCueEntry> &cu
 
     std::string entries;
     for (const auto &cue : ordered) {
-        entries += encodeEntry(cue);
+        const std::string bytes = encodeEntry(cue);
+        // Refused rather than written: carried-over bytes are the only
+        // way anything but a fresh entry gets here, and whatever put a
+        // bad one in `cues`, it must not reach a stick.
+        try {
+            checkEntry(bytes);
+        } catch (const std::exception &e) {
+            throw std::runtime_error(std::string("refusing to write a legacy cue entry that is not one: ") + e.what());
+        }
+        entries += bytes;
     }
 
     std::string out;
     out.reserve(SectionHeaderSize + entries.size());
-    appendU32(out, 0x50434f42);  // "PCOB"
+    appendU32(out, PcobFourcc);
     appendU32(out, SectionHeaderSize);
     appendU32(out, static_cast<uint32_t>(SectionHeaderSize + entries.size()));
     appendU32(out, listType);
@@ -145,6 +190,7 @@ std::string AnlzLegacyCueCodec::encodeCues(const std::vector<LegacyCueEntry> &cu
         : DefaultMemoryCount;
     appendU32(out, memoryCount.value_or(forNewSection));
     out += entries;
+    checkSection(out);
     return out;
 }
 

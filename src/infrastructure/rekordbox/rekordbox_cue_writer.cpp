@@ -129,9 +129,17 @@ void writeLegacyCueList(AnlzFile &file, uint32_t listType, const std::vector<Leg
         return;
     }
     if (sectionIt != file.sections.end()) {
-        // Replacing: the section's own memory_count goes back with it.
-        sectionIt->rawBytes =
-            AnlzLegacyCueCodec::encodeCues(entries, listType, AnlzLegacyCueCodec::memoryCountOf(sectionIt->rawBytes));
+        // Replacing: the section's own memory_count goes back with it,
+        // unless the section is damaged. Then its header is no witness
+        // to anything (WHALESHARK's read 0000ffff), and the section is
+        // written as a new one would be.
+        std::optional<uint32_t> memoryCount;
+        try {
+            AnlzLegacyCueCodec::checkSection(sectionIt->rawBytes);
+            memoryCount = AnlzLegacyCueCodec::memoryCountOf(sectionIt->rawBytes);
+        } catch (const std::exception &) {
+        }
+        sectionIt->rawBytes = AnlzLegacyCueCodec::encodeCues(entries, listType, memoryCount);
     } else {
         file.sections.push_back({PcobFourcc, AnlzLegacyCueCodec::encodeCues(entries, listType)});
     }
