@@ -1214,6 +1214,16 @@ if(SEABASS_GUI AND Qt6_FOUND)
             list(APPEND _seabass_qml_test_env "QT_FORCE_STDERR_LOGGING=1")
         endif()
         set_tests_properties(seabass_qml_tests PROPERTIES ENVIRONMENT "${_seabass_qml_test_env}")
+        if(WIN32)
+            # About 900 cases, and on a Windows Debug build the whole
+            # suite takes ~1,170 s on its own (measured on the shakedown
+            # laptop, 4 cores, after the fixture copies stopped paying
+            # Defender per file) -- over the rig's 900 s default with no
+            # one case left to blame. It also runs scans on the thread
+            # pool, so ctest counts it as two, and a -j6 run does not
+            # stack five more tests beside it.
+            set_tests_properties(seabass_qml_tests PROPERTIES TIMEOUT 2400 PROCESSORS 2)
+        endif()
 
         # The same suite again, under the style the Linux build actually
         # starts with. The pinned lane above compares pixels like with
