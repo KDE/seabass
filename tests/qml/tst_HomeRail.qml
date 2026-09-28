@@ -117,8 +117,14 @@ TestCase {
             compare(text(other).font.weight, Font.Normal);
             verify(sameColor(findChild(other, "railPill").color, "transparent"));
         }
-        // The stick section has no accent bar: that marks the tool.
-        compare(findChild(card, "railAccentBar").visible, false);
+        // The selected stick is marked the way the selected tool is: the
+        // accent bar and an accent icon, not the pill alone.
+        compare(findChild(card, "railAccentBar").visible, true);
+        verify(sameColor(findChild(card, "railIcon").color, Theme.accent), "the selected stick's icon is accent");
+        for (const other of [main, unmounted]) {
+            compare(findChild(other, "railAccentBar").visible, false);
+            verify(sameColor(findChild(other, "railIcon").color, Theme.textMuted));
+        }
 
         rail.selectedStickKey = "/dev/sdc1";
         compare(card.selected, false);

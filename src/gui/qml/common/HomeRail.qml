@@ -382,8 +382,10 @@ FocusScope {
     //
     // A pill, full width in the column and as wide as its text in the
     // compact form. Selected: the group background, full-strength
-    // DemiBold text; a tool also gets the accent bar at its left edge
-    // and an accent icon. The rest are muted and shade on hover.
+    // DemiBold text, the accent bar at its left edge and an accent icon,
+    // stick and tool alike (the stick used to get only the pill, and read
+    // as less selected than the tool beside it; Sebastian, 2026-09-28).
+    // The rest are muted and shade on hover.
     component RailEntry: Item {
         id: entry
         property string text
@@ -426,7 +428,7 @@ FocusScope {
 
         Rectangle {
             objectName: "railAccentBar"
-            visible: entry.selected && !entry.isStick
+            visible: entry.selected
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
@@ -447,7 +449,7 @@ FocusScope {
                 isSdCard: entry.stickIsSdCard
                 isFolder: entry.stickIsFolder
                 size: Math.round(name.fontInfo.pixelSize * 1.4)
-                color: name.color
+                color: entry.selected ? Theme.accent : Theme.textMuted
                 Layout.alignment: Qt.AlignVCenter
             }
             SeabassIcon {
