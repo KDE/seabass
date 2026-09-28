@@ -190,7 +190,8 @@ given its lock back first.
 The catalog cache's prefetch worker is one thread the cache starts
 itself, not an `AsyncWorkers` thread, and it reads the next stages of
 every stick the backup advisor looks at. Each of its passes counts as a
-read all the same (`AsyncWorkers::enterRead()`/`leaveRead()`): the end
+read all the same (`RunningReads`, the count `AsyncWorkers` keeps its
+own workers in, free of Qt because the cache is built into tools): the end
 of the process waits for a pass running then, like any other read, and
 once the process is ending no pass starts. Before this the storm quit
 the app with a Full pass running, nothing waited for it, and it died on
