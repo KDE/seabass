@@ -14,7 +14,7 @@
 function groups() {
     return [
         {key: "explore", name: "Explore", description: "See what is on the stick", icon: "view-media-track"},
-        {key: "sync", name: "Sync", description: "Keep the catalogs in step", icon: "exchange-positions"},
+        {key: "sync", name: "Sync", description: "Keep cues and catalogs in step", icon: "exchange-positions"},
         {key: "backup", name: "Backup", description: "Keep a copy on this computer", icon: "backup"},
         {key: "maintain", name: "Maintain", description: "Find and fix what is wrong", icon: "kt-check-data"},
     ];

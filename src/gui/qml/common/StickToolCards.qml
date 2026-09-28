@@ -34,11 +34,10 @@ Item {
         case "explore":
             return !(root.showBrowse || root.showStatistics || root.showDeviceProfile || root.showPerformance);
         case "sync":
-            return !(root.showSync || root.showCreateEngine);
+            return !(root.showSync || root.showMetadataBackup || root.showCreateEngine);
         case "backup":
             return !(root.showFullStickBackup || root.showUpdateStick || root.showRestoreBackup
-                     || root.showManageBackups || root.showMetadataBackup || root.showRestoreMetadata
-                     || root.showCreateBackupStick);
+                     || root.showManageBackups || root.showRestoreMetadata || root.showCreateBackupStick);
         case "maintain":
             return !(root.showHousekeeping || root.showLibraryHealth || root.showFormat);
         default:
@@ -309,6 +308,25 @@ Item {
                 onClicked: root.syncRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
+                objectName: "metadataBackupCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                // In Sync, beside Sync Cue Points: it keeps the stick's cues,
+                // ratings and comments in step with a copy on this
+                // computer, and the Backup group is about whole sticks.
+                cardTitle: "Metadata"
+                cardSubtitle: "Copy this stick's cues, ratings and comments to this computer"
+                cardIcon: "document-save"
+                // Not gated on the write lock: this only ever writes to
+                // the local store, so another session editing the library
+                // is no reason to refuse a copy of what is on it.
+                visible: root.group === "sync" && root.showMetadataBackup
+                enabled: root.hasRekordbox || root.hasEngine
+                onClicked: root.metadataBackupRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
+            }
+            ActionCard {
                 objectName: "createEngineLibraryCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
@@ -442,22 +460,6 @@ Item {
                 // it ungated too.
                 visible: root.group === "backup" && root.showManageBackups
                 onClicked: root.manageBackupsRequested(root.label, root.currentArchivePath)
-            }
-            ActionCard {
-                objectName: "metadataBackupCard"
-                large: root.large
-                Layout.preferredWidth: grid.cellWidth
-                Layout.maximumWidth: grid.cellWidth
-                Layout.fillHeight: true
-                cardTitle: "Metadata Backup"
-                cardSubtitle: "Copy this stick's cues, ratings and comments to this computer"
-                cardIcon: "document-save"
-                // Not gated on the write lock: this only ever writes to
-                // the local store, so another session editing the library
-                // is no reason to refuse a copy of what is on it.
-                visible: root.group === "backup" && root.showMetadataBackup
-                enabled: root.hasRekordbox || root.hasEngine
-                onClicked: root.metadataBackupRequested(root.label, root.rekordboxPath, root.enginePath, root.libraryId)
             }
             ActionCard {
                 objectName: "restoreMetadataCard"

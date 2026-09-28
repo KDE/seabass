@@ -311,7 +311,7 @@ TestCase {
         compare(page.selectedGroup, "sync");
         compare(page.appSettingsController.homeGroup, "sync", "the choice is stored for the next run");
         compare(findByName(page, "groupHeadingName").text, "Sync");
-        compare(findByName(page, "groupHeadingDescription").text, "Keep the catalogs in step");
+        compare(findByName(page, "groupHeadingDescription").text, "Keep cues and catalogs in step");
         compare(findCard(page, "/media/MAIN", "Sync Cue Points").visible, true);
     }
 
@@ -484,7 +484,7 @@ TestCase {
         settings.experimentalFeaturesEnabled = false;
         var page = makePage([makeStick({hasEngine: false, enginePath: ""})], {},
                             {appSettingsController: settings});
-        var shown = ["USB Stick Performance", "Format USB Stick", "Metadata Backup"];
+        var shown = ["USB Stick Performance", "Format USB Stick", "Metadata"];
         for (var i = 0; i < shown.length; ++i) {
             var card = findCard(page, "/media/MAIN", shown[i]);
             verify(card !== null && card.visible, shown[i] + " must not be behind the experimental setting");
@@ -602,7 +602,7 @@ TestCase {
             verify(card !== null && card.visible, title + " missing");
             compare(card.readOnly, true, title + " must be read-only while locked");
         }
-        compare(findCard(page, "/media/MAIN", "Metadata Backup").readOnly, false, "a copy to this computer is not held up");
+        compare(findCard(page, "/media/MAIN", "Metadata").readOnly, false, "a copy to this computer is not held up");
         const spy = createTemporaryObject(spyComponent, testCase, {target: page, signalName: "fullStickBackupRequested"});
         mouseClick(findCard(page, "/media/MAIN", "Full Stick Backup"));
         compare(spy.count, 0);
@@ -829,7 +829,7 @@ TestCase {
         var page = makePage([backup], makeAdvice({state: "no-backups"}),
                             {appSettingsController: fakeAppSettings()});
         var mp = backup.mountPoint;
-        var reads = ["Browse Library", "Library Statistics", "Metadata Backup"];
+        var reads = ["Browse Library", "Library Statistics", "Metadata"];
         for (var i = 0; i < reads.length; ++i) {
             var card = findCard(page, mp, reads[i]);
             verify(card !== null, reads[i] + " missing");
@@ -844,11 +844,12 @@ TestCase {
         page.selectGroup("explore");
         waitForRendering(page);
         saveScreenshot(page, "stick-list-browsed-backup");
-        // Sync has nothing for a backup: every card in it writes.
-        page.selectGroup("sync");
+        // Backup has nothing for a backup: every card in it writes, and
+        // Metadata, the one that only reads, is in Sync.
+        page.selectGroup("backup");
         compare(findByName(page, "nothingHereLabel").visible, true);
         waitForRendering(page);
-        saveScreenshot(page, "stick-list-browsed-backup-sync");
+        saveScreenshot(page, "stick-list-browsed-backup-backup");
     }
 
     // Closing a folder row is where its unsaved edits would otherwise
@@ -1037,8 +1038,8 @@ TestCase {
         verify(grid !== null, "the action grid must exist");
         const expected = {
             explore: ["Browse Library", "Library Statistics", "Device Profile", "USB Stick Performance"],
-            sync: ["Sync Cue Points", "Create Engine Library"],
-            backup: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Metadata Backup", "Restore Metadata"],
+            sync: ["Sync Cue Points", "Metadata", "Create Engine Library"],
+            backup: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Restore Metadata"],
             maintain: ["Housekeeping", "Library Health", "Format USB Stick"],
         };
         for (const group of page.groupKeys) {
