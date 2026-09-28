@@ -1008,6 +1008,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # screenshot and mistrusts it.
         set_source_files_properties(src/gui/qml/icons/seabass_soundbass.svg
             PROPERTIES QT_RESOURCE_ALIAS qml/icons/seabass_soundbass.svg)
+        set_source_files_properties(src/gui/qml/icons/kde.svg
+            PROPERTIES QT_RESOURCE_ALIAS qml/icons/kde.svg)
         # Same aliasing, same reason: DonationPage asks for
         # qrc:/qt/qml/SeabassGui/qml/images/sebas.png, which is where the
         # app's own module puts it. Without the alias the portrait is a
@@ -1026,6 +1028,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 ${SEABASS_GUI_QML_FILES_FROM_ROOT}
             RESOURCES
                 src/gui/qml/icons/seabass_soundbass.svg
+                src/gui/qml/icons/kde.svg
                 src/gui/qml/images/sebas.png
                 ${SEABASS_GUI_ICONS_FROM_ROOT}
                 ${SEABASS_GUI_FONTS_FROM_ROOT}

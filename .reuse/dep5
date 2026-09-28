@@ -102,5 +102,6 @@ Comment: Subset of Noto Sans Symbols2 2.003 to U+25C8, U+25CE and U+2B21
  version it was cut from.
 
 Files: src/gui/qml/icons/breeze/*
+ src/gui/qml/icons/kde.svg
 Copyright: 2014-2026 The KDE Visual Design Group and breeze-icons contributors
 License: LGPL-3.0-or-later
