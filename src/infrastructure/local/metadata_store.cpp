@@ -366,6 +366,24 @@ void MetadataStore::openAndMigrate()
         throw std::runtime_error(std::string(Context) + ": " + message);
     }
 
+    // No destructor runs for a constructor that throws, so from here on
+    // every throw closes the connection on its way out. Without this a
+    // migration that failed, or a file that is not a database, left one
+    // connection (and its file descriptor) open for the life of the
+    // process, one more every time the store was asked for again.
+    struct CloseOnThrow
+    {
+        sqlite3 *&db;
+        bool armed = true;
+        ~CloseOnThrow()
+        {
+            if (armed) {
+                sqlite3_close(db);
+                db = nullptr;
+            }
+        }
+    } closeOnThrow{m_db};
+
     // Two connections exist in the running app: the one the browse view
     // reads through and the one a backup writes through. A reader that
     // arrives mid-transaction should wait rather than fail the page.
@@ -553,6 +571,7 @@ void MetadataStore::openAndMigrate()
         insert.bind(1, SchemaVersion);
         insert.run();
     }
+    closeOnThrow.armed = false;
 }
 
 // ---- artwork --------------------------------------------------------
