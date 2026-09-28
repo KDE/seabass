@@ -80,8 +80,6 @@ actions/22/deep-history.svg
 actions/22/go-home.svg
 actions/22/edit-clear.svg
 actions/22/edit-undo.svg
-actions/22/view-sort-ascending.svg
-actions/22/view-sort-descending.svg
 actions/22/sidebar-collapse-left.svg
 actions/22/sidebar-expand-left.svg
 actions/22/media-playback-start.svg
@@ -92,6 +90,7 @@ actions/22/go-down.svg
 actions/22/go-previous.svg
 actions/22/go-next.svg
 actions/22/arrow-down.svg
+actions/22/arrow-up.svg
 actions/22/arrow-right.svg
 actions/22/checkmark.svg
 status/22/dialog-warning.svg
