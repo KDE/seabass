@@ -364,6 +364,14 @@ QtObject {
     readonly property real iconSizeNormal: scaled(40)
     readonly property real iconSizeLarge: scaled(48)
 
+    // The height of a page header's pickers: LibrarySourceToggle and the
+    // Sort by combo on Browse, which sit one above the other at the right
+    // of the header and read as a pair. Left to themselves they came out
+    // at whatever their styles made of their contents, and never agreed:
+    // 23 and 40 px under the pinned Basic style, 33 and 32 under KDE's
+    // desktop style, at 10 pt. 32 is KDE's own combo height at 10 pt.
+    readonly property real compactControlHeight: scaled(32)
+
     // The URL of a bundled Breeze icon (qml/icons/breeze/<name>.svg), for
     // a button's icon.source; SeabassIcon draws one on its own. The same
     // URL in the app and under test, since both register the icons at
