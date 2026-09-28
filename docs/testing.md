@@ -588,7 +588,9 @@ stand-in into an empty list and never let a real stick into it; the test
 refuses to start without the variable. A pull renames the stick's
 directory away, so its mount point is gone and every open by path fails;
 a re-plug renames it back, sometimes with its catalogs rewritten in
-between, as a player would.
+between, as a player would. The directory the sticks sit in is
+read-only, as `/media` and `/Volumes` are, so a write aimed at a pulled
+stick fails instead of making its mount point again.
 
 **The reads** are the real readers, through a catalog cache whose passes
 the weather wraps (`LibraryCatalogCache::realStageForTesting()`): most
@@ -613,17 +615,34 @@ within a bound nothing may say it is busy. Busy for three seconds with no
 worker, read or write, running anywhere is a failure of its own: that is
 the page stuck on "scanning" with nothing behind it. At rest no stick's
 write lock is held unless its session still has staged work or is
-writing, and a stick that carries a save that never finished has a
-session that says so. A save that ends with its stick in leaves no lock
-and no note of a save in progress. The window is closed at the end
-within five seconds.
+writing, and a stick that carries a restorable record of a save it was pulled
+out of has a session that can undo something. A save that finished with
+its stick in leaves no lock and no note of a save in progress, and can be
+undone if it wrote anything. The window is closed at the end within five
+seconds.
+
+**A frozen window** checks nothing, so a watchdog thread watches the
+walk's clock: no tick for 30 s (`SEABASS_STORM_FREEZE_MS`) is a freeze.
+It prints the last steps, writes every thread's stack beside the
+failures file (through gdb, where ptrace allows it), and lets every held
+read go, as a hung stick that finally answers would. A window that thaws
+fails the seed; one still frozen 30 s later ends the process with the
+seed on record.
 
 **The quit leg**: the same binary is started again as the app
 (`seabass_qml_tests --storm-quit`), walks the seed for a while, closes
 the window the way a person does (a save running keeps it open; staged
 changes are thrown away when asked) and then ends the way `main()` does,
-through `endProcess()`. The parent wants it gone within a minute with
-exit code 0, as `async_request_exit_test` does for the helper alone.
+through `endProcess()`. A save held up by a read that does not answer keeps the
+window open by design; after 10 s the stick answers, after 20 s every
+stick is pulled, as a person would do. The parent wants the process gone
+within a minute with exit code 0, as `async_request_exit_test` does for
+the helper alone.
+
+**Memory.** Every seed builds and tears down the whole app, and a
+process runs dozens of seeds. A hunt of four processes beside a build
+once pushed this machine into the OOM killer; three processes of about
+700 MB each are what `tools/storm-hunt.sh` is sized for.
 
 **Replaying a seed.** The walk and the weather are decided by the seed
 (the weather by each read's own key and count), so a seed walks the same
