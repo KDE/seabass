@@ -346,8 +346,8 @@ TestCase {
     // An Engine track whose cover is not on the stick: the ring tries
     // its own art, then the rekordbox copy's, large first.
     function test_aMissingCoverFallsBackToTheRekordboxArt() {
-        const present = "file://" + browseFixture.presentArtwork();
-        const ring = make({artworkSource: "file://" + browseFixture.missingArtwork(), fallbackArtworkSource: present});
+        const present = browseFixture.presentArtworkUrl();
+        const ring = make({artworkSource: browseFixture.missingArtworkUrl(), fallbackArtworkSource: present});
         const art = findChild(ring, "ringArtwork");
         tryCompare(art, "status", Image.Ready);
         compare(art.source.toString(), present);

@@ -47,7 +47,7 @@ TestCase {
                 durationSeconds: 372, playlistNames: ["Peaktime", "Warm-up"], streamingSource: "",
                 rating: 4, bpm: 126.5, key: "Fm", bitrate: 320, playCount: 17,
                 // A real file: art the stick does not have is not shown.
-                artworkPath: "file://" + browseFixture.presentArtwork(),
+                artworkPath: browseFixture.presentArtworkUrl(),
                 comment: "Big room, drop at 1:04", album: "Sounds From The Deep"};
     }
 
@@ -144,7 +144,7 @@ TestCase {
         // Passed straight through, never re-prefixed: the role already
         // hands over a file:// URL, and prefixing it again produced
         // "file://file:///..." and an image that silently did not load.
-        compare(panel.trackArtworkPath, "file://" + browseFixture.presentArtwork());
+        compare(panel.trackArtworkPath, browseFixture.presentArtworkUrl());
         compare(panel.pendingPositionMs, -1);
         if (screenshotDir && screenshotDir.length > 0) {
             grabImage(panel).save(screenshotDir + "/track-panel.png");
@@ -158,7 +158,7 @@ TestCase {
     function test_aMissingCoverShowsNothingOrItsFallback() {
         const panel = makePanel();
         const delegate = makeDelegate();
-        delegate.artworkPath = "file://" + browseFixture.missingArtwork();
+        delegate.artworkPath = browseFixture.missingArtworkUrl();
         panel.showFor(delegate);
         const box = findChild(panel, "trackArtwork");
         const image = findChild(panel, "trackArtworkImage");
@@ -170,7 +170,7 @@ TestCase {
             grabImage(panel).save(screenshotDir + "/track-panel-missing-art.png");
         }
 
-        delegate.fallbackArtworkPath = "file://" + browseFixture.presentArtwork();
+        delegate.fallbackArtworkPath = browseFixture.presentArtworkUrl();
         panel.showFor(delegate);
         tryCompare(image, "showing", "fallback");
         compare(box.visible, true, "the fallback cover is shown in its place");
@@ -182,10 +182,10 @@ TestCase {
         panel.scanController = {
             tracksByArtist: function(artist, exclude) {
                 return [{sourceId: "7", title: "Other", durationSeconds: 300, bpm: 124, key: "8A", cueCount: 0,
-                         artworkPath: "file://" + browseFixture.missingArtwork(),
-                         fallbackArtworkPath: "file://" + browseFixture.presentArtwork(), playlistNames: []},
+                         artworkPath: browseFixture.missingArtworkUrl(),
+                         fallbackArtworkPath: browseFixture.presentArtworkUrl(), playlistNames: []},
                         {sourceId: "8", title: "Neither", durationSeconds: 300, bpm: 124, key: "8A", cueCount: 0,
-                         artworkPath: "file://" + browseFixture.missingArtwork(), playlistNames: []}];
+                         artworkPath: browseFixture.missingArtworkUrl(), playlistNames: []}];
             }
         };
         panel.showFor(makeDelegate());

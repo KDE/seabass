@@ -24,8 +24,11 @@ TestCase {
         }
     }
 
+    // The file:// URL of an absolute local path: file:///C:/... on
+    // Windows, where "file://" + path gave file://C:/..., which Qt reads
+    // as host "c".
     function fileUrl(path) {
-        return "file://" + path;
+        return path.startsWith("/") ? "file://" + path : "file:///" + path;
     }
 
     function make(source, fallbackSource) {
