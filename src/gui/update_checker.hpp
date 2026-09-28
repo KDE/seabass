@@ -23,7 +23,7 @@ namespace seabass::gui
 // said it may.
 //
 // This is the only thing in Seabass that talks to the network, and the
-// website promises no ads, no subscriptions and no phoning home. So the
+// website promises nothing phoning home unless you tell it to. So the
 // setting is off until somebody turns it on, and with it off nothing is
 // ever sent: no check at startup, no timer, no request. "Check now"
 // works either way, because pressing a button is the clearest consent

@@ -587,7 +587,8 @@ Page {
             //
             // Off by default and it stays off: this is the only thing in
             // Seabass that makes a network request, and the promise on
-            // the website is no phoning home. With the box unticked
+            // the website is nothing phoning home unless you tell it to.
+            // With the box unticked
             // nothing is sent, ever. "Check now" is a different matter --
             // pressing a button is the clearest consent there is.
             SectionHeader { text: "Updates" }

@@ -240,8 +240,9 @@ Page {
                 }
                 Label {
                     text: "Finally, I think quality software should be available to everyone. Therefore I made "
-                        + "Seabass Free Software. No spying, no phoning home, no ads, just a modest "
-                        + "encouragement to support its development. Whatever you may be able to spare."
+                        + "Seabass Free Software. No spying, nothing phoning home (unless you tell it to!), "
+                        + "no ads, just a modest encouragement to support its development. Whatever you may "
+                        + "be able to spare."
                     wrapMode: Text.WordWrap
                     font.pointSize: Theme.baseFontPointSize * 1.1
                     color: Theme.textMuted
@@ -321,8 +322,8 @@ Page {
             }
 
             Label {
-                text: "Free software, under the GPL. No ads, no subscriptions, nothing phoning home. "
-                    + "Built by Sebastian Kügler and friends."
+                text: "Free software, under the GPL. No ads, no subscriptions, nothing phoning home "
+                    + "(unless you tell it to!). Built by Sebastian Kügler and friends."
                 wrapMode: Text.WordWrap
                 font.pointSize: Theme.baseFontPointSize * 1.1
                 color: Theme.textMuted
