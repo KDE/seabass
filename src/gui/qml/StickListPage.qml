@@ -904,14 +904,40 @@ Page {
                         groupDescription: root.selectedGroupInfo.description
                         textInset: root.paneTextInset
                     }
-                    Label {
+                    // The whole pane's message while there is nothing to
+                    // work on, so it reads as one: centred, the stick's own
+                    // icon at size, and what to do about it underneath.
+                    ColumnLayout {
                         objectName: "noStickNothingHere"
                         visible: root.selectedRow === null && root.selectedGroup !== "backup"
                         Layout.fillWidth: true
-                        Layout.leftMargin: root.paneTextInset
-                        text: "Nothing here without a USB stick. Insert one to get started."
-                        color: Theme.textMuted
-                        wrapMode: Text.WordWrap
+                        Layout.topMargin: Theme.sectionSpacing * 3
+                        spacing: Theme.sectionSpacing
+
+                        UsbStickIcon {
+                            objectName: "noStickIcon"
+                            Layout.alignment: Qt.AlignHCenter
+                            size: Theme.iconSizeLarge * 1.5
+                        }
+                        Label {
+                            objectName: "noStickTitle"
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: "No USB stick"
+                            color: Theme.text
+                            font.pointSize: Theme.fontLarge
+                            font.bold: true
+                        }
+                        Label {
+                            objectName: "noStickHint"
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: "Nothing here without a USB stick. Insert one to get started."
+                            color: Theme.textMuted
+                            font.pointSize: Theme.subtitleSize
+                        }
                     }
 
                     // Tools that work on this computer's own backup stores,
@@ -922,8 +948,13 @@ Page {
                     //
                     // removableCount, not the row count: a folder someone
                     // opened is not a stick, and should not make these
-                    // vanish, since then there would be no route to
-                    // Restore a Stick Backup at all.
+                    // vanish.
+                    //
+                    // Restore a Stick Backup is not among them: it needs a
+                    // drive to restore onto, and this block is only ever
+                    // shown when there is none -- the card led to a page
+                    // with nothing to pick (Sebastian, 2026-09-28). With a
+                    // stick in, its own Backup cards offer the restore.
                     ColumnLayout {
                         objectName: "noStickBackupTools"
                         Layout.fillWidth: true
@@ -950,18 +981,6 @@ Page {
                             readonly property real cellWidth: Math.max(0, (paneColumn.width
                                 - (computerGrid.columns - 1) * computerGrid.columnSpacing) / computerGrid.columns)
 
-                            ActionCard {
-                                objectName: "generalRestoreCard"
-                                large: true
-                                Layout.preferredWidth: computerGrid.cellWidth
-                                Layout.fillHeight: true
-                                cardTitle: "Restore a Stick Backup"
-                                cardSubtitle: "Put a stick backup from this computer onto any drive"
-                                cardIcon: "document-revert"
-                                // No stick preselected: the page itself lists
-                                // every mounted drive and every backup on disk.
-                                onClicked: root.restoreStickBackupRequested("", "", "", "")
-                            }
                             ActionCard {
                                 objectName: "browseFullBackupCard"
                                 large: true
