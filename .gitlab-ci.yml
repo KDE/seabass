@@ -653,8 +653,8 @@ linux:coverage:
     - apt-get install -y -qq --no-install-recommends gcovr
     - cmake -S . -B build-cov -G Ninja -DCMAKE_BUILD_TYPE=Debug
       -DSEABASS_LIBDJINTEROP_TESTS=OFF
-      -DCMAKE_C_FLAGS_DEBUG="-O0 -g --coverage"
-      -DCMAKE_CXX_FLAGS_DEBUG="-O0 -g --coverage"
+      -DCMAKE_C_FLAGS_DEBUG="-O0 -g --coverage -fprofile-update=atomic"
+      -DCMAKE_CXX_FLAGS_DEBUG="-O0 -g --coverage -fprofile-update=atomic"
       -DCMAKE_EXE_LINKER_FLAGS="--coverage"
       -DCMAKE_SHARED_LINKER_FLAGS="--coverage"
       -DCMAKE_C_COMPILER_LAUNCHER=ccache
@@ -680,12 +680,18 @@ linux:coverage:
     # --merge-mode-functions=separate because a template or a lambda in a
     # header is one function on several lines across translation units,
     # which gcovr's strict default refuses to merge.
+    # Threads in the tests bump the same counters: -fprofile-update=atomic
+    # above keeps them exact, and any negative count gcov still reports
+    # (GCC bug 68080) is warned about rather than failing the report,
+    # as is a system header gcov cannot place.
     # gcovr writes into the directory but does not make it.
     - mkdir -p build-cov/coverage
     - gcovr --root . --object-directory build-cov
       --filter 'src/' --exclude 'src/infrastructure/rekordbox/generated/'
       --exclude-throw-branches --exclude-unreachable-branches
       --merge-mode-functions=separate
+      --gcov-ignore-parse-errors=negative_hits.warn_once_per_file
+      --gcov-ignore-errors=no_working_dir_found
       --cobertura build-cov/coverage.xml
       --html-details build-cov/coverage/index.html
       --print-summary
