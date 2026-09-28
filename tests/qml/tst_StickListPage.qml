@@ -393,13 +393,18 @@ TestCase {
         compare(spy.count, 1, "a click at its centre reaches it");
     }
 
-    // One left line for the page and one for the pane: the rail's pills
-    // start where the brand does, and the stick's name, the group heading
-    // and the cards' titles share an edge of their own.
+    // One left line for the page and one for the pane: the brand stands
+    // on the rail's text line (the pills reach left of it by their inset),
+    // and the stick's name, the group heading and the cards' titles share
+    // an edge of their own.
     function test_thePaneTextSharesOneLeftEdge() {
         const page = makePage([makeStick({})], {});
         const x = (item) => Math.round(item.mapToItem(page, 0, 0).x);
-        compare(x(findByName(page, "homeRail")), x(findByName(page, "brandLockup")));
+        const sticksLabel = findByName(page, "railSticksLabel");
+        verify(sticksLabel !== null, "the rail has a section label to line up with");
+        compare(x(findByName(page, "brandLockup")), x(sticksLabel) + Math.round(sticksLabel.leftPadding),
+                "the brand stands on the rail's text line, where its section labels and icons start");
+        compare(x(findByName(page, "brandLockup")), x(findByName(page, "homeRail")) + Theme.crumbTextInset);
         const name = findByName(page, "stickLabel");
         const heading = findByName(page, "groupHeadingName");
         const card = findCard(page, "/media/MAIN", "Browse Library");

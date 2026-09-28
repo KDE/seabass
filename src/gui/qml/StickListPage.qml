@@ -495,6 +495,13 @@ Page {
             RowLayout {
                 objectName: "brandLockup"
                 spacing: Theme.rowSpacing
+                // On the rail's text line, where its section labels and
+                // the entries' icons start, not on its pills' edge: the
+                // pills reach crumbTextInset left of that line so the
+                // accent bar and the shading have somewhere to be, and a
+                // wordmark standing on the bar read as misaligned with
+                // every word under it (Sebastian, 2026-09-28).
+                Layout.leftMargin: Theme.crumbTextInset
                 // Same two colours AboutPage gives this pair, which is
                 // the only other place the lockup appears: the Kelp
                 // palette's text, and its accent lightened.
