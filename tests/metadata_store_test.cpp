@@ -9,7 +9,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #include <sqlite3.h>
 
@@ -41,6 +46,17 @@ fs::path scratchRoot()
     // form on Windows, and appending it again here was redundant even on
     // platforms where it does.
     return seabass::testing::scratchRoot() / "seabass-metadata-store-test";
+}
+
+// Open file descriptors, where the platform lists them (-1 elsewhere):
+// how a connection left open by a constructor that threw is seen.
+long openDescriptors()
+{
+#if defined(__linux__)
+    return static_cast<long>(std::distance(fs::directory_iterator("/proc/self/fd"), fs::directory_iterator()));
+#else
+    return -1;
+#endif
 }
 
 void writeFile(const fs::path &path, const std::string &data)
@@ -1140,6 +1156,372 @@ int main()
         std::cout << "case 23 (a migration whose safety copy failed does not run) OK\n";
     }
 #endif
+
+    // ---- case 24: asking how much is stored changes nothing ----------
+    //
+    // storedTrackCountIfPresent() answers a button that greys itself out,
+    // so it must neither create a database nor migrate one: no file is
+    // 0 and stays no file, a file that is not a database is 0, and a real
+    // store answers its count without being opened for writing.
+    {
+        const fs::path dir = root / "count-only";
+        fs::create_directories(dir);
+        assert(MetadataStore::storedTrackCountIfPresent(dir / "absent.db") == 0);
+        assert(!fs::exists(dir / "absent.db"));
+
+        writeFile(dir / "garbage.db", std::string(4096, 'x'));
+        assert(MetadataStore::storedTrackCountIfPresent(dir / "garbage.db") == 0);
+
+        const fs::path real = dir / "metadata.db";
+        {
+            MetadataStore metadata(real);
+            Track a = sampleTrack(stick, "Contents/Count/A.mp3", "Count A");
+            Track b = sampleTrack(stick, "Contents/Count/B.mp3", "Count B");
+            store(metadata, {a, b}, sourceFor(stick));
+        }
+        const auto before = fs::last_write_time(real);
+        assert(MetadataStore::storedTrackCountIfPresent(real) == 2);
+        assert(fs::last_write_time(real) == before);
+        std::cout << "case 24 (counting a store on disk creates and changes nothing) OK\n";
+    }
+
+    // ---- case 25: a database from a newer Seabass --------------------
+    //
+    // Stamped with a version above this build's. Case 11 shows a working
+    // store comes back; this pins what happens to the newer file: renamed
+    // aside under its own version number, byte for byte what it was.
+    {
+        const fs::path newerDb = root / "newer" / "metadata.db";
+        fs::create_directories(newerDb.parent_path());
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(newerDb).c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_exec(raw, "CREATE TABLE schema_version (version INTEGER NOT NULL);"
+                                     "INSERT INTO schema_version (version) VALUES (4);"
+                                     "CREATE TABLE future_things (x TEXT);"
+                                     "INSERT INTO future_things (x) VALUES ('from a later build');",
+                                nullptr, nullptr, nullptr)
+                   == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        std::ifstream in(newerDb, std::ios::binary);
+        const std::string newerBytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        in.close();
+
+        MetadataStore metadata(newerDb);
+        assert(metadata.trackCount() == 0);  // a clean store, not the newer one read wrongly
+        int superseded = 0;
+        for (const auto &entry : fs::directory_iterator(newerDb.parent_path())) {
+            const std::string name = pathToUtf8(entry.path().filename());
+            if (name.rfind("metadata.db.superseded-4-", 0) == 0) {
+                ++superseded;
+                std::ifstream aside(entry.path(), std::ios::binary);
+                const std::string asideBytes((std::istreambuf_iterator<char>(aside)),
+                                             std::istreambuf_iterator<char>());
+                assert(asideBytes == newerBytes);
+                assert(name.find(':') == std::string::npos);  // no colon: NTFS would read a stream name
+            }
+        }
+        assert(superseded == 1);
+        std::cout << "case 25 (a newer store is moved aside under its version, untouched) OK\n";
+    }
+
+#if !defined(_WIN32)
+    // ---- case 26: ...and when it cannot be moved aside ---------------
+    //
+    // A folder that refuses the rename: the store refuses to open, with
+    // the reason, and the newer file is where it was. Opening over it
+    // would lose it; carrying on without a store would hide that.
+    if (::geteuid() == 0) {
+        std::cout << "case 26 skipped: running as root, so a read-only folder refuses nothing\n";
+    } else {
+        const fs::path newerDb = root / "newer-stuck" / "metadata.db";
+        fs::create_directories(newerDb.parent_path());
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(newerDb).c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_exec(raw, "CREATE TABLE schema_version (version INTEGER NOT NULL);"
+                                     "INSERT INTO schema_version (version) VALUES (7);",
+                                nullptr, nullptr, nullptr)
+                   == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        fs::permissions(newerDb.parent_path(), fs::perms::owner_read | fs::perms::owner_exec,
+                        fs::perm_options::replace);
+        std::string message;
+        try {
+            MetadataStore metadata(newerDb);
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        fs::permissions(newerDb.parent_path(), fs::perms::owner_all, fs::perm_options::replace);
+        assert(message.rfind("metadata store: found a database written by another version of Seabass and could "
+                             "not move it aside: ",
+                             0)
+               == 0);
+        std::size_t entries = 0;
+        for (const auto &entry : fs::directory_iterator(newerDb.parent_path())) {
+            (void)entry;
+            ++entries;
+        }
+        assert(entries == 1 && fs::exists(newerDb));
+        std::cout << "case 26 (a newer store that cannot be moved aside is refused, and kept) OK\n";
+    }
+#endif
+
+    // ---- case 27: a database that cannot be opened at all ------------
+    //
+    // Its folder cannot exist, because a file is in the way.
+    {
+        const fs::path blocker = root / "blocked";
+        writeFile(blocker, "a file where a folder has to be");
+        std::string message;
+        try {
+            MetadataStore metadata(blocker / "metadata.db");
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message.rfind("metadata store: ", 0) == 0);
+        assert(message.find("unable to open") != std::string::npos);
+        std::cout << "case 27 (a store whose folder cannot exist is refused) OK\n";
+    }
+
+    // ---- case 28: a migration that fails part-way is rolled back -------
+    //
+    // A version-2 store, and a trigger that refuses the migration's
+    // DELETE of the phantom cue: the open fails with SQLite's reason, the
+    // store is still version 2 with every cue it had, and the safety copy
+    // is there. With the obstacle gone the same file migrates.
+    {
+        const fs::path oldDb = root / "migration-rollback" / "metadata.db";
+        {
+            MetadataStore metadata(oldDb);
+            Track track = sampleTrack(stick, "Contents/Rollback/Track.mp3", "Rollback");
+            track.cues = {hotCue(1, 32'000.0)};
+            store(metadata, {track}, sourceFor(stick));
+        }
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_exec(raw,
+                                "INSERT INTO cues (track_id, kind, hot_number, position_ms, color, comment, is_loop, "
+                                "loop_end_ms) SELECT id, 'memory', 0, -0.0226757, '', '', 0, 0 FROM tracks;"
+                                "UPDATE schema_version SET version = 2;"
+                                "CREATE TRIGGER refuse_cue_delete BEFORE DELETE ON cues "
+                                "BEGIN SELECT RAISE(ABORT, 'planted: cues may not be deleted'); END;",
+                                nullptr, nullptr, nullptr)
+                   == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        std::string message;
+        const long fdsBefore = openDescriptors();
+        try {
+            MetadataStore metadata(oldDb);
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message.find("planted: cues may not be deleted") != std::string::npos);
+        // The constructor threw, so no destructor runs: the connection it
+        // had opened is closed on the way out, or it stays open for the
+        // life of the process, one more every time the page asks again.
+        assert(openDescriptors() == fdsBefore);
+
+        int version = 0;
+        int cueRows = 0;
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(oldDb).c_str(), &raw) == SQLITE_OK);
+            sqlite3_stmt *statement = nullptr;
+            assert(sqlite3_prepare_v2(raw, "SELECT version FROM schema_version", -1, &statement, nullptr) == SQLITE_OK);
+            assert(sqlite3_step(statement) == SQLITE_ROW);
+            version = sqlite3_column_int(statement, 0);
+            sqlite3_finalize(statement);
+            assert(sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM cues", -1, &statement, nullptr) == SQLITE_OK);
+            assert(sqlite3_step(statement) == SQLITE_ROW);
+            cueRows = sqlite3_column_int(statement, 0);
+            sqlite3_finalize(statement);
+            assert(sqlite3_exec(raw, "DROP TRIGGER refuse_cue_delete", nullptr, nullptr, nullptr) == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        assert(version == 2 && "the version bump was rolled back with the rest");
+        assert(cueRows == 2 && "and so was every deletion");
+        fs::path beside = oldDb;
+        beside += ".before-schema-3";
+        assert(fs::exists(beside));
+
+        MetadataStore reopened(oldDb);
+        const auto rows = reopened.browse("Rollback", 10, 0);
+        assert(rows.size() == 1 && rows[0].cueCount == 1);
+        std::cout << "case 28 (a migration that fails part-way leaves the store as it was) OK\n";
+    }
+
+    // ---- case 29: a backup run that fails part-way is rolled back ------
+    //
+    // The second of two new tracks is refused by a trigger: the run
+    // throws, and the first one, already inserted inside the same
+    // transaction, is not there afterwards. The store stays usable.
+    {
+        const fs::path failDb = root / "store-rollback" / "metadata.db";
+        MetadataStore metadata(failDb);
+        Track kept = sampleTrack(stick, "Contents/Rollback/Kept.mp3", "Already Stored");
+        store(metadata, {kept}, sourceFor(stick));
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(failDb).c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_exec(raw,
+                                "CREATE TRIGGER refuse_poison BEFORE INSERT ON tracks WHEN NEW.title = 'Poison' "
+                                "BEGIN SELECT RAISE(ABORT, 'planted: no poison'); END;",
+                                nullptr, nullptr, nullptr)
+                   == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        Track first = sampleTrack(stick, "Contents/Rollback/First.mp3", "First Of Two");
+        first.cues = {hotCue(1, 1'000.0)};
+        Track poison = sampleTrack(stick, "Contents/Rollback/Poison.mp3", "Poison");
+        std::string message;
+        try {
+            metadata.store({first, poison}, sourceFor(stick), NullProgressReporter::instance(),
+                           CancellationToken::none());
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message.find("planted: no poison") != std::string::npos);
+        assert(metadata.trackCount() == 1);
+        assert(metadata.trackCount("First Of Two") == 0);
+        assert(metadata.browse("Already Stored", 10, 0).size() == 1);
+
+        // Still a working store: the next run goes through.
+        const auto summary = store(metadata, {first}, sourceFor(stick));
+        assert(summary.tracksAdded == 1);
+        assert(metadata.trackCount() == 2);
+        std::cout << "case 29 (a backup run that fails part-way keeps none of it) OK\n";
+    }
+
+    // ---- case 30: a removal that fails part-way is rolled back ---------
+    {
+        const fs::path removeDb = root / "remove-rollback" / "metadata.db";
+        MetadataStore metadata(removeDb);
+        store(metadata,
+              {sampleTrack(stick, "Contents/Remove/Goes.mp3", "Goes"),
+               sampleTrack(stick, "Contents/Remove/Stays.mp3", "Stays")},
+              sourceFor(stick));
+        const auto goes = metadata.browse("Goes", 10, 0);
+        const auto stays = metadata.browse("Stays", 10, 0);
+        assert(goes.size() == 1 && stays.size() == 1);
+        {
+            sqlite3 *raw = nullptr;
+            assert(sqlite3_open(pathToUtf8(removeDb).c_str(), &raw) == SQLITE_OK);
+            assert(sqlite3_exec(raw,
+                                "CREATE TRIGGER refuse_removal BEFORE DELETE ON tracks WHEN OLD.title = 'Stays' "
+                                "BEGIN SELECT RAISE(ABORT, 'planted: this one stays'); END;",
+                                nullptr, nullptr, nullptr)
+                   == SQLITE_OK);
+            sqlite3_close(raw);
+        }
+        assert(metadata.removeTracks({}) == 0);
+        std::string message;
+        try {
+            metadata.removeTracks({goes[0].id, stays[0].id});
+        } catch (const std::runtime_error &e) {
+            message = e.what();
+        }
+        assert(message.find("planted: this one stays") != std::string::npos);
+        assert(metadata.trackCount() == 2 && "the row deleted before the refusal came back too");
+        assert(metadata.removeTracks({goes[0].id}) == 1);
+        assert(metadata.trackCount() == 1);
+        std::cout << "case 30 (a removal that fails part-way removes nothing) OK\n";
+    }
+
+    // ---- case 31: a later run brings what an earlier one lacked --------
+    //
+    // A row stored with no cover and no play count takes both from the
+    // next run, and its playlists read back. The cover has no extension,
+    // so it is kept as .jpg.
+    {
+        const fs::path laterDb = root / "later-fill" / "metadata.db";
+        MetadataStore metadata(laterDb);
+        Track bare = sampleTrack(stick, "Contents/Later/Track.mp3", "Filled Later");
+        store(metadata, {bare}, sourceFor(stick));
+        auto rows = metadata.browse("Filled Later", 10, 0);
+        assert(rows.size() == 1 && rows[0].artworkPath.empty() && !rows[0].playCount.has_value());
+
+        const fs::path coverWithoutExtension = stick / "PIONEER" / "Artwork" / "cover-no-extension";
+        writeFile(coverWithoutExtension, "an image with no extension");
+        Track fuller = bare;
+        fuller.artworkPath = pathToUtf8(coverWithoutExtension);
+        fuller.playCount = 5;
+        fuller.playlists = {PlaylistMembership{"Warm Up", 2}};
+        const auto summary = store(metadata, {fuller}, sourceFor(stick, "RV2", CatalogNew));
+        assert(summary.tracksUpdated == 1);
+        assert(summary.artworkFilesAdded == 1);
+        assert(summary.artworkBytesAdded == std::string("an image with no extension").size());
+
+        rows = metadata.browse("Filled Later", 10, 0);
+        assert(rows.size() == 1);
+        assert(rows[0].playCount == 5);
+        assert(pathFromUtf8(rows[0].artworkPath).extension() == ".jpg");
+        assert(fs::exists(pathFromUtf8(rows[0].artworkPath)));
+        assert(metadata.artworkBytesOnDisk() == std::string("an image with no extension").size());
+        const auto playlists = metadata.playlistsFor(rows[0].id);
+        assert(playlists.size() == 1 && playlists[0].name == "Warm Up" && playlists[0].position == 2);
+        std::cout << "case 31 (a later run fills the cover and play count an earlier one lacked) OK\n";
+    }
+
+#if !defined(_WIN32)
+    // ---- case 32: a cover that cannot be copied does not cost the row --
+    if (::geteuid() == 0) {
+        std::cout << "case 32 skipped: running as root, so a read-only folder refuses nothing\n";
+    } else {
+        const fs::path noCopyDb = root / "no-cover-copy" / "metadata.db";
+        MetadataStore metadata(noCopyDb);
+        fs::create_directories(metadata.artworkDir());
+        fs::permissions(metadata.artworkDir(), fs::perms::owner_read | fs::perms::owner_exec,
+                        fs::perm_options::replace);
+        const fs::path coverFile = stick / "PIONEER" / "Artwork" / "refused.png";
+        writeFile(coverFile, "a cover the store cannot copy");
+        Track track = sampleTrack(stick, "Contents/NoCopy/Track.mp3", "No Copy");
+        track.artworkPath = pathToUtf8(coverFile);
+        track.cues = {hotCue(2, 8'000.0)};
+        const auto summary = store(metadata, {track}, sourceFor(stick));
+        fs::permissions(metadata.artworkDir(), fs::perms::owner_all, fs::perm_options::replace);
+        assert(summary.tracksAdded == 1);
+        assert(summary.artworkFilesAdded == 0);
+        const auto rows = metadata.browse("No Copy", 10, 0);
+        assert(rows.size() == 1 && rows[0].cueCount == 1);
+        assert(rows[0].artworkPath.empty() && "no half-written cover is pointed at");
+        assert(metadata.artworkBytesOnDisk() == 0);
+        std::cout << "case 32 (a cover that cannot be copied is dropped, the track and its cues kept) OK\n";
+    }
+#endif
+
+    // ---- case 33: a file in the database's place that is not one ------
+    //
+    // Damaged, or something else saved under the name. It is moved aside
+    // like a database from another version, never deleted, and a clean
+    // store opens in its place. It used to be opened in place, and every
+    // open after that refused with "file is not a database".
+    {
+        const fs::path garbageDb = root / "garbage" / "metadata.db";
+        const std::string garbage(4096, 'x');
+        writeFile(garbageDb, garbage);
+        MetadataStore metadata(garbageDb);
+        assert(metadata.trackCount() == 0);
+        store(metadata, {sampleTrack(stick, "Contents/Garbage/Track.mp3", "After Garbage")}, sourceFor(stick));
+        assert(metadata.trackCount() == 1);
+        int asideCount = 0;
+        for (const auto &entry : fs::directory_iterator(garbageDb.parent_path())) {
+            const std::string name = pathToUtf8(entry.path().filename());
+            if (name.rfind("metadata.db.superseded--1-", 0) == 0) {
+                ++asideCount;
+                std::ifstream aside(entry.path(), std::ios::binary);
+                const std::string asideBytes((std::istreambuf_iterator<char>(aside)),
+                                             std::istreambuf_iterator<char>());
+                assert(asideBytes == garbage);
+            }
+        }
+        assert(asideCount == 1);
+        std::cout << "case 33 (a file that is not a database is moved aside, and a clean store opens) OK\n";
+    }
 
     return 0;
 }
