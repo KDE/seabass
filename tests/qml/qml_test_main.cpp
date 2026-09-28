@@ -23,6 +23,7 @@
 #include "gui/interface_font.hpp"
 #include "gui/qt_path.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "../fixture_copy.hpp"
 #include "../scratch_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -270,7 +271,7 @@ public:
         fs::remove_all(root, ec);
         fs::create_directories(root, ec);
         const fs::path from = seabass::pathFromUtf8(fixtureRoot.toStdString());
-        fs::copy(from / "rekordbox", root / "PIONEER", fs::copy_options::recursive, ec);
+        seabass::testing::copyPioneerFixture(from / "rekordbox", root / "PIONEER", ec);
         if (ec) {
             return {};
         }
@@ -1065,7 +1066,7 @@ public:
         // A copy, never the fixture itself: nothing here writes, but the
         // readers are handed a stick, and a stick is somewhere a later
         // change could decide to put a lock file.
-        fs::copy(from / "rekordbox", stick / "PIONEER", fs::copy_options::recursive, ec);
+        seabass::testing::copyPioneerFixture(from / "rekordbox", stick / "PIONEER", ec);
         if (ec) {
             return -1;
         }

@@ -59,6 +59,7 @@
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "fixture_copy.hpp"
 #include "scratch_path.hpp"
 
 using namespace seabass::gui;
@@ -79,7 +80,8 @@ fs::path freshCopy(const std::string &name)
     assert(fs::exists(source / "rekordbox" / "export.pdb"));
     assert(fs::exists(source / "rekordbox" / "exportLibrary.db"));
     const fs::path pioneerRoot = scratch / "PIONEER";
-    fs::copy(source, pioneerRoot, fs::copy_options::recursive);
+    seabass::testing::copyPioneerFixture(source, pioneerRoot, ec);
+    assert(!ec);
     return pioneerRoot;
 }
 
