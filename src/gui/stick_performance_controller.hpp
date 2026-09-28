@@ -11,6 +11,7 @@
 #include <QVariantMap>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/async_request.hpp"
 
 namespace seabass::gui
 {
@@ -101,12 +102,13 @@ class StickPerformanceController : public QObject
 
 public:
     explicit StickPerformanceController(QObject *parent = nullptr);
-    // Cancels whatever runs and waits for it: the wear task posts
-    // progress to this object from its thread, and the measure and write
-    // tasks write to the stick, so neither may outlive the page.
+    // Cancels whatever runs. The read measurement is let go of (see
+    // docs/async-requests.md); the rest is waited for: the wear task posts
+    // progress to this object from its thread, and the scratch-file
+    // measurement and the write test write to the stick.
     ~StickPerformanceController() override;
 
-    bool busy() const { return m_busy; }
+    bool busy() const { return m_busy || m_measure.busy(); }
     QString errorMessage() const { return m_errorMessage; }
     QVariantMap filesystemInfo() const { return m_filesystemInfo; }
     QVariantMap measurement() const { return m_measurement; }
@@ -121,7 +123,7 @@ public:
     QVariantMap writeMeasurement() const { return m_writeMeasurement; }
     QVariantMap writeEstimate() const { return m_writeEstimate; }
     bool wearBusy() const { return m_wearBusy; }
-    bool anyBusy() const { return m_busy || m_writeBusy || m_wearBusy; }
+    bool anyBusy() const { return busy() || m_writeBusy || m_wearBusy; }
     QString wearErrorMessage() const { return m_wearErrorMessage; }
     qlonglong wearBytesDone() const { return m_wearBytesDone; }
     qlonglong wearBytesTotal() const { return m_wearBytesTotal; }
@@ -190,6 +192,7 @@ private:
     // other write path; empty when the root is fine.
     static QString refuseBrowsedBackup(const std::string &stickRoot, const QString &stickLabel);
     void setBusy(bool busy);
+    void applyResult(StickPerformanceResult &&result);
     void setErrorMessage(const QString &message);
     void setWriteBusy(bool busy);
     void setWriteErrorMessage(const QString &message);
@@ -201,7 +204,12 @@ private:
     QFutureWatcher<StickWearResult> m_wearWatcher;
     application::CancellationToken m_wearCancel;  // fresh per checkWear()
 
+    // The scratch-file measurement's own busy; the read one's is m_measure.
     bool m_busy = false;
+    AsyncRequest<StickPerformanceResult> m_measure{this, [this]() {
+                                                       emit busyChanged();
+                                                       emit anyBusyChanged();
+                                                   }};
     QString m_errorMessage;
     QVariantMap m_filesystemInfo;
     QVariantMap m_measurement;

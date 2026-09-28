@@ -20,6 +20,7 @@
 #include "domain/stick_performance.hpp"
 
 #include "gui/future_result.hpp"
+#include "gui/async_request.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/write_guard.hpp"
@@ -458,6 +459,9 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
                 ? QDateTime()
                 : QDateTime::fromString(QString::fromStdString(earlier.back().measuredAtUtc), Qt::ISODate);
             const bool record = alwaysRecord || !newest.isValid() || newest.secsTo(now) > 24 * 60 * 60;
+            // A measurement the page let go of (cancelled, superseded,
+            // its stick pulled, the page gone) records nothing.
+            cancel.throwIfCancelled();
             if (record) {
                 infrastructure::local::StickPerformanceRecord line;
                 line.measuredAtUtc = now.toString(Qt::ISODate).toStdString();
@@ -472,6 +476,8 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
                 history.append(line);
                 result.recordedAtUtc = QString::fromStdString(line.measuredAtUtc);
             }
+        } catch (const application::OperationCancelled &) {
+            throw;
         } catch (const std::exception &e) {
             // Not fatal to the measurement, but not silent either: with
             // no record there is no trend and no backup time estimate.
@@ -739,6 +745,10 @@ void StickPerformanceController::setWearErrorMessage(const QString &message)
     emit wearErrorMessageChanged();
 }
 
+// The read measurement (m_measure) is let go of by its AsyncRequest; the
+// one with scratch files writes to the stick and is waited for here, as
+// are the write test and the wear check, which posts its progress to this
+// object.
 StickPerformanceController::~StickPerformanceController()
 {
     m_cancel.cancel();
@@ -855,7 +865,9 @@ void StickPerformanceController::startMeasure(const QString &stickLabel, const Q
                                               const QString &enginePath, const QString &mountPoint,
                                               bool useScratchFiles, bool alwaysRecord)
 {
-    if (anyBusy()) {
+    // A write or the wear check running refuses a measurement, as ever;
+    // another measurement is the request's to serve or supersede.
+    if (m_busy || m_writeBusy || m_wearBusy || (useScratchFiles && m_measure.busy())) {
         return;
     }
     if (rekordboxPath.isEmpty() && enginePath.isEmpty() && mountPoint.isEmpty()) {
@@ -868,6 +880,30 @@ void StickPerformanceController::startMeasure(const QString &stickLabel, const Q
         return;
     }
     setErrorMessage({});
+    if (!useScratchFiles) {
+        // A read, under the rule of docs/async-requests.md: cancel, a
+        // pulled stick and leaving the page end it at once, and a worker
+        // stuck on the stick is let go of rather than waited for. It froze
+        // the window in the storm: the page went while the catalog read
+        // could not see its token, and the destructor waited without end.
+        const std::string stickRoot = stickRootFromPaths(rekordboxPath, enginePath, mountPoint);
+        const QString key = QStringLiteral("%1|%2|%3|%4").arg(stickLabel, rekordboxPath, enginePath, mountPoint);
+        m_measure.start(key, qtPathFromUtf8(stickRoot),
+                        [stickLabel, rekordboxPath, enginePath, mountPoint, alwaysRecord](application::CancellationToken cancel) {
+                            StickPerformanceResult result = runMeasureTask(stickLabel, rekordboxPath, enginePath, mountPoint,
+                                                                           false, alwaysRecord, cancel);
+                            if (result.cancelled) {
+                                throw application::OperationCancelled();
+                            }
+                            return result;
+                        },
+                        {[this](StickPerformanceResult &&result) { applyResult(std::move(result)); },
+                         [this](const QString &error) { setErrorMessage(error); },
+                         [this]() { emit cancelled(); }});
+        return;
+    }
+    // With scratch files it writes to the stick: a write, cancelled by
+    // asking and waited for (see the destructor).
     setBusy(true);
     m_cancel = application::CancellationToken();
     m_watcher.setFuture(QtConcurrent::run(runMeasureTask, stickLabel, rekordboxPath, enginePath, mountPoint,
@@ -876,6 +912,7 @@ void StickPerformanceController::startMeasure(const QString &stickLabel, const Q
 
 void StickPerformanceController::cancel()
 {
+    m_measure.cancel();
     if (m_busy) {
         m_cancel.cancel();
     }
@@ -889,6 +926,11 @@ void StickPerformanceController::onFinished()
         result.errorMessage = thrown;
     }
     setBusy(false);
+    applyResult(std::move(result));
+}
+
+void StickPerformanceController::applyResult(StickPerformanceResult &&result)
+{
     if (result.cancelled) {
         emit cancelled();
         return;
