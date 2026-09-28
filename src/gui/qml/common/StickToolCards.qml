@@ -36,8 +36,9 @@ Item {
         case "sync":
             return !(root.showSync || root.showCreateEngine);
         case "backup":
-            return !(root.showBackups || root.showMetadataBackup || root.showRestoreMetadata
-                     || root.showCreateBackupStick || root.showRestoreBackup);
+            return !(root.showFullStickBackup || root.showUpdateStick || root.showRestoreBackup
+                     || root.showManageBackups || root.showMetadataBackup || root.showRestoreMetadata
+                     || root.showCreateBackupStick);
         case "maintain":
             return !(root.showHousekeeping || root.showLibraryHealth || root.showFormat);
         default:
@@ -60,7 +61,10 @@ Item {
     signal engineLibraryCreatorRequested(string stickLabel, string rekordboxPath)
     signal settingsRequested(string stickLabel, string pioneerRoot)
     signal syncRequested(string stickLabel, string rekordboxPath, string enginePath)
-    signal backupsHubRequested(string stickLabel, string rekordboxPath, string enginePath, string mountPoint, string devicePath)
+    signal fullStickBackupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    // `currentArchivePath`: this stick's own full backup, when the advisor
+    // matched one to it; Manage Backups lists it first.
+    signal manageBackupsRequested(string stickLabel, string currentArchivePath)
     signal formatUsbRequested()
     signal restoreStickBackupRequested(string mountPoint, string devicePath, string archivePath, string stickLabel)
     signal metadataBackupRequested(string stickLabel, string rekordboxPath, string enginePath, string libraryId)
@@ -117,6 +121,19 @@ Item {
         ? root.advice.cloneSource : null
     readonly property var updateSource: root.advice && root.advice.updateSource && root.advice.updateSource.kind !== "none"
         ? root.advice.updateSource : null
+    // The full backup the advisor matched to this stick, by its library or
+    // its hardware. Not "label": two sticks called NO NAME would put the
+    // other one's backup first, marked "This stick", next to Delete. Not
+    // "newest" either: that is only the most recent backup of anything.
+    readonly property string currentArchivePath: root.advice && root.advice.backupPath
+        && ["fingerprint", "identifier"].indexOf(root.advice.matchedBy) >= 0 ? String(root.advice.backupPath) : ""
+    // The advisor is reading this stick's backups and has no verdict yet:
+    // what the Full Stick Backup card would say is not known, so it says
+    // it is scanning. Asked per stick, not of the advisor's busy, which
+    // holds until the slowest of every queued stick has been read.
+    readonly property bool scanningBackups: root.advice === null && root.mountPoint.length > 0
+        && root.backupAdvisor && root.backupAdvisor.pending !== undefined && root.backupAdvisor.pending !== null
+        && root.backupAdvisor.pending.indexOf(root.mountPoint) >= 0
     // In flight (mount, unmount, or an automatic mount) via this row's
     // own devicePath, not the app-wide busy flag.
     readonly property bool thisRowBusy: root.mediaController.busy
@@ -138,14 +155,27 @@ Item {
     // the stick has an Engine Library rather than shown disabled.
     readonly property bool showCreateEngine: root.writable && !root.hasEngine
         && root.appSettingsController.experimentalFeaturesEnabled === true
-    readonly property bool showBackups: root.writable
+    // The four cards the stick's Backups page used to hold, with its
+    // rules: offered wherever that page's card was (`writable`).
+    readonly property bool showFullStickBackup: root.writable
+    // A newer copy of this stick's library exists: on another mounted
+    // stick (copied via its backup) or as the disk backup itself
+    // (restored). An opened folder library has no device path; "update
+    // from the stick" onto it would, in exact mode, delete whatever that
+    // local folder holds that the stick does not.
+    readonly property bool showUpdateStick: root.writable && root.updateSource !== null && root.devicePath.length > 0
+    readonly property bool showManageBackups: root.writable
     readonly property bool showMetadataBackup: root.hasKnownLibrary
     readonly property bool showRestoreMetadata: root.writable
     // Only when another mounted stick has a library to copy onto this
     // empty one; restoring from this computer is Restore Backup's job.
     readonly property bool showCreateBackupStick: !root.hasKnownLibrary && !root.isFolder && root.cloneSource !== null
-    // A folder row has no devicePath to restore a whole stick through.
-    readonly property bool showRestoreBackup: !root.hasKnownLibrary && !root.isFolder
+    // Restore Backup is one card for both kinds of stick: an empty one
+    // (the disaster case, a blank replacement drive) and one with a
+    // library (its own full backup put back). A folder row has no
+    // devicePath to restore a whole stick through.
+    readonly property bool showRestoreBackup: (!root.hasKnownLibrary && !root.isFolder)
+        || (root.writable && root.devicePath.length > 0)
     readonly property bool showHousekeeping: root.writable
     readonly property bool showLibraryHealth: root.writable
     // There is no drive behind a folder row to erase.
@@ -303,37 +333,115 @@ Item {
             }
 
             // ---- Backup
+            // The full stick backup: making it, bringing the stick up to
+            // date from a newer copy, putting it back, and the list of
+            // them. These four used to sit on a Backups page of their own
+            // behind one card here; the advisor's verdict that card
+            // carried is now the first card's line.
             ActionCard {
-                objectName: "backupsCard"
+                objectName: "fullStickBackupCard"
                 large: root.large
                 Layout.preferredWidth: grid.cellWidth
                 Layout.maximumWidth: grid.cellWidth
                 Layout.fillHeight: true
-                cardTitle: "Backups"
+                cardTitle: "Full Stick Backup"
                 readOnly: root.lockedByOther
                 onReadOnlyClicked: root.explainLockRequested(root.libraryId)
-                // The advisor's verdict on the full stick backup leads
-                // when it has one; the generic line otherwise.
                 cardSubtitle: {
                     const pending = root.cuesPending ? " (checking cues)" : "";
-                    if (root.updateSource !== null) {
-                        return "Newer copy on " + root.updateSource.label + ": update this stick from here" + pending;
+                    if (root.scanningBackups) {
+                        return "Scanning existing backups...";
                     }
                     switch (root.adviceState) {
                     case "outdated": return "Update the full stick backup: " + root.advice.detail + pending;
-                    case "behind-backup": return root.advice.detail + pending;
                     case "current": return "Full stick backup is up to date" + pending;
-                    case "back-up-new":
-                    case "no-backups": return "No full stick backup of this library yet" + pending;
-                    case "different-library": return root.advice.detail + " Back it up as new." + pending;
-                    default: return "Back up the whole stick, and manage its backups on this computer";
+                    default: return "Back up the whole stick into one file on this computer";
                     }
                 }
-                cardIcon: "backup"
-                visible: root.group === "backup" && root.showBackups
+                cardIcon: "archive-insert"
+                // Graduated 2026-09-17 (docs/experimental-features.md), with
+                // restoring and updating a stick from the backup.
+                visible: root.group === "backup" && root.showFullStickBackup
                 enabled: root.hasRekordbox || root.hasEngine
-                onClicked: root.backupsHubRequested(root.label, root.rekordboxPath, root.enginePath,
-                                                    root.mountPoint, root.devicePath)
+                onClicked: root.fullStickBackupRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "updateStickCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Update Stick"
+                readOnly: root.lockedByOther
+                onReadOnlyClicked: root.explainLockRequested(root.libraryId)
+                cardSubtitle: root.updateSource !== null ? root.updateSource.detail : ""
+                cardSubtitleIcon: root.updateSource !== null && root.advice.diverged === true ? "dialog-warning" : ""
+                cardIcon: "view-refresh"
+                visible: root.group === "backup" && root.showUpdateStick
+                enabled: root.updateSource !== null && root.updateSource.enoughSpace !== false
+                onClicked: {
+                    if (root.updateSource.kind === "stick") {
+                        root.cloneStickRequested(root.updateSource.label, root.updateSource.rekordboxPath,
+                            root.updateSource.enginePath, root.mountPoint, root.label, true);
+                    } else {
+                        root.restoreStickBackupRequested(root.mountPoint, root.devicePath,
+                            root.updateSource.backupPath, root.label);
+                    }
+                }
+            }
+            // A stick with a library: its own full backup put back, or
+            // another. An empty stick: the disaster case, a blank
+            // replacement drive. Always offered there, whether or not a
+            // backup is known, and worded so it does not presuppose one:
+            // "no-backups" is a real, common state. Not gated on
+            // `mounted`: a stick fresh out of Format USB Stick is not
+            // remounted, and the restore page mounts it itself.
+            ActionCard {
+                objectName: "restoreBackupCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Restore Backup"
+                // A stick mounted read-only is the empty stick's reason
+                // too; a stick with a library keeps the rule its Backups
+                // page gave this card, the lock alone.
+                readOnly: root.lockedByOther || (!root.hasKnownLibrary && root.stickReadOnly)
+                readOnlyReason: root.stickReadOnly && !root.hasKnownLibrary ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: root.hasKnownLibrary
+                    ? (root.currentArchivePath.length > 0
+                        ? "Put this stick's full backup back onto it, or another one"
+                        : "Put a full stick backup from this computer onto this stick")
+                    : (root.adviceState === "restore"
+                        ? "Restore " + root.advice.backupLabel + "'s library onto this stick"
+                        : "No known stick backups yet. Browse for a backup file to restore")
+                cardIcon: "document-revert"
+                visible: root.group === "backup" && root.showRestoreBackup
+                enabled: root.hasKnownLibrary || !root.thisRowBusy
+                onClicked: root.restoreStickBackupRequested(root.mountPoint, root.devicePath,
+                    root.hasKnownLibrary ? root.currentArchivePath
+                                         : (root.adviceState === "restore" ? root.advice.backupPath : ""),
+                    root.label)
+            }
+            ActionCard {
+                // Not "manageBackupsCard": that is the no-stick pane's card
+                // on the home, which lists every stick's backups.
+                objectName: "stickManageBackupsCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Manage Backups"
+                readOnly: root.lockedByOther
+                onReadOnlyClicked: root.explainLockRequested(root.libraryId)
+                cardSubtitle: "Browse and delete the full stick backups on this computer"
+                cardIcon: "deep-history"
+                // Not gated, like Full Stick Backup: it only browses and
+                // deletes files on this computer, and Home's menu offers
+                // it ungated too.
+                visible: root.group === "backup" && root.showManageBackups
+                onClicked: root.manageBackupsRequested(root.label, root.currentArchivePath)
             }
             ActionCard {
                 objectName: "metadataBackupCard"
@@ -390,32 +498,6 @@ Item {
                 onClicked: root.cloneStickRequested(root.cloneSource.label,
                     root.cloneSource.rekordboxPath, root.cloneSource.enginePath,
                     root.mountPoint, root.label, false)
-            }
-            // Restoring a backup onto an empty stick: the disaster case, a
-            // blank replacement drive. Always offered, whether or not a
-            // backup is known, and worded so it does not presuppose one:
-            // "no-backups" is a real, common state here. Not gated on
-            // `mounted`: a stick fresh out of Format USB Stick is not
-            // remounted, and the restore page mounts it itself.
-            ActionCard {
-                objectName: "restoreBackupCard"
-                large: root.large
-                Layout.preferredWidth: grid.cellWidth
-                Layout.maximumWidth: grid.cellWidth
-                Layout.fillHeight: true
-                cardTitle: "Restore Backup"
-                readOnly: root.lockedByOther || root.stickReadOnly
-                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
-                onReadOnlyClicked: root.explainWriteBlock()
-                cardSubtitle: root.adviceState === "restore"
-                    ? "Restore " + root.advice.backupLabel + "'s library onto this stick"
-                    : "No known stick backups yet. Browse for a backup file to restore"
-                cardIcon: "document-revert"
-                visible: root.group === "backup" && root.showRestoreBackup
-                enabled: !root.thisRowBusy
-                onClicked: root.restoreStickBackupRequested(root.mountPoint, root.devicePath,
-                    root.adviceState === "restore" ? root.advice.backupPath : "",
-                    root.label)
             }
 
             // ---- Maintain

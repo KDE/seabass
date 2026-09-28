@@ -493,23 +493,31 @@ TestCase {
         }
     }
 
-    // Only ever opened from a stick's Backups page: Home > STICK >
-    // Backups > Full Stick Backup, with Backups the way back.
-    function test_breadcrumbNamesTheStickAndTheBackupsHub() {
-        const page = pushOnStack(2, {
+    // Opened from the stick's Backup group on Home: Home > STICK > Full
+    // Stick Backup, with Home the way back. From Library Health's "Back Up
+    // First" that page stands between, and is the way back.
+    function test_breadcrumb_data() {
+        return [
+            {tag: "home", below: 1, hubLabel: "", middle: "", link: false},
+            {tag: "library-health", below: 2, hubLabel: "Library Health", middle: "Library Health", link: true},
+        ];
+    }
+    function test_breadcrumb(data) {
+        const page = pushOnStack(data.below, {
             stickLabel: "STICK",
             rekordboxPath: "/media/STICK/PIONEER",
             enginePath: "/media/STICK/Engine Library",
             appSettingsController: {stickBackupDirectory: "/home/u/Seabass Backups",
                                     experimentalFeaturesEnabled: true},
             controller: makeFakeController({}),
+            hubLabel: data.hubLabel,
         });
         waitForRendering(page);
         const crumb = Breadcrumb.read(page);
         compare(crumb.stick, "STICK");
-        compare(crumb.middle, "Backups");
-        verify(crumb.middleIsLink, "Backups is a real level back");
+        compare(crumb.middle, data.middle);
+        compare(crumb.middleIsLink, data.link);
         compare(crumb.title, "Full Stick Backup");
-        saveCrumbShot(page, "stick-backup");
+        saveCrumbShot(page, "stick-backup-" + data.tag);
     }
 }

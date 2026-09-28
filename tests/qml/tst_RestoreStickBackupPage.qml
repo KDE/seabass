@@ -1041,10 +1041,10 @@ TestCase {
             // A stick's own row on Home: the stick, as context.
             {tag: "home-row", below: 1, stickLabel: "STICK", hubLabel: "",
              stick: "STICK", middle: "", link: false},
-            // The stick's Backups page.
-            {tag: "backups-hub", below: 2, stickLabel: "STICK", hubLabel: "Backups",
-             stick: "STICK", middle: "Backups", link: true},
-            // Full Stick Backup, itself under the Backups page.
+            // Manage Backups, opened for the stick.
+            {tag: "manage-backups", below: 2, stickLabel: "STICK", hubLabel: "Manage Backups",
+             stick: "STICK", middle: "Manage Backups", link: true},
+            // Full Stick Backup, itself under Library Health.
             {tag: "full-backup", below: 3, stickLabel: "STICK", hubLabel: "Full Stick Backup",
              stick: "STICK", middle: "Full Stick Backup", link: true},
         ];

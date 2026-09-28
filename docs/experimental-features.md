@@ -112,7 +112,7 @@ real Denon hardware.
   "Restore a Stick Backup" tool button on `StickListPage.qml`'s header
   (top-level, like Format USB Stick, because the target is often a blank
   replacement drive), the restore/clone card on each stick, and "Update
-  Stick" on `BackupsHubPage.qml`. Design: `docs/stick-backup-plan.md`. It
+  Stick" in the home's Backup group (`common/StickToolCards.qml`). Design: `docs/stick-backup-plan.md`. It
   overwrites files on a stick, so it keeps its own confirmations. Still
   owed: a restore onto a fresh exFAT stick that Engine DJ or a player then
   reads without complaint.

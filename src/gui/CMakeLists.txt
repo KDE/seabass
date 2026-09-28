@@ -116,7 +116,6 @@ set(SEABASS_GUI_QML_FILES
     qml/Main.qml
     qml/StickListPage.qml
     qml/DuplicatesHubPage.qml
-    qml/BackupsHubPage.qml
     qml/ScanPage.qml
     qml/TrackDetailPage.qml
     qml/DuplicatesPage.qml

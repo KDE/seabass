@@ -539,15 +539,15 @@ ApplicationWindow {
                 enginePath: enginePath,
             })
             onAppSettingsRequested: stackView.push(appSettingsPageComponent)
-            onBackupsHubRequested: (stickLabel, rekordboxPath, enginePath, mountPoint, devicePath) => stackView.push(backupsHubPageComponent, {
+            onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(stickBackupPageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
-                mountPoint: mountPoint,
-                devicePath: devicePath,
-                backupAdvisor: backupAdvisorCtrl,
             })
-            onManageBackupsRequested: stackView.push(backupsPageComponent)
+            onManageBackupsRequested: (stickLabel, currentArchivePath) => stackView.push(backupsPageComponent, {
+                stickLabel: stickLabel,
+                currentArchivePath: currentArchivePath,
+            })
             onAboutRequested: stackView.push(aboutPageComponent)
             onDonationRequested: stackView.push(donationPageComponent)
             onFormatUsbRequested: stackView.push(formatUsbPageComponent)
@@ -725,15 +725,13 @@ ApplicationWindow {
                     sharedController: healthHub.consistencyController,
                 });
             }
-            // "Back up before repairing": straight to this stick's own
-            // Backups page. No device path to hand over from here, which
-            // only hides the card that restores onto a blank drive.
-            onBackupRequested: (mountPoint) => stackView.push(backupsHubPageComponent, {
+            // "Back up before repairing": straight to this stick's full
+            // backup, the one copy that holds everything the check could
+            // move or drop.
+            onBackupRequested: (mountPoint) => stackView.push(stickBackupPageComponent, {
                 stickLabel: healthHub.stickLabel,
                 rekordboxPath: healthHub.rekordboxPath,
                 enginePath: healthHub.enginePath,
-                mountPoint: mountPoint,
-                backupAdvisor: backupAdvisorCtrl,
                 hubLabel: "Library Health",
             })
         }
@@ -796,40 +794,6 @@ ApplicationWindow {
         AnonymizeLibraryPage {
             mediaController: mediaCtrl
             appSettingsController: appSettingsCtrl
-        }
-    }
-
-    Component {
-        id: backupsHubPageComponent
-        BackupsHubPage {
-            id: backupsHub
-            appSettingsController: appSettingsCtrl
-            onManageBackupsRequested: (stickLabel, currentArchivePath) => stackView.push(backupsPageComponent, {
-                stickLabel: stickLabel,
-                currentArchivePath: currentArchivePath,
-            })
-            onFullStickBackupRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(stickBackupPageComponent, {
-                stickLabel: stickLabel,
-                rekordboxPath: rekordboxPath,
-                enginePath: enginePath,
-            })
-            onRestoreStickBackupRequested: (mountPoint, devicePath, archivePath) => stackView.push(restoreStickBackupPageComponent, {
-                preselectedMountPoint: mountPoint,
-                preselectedDevicePath: devicePath,
-                preselectedArchivePath: archivePath,
-                // For the breadcrumb only: the stick this Backups page is
-                // about, and the page itself as the way back.
-                stickLabel: backupsHub.stickLabel,
-                hubLabel: "Backups",
-            })
-            onCloneStickRequested: (sourceLabel, sourceRekordboxPath, sourceEnginePath, targetMountPoint, targetLabel, targetHasLibrary) => stackView.push(cloneStickPageComponent, {
-                sourceLabel: sourceLabel,
-                sourceRekordboxPath: sourceRekordboxPath,
-                sourceEnginePath: sourceEnginePath,
-                targetMountPoint: targetMountPoint,
-                targetLabel: targetLabel,
-                targetHasLibrary: targetHasLibrary,
-            })
         }
     }
 

@@ -23,6 +23,10 @@ Page {
     required property string enginePath
     required property var appSettingsController
     required property var controller
+    // The page this was opened from when that is not Home (Library
+    // Health's "Back Up First"), for the breadcrumb. From Home it is
+    // empty: the stick is all there is between the house and this page.
+    property string hubLabel: ""
     // "" or the DJ software the global guard currently sees; the page
     // shows the refusal banner from this so it reacts within the guard's
     // 3 s poll, not only when the controller last refreshed.
@@ -150,7 +154,7 @@ Page {
             BackBreadcrumb {
                 stack: root.StackView.view
                 stickLabel: root.stickLabel
-                middleLabel: "Backups"
+                middleLabel: root.hubLabel
                 title: "Full Stick Backup"
                 backEnabled: !root.controller.busy
                 backDisabledTooltip: "Wait for the backup to finish (or cancel it) before leaving this page"

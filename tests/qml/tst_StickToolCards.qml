@@ -91,6 +91,13 @@ TestCase {
         return a;
     }
 
+    // A newer copy of MAIN's library on the mounted stick SPARE.
+    function spareUpdateSource() {
+        return {kind: "stick", label: "SPARE", mountPoint: "/media/SPARE", backupPath: "", modifiedAt: "2026-09-06T10:00:00",
+                enoughSpace: true, detail: "SPARE holds a newer copy of this library.",
+                rekordboxPath: "/media/SPARE/PIONEER", enginePath: "/media/SPARE/Engine Library"};
+    }
+
     function mainCloneSource(enoughSpace) {
         return {kind: "stick", label: "MAIN", mountPoint: "/media/MAIN", backupPath: "", modifiedAt: "2026-09-06T10:00:00",
                 enoughSpace: enoughSpace,
@@ -121,6 +128,7 @@ TestCase {
         id: notifyingAdvisorComponent
         QtObject {
             property var advice: ({})
+            property var pending: []
         }
     }
 
@@ -190,13 +198,20 @@ TestCase {
             {tag: "sync without Engine", group: "sync", stick: {hasEngine: false, enginePath: ""},
              expected: ["Sync Cue Points", "Create Engine Library"]},
             {tag: "backup", group: "backup", stick: {},
-             expected: ["Backups", "Metadata Backup", "Restore Metadata"]},
+             expected: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Metadata Backup", "Restore Metadata"]},
+            {tag: "backup with a newer copy elsewhere", group: "backup", stick: {},
+             advice: {updateSource: spareUpdateSource()},
+             expected: ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Metadata Backup",
+                        "Restore Metadata"]},
+            {tag: "backup of an empty stick", group: "backup", stick: {hasRekordbox: false, hasEngine: false},
+             advice: {cloneSource: mainCloneSource(true)},
+             expected: ["Restore Backup", "Create Backup USB Stick"]},
             {tag: "maintain", group: "maintain", stick: {},
              expected: ["Housekeeping", "Library Health", "Format USB Stick"]},
         ];
     }
     function test_eachGroupShowsItsCardsInOrder(data) {
-        const cards = makeCards(makeStick(data.stick), data.group, {"/media/MAIN": makeAdvice({})});
+        const cards = makeCards(makeStick(data.stick), data.group, {"/media/MAIN": makeAdvice(data.advice || {})});
         compare(JSON.stringify(shownTitles(cards)), JSON.stringify(data.expected));
         compare(cards.empty, false);
         compare(Live.findByObjectName(cards, "nothingHereLabel").visible, false);
@@ -277,8 +292,10 @@ TestCase {
             {tag: "Sync Cue Points", group: "sync", signalName: "syncRequested", args: main},
             {tag: "Create Engine Library", group: "sync", noEngine: true, signalName: "engineLibraryCreatorRequested",
              args: ["MAIN", "/media/MAIN/PIONEER"]},
-            {tag: "Backups", group: "backup", signalName: "backupsHubRequested",
-             args: main.concat(["/media/MAIN", "/dev/sdb1"])},
+            {tag: "Full Stick Backup", group: "backup", signalName: "fullStickBackupRequested", args: main},
+            {tag: "Restore Backup", group: "backup", signalName: "restoreStickBackupRequested",
+             args: ["/media/MAIN", "/dev/sdb1", "", "MAIN"]},
+            {tag: "Manage Backups", group: "backup", signalName: "manageBackupsRequested", args: ["MAIN", ""]},
             {tag: "Metadata Backup", group: "backup", signalName: "metadataBackupRequested",
              args: main.concat(["lib-main"])},
             {tag: "Restore Metadata", group: "backup", signalName: "metadataRestoreRequested",
@@ -309,7 +326,7 @@ TestCase {
         const locked = {
             "explore": ["Device Profile"],
             "sync": ["Sync Cue Points"],
-            "backup": ["Backups", "Restore Metadata"],
+            "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups", "Restore Metadata"],
             "maintain": ["Housekeeping", "Library Health"],
         };
         const plain = {
@@ -317,8 +334,10 @@ TestCase {
             "backup": ["Metadata Backup"],
             "maintain": ["Format USB Stick"],
         };
+        // A newer copy elsewhere, so Update Stick is among the cards.
+        const advice = {"/media/MAIN": makeAdvice({updateSource: spareUpdateSource()})};
         for (const group in locked) {
-            const cards = makeCards(makeStick({}), group, {}, {editRegistry: registry});
+            const cards = makeCards(makeStick({}), group, advice, {editRegistry: registry});
             for (const title of locked[group]) {
                 const c = card(cards, title);
                 compare(c.readOnly, true, title + " must be read-only while locked");
@@ -379,6 +398,16 @@ TestCase {
             verify(c.readOnlyReason.indexOf("Library Health") >= 0);
         }
 
+        // The four full stick backup cards keep the rule the stick's
+        // Backups page gave them: the lock alone. Backing up only reads.
+        const backup = makeCards(makeStick({readOnly: true}), "backup",
+                                 {"/media/MAIN": makeAdvice({updateSource: spareUpdateSource()})});
+        for (const title of ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"]) {
+            const c = card(backup, title);
+            verify(c.visible, title + " missing");
+            compare(c.readOnly, false, title + " is not read-only on a read-only stick");
+        }
+
         const explore = makeCards(makeStick({readOnly: true}), "explore", {});
         compare(card(explore, "Browse Library").readOnly, false);
         compare(card(explore, "Library Statistics").readOnly, false);
@@ -433,12 +462,16 @@ TestCase {
         const settings = fakeAppSettings();
         settings.experimentalFeaturesEnabled = false;
         const stick = makeStick({hasEngine: false, enginePath: ""});
-        const shown = {"explore": "USB Stick Performance", "maintain": "Format USB Stick", "backup": "Metadata Backup"};
+        const shown = {"explore": ["USB Stick Performance"], "maintain": ["Format USB Stick"],
+                       "backup": ["Metadata Backup", "Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"]};
+        const advice = {"/media/MAIN": makeAdvice({updateSource: spareUpdateSource()})};
         for (const group in shown) {
-            const cards = makeCards(stick, group, {}, {appSettingsController: settings});
-            const c = card(cards, shown[group]);
-            verify(c !== null && c.visible, shown[group] + " must not be behind the experimental setting");
-            compare(c.experimental, false, shown[group] + " must not be marked experimental");
+            const cards = makeCards(stick, group, advice, {appSettingsController: settings});
+            for (const title of shown[group]) {
+                const c = card(cards, title);
+                verify(c !== null && c.visible, title + " must not be behind the experimental setting");
+                compare(c.experimental, false, title + " must not be marked experimental");
+            }
         }
         const off = makeCards(stick, "sync", {}, {appSettingsController: settings});
         compare(card(off, "Create Engine Library").visible, false, "Create Engine Library stays behind the setting");
@@ -459,7 +492,7 @@ TestCase {
         advice["/media/SPARE"] = makeAdvice({state: "restore", backupPath: "/b/MAIN.zip", backupLabel: "MAIN",
             detail: "The newest backup can be restored onto this empty stick.", cloneSource: mainCloneSource(true)});
         const cards = makeCards(emptyStick(), "backup", advice);
-        compare(JSON.stringify(shownTitles(cards)), JSON.stringify(["Create Backup USB Stick", "Restore Backup"]));
+        compare(JSON.stringify(shownTitles(cards)), JSON.stringify(["Restore Backup", "Create Backup USB Stick"]));
         const clone = card(cards, "Create Backup USB Stick");
         compare(clone.enabled, true);
         compare(clone.cardSubtitle, "Copy MAIN's library onto this stick.");
@@ -474,12 +507,14 @@ TestCase {
         compare(argsOf(spy, 0),
                 JSON.stringify(["MAIN", "/media/MAIN/PIONEER", "/media/MAIN/Engine Library", "/media/SPARE", "SPARE", false]));
 
-        // A stick with a library restores from its Backups page instead,
-        // and is never a clone target.
+        // A stick with a library is never a clone target; its Restore
+        // Backup puts its own full backup back, and with no newer copy
+        // anywhere there is nothing to update it from.
         const main = makeCards(makeStick({}), "backup", advice);
         compare(card(main, "Create Backup USB Stick").visible, false);
-        compare(card(main, "Restore Backup").visible, false);
-        verify(card(main, "Update Stick") === null);
+        compare(card(main, "Restore Backup").visible, true);
+        compare(card(main, "Restore Backup").cardSubtitle, "Put a full stick backup from this computer onto this stick");
+        compare(card(main, "Update Stick").visible, false);
     }
 
     function test_cloneCardDisabledWithoutSpace() {
@@ -498,59 +533,156 @@ TestCase {
         compare(card(busy, "Restore Backup").enabled, false);
     }
 
-    function test_backupsCardOpensTheHubWithMountAndDevice() {
+    // A newer copy of this stick's library on another mounted stick:
+    // Update Stick copies it over, through the clone page, with the
+    // warning sign when the two have diverged.
+    function test_updateFromPeerStickOpensTheClonePage() {
         const advice = {"/media/MAIN": makeAdvice({state: "outdated", detail: "The library has changed since its last backup.",
-            updateSource: {kind: "stick", label: "SPARE", mountPoint: "/media/SPARE", backupPath: "", modifiedAt: "",
-                           enoughSpace: true, detail: "SPARE holds a newer copy of this library.", rekordboxPath: "",
-                           enginePath: ""}})};
+                                                   diverged: true, updateSource: spareUpdateSource()})};
         const cards = makeCards(makeStick({}), "backup", advice);
-        const backups = card(cards, "Backups");
-        verify(card(cards, "Update Stick") === null);
-        compare(backups.cardSubtitle, "Newer copy on SPARE: update this stick from here");
+        const update = card(cards, "Update Stick");
+        compare(update.visible, true);
+        compare(update.objectName, "updateStickCard");
+        compare(update.cardSubtitle, "SPARE holds a newer copy of this library.");
+        compare(update.cardSubtitleIcon, "dialog-warning");
+        compare(update.enabled, true);
         saveScreenshot(cards, "stick-tools-backup");
-        const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "backupsHubRequested"});
-        backups.clicked();
-        compare(spy.count, 1);
-        compare(spy.signalArguments[0][0], "MAIN");
-        compare(spy.signalArguments[0][3], "/media/MAIN");
-        compare(spy.signalArguments[0][4], "/dev/sdb1");
+        const clone = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "cloneStickRequested"});
+        const restore = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "restoreStickBackupRequested"});
+        mouseClick(update);
+        compare(clone.count, 1);
+        compare(restore.count, 0);
+        compare(argsOf(clone, 0), JSON.stringify(["SPARE", "/media/SPARE/PIONEER", "/media/SPARE/Engine Library",
+                                                  "/media/MAIN", "MAIN", true]));
+
+        // Not diverged: no warning. No room for it: offered, not usable.
+        const plain = spareUpdateSource();
+        plain.enoughSpace = false;
+        const tight = makeCards(makeStick({}), "backup", {"/media/MAIN": makeAdvice({updateSource: plain})});
+        compare(card(tight, "Update Stick").cardSubtitleIcon, "");
+        compare(card(tight, "Update Stick").enabled, false);
     }
 
-    // Each of the advisor's verdicts, as the Backups card says it.
-    function test_backupsLineFollowsTheVerdict_data() {
+    // The newer copy is the disk backup itself: Update Stick restores it.
+    function test_updateFromDiskBackupOpensTheRestorePage() {
+        const advice = {"/media/MAIN": makeAdvice({state: "behind-backup",
+            detail: "The backup holds a newer copy of this library than the stick.",
+            updateSource: {kind: "disk-backup", label: "MAIN", mountPoint: "", backupPath: "/b/MAIN.zip",
+                           modifiedAt: "2026-09-06T10:00:00", enoughSpace: true,
+                           detail: "The backup holds a newer copy of this library than this stick.",
+                           rekordboxPath: "", enginePath: ""}})};
+        const cards = makeCards(makeStick({}), "backup", advice);
+        const clone = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "cloneStickRequested"});
+        const restore = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "restoreStickBackupRequested"});
+        card(cards, "Update Stick").clicked();
+        compare(clone.count, 0);
+        compare(restore.count, 1);
+        compare(argsOf(restore, 0), JSON.stringify(["/media/MAIN", "/dev/sdb1", "/b/MAIN.zip", "MAIN"]));
+    }
+
+    // A stick in use can have its own backup put back: Restore Backup
+    // hands on the backup the advisor matched to this stick, by library
+    // or hardware, and never one that merely shares its name.
+    function test_restoreBackupPreselectsThisSticksBackup_data() {
+        return [
+            {tag: "fingerprint", matchedBy: "fingerprint", archive: "/b/MAIN.zip",
+             subtitle: "Put this stick's full backup back onto it, or another one"},
+            {tag: "identifier", matchedBy: "identifier", archive: "/b/MAIN.zip",
+             subtitle: "Put this stick's full backup back onto it, or another one"},
+            {tag: "label", matchedBy: "label", archive: "",
+             subtitle: "Put a full stick backup from this computer onto this stick"},
+            {tag: "newest", matchedBy: "newest", archive: "",
+             subtitle: "Put a full stick backup from this computer onto this stick"},
+        ];
+    }
+    function test_restoreBackupPreselectsThisSticksBackup(data) {
+        const advice = {"/media/MAIN": makeAdvice({state: "current", backupPath: "/b/MAIN.zip", matchedBy: data.matchedBy})};
+        const cards = makeCards(makeStick({}), "backup", advice);
+        const restore = card(cards, "Restore Backup");
+        compare(restore.visible, true);
+        compare(restore.cardSubtitle, data.subtitle);
+        const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "restoreStickBackupRequested"});
+        mouseClick(restore);
+        compare(spy.count, 1);
+        compare(argsOf(spy, 0), JSON.stringify(["/media/MAIN", "/dev/sdb1", data.archive, "MAIN"]));
+    }
+
+    // Manage Backups lists every full backup, this stick's first: but only
+    // a backup the advisor really matched to it, not merely the newest
+    // one, nor another stick's that has the same label.
+    function test_manageBackupsHandsOnThisSticksBackup_data() {
+        return [
+            {tag: "fingerprint", matchedBy: "fingerprint", archive: "/home/u/Backups/MAIN.zip"},
+            {tag: "newest", matchedBy: "newest", archive: ""},
+            {tag: "label", matchedBy: "label", archive: ""},
+        ];
+    }
+    function test_manageBackupsHandsOnThisSticksBackup(data) {
+        const advice = {"/media/MAIN": makeAdvice({state: "current", matchedBy: data.matchedBy,
+                                                   backupPath: "/home/u/Backups/MAIN.zip"})};
+        const cards = makeCards(makeStick({}), "backup", advice);
+        const manage = card(cards, "Manage Backups");
+        compare(manage.objectName, "stickManageBackupsCard");
+        compare(manage.cardSubtitle, "Browse and delete the full stick backups on this computer");
+        compare(manage.deprecated, false);
+        const spy = createTemporaryObject(spyComponent, testCase, {target: cards, signalName: "manageBackupsRequested"});
+        mouseClick(manage);
+        compare(spy.count, 1);
+        compare(argsOf(spy, 0), JSON.stringify(["MAIN", data.archive]));
+    }
+
+    // Each of the advisor's verdicts, as the Full Stick Backup card says
+    // it: the words the stick's Backups page had.
+    function test_fullStickBackupLineFollowsTheVerdict_data() {
         return [
             {tag: "outdated", advice: {state: "outdated", detail: "The library has changed."},
              expected: "Update the full stick backup: The library has changed."},
-            {tag: "behind-backup", advice: {state: "behind-backup", detail: "The backup is newer than the stick."},
-             expected: "The backup is newer than the stick."},
             {tag: "current", advice: {state: "current"}, expected: "Full stick backup is up to date"},
-            {tag: "back-up-new", advice: {state: "back-up-new"}, expected: "No full stick backup of this library yet"},
-            {tag: "no-backups", advice: {state: "no-backups"}, expected: "No full stick backup of this library yet"},
-            {tag: "different-library", advice: {state: "different-library", detail: "The backup is of another library."},
-             expected: "The backup is of another library. Back it up as new."},
+            {tag: "behind-backup", advice: {state: "behind-backup", detail: "The backup is newer than the stick."},
+             expected: "Back up the whole stick into one file on this computer"},
+            {tag: "no-backups", advice: {state: "no-backups"},
+             expected: "Back up the whole stick into one file on this computer"},
             {tag: "not assessed", advice: null,
-             expected: "Back up the whole stick, and manage its backups on this computer"},
+             expected: "Back up the whole stick into one file on this computer"},
         ];
     }
-    function test_backupsLineFollowsTheVerdict(data) {
+    function test_fullStickBackupLineFollowsTheVerdict(data) {
         const advice = data.advice === null ? {} : {"/media/MAIN": makeAdvice(data.advice)};
         const cards = makeCards(makeStick({}), "backup", advice);
-        compare(card(cards, "Backups").cardSubtitle, data.expected);
+        compare(card(cards, "Full Stick Backup").cardSubtitle, data.expected);
     }
 
     // The verdict with "checking cues" beside it while the cue pass runs,
-    // the plain verdict once it has landed.
-    function test_backupsLineSaysCheckingCuesWhilePending() {
+    // the plain verdict once it has landed, in both states that have one.
+    function test_fullStickBackupLineSaysCheckingCuesWhilePending() {
         const pendingAdvice = {"/media/MAIN": makeAdvice({state: "current", detail: "Backup is up to date.", cuesPending: true})};
         const advisor = createTemporaryObject(notifyingAdvisorComponent, testCase, {advice: pendingAdvice});
         const cards = makeCards(makeStick({}), "backup", {}, {backupAdvisor: advisor});
-        const backups = card(cards, "Backups");
-        compare(backups.cardSubtitle, "Full stick backup is up to date (checking cues)");
+        const full = card(cards, "Full Stick Backup");
+        compare(full.cardSubtitle, "Full stick backup is up to date (checking cues)");
         saveScreenshot(cards, "stick-tools-checking-cues");
         advisor.advice = {"/media/MAIN": makeAdvice({state: "current", detail: "Backup is up to date.", cuesPending: false})};
-        compare(backups.cardSubtitle, "Full stick backup is up to date");
-        advisor.advice = {"/media/MAIN": makeAdvice({cuesPending: true})};
-        compare(backups.cardSubtitle, "No full stick backup of this library yet (checking cues)");
+        compare(full.cardSubtitle, "Full stick backup is up to date");
+        advisor.advice = {"/media/MAIN": makeAdvice({state: "outdated", cuesPending: true,
+                                                     detail: "The library has changed since its last backup."})};
+        compare(full.cardSubtitle, "Update the full stick backup: The library has changed since its last backup. (checking cues)");
+    }
+
+    // Before the advisor has read this stick's backups the card cannot say
+    // anything true about them, so it says it is scanning, until this
+    // stick's advice lands; other sticks still being read do not hold it.
+    function test_fullStickBackupSaysScanningUntilThisSticksAdviceLands() {
+        const advisor = createTemporaryObject(notifyingAdvisorComponent, testCase,
+                                              {advice: {}, pending: ["/media/MAIN", "/media/B"]});
+        const cards = makeCards(makeStick({}), "backup", {}, {backupAdvisor: advisor});
+        const full = card(cards, "Full Stick Backup");
+        compare(full.cardSubtitle, "Scanning existing backups...");
+        advisor.advice = {"/media/MAIN": makeAdvice({state: "current"})};
+        advisor.pending = ["/media/B"];
+        compare(full.cardSubtitle, "Full stick backup is up to date");
+        // Another stick pending, and none for this one: the plain line.
+        advisor.advice = {};
+        compare(full.cardSubtitle, "Back up the whole stick into one file on this computer");
     }
 
     function test_emptyStickRestoreFallsBackToDiskBackupWhenNoPeer() {
@@ -603,6 +735,11 @@ TestCase {
         const maintain = makeCards(folder, "maintain", {});
         compare(card(maintain, "Housekeeping").visible, true);
         compare(card(maintain, "Format USB Stick").visible, false, "no drive to erase behind a folder");
+        // Its backups can be made and listed, but nothing restores or
+        // updates a drive it does not have.
+        const backup = makeCards(folder, "backup", {"/home/dj/restored": makeAdvice({updateSource: spareUpdateSource()})});
+        compare(JSON.stringify(shownTitles(backup)),
+                JSON.stringify(["Full Stick Backup", "Manage Backups", "Metadata Backup", "Restore Metadata"]));
         // A folder with no library has nothing to restore through either.
         const bare = makeCards(makeStick({isFolder: true, devicePath: "", hasRekordbox: false, hasEngine: false}),
                                "backup", {});
