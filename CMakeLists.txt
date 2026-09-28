@@ -2882,6 +2882,17 @@ target_include_directories(backup_stick_test PRIVATE src)
 target_link_libraries(backup_stick_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
 add_test(NAME backup_stick_test COMMAND backup_stick_test)
 
+# BackupStick's refusals: unreadable, manifest-less or damaged archives, a
+# held lock, a write that fails half-way (and the lock free after it).
+add_executable(backup_stick_error_paths_test
+    ${SEABASS_STICK_BACKUP_STICK_SOURCES}
+    tests/backup_stick_error_paths_test.cpp
+)
+target_link_libraries(backup_stick_error_paths_test PRIVATE seabass_core_testing)
+target_include_directories(backup_stick_error_paths_test PRIVATE src)
+target_link_libraries(backup_stick_error_paths_test PRIVATE ZLIB::ZLIB SQLite::SQLite3)
+add_test(NAME backup_stick_error_paths_test COMMAND backup_stick_error_paths_test)
+
 add_executable(backup_archive_concurrent_reader_test
     ${SEABASS_STICK_BACKUP_STICK_SOURCES}
     tests/backup_archive_concurrent_reader_test.cpp
