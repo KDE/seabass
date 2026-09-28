@@ -298,6 +298,22 @@ LocalCueStore::LocalCueStore(std::string path)
         throw std::runtime_error("local cue store: " + message);
     }
 
+    // No destructor runs for a constructor that throws, so every throw
+    // below closes the connection on its way out rather than leaving it
+    // (and its file descriptor) open for the life of the process.
+    struct CloseOnThrow
+    {
+        sqlite3 *&db;
+        bool armed = true;
+        ~CloseOnThrow()
+        {
+            if (armed) {
+                sqlite3_close(db);
+                db = nullptr;
+            }
+        }
+    } closeOnThrow{m_db};
+
     exec(m_db, "PRAGMA foreign_keys = ON;");
     exec(m_db, R"sql(
         CREATE TABLE IF NOT EXISTS tracks (
@@ -341,6 +357,7 @@ LocalCueStore::LocalCueStore(std::string path)
     addColumnIfMissing(m_db, "ALTER TABLE backup_sessions ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1");
     addColumnIfMissing(m_db, "ALTER TABLE cues ADD COLUMN is_loop INTEGER NOT NULL DEFAULT 0");
     addColumnIfMissing(m_db, "ALTER TABLE cues ADD COLUMN loop_end_ms REAL NOT NULL DEFAULT 0");
+    closeOnThrow.armed = false;
 }
 
 LocalCueStore::~LocalCueStore()
