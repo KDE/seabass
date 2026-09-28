@@ -648,6 +648,18 @@ run (`RIG_REFERENCE_PRINTS`) and compared after it. Each check writes
 `<out>/<check>.log` and a `PASS`/`FAIL` line to `<out>/summary.tsv`; a run of
 several hours that reports PASS in minutes is suspect, so read the logs.
 
+The board keeps two tabs, each of which can reach 100%: the checks a round
+runs on its own, and those that need a person on that platform. A summary
+line for a manual check carries a third column, `manual`
+(`<check>\t<verdict>\tmanual`); a line without one is automatic. Which checks
+are manual is `rig_manual_ids()` in `tools/rig-platform.sh`: the by-hand checks
+of docs/manual-testing.md (`P1-player-hardware`, `P3-pull-mid-save`)
+everywhere, and on Windows also D2's format (a UAC prompt), the stick pull and
+H1. A manual check nobody has done in this round is `PENDING` -- still to do,
+not failed -- and a person who does it reports its `PASS` or `FAIL` for the
+board. That is for the manual set only: an automatic check that skipped or
+did not run is a `FAIL`, as it always was.
+
 Some checks run several tests. Those write one `PASS`/`FAIL` line per test
 into `$RIG_PARTS` (`tools/rig-parts.sh` for shell, `tools/rig_parts.hpp` for
 the rig's C++ programs, `RIG_PART_SUFFIX` to tell two runs of one program

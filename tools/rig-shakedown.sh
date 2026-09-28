@@ -199,6 +199,16 @@ real_profile_now() {
 
 real_profile_now > "$out/real-profile-before.txt"
 summary="$out/summary.tsv"
+# A RIG_ONLY run into a round's own output folder re-runs some checks of
+# that round; it used to start summary.tsv afresh and so threw the round's
+# record away (Linux, round 10). The round's rows are kept aside and the
+# re-run's replace them by name at the end, so the file stays the round's
+# record with the re-run folded in. RIG RESULT still speaks for what ran.
+summary_before=""
+if [ -n "${RIG_ONLY:-}" ] && [ -s "$summary" ]; then
+    summary_before="$out/summary.before-rig-only.tsv"
+    cp "$summary" "$summary_before"
+fi
 : > "$summary"
 a="$(stick_label "$A")"
 b="$(stick_label "$B")"
@@ -245,19 +255,31 @@ check() {
         *" $name "*) parts="$out/$name.parts"; rm -f "$parts"; export RIG_PARTS="$parts" ;;
     esac
     local rc=0
+    local verdict
     "$@" > "$out/$name.log" 2>&1 || rc=1
     unset RIG_PARTS
     if [ $rc -eq 0 ] && grep -qE "^SKIP|^ *SKIPPED" "$out/$name.log"; then
         echo "$(date +%T) --- $name: FAIL (it skipped; see $out/$name.log)"
         grep -E "^SKIP|^ *SKIPPED" "$out/$name.log" | head -5
         rc=1
+        verdict=FAIL
     elif [ $rc -eq 0 ]; then
         echo "$(date +%T) --- $name: PASS"
+        verdict=PASS
+    elif rig_is_manual "$name" \
+        && grep -qF "cancelled at the Windows permission prompt" "$out/$name.log"; then
+        # A manual check whose person did not come: D2's UAC prompt timed
+        # out, and Windows cancelled the format before touching the stick.
+        # Nothing was tried, so nothing failed -- it is still to do.
+        echo "$(date +%T) --- $name: PENDING (nobody answered the permission prompt; see $out/$name.log)"
+        rc=0
+        verdict=PENDING
     else
         echo "$(date +%T) --- $name: FAIL (see $out/$name.log)"
+        verdict=FAIL
     fi
     if [ -z "$parts" ]; then
-        printf '%s\t%s\n' "$name" "$([ $rc -eq 0 ] && echo PASS || echo FAIL)" >> "$summary"
+        rig_summary_line "$name" "$verdict" >> "$summary"
     elif [ -s "$parts" ]; then
         cat "$parts" >> "$summary"
         echo "           $(grep -c . "$parts") test results recorded"
@@ -271,6 +293,15 @@ check() {
         rc=1
     fi
     return $rc
+}
+
+# A manual check this round does not run, on the board as still to do.
+pending() {  # name, why
+    local name="$1"
+    rig_wants "$name" || return 0
+    ran="$ran $name"
+    echo "$(date +%T) --- $name: PENDING ($2)"
+    rig_summary_line "$name" PENDING >> "$summary"
 }
 
 # What the catalogs SAY, as opposed to the bytes catalogs() hashes.
@@ -1292,6 +1323,11 @@ check S4-references-unchanged references_unchanged
 # built there and the repair stays a manual check on that platform.
 if ! rig_is_windows && [ -x "$build/rig_fs_repair" ]; then
     check H1-filesystem-repair "$build/rig_fs_repair"
+else
+    # Still on the board, on its manual tab: left out entirely, Windows
+    # rounds counted 74 checks to the other platforms' 75 and nobody could
+    # tell which one was missing.
+    pending H1-filesystem-repair "the repair needs administrator rights here; a person runs it (docs/manual-testing.md)"
 fi
 
 # ---- restores onto the test sticks -----------------------------------
@@ -1470,6 +1506,15 @@ check D2-restore-A-after-format "$build/rig_restore" "$refA" "$A" --execute
 # and nothing needs it, so a round loses nothing by ending here.
 check S1-corpus corpus
 
+# ---- by hand ---------------------------------------------------------
+#
+# docs/manual-testing.md's checks, on every platform: no script can load a
+# stick into a player or pull one out halfway through a save. They are on
+# the board's manual tab under the ids they already had, and a person who
+# has done one reports its PASS or FAIL there.
+pending P1-player-hardware "a stick in a real player; see docs/manual-testing.md"
+pending P3-pull-mid-save "a stick pulled during a save, by hand; see docs/manual-testing.md"
+
 set -f  # a name like F4-* must be reported as typed, not glob-expanded
 for wanted in $(rig_only_names); do
     if [[ " $ran " != *" $wanted "* ]]; then
@@ -1485,8 +1530,16 @@ if [ ! -s "$summary" ]; then
 fi
 echo
 cat "$summary"
-if grep -q "FAIL" "$summary"; then
-    echo "RIG RESULT: FAIL"
-    exit 1
+result=PASS
+grep -q "FAIL" "$summary" && result=FAIL
+if [ -n "$summary_before" ]; then
+    # The round's rows in their order, each replaced by this run's row of
+    # the same name; rows only this run has go at the end.
+    awk -F'\t' 'NR == FNR { now[$1] = $0; order[++n] = $1; next }
+                { if ($1 in now) { print now[$1]; done[$1] = 1 } else print }
+                END { for (i = 1; i <= n; i++) if (!(order[i] in done)) print now[order[i]] }' \
+        "$summary" "$summary_before" > "$summary.merged" && mv "$summary.merged" "$summary"
+    echo "folded into the round's summary.tsv (its rows before this run: $summary_before)"
 fi
-echo "RIG RESULT: PASS"
+echo "RIG RESULT: $result"
+[ "$result" = PASS ]

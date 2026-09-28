@@ -202,6 +202,25 @@ is_protected_label() {  # <label>
     printf '%s\n' "$1" | grep -qiE "$rig_protected_label_pattern"
 }
 
+# The checks that need a person on this platform, by board id -- the one
+# place a check's class is decided. The board shows them on their own tab
+# and a summary line marks them with a third column, "manual" (see
+# rig_summary_line() in rig-parts.sh, which only prints this answer), so a
+# row's class never depends on which script wrote it.
+#
+# Everywhere: the by-hand checks of docs/manual-testing.md. On Windows as
+# well: D2's format asks for elevation (a UAC click), the stick pull needs
+# a hand on the stick (see tests/qml-live/run-live.sh), and H1's image
+# mount and Repair-Volume both need administrator rights. On Linux and
+# macOS those three run unattended and stay automatic.
+rig_manual_ids() {
+    local ids="P1-player-hardware P3-pull-mid-save"
+    if rig_is_windows; then
+        ids="$ids D2-format-stick-A live-stick-pulled H1-filesystem-repair"
+    fi
+    echo "$ids"
+}
+
 # Every volume label on this machine's drives, mounted or not: a stick
 # the desktop has not mounted is still one a format could be pointed at.
 inserted_volume_labels() {
