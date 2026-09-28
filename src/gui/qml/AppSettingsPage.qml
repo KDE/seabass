@@ -118,7 +118,7 @@ Page {
     Component.onCompleted: root.rememberSettings()
 
     Shortcut {
-        sequence: StandardKey.Cancel
+        sequences: [StandardKey.Cancel]
         enabled: root.StackView.status === StackView.Active && !changedOnLeaveDialog.visible
         onActivated: root.leaveOnEscape()
     }

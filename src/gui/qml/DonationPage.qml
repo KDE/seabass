@@ -19,7 +19,7 @@ Page {
     // Escape goes back, as the breadcrumb does, while this page is the
     // one showing.
     Shortcut {
-        sequence: StandardKey.Cancel
+        sequences: [StandardKey.Cancel]
         enabled: root.StackView.status === StackView.Active
         onActivated: root.StackView.view.pop()
     }

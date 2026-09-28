@@ -39,7 +39,7 @@ Page {
     // yet. Deliberately no confirmation: unstaging loses no work, the
     // checkboxes keep their state, and pressing Stage again restores it.
     Shortcut {
-        sequence: StandardKey.Cancel
+        sequences: [StandardKey.Cancel]
         enabled: cleanupController.stagedCount > 0 && !cleanupController.writing
         onActivated: cleanupController.unstageAll()
     }
