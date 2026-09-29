@@ -4,8 +4,12 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
+
+#include <sqlite3.h>
 
 #include <djinterop/djinterop.hpp>
 
@@ -77,6 +81,28 @@ int main()
         root_pl.add_track_back(track3);
         auto nested = root_pl.create_sub_playlist("Real Nested Playlist");
         nested.add_track_back(track3);
+    }
+
+    // A cover kept inside the database, the way older libraries store
+    // them: an image is as identifying as a title.
+    const std::string coverMarker = "A-REAL-COVER-KEPT-IN-THE-ROW";
+    {
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(sourceRoot / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK);
+        const std::string image = std::string("\xFF\xD8\xFF", 3) + coverMarker;
+        sqlite3_stmt *insert = nullptr;
+        assert(sqlite3_prepare_v2(handle,
+                                  "INSERT INTO AlbumArt (id, hash, albumArt) VALUES "
+                                  "(7, '551c96558e2eb05ea31f3735b129f242b720c15', ?);",
+                                  -1, &insert, nullptr)
+               == SQLITE_OK);
+        sqlite3_bind_blob(insert, 1, image.data(), static_cast<int>(image.size()), SQLITE_TRANSIENT);
+        assert(sqlite3_step(insert) == SQLITE_DONE);
+        sqlite3_finalize(insert);
+        assert(sqlite3_exec(handle, ("UPDATE Track SET albumArtId = 7 WHERE id = " + std::to_string(track1Id)).c_str(),
+                            nullptr, nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_close(handle);
     }
 
     auto result = anonymizeEngineLibrary(seabass::pathToUtf8(sourceRoot), seabass::pathToUtf8(destRoot));
@@ -155,6 +181,31 @@ int main()
     assert(sourceTrack1.title() == std::optional<std::string>("Real Title 1"));
     assert(sourceTrack1.hot_cue_at(0)->label == "Real Drop Cue");
     std::cout << "case 8 (source library untouched) OK\n";
+
+    // The cover is gone from the export, and not merely from the live row:
+    // the file itself no longer holds its bytes. The row stays, so the
+    // track still points where it did.
+    {
+        assert(result.albumArtImagesRemoved == 1);
+        const fs::path exported = destRoot / "Database2" / "m.db";
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(exported).c_str(), &handle) == SQLITE_OK);
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(handle, "SELECT a.id, a.albumArt IS NULL FROM Track t JOIN AlbumArt a "
+                                          "ON a.id = t.albumArtId WHERE t.id = ?;",
+                                  -1, &stmt, nullptr)
+               == SQLITE_OK);
+        sqlite3_bind_int64(stmt, 1, track1Id);
+        assert(sqlite3_step(stmt) == SQLITE_ROW);
+        assert(sqlite3_column_int(stmt, 0) == 7);
+        assert(sqlite3_column_int(stmt, 1) == 1);
+        sqlite3_finalize(stmt);
+        sqlite3_close(handle);
+        std::ifstream in(exported, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        assert(bytes.find(coverMarker) == std::string::npos);
+    }
+    std::cout << "case 9 (a cover kept in the database is not exported) OK\n";
 
     std::cout << "all cases passed\n";
     return 0;

@@ -38,6 +38,10 @@ struct EngineAnonymizationResult
     // Rows whose stale Track.filename column was rewritten from the
     // anonymized path (libdjinterop has no setter for it).
     int filenameColumnRows = 0;
+    // AlbumArt rows whose image, kept in the database by older libraries,
+    // was dropped. Artwork/ files are never copied into an export, so the
+    // covers kept in the database go too.
+    int albumArtImagesRemoved = 0;
     int tracksRefused = 0;
     std::string firstRefusalReason;
     std::string errorMessage;  // empty on success

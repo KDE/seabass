@@ -122,6 +122,33 @@ int scrubFilenameColumn(const std::string &destinationRoot)
     return changed;
 }
 
+// Drops the cover images an older library keeps in AlbumArt.albumArt. A
+// cover is as identifying as a title, and the export already leaves out
+// the Artwork/ directory that newer libraries keep theirs in. The rows
+// and their hashes stay, so every track still points where it did.
+// Returns how many rows lost their image, or -1 when that could not be
+// done and the export still holds them.
+int stripAlbumArtImages(const std::string &destinationRoot)
+{
+    const std::string dbPath = pathToUtf8(pathFromUtf8(destinationRoot) / "Database2" / "m.db");
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    char *error = nullptr;
+    int changed = -1;
+    if (sqlite3_exec(db, "UPDATE AlbumArt SET albumArt = NULL WHERE albumArt IS NOT NULL;", nullptr, nullptr, &error)
+        == SQLITE_OK) {
+        changed = sqlite3_changes(db);
+    } else if (error != nullptr && std::string(error).find("no such table") != std::string::npos) {
+        changed = 0;  // a library with no AlbumArt table has no images to drop
+    }
+    sqlite3_free(error);
+    sqlite3_close(db);
+    return changed;
+}
+
 }  // namespace
 
 namespace fs = std::filesystem;
@@ -401,6 +428,11 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
     // failure path shipped MORE real data than the success path.
     if (result.errorMessage.empty()) {
         result.filenameColumnRows = scrubFilenameColumn(destinationRoot);
+        result.albumArtImagesRemoved = stripAlbumArtImages(destinationRoot);
+        if (result.albumArtImagesRemoved < 0) {
+            result.errorMessage = "the cover images kept in the Engine database could not be removed. "
+                                  "This export must not be shared.";
+        }
         // Last thing, after every writer above: see compactDatabase().
         compactDatabase(pathToUtf8(destination / "Database2" / "m.db"));
     }
