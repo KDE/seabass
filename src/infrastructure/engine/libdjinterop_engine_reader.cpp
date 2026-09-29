@@ -203,8 +203,8 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std:
     };
     if (!whole()) {
         // Another read writing the same cover at the same moment is fine:
-        // each write has its own temporary name, and a whole copy is a
-        // whole copy whoever renamed it into place.
+        // writes of one file take turns, and a whole copy is a whole copy
+        // whoever wrote it.
         writeFileDurablyAtomic(pathToUtf8(file), bytes);
     }
     return whole() ? pathToUtf8(file) : std::string();
@@ -281,25 +281,6 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 // file under Artwork/ named by the row's blob hash, looked for on the
 // stick. The artwork stage of a progressive read, so the track list never
 // waits for either.
-// Temporary files an interrupted write left among a library's local
-// copies: a write's own temporary name, and the ".part" names an earlier
-// build used. Only old ones, so a write in progress elsewhere keeps its.
-void sweepInterruptedWrites(const std::filesystem::path &directory)
-{
-    std::error_code ec;
-    const auto cutoff = std::filesystem::file_time_type::clock::now() - std::chrono::minutes(10);
-    for (const auto &entry : std::filesystem::directory_iterator(directory, ec)) {
-        const std::string name = pathToUtf8(entry.path().filename());
-        const bool temporary = name.find(".tmp-seabass-write") != std::string::npos
-            || (name.size() > 5 && name.compare(name.size() - 5, 5, ".part") == 0);
-        std::error_code timeError;
-        if (temporary && entry.last_write_time(timeError) < cutoff && !timeError) {
-            std::error_code removeError;
-            std::filesystem::remove(entry.path(), removeError);
-        }
-    }
-}
-
 // Which stick, or failing that which location, a library's local copies
 // belong to. Clones of one library share its uuid, its hashes and maybe an
 // image's length while holding different bytes, so the uuid alone does not
@@ -376,7 +357,6 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     } catch (const std::exception &) {
         fail("could not list the AlbumArt columns in");
     }
-    sweepInterruptedWrites(libraryDirectory.empty() ? paths::localEngineArtworkDir() / "by-content" : libraryDirectory);
     sqlite3_stmt *stmt = nullptr;
     const std::string sql = "SELECT t.id, a.hash, a.id, " + imageLengthSql
         + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
