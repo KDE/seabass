@@ -11,9 +11,13 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
 
 #include "infrastructure/paths/utf8_path.hpp"
 
@@ -57,39 +61,103 @@ struct PendingJournalRecovery
 {
     bool found = false;      // there was a hot journal, one a read-only read could not get past
     bool recovered = false;  // and it has been rolled back
+    bool busy = false;       // another connection held the database throughout: not checked
     std::filesystem::path keptCopy;  // where the database and journal were copied first
     std::string error;
 };
 
+// How a read ended: SQLite's extended result code (sqlite3_extended_errcode,
+// 0 when it read) and its message. Plain numbers, so that this header needs
+// neither sqlite3.h nor SQLCipher's copy of it.
+struct SqliteReadOutcome
+{
+    int code = 0;
+    std::string message;
+};
+
+namespace pending_journal_codes
+{
+constexpr int ok = 0;
+constexpr int busy = 5;                 // SQLITE_BUSY
+constexpr int locked = 6;               // SQLITE_LOCKED
+constexpr int readOnlyRollback = 776;   // SQLITE_READONLY_ROLLBACK
+}  // namespace pending_journal_codes
+
+inline bool isSqliteBusy(int code)
+{
+    const int primary = code & 0xff;
+    return primary == pending_journal_codes::busy || primary == pending_journal_codes::locked;
+}
+
+// One recovery at a time per database in this process: a second thread
+// waits, then finds the journal spent, rather than copying it again or
+// meeting the first one's rollback as a lock.
+inline std::mutex &pendingJournalLockFor(const std::filesystem::path &database)
+{
+    static std::mutex guard;
+    static std::map<std::string, std::unique_ptr<std::mutex>> locks;
+    std::error_code ec;
+    std::filesystem::path key = std::filesystem::weakly_canonical(database, ec);
+    if (ec || key.empty()) {
+        key = database;
+    }
+    const std::lock_guard<std::mutex> lock(guard);
+    std::unique_ptr<std::mutex> &slot = locks[pathToUtf8(key)];
+    if (!slot) {
+        slot = std::make_unique<std::mutex>();
+    }
+    return *slot;
+}
+
 // Rolls a pending journal back, keeping a copy of both files first.
 //
-// `openReadWriteAndRead` opens the database for writing and reads from it
-// (plain SQLite for Engine, SQLCipher with its key for OneLibrary): SQLite
-// itself decides whether the journal is hot and rolls it back on that first
-// read. It checks the locks to decide, so a save still running in another
-// connection is never rolled back from under it. The copy goes to
+// A journal with a live header is also what a writer mid-commit leaves
+// (Engine DJ, the CLI, Seabass on another thread): SQLite gives it that
+// header just before writing pages, holding EXCLUSIVE. So a read-only
+// read that fails is not proof of a pull. Only SQLITE_READONLY_ROLLBACK is:
+// SQLite's own verdict that the journal is hot and no connection holds
+// the lock that would make it live. BUSY or LOCKED means a writer; the
+// read is tried again every 25 ms for `busyWait`, and after that the
+// database is left alone and reported `busy`. Any other failure is not a
+// hot journal either and is only reported.
+//
+// `readReadWrite` opens the database for writing and reads from it (plain
+// SQLite for Engine, SQLCipher with its key for OneLibrary): SQLite rolls
+// the journal back on that first read. The copy goes to
 // `safekeepingRoot` on this computer, never to the stick, which may be the
 // thing that is failing.
-// `openReadOnlyAndRead` is tried first: a journal with a live header is
-// also what another connection mid-transaction leaves while it works
-// (Engine DJ on the desktop, a second Seabass), and a read-only read then
-// simply succeeds -- SQLite sees the RESERVED lock and the journal is not
-// hot. Nothing is copied or touched in that case. Only a read-only read
-// that fails is the pull's leftover, and then the copy and the roll back.
 inline PendingJournalRecovery recoverPendingJournal(const std::filesystem::path &database,
                                                     const std::filesystem::path &safekeepingRoot,
-                                                    const std::function<void()> &openReadOnlyAndRead,
-                                                    const std::function<void()> &openReadWriteAndRead)
+                                                    const std::function<SqliteReadOutcome()> &readReadOnly,
+                                                    const std::function<SqliteReadOutcome()> &readReadWrite,
+                                                    std::chrono::milliseconds busyWait = std::chrono::milliseconds(0))
 {
     PendingJournalRecovery result;
+    const std::lock_guard<std::mutex> serial(pendingJournalLockFor(database));
     if (!hasPendingJournal(database)) {
         return result;
     }
-    try {
-        openReadOnlyAndRead();
-        return result;  // readable as it is: busy, not hot
-    } catch (const std::exception &) {
-        // The read a hot journal refuses; recovered below.
+    const auto deadline = std::chrono::steady_clock::now() + busyWait;
+    const auto readWhileBusy = [&deadline](const std::function<SqliteReadOutcome()> &read) {
+        SqliteReadOutcome outcome = read();
+        while (isSqliteBusy(outcome.code) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            outcome = read();
+        }
+        return outcome;
+    };
+    const SqliteReadOutcome probe = readWhileBusy(readReadOnly);
+    if (probe.code == pending_journal_codes::ok) {
+        return result;
+    }
+    if (isSqliteBusy(probe.code)) {
+        result.busy = true;
+        result.error = probe.message;
+        return result;
+    }
+    if (probe.code != pending_journal_codes::readOnlyRollback) {
+        result.error = probe.message;
+        return result;
     }
     result.found = true;
 
@@ -124,18 +192,18 @@ inline PendingJournalRecovery recoverPendingJournal(const std::filesystem::path 
     }
     result.keptCopy = keep;
 
-    try {
-        openReadWriteAndRead();
-    } catch (const std::exception &e) {
-        result.error = e.what();
+    // Another process rolling the same journal back holds the lock; once
+    // the journal is spent, its rollback is as good as ours.
+    const SqliteReadOutcome rolledBack = readWhileBusy(readReadWrite);
+    if (rolledBack.code != pending_journal_codes::ok && hasPendingJournal(database)) {
+        result.error = rolledBack.message;
         return result;
     }
     // Recovered means readable the way every reader reads: the same
     // read-only read that failed above, tried again.
-    try {
-        openReadOnlyAndRead();
-    } catch (const std::exception &e) {
-        result.error = "still cannot be read after opening it for writing: " + std::string(e.what());
+    const SqliteReadOutcome check = readWhileBusy(readReadOnly);
+    if (check.code != pending_journal_codes::ok) {
+        result.error = "still cannot be read after opening it for writing: " + check.message;
         return result;
     }
     result.recovered = true;

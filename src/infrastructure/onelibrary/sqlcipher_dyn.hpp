@@ -70,6 +70,7 @@ public:
     std::string columnText(sqlite3_stmt *stmt, int index) const;
     int columnType(sqlite3_stmt *stmt, int index) const;
     std::string errmsg(sqlite3 *db) const;
+    int extendedErrcode(sqlite3 *db) const;
 
 private:
     // Empty when the loaded library reports at least this SQLCipher major

@@ -9,12 +9,14 @@
 // transaction whose changes have already reached the database file, copied
 // with its journal before it commits -- and put back.
 
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include <sqlite3.h>
 
@@ -57,23 +59,26 @@ long long readOnlySum(const fs::path &path, std::string *errorOut = nullptr)
     return sum;
 }
 
-void openAndRead(const fs::path &path, int flags)
+seabass::infrastructure::SqliteReadOutcome openAndRead(const fs::path &path, int flags)
 {
+    seabass::infrastructure::SqliteReadOutcome outcome;
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(seabass::pathToUtf8(path).c_str(), &db, flags, nullptr) != SQLITE_OK) {
-        sqlite3_close(db);
-        throw std::runtime_error("could not open");
-    }
-    try {
-        exec(db, "SELECT count(*) FROM sqlite_master");
-    } catch (...) {
-        sqlite3_close(db);
-        throw;
+    if (sqlite3_open_v2(seabass::pathToUtf8(path).c_str(), &db, flags, nullptr) != SQLITE_OK
+        || sqlite3_exec(db, "SELECT count(*) FROM sqlite_master", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        outcome.code = db != nullptr ? sqlite3_extended_errcode(db) : SQLITE_CANTOPEN;
+        outcome.message = db != nullptr ? sqlite3_errmsg(db) : "could not open";
     }
     sqlite3_close(db);
+    return outcome;
 }
-void openReadOnlyAndRead(const fs::path &path) { openAndRead(path, SQLITE_OPEN_READONLY); }
-void openReadWriteAndRead(const fs::path &path) { openAndRead(path, SQLITE_OPEN_READWRITE); }
+seabass::infrastructure::SqliteReadOutcome openReadOnlyAndRead(const fs::path &path)
+{
+    return openAndRead(path, SQLITE_OPEN_READONLY);
+}
+seabass::infrastructure::SqliteReadOutcome openReadWriteAndRead(const fs::path &path)
+{
+    return openAndRead(path, SQLITE_OPEN_READWRITE);
+}
 
 // A database of 2000 rows summing to 2000, and a copy of it taken in the
 // middle of a transaction that sets every row to 7 -- with the database
@@ -132,8 +137,8 @@ int main()
     {
         const fs::path crashed = root / "crashed.db";
         const auto recovery = recoverPendingJournal(crashed, root / "recovered",
-                                                    [&crashed]() { openReadOnlyAndRead(crashed); },
-                                                    [&crashed]() { openReadWriteAndRead(crashed); });
+                                                    [&crashed]() { return openReadOnlyAndRead(crashed); },
+                                                    [&crashed]() { return openReadWriteAndRead(crashed); });
         assert(recovery.found && recovery.recovered && recovery.error.empty());
         assert(!hasPendingJournal(crashed));
         assert(readOnlySum(crashed) == 2000 && "every row is back to 1: the unfinished update is gone");
@@ -146,8 +151,10 @@ int main()
     {
         const fs::path crashed = root / "crashed.db";
         bool opened = false;
-        const auto recovery = recoverPendingJournal(crashed, root / "recovered-again", [&opened]() { opened = true; },
-                                                    [&opened]() { opened = true; });
+        const auto recovery = recoverPendingJournal(
+            crashed, root / "recovered-again",
+            [&opened]() { opened = true; return seabass::infrastructure::SqliteReadOutcome{}; },
+            [&opened]() { opened = true; return seabass::infrastructure::SqliteReadOutcome{}; });
         assert(!recovery.found && !recovery.recovered && !opened);
         assert(!fs::exists(root / "recovered-again"));
         std::cout << "case 3 (nothing pending, nothing touched) OK\n";
@@ -160,13 +167,72 @@ int main()
         fs::create_directories(second);
         const fs::path crashed = makeInterrupted(second);
         const auto recovery = recoverPendingJournal(crashed, root / "recovered-3",
-            [&crashed]() { openReadOnlyAndRead(crashed); },
-            []() { throw std::runtime_error("attempt to write a readonly database"); });
+            [&crashed]() { return openReadOnlyAndRead(crashed); },
+            []() { return seabass::infrastructure::SqliteReadOutcome{SQLITE_READONLY, "attempt to write a readonly database"}; });
         assert(recovery.found && !recovery.recovered);
         assert(recovery.error.find("readonly") != std::string::npos);
         assert(hasPendingJournal(crashed) && "nothing was rolled back");
         std::cout << "case 4 (cannot write: reported, left alone) OK\n";
     }
+
+    // 5. A writer mid-commit leaves a live journal too, but holds the lock:
+    //    the read-only read meets SQLITE_BUSY, not a hot journal. Nothing
+    //    copied, nothing rolled back, reported busy.
+    {
+        const fs::path dir = root / "busy";
+        fs::create_directories(dir);
+        makeInterrupted(dir);
+        const fs::path live = dir / "live.db";
+        sqlite3 *writer = nullptr;
+        sqlite3_open(seabass::pathToUtf8(live).c_str(), &writer);
+        exec(writer, "PRAGMA cache_size=1");
+        exec(writer, "PRAGMA cache_spill=1");
+        exec(writer, "BEGIN");
+        exec(writer, "UPDATE t SET v = 9");
+        assert(hasPendingJournal(live) && "the writer's journal is live");
+        bool wrote = false;
+        const auto recovery = recoverPendingJournal(
+            live, root / "recovered-busy", [&live]() { return openReadOnlyAndRead(live); },
+            [&live, &wrote]() { wrote = true; return openReadWriteAndRead(live); }, std::chrono::milliseconds(100));
+        assert(recovery.busy && !recovery.found && !recovery.recovered && !wrote);
+        assert(!fs::exists(root / "recovered-busy") && "nothing copied");
+        exec(writer, "COMMIT");
+        sqlite3_close(writer);
+        assert(readOnlySum(live) == 9 * 2000 && "the writer's commit stands");
+        std::cout << "case 5 (a live writer: busy, nothing copied or rolled back) OK\n";
+    }
+
+    // 6. Two threads meeting the same hot journal: one recovers it, the
+    //    other waits and finds it spent. One copy, no error.
+    for (int round = 0; round < 20; ++round) {
+        const fs::path dir = root / ("race-" + std::to_string(round));
+        fs::create_directories(dir);
+        const fs::path crashed = makeInterrupted(dir);
+        std::atomic<int> ready{0};
+        seabass::infrastructure::PendingJournalRecovery results[2];
+        const auto recover = [&](int i) {
+            ++ready;
+            while (ready < 2) {
+            }
+            results[i] = recoverPendingJournal(crashed, dir / "recovered",
+                                               [&crashed]() { return openReadOnlyAndRead(crashed); },
+                                               [&crashed]() { return openReadWriteAndRead(crashed); });
+        };
+        std::thread a(recover, 0);
+        std::thread b(recover, 1);
+        a.join();
+        b.join();
+        const int found = int(results[0].found) + int(results[1].found);
+        const int recovered = int(results[0].recovered) + int(results[1].recovered);
+        if (found != 1 || recovered != 1 || !results[0].error.empty() || !results[1].error.empty()) {
+            std::cerr << "round " << round << ": found " << found << ", recovered " << recovered << ", errors '"
+                      << results[0].error << "' '" << results[1].error << "'\n";
+        }
+        assert(found == 1 && recovered == 1 && "exactly one recovery");
+        assert(results[0].error.empty() && results[1].error.empty());
+        assert(readOnlySum(crashed) == 2000);
+    }
+    std::cout << "case 6 (two threads, one recovery, no error) OK\n";
 
     fs::remove_all(root);
     std::cout << "sqlite_pending_journal_test: all passed\n";
