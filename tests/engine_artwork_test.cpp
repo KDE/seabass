@@ -22,6 +22,7 @@
 #include <sqlite3.h>
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
@@ -758,6 +759,33 @@ int main(int argc, char **argv)
         assert(notAnImage.repaired == 0 && notAnImage.notAnImage == 1);
         assert(imageOf(4).first.empty());
         std::cout << "case 14 (an unreadable image kept in the database is replaced in place) OK\n";
+    }
+
+    // 15. What covers take up on the stick. An older library's images are
+    //     inside its database, and the copies the reader writes out to
+    //     show them are on this computer: counting those copies measured
+    //     the wrong disk and left the images in m.db uncounted.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_stick_bytes");
+        sqlite3 *db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (1, 'af2f6f87c56583adb67003735089017e2eb03572', "
+                 "zeroblob(3000));");
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (2, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', "
+                 "zeroblob(500));");
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (3, '', NULL);");
+        sqlite3_close(db);
+        const fs::path onStick = fixture.stick / "PIONEER" / "Artwork" / "00001" / "a5_m.jpg";  // written by Fixture
+        const fs::path localCopy = seabass::infrastructure::paths::localEngineArtworkDir() / "some-library" / "c.png";
+        write(localCopy, std::string(70000, 'x'));
+        std::vector<seabass::domain::Track> tracks(3);
+        tracks[0].artworkPath = pathToUtf8(onStick);
+        tracks[1].artworkPath = pathToUtf8(onStick);  // counted once
+        tracks[2].artworkPath = pathToUtf8(localCopy);
+        const std::uint64_t expected = fs::file_size(onStick) + 3000 + 500;
+        assert(artworkBytesOnStick(tracks, pathToUtf8(fixture.library)) == expected);
+        assert(artworkBytesOnStick(tracks, {}) == fs::file_size(onStick));
+        fs::remove_all(localCopy.parent_path());
+        std::cout << "case 15 (covers are counted where they take up the stick, database included) OK\n";
     }
 
     std::cout << "engine_artwork_test: all cases passed\n";

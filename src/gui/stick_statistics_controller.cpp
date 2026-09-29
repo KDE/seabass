@@ -19,6 +19,7 @@
 #include "domain/library_statistics.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
 #include "storageprobe/walk_tree.hpp"
@@ -192,7 +193,8 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
 
         // Disk usage breakdown. Audio Files/Artwork come from the
         // already-scanned, deduplicated track list (no extra filesystem
-        // walk needed); Database & Analysis Files is a directory-size
+        // walk needed), plus the images an older Engine library keeps in
+        // its database; Database & Analysis Files is a directory-size
         // walk of the catalog root(s) themselves (export.pdb, ANLZ
         // analysis files, Engine's Database2/*), with the artwork
         // subtotal subtracted back out since rekordbox stores artwork
@@ -200,13 +202,10 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
         // twice.
         std::uint64_t audioBytes = 0;
         std::uint64_t artworkBytes = 0;
-        std::set<std::string> distinctArtwork;
         for (const auto &t : combinedTracks) {
             audioBytes += t.fileSizeBytes;
-            if (!t.artworkPath.empty() && distinctArtwork.insert(t.artworkPath).second) {
-                artworkBytes += application::fileSizeOnDisk(t.artworkPath).value_or(0);
-            }
         }
+        artworkBytes = infrastructure::engine::artworkBytesOnStick(combinedTracks, enginePath.toStdString());
 
         std::uint64_t metadataBytes = 0;
         if (!rekordboxPath.isEmpty()) {
