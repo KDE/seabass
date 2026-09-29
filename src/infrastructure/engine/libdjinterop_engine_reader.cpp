@@ -316,6 +316,9 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         fail("could not open");
     }
+    // A save committing holds the database for a moment: waited out, the
+    // way the other connections to it are, not reported as a failed read.
+    sqlite3_busy_timeout(db, 5000);
     const std::string artworkDirectory = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Artwork");
     // The library's own directory, named by its Information uuid.
     std::filesystem::path libraryDirectory;
@@ -353,7 +356,8 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     }
     // Per AlbumArt row, since many tracks share one.
     std::unordered_map<int64_t, std::string> fileByRow;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
         // Per row: a stop lands within one image, with the database let go.
         if (cancel.cancelled()) {
             sqlite3_finalize(stmt);
@@ -394,6 +398,12 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         if (!known->second.empty()) {
             result[trackId] = known->second;
         }
+    }
+    // Anything but the end of the rows (a lock held too long, a read
+    // error) leaves covers out, and is said rather than returned as all.
+    if (step != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        fail("stopped reading AlbumArt in");
     }
     sqlite3_finalize(stmt);
     sqlite3_close(db);
