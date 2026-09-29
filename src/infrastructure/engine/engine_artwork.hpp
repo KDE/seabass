@@ -222,6 +222,11 @@ inline std::string extensionForImage(std::string_view bytes)
     return {};
 }
 
+// What the covers of these tracks take up on the stick: each distinct
+// image file once, plus, for `engineLibraryPath` when given, the images
+// that library keeps inside its database.
+std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath);
+
 // Gives each entry Engine's own storage: copies its image into Artwork/
 // under the hash of its bytes, adds the AlbumArt row, and points the track
 // at it. Entries with no source are skipped, and so is any track whose
@@ -242,11 +247,6 @@ inline std::string extensionForImage(std::string_view bytes)
 // it exists, so a save can protect it and take it back out if the save
 // then fails (SaveContext::protectForThisChange). It may throw, which
 // fails the repair with the transaction rolled back.
-// What the covers of these tracks take up on the stick: each distinct
-// image file once, plus, for `engineLibraryPath` when given, the images
-// that library keeps inside its database.
-std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath);
-
 ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
                             const std::function<void(const std::string &)> &beforeWrite = {},
                             const std::string &databaseFile = {},
