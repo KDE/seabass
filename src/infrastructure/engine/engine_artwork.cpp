@@ -78,45 +78,42 @@ std::string databaseImageHash(std::string_view image)
 }
 
 // Whether the library keeps its covers in the database, decided from its
-// own rows first: a text hash beside image bytes means it does (libraries
-// Engine DJ 4.5.0 migrated keep doing so while saying schema 3.0.2), a
-// blob hash means files under Artwork/ (as this project's library creator
-// writes them). Only a library with neither is decided by its schema:
-// 3.0.1 and earlier keep images in the column (libdjinterop's maintainer),
-// later ones use files. A library without the image column uses files.
-// Empty when the rows cannot be read, which decides nothing.
+// own rows: those with a text hash (the database's kind, whether or not
+// their image is still there) against those with a blob hash (files under
+// Artwork/, as this project's library creator writes them); the larger
+// kind wins. Libraries Engine DJ 4.5.0 migrated keep text rows while
+// saying schema 3.0.2. Only a library with as many of one as the other,
+// none included, is decided by its schema: 3.0.1 and earlier keep images
+// in the column (libdjinterop's maintainer), later ones use files. A
+// library without the image column uses files. Empty when the rows cannot
+// be read, which decides nothing.
 std::optional<bool> keepsCoversInDatabase(sqlite3 *handle, bool hasImageColumn)
 {
     if (!hasImageColumn) {
         return false;
     }
-    const auto exists = [handle](const std::string &where) -> std::optional<bool> {
-        sqlite3_stmt *stmt = nullptr;
-        const std::string sql = "SELECT EXISTS (SELECT 1 FROM AlbumArt WHERE " + where + ");";
-        if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+    std::int64_t textRows = 0;
+    std::int64_t blobRows = 0;
+    {
+        sqlite3_stmt *count = nullptr;
+        if (sqlite3_prepare_v2(handle,
+                               "SELECT coalesce(sum(typeof(hash) = 'text' AND hash != '' AND "
+                               "substr(hash, 1, 8) != 'image://'), 0), coalesce(sum(typeof(hash) = 'blob' AND "
+                               "length(hash) > 0 AND substr(hash, 1, 8) != 'image://'), 0) FROM AlbumArt;",
+                               -1, &count, nullptr)
+            != SQLITE_OK) {
             return std::nullopt;
         }
-        std::optional<bool> found;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            found = sqlite3_column_int(stmt, 0) != 0;
+        if (sqlite3_step(count) != SQLITE_ROW) {
+            sqlite3_finalize(count);
+            return std::nullopt;
         }
-        sqlite3_finalize(stmt);
-        return found;
-    };
-    const auto textRows = exists("typeof(hash) = 'text' AND hash != '' AND substr(hash, 1, 8) != 'image://' AND "
-                                 + byteLengthSql("albumArt") + " > 0");
-    if (!textRows) {
-        return std::nullopt;
+        textRows = sqlite3_column_int64(count, 0);
+        blobRows = sqlite3_column_int64(count, 1);
+        sqlite3_finalize(count);
     }
-    if (*textRows) {
-        return true;
-    }
-    const auto blobRows = exists("typeof(hash) = 'blob' AND length(hash) > 0 AND substr(hash, 1, 8) != 'image://'");
-    if (!blobRows) {
-        return std::nullopt;
-    }
-    if (*blobRows) {
-        return false;
+    if (textRows != blobRows) {
+        return textRows > blobRows;
     }
     sqlite3_stmt *stmt = nullptr;
     bool older = false;
@@ -566,6 +563,9 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     sqlite3_exec(handle, "COMMIT;", nullptr, nullptr, nullptr);
     sqlite3_close(handle);
 
+    for (ArtworkEntry &entry : audit.unreadable) {
+        entry.libraryCoversInDatabase = audit.coversInDatabase;
+    }
     std::stable_partition(audit.unreadable.begin(), audit.unreadable.end(),
                           [](const ArtworkEntry &entry) { return !entry.imageOnStick.empty(); });
     return audit;
@@ -713,11 +713,10 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         return fail(e.what());
     }
     const std::string imageLength = hasImageColumn ? byteLengthSql("a.albumArt") : "0";
-    const std::optional<bool> storage = keepsCoversInDatabase(handle, hasImageColumn);
-    if (!storage) {
-        return fail(std::string("could not tell how the library keeps its covers: ") + sqlite3_errmsg(handle));
-    }
-    const bool coversInDatabase = *storage;
+    // The library's kind of storage, for a track whose own row says none:
+    // the audit's, carried on each entry, so one repair of a save cannot
+    // change what the next writes. Read here only for an entry without it.
+    std::optional<bool> libraryNow;
 
     // beforeWrite is SaveContext::protectForThisChange, which throws when
     // it cannot copy a file aside (no temporary space, say). Uncaught it
@@ -729,6 +728,10 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             // The image for a track whose row it shares with others: given
             // a row of its own below, rather than written into theirs.
             std::string ownRowBytes;
+            // The kind of row the track points at now, which its new row
+            // keeps: 1 a text hash (the database), 2 a blob hash (a file),
+            // 0 none usable, where the library's kind decides.
+            int rowKind = 0;
             if (entry.storage == ArtworkStorage::InDatabaseUnreadable && !hasImageColumn) {
                 result.noLongerInDatabase++;  // rows here cannot hold an image
                 continue;
@@ -803,6 +806,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 sqlite3_finalize(sharing);
                 if (shared) {
                     ownRowBytes = std::move(bytes);
+                    rowKind = 1;
                 } else {
                     sqlite3_stmt *write = nullptr;
                     if (sqlite3_prepare_v2(handle, "UPDATE AlbumArt SET albumArt = ? WHERE id = ?;", -1, &write,
@@ -835,7 +839,8 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                     ? "typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://'"
                     : "0";
                 const std::string sql = "SELECT coalesce(" + imageLength + ", 0) > 0 OR " + textHash
-                    + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
+                    + ", typeof(a.hash) = 'blob' AND length(a.hash) > 0 AND substr(a.hash, 1, 8) != 'image://'"
+                      " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
                 if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &current, nullptr) != SQLITE_OK) {
                     giveUp(entry, "could not read its art row");
                     continue;
@@ -844,6 +849,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 const int step = sqlite3_step(current);
                 if (step == SQLITE_ROW) {
                     keepsImageInDatabase = sqlite3_column_int(current, 0) != 0;
+                    rowKind = sqlite3_column_int(current, 1) != 0 ? 2 : 0;
                 }
                 sqlite3_finalize(current);
                 if (step != SQLITE_ROW && step != SQLITE_DONE) {
@@ -870,7 +876,15 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 continue;  // neither JPEG nor PNG: nothing a player is promised to read
             }
             std::int64_t albumArtId = 0;
-            if (coversInDatabase) {
+            if (rowKind == 0 && !entry.libraryCoversInDatabase && !libraryNow) {
+                libraryNow = keepsCoversInDatabase(handle, hasImageColumn);
+                if (!libraryNow) {
+                    return fail(std::string("could not tell how the library keeps its covers: ")
+                                + sqlite3_errmsg(handle));
+                }
+            }
+            const bool libraryInDatabase = entry.libraryCoversInDatabase.value_or(libraryNow.value_or(false));
+            if (rowKind == 1 || (rowKind == 0 && libraryInDatabase)) {
                 // The library's own kind of row: a text hash and the image
                 // in it, found again by that hash when a second track has
                 // the same cover.

@@ -98,6 +98,10 @@ struct ArtworkEntry
     // repair asks for the bytes when it gets there; the scan only asks
     // whether they exist, so the count it shows is a promise it can keep.
     bool otherSource = false;
+    // How the library kept its covers when it was audited (the database or
+    // files), for a track whose own row names neither. Taken from the
+    // audit, so every repair of one save writes in the same storage.
+    std::optional<bool> libraryCoversInDatabase;
 };
 
 struct ArtworkAudit
