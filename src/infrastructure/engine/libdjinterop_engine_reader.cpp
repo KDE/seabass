@@ -164,7 +164,7 @@ djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &pro
 // library's own (no uuid) the name is a checksum of the bytes, which costs
 // a read each time. Empty when the row holds nothing a player could draw;
 // that is known from the image's first bytes, and remembered for the run.
-std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId,
+std::string databaseArtworkFile(sqlite3 *db, int &failures, std::int64_t albumArtId,
                                 const std::string &hash, std::int64_t length,
                                 const std::filesystem::path &libraryDirectory)
 {
@@ -205,7 +205,8 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId,
     // are written, since an open one holds the database.
     const std::optional<std::string> head = albumArtImageHead(db, albumArtId);
     if (!head) {
-        return {};  // not read: nothing is concluded about it
+        failures++;  // not read: counted, and nothing concluded about it
+        return {};
     }
     if (extensionForImage(*head).empty()) {
         const std::lock_guard<std::mutex> guard(notImagesLock);
@@ -214,11 +215,18 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId,
     }
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(db, "SELECT albumArt FROM AlbumArt WHERE id = ?", -1, &stmt, nullptr) != SQLITE_OK) {
+        failures++;
         return {};
     }
     sqlite3_bind_int64(stmt, 1, albumArtId);
     std::string bytes;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
+    const int step = sqlite3_step(stmt);
+    if (step != SQLITE_ROW && step != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        failures++;
+        return {};
+    }
+    if (step == SQLITE_ROW) {
         if (const void *blob = sqlite3_column_blob(stmt, 0)) {
             bytes.assign(static_cast<const char *>(blob), static_cast<size_t>(sqlite3_column_bytes(stmt, 0)));
         }
@@ -254,7 +262,11 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId,
         std::filesystem::rename(part, file, ec);
         std::filesystem::remove(part, ec);
     }
-    return whole() ? pathToUtf8(file) : std::string();
+    if (!whole()) {
+        failures++;  // not written, not renamed into place, or not whole
+        return {};
+    }
+    return pathToUtf8(file);
 }
 
 std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &engineLibraryPath)
@@ -350,7 +362,8 @@ std::string localCopiesKey(const std::string &engineLibraryPath, const std::stri
 
 std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &engineLibraryPath,
                                                            const std::string &volumeIdentity,
-                                                           const application::CancellationToken &cancel)
+                                                           const application::CancellationToken &cancel,
+                                                           int &failures)
 {
     std::unordered_map<int64_t, std::string> result;
     const std::filesystem::path dbFile = pathFromUtf8(engineLibraryPath) / "Database2" / "m.db";
@@ -466,13 +479,13 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                 // An image in the row wins; bytes there that are no image
                 // leave the art to whatever the hash names.
                 if (row.imageLength > 0 && !row.blobHash) {
-                    file = databaseArtworkFile(db, row.albumArtId, row.hash, row.imageLength, libraryDirectory);
+                    file = databaseArtworkFile(db, failures, row.albumArtId, row.hash, row.imageLength, libraryDirectory);
                 } else if (row.imageLength > 0) {
                     // Named by the blob hash in hex, so a later read finds
                     // the copy with a stat, as for a text hash.
                     const std::string hex = hashing::toHex(std::span<const std::uint8_t>(
                         reinterpret_cast<const std::uint8_t *>(row.hash.data()), row.hash.size()));
-                    file = databaseArtworkFile(db, row.albumArtId, hex, row.imageLength, libraryDirectory);
+                    file = databaseArtworkFile(db, failures, row.albumArtId, hex, row.imageLength, libraryDirectory);
                 }
                 if (file.empty() && row.blobHash && !std::string_view(row.hash).starts_with("image://")) {
                     const std::span<const std::uint8_t> hash(reinterpret_cast<const std::uint8_t *>(row.hash.data()),
@@ -485,7 +498,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                     file = cachedArtworkFile(artworkDirectory, hash, nullptr, false);
                 }
             } catch (const std::exception &) {
-                // One unreadable image is not worth the others.
+                failures++;  // one unreadable image is not worth the others, but it is counted
             }
             known = fileByRow.emplace(row.albumArtId, std::move(file)).first;
         }
@@ -635,12 +648,13 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
 {
     std::unordered_map<int64_t, std::string> stored;
+    int failures = 0;
     try {
         // Its own read-only open, maybe long after readTracks(): a journal
         // a pulled stick left is recovered first here too. One that cannot
         // be costs the covers, not the rest of the stage this runs in.
         recoverEnginePendingJournals(m_engineLibraryPath);
-        stored = readStoredArtwork(m_engineLibraryPath, m_volumeIdentity, m_cancel);
+        stored = readStoredArtwork(m_engineLibraryPath, m_volumeIdentity, m_cancel, failures);
     } catch (const application::OperationCancelled &) {
         throw;
     } catch (const std::exception &e) {
@@ -657,6 +671,9 @@ void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
         } catch (const std::logic_error &) {
             // Not a row id: not a track of this catalog.
         }
+    }
+    if (failures > 0) {
+        m_progress->warn(std::to_string(failures) + " covers could not be copied from the Engine database");
     }
 }
 
