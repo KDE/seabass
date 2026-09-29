@@ -3002,6 +3002,11 @@ target_link_libraries(manage_stick_backups_test PRIVATE seabass_core)
 add_test(NAME manage_stick_backups_test COMMAND manage_stick_backups_test)
 
 # The archive-path bug: a named backup has to be findable again.
+add_executable(stick_hardware_info_test tests/stick_hardware_info_test.cpp)
+target_include_directories(stick_hardware_info_test PRIVATE src)
+target_link_libraries(stick_hardware_info_test PRIVATE seabass_core)
+add_test(NAME stick_hardware_info_test COMMAND stick_hardware_info_test)
+
 add_executable(find_stick_archive_test tests/find_stick_archive_test.cpp)
 target_include_directories(find_stick_archive_test PRIVATE src)
 target_link_libraries(find_stick_archive_test PRIVATE seabass_core)
