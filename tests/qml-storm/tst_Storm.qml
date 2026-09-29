@@ -42,6 +42,15 @@ TestCase {
         tryVerify(() => runner.done, 30 * 60 * 1000, "seed " + seed + " must finish its walk");
         const failure = runner.failure;
         const log = runner.log.slice();
+        // A walk that failed ends with its window still open. It has no
+        // parent, so the runner does not take it along, and left to the
+        // garbage collector its controllers would read and warn into the
+        // next seed, which would fail for this one's sake.
+        if (runner.window) {
+            runner.window.destroy();
+            runner.window = null;
+            wait(0);
+        }
         runner.destroy();
         return failure.length > 0 ? failure + "\n  steps:\n    " + log.join("\n    ") : "";
     }

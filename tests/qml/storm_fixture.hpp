@@ -664,12 +664,18 @@ public:
         if (!child.waitForStarted(10000)) {
             return QStringLiteral("the quit leg did not start: ") + child.errorString();
         }
+        // The child's scratch tree (three stick copies, 160 MB) is removed at
+        // its exit only when that exit is a clean one; endProcess() cutting
+        // it off, or a kill, leaves it behind, and a hunt piles them up.
+        const qint64 childPid = child.processId();
         if (!child.waitForFinished(boundMs)) {
             child.kill();
             child.waitForFinished(5000);
+            removeChildScratch(childPid);
             return QStringLiteral("the process did not end within %1 ms of the walk:\n").arg(boundMs)
                 + QString::fromUtf8(child.readAll()).right(6000);
         }
+        removeChildScratch(childPid);
         const QString out = QString::fromUtf8(child.readAll());
         if (child.exitStatus() != QProcess::NormalExit || child.exitCode() != 0) {
             return QStringLiteral("the process ended badly (status %1, code %2):\n")
@@ -684,6 +690,29 @@ public:
     }
 
 private:
+    // A quit leg child's seabass-test-<pid> tree, its read-only mount
+    // directories opened first so their sticks can go.
+    static void removeChildScratch(qint64 pid)
+    {
+        namespace fs = std::filesystem;
+        if (pid <= 0) {
+            return;
+        }
+        std::error_code ec;
+        const fs::path root = fs::temp_directory_path(ec) / ("seabass-test-" + std::to_string(pid));
+        if (ec || !fs::exists(root, ec)) {
+            return;
+        }
+        for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+             !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (it->is_directory(ec) && !it->is_symlink(ec)) {
+                fs::permissions(it->path(), fs::perms::owner_all, fs::perm_options::add, ec);
+            }
+        }
+        ec.clear();
+        fs::remove_all(root, ec);
+    }
+
     // The directory the sticks are mounted in is not writable, as /media
     // and /Volumes are not: a write aimed at a pulled stick's mount point
     // fails there, where it would otherwise quietly make the directory
