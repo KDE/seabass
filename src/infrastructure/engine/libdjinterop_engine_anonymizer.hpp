@@ -65,6 +65,15 @@ struct EngineAnonymizationResult
 // close to what real Engine DJ software actually produces as possible,
 // not one this app generated.
 //
+// Two steps of the export, apart for their tests. Clears the cover images
+// an older library keeps in AlbumArt.albumArt of the Engine library at
+// `engineLibraryPath`, with the pages they sat on overwritten: the number
+// of rows cleared, or -1 when that could not be done.
+int stripAlbumArtImages(const std::string &engineLibraryPath);
+// Rebuilds the database file so no overwritten value is left in it.
+// False when that could not be done.
+bool compactDatabase(const std::string &dbPath);
+
 // sourceRoot/destinationRoot are both "engineLibraryPath" paths -- the
 // directory directly containing Database2/, matching
 // LibdjinteropEngineReader's own convention.

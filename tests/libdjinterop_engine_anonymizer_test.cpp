@@ -269,6 +269,43 @@ int main()
     }
     std::cout << "case 11 (a schema without an image column exports) OK\n";
 
+    // The covers leave the file even before it is compacted: the pages they
+    // sat on are overwritten as they are cleared. And a compaction that
+    // cannot run (another connection reading) says so.
+    {
+        const fs::path strip = root / "strip-only" / "Engine Library";
+        fs::create_directories(strip / "Database2");
+        const fs::path db = strip / "Database2" / "m.db";
+        const std::string marker = "A-COVER-THAT-MUST-NOT-STAY-IN-THE-FILE";
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(db).c_str(), &handle) == SQLITE_OK);
+        assert(sqlite3_exec(handle, "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY, hash TEXT, albumArt BLOB);", nullptr,
+                            nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_stmt *insert = nullptr;
+        assert(sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (1, 'abc', ?);", -1, &insert,
+                                  nullptr)
+               == SQLITE_OK);
+        const std::string image = std::string("\xFF\xD8\xFF", 3) + marker + std::string(3000, 'z');
+        sqlite3_bind_blob(insert, 1, image.data(), static_cast<int>(image.size()), SQLITE_TRANSIENT);
+        assert(sqlite3_step(insert) == SQLITE_DONE);
+        sqlite3_finalize(insert);
+        sqlite3_close(handle);
+        assert(stripAlbumArtImages(seabass::pathToUtf8(strip)) == 1);
+        std::ifstream in(db, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        assert(bytes.find(marker) == std::string::npos);
+
+        sqlite3 *reader = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(db).c_str(), &reader) == SQLITE_OK);
+        assert(sqlite3_exec(reader, "BEGIN; SELECT count(*) FROM AlbumArt;", nullptr, nullptr, nullptr) == SQLITE_OK);
+        assert(!compactDatabase(seabass::pathToUtf8(db)));
+        sqlite3_exec(reader, "COMMIT;", nullptr, nullptr, nullptr);
+        sqlite3_close(reader);
+        assert(compactDatabase(seabass::pathToUtf8(db)));
+    }
+    std::cout << "case 12 (covers leave the file as they are cleared, and a failed compaction is said) OK\n";
+
     std::cout << "all cases passed\n";
     return 0;
 }
