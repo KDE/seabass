@@ -36,6 +36,10 @@ public:
     // The defaults are for a reader whose catalog holds everything.
     virtual std::vector<domain::Track> readTracks() { return readAll(); }
     virtual void fillCues(std::vector<domain::Track> &) {}
+    // The covers that cost more than the catalog to name (Engine's image
+    // files, and images kept inside its database). Run with the sizes, in
+    // the last stage, so neither the list nor its cues wait for them.
+    virtual void fillArtwork(std::vector<domain::Track> &) {}
 
     void setProgressReporter(ProgressReporter &reporter) { m_progress = &reporter; }
     // Readers check the token once per track, next to their progress

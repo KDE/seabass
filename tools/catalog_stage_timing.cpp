@@ -40,12 +40,14 @@ int main(int argc, char **argv)
         std::size_t tracks = 0;
         std::size_t withCues = 0;
         std::size_t withSizes = 0;
+        std::size_t withArt = 0;
         try {
             const auto read = cache.tracksFor(format, path, detail, progress);
             tracks = read.size();
             for (const auto &track : read) {
                 withCues += track.cues.empty() ? 0 : 1;
                 withSizes += track.fileSizeBytes == 0 ? 0 : 1;
+                withArt += track.artworkPath.empty() ? 0 : 1;
             }
         } catch (const std::exception &e) {
             std::cout << name << ": failed: " << e.what() << "\n";
@@ -53,7 +55,7 @@ int main(int argc, char **argv)
         }
         const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
         std::cout << name << ": " << took.count() << " ms (" << tracks << " tracks, " << withCues << " with cues, "
-                  << withSizes << " with a size)\n";
+                  << withSizes << " with a size, " << withArt << " with a cover)\n";
     };
     stage("Tracks", Detail::Tracks);
     if (upTo == "tracks") {

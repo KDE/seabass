@@ -212,28 +212,12 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
         return result;
     }
 
-    // Per AlbumArt row, since many tracks share one.
-    std::unordered_map<int64_t, std::string> fileByDatabaseImage;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int64_t trackId = sqlite3_column_int64(stmt, 0);
         const unsigned char *hashText = sqlite3_column_text(stmt, 1);
         std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
         if (sqlite3_column_int64(stmt, 3) > 0) {
-            const int64_t albumArtId = sqlite3_column_int64(stmt, 2);
-            auto known = fileByDatabaseImage.find(albumArtId);
-            if (known == fileByDatabaseImage.end()) {
-                std::string file;
-                try {
-                    file = databaseArtworkFile(db, albumArtId, hash);
-                } catch (const std::exception &) {
-                    // One unreadable image is not worth the scan.
-                }
-                known = fileByDatabaseImage.emplace(albumArtId, std::move(file)).first;
-            }
-            if (!known->second.empty()) {
-                result[trackId] = known->second;
-            }
-            continue;
+            continue;  // an image in the row: readStoredArtwork()'s
         }
         auto pos = hash.find("PIONEER/Artwork");
         if (pos == std::string::npos) {
@@ -266,6 +250,54 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
         } catch (const std::exception &) {
             // Best-effort, same as the rest of this loop's field reads:
             // one unreadable artwork path is not worth losing the scan.
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return result;
+}
+
+// Track id -> cover, for the art that costs more than the catalog to find:
+// an image kept in the row, written out to this computer. The artwork
+// stage of a progressive read, so the track list never waits for it.
+std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &engineLibraryPath)
+{
+    std::unordered_map<int64_t, std::string> result;
+    const std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        if (db) {
+            sqlite3_close(db);
+        }
+        return result;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql =
+        "SELECT t.id, a.hash, a.id FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+        "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 AND length(a.albumArt) > 0";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return result;
+    }
+    // Per AlbumArt row, since many tracks share one.
+    std::unordered_map<int64_t, std::string> fileByRow;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const int64_t trackId = sqlite3_column_int64(stmt, 0);
+        const unsigned char *hashText = sqlite3_column_text(stmt, 1);
+        const std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
+        const int64_t albumArtId = sqlite3_column_int64(stmt, 2);
+        auto known = fileByRow.find(albumArtId);
+        if (known == fileByRow.end()) {
+            std::string file;
+            try {
+                file = databaseArtworkFile(db, albumArtId, hash);
+            } catch (const std::exception &) {
+                // One unreadable image is not worth the others.
+            }
+            known = fileByRow.emplace(albumArtId, std::move(file)).first;
+        }
+        if (!known->second.empty()) {
+            result[trackId] = known->second;
         }
     }
     sqlite3_finalize(stmt);
@@ -404,6 +436,35 @@ LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath
 }
 
 std::vector<domain::Track> LibdjinteropEngineReader::readAll()
+{
+    auto tracks = readTracks();
+    fillArtwork(tracks);
+    return tracks;
+}
+
+void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
+{
+    std::unordered_map<int64_t, std::string> stored;
+    try {
+        stored = readStoredArtwork(m_engineLibraryPath);
+    } catch (const std::exception &e) {
+        m_progress->warn(std::string("could not read album art: ") + e.what());
+        return;
+    }
+    for (auto &track : tracks) {
+        m_cancel.throwIfCancelled();
+        try {
+            const auto found = stored.find(std::stoll(track.sourceId));
+            if (found != stored.end()) {
+                track.artworkPath = found->second;
+            }
+        } catch (const std::logic_error &) {
+            // Not a row id: not a track of this catalog.
+        }
+    }
+}
+
+std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
 {
     // Before anything opens a database here, database_exists() included:
     // that one opens m.db read-write, and SQLite rolled a journal a pulled

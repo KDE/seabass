@@ -116,6 +116,12 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
         // and the command line agree on a catalog. Checked per file, so
         // a stick pulled mid pass (invalidateEveryCatalogOn() cancels the
         // prefetch) stops within one stat.
+        {
+            auto reader = makeReader(format, path);
+            reader->setProgressReporter(progress);
+            reader->setCancellationToken(cancel);
+            reader->fillArtwork(tracks);
+        }
         application::completeTracks(tracks, cancel);
         // The lengths the Tracks stage left out: every file the cache did
         // not know is probed now (and cached for the next insertion).
