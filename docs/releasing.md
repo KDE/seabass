@@ -150,7 +150,8 @@ as a button in the pipeline:
 service clears a request by project and exact ref name
 (`sysadmin/ci-utilities`, `signing/*-projects.yaml`). Seabass is cleared
 on `Seabass/0.8` and `Seabass/1.0` for macOS signing and notarisation and
-Windows signing, and on `master` for macOS and Windows signing. A tag is
+Windows signing, and on `master` for Windows signing only: `master` is in
+neither macOS list. A tag is
 its own ref name and is not listed, and the secure services key has not
 reached our tag pipelines either (the tags are not protected). A tag pipeline's
 packages come out unsigned and its jobs still pass; only the log says
