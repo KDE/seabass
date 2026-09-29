@@ -135,6 +135,11 @@ public:
     // never tested at all -- it spent its whole life throwing
     // StickBusyError on a lock its own caller held and returning 0.
     std::uint64_t releaseAutomaticBackupsIfTight(const infrastructure::backup::StickSpace &space);
+    // Test seam: the version that measures reads `space` instead. A test
+    // whose saves must keep their records (save_backup_discard_under_lock_test's
+    // setup) would otherwise see them released whenever the disk its
+    // scratch stick lives on is nearly full, as a developer's often is.
+    void setMeasuredSpaceForTesting(const infrastructure::backup::StickSpace &space) { m_spaceForTesting = space; }
 
     // Backs `file` up under `label` unless this save already did; records
     // the backup for undo. Returns true when a backup was made now.
@@ -258,6 +263,8 @@ public:
     std::vector<UndoableBackup> takeBackups();
 
 private:
+    std::optional<infrastructure::backup::StickSpace> m_spaceForTesting;
+
     // The -wal / -journal beside a SQLite database, when they exist and
     // hold bytes: backed up with the main file so a restore cannot go
     // back to an older state than the stick actually had.

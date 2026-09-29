@@ -218,6 +218,13 @@ void successfulSave(const fs::path &pioneerRoot, const Target &target, int slot)
     CancellationToken token;
     const QString root = seabass::gui::pathToQString(pioneerRoot);
     SaveContext ctx(token, noProgress, {}, root, {});
+    // A stick with room, whatever the disk under the scratch tree has: on a
+    // nearly full one the save released the very records the case below
+    // needs, and its setup failed ("at least two automatic records").
+    seabass::infrastructure::backup::StickSpace roomy;
+    roomy.capacityBytes = 64ULL * 1024 * 1024 * 1024;
+    roomy.freeBytes = 32ULL * 1024 * 1024 * 1024;
+    ctx.setMeasuredSpaceForTesting(roomy);
     std::vector<std::shared_ptr<PendingChange>> changes = {std::make_shared<AddCueChange>(
         QStringLiteral("rekordbox"), root, QString::fromStdString(target.sourceId), 1000.0 * slot,
         QStringLiteral("hot"), slot, QStringLiteral("#FF0000"), QString(), false, 0.0,
