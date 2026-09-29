@@ -184,4 +184,9 @@ fs::path localBrowsedBackupsDir()
     return localMetadataDir() / "browsed-backups";
 }
 
+fs::path localEngineArtworkDir()
+{
+    return localMetadataDir() / "engine-artwork";
+}
+
 }  // namespace seabass::infrastructure::paths
