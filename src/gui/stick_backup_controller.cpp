@@ -78,6 +78,7 @@ struct StickBackupController::PreviewResult
 {
     BackupPreview preview;
     QString stickIdentifier;
+    QString legacyStickIdentifier;
     // Set when this stick's backup was found in the folder under a name
     // other than the one the page assumed. See findStickArchive().
     QString adoptedArchivePath;
@@ -146,6 +147,7 @@ BackupStickOptions StickBackupController::baseOptions() const
     options.stickRoot = pathFromQString(m_stickRoot);
     options.archivePath = pathFromQString(m_archivePath);
     options.stickIdentifier = m_stickIdentifier.toStdString();
+    options.legacyStickIdentifier = m_legacyStickIdentifier.toStdString();
     options.stickLabel = m_stickLabel.toStdString();
     options.sourceReadOnly = m_stickReadOnly;
     // Only when it actually changed. Leaving it unset is what tells
@@ -202,8 +204,10 @@ void StickBackupController::refreshPreview(bool restart)
         if (options.stickIdentifier.empty()) {
             auto info = infrastructure::system::readStickHardwareInfo(root.toStdString(), label.toStdString());
             options.stickIdentifier = info.stickIdentifier;
+            options.legacyStickIdentifier = info.legacyStickIdentifier;
         }
         result->stickIdentifier = QString::fromStdString(options.stickIdentifier);
+        result->legacyStickIdentifier = QString::fromStdString(options.legacyStickIdentifier);
         // Only when the page's guess is not there: an archive that exists
         // at the expected path is this stick's by construction, and
         // opening every file in the folder to confirm it would cost a
@@ -211,7 +215,8 @@ void StickBackupController::refreshPreview(bool restart)
         std::error_code archiveEc;
         if (!fs::exists(options.archivePath, archiveEc)) {
             const fs::path found = application::findStickArchive(
-                options.archivePath.parent_path(), options.stickIdentifier, label.toStdString());
+                options.archivePath.parent_path(), options.stickIdentifier, label.toStdString(),
+                options.legacyStickIdentifier);
             if (!found.empty()) {
                 options.archivePath = found;
                 result->adoptedArchivePath = pathToQString(found);
@@ -225,6 +230,7 @@ void StickBackupController::refreshPreview(bool restart)
         // the ETA stays unknown.
         try {
             infrastructure::local::StickPerformanceHistory history;
+            history.adoptLegacyRecords(options.legacyStickIdentifier, options.stickIdentifier);
             auto records = history.forStick(options.stickIdentifier);
             for (auto it = records.rbegin(); it != records.rend(); ++it) {
                 if (it->streamingBytesPerSecond > 0.0) {
@@ -258,6 +264,7 @@ void StickBackupController::onPreviewFinished(const std::shared_ptr<PreviewResul
     }
     if (result) {
         m_stickIdentifier = result->stickIdentifier;
+        m_legacyStickIdentifier = result->legacyStickIdentifier;
         // The preview found this stick's backup under a name the page did
         // not guess. Take it, or every later action -- update, changelog,
         // rename, replace -- keeps addressing the file that is not there.

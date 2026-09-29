@@ -63,7 +63,9 @@ int backup(const fs::path &root, const fs::path &archive)
     options.stickRoot = root;
     options.archivePath = archive;
     options.stickLabel = rig::stickLabelFor(root);
-    options.stickIdentifier = infrastructure::system::readStickHardwareInfo(rootUtf8, options.stickLabel).stickIdentifier;
+    const auto hardware = infrastructure::system::readStickHardwareInfo(rootUtf8, options.stickLabel);
+    options.stickIdentifier = hardware.stickIdentifier;
+    options.legacyStickIdentifier = hardware.legacyStickIdentifier;
     options.sourceReadOnly = readOnly;
     options.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
 

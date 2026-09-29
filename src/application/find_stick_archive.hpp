@@ -28,6 +28,11 @@ namespace seabass::application
 // backup written before identifiers existed -- and then only the first
 // such match, since nothing distinguishes two of them.
 //
+// legacyStickIdentifier (StickHardwareInfo::legacyStickIdentifier) is the
+// identifier the stick had before Linux read labels with spaces properly;
+// a backup recorded under it is this stick's too, second to one recorded
+// under the current identifier.
+//
 // Returns an empty path when nothing matches, which is the ordinary case
 // for a stick that has never been backed up.
 //
@@ -36,7 +41,8 @@ namespace seabass::application
 // archive that IS at the expected path is this stick's by construction.
 inline std::filesystem::path findStickArchive(const std::filesystem::path &directory,
                                                 const std::string &stickIdentifier,
-                                                const std::string &stickLabel)
+                                                const std::string &stickLabel,
+                                                const std::string &legacyStickIdentifier = {})
 {
     if (directory.empty()) {
         return {};
@@ -45,6 +51,7 @@ inline std::filesystem::path findStickArchive(const std::filesystem::path &direc
     if (!std::filesystem::is_directory(directory, ec)) {
         return {};
     }
+    std::filesystem::path byLegacy;
     std::filesystem::path byLabel;
     for (const ManagedStickBackup &backup : ManageStickBackups::list(directory, {})) {
         const StickBackupDescription &d = backup.description;
@@ -54,11 +61,14 @@ inline std::filesystem::path findStickArchive(const std::filesystem::path &direc
         if (!stickIdentifier.empty() && d.stickIdentifier == stickIdentifier) {
             return d.archivePath;
         }
+        if (!legacyStickIdentifier.empty() && d.stickIdentifier == legacyStickIdentifier && byLegacy.empty()) {
+            byLegacy = d.archivePath;
+        }
         if (d.stickIdentifier.empty() && d.stickLabel == stickLabel && byLabel.empty()) {
             byLabel = d.archivePath;
         }
     }
-    return byLabel;
+    return byLegacy.empty() ? byLabel : byLegacy;
 }
 
 }  // namespace seabass::application

@@ -146,8 +146,10 @@ int main(int argc, char **argv)
         options.backup.stickRoot = source;
         options.backup.stickLabel = rig::stickLabelFor(source);
         options.backup.archivePath = backupDir / pathFromUtf8(options.backup.stickLabel + ".zip");
-        options.backup.stickIdentifier =
-            infrastructure::system::readStickHardwareInfo(pathToUtf8(source), options.backup.stickLabel).stickIdentifier;
+        const auto hardware =
+            infrastructure::system::readStickHardwareInfo(pathToUtf8(source), options.backup.stickLabel);
+        options.backup.stickIdentifier = hardware.stickIdentifier;
+        options.backup.legacyStickIdentifier = hardware.legacyStickIdentifier;
         options.backup.conflictingProcessProbe = [] { return infrastructure::system::isConflictingDjSoftwareRunning(); };
         options.targetRoot = target;
         options.exact = exact;

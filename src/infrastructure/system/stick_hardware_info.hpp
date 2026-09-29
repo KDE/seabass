@@ -40,6 +40,12 @@ struct StickHardwareInfo
     // Falls back to stickLabel + total capacity when no UUID is
     // available -- never empty.
     std::string stickIdentifier;
+    // The label + capacity identifier an earlier build gave this stick on
+    // Linux, where the /proc/mounts lookup missed a mount point holding a
+    // space (or tab, newline, backslash) or given with a trailing slash.
+    // Backups and history recorded under it are this stick's. Empty when
+    // the identifier did not change.
+    std::string legacyStickIdentifier;
 };
 
 StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std::string &stickLabel);

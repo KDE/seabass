@@ -209,6 +209,7 @@ private:
     QString m_savedBackupName;
     DirectWriteHold m_writeHold;
     QString m_stickIdentifier;
+    QString m_legacyStickIdentifier;
     QString m_rekordboxPath;
     QString m_enginePath;
     QString m_activity;

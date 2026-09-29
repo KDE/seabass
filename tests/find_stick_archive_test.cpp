@@ -111,6 +111,56 @@ void anEmptyOrMissingFolderIsNotAnError(const fs::path &root)
     std::cout << "  a missing folder and an empty one both answer empty\n";
 }
 
+// Before Linux read a label with a space properly, "Stick 1" was
+// identified as "<label>-<size>". Its backups carry that identifier and
+// must stay this stick's once it is known by its filesystem UUID.
+void aBackupUnderTheLegacyIdentifierIsStillFound(const fs::path &root)
+{
+    const fs::path dir = root / "backups";
+    fs::create_directories(dir);
+    backUp(makeStick(root, "other"), dir / "another Stick 1.zip", "Stick 1-2000", "Stick 1");
+    const fs::path mine = backUp(makeStick(root, "mine"), dir / "Gig.zip", "Stick 1-1000", "Stick 1");
+
+    const fs::path found = findStickArchive(dir, "ABCD-1234", "Stick 1", "Stick 1-1000");
+    std::cout << "  recorded as Stick 1-1000, now ABCD-1234: found " << seabass::pathToUtf8(found.filename()) << "\n";
+    assert(found == mine);
+
+    // One already recorded under the new identifier wins over the old.
+    const fs::path current = backUp(makeStick(root, "mine2"), dir / "current.zip", "ABCD-1234", "Stick 1");
+    assert(findStickArchive(dir, "ABCD-1234", "Stick 1", "Stick 1-1000") == current);
+}
+
+// The update of that backup: not refused as another stick's, and it
+// records the new identifier.
+void theLegacyBackupIsUpdatedInPlace(const fs::path &root)
+{
+    const fs::path stick = makeStick(root, "space");
+    const fs::path archive = backUp(stick, root / "Stick 1.zip", "Stick 1-1000", "Stick 1");
+    std::ofstream(stick / "Contents" / "b.mp3", std::ios::binary) << std::string(4096, 'b');
+
+    BackupStickOptions options;
+    options.stickRoot = stick;
+    options.archivePath = archive;
+    options.stickIdentifier = "ABCD-1234";
+    options.legacyStickIdentifier = "Stick 1-1000";
+    options.stickLabel = "Stick 1";
+    const BackupPreview preview = BackupStick::preview(options);
+    std::cout << "  preview says another stick: " << (preview.identifierMismatch ? "yes" : "no") << "\n";
+    assert(!preview.identifierMismatch);
+    const BackupStickOutcome outcome = BackupStick::execute(options);
+    std::cout << "  update: " << outcome.message << "\n";
+    assert(outcome.status == BackupOutcomeStatus::Complete);
+    assert(BackupStick::preview(options).previousIdentifier == "ABCD-1234");
+
+    // A stick that merely shares the label is still refused.
+    BackupStickOptions other = options;
+    other.stickRoot = makeStick(root, "stranger");
+    other.stickIdentifier = "EEEE-0000";
+    other.legacyStickIdentifier = "Stick 1-2000";
+    assert(BackupStick::preview(other).identifierMismatch);
+    assert(BackupStick::execute(other).status != BackupOutcomeStatus::Complete);
+}
+
 }  // namespace
 
 int main()
@@ -127,6 +177,8 @@ int main()
         {"the right stick when two share a label", theRightStickWhenTwoShareALabel},
         {"nothing for a stick that has no backup", nothingForAStickThatHasNoBackup},
         {"an empty or missing folder is not an error", anEmptyOrMissingFolderIsNotAnError},
+        {"a backup under the legacy identifier is still found", aBackupUnderTheLegacyIdentifierIsStillFound},
+        {"the legacy backup is updated in place", theLegacyBackupIsUpdatedInPlace},
     };
     for (const Case &c : cases) {
         const fs::path here = scratch / c.name;

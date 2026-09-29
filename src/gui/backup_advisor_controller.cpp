@@ -243,6 +243,7 @@ void BackupAdvisorController::startNext()
         const infrastructure::system::StickHardwareInfo hardware =
             infrastructure::system::readStickHardwareInfo(request.mountPoint.toStdString(), facts.stickLabel);
         facts.stickIdentifier = hardware.stickIdentifier;
+        facts.legacyStickIdentifier = hardware.legacyStickIdentifier;
         facts.freeBytes = hardware.freeBytes;
         facts.usedBytes = hardware.totalBytes > hardware.freeBytes ? hardware.totalBytes - hardware.freeBytes : 0;
         const fs::path root = pathFromQString(request.mountPoint);
@@ -397,6 +398,7 @@ void BackupAdvisorController::recomputeAdvice()
         StickBackupAdviceInput input;
         input.hasLibrary = facts.hasLibrary;
         input.stickIdentifier = facts.stickIdentifier;
+        input.legacyStickIdentifier = facts.legacyStickIdentifier;
         input.stickLabel = facts.stickLabel;
         input.liveFingerprint = facts.fingerprint;
         input.liveDatabaseFingerprints = facts.databaseFingerprints;

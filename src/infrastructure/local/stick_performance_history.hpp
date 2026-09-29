@@ -50,6 +50,12 @@ public:
     // Sets the wear state on the newest record for the stick, if any.
     void setLatestWearState(const std::string &stickIdentifier, const std::string &wearState);
 
+    // Moves the records kept under legacyIdentifier to identifier, once:
+    // the identity a stick had before Linux read labels with spaces
+    // properly (StickHardwareInfo::legacyStickIdentifier). No-op when
+    // either is empty, they are equal, or nothing is kept under the old one.
+    void adoptLegacyRecords(const std::string &legacyIdentifier, const std::string &identifier);
+
     static std::filesystem::path defaultPath();
 
 private:

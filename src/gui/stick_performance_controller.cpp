@@ -449,6 +449,7 @@ StickPerformanceResult runMeasureTask(QString stickLabel, QString rekordboxPath,
         // measurement and the stick was recorded within the last day.
         try {
             infrastructure::local::StickPerformanceHistory history;
+            history.adoptLegacyRecords(hwInfo.legacyStickIdentifier, hwInfo.stickIdentifier);
             auto earlier = earlierPoints(history, hwInfo.stickIdentifier);
             result.trend = toVariant(domain::assessTrend(score.score, measurement.randomReadMedianMs,
                                                          measurement.randomReadOutliers + measurement.smallFileOutliers,
@@ -518,8 +519,11 @@ StickWearResult runWearTask(std::string stickRoot, std::string stickLabel, std::
     try {
         // Without a completed measurement there is no identifier on the
         // controller yet; the stick can still say who it is.
+        std::string legacyStickIdentifier;
         if (stickIdentifier.empty()) {
-            stickIdentifier = infrastructure::system::readStickHardwareInfo(stickRoot, stickLabel).stickIdentifier;
+            const auto hardware = infrastructure::system::readStickHardwareInfo(stickRoot, stickLabel);
+            stickIdentifier = hardware.stickIdentifier;
+            legacyStickIdentifier = hardware.legacyStickIdentifier;
         }
         QElapsedTimer sinceLast;
         sinceLast.start();
@@ -577,6 +581,7 @@ StickWearResult runWearTask(std::string stickRoot, std::string stickLabel, std::
             try {
                 infrastructure::local::StickPerformanceHistory history;
                 const std::string wear = wearStateKey(assessment.state).toStdString();
+                history.adoptLegacyRecords(legacyStickIdentifier, stickIdentifier);
                 auto records = history.forStick(stickIdentifier);
                 if (!records.empty() && !sessionRecordedAtUtc.empty() && records.back().measuredAtUtc == sessionRecordedAtUtc) {
                     history.setLatestWearState(stickIdentifier, wear);

@@ -81,6 +81,14 @@ const StickBackupDescription *firstByIdentifier(const StickBackupAdviceInput &in
             return backup;
         }
     }
+    if (input.legacyStickIdentifier.empty()) {
+        return nullptr;
+    }
+    for (const StickBackupDescription *backup : readable) {
+        if (backup->stickIdentifier == input.legacyStickIdentifier) {
+            return backup;
+        }
+    }
     return nullptr;
 }
 

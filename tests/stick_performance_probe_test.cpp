@@ -307,6 +307,51 @@ int main()
         std::cout << "case 9 (local history round trip, cap, wear state) OK\n";
     }
 
+    // Case 10: a stick labelled with a space was recorded as
+    // "<label>-<size>" before Linux found its filesystem UUID. Its
+    // history moves to the new identifier once, the cap still holds, and
+    // no other stick is touched.
+    {
+        using seabass::infrastructure::local::StickPerformanceHistory;
+        using seabass::infrastructure::local::StickPerformanceRecord;
+        fs::path file = root / "history-legacy" / "stick-performance-history.tsv";
+        StickPerformanceHistory history(file);
+        auto record = [](const std::string &id, int day, int score) {
+            StickPerformanceRecord r;
+            r.measuredAtUtc = "2026-08-" + std::string(day < 10 ? "0" : "") + std::to_string(day) + "T10:00:00Z";
+            r.stickIdentifier = id;
+            r.stickLabel = "Stick 1";
+            r.score = score;
+            return r;
+        };
+        for (int i = 0; i < 15; ++i) {
+            history.append(record("Stick 1-1000", i + 1, 60 + i));
+        }
+        history.append(record("RV2-5000", 16, 40));
+        for (int i = 0; i < 10; ++i) {
+            history.append(record("ABCD-1234", 17 + i, 80 + i));
+        }
+
+        history.adoptLegacyRecords("Stick 1-1000", "ABCD-1234");
+        StickPerformanceHistory reopened(file);
+        auto adopted = reopened.forStick("ABCD-1234");
+        std::cout << "case 10: " << adopted.size() << " records under the new identifier, "
+                  << reopened.forStick("Stick 1-1000").size() << " left under the old\n";
+        assert(adopted.size() == StickPerformanceHistory::kKeepPerStick);
+        assert(adopted.front().score == 65);  // oldest five of the 25 dropped
+        assert(adopted.back().score == 89);
+        assert(reopened.forStick("Stick 1-1000").empty());
+        assert(reopened.forStick("RV2-5000").size() == 1);
+
+        // Nothing to adopt, or no identifier: nothing changes.
+        reopened.adoptLegacyRecords("Stick 1-1000", "ABCD-1234");
+        reopened.adoptLegacyRecords("", "ABCD-1234");
+        reopened.adoptLegacyRecords("RV2-5000", "");
+        assert(reopened.forStick("ABCD-1234").size() == StickPerformanceHistory::kKeepPerStick);
+        assert(reopened.forStick("RV2-5000").size() == 1);
+        std::cout << "case 10 (history recorded under the legacy identifier is adopted) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "All stick_performance_probe tests passed.\n";
     return 0;
