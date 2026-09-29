@@ -180,17 +180,19 @@ signed on a tag: see "Signing depends on the ref" above.
 | Linux | `linux:package` | `seabass-<version>_<channel>_linux.tar.gz` |
 | Windows | `craft_windows_qt6_x86_64` (Craft; the MSYS2 `windows:package` only once a Windows runner exists) | `seabass-<version>_<channel>_windows.exe` |
 | macOS | `craft_macos_qt6_arm64` | `seabass-<version>_<channel>_macos-arm64.dmg` |
+| macOS | `macos:universal` (a button once both halves are green) | `seabass-<version>_<channel>_macos.dmg` |
 | macOS | `craft_macos_qt6_x86_64` | `seabass-<version>_<channel>_macos-x86_64.dmg` |
 
 The `<channel>` in a filename is the build channel, which is what the
 binary reports in its own Settings. The directory it is served from is the
 website channel.
 
-The two macOS rows are halves. Neither is published: see "A universal
-macOS package" below. `fetch-release.sh` brings both down as evidence
-that both architectures build, and then looks for
-`seabass-<version>_<channel>_macos.dmg`, the merged package, which is made
-on a Mac. It refuses to call the release complete without it.
+The first two macOS rows are halves. Neither is published: see "A
+universal macOS package" below. `fetch-release.sh` brings both down as
+evidence that both architectures build, and then takes
+`seabass-<version>_<channel>_macos.dmg`, the merged package, from
+`macos:universal`, unless one merged by hand on a Mac is already in
+place. It refuses to call the release complete without it.
 
 `tools/fetch-release.sh` puts them in
 `~/Seabass/releases/<channel>/` under exactly those names, which are also

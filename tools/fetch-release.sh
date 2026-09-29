@@ -98,6 +98,10 @@ want_linux="linux:package"
 want_windows="craft_windows_qt6_x86_64"
 want_macos_arm64="craft_macos_qt6_arm64"
 want_macos_x86_64="craft_macos_qt6_x86_64"
+# The two halves merged into the package that is published. On a tag it is
+# signed ad hoc, like the halves: see docs/releasing.md, "Signing depends
+# on the ref".
+want_macos_universal="macos:universal"
 
 jobs="$(api "$API/projects/$PROJECT/pipelines/$id/jobs?per_page=100")"
 
@@ -146,11 +150,17 @@ fetch_job "$want_windows" windows exe || missing=1
 # Both Mac architectures, because the package that gets published is
 # neither of them: Craft builds one architecture per root, and an
 # arm64-only .dmg mounts on an Intel Mac and refuses to launch. These two
-# are the halves; tools/macos-universal-dmg.sh makes the whole, on a Mac.
+# are the halves; macos:universal makes the whole (below).
 fetch_job "$want_macos_arm64" macos-arm64 dmg || missing=1
 fetch_job "$want_macos_x86_64" macos-x86_64 dmg || missing=1
 
 universal="$dest/$(seabass_package_name "$version" "$channel" macos dmg)"
+# A universal package already in place (merged by hand on a Mac, or taken
+# on an earlier run) is kept. Otherwise CI's merge is taken, and
+# its absence is reported by fetch_job and then again below.
+if [ ! -f "$universal" ]; then
+    fetch_job "$want_macos_universal" macos dmg || true
+fi
 echo
 if [ -f "$universal" ]; then
     echo "macos:   $universal"
@@ -163,11 +173,11 @@ else
     missing=1
     echo "macos:   no universal package yet, and the two above are not it."
     echo "         They are CI's halves, one architecture each, and they are here as"
-    echo "         evidence that both build. The package that gets published is merged"
-    echo "         on a Mac from two Craft roots, because the check that the two roots"
-    echo "         hold the same package versions reads their install.db and a .dmg"
-    echo "         does not carry one. See docs/releasing.md, \"A universal macOS"
-    echo "         package\", then put the result here as:"
+    echo "         evidence that both build. The package that gets published is the"
+    echo "         two merged: press $want_macos_universal in the tag's pipeline once"
+    echo "         both halves are green and run this again, or merge them on a Mac"
+    echo "         (docs/releasing.md, \"A universal macOS package\") and put the"
+    echo "         result here as:"
     echo "           $(seabass_package_name "$version" "$channel" macos dmg)"
 fi
 
