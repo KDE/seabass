@@ -452,6 +452,7 @@ add_library(seabass_core STATIC
     src/infrastructure/system/stick_hardware_info.cpp
     src/infrastructure/zip_archive_writer.cpp
     src/infrastructure/hashing/sha256.cpp
+    src/infrastructure/hashing/sha1.cpp
     src/infrastructure/stick_backup/posix_archive_file.cpp
     src/infrastructure/stick_backup/zip_format.cpp
     src/infrastructure/stick_backup/zip64_writer.cpp
@@ -557,6 +558,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/engine/rekordbox_key_parser.cpp
     src/infrastructure/fs_remove.cpp
     src/infrastructure/hashing/sha256.cpp
+    src/infrastructure/hashing/sha1.cpp
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/local/browsed_backup_root.cpp
     src/infrastructure/long_paths.cpp
@@ -2806,6 +2808,11 @@ target_link_libraries(zip_archive_reader_refusals_test PRIVATE ZLIB::ZLIB)
 add_test(NAME zip_archive_reader_refusals_test COMMAND zip_archive_reader_refusals_test)
 
 # --- stick backup (docs/stick-backup-plan.md) ---
+
+add_executable(sha1_test tests/sha1_test.cpp)
+target_link_libraries(sha1_test PRIVATE seabass_core_testing)
+target_include_directories(sha1_test PRIVATE src)
+add_test(NAME sha1_test COMMAND sha1_test)
 
 add_executable(sha256_test
     tests/sha256_test.cpp
