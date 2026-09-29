@@ -1305,6 +1305,88 @@ int main(int argc, char **argv)
         std::cout << "case 24 (the library's own rows decide the storage a repair writes in) OK\n";
     }
 
+    // 25. A save repairs one track at a time, and the storage it writes in
+    //     must not drift as it goes. A track keeps the kind of row it
+    //     points at (a text hash: the database; a blob hash: a file); only
+    //     a track with no usable row takes the library's kind, which the
+    //     audit decided once, by counting rows of each kind (text rows
+    //     whose image is gone count too) and the schema only when there
+    //     are none.
+    {
+        const auto probe = [](const ArtworkEntry &) { return true; };
+        const auto reader = [](const ArtworkEntry &entry) { return jpeg("TAGS-" + std::to_string(entry.trackId)); };
+        const auto schema = [](sqlite3 *db, int patch) {
+            exec(db, "CREATE TABLE Information (id INTEGER PRIMARY KEY, uuid TEXT, schemaVersionMajor INTEGER, "
+                     "schemaVersionMinor INTEGER, schemaVersionPatch INTEGER);");
+            exec(db, "INSERT INTO Information VALUES (1, 'u', 3, 0, " + std::to_string(patch) + ");");
+        };
+        const auto oneAtATime = [&](Fixture &fixture, const ArtworkAudit &audit) {
+            ArtworkRepair total;
+            for (ArtworkEntry entry : audit.unreadable) {
+                entry.otherSource = true;  // the imported one's image is on no stick here: take the tags
+                const ArtworkRepair one = repairArtwork(pathToUtf8(fixture.library), {entry}, {}, {}, reader);
+                assert(one.error.empty());
+                total.repaired += one.repaired;
+                total.filesWritten.insert(total.filesWritten.end(), one.filesWritten.begin(), one.filesWritten.end());
+            }
+            return total;
+        };
+        const auto textRows = [](Fixture &fixture) {
+            sqlite3 *db = fixture.open();
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(db,
+                               "SELECT count(*) FROM AlbumArt WHERE typeof(hash) = 'text' AND hash != '' AND "
+                               "substr(hash, 1, 8) != 'image://';",
+                               -1, &stmt, nullptr);
+            sqlite3_step(stmt);
+            const int count = sqlite3_column_int(stmt, 0);
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            return count;
+        };
+
+        // A file library with one empty text row, repaired first: the
+        // others are not turned into database rows by it.
+        Fixture files(seabass::testing::scratchRoot() / "seabass_engine_artwork_stable_files");
+        sqlite3 *db = files.open();
+        schema(db, 2);
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES "
+                 "(2, x'2222222222222222222222222222222222222222', NULL), "
+                 "(3, x'3333333333333333333333333333333333333333', NULL), "
+                 "(4, x'4444444444444444444444444444444444444444', NULL), "
+                 "(5, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', x''), "
+                 "(6, 'image://fileart//media/X/PIONEER/Artwork/00001/gone.jpg', NULL);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Text row', 'A', 5), "
+                 "(2, 'File gone', 'B', 2), (3, 'File gone too', 'C', 3), (4, 'Imported', 'D', 6);");
+        sqlite3_close(db);
+        write(files.library / "Artwork" / (artworkFileName(std::vector<std::uint8_t>(20, 0x44)) + ".jpg"), jpeg("F"));
+        const ArtworkAudit filesAudit = auditArtwork(pathToUtf8(files.library), {}, probe);
+        assert(!filesAudit.coversInDatabase);
+        assert(filesAudit.unreadable.size() == 4);
+        const ArtworkRepair filesRepair = oneAtATime(files, filesAudit);
+        assert(filesRepair.repaired == 4);
+        assert(filesRepair.filesWritten.size() == 3);  // tracks 2, 3 and 4 as files
+        assert(textRows(files) == 1);                   // only the row that was text to begin with
+
+        // A database library whose images are all gone, two tracks sharing
+        // a row: the database it stays.
+        Fixture emptied(seabass::testing::scratchRoot() / "seabass_engine_artwork_stable_database");
+        db = emptied.open();
+        schema(db, 2);
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (2, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', x''), "
+                 "(3, '8998055a7787a03a8e8de2fa607a11f37b4c674a', NULL);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'A', 'A', 2), (2, 'B', 'B', 2), "
+                 "(3, 'C', 'C', 3);");
+        sqlite3_close(db);
+        const ArtworkAudit emptiedAudit = auditArtwork(pathToUtf8(emptied.library), {}, probe);
+        assert(emptiedAudit.coversInDatabase);
+        const ArtworkRepair emptiedRepair = oneAtATime(emptied, emptiedAudit);
+        assert(emptiedRepair.repaired == 3);
+        assert(emptiedRepair.filesWritten.empty());
+        assert(fs::is_empty(emptied.library / "Artwork"));
+        std::cout << "case 25 (a save keeps each track's kind of storage, and the library's is decided once) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }
