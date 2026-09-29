@@ -313,8 +313,9 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         const std::int64_t albumArtId = sqlite3_column_int64(stmt, 4);
 
         // A row holding an image is decided by that image alone: whatever
-        // its hash says, this is what a player shows. Never offered for
-        // repair, which would point the track away from it.
+        // its hash says, this is what a player shows. Never re-pointed; an
+        // unreadable one is repaired in place, when its hash says the
+        // library keeps its images in the database.
         if (const auto image = pointsAtArt ? imageHeadByRow.find(albumArtId) : imageHeadByRow.end();
             image != imageHeadByRow.end()) {
             audit.tracksWithArt++;
@@ -324,6 +325,9 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
                 entry.storage = ArtworkStorage::InDatabaseUnreadable;
                 if (blob != nullptr && size > 0) {
                     entry.reference.assign(static_cast<const char *>(blob), static_cast<size_t>(size));
+                }
+                if (classifyArtworkReference(entry.reference, referenceType) == ArtworkStorage::InDatabase) {
+                    findASourceFor(entry);
                 }
                 audit.unreadable.push_back(std::move(entry));
             }
@@ -370,6 +374,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             // holds none.
             entry.storage = ArtworkStorage::InDatabaseUnreadable;
             entry.reference = reference;
+            findASourceFor(entry);
             audit.unreadable.push_back(std::move(entry));
             continue;
         }
@@ -465,13 +470,74 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     // rollback then restores underneath a connection still holding it.
     try {
         for (const ArtworkEntry &entry : entries) {
+            if (entry.storage == ArtworkStorage::InDatabaseUnreadable) {
+                // Repaired in place: the image goes into the row the track
+                // already points at, whose hash and id stay, so every track
+                // sharing the row keeps it. Asked of the row as it is now.
+                sqlite3_stmt *current = nullptr;
+                if (sqlite3_prepare_v2(handle,
+                                       "SELECT a.id, substr(a.albumArt, 1, 8), typeof(a.hash) = 'text' AND a.hash != '' "
+                                       "AND substr(a.hash, 1, 8) != 'image://' "
+                                       "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;",
+                                       -1, &current, nullptr)
+                    != SQLITE_OK) {
+                    return fail(std::string("could not read the track's art row: ") + sqlite3_errmsg(handle));
+                }
+                sqlite3_bind_int64(current, 1, entry.trackId);
+                if (sqlite3_step(current) != SQLITE_ROW) {
+                    sqlite3_finalize(current);
+                    result.tracksNoLongerThere++;
+                    continue;
+                }
+                const std::int64_t row = sqlite3_column_int64(current, 0);
+                const void *head = sqlite3_column_blob(current, 1);
+                const std::string headBytes =
+                    head ? std::string(static_cast<const char *>(head), static_cast<size_t>(sqlite3_column_bytes(current, 1)))
+                         : std::string();
+                const bool storedInDatabase = sqlite3_column_int(current, 2) != 0;
+                sqlite3_finalize(current);
+                if (!extensionForImage(headBytes).empty()) {
+                    // Never overwritten: whatever put it there, it reads.
+                    result.alreadyReadable++;
+                    continue;
+                }
+                if (!storedInDatabase) {
+                    continue;  // the row is no longer one that keeps its image in the database
+                }
+                std::string bytes;
+                if (!entry.imageOnStick.empty()) {
+                    bytes = readWholeFile(entry.imageOnStick);
+                } else if (entry.otherSource && readOtherSource) {
+                    bytes = readOtherSource(entry);
+                }
+                if (bytes.empty()) {
+                    continue;
+                }
+                if (extensionForImage(bytes).empty()) {
+                    result.notAnImage++;
+                    continue;
+                }
+                sqlite3_stmt *write = nullptr;
+                if (sqlite3_prepare_v2(handle, "UPDATE AlbumArt SET albumArt = ? WHERE id = ?;", -1, &write, nullptr)
+                    != SQLITE_OK) {
+                    return fail(std::string("could not write the image into its row: ") + sqlite3_errmsg(handle));
+                }
+                sqlite3_bind_blob(write, 1, bytes.data(), static_cast<int>(bytes.size()), SQLITE_TRANSIENT);
+                sqlite3_bind_int64(write, 2, row);
+                if (sqlite3_step(write) != SQLITE_DONE) {
+                    sqlite3_finalize(write);
+                    return fail(std::string("could not write the image into its row: ") + sqlite3_errmsg(handle));
+                }
+                sqlite3_finalize(write);
+                result.repaired++;
+                continue;
+            }
             // Asked of the database as it is now, not of the audit: a
             // track whose row holds an image, or names one by a text hash,
             // keeps its art in the database and is never re-pointed. The
             // new row would hold no image, and the old one would be left
             // to nobody.
-            bool keepsImageInDatabase = entry.storage == ArtworkStorage::InDatabase
-                || entry.storage == ArtworkStorage::InDatabaseUnreadable;
+            bool keepsImageInDatabase = entry.storage == ArtworkStorage::InDatabase;
             if (!keepsImageInDatabase) {
                 sqlite3_stmt *current = nullptr;
                 if (sqlite3_prepare_v2(handle,

@@ -122,6 +122,14 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
     if (!repair.error.empty()) {
         return ChangeOutcome::failure(QString::fromStdString(repair.error));
     }
+    if (repair.repaired == 0 && repair.alreadyReadable > 0 && repair.keptInDatabase == 0) {
+        // Another track sharing its row in the database was given the
+        // image first in this save: this one reads now too.
+        session.noteItemApplied();
+        ctx.log().record("artwork: track " + std::to_string(m_entry.trackId)
+                         + " shares an art row that already holds a readable image");
+        return ChangeOutcome::success();
+    }
     if (repair.repaired == 0) {
         // This one track could not be given art. That is a skip, not a
         // failure -- and not a success, which the summary would count as a
@@ -155,7 +163,10 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
     session.noteItemApplied();
     ctx.log().record("artwork: gave track " + std::to_string(m_entry.trackId)
                      + " cover art Engine can find, " + std::to_string(repair.filesWritten.size())
-                     + " image(s) copied into the library");
+                     + " image(s) copied into the library"
+                     + (m_entry.storage == infrastructure::engine::ArtworkStorage::InDatabaseUnreadable
+                            ? ", the image written into its art row in the database"
+                            : ""));
     return ChangeOutcome::success();
 }
 

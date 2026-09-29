@@ -67,6 +67,73 @@ void createEngineArtworkTables(const std::filesystem::path &databaseFile, const 
     }
 }
 
+void setEngineDatabaseArtwork(const std::filesystem::path &databaseFile, std::int64_t rowId, const std::string &hash,
+                              const std::string &image, const std::vector<std::int64_t> &trackIds)
+{
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(seabass::pathToUtf8(databaseFile).c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("cannot open " + seabass::pathToUtf8(databaseFile));
+    }
+    sqlite3_stmt *stmt = nullptr;
+    bool ok = sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO AlbumArt (id, hash, albumArt) VALUES (?, ?, ?);", -1, &stmt,
+                                 nullptr)
+        == SQLITE_OK;
+    if (ok) {
+        sqlite3_bind_int64(stmt, 1, rowId);
+        sqlite3_bind_text(stmt, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 3, image.data(), static_cast<int>(image.size()), SQLITE_TRANSIENT);
+        ok = sqlite3_step(stmt) == SQLITE_DONE;
+    }
+    sqlite3_finalize(stmt);
+    for (const std::int64_t track : trackIds) {
+        const std::string sql = "UPDATE Track SET albumArtId = " + std::to_string(rowId) + " WHERE id = "
+            + std::to_string(track) + ";";
+        ok = ok && sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+    }
+    sqlite3_close(db);
+    if (!ok) {
+        throw std::runtime_error("cannot write the artwork row in " + seabass::pathToUtf8(databaseFile));
+    }
+}
+
+std::string engineAlbumArtImage(const std::filesystem::path &databaseFile, std::int64_t rowId)
+{
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(seabass::pathToUtf8(databaseFile).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return {};
+    }
+    sqlite3_stmt *stmt = nullptr;
+    std::string image;
+    if (sqlite3_prepare_v2(db, "SELECT albumArt FROM AlbumArt WHERE id = ?", -1, &stmt, nullptr) == SQLITE_OK
+        && sqlite3_bind_int64(stmt, 1, rowId) == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+        if (const void *blob = sqlite3_column_blob(stmt, 0)) {
+            image.assign(static_cast<const char *>(blob), static_cast<size_t>(sqlite3_column_bytes(stmt, 0)));
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return image;
+}
+
+std::int64_t engineTrackAlbumArtId(const std::filesystem::path &databaseFile, std::int64_t trackId)
+{
+    sqlite3 *db = nullptr;
+    if (sqlite3_open_v2(seabass::pathToUtf8(databaseFile).c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    std::int64_t id = -1;
+    if (sqlite3_prepare_v2(db, "SELECT albumArtId FROM Track WHERE id = ?", -1, &stmt, nullptr) == SQLITE_OK
+        && sqlite3_bind_int64(stmt, 1, trackId) == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+        id = sqlite3_column_int64(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return id;
+}
+
 std::string engineTrackArtworkHash(const std::filesystem::path &databaseFile, std::int64_t trackId)
 {
     sqlite3 *db = nullptr;

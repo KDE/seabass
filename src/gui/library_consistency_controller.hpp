@@ -410,7 +410,8 @@ public:
     // no hash to find it by. Nothing here can repair that.
     int artworkBrokenRowCount() const;
     // Art kept inside the database whose row holds no image a player can
-    // draw. Not repaired: the library reads its art from those rows.
+    // draw. Repaired in place, in that row, since the library reads its
+    // art from there.
     int artworkEmptyInDatabaseCount() const;
     // Set when the audit could not read the database. Without it an audit
     // that failed looks exactly like a library with nothing wrong: no

@@ -22,6 +22,13 @@ std::int64_t readEngineImportCounter(const std::filesystem::path &databaseFile);
 // The two tables repairArtwork() writes, AlbumArt and Track, with one
 // Track row per id in `trackIds` and no art for any of them.
 void createEngineArtworkTables(const std::filesystem::path &databaseFile, const std::vector<std::int64_t> &trackIds);
+// An AlbumArt row the way an older library keeps it (hex text hash, image
+// in the row), with the given tracks pointing at it.
+void setEngineDatabaseArtwork(const std::filesystem::path &databaseFile, std::int64_t rowId, const std::string &hash,
+                              const std::string &image, const std::vector<std::int64_t> &trackIds);
+// That row's image, its hash, and the row the track points at.
+std::string engineAlbumArtImage(const std::filesystem::path &databaseFile, std::int64_t rowId);
+std::int64_t engineTrackAlbumArtId(const std::filesystem::path &databaseFile, std::int64_t trackId);
 // The AlbumArt hash the track with this id points at, or "" for none.
 std::string engineTrackArtworkHash(const std::filesystem::path &databaseFile, std::int64_t trackId);
 }  // namespace seabass::testing
