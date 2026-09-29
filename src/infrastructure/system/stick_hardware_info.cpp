@@ -72,28 +72,32 @@ std::string fallbackIdentifier(const std::string &stickLabel, std::uint64_t tota
 
 }  // namespace
 
+MountEntry findMountEntry(std::istream &mounts, const std::string &mountPoint)
+{
+    MountEntry entry;
+    bool typeFound = false;
+    std::string line;
+    while (std::getline(mounts, line)) {
+        std::istringstream fields(line);
+        std::string device, mount, fstype;
+        if (!(fields >> device >> mount >> fstype) || mount != mountPoint) {
+            continue;
+        }
+        if (!typeFound) {
+            entry.filesystem = fstype;
+            typeFound = true;
+        }
+        if (entry.device.empty() && device.rfind("/dev/", 0) == 0) {
+            entry.device = device;
+        }
+    }
+    return entry;
+}
+
 #if defined(__linux__)
 
 namespace
 {
-
-// Same /proc/mounts convention as
-// infrastructure/media/linux_removable_media_locator.cpp's own
-// readDeviceMountPoints() (kept separate rather than shared -- that one
-// maps device->mountpoint for stick discovery, this needs the reverse:
-// a stick page only ever has a mount point, never the device node).
-std::string deviceNodeForMountPoint(const std::string &mountPoint)
-{
-    std::ifstream in("/proc/mounts");
-    std::string device, mount, rest;
-    while (in >> device >> mount) {
-        std::getline(in, rest);  // consume rest of the line
-        if (mount == mountPoint && device.rfind("/dev/", 0) == 0) {
-            return device;
-        }
-    }
-    return "";
-}
 
 std::string basename(const std::string &path)
 {
@@ -107,19 +111,12 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
 {
     StickHardwareInfo info;
 
-    // Filesystem type + capacity: /proc/mounts and statvfs both key off
-    // the mount point directly, no device node needed.
+    MountEntry mount;
     {
         std::ifstream in("/proc/mounts");
-        std::string device, mount, fstype, rest;
-        while (in >> device >> mount >> fstype) {
-            std::getline(in, rest);
-            if (mount == mountPoint) {
-                info.filesystem = lower(fstype);
-                break;
-            }
-        }
+        mount = findMountEntry(in, mountPoint);
     }
+    info.filesystem = lower(mount.filesystem);
     {
         struct statvfs vfs{};
         if (statvfs(mountPoint.c_str(), &vfs) == 0) {
@@ -133,7 +130,7 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
 
     // USB speed + a stable identifier: both come from udev, keyed off the
     // device node backing this mount point.
-    std::string devnode = deviceNodeForMountPoint(mountPoint);
+    const std::string &devnode = mount.device;
     if (!devnode.empty()) {
         std::unique_ptr<udev, decltype(&udev_unref)> ctx(udev_new(), udev_unref);
         if (ctx) {
