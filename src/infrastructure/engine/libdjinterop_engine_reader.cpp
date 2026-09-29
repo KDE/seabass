@@ -684,7 +684,14 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
     // stick left behind back right there, silently, before a copy of it
     // was kept (rig check F6, 2026-09-28). The read-only opens below
     // (artwork, streaming sources, edit times) need it done first too.
-    recoverEnginePendingJournals(m_engineLibraryPath);
+    // A database still being written after the wait is not read either:
+    // were that writer another recovery that died, database_exists()
+    // would roll its journal back with no copy kept.
+    const std::string busy = recoverEnginePendingJournals(m_engineLibraryPath, std::chrono::seconds(10));
+    if (!busy.empty()) {
+        throw std::runtime_error("the Engine Library on this stick is being written right now (" + busy
+                                 + " is locked); try again once that has finished");
+    }
     if (!djinterop::engine::database_exists(m_engineLibraryPath)) {
         throw std::runtime_error("no Engine Library found at " + m_engineLibraryPath);
     }

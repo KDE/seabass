@@ -4,6 +4,7 @@
 
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -74,21 +75,30 @@ std::vector<Track> OneLibraryReader::readAll()
     SqlCipherLibrary lib;
     // A stick pulled mid-save leaves OneLibrary with a pending journal,
     // which a read-only open cannot get past. Roll it back first, keeping
-    // a copy on this computer; see sqlite_pending_journal.hpp (#48).
+    // a copy on this computer; see sqlite_pending_journal.hpp (#48). One
+    // still being written after the wait is left to the read-only open
+    // below, which reports the lock itself.
+    const auto readWith = [&lib, &dbPath](bool readOnly) {
+        SqliteReadOutcome outcome;
+        try {
+            SqlCipherDb db(lib, dbPath, readOnly);
+            try {
+                db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+                SqlCipherStatement read(db, "SELECT count(*) FROM sqlite_master");
+                read.step();
+            } catch (const std::exception &e) {
+                outcome.code = lib.extendedErrcode(db.handle());
+                outcome.message = e.what();
+            }
+        } catch (const std::exception &e) {
+            outcome.code = 1;  // SQLITE_ERROR: could not open
+            outcome.message = e.what();
+        }
+        return outcome;
+    };
     const PendingJournalRecovery recovery = recoverPendingJournal(
-        pathFromUtf8(dbPath), paths::localRoot() / "recovered",
-        [&lib, &dbPath]() {
-            SqlCipherDb readable(lib, dbPath, /*readOnly=*/true);
-            readable.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
-            SqlCipherStatement read(readable, "SELECT count(*) FROM sqlite_master");
-            read.step();
-        },
-        [&lib, &dbPath]() {
-            SqlCipherDb writable(lib, dbPath, /*readOnly=*/false);
-            writable.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
-            SqlCipherStatement read(writable, "SELECT count(*) FROM sqlite_master");
-            read.step();
-        });
+        pathFromUtf8(dbPath), paths::localRoot() / "recovered", [&readWith]() { return readWith(true); },
+        [&readWith]() { return readWith(false); }, std::chrono::seconds(10));
     if (recovery.found && !recovery.recovered) {
         throw std::runtime_error("OneLibrary on this stick was left mid-save (was the stick pulled while saving?) "
                                  "and could not be put back: " + recovery.error

@@ -33,6 +33,7 @@ using ColumnInt64Fn = int64_t (*)(sqlite3_stmt *, int);
 using ColumnTextFn = const unsigned char *(*)(sqlite3_stmt *, int);
 using ColumnTypeFn = int (*)(sqlite3_stmt *, int);
 using ErrmsgFn = const char *(*)(sqlite3 *);
+using ExtendedErrcodeFn = int (*)(sqlite3 *);
 
 // SQLite's own convention for "the string is only valid for the duration
 // of this call -- make your own copy" (as opposed to SQLITE_STATIC).
@@ -166,6 +167,7 @@ struct SqlCipherLibrary::Fns
     ColumnTextFn columnText;
     ColumnTypeFn columnType;
     ErrmsgFn errmsg;
+    ExtendedErrcodeFn extendedErrcode;
 };
 
 SqlCipherLibrary::SqlCipherLibrary()
@@ -197,6 +199,7 @@ SqlCipherLibrary::SqlCipherLibrary()
                 resolve<ColumnTextFn>(mod, "sqlite3_column_text"),
                 resolve<ColumnTypeFn>(mod, "sqlite3_column_type"),
                 resolve<ErrmsgFn>(mod, "sqlite3_errmsg"),
+                resolve<ExtendedErrcodeFn>(mod, "sqlite3_extended_errcode"),
             };
         } catch (const std::exception &e) {
             missingSymbol = e.what();
@@ -317,6 +320,10 @@ std::string SqlCipherLibrary::errmsg(sqlite3 *db) const
 {
     const char *msg = m_fns->errmsg(db);
     return msg ? msg : "unknown error";
+}
+int SqlCipherLibrary::extendedErrcode(sqlite3 *db) const
+{
+    return m_fns->extendedErrcode(db);
 }
 
 SqlCipherDb::SqlCipherDb(const SqlCipherLibrary &lib, const std::string &path, bool readOnly) : m_lib(lib)
