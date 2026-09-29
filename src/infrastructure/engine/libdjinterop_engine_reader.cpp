@@ -274,7 +274,8 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 // file under Artwork/ named by the row's blob hash, looked for on the
 // stick. The artwork stage of a progressive read, so the track list never
 // waits for either.
-std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &engineLibraryPath)
+std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &engineLibraryPath,
+                                                           const application::CancellationToken &cancel)
 {
     std::unordered_map<int64_t, std::string> result;
     const std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
@@ -315,6 +316,12 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     // Per AlbumArt row, since many tracks share one.
     std::unordered_map<int64_t, std::string> fileByRow;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
+        // Per row: a stop lands within one image, with the database let go.
+        if (cancel.cancelled()) {
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            throw application::OperationCancelled();
+        }
         const int64_t trackId = sqlite3_column_int64(stmt, 0);
         const int64_t albumArtId = sqlite3_column_int64(stmt, 2);
         const std::int64_t imageLength = sqlite3_column_int64(stmt, 3);
@@ -496,7 +503,9 @@ void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
 {
     std::unordered_map<int64_t, std::string> stored;
     try {
-        stored = readStoredArtwork(m_engineLibraryPath);
+        stored = readStoredArtwork(m_engineLibraryPath, m_cancel);
+    } catch (const application::OperationCancelled &) {
+        throw;
     } catch (const std::exception &e) {
         m_progress->warn(std::string("could not read album art: ") + e.what());
         return;
