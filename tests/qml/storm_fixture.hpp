@@ -824,16 +824,41 @@ public:
         // its exit only when that exit is a clean one; endProcess() cutting
         // it off, or a kill, leaves it behind, and a hunt piles them up.
         const qint64 childPid = child.processId();
-        if (!child.waitForFinished(boundMs)) {
+        // The bound is on the quit, so its clock starts where the walk ends
+        // (the child says "STORM QUIT LEG WALKED"), not where the process
+        // does. It used to be one waitForFinished(boundMs) from the start:
+        // on a Windows Debug build the 40-step walk alone takes about 75 s,
+        // and every quit leg there "did not end within 60000 ms of the
+        // walk" while ending 2.5 s after it. The walk has a bound of its
+        // own, SEABASS_STORM_QUIT_WALK_MS, generous since a frozen walk is
+        // the watchdog's to catch.
+        const int walkBoundMs = envMs("SEABASS_STORM_QUIT_WALK_MS", 600000);
+        QByteArray output;
+        QElapsedTimer sinceStart;
+        QElapsedTimer sinceWalk;
+        sinceStart.start();
+        const auto give = [&](const QString &why) {
             child.kill();
             child.waitForFinished(5000);
+            output += child.readAll();
             removeChildScratch(childPid);
-            return QStringLiteral("the process did not end within %1 ms of the walk:
-").arg(boundMs)
-                + QString::fromUtf8(child.readAll()).right(6000);
+            return why + QStringLiteral(":\n") + QString::fromUtf8(output).right(6000);
+        };
+        while (!child.waitForFinished(200)) {
+            output += child.readAll();
+            if (!sinceWalk.isValid() && output.contains("STORM QUIT LEG WALKED")) {
+                sinceWalk.start();
+            }
+            if (sinceWalk.isValid() && sinceWalk.elapsed() > boundMs) {
+                return give(QStringLiteral("the process did not end within %1 ms of the walk").arg(boundMs));
+            }
+            if (!sinceWalk.isValid() && sinceStart.elapsed() > walkBoundMs) {
+                return give(QStringLiteral("the walk did not end within %1 ms").arg(walkBoundMs));
+            }
         }
+        output += child.readAll();
         removeChildScratch(childPid);
-        const QString out = QString::fromUtf8(child.readAll());
+        const QString out = QString::fromUtf8(output);
         if (child.exitStatus() != QProcess::NormalExit || child.exitCode() != 0) {
             return QStringLiteral("the process ended badly (status %1, code %2):\n")
                        .arg(child.exitStatus())
