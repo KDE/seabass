@@ -571,15 +571,21 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     return audit;
 }
 
-std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath)
+std::optional<std::uint64_t> artworkBytesOnStick(const std::vector<domain::Track> &tracks,
+                                                 const std::string &engineLibraryPath)
 {
     // The copies the reader writes out of the database are on this
-    // computer, not the stick: the images they copy are counted below.
+    // computer, not the stick: the images they copy are counted below. So
+    // are the Engine library's own Artwork/ files, from its rows, so the
+    // figure does not depend on the artwork stage having named them.
     const std::string localCopies = pathToUtf8(paths::localEngineArtworkDir());
+    const std::string engineArtwork =
+        engineLibraryPath.empty() ? std::string() : pathToUtf8(artworkDirectory(engineLibraryPath));
     std::uint64_t bytes = 0;
     std::set<std::string> counted;
     for (const auto &track : tracks) {
         if (track.artworkPath.empty() || track.artworkPath.rfind(localCopies, 0) == 0
+            || (!engineArtwork.empty() && track.artworkPath.rfind(engineArtwork, 0) == 0)
             || !counted.insert(track.artworkPath).second) {
             continue;
         }
@@ -588,19 +594,64 @@ std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, cons
     if (engineLibraryPath.empty()) {
         return bytes;
     }
+    const fs::path db = databaseFile(engineLibraryPath);
+    std::error_code ec;
+    if (!fs::exists(db, ec) && !ec) {
+        return bytes;  // no Engine database here to count
+    }
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(pathToUtf8(databaseFile(engineLibraryPath)).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
-        == SQLITE_OK) {
-        sqlite3_stmt *stmt = nullptr;
+    const auto giveUp = [&handle]() -> std::optional<std::uint64_t> {
+        sqlite3_close(handle);
+        return std::nullopt;
+    };
+    if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        return giveUp();
+    }
+    sqlite3_busy_timeout(handle, 5000);
+    bool hasImageColumn = false;
+    try {
+        hasImageColumn = hasColumn(handle, "AlbumArt", "albumArt");
+    } catch (const std::exception &) {
+        return giveUp();
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (hasImageColumn) {
         const std::string sumSql = "SELECT coalesce(sum(" + byteLengthSql("albumArt") + "), 0) FROM AlbumArt;";
-        if (sqlite3_prepare_v2(handle, sumSql.c_str(), -1, &stmt, nullptr)
-                == SQLITE_OK
-            && sqlite3_step(stmt) == SQLITE_ROW) {
-            bytes += static_cast<std::uint64_t>(sqlite3_column_int64(stmt, 0));
+        if (sqlite3_prepare_v2(handle, sumSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK
+            || sqlite3_step(stmt) != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            return giveUp();
         }
+        bytes += static_cast<std::uint64_t>(sqlite3_column_int64(stmt, 0));
         sqlite3_finalize(stmt);
     }
+    // Each distinct file hash once, by a stat of the file it names.
+    if (sqlite3_prepare_v2(handle,
+                           "SELECT DISTINCT hash FROM AlbumArt WHERE typeof(hash) = 'blob' AND length(hash) > 0 "
+                           "AND substr(hash, 1, 8) != 'image://';",
+                           -1, &stmt, nullptr)
+        != SQLITE_OK) {
+        return giveUp();
+    }
+    std::vector<std::string> hashes;
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        hashes.emplace_back(static_cast<const char *>(sqlite3_column_blob(stmt, 0)),
+                            static_cast<size_t>(sqlite3_column_bytes(stmt, 0)));
+    }
+    sqlite3_finalize(stmt);
+    if (step != SQLITE_DONE) {
+        return giveUp();
+    }
     sqlite3_close(handle);
+    for (const std::string &hash : hashes) {
+        const std::string file = cachedArtworkFile(
+            engineArtwork, std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(hash.data()), hash.size()),
+            nullptr, false);
+        if (!file.empty() && counted.insert(file).second) {
+            bytes += application::fileSizeOnDisk(file).value_or(0);
+        }
+    }
     return bytes;
 }
 
