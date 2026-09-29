@@ -186,6 +186,9 @@ struct ArtworkRepair
     // when the repair gets to them: another track sharing the row was
     // given it first. Nothing is written for them.
     int alreadyReadable = 0;
+    // InDatabaseUnreadable entries whose row no longer keeps its image in
+    // the database when the repair gets to them: nothing is written.
+    int noLongerInDatabase = 0;
     std::string error;
 };
 
