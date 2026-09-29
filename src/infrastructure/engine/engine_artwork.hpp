@@ -16,6 +16,7 @@
 #include "domain/track.hpp"
 
 struct sqlite3;
+struct sqlite3_blob;
 
 namespace seabass::infrastructure::engine
 {
@@ -153,6 +154,22 @@ std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<con
 // The first bytes (up to 8) of the image an AlbumArt row keeps in the
 // database, read without loading the rest of it. Empty when there is none.
 std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId);
+
+// The same for many rows, through one blob handle moved from row to row.
+class AlbumArtImageHeads
+{
+public:
+    explicit AlbumArtImageHeads(sqlite3 *handle) : m_handle(handle) {}
+    ~AlbumArtImageHeads();
+    AlbumArtImageHeads(const AlbumArtImageHeads &) = delete;
+    AlbumArtImageHeads &operator=(const AlbumArtImageHeads &) = delete;
+
+    std::string of(std::int64_t albumArtId);
+
+private:
+    sqlite3 *m_handle;
+    struct sqlite3_blob *m_blob = nullptr;
+};
 
 // Which storage a raw AlbumArt.hash value is.
 ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type);
