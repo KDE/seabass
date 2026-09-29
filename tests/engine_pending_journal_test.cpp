@@ -225,9 +225,10 @@ int main()
     }
 
     // 5. A save of another connection that holds the database while it
-    //    writes leaves a journal with a live header too. That is waited
-    //    out, not taken for a pulled stick's leftover: nothing is copied
-    //    and nothing is rolled back.
+    //    writes leaves a journal with a live header too. That is a busy
+    //    database, not a pulled stick's leftover: nothing is copied, nothing
+    //    is rolled back, nothing is thrown, and the read does not wait for
+    //    the save (it may run on the thread that draws the window).
     {
         const fs::path busy = scratch / "busy" / "Engine Library";
         fs::remove_all(busy.parent_path(), ec);
@@ -239,27 +240,26 @@ int main()
         exec(writer, "PRAGMA journal_mode=DELETE");
         exec(writer, "PRAGMA cache_size=1");
         exec(writer, "PRAGMA cache_spill=1");
-        exec(writer, "BEGIN");
+        exec(writer, "BEGIN EXCLUSIVE");
         exec(writer, "UPDATE Track SET title = 'SAVED', path = hex(randomblob(400))");
         assert(seabass::infrastructure::hasPendingJournal(busy / "Database2" / "m.db"));
-        std::thread commit([writer] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            sqlite3_exec(writer, "COMMIT", nullptr, nullptr, nullptr);
-        });
         bool threw = false;
+        const auto started = std::chrono::steady_clock::now();
         try {
             seabass::infrastructure::engine::recoverEnginePendingJournals(seabass::pathToUtf8(busy));
         } catch (const std::exception &e) {
             std::cerr << "recovery threw: " << e.what() << "\n";
             threw = true;
         }
-        commit.join();
+        const auto took = std::chrono::steady_clock::now() - started;
+        exec(writer, "COMMIT");
         sqlite3_close(writer);
         assert(!threw);
+        assert(took < std::chrono::seconds(1) && "a busy database is not waited for");
         assert(entriesOf(recovered).empty() && "a save in progress is not copied as a pulled stick's leftover");
         const auto tracks = readAll(busy);
-        assert(!tracks.empty() && tracks.front().title == "SAVED" && "and the save it waited for stands");
-        std::cout << "case 5 (a save in progress is waited out, not rolled back) OK\n";
+        assert(!tracks.empty() && tracks.front().title == "SAVED" && "and the save stands");
+        std::cout << "case 5 (a save in progress is left alone, without waiting) OK\n";
     }
 
     fs::remove_all(scratch, ec);
