@@ -64,6 +64,10 @@ enum class ArtworkStorage {
     // the track at a file, which would move it off the storage its
     // library reads.
     InDatabaseUnreadable,
+    // A row holding an image in a format a player may not show (GIF,
+    // WebP, BMP, TIFF). A real image all the same: reported, and never
+    // written over or left behind.
+    InDatabaseOtherFormat,
     // No art row, or Engine's own empty "no cover" row.
     None,
 };
@@ -151,7 +155,7 @@ enum class ReferenceType { Blob, Text };
 std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash,
                               bool *anyFile = nullptr);
 
-// The first bytes (up to 8) of the image an AlbumArt row keeps in the
+// The first bytes (up to 12) of the image an AlbumArt row keeps in the
 // database, read without loading the rest of it. Empty when there is none.
 std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId);
 
@@ -208,6 +212,19 @@ struct ArtworkRepair
     int noLongerInDatabase = 0;
     std::string error;
 };
+
+// Whether the bytes start like a real image in a format a player is not
+// promised to show: GIF, WebP, BMP or TIFF. Such an image is somebody's
+// cover all the same, so nothing writes over it. Needs the first twelve
+// bytes (WebP names itself at offset 8).
+inline bool isOtherImageFormat(std::string_view bytes)
+{
+    const auto startsWith = [&bytes](std::string_view magic, size_t at = 0) {
+        return bytes.size() >= at + magic.size() && bytes.substr(at, magic.size()) == magic;
+    };
+    return startsWith("GIF87a") || startsWith("GIF89a") || (startsWith("RIFF") && startsWith("WEBP", 8))
+        || startsWith("BM") || startsWith(std::string_view("II*\0", 4)) || startsWith(std::string_view("MM\0*", 4));
+}
 
 // The extension an Engine artwork file must carry, decided on the bytes
 // rather than on the name the source had.

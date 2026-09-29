@@ -163,7 +163,7 @@ std::string AlbumArtImageHeads::of(std::int64_t albumArtId)
         m_blob = nullptr;
         return {};
     }
-    std::string head(static_cast<size_t>(std::min(sqlite3_blob_bytes(m_blob), 8)), '\0');
+    std::string head(static_cast<size_t>(std::min(sqlite3_blob_bytes(m_blob), 12)), '\0');
     if (sqlite3_blob_read(m_blob, head.data(), static_cast<int>(head.size()), 0) != SQLITE_OK) {
         head.clear();
     }
@@ -376,6 +376,16 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
                 continue;
             }
             const std::string_view hashBytes(static_cast<const char *>(blob), blob ? static_cast<size_t>(size) : 0);
+            if (isOtherImageFormat(image->second)) {
+                // A real image a player may not show: reported, and left
+                // alone. No repair is offered, since any would write over
+                // it or leave it behind.
+                audit.tracksWithArt++;
+                entry.storage = ArtworkStorage::InDatabaseOtherFormat;
+                entry.reference = std::string(hashBytes);
+                audit.unreadable.push_back(std::move(entry));
+                continue;
+            }
             if (classifyArtworkReference(hashBytes, referenceType) == ArtworkStorage::InDatabase) {
                 audit.tracksWithArt++;
                 entry.storage = ArtworkStorage::InDatabaseUnreadable;
@@ -604,6 +614,10 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 const bool storedInDatabase = sqlite3_column_int(current, 1) != 0;
                 sqlite3_finalize(current);
                 const std::string headBytes = albumArtImageHead(handle, row);
+                if (isOtherImageFormat(headBytes)) {
+                    result.keptInDatabase++;  // a real image, in a format of its own
+                    continue;
+                }
                 if (!extensionForImage(headBytes).empty()) {
                     // Never overwritten: whatever put it there, it reads.
                     result.alreadyReadable++;
@@ -647,7 +661,8 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             // re-pointed. The new row would hold no image, and the old one
             // would be left to nobody. Bytes that are no image stay where
             // they are, in a row nothing points at any more.
-            bool keepsImageInDatabase = entry.storage == ArtworkStorage::InDatabase;
+            bool keepsImageInDatabase =
+                entry.storage == ArtworkStorage::InDatabase || entry.storage == ArtworkStorage::InDatabaseOtherFormat;
             if (!keepsImageInDatabase) {
                 sqlite3_stmt *current = nullptr;
                 // Without the image column a text hash keeps nothing here.
@@ -665,7 +680,10 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                     const std::int64_t row = sqlite3_column_int64(current, 0);
                     const bool holdsBytes = sqlite3_column_int(current, 1) != 0;
                     keepsImageInDatabase = sqlite3_column_int(current, 2) != 0
-                        || (holdsBytes && !extensionForImage(albumArtImageHead(handle, row)).empty());
+                        || (holdsBytes && [&] {
+                               const std::string head = albumArtImageHead(handle, row);
+                               return !extensionForImage(head).empty() || isOtherImageFormat(head);
+                           }());
                 }
                 sqlite3_finalize(current);
             }
