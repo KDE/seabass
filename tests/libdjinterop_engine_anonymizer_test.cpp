@@ -103,6 +103,13 @@ int main()
         assert(sqlite3_exec(handle, ("UPDATE Track SET albumArtId = 7 WHERE id = " + std::to_string(track1Id)).c_str(),
                             nullptr, nullptr, nullptr)
                == SQLITE_OK);
+        // A file-kind row with an empty value in albumArt: nothing to take
+        // out, and its hash names a file, so it stays.
+        assert(sqlite3_exec(handle,
+                            "INSERT INTO AlbumArt (id, hash, albumArt) VALUES "
+                            "(8, x'1111111111111111111111111111111111111111', x'');",
+                            nullptr, nullptr, nullptr)
+               == SQLITE_OK);
         sqlite3_close(handle);
     }
 
@@ -187,7 +194,7 @@ int main()
     // the file itself no longer holds its bytes. The row stays, so the
     // track still points where it did.
     {
-        assert(result.albumArtImagesRemoved == 1);
+        assert(result.albumArtImagesRemoved == 1);  // not the empty value beside a file hash
         const fs::path exported = destRoot / "Database2" / "m.db";
         sqlite3 *handle = nullptr;
         assert(sqlite3_open(seabass::pathToUtf8(exported).c_str(), &handle) == SQLITE_OK);
@@ -215,6 +222,19 @@ int main()
         const ArtworkAudit audit = auditArtwork(seabass::pathToUtf8(destRoot));
         assert(audit.error.empty());
         assert(audit.unreadable.empty());
+    }
+    {
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(destRoot / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK);
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(handle, "SELECT typeof(hash), length(hash) FROM AlbumArt WHERE id = 8;", -1, &stmt,
+                                  nullptr)
+               == SQLITE_OK);
+        assert(sqlite3_step(stmt) == SQLITE_ROW);
+        assert(std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0))) == "blob");
+        assert(sqlite3_column_int(stmt, 1) == 20);
+        sqlite3_finalize(stmt);
+        sqlite3_close(handle);
     }
     std::cout << "case 10 (an export with its covers taken out audits clean) OK\n";
 
