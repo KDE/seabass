@@ -1997,7 +1997,7 @@ add_test(NAME metadata_merge_test COMMAND metadata_merge_test)
 add_executable(durable_file_write_test
     tests/durable_file_write_test.cpp
 )
-target_link_libraries(durable_file_write_test PRIVATE seabass_core_testing Threads::Threads)
+target_link_libraries(durable_file_write_test PRIVATE seabass_core_testing)
 target_include_directories(durable_file_write_test PRIVATE src)
 add_test(NAME durable_file_write_test COMMAND durable_file_write_test)
 
@@ -3349,11 +3349,6 @@ target_include_directories(engine_reader_paths_test PRIVATE src)
 target_compile_definitions(engine_reader_paths_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(engine_reader_paths_test PRIVATE seabass_core SQLite::SQLite3)
 add_test(NAME engine_reader_paths_test COMMAND engine_reader_paths_test)
-
-add_executable(proc_mounts_test tests/proc_mounts_test.cpp)
-target_include_directories(proc_mounts_test PRIVATE src)
-target_link_libraries(proc_mounts_test PRIVATE seabass_core)
-add_test(NAME proc_mounts_test COMMAND proc_mounts_test)
 
 add_executable(engine_reader_db_artwork_test tests/engine_reader_db_artwork_test.cpp)
 target_include_directories(engine_reader_db_artwork_test PRIVATE src tests)

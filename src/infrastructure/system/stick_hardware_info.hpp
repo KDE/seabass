@@ -5,8 +5,6 @@
 #pragma once
 
 #include <cstdint>
-#include <istream>
-#include <optional>
 #include <string>
 
 namespace seabass::infrastructure::system
@@ -44,15 +42,5 @@ struct StickHardwareInfo
 };
 
 StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std::string &stickLabel);
-
-// The /proc/mounts line (Linux) for `mountPoint`, read from `mounts`: its
-// device and filesystem type. Separate so it can be tested on a synthetic
-// table on any platform.
-struct ProcMountEntry
-{
-    std::string device;
-    std::string filesystem;
-};
-std::optional<ProcMountEntry> findProcMount(std::istream &mounts, const std::string &mountPoint);
 
 }  // namespace seabass::infrastructure::system

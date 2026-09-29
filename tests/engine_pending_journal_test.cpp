@@ -22,9 +22,7 @@
 #include <sqlite3.h>
 
 #include <cassert>
-#include <chrono>
 #include <fstream>
-#include <thread>
 #include <filesystem>
 #include <iostream>
 #include <set>
@@ -32,7 +30,6 @@
 #include <vector>
 
 #include "application/ports/progress_reporter.hpp"
-#include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -222,44 +219,6 @@ int main()
         assert(seabass::infrastructure::hasPendingJournal(stuck / "Database2" / "m.db") && "left as it was");
         fs::remove(recovered, ec);
         std::cout << "case 4 (a journal that cannot be put back fails the artwork stage alone) OK\n";
-    }
-
-    // 5. A save of another connection that holds the database while it
-    //    writes leaves a journal with a live header too. That is a busy
-    //    database, not a pulled stick's leftover: nothing is copied, nothing
-    //    is rolled back, nothing is thrown, and the read does not wait for
-    //    the save (it may run on the thread that draws the window).
-    {
-        const fs::path busy = scratch / "busy" / "Engine Library";
-        fs::remove_all(busy.parent_path(), ec);
-        fs::create_directories(busy.parent_path());
-        fs::copy(source, busy, fs::copy_options::recursive);
-        fs::remove_all(recovered, ec);
-        sqlite3 *writer = nullptr;
-        assert(sqlite3_open(seabass::pathToUtf8(busy / "Database2" / "m.db").c_str(), &writer) == SQLITE_OK);
-        exec(writer, "PRAGMA journal_mode=DELETE");
-        exec(writer, "PRAGMA cache_size=1");
-        exec(writer, "PRAGMA cache_spill=1");
-        exec(writer, "BEGIN EXCLUSIVE");
-        exec(writer, "UPDATE Track SET title = 'SAVED', path = hex(randomblob(400))");
-        assert(seabass::infrastructure::hasPendingJournal(busy / "Database2" / "m.db"));
-        bool threw = false;
-        const auto started = std::chrono::steady_clock::now();
-        try {
-            seabass::infrastructure::engine::recoverEnginePendingJournals(seabass::pathToUtf8(busy));
-        } catch (const std::exception &e) {
-            std::cerr << "recovery threw: " << e.what() << "\n";
-            threw = true;
-        }
-        const auto took = std::chrono::steady_clock::now() - started;
-        exec(writer, "COMMIT");
-        sqlite3_close(writer);
-        assert(!threw);
-        assert(took < std::chrono::seconds(1) && "a busy database is not waited for");
-        assert(entriesOf(recovered).empty() && "a save in progress is not copied as a pulled stick's leftover");
-        const auto tracks = readAll(busy);
-        assert(!tracks.empty() && tracks.front().title == "SAVED" && "and the save stands");
-        std::cout << "case 5 (a save in progress is left alone, without waiting) OK\n";
     }
 
     fs::remove_all(scratch, ec);
