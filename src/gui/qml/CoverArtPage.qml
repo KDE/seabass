@@ -107,7 +107,10 @@ Page {
                     : consistencyController?.artworkTracksWithArt === 0
                         ? "No Engine library on this stick, or no track carries cover art."
                         : consistencyController?.artworkUnreadableCount === 0
-                            ? "Every Engine track's cover art is stored where a player can find it."
+                            ? (consistencyController?.artworkUncheckedCount === 0
+                                ? "Every Engine track's cover art is stored where a player can find it."
+                                : consistencyController?.artworkUncheckedCount
+                                  + " stored cover(s) could not be read to check them")
                             : consistencyController?.artworkUnreadableCount + " of "
                               + consistencyController?.artworkTracksWithArt
                               + " Engine track(s) have cover art no player can show"

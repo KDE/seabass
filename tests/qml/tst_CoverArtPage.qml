@@ -80,6 +80,21 @@ TestCase {
         }
     }
 
+    // A library whose every cover sits in a row the audit cannot read to
+    // check: nothing is a fault, and nothing may be called healthy either.
+    property string uncheckedLibrary: ""
+
+    Component {
+        id: uncheckedPageComponent
+        CoverArtPage {
+            width: 980
+            height: 660
+            stickLabel: "UNCHECKED"
+            rekordboxPath: ""
+            enginePath: testCase.uncheckedLibrary
+        }
+    }
+
     Component {
         id: hubControllerComponent
         LibraryConsistencyController {}
@@ -305,6 +320,21 @@ TestCase {
         verify(button === null || !button.visible, "nothing to copy in, so nothing to offer");
         var nothing = findChild(page, "coverArtNothingToDo");
         verify(nothing !== null && nothing.visible, "and the page says why there is no button");
+    }
+
+    function test_coversThatCouldNotBeCheckedAreNotCalledHealthy() {
+        testCase.uncheckedLibrary = artworkFixture.libraryWithUncheckedCovers(testCase.fixtureEngineRoot);
+        verify(testCase.uncheckedLibrary.length > 0, "the fixture copy must be made");
+        const page = createTemporaryObject(uncheckedPageComponent, testCase);
+        const controller = page.consistencyController;
+        tryVerify(function() { return controller.busy === false; }, 300000, "the fixture scan must finish");
+        compare(controller.artworkError, "");
+        compare(controller.artworkUnreadableCount, 0, "nothing here is a fault");
+        verify(controller.artworkUncheckedCount > 0, "and every cover could not be checked");
+        const headline = findChild(page, "coverArtHeadline");
+        verify(headline.text.indexOf("can find it") < 0, "it does not claim every cover is found: " + headline.text);
+        verify(headline.text.indexOf(String(controller.artworkUncheckedCount)) >= 0,
+               "it counts the covers it could not check: " + headline.text);
     }
 
     // Pushed from the Library Health hub only: Home > stick > Library

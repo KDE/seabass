@@ -153,6 +153,7 @@ Page {
     readonly property int junkCueCount: healthController.junkCues.count
     readonly property int artworkUnreadableCount: healthController.artworkUnreadableCount
     readonly property int artworkRepairableCount: healthController.artworkRepairableCount
+    readonly property int artworkUncheckedCount: healthController.artworkUncheckedCount
 
     readonly property string brokenSummary: {
         if (root.scanning) {
@@ -226,11 +227,16 @@ Page {
         if (healthController.artworkTracksWithArt === 0) {
             return "No Engine library on this stick, or no track carries cover art.";
         }
+        const unchecked = root.artworkUncheckedCount > 0
+            ? " " + root.artworkUncheckedCount + " stored cover(s) could not be read to check them."
+            : "";
         if (root.artworkUnreadableCount === 0) {
-            return "Every Engine track's cover art is stored where a player can find it.";
+            return root.artworkUncheckedCount === 0
+                ? "Every Engine track's cover art is stored where a player can find it."
+                : unchecked.trim();
         }
         let text = root.artworkUnreadableCount + " of " + healthController.artworkTracksWithArt
-            + " Engine tracks have cover art no player can show.";
+            + " Engine tracks have cover art no player can show." + unchecked;
         if (root.artworkRepairableCount > 0) {
             text += " " + (root.artworkRepairableCount === root.artworkUnreadableCount ? "All of them"
                                                                                        : root.artworkRepairableCount + " of them")
@@ -535,9 +541,11 @@ Page {
                 title: "Cover art"
                 summary: root.artworkSummary
                 running: root.scanning
-                ok: root.artworkUnreadableCount === 0 && healthController.artworkError.length === 0
+                ok: root.artworkUnreadableCount === 0 && root.artworkUncheckedCount === 0
+                    && healthController.artworkError.length === 0
                 failed: healthController.artworkError.length > 0
-                actionLabel: root.artworkUnreadableCount > 0 ? "Review cover art" : ""
+                actionLabel: root.artworkUnreadableCount > 0 || root.artworkUncheckedCount > 0
+                    ? "Review cover art" : ""
                 onActionRequested: root.detailRequested("artwork")
             }
 
