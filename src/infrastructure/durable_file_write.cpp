@@ -6,8 +6,10 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
-#include <atomic>
+#include <array>
 #include <cstdint>
+#include <functional>
+#include <mutex>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -231,21 +233,33 @@ bool appendToFileDurably(const std::string &path, const std::string &data)
     return true;
 }
 
+namespace
+{
+
+// Two writers of one file in this process (the catalog prefetch and a page
+// writing one cache) share its temporary name, and one renamed the other's
+// temporary file away, failing that write. Writes of one target take turns
+// on a lock picked by the target's path; writes of other targets rarely
+// share one. Other processes (the command line beside the app) are not
+// covered.
+std::mutex &writeLockFor(const fs::path &target)
+{
+    static std::array<std::mutex, 64> locks;
+    std::error_code ec;
+    const fs::path absolute = fs::absolute(target, ec);
+    const std::string key = pathToUtf8((ec ? target : absolute).lexically_normal());
+    return locks[std::hash<std::string>{}(key) % locks.size()];
+}
+
+}  // namespace
+
 bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
 {
     WorkCounters::instance().noteDurableFileWrite();
     const fs::path target = pathFromUtf8(path);
-    // A name of its own per write: two writers of one file at once (the
-    // catalog prefetch and a page) used to share one temporary name, and
-    // one renamed the other's away, failing that write.
-    static std::atomic<std::uint64_t> writes{0};
-#if defined(_WIN32)
-    const unsigned long process = GetCurrentProcessId();
-#else
-    const long process = static_cast<long>(getpid());
-#endif
+    const std::lock_guard<std::mutex> turn(writeLockFor(target));
     fs::path tempPath = target;
-    tempPath += ".tmp-seabass-write-" + std::to_string(process) + "-" + std::to_string(writes.fetch_add(1));
+    tempPath += ".tmp-seabass-write";
     if (!writeFileDurably(tempPath, data)) {
         std::error_code removeEc;
         fs::remove(tempPath, removeEc);
@@ -258,11 +272,6 @@ bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
         fs::remove(tempPath, ec);
         return false;
     }
-    // The single temporary name earlier builds used, left by a write that
-    // was interrupted: this write replaces what it was for.
-    fs::path legacyTemp = target;
-    legacyTemp += ".tmp-seabass-write";
-    fs::remove(legacyTemp, ec);
     fsyncDirectoryContaining(path);
     return true;
 }

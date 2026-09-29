@@ -88,13 +88,15 @@ int main()
         std::cout << "case 3 (missing source leaves target untouched) OK\n";
     }
 
-    // Simulates the real crash scenario this function exists for: an
-    // earlier build wrote (or was writing) its single ".tmp-seabass-write"
-    // file and never got to fsync/rename before the stick was pulled or
-    // the process died, leaving that stale/partial temp file behind. The
-    // next write must not get confused by it, and takes it away: a
-    // correct target and no leftover temp file, exactly as if the stale
-    // file had never existed.
+    // Simulates the real crash scenario this function exists for: a
+    // previous run wrote (or was writing) the ".tmp-seabass-write" file
+    // and never got to fsync/rename before the stick was pulled or the
+    // process died, leaving that stale/partial temp file behind. The
+    // *next* run must not get confused by it -- writeFileDurablyAtomic()
+    // opens its temp path with O_TRUNC, so it should just overwrite the
+    // garbage and complete correctly, leaving both a correct target and
+    // no leftover temp file, exactly as if the stale file had never
+    // existed.
     {
         fs::path target = root / "recovers_from_stale_temp.db";
         writeFile(target, "old content");
