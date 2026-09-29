@@ -869,6 +869,30 @@ int main(int argc, char **argv)
                                                    [](const ArtworkEntry &) { return jpeg("TAGS"); });
         assert(repair.error.empty());
         assert(repair.repaired == 1);
+
+        // A text hash there names no image in a row that cannot hold one:
+        // never a fault of the in-place kind, and a repair handed one
+        // anyway does not fail the save.
+        db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (40, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (30, 'Text hash', 'C', 40);");
+        sqlite3_close(db);
+        const ArtworkAudit withText = auditArtwork(pathToUtf8(fixture.library), {}, probe);
+        assert(withText.error.empty());
+        for (const ArtworkEntry &entry : withText.unreadable) {
+            assert(entry.storage != ArtworkStorage::InDatabaseUnreadable);
+        }
+        const ArtworkRepair rebuilt = repairArtwork(pathToUtf8(fixture.library), withText.unreadable, {}, {},
+                                                    [](const ArtworkEntry &) { return jpeg("TAGS-TOO"); });
+        assert(rebuilt.error.empty() && rebuilt.repaired == 1);  // the text-hash track, given a file
+        ArtworkEntry inPlace;
+        inPlace.trackId = 30;
+        inPlace.storage = ArtworkStorage::InDatabaseUnreadable;
+        inPlace.otherSource = true;
+        const ArtworkRepair refused = repairArtwork(pathToUtf8(fixture.library), {inPlace}, {}, {},
+                                                    [](const ArtworkEntry &) { return jpeg("TAGS"); });
+        assert(refused.error.empty());
+        assert(refused.repaired == 0 && refused.noLongerInDatabase == 1);
         std::cout << "case 17 (no albumArt column: the art is audited as files) OK\n";
     }
 
