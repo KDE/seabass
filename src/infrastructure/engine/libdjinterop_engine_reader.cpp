@@ -368,20 +368,20 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         sqlite3_finalize(information);
     }
     // A schema without the image column keeps no images in the database.
-    std::string imageLength = "0";
+    std::string imageLengthSql = "0";
     try {
         if (hasColumn(db, "AlbumArt", "albumArt")) {
-            imageLength = "length(a.albumArt)";
+            imageLengthSql = "length(a.albumArt)";
         }
     } catch (const std::exception &) {
         fail("could not list the AlbumArt columns in");
     }
     sweepInterruptedWrites(libraryDirectory.empty() ? paths::localEngineArtworkDir() / "by-content" : libraryDirectory);
     sqlite3_stmt *stmt = nullptr;
-    const std::string sql = "SELECT t.id, a.hash, a.id, " + imageLength
+    const std::string sql = "SELECT t.id, a.hash, a.id, " + imageLengthSql
         + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
           "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 AND ("
-        + imageLength + " > 0 OR (typeof(a.hash) = 'blob' AND length(a.hash) > 0))";
+        + imageLengthSql + " > 0 OR (typeof(a.hash) = 'blob' AND length(a.hash) > 0))";
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         fail("could not read AlbumArt in");
     }
@@ -411,7 +411,16 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                     const std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
                     file = databaseArtworkFile(db, albumArtId, hash, imageLength, libraryDirectory);
                 } else if (imageInRow) {
-                    file = databaseArtworkFile(db, albumArtId, std::string(), imageLength, libraryDirectory);
+                    // Named by the blob hash in hex, so a later read finds
+                    // the copy with a stat, as for a text hash.
+                    const auto *bytes = static_cast<const unsigned char *>(sqlite3_column_blob(stmt, 1));
+                    static constexpr char Hex[] = "0123456789abcdef";
+                    std::string hex;
+                    for (int i = 0; i < sqlite3_column_bytes(stmt, 1); ++i) {
+                        hex += Hex[bytes[i] >> 4];
+                        hex += Hex[bytes[i] & 0x0F];
+                    }
+                    file = databaseArtworkFile(db, albumArtId, hex, imageLength, libraryDirectory);
                 }
                 if (file.empty() && blobHash) {
                     const void *blob = sqlite3_column_blob(stmt, 1);
