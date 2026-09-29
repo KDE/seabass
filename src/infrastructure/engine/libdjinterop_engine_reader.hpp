@@ -45,8 +45,16 @@ public:
     std::vector<domain::Track> readTracks() override;
     void fillArtwork(std::vector<domain::Track> &tracks) override;
 
+    // The filesystem identity of the stick the library is on, when the
+    // caller knows it (a UUID or volume serial). The local copies of
+    // covers kept in the database are filed under it, so clones of one
+    // library on two sticks keep theirs apart. Without one they are filed
+    // under the library's location.
+    void setVolumeIdentity(std::string identity) { m_volumeIdentity = std::move(identity); }
+
 private:
     std::string m_engineLibraryPath;
+    std::string m_volumeIdentity;
 };
 
 }  // namespace seabass::infrastructure::engine

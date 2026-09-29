@@ -22,7 +22,9 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/system/stick_hardware_info.hpp"
 
 namespace seabass::gui
 {
@@ -66,6 +68,23 @@ std::unique_ptr<application::LibraryReader> makeReader(const std::string &format
         return std::make_unique<infrastructure::onelibrary::OneLibraryReader>(path);
     }
     throw std::invalid_argument("LibraryCatalogCache: unknown format \"" + format + "\"");
+}
+
+// The filesystem identity of the stick an Engine library is on, for the
+// reader's local copies of covers kept in the database. Empty for a library
+// in Seabass's own tree on this computer (a browsed backup), which has no
+// stick of its own, and when the system knows no identity for the stick
+// (readStickHardwareInfo()'s fallback, label plus size, which clones share).
+std::string volumeIdentityOf(const std::string &engineLibraryPath)
+{
+    const fs::path library = pathFromUtf8(engineLibraryPath);
+    const std::string own = pathToUtf8(infrastructure::paths::localRoot());
+    if (pathToUtf8(library).rfind(own, 0) == 0) {
+        return {};
+    }
+    const std::string identity =
+        infrastructure::system::readStickHardwareInfo(pathToUtf8(library.parent_path()), std::string()).stickIdentifier;
+    return identity.rfind('-', 0) == 0 ? std::string() : identity;
 }
 
 void realStage(LibraryCatalogCache::Detail stage, const std::string &format, const std::string &path,
@@ -120,6 +139,9 @@ void realStage(LibraryCatalogCache::Detail stage, const std::string &format, con
             auto reader = makeReader(format, path);
             reader->setProgressReporter(progress);
             reader->setCancellationToken(cancel);
+            if (auto *engine = dynamic_cast<infrastructure::engine::LibdjinteropEngineReader *>(reader.get())) {
+                engine->setVolumeIdentity(volumeIdentityOf(path));
+            }
             reader->fillArtwork(tracks);
         }
         application::completeTracks(tracks, cancel);
