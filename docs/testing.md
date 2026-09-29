@@ -592,6 +592,29 @@ between, as a player would. The directory the sticks sit in is
 read-only, as `/media` and `/Volumes` are, so a write aimed at a pulled
 stick fails instead of making its mount point again.
 
+**On Windows** a stick is a drive letter, and a pull is the letter going
+away. A rename cannot model it there: Windows refuses to rename a
+directory while any file under it is open, and the app keeps its
+catalogs open, so the storm would only ever have pulled a stick the app
+was not reading -- the one pull that cannot race with anything. Retrying
+the rename until nothing is open would have been the same thing, slower.
+So each stick's copy stays where it is and a letter is mapped to it with
+`DefineDosDevice` (what `subst` does, no elevation); a pull removes the
+letter, a re-plug maps the same letter again. Every open by path then
+fails, as it does when a real stick goes, while a handle the app already
+holds stays open, exactly as a rename leaves one on Linux. (A real pull
+fails those handles too, on their next I/O; neither platform's storm
+models that.) The read-only mount directory has no counterpart and none
+is needed: with the letter gone there is no path to write to. Letters
+are taken from the free ones from Z down, given back when the seed ends
+or the quit leg's process does -- a DOS device outlives its process --
+and a letter a dead storm left behind (one pointing into a
+`seabass-test-<pid>` storm tree whose process is gone) is taken back
+before the next seed. The storm runs in a real window on the desktop;
+Windows needs no xvfb for that. `tools/storm-hunt.sh` is Linux-only, so a
+hunt there runs the binary itself with `SEABASS_STORM_SEEDS`, one
+process at a time.
+
 **The reads** are the real readers, through a catalog cache whose passes
 the weather wraps (`LibraryCatalogCache::realStageForTesting()`): most
 pass, some are slowed, some held until the stick "answers" (a later
