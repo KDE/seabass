@@ -13,6 +13,7 @@
 
 #include <djinterop/djinterop.hpp>
 
+#include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
 
 #include "infrastructure/paths/utf8_path.hpp"
@@ -206,6 +207,17 @@ int main()
         assert(bytes.find(coverMarker) == std::string::npos);
     }
     std::cout << "case 9 (a cover kept in the database is not exported) OK\n";
+
+    // The export audits clean: a row whose image was taken out keeps no
+    // hash that names one, so it reads as Engine's empty "no cover" row
+    // rather than a cover the export lost.
+    {
+        const ArtworkAudit audit = auditArtwork(seabass::pathToUtf8(destRoot));
+        assert(audit.error.empty());
+        assert(audit.unreadable.empty());
+    }
+    std::cout << "case 10 (an export with its covers taken out audits clean) OK\n";
+
 
     std::cout << "all cases passed\n";
     return 0;
