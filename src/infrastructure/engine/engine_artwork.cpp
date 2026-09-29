@@ -63,6 +63,21 @@ bool isImageARepairCanName(const fs::path &file)
     return !extensionForImage(std::string_view(head.data(), static_cast<size_t>(in.gcount()))).empty();
 }
 
+bool hasColumn(sqlite3 *handle, const char *table, const char *column)
+{
+    bool found = false;
+    sqlite3_stmt *columns = nullptr;
+    if (sqlite3_prepare_v2(handle, (std::string("PRAGMA table_info(") + table + ");").c_str(), -1, &columns, nullptr)
+        == SQLITE_OK) {
+        while (!found && sqlite3_step(columns) == SQLITE_ROW) {
+            const unsigned char *name = sqlite3_column_text(columns, 1);
+            found = name != nullptr && std::string_view(reinterpret_cast<const char *>(name)) == column;
+        }
+    }
+    sqlite3_finalize(columns);
+    return found;
+}
+
 std::string readWholeFile(const fs::path &file)
 {
     std::ifstream in(file, std::ios::binary);
@@ -216,25 +231,15 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     // older or hand-made schema without it must still get its art
     // checked: without the column there is simply no rekordbox track to
     // match, not a failed scan.
-    bool hasTrackPath = false;
-    {
-        sqlite3_stmt *columns = nullptr;
-        if (sqlite3_prepare_v2(handle, "PRAGMA table_info(Track);", -1, &columns, nullptr) == SQLITE_OK) {
-            while (sqlite3_step(columns) == SQLITE_ROW) {
-                const unsigned char *column = sqlite3_column_text(columns, 1);
-                if (column != nullptr && std::string(reinterpret_cast<const char *>(column)) == "path") {
-                    hasTrackPath = true;
-                    break;
-                }
-            }
-        }
-        sqlite3_finalize(columns);
-    }
+    const bool hasTrackPath = hasColumn(handle, "Track", "path");
+    // And a schema whose AlbumArt has no image column keeps no images in
+    // the database: its art is all files.
+    const bool hasImageColumn = hasColumn(handle, "AlbumArt", "albumArt");
 
     // The first bytes of every image kept in the database, once per row
     // rather than once per track pointing at it.
     std::unordered_map<std::int64_t, std::string> imageHeadByRow;
-    {
+    if (hasImageColumn) {
         sqlite3_stmt *images = nullptr;
         if (sqlite3_prepare_v2(handle,
                                "SELECT id, substr(albumArt, 1, 8) FROM AlbumArt "
@@ -494,6 +499,8 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         return result;
     }
 
+    const std::string imageLength = hasColumn(handle, "AlbumArt", "albumArt") ? "length(a.albumArt)" : "0";
+
     auto fail = [&](const std::string &message) {
         sqlite3_exec(handle, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close(handle);
@@ -579,11 +586,10 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             bool keepsImageInDatabase = entry.storage == ArtworkStorage::InDatabase;
             if (!keepsImageInDatabase) {
                 sqlite3_stmt *current = nullptr;
-                if (sqlite3_prepare_v2(handle,
-                                       "SELECT length(a.albumArt) > 0 OR (typeof(a.hash) = 'text' AND a.hash != '' "
-                                       "AND substr(a.hash, 1, 8) != 'image://') "
-                                       "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;",
-                                       -1, &current, nullptr)
+                const std::string sql = "SELECT " + imageLength
+                    + " > 0 OR (typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://') "
+                      "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
+                if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &current, nullptr)
                     != SQLITE_OK) {
                     return fail(std::string("could not read the track's art row: ") + sqlite3_errmsg(handle));
                 }
@@ -650,7 +656,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
 
             if (albumArtId == 0) {
                 sqlite3_stmt *insert = nullptr;
-                if (sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (hash, albumArt) VALUES (?, NULL);", -1, &insert,
+                if (sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (hash) VALUES (?);", -1, &insert,
                                        nullptr) != SQLITE_OK) {
                     return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
                 }

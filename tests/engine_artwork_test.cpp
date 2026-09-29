@@ -845,6 +845,33 @@ int main(int argc, char **argv)
         std::cout << "case 16 (both seeds of Engine's no-cover row are no art, a row of its own is a fault) OK\n";
     }
 
+    // 17. A schema whose AlbumArt has no albumArt column keeps no images in
+    //     the database: its art is audited as files, not refused.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_no_image_column");
+        sqlite3 *db = fixture.open();
+        exec(db, "DROP TABLE AlbumArt;");
+        exec(db, "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY, hash BLOB);");
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (2, x'7777777777777777777777777777777777777777');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'File', 'A', 2);");
+        sqlite3_close(db);
+        write(fixture.library / "Artwork" / (artworkFileName(std::vector<std::uint8_t>(20, 0x77)) + ".jpg"), jpeg("F"));
+        db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (3, x'8888888888888888888888888888888888888888');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (2, 'File gone', 'B', 3);");
+        sqlite3_close(db);
+        const auto probe = [](const ArtworkEntry &) { return true; };
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library), {}, probe);
+        assert(audit.error.empty());
+        assert(audit.readableByAPlayer == 1);
+        assert(audit.repairable() == 1);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable, {}, {},
+                                                   [](const ArtworkEntry &) { return jpeg("TAGS"); });
+        assert(repair.error.empty());
+        assert(repair.repaired == 1);
+        std::cout << "case 17 (no albumArt column: the art is audited as files) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }
