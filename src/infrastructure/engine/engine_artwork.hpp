@@ -161,8 +161,11 @@ enum class ReferenceType { Blob, Text };
 // `artworkDirectory` (the library's Artwork/), as ".jpg", ".jpeg" or
 // ".png", and holding a JPEG or PNG. Empty when there is none. `anyFile`,
 // when given, is set if a file by one of those names exists at all.
+// With `checkBytes` false the file only has to be there: a stat, not an
+// open, for a reader that shows covers and leaves judging them to the
+// audit.
 std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash,
-                              bool *anyFile = nullptr);
+                              bool *anyFile = nullptr, bool checkBytes = true);
 
 // The first bytes (up to 12) of the image an AlbumArt row keeps in the
 // database, read without loading the rest of it. Empty when there is none.

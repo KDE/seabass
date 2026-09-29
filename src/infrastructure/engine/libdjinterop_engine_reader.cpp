@@ -473,7 +473,12 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                 if (file.empty() && row.blobHash && !std::string_view(row.hash).starts_with("image://")) {
                     const std::span<const std::uint8_t> hash(reinterpret_cast<const std::uint8_t *>(row.hash.data()),
                                                              row.hash.size());
-                    file = cachedArtworkFile(artworkDirectory, hash);
+                    // A stat per cover, as the catalog's last stage always
+                    // cost: this stage runs again inside saves, and opening
+                    // every file each time was a read per cover per save.
+                    // An empty or broken file shows as the fallback art, and
+                    // the audit reports it.
+                    file = cachedArtworkFile(artworkDirectory, hash, nullptr, false);
                 }
             } catch (const std::exception &) {
                 // One unreadable image is not worth the others.
