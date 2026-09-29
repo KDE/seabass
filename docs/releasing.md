@@ -142,9 +142,10 @@ as a button in the pipeline:
   `craft_macos_qt6_x86_64` -- the Craft packages. They sit in the last
   stage, `deploy`, so their buttons appear once the build and test stages
   have finished.
-- `macos:universal` -- the two macOS halves merged, signed and notarised
-  (see "A universal macOS package"). Only on `Seabass/X.Y`, and only
-  once both macOS halves have run in the same pipeline.
+- `macos:universal` -- the two macOS halves merged into one universal
+  `.dmg` (see "A universal macOS package"). It is offered wherever the
+  halves are and runs once both have run in the same pipeline; only on
+  `Seabass/X.Y` is the result signed and notarised.
 
 **Signing depends on the ref, and tags are not signed.** KDE's signing
 service clears a request by project and exact ref name
@@ -229,13 +230,16 @@ sign there, but the `.dmg` itself needs `hdiutil`, and both halves are
 produced on Macs anyway -- while being scriptable from the Linux publisher
 over ssh: each script is non-interactive and exits non-zero on any fault.
 
-On a `Seabass/X.Y` branch CI does the same: `macos:universal` takes the two
-halves' `.dmg` files and the `install.db` each Craft job keeps, merges them
-with `--from-dmgs`, has the merged bundle and the image signed and the
-image notarised by KDE's signing service, and runs
-`tools/macos-verify-dmg.sh` against the committed fixture. It refuses when
-the runner cannot execute x86_64 code, rather than check one slice and
-pass.
+CI does the same in `macos:universal`: it takes the two halves' `.dmg`
+files and the `install.db` each Craft job keeps, merges them with
+`--from-dmgs`, and runs `tools/macos-verify-dmg.sh` against the committed
+fixture laid out as a stick. On a `Seabass/X.Y` branch it also has the
+merged bundle and the image signed and the image notarised by KDE's
+signing service; on any other ref the package is signed ad hoc, as the
+halves are. It refuses when the runner cannot execute x86_64 code, rather
+than check one slice and pass. The nightly runs it by itself, so two
+Craft roots that have drifted apart show up as a red job before a
+release rather than on the day of one.
 
 ```sh
 # on the Mac, once per architecture, from the same source tree
@@ -315,8 +319,10 @@ the download directory.
   downloading it can read a dependency list. Not good enough for a stable
   release aimed at DJs; that needs a self-contained build, and it is not
   written yet.
-- **The macOS package has to be universal, and CI merges it only on a
-  `Seabass/X.Y` branch, not on a tag** (`macos:universal`, above).
+- **The macOS package has to be universal, and CI signs it only on a
+  `Seabass/X.Y` branch.** `macos:universal` merges it on every ref, a tag
+  included, but a tag's package is signed ad hoc, and Gatekeeper will say
+  it cannot be verified.
   Rosetta translates x86_64 to ARM and never the reverse, so an arm64-only
   `.dmg` mounts on an Intel Mac and refuses to launch -- and
   `publish-release.py` has one macOS slot, which is the right shape only if
