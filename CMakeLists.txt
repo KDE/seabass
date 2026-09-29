@@ -2308,6 +2308,16 @@ if(TARGET seabass_edit)
     target_link_libraries(async_request_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
     add_test(NAME async_request_test COMMAND async_request_test)
 
+    # A GUI-thread QObject a worker drops last is destroyed on the GUI thread.
+    add_executable(main_thread_shared_test
+        src/gui/stick_events.cpp
+        src/gui/qt_progress_reporter.hpp
+        tests/main_thread_shared_test.cpp
+    )
+    target_include_directories(main_thread_shared_test PRIVATE src)
+    target_link_libraries(main_thread_shared_test PRIVATE seabass_core Qt6::Core Qt6::Concurrent)
+    add_test(NAME main_thread_shared_test COMMAND main_thread_shared_test)
+
     # The end of the process with a read still stuck: no static destructor
     # runs beneath it.
     add_executable(async_request_exit_test

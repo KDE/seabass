@@ -6,6 +6,7 @@
 
 #include "gui/async_request.hpp"
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -404,13 +405,15 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
     // mid-scan, the task keeps running harmlessly in the background instead
     // of touching a dangling object. Signals are connected with `this` as
     // the context object, so Qt stops delivering them once we're gone.
-    auto reporter = std::make_shared<QtProgressReporter>();
+    // The task's reference is usually the last one; makeMainThreadShared()
+    // sees that the reporter and the relay are destroyed here all the same.
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     connect(reporter.get(), &QtProgressReporter::started, this,
             [this](const QString &, int total) { setScanProgress(0, total); });
     connect(reporter.get(), &QtProgressReporter::progressed, this,
             [this](int current) { setScanProgress(current, m_scanTotal); });
 
-    auto relay = std::make_shared<ScanPhaseRelay>();
+    auto relay = makeMainThreadShared<ScanPhaseRelay>();
     connect(relay.get(), &ScanPhaseRelay::tracksRead, this, &ScanController::onTracksRead);
 
     LibraryCatalogCache *cache =

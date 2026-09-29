@@ -6,6 +6,7 @@
 
 #include "gui/stick_path.hpp"
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 #include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -1039,7 +1040,7 @@ std::shared_ptr<QtProgressReporter> MetadataBackupController::makeReporter(std::
 {
     // A scan's reporter speaks only while its scan is the current one.
     const auto current = [speaks = std::move(speaks)]() { return !speaks || speaks(); };
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     // Each phase (one per catalog read, then the store write) reports
     // its own 0..N. Adding the previous phases' totals as a baseline
     // keeps one bar moving forward instead of several restarting, which

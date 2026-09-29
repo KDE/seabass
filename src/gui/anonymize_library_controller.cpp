@@ -5,6 +5,7 @@
 #include "anonymize_library_controller.hpp"
 
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -116,7 +117,7 @@ AnonymizeLibraryController::AnonymizeLibraryController(QObject *parent) : QObjec
 
 std::shared_ptr<QtProgressReporter> AnonymizeLibraryController::makeReporter()
 {
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     // Two sequential phases (rekordbox, then Engine) previously each called
     // setProgress(0, total) here, so the bar visibly restarted from 0% at
     // the halfway point -- looked like the whole operation had reset, not

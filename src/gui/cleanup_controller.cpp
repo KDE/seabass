@@ -7,6 +7,7 @@
 #include "gui/stick_path.hpp"
 #include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "cleanup_controller.hpp"
 
@@ -1067,7 +1068,7 @@ std::shared_ptr<QtProgressReporter> CleanupController::makeReporter(std::functio
 {
     // Each reporter speaks for the request made right after it, and only
     // while that request (or the delete, which has no scan) is current.
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     const auto current = std::move(speaks);
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
         if (current()) {
