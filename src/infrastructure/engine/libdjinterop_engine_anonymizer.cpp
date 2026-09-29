@@ -152,8 +152,10 @@ int stripAlbumArtImages(const std::string &destinationRoot)
     // The hash goes with the image: a text hash names the image in its own
     // row, and without it the row reads as Engine's empty "no cover" row
     // rather than a cover the export lost.
-    if (sqlite3_exec(db, "UPDATE AlbumArt SET albumArt = NULL, hash = '' WHERE albumArt IS NOT NULL;", nullptr, nullptr,
-                     &error)
+    // Only rows that hold bytes: an empty value beside a file hash keeps
+    // that hash, which names a file and no image of its own.
+    const std::string sql = "UPDATE AlbumArt SET albumArt = NULL, hash = '' WHERE " + byteLengthSql("albumArt") + " > 0;";
+    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &error)
         == SQLITE_OK) {
         changed = sqlite3_changes(db);
     }
