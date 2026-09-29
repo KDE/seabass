@@ -8,6 +8,17 @@
 # universal bundle, and wrap it in a .dmg.
 #
 #   tools/macos-universal-dmg.sh <arm64.app> <x86_64.app> <out.dmg> [volume name]
+#   tools/macos-universal-dmg.sh --from-dmgs <arm64.dmg> <x86_64.dmg> \
+#       <arm64 install.db> <x86_64 install.db> <out.dmg> [volume name]
+#
+# The second form takes what the two Craft CI jobs leave: their .dmg files,
+# and the install.db each copied out of its Craft root before cleaning up.
+#
+# SEABASS_SIGN_COMMAND, if set, is run with the merged .app and then with
+# the .dmg appended (split on whitespace, like Craft's MacCustomSignCommand),
+# and each must come back with a real signature, not an ad-hoc one.
+# SEABASS_NOTARIZE_COMMAND, if set, is run with the .dmg appended, and the
+# .dmg must then carry a stapled ticket.
 #
 # Why this exists: Rosetta translates x86_64 to ARM and never the reverse,
 # so an arm64-only package mounts on an Intel Mac and refuses to launch.
@@ -22,13 +33,63 @@
 #     framework is re-signed afterwards, innermost first.
 #   - Files recording where they were built: textually different, same
 #     meaning. Reported, not treated as a fault.
-# Ad-hoc signed only. Signing and notarisation belong to CI.
+# Ad-hoc signed unless SEABASS_SIGN_COMMAND says otherwise.
 set -u
 set -o pipefail
-arm="${1:?the arm64 .app}"
-intel="${2:?the x86_64 .app}"
-out_dmg="${3:?the .dmg to write}"
-volume="${4:-Seabass}"
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/seabass-universal.XXXXXX")"
+attached=()
+cleanup() {
+    # Detached before the temp tree goes: rm -rf over a live mount would
+    # leave the image attached.
+    local mp
+    for mp in ${attached[@]+"${attached[@]}"}; do
+        hdiutil detach "$mp" -quiet 2>/dev/null || hdiutil detach "$mp" -force -quiet 2>/dev/null ||
+            echo "could not detach $mp: the image is still attached" >&2
+    done
+    rm -rf "$work"
+}
+trap cleanup EXIT
+
+# <dmg> <arch>: copies the one .app in the image to $work/<arch>/ and
+# leaves its path in $extracted. Not called in $(...): a subshell would
+# keep a failed attach out of $attached, and cleanup would miss it.
+app_from_dmg() {
+    local mp="$work/mnt-$2" apps
+    mkdir -p "$mp" "$work/$2"
+    hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mp" "$1" >/dev/null ||
+        { echo "could not attach $1" >&2; return 1; }
+    attached+=("$mp")
+    apps=("$mp"/*.app)
+    if [ "${#apps[@]}" -ne 1 ] || [ ! -d "${apps[0]}" ]; then
+        echo "$1 does not hold exactly one .app" >&2; return 1
+    fi
+    cp -R "${apps[0]}" "$work/$2/" || return 1
+    hdiutil detach "$mp" -quiet || { echo "could not detach $mp" >&2; return 1; }
+    unset 'attached[${#attached[@]}-1]'
+    extracted="$work/$2/$(basename "${apps[0]}")"
+}
+
+arm_db=""; intel_db=""
+if [ "${1:-}" = "--from-dmgs" ]; then
+    arm_dmg="${2:?the arm64 .dmg}"
+    intel_dmg="${3:?the x86_64 .dmg}"
+    arm_db="${4:?the arm64 install.db}"
+    intel_db="${5:?the x86_64 install.db}"
+    out_dmg="${6:?the .dmg to write}"
+    volume="${7:-Seabass}"
+    for f in "$arm_dmg" "$intel_dmg" "$arm_db" "$intel_db"; do
+        [ -f "$f" ] || { echo "no such file: $f" >&2; exit 1; }
+    done
+    echo "== copying the bundles out of the two images"
+    app_from_dmg "$arm_dmg" arm64 || exit 1; arm="$extracted"
+    app_from_dmg "$intel_dmg" x86_64 || exit 1; intel="$extracted"
+else
+    arm="${1:?the arm64 .app}"
+    intel="${2:?the x86_64 .app}"
+    out_dmg="${3:?the .dmg to write}"
+    volume="${4:-Seabass}"
+fi
 
 # A DEPLOYED bundle, not an installed one. Craft's <root>/Applications/KDE/
 # seabass.app holds four files -- the executable, Info.plist, the icon and a
@@ -60,20 +121,22 @@ craft_root_of() {  # <root>/build/qt-apps/seabass/archive/Applications/KDE/x.app
     d="${d%/build/qt-apps/seabass/archive}"
     [ -f "$d/etc/blueprints/install.db" ] && echo "$d"
 }
-arm_root="$(craft_root_of "$arm")" || true
-intel_root="$(craft_root_of "$intel")" || true
+if [ -z "$arm_db" ]; then
+    arm_root="$(craft_root_of "$arm")" && arm_db="$arm_root/etc/blueprints/install.db"
+    intel_root="$(craft_root_of "$intel")" && intel_db="$intel_root/etc/blueprints/install.db"
+fi
 echo "== the two Craft roots agree on package versions"
-if [ -z "${arm_root:-}" ] || [ -z "${intel_root:-}" ] || ! command -v sqlite3 >/dev/null 2>&1; then
+if [ -z "$arm_db" ] || [ -z "$intel_db" ] || ! command -v sqlite3 >/dev/null 2>&1; then
     # Said out loud and refused rather than skipped: a check that did not run
     # has proved nothing, and this one is the only thing standing between a
     # universal package and two different builds of ffmpeg, one per slice.
     why="the bundles are not in a Craft root's layout"
     command -v sqlite3 >/dev/null 2>&1 || why="sqlite3 is not on PATH"
     echo "  CANNOT CHECK: $why" >&2
-    if [ -n "${SEABASS_UNCHECKED_ROOTS:-}" ]; then
+    if [ -n "${SEABASS_UNCHECKED_ROOTS:-}" ] && [ "${1:-}" != "--from-dmgs" ]; then
         echo "  continuing because SEABASS_UNCHECKED_ROOTS is set" >&2
     else
-        echo "  set SEABASS_UNCHECKED_ROOTS=1 to merge anyway, knowing this was not checked." >&2
+        echo "  set SEABASS_UNCHECKED_ROOTS=1 to merge two .app bundles anyway, knowing this was not checked." >&2
         exit 1
     fi
 else
@@ -89,21 +152,28 @@ else
     # compared, and by revision as well as version.
     q="select packagePath || ' ' || version || ' ' || ifnull(revision, '')
        from packageList where packagePath not like 'craft/%' order by packagePath;"
-    if ! diff <(sqlite3 "$arm_root/etc/blueprints/install.db" "$q") \
-              <(sqlite3 "$intel_root/etc/blueprints/install.db" "$q") > "${TMPDIR:-/tmp}/seabass-pkgdiff.$$"; then
+    # Each list is read on its own and must be non-empty: two databases that
+    # sqlite3 cannot read give two empty lists, and those are identical.
+    for side in arm intel; do
+        db="${side}_db"
+        if ! sqlite3 "${!db}" "$q" > "$work/packages-$side.txt" 2> "$work/packages-$side.err" ||
+           [ ! -s "$work/packages-$side.txt" ]; then
+            echo "  CANNOT CHECK: no package list from ${!db}" >&2
+            sed 's/^/    /' "$work/packages-$side.err" >&2
+            exit 1
+        fi
+    done
+    if ! diff "$work/packages-arm.txt" "$work/packages-intel.txt" > "$work/packages.diff"; then
         echo "  the roots differ, and a merged bundle would carry one build of each:" >&2
-        sed 's/^/    /' "${TMPDIR:-/tmp}/seabass-pkgdiff.$$" >&2
-        rm -f "${TMPDIR:-/tmp}/seabass-pkgdiff.$$"
+        sed 's/^/    /' "$work/packages.diff" >&2
         echo "  bring them level first, e.g. craft --update <package> in the older root, then re-package." >&2
         exit 1
     fi
-    rm -f "${TMPDIR:-/tmp}/seabass-pkgdiff.$$"
-    echo "  identical"
+    echo "  identical ($(wc -l < "$work/packages-arm.txt" | tr -d ' ') packages)"
 fi
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/seabass-universal.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
-app="$work/$(basename "$arm")"
+app="$work/merged/$(basename "$arm")"
+mkdir -p "$work/merged"
 echo "== staging from the arm64 bundle"
 cp -R "$arm" "$app" || exit 1
 
@@ -192,10 +262,42 @@ if [ -x "$cli" ]; then
         echo "  the arm64 slice does not run -- is this an Apple Silicon Mac?" >&2
         echo "  (an Intel host cannot execute an arm64 slice at all, so the merge step belongs on Apple Silicon)" >&2
         exit 1; fi
+    # Rosetta is asked about first, so that a machine without it is named
+    # as the reason rather than read as a broken x86_64 slice.
+    if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+        echo "  ONLY THE ARM64 SLICE RAN: this machine cannot execute x86_64 code (no Rosetta)," >&2
+        echo "  so the x86_64 slice is unchecked and this package is refused." >&2
+        exit 1
+    fi
     if arch -x86_64 "$cli" --help >/dev/null 2>&1 </dev/null; then echo "  x86_64 slice runs (under Rosetta)"; else
-        echo "  the x86_64 slice does not run -- is Rosetta installed?" >&2; exit 1; fi
+        echo "  the x86_64 slice does not run, although Rosetta does" >&2; exit 1; fi
 else
     echo "  no seabass-cli in the bundle to run" >&2; exit 1
+fi
+
+# A signing command that finds its ref not cleared for signing skips and
+# exits 0 (ci-notary-service's signmacapp.py does), so its status proves
+# nothing: the signature is read back instead.
+sign_cmd=(); notarize_cmd=()
+[ -n "${SEABASS_SIGN_COMMAND:-}" ] && read -r -a sign_cmd <<< "$SEABASS_SIGN_COMMAND"
+[ -n "${SEABASS_NOTARIZE_COMMAND:-}" ] && read -r -a notarize_cmd <<< "$SEABASS_NOTARIZE_COMMAND"
+really_signed() {  # <path>: a signature with an Authority, not an ad-hoc one
+    local out
+    out="$(codesign -dvv "$1" 2>&1)" || { printf '%s\n' "$out" | sed 's/^/  /' >&2; return 1; }
+    if printf '%s\n' "$out" | grep -q '^Signature=adhoc' || ! printf '%s\n' "$out" | grep -q '^Authority='; then
+        printf '%s\n' "$out" | sed 's/^/  /' >&2; return 1
+    fi
+    printf '%s\n' "$out" | grep -E '^(Authority|TeamIdentifier|Timestamp)=' | sed 's/^/  /'
+}
+if [ "${#sign_cmd[@]}" -gt 0 ]; then
+    echo "== signing the merged bundle"
+    "${sign_cmd[@]}" "$app" || { echo "  the signing command failed" >&2; exit 1; }
+    really_signed "$app" || { echo "  the bundle is not signed for distribution after signing" >&2; exit 1; }
+    codesign --verify --deep --strict "$app" || { echo "  the signed bundle does not verify" >&2; exit 1; }
+    # The signature is new, so the slices are run again under it.
+    arch -arm64 "$cli" --help >/dev/null 2>&1 </dev/null || { echo "  the signed arm64 slice does not run" >&2; exit 1; }
+    arch -x86_64 "$cli" --help >/dev/null 2>&1 </dev/null || { echo "  the signed x86_64 slice does not run" >&2; exit 1; }
+    echo "  signed, verifies, both slices still run"
 fi
 
 echo "== building $out_dmg"
@@ -204,7 +306,18 @@ staging="$work/dmg"
 mkdir -p "$staging"
 cp -R "$app" "$staging/"
 ln -s /Applications "$staging/Applications"
-hdiutil create -volname "$volume" -srcfolder "$staging" -ov -format UDZO -quiet "$out_dmg" || exit 1
+# HFS+ as Craft's dmgbuild makes it, rather than whatever hdiutil defaults to.
+hdiutil create -volname "$volume" -srcfolder "$staging" -fs HFS+ -ov -format UDZO -quiet "$out_dmg" || exit 1
+if [ "${#sign_cmd[@]}" -gt 0 ]; then
+    echo "== signing the image"
+    "${sign_cmd[@]}" "$out_dmg" || { echo "  the signing command failed" >&2; exit 1; }
+    really_signed "$out_dmg" || { echo "  the image is not signed for distribution after signing" >&2; exit 1; }
+fi
+if [ "${#notarize_cmd[@]}" -gt 0 ]; then
+    echo "== notarising the image"
+    "${notarize_cmd[@]}" "$out_dmg" || { echo "  the notarising command failed" >&2; exit 1; }
+    xcrun stapler validate "$out_dmg" || { echo "  no notarisation ticket is stapled to the image" >&2; exit 1; }
+fi
 # Written with the bare filename, so `shasum -c` works wherever the package
 # is downloaded to; with the path as given it only checked on this machine.
 ( cd "$(dirname "$out_dmg")" && shasum -a 256 "$(basename "$out_dmg")" | tee "$(basename "$out_dmg").sha256" )
