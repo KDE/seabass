@@ -246,6 +246,28 @@ int main()
         std::cout << "case 7 (a clone with the same uuid and hash shows its own cover) OK\n";
     }
 
+    // 8. A stop lands within one row of the artwork stage, before any
+    //    image is written out.
+    {
+        fs::remove_all(cache, ec);
+        QuietReporter reporter;
+        seabass::application::CancellationToken cancel;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(library));
+        reader.setProgressReporter(reporter);
+        reader.setCancellationToken(cancel);
+        auto tracks = reader.readTracks();
+        cancel.cancel();
+        bool stopped = false;
+        try {
+            reader.fillArtwork(tracks);
+        } catch (const seabass::application::OperationCancelled &) {
+            stopped = true;
+        }
+        assert(stopped);
+        assert(!fs::exists(cache) || fs::is_empty(cache));
+        std::cout << "case 8 (a stop lands before the artwork stage writes anything) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
