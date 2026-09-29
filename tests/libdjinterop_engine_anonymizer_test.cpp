@@ -218,6 +218,36 @@ int main()
     }
     std::cout << "case 10 (an export with its covers taken out audits clean) OK\n";
 
+    // A schema whose AlbumArt has no albumArt column keeps no covers in the
+    // database, and exports as any other.
+    {
+        const fs::path plainSource = root / "plain-source" / "Engine Library";
+        const fs::path plainDest = root / "plain-dest" / "Engine Library";
+        fs::create_directories(plainSource.parent_path());
+        {
+            auto db = djinterop::engine::create_database(seabass::pathToUtf8(plainSource));
+            djinterop::track_snapshot snapshot;
+            snapshot.title = "Plain";
+            snapshot.relative_path = "../Contents/plain.mp3";
+            db.create_track(snapshot);
+        }
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(plainSource / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK);
+        assert(sqlite3_exec(handle,
+                            "PRAGMA foreign_keys = OFF; DROP INDEX IF EXISTS index_AlbumArt_hash; DROP TABLE AlbumArt; "
+                            "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT); "
+                            "INSERT INTO AlbumArt (id, hash) VALUES (1, '');",
+                            nullptr, nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_close(handle);
+        const auto plain = anonymizeEngineLibrary(seabass::pathToUtf8(plainSource), seabass::pathToUtf8(plainDest));
+        if (!plain.errorMessage.empty()) {
+            std::cerr << plain.errorMessage << "\n";
+        }
+        assert(plain.errorMessage.empty());
+        assert(plain.albumArtImagesRemoved == 0);
+    }
+    std::cout << "case 11 (a schema without an image column exports) OK\n";
 
     std::cout << "all cases passed\n";
     return 0;

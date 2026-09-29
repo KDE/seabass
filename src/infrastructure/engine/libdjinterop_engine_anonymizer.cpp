@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
+#include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include "infrastructure/anonymization_export_layout.hpp"
@@ -136,6 +137,16 @@ int stripAlbumArtImages(const std::string &destinationRoot)
         sqlite3_close(db);
         return -1;
     }
+    // A schema without the image column keeps no images in the database.
+    try {
+        if (!hasColumn(db, "AlbumArt", "albumArt")) {
+            sqlite3_close(db);
+            return 0;
+        }
+    } catch (const std::exception &) {
+        sqlite3_close(db);
+        return -1;
+    }
     char *error = nullptr;
     int changed = -1;
     // The hash goes with the image: a text hash names the image in its own
@@ -145,8 +156,6 @@ int stripAlbumArtImages(const std::string &destinationRoot)
                      &error)
         == SQLITE_OK) {
         changed = sqlite3_changes(db);
-    } else if (error != nullptr && std::string(error).find("no such table") != std::string::npos) {
-        changed = 0;  // a library with no AlbumArt table has no images to drop
     }
     sqlite3_free(error);
     sqlite3_close(db);
