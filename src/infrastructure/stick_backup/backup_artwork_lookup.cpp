@@ -5,6 +5,7 @@
 #include "infrastructure/stick_backup/backup_artwork_lookup.hpp"
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 #include "infrastructure/stick_backup/zip64_reader.hpp"
@@ -82,17 +83,15 @@ BackupArtworkLookup::TrackArtwork BackupArtworkLookup::artworkForTrack(const fs:
     // level inside the stick root the archive paths start at.
     const std::string enginePath = "../" + trackPath;
     // A schema without the image column keeps no covers in the database.
-    const bool prepared =
-        sqlite3_prepare_v2(handle,
-                           "SELECT a.hash, a.albumArt FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
-                           "WHERE t.path = ?;",
-                           -1, &stmt, nullptr)
-            == SQLITE_OK
-        || sqlite3_prepare_v2(handle,
-                              "SELECT a.hash, NULL FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
-                              "WHERE t.path = ?;",
-                              -1, &stmt, nullptr)
-            == SQLITE_OK;
+    bool hasImageColumn = false;
+    try {
+        hasImageColumn = engine::hasColumn(handle, "AlbumArt", "albumArt");
+    } catch (const std::exception &) {
+        // Unreadable: asked below, where the query fails the same way.
+    }
+    const std::string sql = std::string("SELECT a.hash, ") + (hasImageColumn ? "a.albumArt" : "NULL")
+        + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.path = ?;";
+    const bool prepared = sqlite3_prepare_v2(handle, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK;
     if (prepared) {
         sqlite3_bind_text(stmt, 1, enginePath.c_str(), -1, SQLITE_TRANSIENT);
         if (sqlite3_step(stmt) == SQLITE_ROW) {

@@ -6,6 +6,7 @@
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
+#include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -427,25 +428,13 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
         fail("open");
     }
 
-    bool hasColumn = false;
-    {
-        sqlite3_stmt *columns = nullptr;
-        if (sqlite3_prepare_v2(db, "PRAGMA table_info(Track)", -1, &columns, nullptr) != SQLITE_OK) {
-            fail("list Track columns");
-        }
-        int step;
-        while ((step = sqlite3_step(columns)) == SQLITE_ROW) {
-            const unsigned char *name = sqlite3_column_text(columns, 1);
-            if (name && std::string(reinterpret_cast<const char *>(name)) == "streamingSource") {
-                hasColumn = true;
-            }
-        }
-        sqlite3_finalize(columns);
-        if (step != SQLITE_DONE) {
-            fail("list Track columns");
-        }
+    bool hasStreamingSource = false;
+    try {
+        hasStreamingSource = hasColumn(db, "Track", "streamingSource");
+    } catch (const std::exception &) {
+        fail("list Track columns");
     }
-    if (!hasColumn) {
+    if (!hasStreamingSource) {
         sqlite3_close(db);
         return result;
     }
