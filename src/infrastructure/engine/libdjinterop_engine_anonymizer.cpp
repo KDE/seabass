@@ -125,7 +125,7 @@ int scrubFilenameColumn(const std::string &destinationRoot)
 // Drops the cover images an older library keeps in AlbumArt.albumArt. A
 // cover is as identifying as a title, and the export already leaves out
 // the Artwork/ directory that newer libraries keep theirs in. The rows
-// and their hashes stay, so every track still points where it did.
+// stay, so every track still points where it did.
 // Returns how many rows lost their image, or -1 when that could not be
 // done and the export still holds them.
 int stripAlbumArtImages(const std::string &destinationRoot)
@@ -138,7 +138,11 @@ int stripAlbumArtImages(const std::string &destinationRoot)
     }
     char *error = nullptr;
     int changed = -1;
-    if (sqlite3_exec(db, "UPDATE AlbumArt SET albumArt = NULL WHERE albumArt IS NOT NULL;", nullptr, nullptr, &error)
+    // The hash goes with the image: a text hash names the image in its own
+    // row, and without it the row reads as Engine's empty "no cover" row
+    // rather than a cover the export lost.
+    if (sqlite3_exec(db, "UPDATE AlbumArt SET albumArt = NULL, hash = '' WHERE albumArt IS NOT NULL;", nullptr, nullptr,
+                     &error)
         == SQLITE_OK) {
         changed = sqlite3_changes(db);
     } else if (error != nullptr && std::string(error).find("no such table") != std::string::npos) {
