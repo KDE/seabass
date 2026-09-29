@@ -731,11 +731,12 @@ int main(int argc, char **argv)
         assert(audit.repairable() == 2);
         const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable, {}, {}, reader);
         assert(repair.error.empty());
-        // Track 4 shares row 3 with track 7, so it gets a row of its own
-        // (a file: this library states no schema version); track 7, then
-        // alone on row 3, is repaired in place. Row 4 is not touched.
+        // Track 4 shares row 3 with track 7, so it gets a row of its own,
+        // in the database, where this library keeps its covers (row 1);
+        // track 7, then alone on row 3, is repaired in place. Row 4 is not
+        // touched.
         assert(repair.repaired == 2);
-        assert(repair.filesWritten.size() == 1);
+        assert(repair.filesWritten.empty());
         assert(imageOf(3) == (std::pair{rescued, std::string("934a576ac3a4a0ab6d66478652b9bb8b7ac68b82")}));
         assert(imageOf(4).first == junk);
         const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library), {}, probe);
@@ -1247,6 +1248,49 @@ int main(int argc, char **argv)
         sqlite3_finalize(stmt);
         sqlite3_close(db);
         std::cout << "case 23 (the in-place rule fails closed) OK\n";
+    }
+
+    // 24. The storage a repair writes in is read from the library's own
+    //     rows first: a text hash beside image bytes means covers in the
+    //     database (as in libraries Engine DJ 4.5.0 migrated, which still
+    //     say schema 3.0.2), a blob hash means files (as this project's
+    //     own library creator writes them); only a library with neither
+    //     is decided by its schema.
+    {
+        const auto library = [](Fixture &fixture, int patch, const std::string &existingRow) {
+            sqlite3 *db = fixture.open();
+            exec(db, "CREATE TABLE Information (id INTEGER PRIMARY KEY, uuid TEXT, schemaVersionMajor INTEGER, "
+                     "schemaVersionMinor INTEGER, schemaVersionPatch INTEGER);");
+            exec(db, "INSERT INTO Information VALUES (1, 'u', 3, 0, " + std::to_string(patch) + ");");
+            exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES " + existingRow + ", (5, NULL, NULL);");
+            exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Has one', 'A', 2), "
+                     "(2, 'Asked', 'B', 5);");
+            sqlite3_close(db);
+        };
+        const auto probe = [](const ArtworkEntry &) { return true; };
+        const auto reader = [](const ArtworkEntry &) { return jpeg("ZERO-0"); };
+
+        Fixture migrated(seabass::testing::scratchRoot() / "seabass_engine_artwork_rows_say_database");
+        library(migrated, 2, "(2, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', x'FFD8FF00')");
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(migrated.library), {}, probe);
+        assert(audit.coversInDatabase);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(migrated.library), audit.unreadable, {}, {}, reader);
+        assert(repair.error.empty() && repair.repaired == 1 && repair.filesWritten.empty());
+        sqlite3 *db = migrated.open();
+        assert(hashOf(db, 2) == "27faee4c127397d313b9b26b711d09a7c0eae79");
+        sqlite3_close(db);
+
+        Fixture ours(seabass::testing::scratchRoot() / "seabass_engine_artwork_rows_say_files");
+        library(ours, 1, "(2, x'7777777777777777777777777777777777777777', NULL)");
+        write(ours.library / "Artwork" / (artworkFileName(std::vector<std::uint8_t>(20, 0x77)) + ".jpg"), jpeg("F"));
+        const ArtworkAudit oursAudit = auditArtwork(pathToUtf8(ours.library), {}, probe);
+        assert(!oursAudit.coversInDatabase);
+        const ArtworkRepair oursRepair = repairArtwork(pathToUtf8(ours.library), oursAudit.unreadable, {}, {}, reader);
+        assert(oursRepair.error.empty() && oursRepair.repaired == 1 && oursRepair.filesWritten.size() == 1);
+        db = ours.open();
+        assert(hashOf(db, 2).size() == 20);
+        sqlite3_close(db);
+        std::cout << "case 24 (the library's own rows decide the storage a repair writes in) OK\n";
     }
 
     std::cout << "engine_artwork_test: all cases passed\n";
