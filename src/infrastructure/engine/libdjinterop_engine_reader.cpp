@@ -12,14 +12,12 @@
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
-#include <thread>
 #include <span>
 #include <string_view>
 #include <sstream>
@@ -203,21 +201,12 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std:
         return std::filesystem::is_regular_file(file, sizeError)
             && std::filesystem::file_size(file, sizeError) == bytes.size() && !sizeError;
     };
-    if (whole()) {
-        return pathToUtf8(file);
+    if (!whole()) {
+        // Another read writing the same cover at the same moment is fine:
+        // each write has its own temporary name, and a whole copy is a
+        // whole copy whoever renamed it into place.
+        writeFileDurablyAtomic(pathToUtf8(file), bytes);
     }
-    // Written under a name of its own and renamed into place: two reads of
-    // one library (the prefetch and a page) can write the same cover at
-    // once, and a shared temporary name let one rename the other's away.
-    static std::atomic<unsigned> written{0};
-    std::filesystem::path part = file;
-    part += "." + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "-"
-        + std::to_string(written.fetch_add(1)) + ".part";
-    const bool ok = writeFileDurablyAtomic(pathToUtf8(part), bytes);
-    if (ok) {
-        std::filesystem::rename(part, file, ec);
-    }
-    std::filesystem::remove(part, ec);
     return whole() ? pathToUtf8(file) : std::string();
 }
 
@@ -292,6 +281,25 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 // file under Artwork/ named by the row's blob hash, looked for on the
 // stick. The artwork stage of a progressive read, so the track list never
 // waits for either.
+// Temporary files an interrupted write left among a library's local
+// copies: a write's own temporary name, and the ".part" names an earlier
+// build used. Only old ones, so a write in progress elsewhere keeps its.
+void sweepInterruptedWrites(const std::filesystem::path &directory)
+{
+    std::error_code ec;
+    const auto cutoff = std::filesystem::file_time_type::clock::now() - std::chrono::minutes(10);
+    for (const auto &entry : std::filesystem::directory_iterator(directory, ec)) {
+        const std::string name = pathToUtf8(entry.path().filename());
+        const bool temporary = name.find(".tmp-seabass-write") != std::string::npos
+            || (name.size() > 5 && name.compare(name.size() - 5, 5, ".part") == 0);
+        std::error_code timeError;
+        if (temporary && entry.last_write_time(timeError) < cutoff && !timeError) {
+            std::error_code removeError;
+            std::filesystem::remove(entry.path(), removeError);
+        }
+    }
+}
+
 // Which stick, or failing that which location, a library's local copies
 // belong to. Clones of one library share its uuid, its hashes and maybe an
 // image's length while holding different bytes, so the uuid alone does not
@@ -368,6 +376,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     } catch (const std::exception &) {
         fail("could not list the AlbumArt columns in");
     }
+    sweepInterruptedWrites(libraryDirectory.empty() ? paths::localEngineArtworkDir() / "by-content" : libraryDirectory);
     sqlite3_stmt *stmt = nullptr;
     const std::string sql = "SELECT t.id, a.hash, a.id, " + imageLength
         + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "

@@ -448,6 +448,28 @@ int main()
         std::cout << "case 13 (clones with the same uuid, hash and length keep their own covers) OK\n";
     }
 
+    // 14. Temporary files an interrupted write left among the local copies
+    //    are swept on the next read; a fresh one, which may be a write in
+    //    progress, is left alone.
+    {
+        const auto read = artworkBySourceId(seabass::pathToUtf8(library));
+        const fs::path directory = seabass::pathFromUtf8(read.at("1")).parent_path();
+        const fs::path stalePart = directory / "cover.jpg.1234-0.part";
+        const fs::path staleTemp = directory / "cover.jpg.tmp-seabass-write-99-3";
+        const fs::path freshTemp = directory / "cover.jpg.tmp-seabass-write-99-4";
+        for (const fs::path &file : {stalePart, staleTemp, freshTemp}) {
+            std::ofstream(file, std::ios::binary) << "half";
+        }
+        const auto old = fs::file_time_type::clock::now() - std::chrono::hours(2);
+        fs::last_write_time(stalePart, old);
+        fs::last_write_time(staleTemp, old);
+        artworkBySourceId(seabass::pathToUtf8(library));
+        assert(!fs::exists(stalePart) && !fs::exists(staleTemp));
+        assert(fs::exists(freshTemp));
+        fs::remove(freshTemp);
+        std::cout << "case 14 (leftovers of interrupted writes are swept) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
