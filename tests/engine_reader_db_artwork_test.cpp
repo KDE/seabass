@@ -118,6 +118,30 @@ int main()
     assert(fs::last_write_time(seabass::pathFromUtf8(second.at("1"))) == before);
     std::cout << "case 2 (a later read reuses what the first wrote out) OK\n";
 
+    // 3. Writing the images out is not the track list's to wait for: the
+    //    first stage of a progressive read names no such cover and writes
+    //    nothing, and the artwork stage brings them in.
+    {
+        fs::remove_all(cache, ec);
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(library));
+        reader.setProgressReporter(reporter);
+        auto tracks = reader.readTracks();
+        for (const auto &track : tracks) {
+            if (track.sourceId == "1" || track.sourceId == "2") {
+                assert(track.artworkPath.empty());
+            }
+        }
+        assert(!fs::exists(cache) || fs::is_empty(cache));
+        reader.fillArtwork(tracks);
+        for (const auto &track : tracks) {
+            if (track.sourceId == "1") {
+                assert(slurp(track.artworkPath) == pngImage);
+            }
+        }
+        std::cout << "case 3 (the track list does not wait for covers kept in the database) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;

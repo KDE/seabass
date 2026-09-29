@@ -32,15 +32,17 @@ public:
     // (i.e. the "Engine Library" folder itself).
     explicit LibdjinteropEngineReader(std::string engineLibraryPath);
 
-    // The cues are in the catalog, so readTracks() is this and fillCues()
-    // has nothing to add (the LibraryReader defaults). Reads m.db
-    // alone: no audio file is stat'd for its size (application::
-    // fillFileSizes) and no artwork file for its existence; artworkPath is
-    // what the catalog names, whether or not the file is still there.
-    // A cover kept inside the database is the exception: it is written
-    // out once to paths::localEngineArtworkDir(), on this computer, and
-    // artworkPath names that copy.
+    // The cues are in the catalog, so fillCues() has nothing to add (the
+    // LibraryReader default). readTracks() reads m.db alone: no audio
+    // file is stat'd for its size (application::fillFileSizes) and no
+    // artwork file for its existence; artworkPath is what the catalog
+    // names, whether or not the file is still there. fillArtwork() adds
+    // the covers that take more: an image kept inside the database,
+    // written out once to paths::localEngineArtworkDir() on this
+    // computer. readAll() is the two.
     std::vector<domain::Track> readAll() override;
+    std::vector<domain::Track> readTracks() override;
+    void fillArtwork(std::vector<domain::Track> &tracks) override;
 
 private:
     std::string m_engineLibraryPath;
