@@ -261,9 +261,12 @@ inline std::string extensionForImage(std::string_view bytes)
 // that library keeps inside its database.
 std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath);
 
-// Gives each entry Engine's own storage: copies its image into Artwork/
+// Gives each entry the library's own storage. From schema 3.0.2 on: copies
+// its image into Artwork/
 // under the hash of its bytes, adds the AlbumArt row, and points the track
-// at it. Entries with no source are skipped, and so is any track whose
+// at it. Before 3.0.2, where the library keeps its covers in the
+// database: a row with a text hash and the image in it, and no file.
+// Entries with no source are skipped, and so is any track whose
 // current row keeps its art in the database. An InDatabaseUnreadable entry
 // instead gets the image written into the row it points at, whose hash and
 // id stay; a row whose image reads already is never overwritten. One
