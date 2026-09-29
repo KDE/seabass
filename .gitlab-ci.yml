@@ -150,6 +150,9 @@ include:
 # catalog -- SQLCipher for OneLibrary is the dependency most likely to
 # be quietly broken in a cross-built binary, and a launch alone does not
 # exercise it. Label anything found that way manual-testing.
+# macos:universal, below, now makes that check on CI as well: it runs
+# both slices of the merged bundle against the committed fixture, which
+# carries an encrypted OneLibrary. The person is still owed for the GUI.
 #
 # Both targets queue on that one builder, so this roughly doubles the
 # wall-clock of a full macOS pipeline. Worth it against shipping a
@@ -237,18 +240,27 @@ craft_macos_qt6_x86_64:
   rules: *craft_lane_rules
   <<: *craft_macos_keep_install_db
 
-# One universal .dmg from the two halves above, signed and notarised.
+# One universal .dmg from the two halves above.
+#
+# It runs wherever the halves do, by the same rules: automatic on the
+# nightly schedule, a button on a tag and on any other push. The nightly
+# run is the one that matters most: it is where the two Craft roots
+# drifting apart (the install.db check in tools/macos-universal-dmg.sh)
+# shows up as a red job, rather than on the evening of a release.
+#
+# Signing is a separate question, and only Seabass/X.Y answers yes.
+# sysadmin/ci-utilities clears multimedia/seabass for macOS signing and
+# notarisation on Seabass/0.8 and Seabass/1.0 only (signing/
+# macappsigner-projects.yaml and macappnotarizer-projects.yaml; master is
+# listed for Windows signing alone), and the secure services key reaches
+# protected branches only, which a tag is not. Everywhere else the merged
+# bundle is signed ad hoc, like the halves it came from, because
+# signmacapp.py skips an uncleared ref and exits 0, and the script
+# refuses a bundle it was told to sign that came back unsigned.
 #
 # Signing happens after the merge because lipo invalidates the halves'
 # signatures. The same ci-notary-service clients the template uses sign
-# the merged .app and the .dmg, and notarise the .dmg. The service clears
-# a signing request by project and ref, so this is offered only on the
-# Seabass/X.Y branches listed for signing and notarisation in
-# sysadmin/ci-utilities, and only where the secure services key reaches.
-# Tags get neither the key nor a listing, so a tag pipeline cannot sign.
-#
-# A button, never automatic: it runs on KDE's one macOS machine, and only
-# after both halves have been built in the same pipeline.
+# the merged .app and the .dmg, and notarise the .dmg.
 macos:universal:
   stage: deploy
   tags:
@@ -258,9 +270,18 @@ macos:universal:
       artifacts: true
     - job: craft_macos_qt6_x86_64
       artifacts: true
+  # The first rule is *craft_lane_rules' manual branch with signing
+  # switched on; the rest are *craft_lane_rules itself, written out
+  # because a rule list cannot be extended through an anchor.
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
       when: manual
+      allow_failure: true
+      variables:
+        SEABASS_UNIVERSAL_SIGN: "yes"
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $KDECI_SECURE_SERVICES_KEY'
+    - if: '$CI_COMMIT_TAG && $KDECI_SECURE_SERVICES_KEY'
+    - when: manual
       allow_failure: true
   variables:
     # As in the Craft jobs: this runner shares one build directory, and the
@@ -293,9 +314,14 @@ macos:universal:
       arm_db="$(pick "kde-ci-craft/$CI_PIPELINE_IID-macos-arm-clang-install.db")" || exit 1
       intel_db="$(pick "kde-ci-craft/$CI_PIPELINE_IID-macos-64-clang-install.db")" || exit 1
       mkdir kde-ci-universal
-      SEABASS_SIGN_COMMAND="python3 ci-notary-service/signmacapp.py -v --config ci-utilities/signing/signmacapp.ini" \
-      SEABASS_NOTARIZE_COMMAND="python3 ci-notary-service/notarizemacapp.py -v --config ci-utilities/signing/notarizemacapp.ini" \
-        src/tools/macos-universal-dmg.sh --from-dmgs "$arm_dmg" "$intel_dmg" "$arm_db" "$intel_db" \
+      if [ "${SEABASS_UNIVERSAL_SIGN:-}" = "yes" ]; then
+        echo "Signing: $CI_COMMIT_REF_NAME is cleared, the merged bundle and image are signed and notarised"
+        export SEABASS_SIGN_COMMAND="python3 ci-notary-service/signmacapp.py -v --config ci-utilities/signing/signmacapp.ini"
+        export SEABASS_NOTARIZE_COMMAND="python3 ci-notary-service/notarizemacapp.py -v --config ci-utilities/signing/notarizemacapp.ini"
+      else
+        echo "Signing: none, $CI_COMMIT_REF_NAME is not a Seabass/X.Y branch the key reaches; the package is signed ad hoc"
+      fi
+      src/tools/macos-universal-dmg.sh --from-dmgs "$arm_dmg" "$intel_dmg" "$arm_db" "$intel_db" \
           "kde-ci-universal/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-universal.dmg"
     # The same read-only check a release gets on a Mac, against the committed
     # fixture laid out as a stick: both slices read the encrypted OneLibrary.
