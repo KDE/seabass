@@ -133,7 +133,7 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
         // database error is a different thing and came back above, as an
         // error string.
         //
-        // All three are rare by construction: the audit only offers a
+        // All of these are rare by construction: the audit only offers a
         // track whose image is on this stick and reads as a JPEG or a PNG,
         // so each of these means something changed underneath the page
         // since it was scanned -- and the page rescans after the save, so
@@ -142,6 +142,8 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
         std::string why;
         if (repair.tracksNoLongerThere > 0) {
             why = "the track is no longer in the library";
+        } else if (repair.keptInDatabase > 0) {
+            why = "its art row keeps the image in the database";
         } else if (repair.notAnImage > 0) {
             why = m_entry.imageOnStick + " is not a JPEG or a PNG";
         } else {

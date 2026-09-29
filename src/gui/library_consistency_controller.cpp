@@ -668,6 +668,15 @@ int LibraryConsistencyController::artworkBrokenRowCount() const
                                           }));
 }
 
+int LibraryConsistencyController::artworkEmptyInDatabaseCount() const
+{
+    return static_cast<int>(std::count_if(m_artwork.unreadable.begin(), m_artwork.unreadable.end(),
+                                          [](const infrastructure::engine::ArtworkEntry &entry) {
+                                              return entry.storage
+                                                  == infrastructure::engine::ArtworkStorage::InDatabaseUnreadable;
+                                          }));
+}
+
 void LibraryConsistencyController::scan(const QString &rekordboxPath, const QString &enginePath,
                                           const QString &playlistName)
 {

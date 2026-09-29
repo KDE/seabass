@@ -163,6 +163,12 @@ Page {
                         + "image up by. The track still says which file it is, though, so a cover can come back from "
                         + "the file's own tags or from a backup that knows it.");
                 }
+                const emptyInDatabase = consistencyController?.artworkEmptyInDatabaseCount;
+                if (emptyInDatabase > 0) {
+                    parts.push(emptyInDatabase + " keep their cover inside the Engine database, the way older "
+                        + "Engine libraries do, and the image stored there is empty or not a picture. Seabass "
+                        + "leaves those as they are, because that library reads its covers from there.");
+                }
                 parts.push(fixable > 0
                     ? fixable + " of " + consistencyController?.artworkUnreadableCount + " can be put back: Seabass "
                       + "takes the image from the rekordbox art on this stick, the track's own tags, or a stick "

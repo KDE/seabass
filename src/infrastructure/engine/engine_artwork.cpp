@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <unordered_map>
 
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/hashing/sha256.hpp"
@@ -114,7 +115,7 @@ std::string artworkFileName(std::span<const std::uint8_t> hash)
     return out;
 }
 
-ArtworkStorage classifyArtworkReference(std::string_view reference)
+ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type)
 {
     if (reference.empty()) {
         return ArtworkStorage::None;
@@ -122,8 +123,9 @@ ArtworkStorage classifyArtworkReference(std::string_view reference)
     if (reference.starts_with(ImportedPrefix)) {
         return ArtworkStorage::ImportedPath;
     }
-    // A hash. Whether its file is there is the caller's to check.
-    return ArtworkStorage::Cached;
+    // A hash. Whether its file, or its image in the row, is there is the
+    // caller's to check.
+    return type == ReferenceType::Text ? ArtworkStorage::InDatabase : ArtworkStorage::Cached;
 }
 
 std::string imageOnStickFor(std::string_view reference, const std::string &stickRoot)
@@ -201,6 +203,28 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         sqlite3_finalize(columns);
     }
 
+    // The first bytes of every image kept in the database, once per row
+    // rather than once per track pointing at it.
+    std::unordered_map<std::int64_t, std::string> imageHeadByRow;
+    {
+        sqlite3_stmt *images = nullptr;
+        if (sqlite3_prepare_v2(handle,
+                               "SELECT id, substr(albumArt, 1, 8) FROM AlbumArt "
+                               "WHERE albumArt IS NOT NULL AND length(albumArt) > 0;",
+                               -1, &images, nullptr)
+            != SQLITE_OK) {
+            audit.error = std::string("could not read the AlbumArt table: ") + sqlite3_errmsg(handle);
+            sqlite3_close(handle);
+            return audit;
+        }
+        while (sqlite3_step(images) == SQLITE_ROW) {
+            const void *head = sqlite3_column_blob(images, 1);
+            imageHeadByRow[sqlite3_column_int64(images, 0)] =
+                std::string(static_cast<const char *>(head), static_cast<size_t>(sqlite3_column_bytes(images, 1)));
+        }
+        sqlite3_finalize(images);
+    }
+
     sqlite3_stmt *stmt = nullptr;
     const std::string sqlText =
         std::string("SELECT t.id, t.title, t.artist, a.hash, t.albumArtId, ")
@@ -255,32 +279,51 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
                 pathFromUtf8(engineLibraryPath) / pathFromUtf8(reinterpret_cast<const char *>(trackPath)), pathEc);
             entry.trackFile = pathEc ? std::string() : pathToUtf8(absolute);
         }
+        // Asked before the value is read: reading it may convert it.
+        const ReferenceType referenceType =
+            sqlite3_column_type(stmt, 3) == SQLITE_TEXT ? ReferenceType::Text : ReferenceType::Blob;
         const void *blob = sqlite3_column_blob(stmt, 3);
         const int size = sqlite3_column_bytes(stmt, 3);
+        const bool pointsAtArt = sqlite3_column_type(stmt, 4) != SQLITE_NULL;
+        const std::int64_t albumArtId = sqlite3_column_int64(stmt, 4);
+
+        // A row holding an image is decided by that image alone: whatever
+        // its hash says, this is what a player shows. Never offered for
+        // repair, which would point the track away from it.
+        if (const auto image = pointsAtArt ? imageHeadByRow.find(albumArtId) : imageHeadByRow.end();
+            image != imageHeadByRow.end()) {
+            audit.tracksWithArt++;
+            if (!extensionForImage(image->second).empty()) {
+                audit.readableByAPlayer++;
+            } else {
+                entry.storage = ArtworkStorage::InDatabaseUnreadable;
+                if (blob != nullptr && size > 0) {
+                    entry.reference.assign(static_cast<const char *>(blob), static_cast<size_t>(size));
+                }
+                audit.unreadable.push_back(std::move(entry));
+            }
+            continue;
+        }
         if (blob == nullptr || size <= 0) {
             // Nothing to find the art by, which is two different things.
             //
             // Engine's way of saying "this track has no cover" is not a
-            // missing albumArtId. It is a row: libdjinterop seeds
-            // AlbumArt (1, '', NULL) in every schema it writes
-            // (schema_1_18_0_os.cpp and its siblings) and points art-less
-            // tracks at it -- ALBUM_ART_ID_NONE in
-            // djinterop/engine/v3/track_table.hpp. 0 is the other
-            // spelling, which this project's own Engine reader already
-            // excludes. Both are "no art asked for", and reporting them
-            // would put a permanent, unfixable warning on every healthy
-            // library: most tracks on most sticks have no cover.
+            // missing albumArtId. It is a row with an empty text hash and
+            // no image: libdjinterop seeds AlbumArt (1, '', NULL) in every
+            // schema it writes (schema_1_18_0_os.cpp and its siblings) and
+            // points art-less tracks at it. 0 is the other spelling, which
+            // names no row at all. Both are "no art asked for", and
+            // reporting them would put a permanent, unfixable warning on
+            // every healthy library: most tracks on most sticks have no
+            // cover. Told by the row's content rather than its id, since a
+            // library Engine writes can hold real art at id 1.
             //
-            // What is left -- an albumArtId of its own, pointing at a row
-            // whose hash is NULL or empty -- is art asked for that nothing
-            // can resolve. The committed fixture has two of those (two
-            // tracks at AlbumArt 469, hash NULL, on a library whose row 1
-            // carries a real 65-byte reference, so it has no sentinel),
-            // and counting them as "no art asked for" left them out of
-            // every figure the page shows.
-            constexpr std::int64_t AlbumArtIdNone = 1;
-            const std::int64_t albumArtId = sqlite3_column_int64(stmt, 4);
-            if (sqlite3_column_type(stmt, 4) == SQLITE_NULL || albumArtId == 0 || albumArtId == AlbumArtIdNone) {
+            // What is left -- a row whose hash is NULL or an empty blob --
+            // is art asked for that nothing can resolve. The committed
+            // fixture has two of those (two tracks at AlbumArt 469, hash
+            // NULL), and counting them as "no art asked for" left them out
+            // of every figure the page shows.
+            if (!pointsAtArt || albumArtId == 0 || referenceType == ReferenceType::Text) {
                 continue;
             }
             entry.storage = ArtworkStorage::RowWithoutHash;
@@ -294,8 +337,17 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             continue;
         }
         const std::string reference(static_cast<const char *>(blob), static_cast<size_t>(size));
-        entry.storage = classifyArtworkReference(reference);
+        entry.storage = classifyArtworkReference(reference, referenceType);
         audit.tracksWithArt++;
+
+        if (entry.storage == ArtworkStorage::InDatabase) {
+            // A text hash names the image in its own row, and that row
+            // holds none.
+            entry.storage = ArtworkStorage::InDatabaseUnreadable;
+            entry.reference = reference;
+            audit.unreadable.push_back(std::move(entry));
+            continue;
+        }
 
         if (entry.storage == ArtworkStorage::ImportedPath) {
             entry.reference = reference;
@@ -407,6 +459,31 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     // rollback then restores underneath a connection still holding it.
     try {
         for (const ArtworkEntry &entry : entries) {
+            // Asked of the database as it is now, not of the audit: a
+            // track whose row holds an image, or names one by a text hash,
+            // keeps its art in the database and is never re-pointed. The
+            // new row would hold no image, and the old one would be left
+            // to nobody.
+            bool keepsImageInDatabase = entry.storage == ArtworkStorage::InDatabase
+                || entry.storage == ArtworkStorage::InDatabaseUnreadable;
+            if (!keepsImageInDatabase) {
+                sqlite3_stmt *current = nullptr;
+                if (sqlite3_prepare_v2(handle,
+                                       "SELECT length(a.albumArt) > 0 OR (typeof(a.hash) = 'text' AND a.hash != '' "
+                                       "AND substr(a.hash, 1, 8) != 'image://') "
+                                       "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;",
+                                       -1, &current, nullptr)
+                    != SQLITE_OK) {
+                    return fail(std::string("could not read the track's art row: ") + sqlite3_errmsg(handle));
+                }
+                sqlite3_bind_int64(current, 1, entry.trackId);
+                keepsImageInDatabase = sqlite3_step(current) == SQLITE_ROW && sqlite3_column_int(current, 0) != 0;
+                sqlite3_finalize(current);
+            }
+            if (keepsImageInDatabase) {
+                result.keptInDatabase++;
+                continue;
+            }
             std::string bytes;
             if (!entry.imageOnStick.empty()) {
                 bytes = readWholeFile(entry.imageOnStick);
