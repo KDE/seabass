@@ -10,6 +10,7 @@
 // so the art silently never appears. Found on a real stick: 1174 of 1271
 // tracks in that state, while the 95 with cached art showed up fine.
 
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -786,6 +787,62 @@ int main(int argc, char **argv)
         assert(artworkBytesOnStick(tracks, {}) == fs::file_size(onStick));
         fs::remove_all(localCopy.parent_path());
         std::cout << "case 15 (covers are counted where they take up the stick, database included) OK\n";
+    }
+
+    // 16. Engine 2.x and 3.x seed the "no cover" row as AlbumArt (1, NULL,
+    //     NULL), libdjinterop as (1, '', NULL). Both are Engine's way of
+    //     saying a track has no art: never a fault, never repaired. The
+    //     committed fixture one_stick_two_catalogs has twelve tracks there.
+    //     A row of its own with nothing in it (the other fixture's AlbumArt
+    //     469, case 9) stays a fault.
+    {
+        const fs::path stick = seabass::testing::scratchRoot() / "seabass_engine_artwork_seed_row";
+        std::error_code ec;
+        fs::remove_all(stick, ec);
+        fs::create_directories(stick);
+        fs::copy(pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "one_stick_two_catalogs" / "engine",
+                 stick / "Engine Library", fs::copy_options::recursive);
+        const fs::path database = stick / "Engine Library" / "Database2" / "m.db";
+        const auto tracksOnRowOne = [&database] {
+            sqlite3 *db = nullptr;
+            assert(sqlite3_open(pathToUtf8(database).c_str(), &db) == SQLITE_OK);
+            sqlite3_stmt *stmt = nullptr;
+            assert(sqlite3_prepare_v2(db, "SELECT id FROM Track WHERE albumArtId = 1 ORDER BY id;", -1, &stmt, nullptr)
+                   == SQLITE_OK);
+            std::vector<std::int64_t> ids;
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                ids.push_back(sqlite3_column_int64(stmt, 0));
+            }
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            return ids;
+        };
+        const std::vector<std::int64_t> artless = tracksOnRowOne();
+        assert(artless.size() == 12);
+        const auto probe = [](const ArtworkEntry &) { return true; };
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(stick / "Engine Library"), {}, probe);
+        assert(audit.error.empty());
+        for (const ArtworkEntry &entry : audit.unreadable) {
+            assert(std::find(artless.begin(), artless.end(), entry.trackId) == artless.end());
+        }
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(stick / "Engine Library"), audit.unreadable, {}, {},
+                                                   [](const ArtworkEntry &) { return jpeg("FROM-THE-TAGS"); });
+        assert(repair.error.empty());
+        assert(tracksOnRowOne() == artless);  // none of them was given a row of its own
+
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_null_seed");
+        sqlite3 *db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (1, NULL, NULL);");
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (2, NULL, NULL);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Seed', 'A', 1);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (2, 'Lost its hash', 'B', 2);");
+        sqlite3_close(db);
+        const ArtworkAudit seeded = auditArtwork(pathToUtf8(fixture.library));
+        assert(seeded.tracksWithArt == 1);
+        assert(seeded.unreadable.size() == 1 && seeded.unreadable[0].trackId == 2);
+        assert(seeded.unreadable[0].storage == ArtworkStorage::RowWithoutHash);
+        fs::remove_all(stick, ec);
+        std::cout << "case 16 (both seeds of Engine's no-cover row are no art, a row of its own is a fault) OK\n";
     }
 
     std::cout << "engine_artwork_test: all cases passed\n";
