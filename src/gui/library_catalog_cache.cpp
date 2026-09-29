@@ -163,7 +163,10 @@ void LibraryCatalogCache::setInstanceForTesting(LibraryCatalogCache *cache)
     s_instanceForTesting.store(cache);
 }
 
-LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime) {}
+LibraryCatalogCache::LibraryCatalogCache() : m_stageFn(realStage), m_mtimeFn(realMtime)
+{
+    stopWhenTheProcessEnds();
+}
 
 LibraryCatalogCache::StageFn LibraryCatalogCache::realStageForTesting()
 {
@@ -178,6 +181,7 @@ LibraryCatalogCache::MtimeFn LibraryCatalogCache::realMtimeForTesting()
 LibraryCatalogCache::LibraryCatalogCache(StageFn stageFn, MtimeFn mtimeFn)
     : m_stageFn(std::move(stageFn)), m_mtimeFn(std::move(mtimeFn))
 {
+    stopWhenTheProcessEnds();
 }
 
 LibraryCatalogCache::LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn)
@@ -191,9 +195,19 @@ LibraryCatalogCache::LibraryCatalogCache(ScanFn scanFn, MtimeFn mtimeFn)
       }),
       m_mtimeFn(std::move(mtimeFn))
 {
+    stopWhenTheProcessEnds();
 }
 
-LibraryCatalogCache::~LibraryCatalogCache()
+// A pass in progress when the process begins to end is cancelled there
+// and then, so it ends inside endProcess()'s bound for reads instead of
+// running on until the bound cuts the process off without its static
+// destructors (a real stick's cue stage alone takes seconds).
+void LibraryCatalogCache::stopWhenTheProcessEnds()
+{
+    RunningReads::instance().onShutdown(this, [this] { stopPrefetching(); });
+}
+
+void LibraryCatalogCache::stopPrefetching()
 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -202,6 +216,12 @@ LibraryCatalogCache::~LibraryCatalogCache()
         m_prefetchCancel.cancel();
     }
     m_prefetchCv.notify_all();
+}
+
+LibraryCatalogCache::~LibraryCatalogCache()
+{
+    RunningReads::instance().removeShutdownHook(this);
+    stopPrefetching();
     if (m_prefetchThread.joinable()) {
         m_prefetchThread.join();
     }
