@@ -460,8 +460,11 @@ ApplicationWindow {
         id: appHeader
         objectName: "appHeader"
         stackView: stackView
-        anchors.top: stackView.top
-        anchors.right: stackView.right
+        // The stack is inside the column, so not a sibling to anchor to;
+        // it is the column's first item and the column fills the window,
+        // so the window's top right corner is the stack's.
+        anchors.top: parent.top
+        anchors.right: parent.right
         anchors.topMargin: Theme.pageMargin + (Theme.headerBackButtonSize - height) / 2
         anchors.rightMargin: Theme.pageMargin
         function go(component) {
