@@ -189,7 +189,8 @@ std::string artworkFileName(std::span<const std::uint8_t> hash)
     return out;
 }
 
-std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash, bool *anyFile)
+std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash, bool *anyFile,
+                              bool checkBytes)
 {
     const std::string name = artworkFileName(hash);
     std::error_code ec;
@@ -207,7 +208,7 @@ std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<con
         // placeholder. Counting those as "a player can read this" is how a
         // stick reports every cover art fixed while the player shows
         // blanks, so the bytes have to say JPEG or PNG.
-        if (isImageARepairCanName(cached)) {
+        if (!checkBytes || isImageARepairCanName(cached)) {
             return pathToUtf8(cached);
         }
     }

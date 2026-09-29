@@ -201,6 +201,14 @@ int main()
         assert(!read.at("4").empty());
         assert(fs::equivalent(seabass::pathFromUtf8(read.at("4")), artwork));
         assert(read.at("5").empty());
+        // Found by a stat, not an open: a file that is there is named
+        // whatever it holds (the audit judges it), so a repeat of this
+        // stage inside a save reads no cover.
+        std::ofstream(library / "Artwork" / (seabass::infrastructure::engine::artworkFileName(gone) + ".jpg"),
+                      std::ios::binary);
+        const auto again = artworkBySourceId(seabass::pathToUtf8(library));
+        assert(!again.at("5").empty());
+        fs::remove(library / "Artwork" / (seabass::infrastructure::engine::artworkFileName(gone) + ".jpg"));
         std::cout << "case 5 (a cover kept as a file under Artwork/ is shown from the stick) OK\n";
     }
 
