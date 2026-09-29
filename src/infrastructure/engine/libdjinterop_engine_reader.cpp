@@ -148,25 +148,29 @@ djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &pro
 
 // The image an AlbumArt row keeps in the database, as a file on this
 // computer, since everything that shows a cover takes a path. Written once
-// into `directory`, which belongs to this one library, under the row's hex
-// hash, so a later scan finds it with a stat and never reads the image
-// again. Engine's hash names an image only inside its own library: it is
-// not a checksum of the bytes. Without a hex hash, or without a directory
-// of the library's own (empty `libraryDirectory`), the name is a checksum of the
-// bytes instead, which costs a read each time. Empty when the row holds
-// nothing a player could draw.
+// into `libraryDirectory`, which belongs to this one library (its
+// Information uuid), under the row's hex hash and the image's length, so a
+// later scan finds it with a stat and never reads the image again. The
+// length is in the name because the uuid does not settle it: a clone of a
+// stick keeps its uuid, and Engine's hash is not a checksum of the bytes.
+// Without a hex hash, or without a directory of the library's own (empty
+// `libraryDirectory`), the name is a checksum of the bytes instead, which
+// costs a read each time. Empty when the row holds nothing a player could
+// draw.
 std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std::string &hash,
-                                const std::filesystem::path &libraryDirectory)
+                                std::int64_t length, const std::filesystem::path &libraryDirectory)
 {
     const bool hexHash = !libraryDirectory.empty() && !hash.empty() && hash.size() <= 64
         && std::all_of(hash.begin(), hash.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
     const std::filesystem::path directory =
         libraryDirectory.empty() ? paths::localEngineArtworkDir() / "by-content" : libraryDirectory;
+    const std::string knownName = hash + "-" + std::to_string(length);
     std::error_code ec;
     if (hexHash) {
         for (const char *extension : {".jpg", ".png"}) {
-            const std::filesystem::path known = directory / pathFromUtf8(hash + extension);
-            if (std::filesystem::is_regular_file(known, ec)) {
+            const std::filesystem::path known = directory / pathFromUtf8(knownName + extension);
+            if (std::filesystem::is_regular_file(known, ec)
+                && std::filesystem::file_size(known, ec) == static_cast<std::uintmax_t>(length) && !ec) {
                 return pathToUtf8(known);
             }
         }
@@ -187,10 +191,13 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std:
     if (extension.empty()) {
         return {};
     }
-    const std::string name = hexHash ? hash : hashing::toHex(hashing::Sha256::of(std::string_view(bytes)));
+    const std::string name = hexHash ? hash + "-" + std::to_string(bytes.size())
+                                     : hashing::toHex(hashing::Sha256::of(std::string_view(bytes)));
     const std::filesystem::path file = directory / pathFromUtf8(name + extension);
     std::filesystem::create_directories(directory, ec);
-    if (!std::filesystem::is_regular_file(file, ec) && !writeFileDurablyAtomic(pathToUtf8(file), bytes)) {
+    const bool whole = std::filesystem::is_regular_file(file, ec)
+        && std::filesystem::file_size(file, ec) == bytes.size() && !ec;
+    if (!whole && !writeFileDurablyAtomic(pathToUtf8(file), bytes)) {
         return {};
     }
     return pathToUtf8(file);
@@ -298,7 +305,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     }
     sqlite3_stmt *stmt = nullptr;
     const char *sql =
-        "SELECT t.id, a.hash, a.id, length(a.albumArt) > 0 FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+        "SELECT t.id, a.hash, a.id, length(a.albumArt) FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
         "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 "
         "AND (length(a.albumArt) > 0 OR (typeof(a.hash) = 'blob' AND length(a.hash) > 0))";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
@@ -310,7 +317,8 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const int64_t trackId = sqlite3_column_int64(stmt, 0);
         const int64_t albumArtId = sqlite3_column_int64(stmt, 2);
-        const bool imageInRow = sqlite3_column_int(stmt, 3) != 0;
+        const std::int64_t imageLength = sqlite3_column_int64(stmt, 3);
+        const bool imageInRow = imageLength > 0;
         auto known = fileByRow.find(albumArtId);
         if (known == fileByRow.end()) {
             std::string file;
@@ -321,9 +329,9 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                 if (imageInRow && !blobHash) {
                     const unsigned char *hashText = sqlite3_column_text(stmt, 1);
                     const std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
-                    file = databaseArtworkFile(db, albumArtId, hash, libraryDirectory);
+                    file = databaseArtworkFile(db, albumArtId, hash, imageLength, libraryDirectory);
                 } else if (imageInRow) {
-                    file = databaseArtworkFile(db, albumArtId, std::string(), libraryDirectory);
+                    file = databaseArtworkFile(db, albumArtId, std::string(), imageLength, libraryDirectory);
                 }
                 if (file.empty() && blobHash) {
                     const void *blob = sqlite3_column_blob(stmt, 1);
