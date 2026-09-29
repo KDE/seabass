@@ -3353,7 +3353,7 @@ add_test(NAME engine_reader_paths_test COMMAND engine_reader_paths_test)
 add_executable(engine_reader_db_artwork_test tests/engine_reader_db_artwork_test.cpp)
 target_include_directories(engine_reader_db_artwork_test PRIVATE src tests)
 target_compile_definitions(engine_reader_db_artwork_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(engine_reader_db_artwork_test PRIVATE seabass_core SQLite::SQLite3)
+target_link_libraries(engine_reader_db_artwork_test PRIVATE seabass_core SQLite::SQLite3 Threads::Threads)
 add_test(NAME engine_reader_db_artwork_test COMMAND engine_reader_db_artwork_test)
 
 # #48, found by rig check F6: the Engine reader keeps a copy of a database

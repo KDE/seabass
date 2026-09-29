@@ -12,11 +12,13 @@
 #include <sqlite3.h>
 
 #include <cassert>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -288,6 +290,44 @@ int main()
         assert(reporter.warnings.size() == 1);
         assert(reporter.warnings[0].find("album art") != std::string::npos);
         std::cout << "case 9 (an artwork stage that cannot read the database warns) OK\n";
+    }
+
+    // 10. Two reads of the same library at once (the prefetch and a page)
+    //     write out the same covers side by side. Each still names a whole
+    //     copy of every one.
+    {
+        const fs::path busy = library.parent_path() / "busy" / "Engine Library";
+        fs::create_directories(busy.parent_path());
+        fs::copy(source, busy, fs::copy_options::recursive);
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(busy / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_exec(db, "BEGIN; DELETE FROM AlbumArt;", nullptr, nullptr, nullptr) == SQLITE_OK);
+        for (int row = 1; row <= 300; ++row) {
+            char hash[41];
+            std::snprintf(hash, sizeof(hash), "%040x", row);
+            setRow(db, row, hash, pngImage + std::string(static_cast<size_t>(4000 + row), 'p'));
+        }
+        assert(sqlite3_exec(db, "UPDATE Track SET albumArtId = ((id - 1) % 300) + 1; COMMIT;", nullptr, nullptr,
+                            nullptr)
+               == SQLITE_OK);
+        sqlite3_close(db);
+        for (int round = 0; round < 5; ++round) {
+            fs::remove_all(cache, ec);
+            std::map<std::string, std::string> results[2];
+            std::thread first([&] { results[0] = artworkBySourceId(seabass::pathToUtf8(busy)); });
+            std::thread second([&] { results[1] = artworkBySourceId(seabass::pathToUtf8(busy)); });
+            first.join();
+            second.join();
+            for (const auto &result : results) {
+                assert(result.size() > 300);
+                for (const auto &[sourceId, path] : result) {
+                    const int row = (std::stoi(sourceId) - 1) % 300 + 1;
+                    assert(!path.empty());
+                    assert(slurp(path) == pngImage + std::string(static_cast<size_t>(4000 + row), 'p'));
+                }
+            }
+        }
+        std::cout << "case 10 (two reads writing the same covers at once both get whole copies) OK\n";
     }
 
     fs::remove_all(library.parent_path(), ec);
