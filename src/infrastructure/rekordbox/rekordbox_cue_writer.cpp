@@ -6,6 +6,7 @@
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -232,6 +233,33 @@ std::string restoreAfterFailedReadBack(const std::vector<std::pair<std::string, 
     return message;
 }
 
+// Whether `ms` is a time the files can hold: every position in them is
+// an unsigned 32-bit count of milliseconds. A negative one used to be
+// cast straight in and wrapped (Sanctum on WHALESHARK carried hot cue 1
+// at 0xffff667c, Engine's -39300 ms), putting a cue some 49 days into
+// the track. NaN fails too.
+bool fitsAnlzMs(double ms)
+{
+    return ms >= 0.0 && ms <= double(UINT32_MAX);
+}
+
+// The cues the files can hold. A cue before the start of the track is
+// not one of them: domain::isJunkCue calls a negative position junk
+// whatever the user prefers, a "no cue set" sentinel read as a position
+// that points nowhere, and there is no way to write it that a player
+// would read as that. So it is left off the rekordbox side, as Clean Up
+// would take it off, and so is a loop whose end is not a time either.
+std::vector<domain::CuePoint> writableCues(const std::vector<domain::CuePoint> &cues)
+{
+    std::vector<domain::CuePoint> out;
+    for (const auto &cue : cues) {
+        if (fitsAnlzMs(cue.positionMs) && (!cue.isLoop || fitsAnlzMs(cue.loopEndMs))) {
+            out.push_back(cue);
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, const std::string &analyzePath)
@@ -256,8 +284,9 @@ std::optional<std::string> RekordboxCueWriter::analyzePathFor(uint32_t trackId) 
     return m_pathIndex ? m_pathIndex->pathFor(trackId) : findAnlzPathForTrackId(m_pioneerRoot, trackId);
 }
 
-void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues)
+void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &requested)
 {
+    const std::vector<domain::CuePoint> cues = writableCues(requested);
     uint32_t trackId = static_cast<uint32_t>(std::stoul(trackSourceId));
 
     auto analyzePath = analyzePathFor(trackId);

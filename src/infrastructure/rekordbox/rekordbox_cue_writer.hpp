@@ -57,7 +57,9 @@ public:
     // back afterwards. A file that does not read back as written, or
     // holds a legacy list outside the surveyed shape, is put back as it
     // was (with the .EXT too, when the .DAT failed) and the call throws
-    // naming it.
+    // naming it. A cue at a negative position (or a loop ending at
+    // one) is left out: the files hold unsigned milliseconds, and such
+    // a cue is junk that points nowhere in the track.
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
     // Runs after each file is written, before it is read back, so a test
