@@ -158,6 +158,21 @@ std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<con
     return {};
 }
 
+std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId)
+{
+    sqlite3_blob *blob = nullptr;
+    if (sqlite3_blob_open(handle, "main", "AlbumArt", "albumArt", albumArtId, 0, &blob) != SQLITE_OK) {
+        sqlite3_blob_close(blob);
+        return {};
+    }
+    std::string head(static_cast<size_t>(std::min(sqlite3_blob_bytes(blob), 8)), '\0');
+    if (sqlite3_blob_read(blob, head.data(), static_cast<int>(head.size()), 0) != SQLITE_OK) {
+        head.clear();
+    }
+    sqlite3_blob_close(blob);
+    return head;
+}
+
 ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type)
 {
     if (reference.empty()) {
@@ -241,19 +256,20 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     std::unordered_map<std::int64_t, std::string> imageHeadByRow;
     if (hasImageColumn) {
         sqlite3_stmt *images = nullptr;
-        if (sqlite3_prepare_v2(handle,
-                               "SELECT id, substr(albumArt, 1, 8) FROM AlbumArt "
-                               "WHERE albumArt IS NOT NULL AND length(albumArt) > 0;",
-                               -1, &images, nullptr)
+        if (sqlite3_prepare_v2(handle, "SELECT id FROM AlbumArt WHERE length(albumArt) > 0;", -1, &images, nullptr)
             != SQLITE_OK) {
             audit.error = std::string("could not read the AlbumArt table: ") + sqlite3_errmsg(handle);
             sqlite3_close(handle);
             return audit;
         }
+        std::vector<std::int64_t> rows;
         while (sqlite3_step(images) == SQLITE_ROW) {
-            const void *head = sqlite3_column_blob(images, 1);
-            imageHeadByRow[sqlite3_column_int64(images, 0)] =
-                std::string(static_cast<const char *>(head), static_cast<size_t>(sqlite3_column_bytes(images, 1)));
+            rows.push_back(sqlite3_column_int64(images, 0));
+        }
+        sqlite3_finalize(images);
+        images = nullptr;
+        for (const std::int64_t row : rows) {
+            imageHeadByRow[row] = albumArtImageHead(handle, row);
         }
         sqlite3_finalize(images);
     }
@@ -522,7 +538,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 // sharing the row keeps it. Asked of the row as it is now.
                 sqlite3_stmt *current = nullptr;
                 if (sqlite3_prepare_v2(handle,
-                                       "SELECT a.id, substr(a.albumArt, 1, 8), typeof(a.hash) = 'text' AND a.hash != '' "
+                                       "SELECT a.id, typeof(a.hash) = 'text' AND a.hash != '' "
                                        "AND substr(a.hash, 1, 8) != 'image://' "
                                        "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;",
                                        -1, &current, nullptr)
@@ -536,12 +552,9 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                     continue;
                 }
                 const std::int64_t row = sqlite3_column_int64(current, 0);
-                const void *head = sqlite3_column_blob(current, 1);
-                const std::string headBytes =
-                    head ? std::string(static_cast<const char *>(head), static_cast<size_t>(sqlite3_column_bytes(current, 1)))
-                         : std::string();
-                const bool storedInDatabase = sqlite3_column_int(current, 2) != 0;
+                const bool storedInDatabase = sqlite3_column_int(current, 1) != 0;
                 sqlite3_finalize(current);
+                const std::string headBytes = albumArtImageHead(handle, row);
                 if (!extensionForImage(headBytes).empty()) {
                     // Never overwritten: whatever put it there, it reads.
                     result.alreadyReadable++;

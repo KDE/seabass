@@ -15,6 +15,8 @@
 #include "application/ports/cancellation_token.hpp"
 #include "domain/track.hpp"
 
+struct sqlite3;
+
 namespace seabass::infrastructure::engine
 {
 
@@ -147,6 +149,10 @@ enum class ReferenceType { Blob, Text };
 // when given, is set if a file by one of those names exists at all.
 std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash,
                               bool *anyFile = nullptr);
+
+// The first bytes (up to 8) of the image an AlbumArt row keeps in the
+// database, read without loading the rest of it. Empty when there is none.
+std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId);
 
 // Which storage a raw AlbumArt.hash value is.
 ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type);
