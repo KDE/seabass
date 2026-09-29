@@ -342,11 +342,13 @@ Page {
     TextMetrics { id: timeHeaderMeasure; font: root.sortHeaderFont; text: "TIME" }
     TextMetrics { id: cuesHeaderMeasure; font: root.sortHeaderFont; text: "CUES" }
     TextMetrics { id: playsHeaderMeasure; font: root.sortHeaderFont; text: "PLAYS" }
-    readonly property real keyColumnWidth: sortColumnWidth(keyHeaderMeasure, 50)
+    // Key's minimum is the KeyBadge's own width, which scales where the
+    // other columns' pixel counts do not; the badge reads this width too.
+    readonly property real keyColumnWidth: sortColumnWidth(keyHeaderMeasure, Theme.scaled(50))
     readonly property real bpmColumnWidth: sortColumnWidth(bpmHeaderMeasure, 50)
     readonly property real timeColumnWidth: sortColumnWidth(timeHeaderMeasure, 60)
     readonly property real cuesColumnWidth: sortColumnWidth(cuesHeaderMeasure, 50)
-    readonly property real playsColumnWidth: sortColumnWidth(playsHeaderMeasure, 50)
+    readonly property real playsColumnWidth: sortColumnWidth(playsHeaderMeasure, 60)
 
     // One decimal place, but only when there actually is one, "128"
     // reads better than "128.0" for the (very common) case of a whole-
@@ -840,6 +842,7 @@ Page {
                             visible: root.browseTier >= 2
                             keyName: key
                             notation: root.appSettingsController.keyNotation
+                            Layout.preferredWidth: root.keyColumnWidth
                         }
                         Label {
                             visible: root.browseTier >= 2
