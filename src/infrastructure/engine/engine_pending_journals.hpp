@@ -40,17 +40,26 @@ inline void recoverEnginePendingJournals(const std::string &engineLibraryPath)
                 int read = SQLITE_ERROR;
                 std::string readError;
                 if (opened == SQLITE_OK) {
-                    // A save in another connection holds the database while
-                    // it writes, and its journal has a live header too: its
-                    // lock is waited out rather than taken for a pulled
-                    // stick's leftover.
-                    sqlite3_busy_timeout(handle, 5000);
+                    // The primary code of the extended one: a busy database
+                    // reads as SQLITE_BUSY or SQLITE_LOCKED, a hot journal on
+                    // a read-only connection as SQLITE_READONLY.
                     read = sqlite3_exec(handle, "SELECT count(*) FROM sqlite_master", nullptr, nullptr, nullptr);
+                    if (read != SQLITE_OK) {
+                        read = sqlite3_extended_errcode(handle) & 0xFF;
+                    }
                     readError = sqlite3_errmsg(handle);
                 }
                 sqlite3_close(handle);
                 if (opened != SQLITE_OK) {
                     throw std::runtime_error(openError);
+                }
+                // Another connection holding the database while it writes
+                // (a save of this app, Engine DJ) leaves a journal with a
+                // live header as well. That is busy, not hot: nothing is
+                // copied or rolled back, and nothing waits for it. The next
+                // read looks again.
+                if ((flags & SQLITE_OPEN_READONLY) != 0 && (read == SQLITE_BUSY || read == SQLITE_LOCKED)) {
+                    return;
                 }
                 if (read != SQLITE_OK) {
                     throw std::runtime_error(readError);
