@@ -22,6 +22,9 @@
 #include <sqlite3.h>
 
 #include <cassert>
+#include <chrono>
+#include <fstream>
+#include <thread>
 #include <filesystem>
 #include <iostream>
 #include <set>
@@ -29,6 +32,7 @@
 #include <vector>
 
 #include "application/ports/progress_reporter.hpp"
+#include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -42,10 +46,11 @@ namespace
 
 struct QuietReporter : seabass::application::ProgressReporter
 {
+    std::vector<std::string> warnings;
     void start(const std::string &, size_t) override {}
     void tick(size_t) override {}
     void finish() override {}
-    void warn(const std::string &) override {}
+    void warn(const std::string &message) override { warnings.push_back(message); }
 };
 
 void exec(sqlite3 *db, const std::string &sql)
@@ -119,6 +124,9 @@ int main()
     assert(seabass::infrastructure::hasPendingJournal(crashedDb) && "the copied journal is live");
 
     const fs::path recovered = seabass::infrastructure::paths::localRoot() / "recovered";
+    if (fs::exists(recovered) && !fs::is_directory(recovered)) {
+        fs::remove(recovered);  // case 4's stand-in, left by a run that stopped there
+    }
     const std::set<std::string> keptBefore = entriesOf(recovered);
 
     // 1. Read as it was before the transaction.
@@ -181,6 +189,77 @@ int main()
         assert(!seabass::infrastructure::hasPendingJournal(againDb) && "recovered before the artwork read");
         assert(entriesOf(recovered).size() == 1 && "and a copy kept first");
         std::cout << "case 3 (the artwork stage recovers a pending journal before it reads) OK\n";
+    }
+
+    // 4. A journal that cannot be put back fails the artwork stage alone:
+    //    it warns, and the rest of the catalog's last stage still runs.
+    {
+        const fs::path stuck = scratch / "stuck" / "Engine Library";
+        fs::remove_all(stuck.parent_path(), ec);
+        fs::create_directories(stuck.parent_path());
+        fs::copy(source, stuck, fs::copy_options::recursive);
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(live / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        exec(db, "PRAGMA journal_mode=DELETE");
+        exec(db, "PRAGMA cache_size=1");
+        exec(db, "PRAGMA cache_spill=1");
+        exec(db, "BEGIN");
+        exec(db, "UPDATE Track SET title = 'INTERRUPTED', path = hex(randomblob(400))");
+        fs::copy_file(live / "Database2" / "m.db", stuck / "Database2" / "m.db", fs::copy_options::overwrite_existing);
+        fs::copy_file(live / "Database2" / "m.db-journal", stuck / "Database2" / "m.db-journal",
+                      fs::copy_options::overwrite_existing);
+        exec(db, "ROLLBACK");
+        sqlite3_close(db);
+        // No copy can be kept, so nothing is rolled back.
+        fs::remove_all(recovered, ec);
+        std::ofstream(recovered) << "a file where the folder should be";
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(stuck));
+        reader.setProgressReporter(reporter);
+        std::vector<seabass::domain::Track> none;
+        reader.fillArtwork(none);
+        assert(reporter.warnings.size() == 1);
+        assert(seabass::infrastructure::hasPendingJournal(stuck / "Database2" / "m.db") && "left as it was");
+        fs::remove(recovered, ec);
+        std::cout << "case 4 (a journal that cannot be put back fails the artwork stage alone) OK\n";
+    }
+
+    // 5. A save of another connection that holds the database while it
+    //    writes leaves a journal with a live header too. That is waited
+    //    out, not taken for a pulled stick's leftover: nothing is copied
+    //    and nothing is rolled back.
+    {
+        const fs::path busy = scratch / "busy" / "Engine Library";
+        fs::remove_all(busy.parent_path(), ec);
+        fs::create_directories(busy.parent_path());
+        fs::copy(source, busy, fs::copy_options::recursive);
+        fs::remove_all(recovered, ec);
+        sqlite3 *writer = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(busy / "Database2" / "m.db").c_str(), &writer) == SQLITE_OK);
+        exec(writer, "PRAGMA journal_mode=DELETE");
+        exec(writer, "PRAGMA cache_size=1");
+        exec(writer, "PRAGMA cache_spill=1");
+        exec(writer, "BEGIN");
+        exec(writer, "UPDATE Track SET title = 'SAVED', path = hex(randomblob(400))");
+        assert(seabass::infrastructure::hasPendingJournal(busy / "Database2" / "m.db"));
+        std::thread commit([writer] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            sqlite3_exec(writer, "COMMIT", nullptr, nullptr, nullptr);
+        });
+        bool threw = false;
+        try {
+            seabass::infrastructure::engine::recoverEnginePendingJournals(seabass::pathToUtf8(busy));
+        } catch (const std::exception &e) {
+            std::cerr << "recovery threw: " << e.what() << "\n";
+            threw = true;
+        }
+        commit.join();
+        sqlite3_close(writer);
+        assert(!threw);
+        assert(entriesOf(recovered).empty() && "a save in progress is not copied as a pulled stick's leftover");
+        const auto tracks = readAll(busy);
+        assert(!tracks.empty() && tracks.front().title == "SAVED" && "and the save it waited for stands");
+        std::cout << "case 5 (a save in progress is waited out, not rolled back) OK\n";
     }
 
     fs::remove_all(scratch, ec);

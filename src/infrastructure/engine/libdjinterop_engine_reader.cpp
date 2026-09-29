@@ -537,11 +537,12 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 
 void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
 {
-    // Its own read-only open, maybe long after readTracks(): a journal a
-    // pulled stick left is recovered first here too.
-    recoverEnginePendingJournals(m_engineLibraryPath);
     std::unordered_map<int64_t, std::string> stored;
     try {
+        // Its own read-only open, maybe long after readTracks(): a journal
+        // a pulled stick left is recovered first here too. One that cannot
+        // be costs the covers, not the rest of the stage this runs in.
+        recoverEnginePendingJournals(m_engineLibraryPath);
         stored = readStoredArtwork(m_engineLibraryPath, m_cancel);
     } catch (const application::OperationCancelled &) {
         throw;
