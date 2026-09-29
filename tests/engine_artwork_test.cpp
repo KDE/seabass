@@ -1032,6 +1032,69 @@ int main(int argc, char **argv)
         std::cout << "case 20 (a GIF or WebP kept in the database is never written over) OK\n";
     }
 
+    // 21. A library whose schema predates 3.0.2 keeps its covers in the
+    //     database, so a repair there gives a track a row of that kind: a
+    //     text hash and the image in albumArt, and no file under Artwork/,
+    //     which its players do not read. The hash is spelled the way
+    //     Engine's own rows appear to be: lowercase hex of a SHA-1 of the
+    //     image, without leading zeros (inferred from one untouched JPEG in
+    //     a 4.5.0 library). From 3.0.2 on, a repair writes a file as before.
+    {
+        const auto schema = [](Fixture &fixture, int minor, int patch) {
+            sqlite3 *db = fixture.open();
+            exec(db, "CREATE TABLE Information (id INTEGER PRIMARY KEY, uuid TEXT, schemaVersionMajor INTEGER, "
+                     "schemaVersionMinor INTEGER, schemaVersionPatch INTEGER);");
+            exec(db, "INSERT INTO Information VALUES (1, 'u', 3, " + std::to_string(minor) + ", " + std::to_string(patch)
+                         + ");");
+            exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (1, NULL, NULL), (5, NULL, NULL);");
+            exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Asked', 'A', 5);");
+            exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (2, 'Also', 'B', 5);");
+            sqlite3_close(db);
+        };
+        const std::string tags = jpeg("ZERO-0");  // SHA-1 027faee4c127397d313b9b26b711d09a7c0eae79
+        const auto reader = [&tags](const ArtworkEntry &) { return tags; };
+        const auto probe = [](const ArtworkEntry &) { return true; };
+
+        Fixture older(seabass::testing::scratchRoot() / "seabass_engine_artwork_schema_301");
+        schema(older, 0, 1);
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(older.library), {}, probe);
+        assert(audit.repairable() == 2);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(older.library), audit.unreadable, {}, {}, reader);
+        assert(repair.error.empty());
+        assert(repair.repaired == 2);
+        assert(repair.filesWritten.empty());
+        assert(fs::is_empty(older.library / "Artwork"));
+        sqlite3 *db = older.open();
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(db, "SELECT DISTINCT a.id, typeof(a.hash), a.hash, a.albumArt FROM Track t "
+                                      "JOIN AlbumArt a ON a.id = t.albumArtId;",
+                                  -1, &stmt, nullptr)
+               == SQLITE_OK);
+        assert(sqlite3_step(stmt) == SQLITE_ROW);
+        assert(std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1))) == "text");
+        assert(std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 2)))
+               == "27faee4c127397d313b9b26b711d09a7c0eae79");
+        assert(std::string(static_cast<const char *>(sqlite3_column_blob(stmt, 3)),
+                           static_cast<size_t>(sqlite3_column_bytes(stmt, 3)))
+               == tags);
+        assert(sqlite3_step(stmt) == SQLITE_DONE);  // both tracks share the one new row
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        const ArtworkAudit after = auditArtwork(pathToUtf8(older.library), {}, probe);
+        assert(after.readableByAPlayer == 2 && after.unreadable.empty());
+
+        Fixture newer(seabass::testing::scratchRoot() / "seabass_engine_artwork_schema_302");
+        schema(newer, 0, 2);
+        const ArtworkAudit newerAudit = auditArtwork(pathToUtf8(newer.library), {}, probe);
+        const ArtworkRepair newerRepair = repairArtwork(pathToUtf8(newer.library), newerAudit.unreadable, {}, {}, reader);
+        assert(newerRepair.error.empty() && newerRepair.repaired == 2);
+        assert(newerRepair.filesWritten.size() == 1);
+        db = newer.open();
+        assert(hashOf(db, 1).size() == 20);  // a blob hash naming the file
+        sqlite3_close(db);
+        std::cout << "case 21 (a library before schema 3.0.2 is repaired in its own storage) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }

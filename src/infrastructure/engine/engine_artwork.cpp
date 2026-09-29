@@ -64,6 +64,111 @@ bool isImageARepairCanName(const fs::path &file)
     return !extensionForImage(std::string_view(head.data(), static_cast<size_t>(in.gcount()))).empty();
 }
 
+// SHA-1 (FIPS 180-4), for the one place it is needed: naming a cover the
+// way Engine names the images it keeps in the database.
+std::array<std::uint8_t, 20> sha1(std::string_view data)
+{
+    std::uint32_t h[5] = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};
+    std::string message(data);
+    const std::uint64_t bits = static_cast<std::uint64_t>(data.size()) * 8;
+    message.push_back(static_cast<char>(0x80));
+    while (message.size() % 64 != 56) {
+        message.push_back('\0');
+    }
+    for (int i = 7; i >= 0; --i) {
+        message.push_back(static_cast<char>((bits >> (i * 8)) & 0xFF));
+    }
+    const auto rotl = [](std::uint32_t x, int n) { return (x << n) | (x >> (32 - n)); };
+    for (size_t chunk = 0; chunk < message.size(); chunk += 64) {
+        std::uint32_t w[80];
+        for (int i = 0; i < 16; ++i) {
+            const auto byte = [&](int k) {
+                return static_cast<std::uint32_t>(static_cast<unsigned char>(message[chunk + 4 * i + k]));
+            };
+            w[i] = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3);
+        }
+        for (int i = 16; i < 80; ++i) {
+            w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        }
+        std::uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; ++i) {
+            std::uint32_t f, k;
+            if (i < 20) {
+                f = (b & c) | (~b & d);
+                k = 0x5A827999;
+            } else if (i < 40) {
+                f = b ^ c ^ d;
+                k = 0x6ED9EBA1;
+            } else if (i < 60) {
+                f = (b & c) | (b & d) | (c & d);
+                k = 0x8F1BBCDC;
+            } else {
+                f = b ^ c ^ d;
+                k = 0xCA62C1D6;
+            }
+            const std::uint32_t temp = rotl(a, 5) + f + e + k + w[i];
+            e = d;
+            d = c;
+            c = rotl(b, 30);
+            b = a;
+            a = temp;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+    }
+    std::array<std::uint8_t, 20> digest{};
+    for (int i = 0; i < 5; ++i) {
+        for (int k = 0; k < 4; ++k) {
+            digest[static_cast<size_t>(4 * i + k)] = static_cast<std::uint8_t>(h[i] >> (24 - 8 * k));
+        }
+    }
+    return digest;
+}
+
+// The text hash Engine appears to give an image it keeps in the database:
+// lowercase hex of a SHA-1 of its bytes, leading zeros dropped. Inferred,
+// not documented: it matches the one untouched JPEG in a 4.5.0 library,
+// while the others there were re-encoded after hashing.
+std::string databaseImageHash(std::string_view image)
+{
+    static constexpr char Hex[] = "0123456789abcdef";
+    std::string hex;
+    for (const std::uint8_t byte : sha1(image)) {
+        hex += Hex[byte >> 4];
+        hex += Hex[byte & 0x0F];
+    }
+    const auto first = hex.find_first_not_of('0');
+    return first == std::string::npos ? std::string("0") : hex.substr(first);
+}
+
+// Whether the library keeps its covers in the database: schema 3.0.1 and
+// earlier do (libdjinterop's maintainer, and the schemas themselves); from
+// 3.0.2 on they are files under Artwork/. A library without the version, or
+// without an image column, is taken for the file kind.
+bool keepsCoversInDatabase(sqlite3 *handle, bool hasImageColumn)
+{
+    if (!hasImageColumn) {
+        return false;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    bool older = false;
+    if (sqlite3_prepare_v2(handle,
+                           "SELECT schemaVersionMajor, schemaVersionMinor, schemaVersionPatch FROM Information "
+                           "ORDER BY id LIMIT 1;",
+                           -1, &stmt, nullptr)
+            == SQLITE_OK
+        && sqlite3_step(stmt) == SQLITE_ROW) {
+        const std::array<std::int64_t, 3> version = {sqlite3_column_int64(stmt, 0), sqlite3_column_int64(stmt, 1),
+                                                     sqlite3_column_int64(stmt, 2)};
+        older = version < std::array<std::int64_t, 3>{3, 0, 2};
+    }
+    sqlite3_finalize(stmt);
+    return older;
+}
+
 std::string readWholeFile(const fs::path &file)
 {
     std::ifstream in(file, std::ios::binary);
@@ -579,6 +684,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         return fail(e.what());
     }
     const std::string imageLength = hasImageColumn ? byteLengthSql("a.albumArt") : "0";
+    const bool coversInDatabase = keepsCoversInDatabase(handle, hasImageColumn);
 
     // beforeWrite is SaveContext::protectForThisChange, which throws when
     // it cannot copy a file aside (no temporary space, say). Uncaught it
@@ -705,58 +811,96 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 result.notAnImage++;
                 continue;  // neither JPEG nor PNG: nothing a player is promised to read
             }
-            const auto full = hashing::Sha256::of(std::as_bytes(std::span(bytes)));
-            // 20 bytes, the width Engine's own rows use.
-            const std::span<const std::uint8_t> hash(full.data(), 20);
-            const std::string name = artworkFileName(hash);
-            const fs::path destination = artwork / pathFromUtf8(name + extension);
-            // Not "is it there" but "is it an image": an empty file at
-            // the right name is exactly what this repair exists to fix,
-            // and skipping it because something is there would write the
-            // row, report success, and leave the player showing nothing.
-            if (!fs::is_regular_file(destination, ec) || !isImageARepairCanName(destination)) {
-                if (beforeWrite) {
-                    beforeWrite(pathToUtf8(destination));
-                }
-                // Durably, like every other write onto a stick: a bare
-                // ofstream leaves the bytes in the write-back cache, and a
-                // stick pulled after the save said Done would leave a
-                // truncated file sitting at exactly the name the audit
-                // looks for. The track would then count as readable from
-                // then on, the page would call the library healthy, the
-                // player would show a broken cover, and no rescan could
-                // ever surface it -- worse than not having copied it.
-                const std::string destinationUtf8 = pathToUtf8(destination);
-                if (!writeFileDurablyAtomic(destinationUtf8, bytes)) {
-                    return fail("could not write " + destinationUtf8);
-                }
-                result.filesWritten.push_back(destinationUtf8);
-            }
-
             std::int64_t albumArtId = 0;
-            sqlite3_stmt *find = nullptr;
-            if (sqlite3_prepare_v2(handle, "SELECT id FROM AlbumArt WHERE hash = ?;", -1, &find, nullptr) != SQLITE_OK) {
-                return fail(std::string("could not look up the art row: ") + sqlite3_errmsg(handle));
-            }
-            sqlite3_bind_blob(find, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
-            if (sqlite3_step(find) == SQLITE_ROW) {
-                albumArtId = sqlite3_column_int64(find, 0);
-            }
-            sqlite3_finalize(find);
-
-            if (albumArtId == 0) {
-                sqlite3_stmt *insert = nullptr;
-                if (sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (hash) VALUES (?);", -1, &insert,
-                                       nullptr) != SQLITE_OK) {
-                    return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+            if (coversInDatabase) {
+                // The library's own kind of row: a text hash and the image
+                // in it, found again by that hash when a second track has
+                // the same cover.
+                const std::string textHash = databaseImageHash(bytes);
+                sqlite3_stmt *find = nullptr;
+                if (sqlite3_prepare_v2(handle,
+                                       "SELECT id FROM AlbumArt WHERE typeof(hash) = 'text' AND hash = ? AND "
+                                       "albumArt = ?;",
+                                       -1, &find, nullptr)
+                    != SQLITE_OK) {
+                    return fail(std::string("could not look up the art row: ") + sqlite3_errmsg(handle));
                 }
-                sqlite3_bind_blob(insert, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
-                if (sqlite3_step(insert) != SQLITE_DONE) {
+                sqlite3_bind_text(find, 1, textHash.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_blob(find, 2, bytes.data(), static_cast<int>(bytes.size()), SQLITE_TRANSIENT);
+                if (sqlite3_step(find) == SQLITE_ROW) {
+                    albumArtId = sqlite3_column_int64(find, 0);
+                }
+                sqlite3_finalize(find);
+                if (albumArtId == 0) {
+                    sqlite3_stmt *insert = nullptr;
+                    if (sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (hash, albumArt) VALUES (?, ?);", -1, &insert,
+                                           nullptr)
+                        != SQLITE_OK) {
+                        return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+                    }
+                    sqlite3_bind_text(insert, 1, textHash.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_blob(insert, 2, bytes.data(), static_cast<int>(bytes.size()), SQLITE_TRANSIENT);
+                    if (sqlite3_step(insert) != SQLITE_DONE) {
+                        sqlite3_finalize(insert);
+                        return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+                    }
                     sqlite3_finalize(insert);
-                    return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+                    albumArtId = sqlite3_last_insert_rowid(handle);
                 }
-                sqlite3_finalize(insert);
-                albumArtId = sqlite3_last_insert_rowid(handle);
+            } else {
+                const auto full = hashing::Sha256::of(std::as_bytes(std::span(bytes)));
+                // 20 bytes, the width Engine's own rows use.
+                const std::span<const std::uint8_t> hash(full.data(), 20);
+                const std::string name = artworkFileName(hash);
+                const fs::path destination = artwork / pathFromUtf8(name + extension);
+                // Not "is it there" but "is it an image": an empty file at
+                // the right name is exactly what this repair exists to fix,
+                // and skipping it because something is there would write the
+                // row, report success, and leave the player showing nothing.
+                if (!fs::is_regular_file(destination, ec) || !isImageARepairCanName(destination)) {
+                    if (beforeWrite) {
+                        beforeWrite(pathToUtf8(destination));
+                    }
+                    // Durably, like every other write onto a stick: a bare
+                    // ofstream leaves the bytes in the write-back cache, and a
+                    // stick pulled after the save said Done would leave a
+                    // truncated file sitting at exactly the name the audit
+                    // looks for. The track would then count as readable from
+                    // then on, the page would call the library healthy, the
+                    // player would show a broken cover, and no rescan could
+                    // ever surface it -- worse than not having copied it.
+                    const std::string destinationUtf8 = pathToUtf8(destination);
+                    if (!writeFileDurablyAtomic(destinationUtf8, bytes)) {
+                        return fail("could not write " + destinationUtf8);
+                    }
+                    result.filesWritten.push_back(destinationUtf8);
+                }
+
+                sqlite3_stmt *find = nullptr;
+                if (sqlite3_prepare_v2(handle, "SELECT id FROM AlbumArt WHERE hash = ?;", -1, &find, nullptr)
+                    != SQLITE_OK) {
+                    return fail(std::string("could not look up the art row: ") + sqlite3_errmsg(handle));
+                }
+                sqlite3_bind_blob(find, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
+                if (sqlite3_step(find) == SQLITE_ROW) {
+                    albumArtId = sqlite3_column_int64(find, 0);
+                }
+                sqlite3_finalize(find);
+
+                if (albumArtId == 0) {
+                    sqlite3_stmt *insert = nullptr;
+                    if (sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (hash) VALUES (?);", -1, &insert,
+                                           nullptr) != SQLITE_OK) {
+                        return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+                    }
+                    sqlite3_bind_blob(insert, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
+                    if (sqlite3_step(insert) != SQLITE_DONE) {
+                        sqlite3_finalize(insert);
+                        return fail(std::string("could not add the art row: ") + sqlite3_errmsg(handle));
+                    }
+                    sqlite3_finalize(insert);
+                    albumArtId = sqlite3_last_insert_rowid(handle);
+                }
             }
 
             sqlite3_stmt *point = nullptr;
