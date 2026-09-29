@@ -212,11 +212,104 @@ reuse:
 
 # macOS, both architectures. Neither had a local override before, so
 # both ran on every push from the Craft template's own default.
+#
+# The after_script keeps each Craft root's install.db, which
+# macos:universal below compares, before the template's own after_script
+# deletes the root. It is named after the pipeline so that a copy left in
+# the Mac's shared build directory by another pipeline can never be read
+# as this one's.
+.craft_macos_keep_install_db: &craft_macos_keep_install_db
+  after_script:
+    - mkdir -p kde-ci-craft
+    - cp -f "$KDECI_CRAFT_PLATFORM/etc/blueprints/install.db" "kde-ci-craft/$CI_PIPELINE_IID-$KDECI_CRAFT_PLATFORM-install.db" || echo "no install.db to keep"
+    - !reference [.craft_macos_base, after_script]
+  artifacts:
+    paths:
+      - "kde-ci-packages/"
+      - "kde-ci-logs/"
+      - "kde-ci-craft/"
+
 craft_macos_qt6_arm64:
   rules: *craft_lane_rules
+  <<: *craft_macos_keep_install_db
 
 craft_macos_qt6_x86_64:
   rules: *craft_lane_rules
+  <<: *craft_macos_keep_install_db
+
+# One universal .dmg from the two halves above, signed and notarised.
+#
+# Signing happens after the merge because lipo invalidates the halves'
+# signatures. The same ci-notary-service clients the template uses sign
+# the merged .app and the .dmg, and notarise the .dmg. The service clears
+# a signing request by project and ref, so this is offered only on the
+# Seabass/X.Y branches listed for signing and notarisation in
+# sysadmin/ci-utilities, and only where the secure services key reaches.
+# Tags get neither the key nor a listing, so a tag pipeline cannot sign.
+#
+# A button, never automatic: it runs on KDE's one macOS machine, and only
+# after both halves have been built in the same pipeline.
+macos:universal:
+  stage: deploy
+  tags:
+    - macOS
+  needs:
+    - job: craft_macos_qt6_arm64
+      artifacts: true
+    - job: craft_macos_qt6_x86_64
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^Seabass\/[0-9]+\.[0-9]+$/ && $KDECI_SECURE_SERVICES_KEY'
+      when: manual
+      allow_failure: true
+  variables:
+    # As in the Craft jobs: this runner shares one build directory, and the
+    # halves' artifacts are unpacked into it before any script runs.
+    GIT_STRATEGY: none
+  before_script:
+    - rm -rf src ci-utilities ci-notary-service kde-ci-universal fixture-stick
+    - git clone https://invent.kde.org/sysadmin/ci-utilities.git --depth=1
+    - git clone https://invent.kde.org/sysadmin/ci-notary-service.git --depth=1
+    - python3 -u ci-utilities/gitlab-ci-clone.py src/
+  script:
+    - |
+      if /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+        echo "Rosetta: present, both slices will be executed"
+      else
+        echo "Rosetta: ABSENT, the x86_64 slice cannot be executed on this runner"
+      fi
+    - |
+      pick() {
+        # shellcheck disable=SC2086 # unquoted on purpose: the pattern is globbed
+        set -- $1
+        if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+          echo "expected exactly one match, found: $*" >&2
+          return 1
+        fi
+        echo "$1"
+      }
+      arm_dmg="$(pick "kde-ci-packages/*-$CI_PIPELINE_IID-macos-clang-arm64.dmg")" || exit 1
+      intel_dmg="$(pick "kde-ci-packages/*-$CI_PIPELINE_IID-macos-clang-x86_64.dmg")" || exit 1
+      arm_db="$(pick "kde-ci-craft/$CI_PIPELINE_IID-macos-arm-clang-install.db")" || exit 1
+      intel_db="$(pick "kde-ci-craft/$CI_PIPELINE_IID-macos-64-clang-install.db")" || exit 1
+      mkdir kde-ci-universal
+      SEABASS_SIGN_COMMAND="python3 ci-notary-service/signmacapp.py -v --config ci-utilities/signing/signmacapp.ini" \
+      SEABASS_NOTARIZE_COMMAND="python3 ci-notary-service/notarizemacapp.py -v --config ci-utilities/signing/notarizemacapp.ini" \
+        src/tools/macos-universal-dmg.sh --from-dmgs "$arm_dmg" "$intel_dmg" "$arm_db" "$intel_db" \
+          "kde-ci-universal/seabass-$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID-macos-universal.dmg"
+    # The same read-only check a release gets on a Mac, against the committed
+    # fixture laid out as a stick: both slices read the encrypted OneLibrary.
+    - mkdir fixture-stick
+    - cp -R src/tests/fixtures/anonymized_library/rekordbox fixture-stick/PIONEER
+    - cp -R src/tests/fixtures/anonymized_library/engine "fixture-stick/Engine Library"
+    - src/tools/macos-verify-dmg.sh kde-ci-universal/*.dmg fixture-stick
+  after_script:
+    - rm -rf src ci-utilities ci-notary-service fixture-stick
+  artifacts:
+    expire_in: 1 week
+    when: always
+    paths:
+      - "kde-ci-universal/"
 
 
 
