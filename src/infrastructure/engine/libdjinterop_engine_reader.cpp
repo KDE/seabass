@@ -575,9 +575,7 @@ LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath
 
 std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 {
-    auto tracks = readTracks();
-    fillArtwork(tracks);
-    return tracks;
+    return readTracks();
 }
 
 void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)

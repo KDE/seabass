@@ -39,8 +39,9 @@ public:
     // names, whether or not the file is still there. fillArtwork() adds
     // the covers that take more: an image file under Artwork/, looked for
     // on the stick, and an image kept inside the database, written out
-    // once to paths::localEngineArtworkDir() on this computer. readAll()
-    // is the two.
+    // once to paths::localEngineArtworkDir() on this computer. Only for a
+    // caller that shows covers (the catalog cache's Full stage): readAll()
+    // is readTracks() alone, as the checks and tools that call it want.
     std::vector<domain::Track> readAll() override;
     std::vector<domain::Track> readTracks() override;
     void fillArtwork(std::vector<domain::Track> &tracks) override;

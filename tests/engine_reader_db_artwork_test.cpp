@@ -69,7 +69,9 @@ std::map<std::string, std::string> artworkBySourceId(const std::string &library)
     seabass::infrastructure::engine::LibdjinteropEngineReader reader(library);
     reader.setProgressReporter(reporter);
     std::map<std::string, std::string> result;
-    for (const auto &track : reader.readAll()) {
+    auto tracks = reader.readTracks();
+    reader.fillArtwork(tracks);
+    for (const auto &track : tracks) {
         result[track.sourceId] = track.artworkPath;
     }
     return result;
@@ -470,6 +472,20 @@ int main()
         assert(seabass::pathToUtf8(seabass::pathFromUtf8(read.at("8")).filename()) == expected);
         assert(slurp(read.at("8")) == pngImage);
         std::cout << "case 14 (an image beside a blob hash is named by that hash) OK\n";
+    }
+
+    // 16. Covers are the artwork stage's alone: a whole read (the command
+    //     line, restore checks, the anonymization verifier) names what the
+    //     catalog holds and writes nothing out.
+    {
+        fs::remove_all(cache, ec);
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(library));
+        reader.setProgressReporter(reporter);
+        const auto tracks = reader.readAll();
+        assert(!tracks.empty());
+        assert(!fs::exists(cache) || fs::is_empty(cache));
+        std::cout << "case 16 (a whole read writes no covers out) OK\n";
     }
 
     fs::remove_all(library.parent_path(), ec);

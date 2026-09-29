@@ -38,7 +38,8 @@ public:
     virtual void fillCues(std::vector<domain::Track> &) {}
     // The covers that cost more than the catalog to name (Engine's image
     // files, and images kept inside its database). Run with the sizes, in
-    // the last stage, so neither the list nor its cues wait for them.
+    // the last stage, so neither the list nor its cues wait for them, and
+    // only by a caller that shows covers: readAll() leaves them out.
     virtual void fillArtwork(std::vector<domain::Track> &) {}
 
     void setProgressReporter(ProgressReporter &reporter) { m_progress = &reporter; }
