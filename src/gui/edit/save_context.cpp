@@ -120,6 +120,9 @@ infrastructure::backup::FilesystemBackupStore &SaveContext::archiveStore()
 
 std::uint64_t SaveContext::releaseAutomaticBackupsIfTight()
 {
+    if (m_spaceForTesting) {
+        return releaseAutomaticBackupsIfTight(*m_spaceForTesting);
+    }
     return releaseAutomaticBackupsIfTight(infrastructure::backup::measureStickSpace(pathFromUtf8(stickRoot())));
 }
 
