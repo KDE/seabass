@@ -144,19 +144,35 @@ std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<con
     return {};
 }
 
-std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId)
+AlbumArtImageHeads::~AlbumArtImageHeads()
 {
-    sqlite3_blob *blob = nullptr;
-    if (sqlite3_blob_open(handle, "main", "AlbumArt", "albumArt", albumArtId, 0, &blob) != SQLITE_OK) {
-        sqlite3_blob_close(blob);
+    sqlite3_blob_close(m_blob);
+}
+
+std::string AlbumArtImageHeads::of(std::int64_t albumArtId)
+{
+    // One handle moved from row to row: opening one per row costs a
+    // statement's worth of work each time.
+    const bool positioned = m_blob != nullptr
+        ? sqlite3_blob_reopen(m_blob, albumArtId) == SQLITE_OK
+        : sqlite3_blob_open(m_handle, "main", "AlbumArt", "albumArt", albumArtId, 0, &m_blob) == SQLITE_OK;
+    if (!positioned) {
+        // A failed reopen leaves the handle unusable; the next row opens
+        // a fresh one.
+        sqlite3_blob_close(m_blob);
+        m_blob = nullptr;
         return {};
     }
-    std::string head(static_cast<size_t>(std::min(sqlite3_blob_bytes(blob), 8)), '\0');
-    if (sqlite3_blob_read(blob, head.data(), static_cast<int>(head.size()), 0) != SQLITE_OK) {
+    std::string head(static_cast<size_t>(std::min(sqlite3_blob_bytes(m_blob), 8)), '\0');
+    if (sqlite3_blob_read(m_blob, head.data(), static_cast<int>(head.size()), 0) != SQLITE_OK) {
         head.clear();
     }
-    sqlite3_blob_close(blob);
     return head;
+}
+
+std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId)
+{
+    return AlbumArtImageHeads(handle).of(albumArtId);
 }
 
 ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type)
@@ -245,28 +261,41 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         return audit;
     }
 
+    // One read transaction for the row list and the tracks below, so both
+    // see the same state of a database a save may be writing.
+    sqlite3_busy_timeout(handle, 5000);
+    if (sqlite3_exec(handle, "BEGIN;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        audit.error = std::string("could not begin reading the database: ") + sqlite3_errmsg(handle);
+        sqlite3_close(handle);
+        return audit;
+    }
+
     // The first bytes of every image kept in the database, once per row
-    // rather than once per track pointing at it.
+    // rather than once per track pointing at it, through one blob handle.
     std::unordered_map<std::int64_t, std::string> imageHeadByRow;
     if (hasImageColumn) {
         sqlite3_stmt *images = nullptr;
         const std::string listSql = "SELECT id FROM AlbumArt WHERE " + byteLengthSql("albumArt") + " > 0;";
-        if (sqlite3_prepare_v2(handle, listSql.c_str(), -1, &images, nullptr)
-            != SQLITE_OK) {
+        if (sqlite3_prepare_v2(handle, listSql.c_str(), -1, &images, nullptr) != SQLITE_OK) {
             audit.error = std::string("could not read the AlbumArt table: ") + sqlite3_errmsg(handle);
             sqlite3_close(handle);
             return audit;
         }
         std::vector<std::int64_t> rows;
-        while (sqlite3_step(images) == SQLITE_ROW) {
+        int step;
+        while ((step = sqlite3_step(images)) == SQLITE_ROW) {
             rows.push_back(sqlite3_column_int64(images, 0));
         }
         sqlite3_finalize(images);
-        images = nullptr;
-        for (const std::int64_t row : rows) {
-            imageHeadByRow[row] = albumArtImageHead(handle, row);
+        if (step != SQLITE_DONE) {
+            audit.error = std::string("could not read the AlbumArt table: ") + sqlite3_errmsg(handle);
+            sqlite3_close(handle);
+            return audit;
         }
-        sqlite3_finalize(images);
+        AlbumArtImageHeads heads(handle);
+        for (const std::int64_t row : rows) {
+            imageHeadByRow[row] = heads.of(row);
+        }
     }
 
     sqlite3_stmt *stmt = nullptr;
@@ -447,6 +476,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         }
     }
     sqlite3_finalize(stmt);
+    sqlite3_exec(handle, "COMMIT;", nullptr, nullptr, nullptr);
     sqlite3_close(handle);
 
     std::stable_partition(audit.unreadable.begin(), audit.unreadable.end(),
