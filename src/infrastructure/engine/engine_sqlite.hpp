@@ -39,4 +39,14 @@ inline bool hasColumn(sqlite3 *handle, std::string_view table, std::string_view 
     return found;
 }
 
+// SQL for the size in bytes of an image column. length() counts a text
+// value in characters, up to its first NUL, and casting to a blob loads
+// the whole value, so the cast is taken for text alone and a blob keeps
+// SQLite's cheap length.
+inline std::string byteLengthSql(std::string_view column)
+{
+    const std::string c(column);
+    return "(CASE typeof(" + c + ") WHEN 'text' THEN length(CAST(" + c + " AS BLOB)) ELSE length(" + c + ") END)";
+}
+
 }  // namespace seabass::infrastructure::engine
