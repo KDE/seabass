@@ -318,6 +318,36 @@ Page {
         return m + ":" + (s < 10 ? "0" : "") + s;
     }
 
+    // The sortable columns' widths, one number each for the header and the
+    // rows under it: the column's own minimum, or what its header needs for
+    // its label and the sort arrow after it in the font in use, whichever
+    // is more. They were bare pixel counts tuned to one platform's font
+    // ("Plays is 60, not 50"), so on Windows, whose header font is wider,
+    // "BPM" was cut short beside its arrow. The minimums stay the pixel
+    // counts they were: where a header fits, nothing moves, and the
+    // page's column tiers (browseTier) are laid out against them.
+    //
+    // Measured with TextMetrics in TableHeaderLabel's own font, not with
+    // hidden labels: an Item among the Page's children, visible or not,
+    // changes how the Page sizes its content, and the list came out wide
+    // enough for the full column tier on a page too narrow for it.
+    readonly property real sortIndicatorRoom: Theme.iconSizeSmall * 0.5 + Theme.scaled(1)  // see SortableTableHeader
+    readonly property font sortHeaderFont: Qt.font({family: Theme.dataFamily, pointSize: Theme.tableHeaderSize,
+                                                    letterSpacing: 0.6})  // see TableHeaderLabel
+    function sortColumnWidth(measure, minimum) {
+        return Math.ceil(Math.max(minimum, measure.advanceWidth + root.sortIndicatorRoom));
+    }
+    TextMetrics { id: keyHeaderMeasure; font: root.sortHeaderFont; text: "KEY" }
+    TextMetrics { id: bpmHeaderMeasure; font: root.sortHeaderFont; text: "BPM" }
+    TextMetrics { id: timeHeaderMeasure; font: root.sortHeaderFont; text: "TIME" }
+    TextMetrics { id: cuesHeaderMeasure; font: root.sortHeaderFont; text: "CUES" }
+    TextMetrics { id: playsHeaderMeasure; font: root.sortHeaderFont; text: "PLAYS" }
+    readonly property real keyColumnWidth: sortColumnWidth(keyHeaderMeasure, 50)
+    readonly property real bpmColumnWidth: sortColumnWidth(bpmHeaderMeasure, 50)
+    readonly property real timeColumnWidth: sortColumnWidth(timeHeaderMeasure, 60)
+    readonly property real cuesColumnWidth: sortColumnWidth(cuesHeaderMeasure, 50)
+    readonly property real playsColumnWidth: sortColumnWidth(playsHeaderMeasure, 50)
+
     // One decimal place, but only when there actually is one, "128"
     // reads better than "128.0" for the (very common) case of a whole-
     // number BPM, while a genuinely fractional one (e.g. a half-time
@@ -541,14 +571,12 @@ Page {
                 // The widths are the row delegate's own, column for column.
                 Repeater {
                     model: [
-                        { label: "Key", key: "key", width: 50 },
-                        { label: "BPM", key: "bpm", width: 50 },
-                        { label: "Time", key: "duration", width: 60 },
-                        { label: "Cues", key: "cues", width: 50 },
-                        { label: "Plays", key: "plays", width: 60 },
+                        { label: "Key", key: "key", width: root.keyColumnWidth },
+                        { label: "BPM", key: "bpm", width: root.bpmColumnWidth },
+                        { label: "Time", key: "duration", width: root.timeColumnWidth },
+                        { label: "Cues", key: "cues", width: root.cuesColumnWidth },
+                        { label: "Plays", key: "plays", width: root.playsColumnWidth },
                     ]
-                    // Plays is 60, not 50: its label and the sort arrow
-                    // after it do not fit in 50 at the default font size.
                     delegate: SortableTableHeader {
                         required property var modelData
                         objectName: "sortHeader_" + modelData.key
@@ -813,11 +841,15 @@ Page {
                             keyName: key
                             notation: root.appSettingsController.keyNotation
                         }
-                        Label { visible: root.browseTier >= 2; text: root.formatBpm(bpm); Layout.preferredWidth: 50 }
+                        Label {
+                            visible: root.browseTier >= 2
+                            text: root.formatBpm(bpm)
+                            Layout.preferredWidth: root.bpmColumnWidth
+                        }
                         Label {
                             visible: root.browseTier >= 2
                             text: root.formatDuration(durationSeconds)
-                            Layout.preferredWidth: 60
+                            Layout.preferredWidth: root.timeColumnWidth
                         }
                         // Empty while the cue pass runs, rather than a 0
                         // that would read as "this track has no cues".
@@ -825,12 +857,12 @@ Page {
                             objectName: "cueCountLabel"
                             visible: root.browseTier >= 2
                             text: scanController.cuesPending ? "" : cueCount
-                            Layout.preferredWidth: 50
+                            Layout.preferredWidth: root.cuesColumnWidth
                         }
                         Label {
                             visible: root.browseTier >= 2
                             text: playCount >= 0 ? playCount : "--"
-                            Layout.preferredWidth: 60
+                            Layout.preferredWidth: root.playsColumnWidth
                         }
                         ToolButton {
                             display: AbstractButton.IconOnly
