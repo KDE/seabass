@@ -13,10 +13,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <unordered_map>
 
+#include "application/use_cases/fill_file_sizes.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/hashing/sha256.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 
 namespace seabass::infrastructure::engine
 {
@@ -418,6 +421,38 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     std::stable_partition(audit.unreadable.begin(), audit.unreadable.end(),
                           [](const ArtworkEntry &entry) { return !entry.imageOnStick.empty(); });
     return audit;
+}
+
+std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath)
+{
+    // The copies the reader writes out of the database are on this
+    // computer, not the stick: the images they copy are counted below.
+    const std::string localCopies = pathToUtf8(paths::localEngineArtworkDir());
+    std::uint64_t bytes = 0;
+    std::set<std::string> counted;
+    for (const auto &track : tracks) {
+        if (track.artworkPath.empty() || track.artworkPath.rfind(localCopies, 0) == 0
+            || !counted.insert(track.artworkPath).second) {
+            continue;
+        }
+        bytes += application::fileSizeOnDisk(track.artworkPath).value_or(0);
+    }
+    if (engineLibraryPath.empty()) {
+        return bytes;
+    }
+    sqlite3 *handle = nullptr;
+    if (sqlite3_open_v2(pathToUtf8(databaseFile(engineLibraryPath)).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
+        == SQLITE_OK) {
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(handle, "SELECT coalesce(sum(length(albumArt)), 0) FROM AlbumArt;", -1, &stmt, nullptr)
+                == SQLITE_OK
+            && sqlite3_step(stmt) == SQLITE_ROW) {
+            bytes += static_cast<std::uint64_t>(sqlite3_column_int64(stmt, 0));
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(handle);
+    return bytes;
 }
 
 ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
