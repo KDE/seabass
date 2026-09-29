@@ -607,6 +607,7 @@ private:
     std::set<QString> m_stagedCleanupLeftovers;
     bool m_cleanupLeftoverFixStaged = false;
     infrastructure::engine::RekordboxImportState m_importState;
+    QFutureWatcher<infrastructure::engine::RekordboxImportState> m_importStateWatcher;
     bool m_importMarkStaged = false;
     // A rekordbox repair's OneLibrary mirror can stale another listed
     // issue: re-scan once the save that applied one has finished.
