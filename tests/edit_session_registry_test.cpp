@@ -223,6 +223,12 @@ int main(int argc, char **argv)
         assert(!busy->writing());
         assert(!registry.anyWriting());
         const QVariantMap summary = finished.takeFirst().at(0).toMap();
+        // Said before the assert: this failed once under the full suite
+        // (2026-09-29, 0.8) and passed on every rerun, with nothing to
+        // say which error the save reported.
+        if (!summary.value("error").toString().isEmpty()) {
+            std::cerr << "the save reported: " << summary.value("error").toString().toStdString() << "\n";
+        }
         assert(summary.value("error").toString().isEmpty());
         assert(summary.value("written").toInt() == 1);
         std::cout << "case 5 (anyWriting follows a running save, not the idle session beside it) OK\n";
