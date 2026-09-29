@@ -213,7 +213,7 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 
     sqlite3_stmt *stmt = nullptr;
     const char *sql =
-        "SELECT t.id, a.hash, a.id, length(a.albumArt) FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+        "SELECT t.id, a.hash FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
         "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
@@ -224,9 +224,6 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
         int64_t trackId = sqlite3_column_int64(stmt, 0);
         const unsigned char *hashText = sqlite3_column_text(stmt, 1);
         std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
-        if (sqlite3_column_int64(stmt, 3) > 0) {
-            continue;  // an image in the row: readStoredArtwork()'s
-        }
         auto pos = hash.find("PIONEER/Artwork");
         if (pos == std::string::npos) {
             continue;
@@ -318,11 +315,17 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         if (known == fileByRow.end()) {
             std::string file;
             try {
-                if (imageInRow) {
+                // An image in the row wins; bytes there that are no image
+                // leave the art to whatever the hash names.
+                const bool blobHash = sqlite3_column_type(stmt, 1) == SQLITE_BLOB;
+                if (imageInRow && !blobHash) {
                     const unsigned char *hashText = sqlite3_column_text(stmt, 1);
                     const std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
                     file = databaseArtworkFile(db, albumArtId, hash, libraryDirectory);
-                } else {
+                } else if (imageInRow) {
+                    file = databaseArtworkFile(db, albumArtId, std::string(), libraryDirectory);
+                }
+                if (file.empty() && blobHash) {
                     const void *blob = sqlite3_column_blob(stmt, 1);
                     const std::span<const std::uint8_t> hash(static_cast<const std::uint8_t *>(blob),
                                                              static_cast<size_t>(sqlite3_column_bytes(stmt, 1)));
