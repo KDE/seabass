@@ -659,8 +659,12 @@ changes are thrown away when asked) and then ends the way `main()` does,
 through `endProcess()`. A save held up by a read that does not answer keeps the
 window open by design; after 10 s the stick answers, after 20 s every
 stick is pulled, as a person would do. The parent wants the process gone
-within a minute with exit code 0, as `async_request_exit_test` does for
-the helper alone.
+within a minute of the walk's end with exit code 0, as
+`async_request_exit_test` does for the helper alone. The minute starts
+when the child says its walk is over, not when it starts: a Windows
+Debug build takes about 75 s to walk the leg's 40 steps and then ends
+2.5 s after it. The walk itself is bounded by
+`SEABASS_STORM_QUIT_WALK_MS` (10 minutes).
 
 **Memory.** Every seed builds and tears down the whole app, and a
 process runs dozens of seeds. A hunt of four processes beside a build
