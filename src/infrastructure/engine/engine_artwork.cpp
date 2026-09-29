@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
@@ -61,21 +62,6 @@ bool isImageARepairCanName(const fs::path &file)
     std::array<char, 8> head{};
     in.read(head.data(), head.size());
     return !extensionForImage(std::string_view(head.data(), static_cast<size_t>(in.gcount()))).empty();
-}
-
-bool hasColumn(sqlite3 *handle, const char *table, const char *column)
-{
-    bool found = false;
-    sqlite3_stmt *columns = nullptr;
-    if (sqlite3_prepare_v2(handle, (std::string("PRAGMA table_info(") + table + ");").c_str(), -1, &columns, nullptr)
-        == SQLITE_OK) {
-        while (!found && sqlite3_step(columns) == SQLITE_ROW) {
-            const unsigned char *name = sqlite3_column_text(columns, 1);
-            found = name != nullptr && std::string_view(reinterpret_cast<const char *>(name)) == column;
-        }
-    }
-    sqlite3_finalize(columns);
-    return found;
 }
 
 std::string readWholeFile(const fs::path &file)
@@ -246,10 +232,18 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     // older or hand-made schema without it must still get its art
     // checked: without the column there is simply no rekordbox track to
     // match, not a failed scan.
-    const bool hasTrackPath = hasColumn(handle, "Track", "path");
+    bool hasTrackPath = false;
     // And a schema whose AlbumArt has no image column keeps no images in
     // the database: its art is all files.
-    const bool hasImageColumn = hasColumn(handle, "AlbumArt", "albumArt");
+    bool hasImageColumn = false;
+    try {
+        hasTrackPath = hasColumn(handle, "Track", "path");
+        hasImageColumn = hasColumn(handle, "AlbumArt", "albumArt");
+    } catch (const std::exception &e) {
+        audit.error = e.what();
+        sqlite3_close(handle);
+        return audit;
+    }
 
     // The first bytes of every image kept in the database, once per row
     // rather than once per track pointing at it.
@@ -517,8 +511,6 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         return result;
     }
 
-    const std::string imageLength = hasColumn(handle, "AlbumArt", "albumArt") ? "length(a.albumArt)" : "0";
-
     auto fail = [&](const std::string &message) {
         sqlite3_exec(handle, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close(handle);
@@ -526,6 +518,14 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         result.repaired = 0;
         return result;
     };
+
+    bool hasImageColumn = false;
+    try {
+        hasImageColumn = hasColumn(handle, "AlbumArt", "albumArt");
+    } catch (const std::exception &e) {
+        return fail(e.what());
+    }
+    const std::string imageLength = hasImageColumn ? "length(a.albumArt)" : "0";
 
     // beforeWrite is SaveContext::protectForThisChange, which throws when
     // it cannot copy a file aside (no temporary space, say). Uncaught it
