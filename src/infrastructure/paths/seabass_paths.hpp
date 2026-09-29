@@ -95,8 +95,9 @@ fs::path localMetadataDir();
 fs::path localBrowsedBackupsDir();
 
 // ~/Seabass/metadata/engine-artwork -- covers an Engine library keeps
-// inside its database, written out as files so they can be shown. Derived
-// data, safe to delete at any time, and never written to the stick.
+// inside its database, written out as files so they can be shown, one
+// directory per library (its Information uuid). Derived data, safe to
+// delete at any time, and never written to the stick.
 fs::path localEngineArtworkDir();
 
 }  // namespace seabass::infrastructure::paths

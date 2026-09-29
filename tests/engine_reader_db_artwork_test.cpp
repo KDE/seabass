@@ -106,7 +106,7 @@ int main()
     assert(seabass::pathFromUtf8(first.at("1")).extension() == ".png");
     assert(seabass::pathFromUtf8(first.at("2")).extension() == ".jpg");
     const fs::path cache = seabass::infrastructure::paths::localEngineArtworkDir();
-    assert(seabass::pathFromUtf8(first.at("1")).parent_path() == cache);
+    assert(seabass::pathFromUtf8(first.at("1")).parent_path().parent_path() == cache);  // one directory per library
     assert(first.at("3").empty());  // bytes no player can draw are not offered as a cover
     std::cout << "case 1 (covers kept in the database are shown) OK\n";
 
@@ -140,6 +140,31 @@ int main()
             }
         }
         std::cout << "case 3 (the track list does not wait for covers kept in the database) OK\n";
+    }
+
+    // 4. Two libraries whose rows carry the same hash over different
+    //    images: each shows its own. The hash is Engine's, not a checksum
+    //    of the bytes, so it names an image only inside one library.
+    {
+        const fs::path other = library.parent_path() / "other" / "Engine Library";
+        fs::create_directories(other.parent_path());
+        fs::copy(source, other, fs::copy_options::recursive);
+        const std::string otherImage = std::string("\x89PNG\r\n\x1a\n", 8) + "ANOTHER-LIBRARY-S-PNG";
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(other / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        setRow(db, 1, "af2f6f87c56583adb67003735089017e2eb03572", otherImage);
+        assert(sqlite3_exec(db, "UPDATE Information SET uuid = '11111111-2222-3333-4444-555555555555';", nullptr,
+                            nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_close(db);
+        const auto mine = artworkBySourceId(seabass::pathToUtf8(library));
+        const auto theirs = artworkBySourceId(seabass::pathToUtf8(other));
+        assert(slurp(mine.at("1")) == pngImage);
+        assert(slurp(theirs.at("1")) == otherImage);
+        // And each still costs a stat the next time.
+        const auto again = artworkBySourceId(seabass::pathToUtf8(other));
+        assert(again.at("1") == theirs.at("1"));
+        std::cout << "case 4 (two libraries with the same hash keep their own covers) OK\n";
     }
 
     fs::remove_all(library.parent_path(), ec);
