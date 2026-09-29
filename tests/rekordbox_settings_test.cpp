@@ -151,7 +151,11 @@ int main()
             ofs.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         }
         bool found = false;
-        for (const auto &[label, value] : readDeviceSettings(seabass::pathToUtf8(dir))[0].fields) {
+        // Bound first: a range-for over readDeviceSettings(...)[0].fields
+        // looped over a vector destroyed before the loop began (ASan).
+        const auto files = readDeviceSettings(seabass::pathToUtf8(dir));
+        assert(!files.empty());
+        for (const auto &[label, value] : files[0].fields) {
             if (label == "Quantize") {
                 assert(value == "unknown (0x82)");
                 found = true;

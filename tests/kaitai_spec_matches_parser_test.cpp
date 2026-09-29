@@ -137,14 +137,18 @@ std::map<std::string, SpecType> typesIn(const fs::path &ksy)
 // nothing.
 std::set<std::string> accessorsOf(const std::string &header, const std::string &type, bool &found)
 {
-    const std::regex classBody("class " + type + R"(_t : public kaitai::kstruct \{([\s\S]*?)\n    \};)");
-    std::smatch m;
-    found = std::regex_search(header, m, classBody);
+    // Found by plain search, not a regex: libstdc++'s executor recursed
+    // once per character of a lazy [\s\S]*? over a body of 12,689
+    // characters (track_row_t) and overflowed the stack under ASan.
+    const std::string opening = "class " + type + "_t : public kaitai::kstruct {";
+    const size_t start = header.find(opening);
+    const size_t end = start == std::string::npos ? std::string::npos : header.find("\n    };", start);
+    found = end != std::string::npos;
     std::set<std::string> names;
     if (!found) {
         return names;
     }
-    const std::string body = m[1];
+    const std::string body = header.substr(start + opening.size(), end - start - opening.size());
     const std::regex inlineGetter(R"(\b([a-z0-9_]+)\(\) const \{ return m_)");
     const std::regex declaredGetter(R"(\n\s+[A-Za-z_][\w:*<>, ]*\s+([a-z0-9_]+)\(\);)");
     for (auto it = std::sregex_iterator(body.begin(), body.end(), inlineGetter); it != std::sregex_iterator(); ++it) {

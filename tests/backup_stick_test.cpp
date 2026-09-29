@@ -768,7 +768,9 @@ int main()
         assert(f.archiveNames().count("Contents/a.mp3"));
         assert(f.entryContent("Contents/a.mp3") == whole.substr(0, 40'000));
 
-        const ManifestRow *row = f.manifest().findRow("Contents/a.mp3");
+        // manifest() returns by value: keep it alive while `row` points into it.
+        const BackupManifest manifest = f.manifest();
+        const ManifestRow *row = manifest.findRow("Contents/a.mp3");
         assert(row != nullptr && row->salvagedFromSize == 100'000
                && "and the row says how much is missing, so a restore can too");
 
