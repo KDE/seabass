@@ -378,59 +378,35 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         fail("could not read AlbumArt in");
     }
-    // Per AlbumArt row, since many tracks share one.
-    std::unordered_map<int64_t, std::string> fileByRow;
+    // The rows first, and the statement finished, before any image is
+    // read or written out: a read holds a lock on the database for as long
+    // as its statement runs, and writing out a library's covers can take
+    // longer than a save waits for one.
+    struct StoredRow
+    {
+        int64_t trackId = 0;
+        int64_t albumArtId = 0;
+        bool blobHash = false;
+        std::string hash;
+        std::int64_t imageLength = 0;
+    };
+    std::vector<StoredRow> rows;
     int step;
     while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
-        // Per row: a stop lands within one image, with the database let go.
         if (cancel.cancelled()) {
             sqlite3_finalize(stmt);
             sqlite3_close(db);
             throw application::OperationCancelled();
         }
-        const int64_t trackId = sqlite3_column_int64(stmt, 0);
-        const int64_t albumArtId = sqlite3_column_int64(stmt, 2);
-        const std::int64_t imageLength = sqlite3_column_int64(stmt, 3);
-        const bool imageInRow = imageLength > 0;
-        auto known = fileByRow.find(albumArtId);
-        if (known == fileByRow.end()) {
-            std::string file;
-            try {
-                // An image in the row wins; bytes there that are no image
-                // leave the art to whatever the hash names.
-                const bool blobHash = sqlite3_column_type(stmt, 1) == SQLITE_BLOB;
-                if (imageInRow && !blobHash) {
-                    const unsigned char *hashText = sqlite3_column_text(stmt, 1);
-                    const std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
-                    file = databaseArtworkFile(db, albumArtId, hash, imageLength, libraryDirectory);
-                } else if (imageInRow) {
-                    // Named by the blob hash in hex, so a later read finds
-                    // the copy with a stat, as for a text hash.
-                    const auto *bytes = static_cast<const unsigned char *>(sqlite3_column_blob(stmt, 1));
-                    static constexpr char Hex[] = "0123456789abcdef";
-                    std::string hex;
-                    for (int i = 0; i < sqlite3_column_bytes(stmt, 1); ++i) {
-                        hex += Hex[bytes[i] >> 4];
-                        hex += Hex[bytes[i] & 0x0F];
-                    }
-                    file = databaseArtworkFile(db, albumArtId, hex, imageLength, libraryDirectory);
-                }
-                if (file.empty() && blobHash) {
-                    const void *blob = sqlite3_column_blob(stmt, 1);
-                    const std::span<const std::uint8_t> hash(static_cast<const std::uint8_t *>(blob),
-                                                             static_cast<size_t>(sqlite3_column_bytes(stmt, 1)));
-                    if (!std::string_view(static_cast<const char *>(blob), hash.size()).starts_with("image://")) {
-                        file = cachedArtworkFile(artworkDirectory, hash);
-                    }
-                }
-            } catch (const std::exception &) {
-                // One unreadable image is not worth the others.
-            }
-            known = fileByRow.emplace(albumArtId, std::move(file)).first;
+        StoredRow row;
+        row.trackId = sqlite3_column_int64(stmt, 0);
+        row.albumArtId = sqlite3_column_int64(stmt, 2);
+        row.imageLength = sqlite3_column_int64(stmt, 3);
+        row.blobHash = sqlite3_column_type(stmt, 1) == SQLITE_BLOB;
+        if (const void *hash = sqlite3_column_blob(stmt, 1)) {
+            row.hash.assign(static_cast<const char *>(hash), static_cast<size_t>(sqlite3_column_bytes(stmt, 1)));
         }
-        if (!known->second.empty()) {
-            result[trackId] = known->second;
-        }
+        rows.push_back(std::move(row));
     }
     // Anything but the end of the rows (a lock held too long, a read
     // error) leaves covers out, and is said rather than returned as all.
@@ -439,6 +415,49 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         fail("stopped reading AlbumArt in");
     }
     sqlite3_finalize(stmt);
+
+    // Per AlbumArt row, since many tracks share one, each image in a short
+    // statement of its own.
+    std::unordered_map<int64_t, std::string> fileByRow;
+    for (const StoredRow &row : rows) {
+        // Per row: a stop lands within one image, with the database let go.
+        if (cancel.cancelled()) {
+            sqlite3_close(db);
+            throw application::OperationCancelled();
+        }
+        auto known = fileByRow.find(row.albumArtId);
+        if (known == fileByRow.end()) {
+            std::string file;
+            try {
+                // An image in the row wins; bytes there that are no image
+                // leave the art to whatever the hash names.
+                if (row.imageLength > 0 && !row.blobHash) {
+                    file = databaseArtworkFile(db, row.albumArtId, row.hash, row.imageLength, libraryDirectory);
+                } else if (row.imageLength > 0) {
+                    // Named by the blob hash in hex, so a later read finds
+                    // the copy with a stat, as for a text hash.
+                    static constexpr char Hex[] = "0123456789abcdef";
+                    std::string hex;
+                    for (const unsigned char c : row.hash) {
+                        hex += Hex[c >> 4];
+                        hex += Hex[c & 0x0F];
+                    }
+                    file = databaseArtworkFile(db, row.albumArtId, hex, row.imageLength, libraryDirectory);
+                }
+                if (file.empty() && row.blobHash && !std::string_view(row.hash).starts_with("image://")) {
+                    const std::span<const std::uint8_t> hash(reinterpret_cast<const std::uint8_t *>(row.hash.data()),
+                                                             row.hash.size());
+                    file = cachedArtworkFile(artworkDirectory, hash);
+                }
+            } catch (const std::exception &) {
+                // One unreadable image is not worth the others.
+            }
+            known = fileByRow.emplace(row.albumArtId, std::move(file)).first;
+        }
+        if (!known->second.empty()) {
+            result[row.trackId] = known->second;
+        }
+    }
     sqlite3_close(db);
     return result;
 }
