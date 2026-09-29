@@ -1689,7 +1689,7 @@ add_executable(engine_artwork_test
 target_link_libraries(engine_artwork_test PRIVATE seabass_core_testing)
 target_include_directories(engine_artwork_test PRIVATE src tests)
 target_compile_definitions(engine_artwork_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(engine_artwork_test PRIVATE SQLite::SQLite3)
+target_link_libraries(engine_artwork_test PRIVATE SQLite::SQLite3 Threads::Threads)
 add_test(NAME engine_artwork_test COMMAND engine_artwork_test)
 
 add_executable(junk_cue_test

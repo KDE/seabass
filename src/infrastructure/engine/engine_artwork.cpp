@@ -243,6 +243,9 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         }
         return audit;
     }
+    // A save committing holds the database for a moment: waited out, as in
+    // the other connections to it, from the first statement on.
+    sqlite3_busy_timeout(handle, 5000);
 
     // Every Engine library this ships against has Track.path, but an
     // older or hand-made schema without it must still get its art
@@ -263,7 +266,6 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
 
     // One read transaction for the row list and the tracks below, so both
     // see the same state of a database a save may be writing.
-    sqlite3_busy_timeout(handle, 5000);
     if (sqlite3_exec(handle, "BEGIN;", nullptr, nullptr, nullptr) != SQLITE_OK) {
         audit.error = std::string("could not begin reading the database: ") + sqlite3_errmsg(handle);
         sqlite3_close(handle);
