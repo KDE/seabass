@@ -40,6 +40,7 @@
 #include "gui/edit/changes/repair_artwork_change.hpp"
 
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 #include "infrastructure/media/filesystem_health.hpp"
 #include "gui/artwork_rescue_sources.hpp"
 #include "gui/edit/changes/fill_sample_rate_change.hpp"
@@ -622,7 +623,7 @@ std::shared_ptr<QtProgressReporter> LibraryConsistencyController::makeReporter()
 {
     // Speaks only for the leg started right after it, while that leg is
     // the one outstanding: a superseded leg reports until it notices.
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     const auto current = m_scan.speaksForNext();
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &, int total) {
         if (current()) {

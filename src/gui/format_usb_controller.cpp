@@ -5,6 +5,7 @@
 #include "format_usb_controller.hpp"
 
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 #include "gui/sleep_inhibitor.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -273,7 +274,7 @@ void FormatUsbController::format(const QString &wholeDiskPath, const QString &fi
     setStatusMessage({});
     setBusy(true);
 
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     // Awake for the whole format: see SleepInhibitor.
     auto keepAwake = SleepInhibitor::hold(QStringLiteral("Formatting a USB stick"));
     auto overridden = formatTaskOverride();

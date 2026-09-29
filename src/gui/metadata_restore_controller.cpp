@@ -19,6 +19,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/metadata_row_text.hpp"
 #include "gui/stick_catalogs.hpp"
@@ -671,7 +672,7 @@ void MetadataRestoreController::unstageIndices(const std::vector<int> &indices)
 
 std::shared_ptr<QtProgressReporter> MetadataRestoreController::makeReporter(std::function<bool()> speaks)
 {
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     // Only the scan outstanding moves the bar: a superseded or cancelled
     // one reports until its worker notices.
     const auto current = [speaks = std::move(speaks)]() { return speaks(); };

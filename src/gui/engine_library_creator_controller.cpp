@@ -7,6 +7,7 @@
 #include "gui/stick_path.hpp"
 #include "gui/detached_write.hpp"
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 #include "gui/stick_events.hpp"
 #include "gui/async_request.hpp"
 #include "gui/sleep_inhibitor.hpp"
@@ -119,7 +120,7 @@ EngineLibraryCreatorController::EngineLibraryCreatorController(QObject *parent) 
 
 std::shared_ptr<QtProgressReporter> EngineLibraryCreatorController::makeReporter()
 {
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     // Scan, then create, then copy-to-stick each used to call
     // setScanProgress(0, total) here, so the bar visibly restarted from 0%
     // at every phase boundary -- looked like the operation kept resetting,

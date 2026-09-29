@@ -22,7 +22,10 @@ namespace seabass::gui
 // controller (and its QML page) can be destroyed mid-scan without the
 // background thread touching a dangling object. Signals are connected to
 // the controller using it as the context object, so Qt automatically
-// stops delivering them once the controller is gone.
+// stops delivering them once the controller is gone. Make one with
+// makeMainThreadShared() (gui/main_thread_shared.hpp), never make_shared:
+// the task's reference is usually the last, and it drops on the worker,
+// while the reporter must still be destroyed on the GUI thread it lives on.
 class QtProgressReporter : public QObject, public application::ProgressReporter
 {
     Q_OBJECT

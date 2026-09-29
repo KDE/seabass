@@ -7,6 +7,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/edit/pending_change.hpp"
+#include "gui/main_thread_shared.hpp"
 #include "gui/staged_plan_model.hpp"
 
 namespace seabass::gui
@@ -38,7 +39,7 @@ void StagedCueEditController::cancelScan()
 
 std::shared_ptr<QtProgressReporter> StagedCueEditController::makeReporter()
 {
-    auto reporter = std::make_shared<QtProgressReporter>();
+    auto reporter = makeMainThreadShared<QtProgressReporter>();
     const auto current = m_scan.speaksForNext();
     connect(reporter.get(), &QtProgressReporter::started, this, [this, current](const QString &label, int total) {
         if (current()) {

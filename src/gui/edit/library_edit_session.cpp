@@ -7,6 +7,7 @@
 #include "gui/edit/library_edit_session.hpp"
 
 #include "gui/future_result.hpp"
+#include "gui/main_thread_shared.hpp"
 
 #include <QtConcurrent>
 
@@ -439,7 +440,7 @@ void LibraryEditSession::save()
     setWriteProgress(QStringLiteral("Preparing"), 0, pendingUnits());
     setWriting(true);
 
-    auto bridge = std::make_shared<SaveProgressBridge>();
+    auto bridge = makeMainThreadShared<SaveProgressBridge>();
     connect(bridge.get(), &QtProgressReporter::started, this,
             [this](const QString &, int total) { setWriteProgress(m_writeLabel, 0, total); });
     connect(bridge.get(), &QtProgressReporter::progressed, this,

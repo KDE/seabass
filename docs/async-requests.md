@@ -211,6 +211,15 @@ A worker has let go of what it captured before it counts as done, so
 "no worker running" really means none: no reporter or reader handle is
 still being destroyed on a worker thread while the statics go.
 
+A worker's captures often hold the last reference to a QObject made on
+the GUI thread: a progress reporter, or the scan's `ScanPhaseRelay`. Qt
+does not support destroying one on another thread, so these are made with
+`makeMainThreadShared()` (src/gui/main_thread_shared.hpp), never
+`make_shared`. The last reference dropped on a worker hands the object to
+`deleteLater()` and it is destroyed on the GUI thread. Once no event loop
+runs there any more, at the end of the process, that deletion may never
+happens: a leak at exit, which is harmless.
+
 A read the process cannot give a thread to ends at once, in error, with
 a message that says why. That happens when the system refuses a thread,
 or when 256 workers are already running, which only happens when reads
