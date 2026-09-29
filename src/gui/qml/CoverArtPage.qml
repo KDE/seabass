@@ -167,7 +167,8 @@ Page {
                 if (emptyInDatabase > 0) {
                     parts.push(emptyInDatabase + " keep their cover inside the Engine database, the way older "
                         + "Engine libraries do, and the image stored there is empty or not a picture. Seabass "
-                        + "leaves those as they are, because that library reads its covers from there.");
+                        + "puts a copy back into the database itself, because that library reads its covers "
+                        + "from there.");
                 }
                 parts.push(fixable > 0
                     ? fixable + " of " + consistencyController?.artworkUnreadableCount + " can be put back: Seabass "
@@ -198,8 +199,8 @@ Page {
                     ? "This stick is read-only until its filesystem has been checked. Library Health offers that."
                     : consistencyController?.artworkRepairStaged
                     ? "Take this back out of the changes to save"
-                    : "Stage copying each image into Engine Library/Artwork and pointing the track at it. "
-                        + "Save writes it to the stick."
+                    : "Stage copying each image into Engine Library/Artwork and pointing the track at it, or into "
+                        + "the database for a library that keeps its covers there. Save writes it to the stick."
                 // Staging only. Save is the press that writes, like
                 // everywhere else in this app.
                 onClicked: consistencyController?.artworkRepairStaged

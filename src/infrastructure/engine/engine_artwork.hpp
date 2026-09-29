@@ -56,8 +56,9 @@ enum class ArtworkStorage {
     // player whatever the row's hash or id.
     InDatabase,
     // A row that keeps its image in the database, holding none, or bytes
-    // that are neither JPEG nor PNG. Never repaired: pointing the track at
-    // a file instead would move it off the storage its library reads.
+    // that are neither JPEG nor PNG. Repaired in place, never by pointing
+    // the track at a file, which would move it off the storage its
+    // library reads.
     InDatabaseUnreadable,
     // No art row, or Engine's own empty "no cover" row.
     None,
@@ -174,6 +175,10 @@ struct ArtworkRepair
     // Entries left alone because the track's row keeps its art in the
     // database: re-pointing it would drop that image.
     int keptInDatabase = 0;
+    // Entries whose row in the database already holds a readable image
+    // when the repair gets to them: another track sharing the row was
+    // given it first. Nothing is written for them.
+    int alreadyReadable = 0;
     std::string error;
 };
 
@@ -209,8 +214,11 @@ inline std::string extensionForImage(std::string_view bytes)
 
 // Gives each entry Engine's own storage: copies its image into Artwork/
 // under the hash of its bytes, adds the AlbumArt row, and points the track
-// at it. Entries with no imageOnStick are skipped, and so is any track
-// whose current row keeps its art in the database. One transaction.
+// at it. Entries with no source are skipped, and so is any track whose
+// current row keeps its art in the database. An InDatabaseUnreadable entry
+// instead gets the image written into the row it points at, whose hash and
+// id stay; a row whose image reads already is never overwritten. One
+// transaction.
 //
 // `databaseFile` is the m.db to write. It is a parameter rather than
 // <engineLibraryPath>/Database2/m.db because a save may have redirected
