@@ -292,7 +292,28 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 // file under Artwork/ named by the row's blob hash, looked for on the
 // stick. The artwork stage of a progressive read, so the track list never
 // waits for either.
+// Which stick, or failing that which location, a library's local copies
+// belong to. Clones of one library share its uuid, its hashes and maybe an
+// image's length while holding different bytes, so the uuid alone does not
+// settle whose copy a file is. A filesystem identity survives the stick
+// being mounted elsewhere; the location is the fallback, which costs an
+// extraction again when the same stick comes back at another path.
+std::string localCopiesKey(const std::string &engineLibraryPath, const std::string &volumeIdentity)
+{
+    const bool usable = !volumeIdentity.empty() && volumeIdentity.size() <= 64
+        && std::all_of(volumeIdentity.begin(), volumeIdentity.end(),
+                       [](unsigned char c) { return std::isalnum(c) != 0 || c == '-'; });
+    if (usable) {
+        return "volume-" + volumeIdentity;
+    }
+    std::error_code ec;
+    const std::filesystem::path location = std::filesystem::weakly_canonical(pathFromUtf8(engineLibraryPath), ec);
+    const std::string where = pathToUtf8(ec ? pathFromUtf8(engineLibraryPath) : location);
+    return "at-" + hashing::toHex(hashing::Sha256::of(std::string_view(where))).substr(0, 16);
+}
+
 std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &engineLibraryPath,
+                                                           const std::string &volumeIdentity,
                                                            const application::CancellationToken &cancel)
 {
     std::unordered_map<int64_t, std::string> result;
@@ -320,7 +341,8 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     // way the other connections to it are, not reported as a failed read.
     sqlite3_busy_timeout(db, 5000);
     const std::string artworkDirectory = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Artwork");
-    // The library's own directory, named by its Information uuid.
+    // The library's own directory: its Information uuid, and the stick it
+    // is on, since a clone keeps the uuid (localCopiesKey()).
     std::filesystem::path libraryDirectory;
     {
         sqlite3_stmt *information = nullptr;
@@ -332,7 +354,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
             if (!uuid.empty() && uuid.size() <= 64
                 && std::all_of(uuid.begin(), uuid.end(),
                                [](unsigned char c) { return std::isalnum(c) != 0 || c == '-'; })) {
-                libraryDirectory = paths::localEngineArtworkDir() / uuid;
+                libraryDirectory = paths::localEngineArtworkDir() / uuid / localCopiesKey(engineLibraryPath, volumeIdentity);
             }
         }
         sqlite3_finalize(information);
@@ -543,7 +565,7 @@ void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
         // a pulled stick left is recovered first here too. One that cannot
         // be costs the covers, not the rest of the stage this runs in.
         recoverEnginePendingJournals(m_engineLibraryPath);
-        stored = readStoredArtwork(m_engineLibraryPath, m_cancel);
+        stored = readStoredArtwork(m_engineLibraryPath, m_volumeIdentity, m_cancel);
     } catch (const application::OperationCancelled &) {
         throw;
     } catch (const std::exception &e) {

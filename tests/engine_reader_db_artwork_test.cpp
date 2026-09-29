@@ -111,7 +111,7 @@ int main()
     assert(seabass::pathFromUtf8(first.at("1")).extension() == ".png");
     assert(seabass::pathFromUtf8(first.at("2")).extension() == ".jpg");
     const fs::path cache = seabass::infrastructure::paths::localEngineArtworkDir();
-    assert(seabass::pathFromUtf8(first.at("1")).parent_path().parent_path() == cache);  // one directory per library
+    assert(seabass::pathFromUtf8(first.at("1")).parent_path().parent_path().parent_path() == cache);  // per library and stick
     assert(first.at("3").empty());  // bytes no player can draw are not offered as a cover
     std::cout << "case 1 (covers kept in the database are shown) OK\n";
 
@@ -405,6 +405,47 @@ int main()
         }
         assert(shown);
         std::cout << "case 12 (a writer committing is waited out) OK\n";
+    }
+
+    // 13. Clones that went their own ways can share uuid, hash and even the
+    //     image's length over different bytes. The copies are kept per
+    //     stick (its filesystem's identity, when the page knows it) or per
+    //     library location, so each shows its own, and a later read still
+    //     finds its copy with a stat.
+    {
+        const std::string first = std::string("\x89PNG\r\n\x1a\n", 8) + "SAME-LENGTH-IMAGE-AAAA";
+        const std::string second = std::string("\x89PNG\r\n\x1a\n", 8) + "SAME-LENGTH-IMAGE-BBBB";
+        std::vector<fs::path> clones;
+        for (const char *name : {"clone-a", "clone-b"}) {
+            const fs::path clone = library.parent_path() / name / "Engine Library";
+            fs::create_directories(clone.parent_path());
+            fs::copy(source, clone, fs::copy_options::recursive);
+            sqlite3 *db = nullptr;
+            assert(sqlite3_open(seabass::pathToUtf8(clone / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+            setRow(db, 1, "af2f6f87c56583adb67003735089017e2eb03572", clones.empty() ? first : second);
+            sqlite3_close(db);
+            clones.push_back(clone);
+        }
+        const auto a = artworkBySourceId(seabass::pathToUtf8(clones[0]));
+        const auto b = artworkBySourceId(seabass::pathToUtf8(clones[1]));
+        assert(slurp(a.at("1")) == first);
+        assert(slurp(b.at("1")) == second);
+
+        // With the stick's identity given, that is the key: the same stick
+        // at another path finds the same copy.
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(clones[0]));
+        reader.setProgressReporter(reporter);
+        reader.setVolumeIdentity("1234-ABCD");
+        auto tracks = reader.readTracks();
+        reader.fillArtwork(tracks);
+        for (const auto &track : tracks) {
+            if (track.sourceId == "1") {
+                assert(track.artworkPath.find("1234-ABCD") != std::string::npos);
+                assert(slurp(track.artworkPath) == first);
+            }
+        }
+        std::cout << "case 13 (clones with the same uuid, hash and length keep their own covers) OK\n";
     }
 
     fs::remove_all(library.parent_path(), ec);
