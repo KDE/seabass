@@ -12,6 +12,7 @@
 #include <sqlite3.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -373,6 +374,37 @@ int main()
         }
         assert(shown);
         std::cout << "case 11 (no albumArt column: covers under Artwork/ still show, no warning) OK\n";
+    }
+
+    // 12. A writer holding the database for a moment (a save committing)
+    //     is waited out, not reported as covers that are not there.
+    {
+        fs::remove_all(cache, ec);
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(library));
+        reader.setProgressReporter(reporter);
+        auto tracks = reader.readTracks();
+        reporter.warnings.clear();
+        sqlite3 *writer = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &writer) == SQLITE_OK);
+        assert(sqlite3_exec(writer, "BEGIN EXCLUSIVE;", nullptr, nullptr, nullptr) == SQLITE_OK);
+        std::thread release([writer] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            sqlite3_exec(writer, "COMMIT;", nullptr, nullptr, nullptr);
+        });
+        reader.fillArtwork(tracks);
+        release.join();
+        sqlite3_close(writer);
+        for (const auto &warning : reporter.warnings) {
+            std::cerr << "warning: " << warning << "\n";
+        }
+        assert(reporter.warnings.empty());
+        bool shown = false;
+        for (const auto &track : tracks) {
+            shown = shown || (track.sourceId == "1" && slurp(track.artworkPath) == pngImage);
+        }
+        assert(shown);
+        std::cout << "case 12 (a writer committing is waited out) OK\n";
     }
 
     fs::remove_all(library.parent_path(), ec);
