@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
-#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/engine/engine_sqlite.hpp"
@@ -12,12 +11,15 @@
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <filesystem>
 #include <optional>
+#include <random>
 #include <set>
 #include <mutex>
 #include <span>
@@ -204,10 +206,21 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std:
             && std::filesystem::file_size(file, sizeError) == bytes.size() && !sizeError;
     };
     if (!whole()) {
-        // Another read writing the same cover at the same moment is fine:
-        // writes of one file take turns, and a whole copy is a whole copy
-        // whoever wrote it.
-        writeFileDurablyAtomic(pathToUtf8(file), bytes);
+        // A temporary name of its own and a rename: two reads (the prefetch
+        // and a page, or the app and the command line) can write the same
+        // cover at once, and neither may rename the other's half-written
+        // file into place. Only for this cache on this computer, never a
+        // stick, so a write interrupted here leaves nothing on a stick.
+        static const std::uint64_t process = (std::uint64_t{std::random_device{}()} << 32) ^ std::random_device{}();
+        static std::atomic<std::uint64_t> writes{0};
+        std::filesystem::path part = file;
+        part += "." + std::to_string(process) + "-" + std::to_string(writes.fetch_add(1)) + ".tmp";
+        {
+            std::ofstream out(part, std::ios::binary | std::ios::trunc);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        std::filesystem::rename(part, file, ec);
+        std::filesystem::remove(part, ec);
     }
     return whole() ? pathToUtf8(file) : std::string();
 }
