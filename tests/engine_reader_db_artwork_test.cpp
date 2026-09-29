@@ -226,6 +226,26 @@ int main()
         std::cout << "case 6 (junk in albumArt does not hide the art the hash names) OK\n";
     }
 
+    // 7. A clone (Backup USB Stick) keeps the library's uuid, so two
+    //    libraries can share uuid and hash over different images. Each
+    //    shows its own: a copy whose size is not the row's is written
+    //    again.
+    {
+        const fs::path clone = library.parent_path() / "clone" / "Engine Library";
+        fs::create_directories(clone.parent_path());
+        fs::copy(source, clone, fs::copy_options::recursive);
+        const std::string cloneImage = std::string("\x89PNG\r\n\x1a\n", 8) + "THE-CLONE-HAS-A-LONGER-PNG-HERE";
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(clone / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        setRow(db, 1, "af2f6f87c56583adb67003735089017e2eb03572", cloneImage);
+        sqlite3_close(db);
+        const auto mine = artworkBySourceId(seabass::pathToUtf8(library));
+        assert(slurp(mine.at("1")) == pngImage);
+        const auto theirs = artworkBySourceId(seabass::pathToUtf8(clone));
+        assert(slurp(theirs.at("1")) == cloneImage);
+        std::cout << "case 7 (a clone with the same uuid and hash shows its own cover) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
