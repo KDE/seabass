@@ -1997,7 +1997,7 @@ add_test(NAME metadata_merge_test COMMAND metadata_merge_test)
 add_executable(durable_file_write_test
     tests/durable_file_write_test.cpp
 )
-target_link_libraries(durable_file_write_test PRIVATE seabass_core_testing)
+target_link_libraries(durable_file_write_test PRIVATE seabass_core_testing Threads::Threads)
 target_include_directories(durable_file_write_test PRIVATE src)
 add_test(NAME durable_file_write_test COMMAND durable_file_write_test)
 

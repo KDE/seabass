@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 #include "infrastructure/durable_file_write.hpp"
 
@@ -86,15 +88,13 @@ int main()
         std::cout << "case 3 (missing source leaves target untouched) OK\n";
     }
 
-    // Simulates the real crash scenario this function exists for: a
-    // previous run wrote (or was writing) the ".tmp-seabass-write" file
-    // and never got to fsync/rename before the stick was pulled or the
-    // process died, leaving that stale/partial temp file behind. The
-    // *next* run must not get confused by it -- writeFileDurablyAtomic()
-    // opens its temp path with O_TRUNC, so it should just overwrite the
-    // garbage and complete correctly, leaving both a correct target and
-    // no leftover temp file, exactly as if the stale file had never
-    // existed.
+    // Simulates the real crash scenario this function exists for: an
+    // earlier build wrote (or was writing) its single ".tmp-seabass-write"
+    // file and never got to fsync/rename before the stick was pulled or
+    // the process died, leaving that stale/partial temp file behind. The
+    // next write must not get confused by it, and takes it away: a
+    // correct target and no leftover temp file, exactly as if the stale
+    // file had never existed.
     {
         fs::path target = root / "recovers_from_stale_temp.db";
         writeFile(target, "old content");
@@ -184,6 +184,40 @@ int main()
         assert(copyFileDurablyAtomic(seabass::pathToUtf8(source), seabass::pathToUtf8(target)));
         assert(readFile(target) == "bytes worth copying");
         std::cout << "case 6b (a readable source still copies) OK\n";
+    }
+
+    // 7. Two writers of the same file at once (a prefetch and a page
+    //    writing one cache) each finish: every write lands whole, and none
+    //    is lost because the other renamed its temporary file away.
+    {
+        const fs::path target = root / "written-twice-at-once.bin";
+        const std::string a(20000, 'a');
+        const std::string b(30000, 'b');
+        int failed = 0;
+        std::atomic<int> failures{0};
+        auto writeMany = [&](const std::string &content) {
+            for (int i = 0; i < 200; ++i) {
+                if (!writeFileDurablyAtomic(seabass::pathToUtf8(target), content)) {
+                    failures++;
+                }
+            }
+        };
+        std::thread first(writeMany, a);
+        std::thread second(writeMany, b);
+        first.join();
+        second.join();
+        failed = failures.load();
+        if (failed != 0) {
+            std::cerr << failed << " of 400 writes failed\n";
+        }
+        assert(failed == 0);
+        const std::string last = readFile(target);
+        assert(last == a || last == b);
+        for (const auto &entry : fs::directory_iterator(root)) {
+            assert(entry.path().filename().string().find(".tmp-seabass-write") == std::string::npos
+                   && "no temporary file is left behind");
+        }
+        std::cout << "case 7 (two writers of one file at once both finish) OK\n";
     }
 
     fs::remove_all(root);

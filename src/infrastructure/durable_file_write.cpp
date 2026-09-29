@@ -6,6 +6,7 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -234,8 +235,17 @@ bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
 {
     WorkCounters::instance().noteDurableFileWrite();
     const fs::path target = pathFromUtf8(path);
+    // A name of its own per write: two writers of one file at once (the
+    // catalog prefetch and a page) used to share one temporary name, and
+    // one renamed the other's away, failing that write.
+    static std::atomic<std::uint64_t> writes{0};
+#if defined(_WIN32)
+    const unsigned long process = GetCurrentProcessId();
+#else
+    const long process = static_cast<long>(getpid());
+#endif
     fs::path tempPath = target;
-    tempPath += ".tmp-seabass-write";
+    tempPath += ".tmp-seabass-write-" + std::to_string(process) + "-" + std::to_string(writes.fetch_add(1));
     if (!writeFileDurably(tempPath, data)) {
         std::error_code removeEc;
         fs::remove(tempPath, removeEc);
@@ -248,6 +258,11 @@ bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
         fs::remove(tempPath, ec);
         return false;
     }
+    // The single temporary name earlier builds used, left by a write that
+    // was interrupted: this write replaces what it was for.
+    fs::path legacyTemp = target;
+    legacyTemp += ".tmp-seabass-write";
+    fs::remove(legacyTemp, ec);
     fsyncDirectoryContaining(path);
     return true;
 }
