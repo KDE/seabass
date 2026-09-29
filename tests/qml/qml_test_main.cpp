@@ -156,6 +156,31 @@ public:
         return ok ? library : QString();
     }
 
+    // A copy where every track points at one art row whose albumArt holds
+    // a number: a value no blob handle opens, so the audit cannot read it
+    // to check it. Nothing else is wrong with the covers, which is the one
+    // shape where a page could call the library healthy.
+    Q_INVOKABLE QString libraryWithUncheckedCovers(const QString &fromLibrary)
+    {
+        const QString library = copy(fromLibrary, false);
+        if (library.isEmpty()) {
+            return {};
+        }
+        sqlite3 *db = nullptr;
+        const std::string file = seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db");
+        if (sqlite3_open(file.c_str(), &db) != SQLITE_OK) {
+            sqlite3_close(db);
+            return {};
+        }
+        const bool ok = sqlite3_exec(db,
+                                     "INSERT OR REPLACE INTO AlbumArt (id, hash, albumArt) VALUES "
+                                     "(99999, 'abcdef0123', 12345); UPDATE Track SET albumArtId = 99999;",
+                                     nullptr, nullptr, nullptr)
+            == SQLITE_OK;
+        sqlite3_close(db);
+        return ok ? library : QString();
+    }
+
     // A copy whose imported art paths have their images beside it, under
     // the stick's own PIONEER/Artwork -- the one shape where the page has
     // something to offer, and so the only one that can show that pressing

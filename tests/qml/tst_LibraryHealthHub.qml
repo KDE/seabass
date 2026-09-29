@@ -43,6 +43,22 @@ TestCase {
         }
     }
 
+    readonly property string fixtureEngineRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library/engine").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+    property string uncheckedLibrary: ""
+
+    Component {
+        id: uncheckedPageComponent
+        LibraryHealthHubPage {
+            playbackController: realPlayback
+            stickLabel: "UNCHECKED"
+            rekordboxPath: ""
+            enginePath: testCase.uncheckedLibrary
+        }
+    }
+
     function findByObjectName(item, name) {
         if (!item) return null;
         if (item.objectName === name) return item;
@@ -241,6 +257,22 @@ TestCase {
         // No stick, so nothing was read and nothing is known.
         compare(page.consistencyController.analysisKnown, false);
         verify(page.analysisSummary.indexOf("Every Engine track has been analysed") < 0);
+    }
+
+    // Covers the audit could not read to check are not a clean result: the
+    // card is not green, and it offers the page that says what they are.
+    function test_coversThatCouldNotBeCheckedKeepTheCardOpen() {
+        testCase.uncheckedLibrary = artworkFixture.libraryWithUncheckedCovers(testCase.fixtureEngineRoot);
+        verify(testCase.uncheckedLibrary.length > 0, "the fixture copy must be made");
+        const page = createTemporaryObject(uncheckedPageComponent, testCase);
+        tryVerify(function() { return page.consistencyController.busy === false; }, 300000, "the scan must finish");
+        compare(page.consistencyController.artworkUnreadableCount, 0);
+        verify(page.consistencyController.artworkUncheckedCount > 0);
+        const card = findByObjectName(page, "coverArtCard");
+        verify(card !== null, "the hub has a cover art card");
+        compare(card.ok, false, "a cover that could not be checked is not healthy");
+        compare(card.actionLabel, "Review cover art");
+        verify(card.summary.indexOf("can find it") < 0, "and it does not say every cover is found: " + card.summary);
     }
 
     function test_aFindingOffersItsOneAction() {
