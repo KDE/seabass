@@ -37,6 +37,7 @@ struct StickBackupAdviceInput
 
     bool hasLibrary = false;
     std::string stickIdentifier;  // infrastructure::system::StickHardwareInfo::stickIdentifier
+    std::string legacyStickIdentifier;  // StickHardwareInfo::legacyStickIdentifier; a backup under it is this stick's
     std::string stickLabel;
     std::optional<domain::LibraryFingerprint> liveFingerprint;  // nullopt: no library, or unreadable
     // Archive-relative main-database path -> the DbSetFingerprint hex the

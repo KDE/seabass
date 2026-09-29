@@ -46,6 +46,9 @@ struct BackupStickOptions
     std::filesystem::path stickRoot;
     std::filesystem::path archivePath;  // the journal lives at archivePath + ".journal"
     std::string stickIdentifier;
+    // StickHardwareInfo::legacyStickIdentifier: an archive recorded under
+    // it is this stick's, and an update records stickIdentifier instead.
+    std::string legacyStickIdentifier;
     std::string stickLabel;
     // How to read the library's content identity, as
     // domain::LibraryFingerprint::serialize(). Called by the backup ITSELF

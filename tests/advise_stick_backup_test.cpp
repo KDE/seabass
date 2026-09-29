@@ -106,6 +106,24 @@ int main()
         assert(advice.backupPath == "/b/A.zip");
     }
 
+    // A stick labelled with a space was identified as "<label>-<size>" on
+    // Linux before the fix; its backup under that identifier is still its
+    // own, and not the other "Stick 1" listed first.
+    {
+        const StickBackupDescription otherStick1 = makeBackup("/b/other.zip", "Stick 1-2000", "Stick 1", 300, libraryB);
+        const StickBackupDescription ownOld = makeBackup("/b/mine.zip", "Stick 1-1000", "Stick 1", 100, libraryA);
+        StickBackupAdviceInput input;
+        input.hasLibrary = false;
+        input.backups = {otherStick1, ownOld};
+        input.stickIdentifier = "ABCD-1234";
+        input.legacyStickIdentifier = "Stick 1-1000";
+        input.stickLabel = "Stick 1";
+        StickBackupAdvice advice = adviseStickBackup(input);
+        std::cout << "legacy identifier: matched " << toString(advice.matchedBy) << ", " << advice.backupPath << "\n";
+        assert(advice.matchedBy == StickBackupAdvice::MatchedBy::Identifier);
+        assert(advice.backupPath == "/b/mine.zip");
+    }
+
     // The same library on a different stick (re-imported, new UUID): found
     // by content, current when the database fingerprint still matches.
     {

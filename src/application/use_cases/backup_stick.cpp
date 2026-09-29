@@ -400,6 +400,17 @@ ManifestRow rowForEntry(const TreeEntry &entry, const ArchiveUpdater::AppendedEn
     return row;
 }
 
+// Both sides name a stick and they differ. The legacy identifier is this
+// stick's too: see BackupStickOptions.
+bool belongsToAnotherStick(const BackupStickOptions &options, const BackupManifest &manifest)
+{
+    if (options.stickIdentifier.empty() || manifest.stickIdentifier.empty()) {
+        return false;
+    }
+    return manifest.stickIdentifier != options.stickIdentifier
+           && manifest.stickIdentifier != options.legacyStickIdentifier;
+}
+
 }  // namespace
 
 // ---- PendingBackup ----
@@ -603,8 +614,7 @@ BackupPreview BackupStick::preview(const BackupStickOptions &options, ProgressRe
         preview.previousIdentifier = opened.manifest->stickIdentifier;
         preview.previousLabel = opened.manifest->stickLabel;
         preview.previousUserName = opened.manifest->userName;
-        preview.identifierMismatch = !options.stickIdentifier.empty() && !opened.manifest->stickIdentifier.empty()
-                                     && options.stickIdentifier != opened.manifest->stickIdentifier;
+        preview.identifierMismatch = belongsToAnotherStick(options, *opened.manifest);
         preview.archiveBytes = opened.archive->size();
         preview.deadBytes = deadSpace(*opened.reader).deadBytes;
     }
@@ -663,8 +673,7 @@ BackupStickOutcome BackupStick::execute(const BackupStickOptions &options, Progr
     // update from a different stick would diff the newcomer against the
     // archive and record every file of the original as removed, which is
     // the original's backup gone. Refuse; preview flags the same thing.
-    if (opened.manifest && !options.stickIdentifier.empty() && !opened.manifest->stickIdentifier.empty()
-        && options.stickIdentifier != opened.manifest->stickIdentifier) {
+    if (opened.manifest && belongsToAnotherStick(options, *opened.manifest)) {
         outcome.message = "this backup belongs to a different stick (" + opened.manifest->stickLabel
                           + ", id " + opened.manifest->stickIdentifier + "); back this one up under another name";
         return outcome;

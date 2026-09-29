@@ -143,6 +143,7 @@ private:
     {
         bool hasLibrary = false;
         std::string stickIdentifier;
+        std::string legacyStickIdentifier;
         std::string stickLabel;
         std::optional<domain::LibraryFingerprint> fingerprint;
         std::map<std::string, std::string> databaseFingerprints;

@@ -184,8 +184,9 @@ int main(int argc, char **argv)
         options.stickRoot = root;
         options.archivePath = archive;
         options.stickLabel = rig::stickLabelFor(root);
-        options.stickIdentifier =
-            infrastructure::system::readStickHardwareInfo(pathToUtf8(root), options.stickLabel).stickIdentifier;
+        const auto hardware = infrastructure::system::readStickHardwareInfo(pathToUtf8(root), options.stickLabel);
+        options.stickIdentifier = hardware.stickIdentifier;
+        options.legacyStickIdentifier = hardware.legacyStickIdentifier;
         std::cout << "stick " << options.stickLabel << " (" << options.stickIdentifier << ") -> " << pathToUtf8(archive)
                   << "\n";
 

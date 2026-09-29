@@ -371,8 +371,10 @@ void CloneStickController::start(bool exact)
         if (!result->refusal.isEmpty()) {
             return result;
         }
-        options.backup.stickIdentifier =
-            infrastructure::system::readStickHardwareInfo(sourceRoot.toStdString(), sourceLabel.toStdString()).stickIdentifier;
+        const auto sourceHardware =
+            infrastructure::system::readStickHardwareInfo(sourceRoot.toStdString(), sourceLabel.toStdString());
+        options.backup.stickIdentifier = sourceHardware.stickIdentifier;
+        options.backup.legacyStickIdentifier = sourceHardware.legacyStickIdentifier;
         // Handed over rather than read now, and read fresh when it is:
         // see BackupStickOptions::readLibraryFingerprint. A clone writes
         // the same manifest header a backup does and has the same way of

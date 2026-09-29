@@ -60,6 +60,7 @@ struct Facts
     fs::path root;
     std::string label;
     std::string identifier;
+    std::string legacyIdentifier;
     bool hasLibrary = false;
     std::optional<domain::LibraryFingerprint> fingerprint;
     std::map<std::string, std::string> databaseFingerprints;
@@ -85,6 +86,7 @@ Facts gather(const fs::path &root, const std::vector<application::StickBackupDes
     facts.label = rig::stickLabelFor(root);
     const auto hardware = infrastructure::system::readStickHardwareInfo(pathToUtf8(root), facts.label);
     facts.identifier = hardware.stickIdentifier;
+    facts.legacyIdentifier = hardware.legacyStickIdentifier;
     facts.freeBytes = hardware.freeBytes;
     facts.usedBytes = hardware.totalBytes > hardware.freeBytes ? hardware.totalBytes - hardware.freeBytes : 0;
     std::error_code ec;
@@ -182,6 +184,7 @@ int main(int argc, char **argv)
             StickBackupAdviceInput input;
             input.hasLibrary = facts.hasLibrary;
             input.stickIdentifier = facts.identifier;
+            input.legacyStickIdentifier = facts.legacyIdentifier;
             input.stickLabel = facts.label;
             input.liveFingerprint = facts.fingerprint;
             input.liveDatabaseFingerprints = facts.databaseFingerprints;

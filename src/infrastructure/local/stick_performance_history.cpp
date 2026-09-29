@@ -131,26 +131,55 @@ std::vector<StickPerformanceRecord> StickPerformanceHistory::forStick(const std:
     return out;
 }
 
-void StickPerformanceHistory::append(const StickPerformanceRecord &record)
+namespace
 {
-    auto records = readAll();
-    records.push_back(record);
-    // Drop the oldest of this stick beyond the cap; other sticks untouched.
+
+// Drops the oldest of this stick beyond the cap; other sticks untouched.
+void capStick(std::vector<StickPerformanceRecord> &records, const std::string &stickIdentifier)
+{
     int forThis = 0;
     for (const auto &r : records) {
-        if (r.stickIdentifier == record.stickIdentifier) {
+        if (r.stickIdentifier == stickIdentifier) {
             ++forThis;
         }
     }
-    for (auto it = records.begin(); it != records.end() && forThis > kKeepPerStick;) {
-        if (it->stickIdentifier == record.stickIdentifier) {
+    for (auto it = records.begin(); it != records.end() && forThis > StickPerformanceHistory::kKeepPerStick;) {
+        if (it->stickIdentifier == stickIdentifier) {
             it = records.erase(it);
             --forThis;
         } else {
             ++it;
         }
     }
+}
+
+}  // namespace
+
+void StickPerformanceHistory::append(const StickPerformanceRecord &record)
+{
+    auto records = readAll();
+    records.push_back(record);
+    capStick(records, record.stickIdentifier);
     writeAll(records);
+}
+
+void StickPerformanceHistory::adoptLegacyRecords(const std::string &legacyIdentifier, const std::string &identifier)
+{
+    if (legacyIdentifier.empty() || identifier.empty() || legacyIdentifier == identifier) {
+        return;
+    }
+    auto records = readAll();
+    bool moved = false;
+    for (auto &r : records) {
+        if (r.stickIdentifier == legacyIdentifier) {
+            r.stickIdentifier = identifier;
+            moved = true;
+        }
+    }
+    if (moved) {
+        capStick(records, identifier);
+        writeAll(records);
+    }
 }
 
 void StickPerformanceHistory::setLatestWearState(const std::string &stickIdentifier, const std::string &wearState)
