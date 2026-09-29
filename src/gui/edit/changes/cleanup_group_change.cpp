@@ -617,8 +617,16 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
             if (plan.lastPlayedAtForSurvivor) {
                 engineCueWriter->setLastPlayedAt(survivorId, *plan.lastPlayedAtForSurvivor);
             }
-            w.session.noteItemApplied();
-            log.record("cleanup: propagated missing bpm/key onto survivor track id=" + survivorId);
+            // Counted only for what was written: a cover planned here alone
+            // (which the planner no longer does for Engine) is not a write.
+            if (plan.bpmForSurvivor || plan.keyForSurvivor || plan.lastPlayedAtForSurvivor) {
+                w.session.noteItemApplied();
+                log.record("cleanup: propagated missing bpm/key onto survivor track id=" + survivorId);
+            }
+            if (plan.artworkPathForSurvivor) {
+                log.record("cleanup: no cover written onto Engine survivor track id=" + survivorId
+                           + ": Engine covers are not propagated");
+            }
         } else if (format == "onelibrary") {
             auto &fieldWriter = sharedOneLibraryWriter(ctx, w.effectiveRoot, w.realStickRootForOneLib);
             if (plan.keyForSurvivor) {
