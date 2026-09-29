@@ -178,7 +178,9 @@ DuplicateCleanupPlan DuplicateCleanupPlanner::plan(const DuplicateGroup &group)
             }
         }
     }
-    if (result.survivor.artworkPath.empty()) {
+    // Not for an Engine survivor: nothing writes an Engine cover onto it
+    // yet, and a propagation planned there would be counted as done.
+    if (result.survivor.artworkPath.empty() && result.survivor.format != "engine") {
         for (size_t i = 0; i < group.tracks.size(); ++i) {
             if (i != survivorIndex && !group.tracks[i].artworkPath.empty()) {
                 result.artworkPathForSurvivor = group.tracks[i].artworkPath;

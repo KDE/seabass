@@ -183,6 +183,25 @@ int main()
         std::cout << "case 9 (neither copy has bpm/key/artwork: nothing propagates) OK\n";
     }
 
+    // An Engine survivor gets no cover propagated: nothing in the Engine
+    // apply writes one, and planning it made the save count a propagation
+    // that never happened. Bpm and key still go.
+    {
+        Track a = makeTrack("a", 200.0, 320, 8'000'000);
+        Track b = makeTrack("b", 200.0, 128, 3'000'000);
+        a.format = "engine";
+        b.format = "engine";
+        b.bpm = 128.0;
+        b.artworkPath = "/home/user/Seabass/metadata/engine-artwork/u/at-x/cover.jpg";
+        DuplicateGroup group{{a, b}};
+        auto plan = DuplicateCleanupPlanner::plan(group);
+        assert(plan.survivor.sourceId == "a");
+        assert(plan.bpmForSurvivor.has_value());
+        assert(!plan.artworkPathForSurvivor.has_value());
+        assert(plan.artworkDonorSourceId.empty());
+        std::cout << "case 9b (an Engine survivor gets no cover planned) OK\n";
+    }
+
     // Play counts are added up onto the survivor: each copy was played in
     // its own right. A difference is merged, never a warning.
     {
