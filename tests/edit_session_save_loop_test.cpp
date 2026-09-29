@@ -605,16 +605,15 @@ int main()
 
     // 19. An older library's row with an unreadable image kept in the
     //     database is repaired in place, through the real change: the
-    //     database is backed up for Undo first, the image lands in the
-    //     row, and both tracks sharing it keep pointing at it. The second
-    //     track finds its row readable already, which is a repair too.
+    //     database is backed up for Undo first, and the image lands in the
+    //     row the track points at.
     {
         const fs::path stickRoot = root / "artwork-in-place";
         const fs::path library = stickRoot / "Engine Library";
         const fs::path database = library / "Database2" / "m.db";
         fs::create_directories(library / "Database2");
-        seabass::testing::createEngineArtworkTables(database, {1, 2});
-        seabass::testing::setEngineDatabaseArtwork(database, 9, "934a576ac3a4a0ab6d66478652b9bb8b7ac68b82", "", {1, 2});
+        seabass::testing::createEngineArtworkTables(database, {1});
+        seabass::testing::setEngineDatabaseArtwork(database, 9, "934a576ac3a4a0ab6d66478652b9bb8b7ac68b82", "", {1});
         const fs::path image = stickRoot / "PIONEER" / "Artwork" / "00001" / "a9.jpg";
         fs::create_directories(image.parent_path());
         const std::string jpeg = std::string("\xFF\xD8\xFF", 3) + "RESCUED";
@@ -630,11 +629,9 @@ int main()
         const QString enginePath = pathToQString(library);
         CancellationToken token;
         SaveContext ctx(token, noProgress, nullptr, {}, enginePath);
-        auto result = runSaveLoop({std::make_shared<RepairArtworkChange>(enginePath, entry(1), 2, true, nullptr),
-                                   std::make_shared<RepairArtworkChange>(enginePath, entry(2), 2, false, nullptr)},
-                                  ctx);
+        auto result = runSaveLoop({std::make_shared<RepairArtworkChange>(enginePath, entry(1), 1, true, nullptr)}, ctx);
         assert(result.error.isEmpty());
-        assert(result.appliedIds.size() == 2);
+        assert(result.appliedIds.size() == 1);
         assert(result.skippedIds.isEmpty());
         bool databaseBackedUp = false;
         for (const UndoableBackup &backup : result.backups) {
@@ -643,7 +640,6 @@ int main()
         assert(databaseBackedUp && "the database is backed up before the image is written into it");
         assert(seabass::testing::engineAlbumArtImage(database, 9) == jpeg);
         assert(seabass::testing::engineTrackAlbumArtId(database, 1) == 9);
-        assert(seabass::testing::engineTrackAlbumArtId(database, 2) == 9);
         assert(seabass::testing::engineTrackArtworkHash(database, 1) == "934a576ac3a4a0ab6d66478652b9bb8b7ac68b82");
         std::cout << "case 19 (an unreadable image kept in the database is replaced in place, after a backup) OK\n";
     }

@@ -728,9 +728,12 @@ int main(int argc, char **argv)
         assert(audit.repairable() == 3);
         const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable, {}, {}, reader);
         assert(repair.error.empty());
-        assert(repair.repaired == 2);          // rows 3 and 4
-        assert(repair.alreadyReadable == 1);   // the second track on row 3
-        assert(repair.filesWritten.empty());
+        // Track 4 shares row 3 with track 7, so it gets a row of its own
+        // (a file: this library states no schema version); track 7, then
+        // alone on row 3, and track 5, alone on row 4, are repaired in place.
+        assert(repair.repaired == 3);
+        assert(repair.alreadyReadable == 0);
+        assert(repair.filesWritten.size() == 1);
         assert(imageOf(3) == (std::pair{rescued, std::string("934a576ac3a4a0ab6d66478652b9bb8b7ac68b82")}));
         assert(imageOf(4).first == rescued);
         const ArtworkAudit after = auditArtwork(pathToUtf8(fixture.library), {}, probe);
@@ -738,9 +741,12 @@ int main(int argc, char **argv)
         assert(after.unreadable.empty());
         db = fixture.open();
         sqlite3_stmt *count = nullptr;
-        assert(sqlite3_prepare_v2(db, "SELECT count(*), sum(albumArtId) FROM Track;", -1, &count, nullptr) == SQLITE_OK);
-        assert(sqlite3_step(count) == SQLITE_ROW);
-        assert(sqlite3_column_int(count, 1) == 1 + 3 + 4 + 3);  // nobody re-pointed
+        assert(sqlite3_prepare_v2(db, "SELECT albumArtId FROM Track ORDER BY id;", -1, &count, nullptr) == SQLITE_OK);
+        std::vector<int> rows;
+        while (sqlite3_step(count) == SQLITE_ROW) {
+            rows.push_back(sqlite3_column_int(count, 0));
+        }
+        assert(rows.size() == 4 && rows[0] == 1 && rows[1] != 3 && rows[2] == 4 && rows[3] == 3);
         sqlite3_finalize(count);
         sqlite3_close(db);
 
@@ -1093,6 +1099,55 @@ int main(int argc, char **argv)
         assert(hashOf(db, 1).size() == 20);  // a blob hash naming the file
         sqlite3_close(db);
         std::cout << "case 21 (a library before schema 3.0.2 is repaired in its own storage) OK\n";
+    }
+
+    // 22. Two tracks on one row with no usable image, whose own tags hold
+    //     different covers: writing the first one's into the shared row
+    //     would give the second the wrong cover. The first gets a row of
+    //     its own, in the library's storage; the second, alone on the row
+    //     by then, has it repaired in place, as a track alone on its row
+    //     always does.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_shared_row");
+        sqlite3 *db = fixture.open();
+        exec(db, "CREATE TABLE Information (id INTEGER PRIMARY KEY, uuid TEXT, schemaVersionMajor INTEGER, "
+                 "schemaVersionMinor INTEGER, schemaVersionPatch INTEGER);");
+        exec(db, "INSERT INTO Information VALUES (1, 'u', 3, 0, 1);");
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (1, NULL, NULL), "
+                 "(3, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', x''), (4, '8998055a7787a03a8e8de2fa607a11f37b4c674a', x'');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'First', 'A', 3), (2, 'Second', 'B', 3), "
+                 "(3, 'Alone', 'C', 4);");
+        sqlite3_close(db);
+        const auto coverOf = [](const ArtworkEntry &entry) { return jpeg("TAGS-OF-TRACK-" + std::to_string(entry.trackId)); };
+        const auto probe = [](const ArtworkEntry &) { return true; };
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library), {}, probe);
+        assert(audit.repairable() == 3);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), audit.unreadable, {}, {}, coverOf);
+        assert(repair.error.empty());
+        assert(repair.repaired == 3);
+        assert(repair.filesWritten.empty());
+        db = fixture.open();
+        const auto imageFor = [db](int track) {
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(db, "SELECT a.id, a.albumArt FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+                                   "WHERE t.id = ?;",
+                               -1, &stmt, nullptr);
+            sqlite3_bind_int(stmt, 1, track);
+            assert(sqlite3_step(stmt) == SQLITE_ROW);
+            const auto result = std::pair{sqlite3_column_int(stmt, 0),
+                                          std::string(static_cast<const char *>(sqlite3_column_blob(stmt, 1)),
+                                                      static_cast<size_t>(sqlite3_column_bytes(stmt, 1)))};
+            sqlite3_finalize(stmt);
+            return result;
+        };
+        const auto first = imageFor(1);
+        const auto second = imageFor(2);
+        const auto alone = imageFor(3);
+        assert(first.second == jpeg("TAGS-OF-TRACK-1") && first.first != 3);
+        assert(second.second == jpeg("TAGS-OF-TRACK-2") && second.first == 3);
+        assert(alone.first == 4 && alone.second == jpeg("TAGS-OF-TRACK-3"));  // in place
+        sqlite3_close(db);
+        std::cout << "case 22 (tracks sharing an empty row get rows of their own) OK\n";
     }
 
     std::cout << "engine_artwork_test: all cases passed\n";

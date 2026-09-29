@@ -693,6 +693,9 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     // rollback then restores underneath a connection still holding it.
     try {
         for (const ArtworkEntry &entry : entries) {
+            // The image for a track whose row it shares with others: given
+            // a row of its own below, rather than written into theirs.
+            std::string ownRowBytes;
             if (entry.storage == ArtworkStorage::InDatabaseUnreadable && !hasImageColumn) {
                 result.noLongerInDatabase++;  // rows here cannot hold an image
                 continue;
@@ -746,20 +749,37 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                     result.notAnImage++;
                     continue;
                 }
-                sqlite3_stmt *write = nullptr;
-                if (sqlite3_prepare_v2(handle, "UPDATE AlbumArt SET albumArt = ? WHERE id = ?;", -1, &write, nullptr)
+                // In place only for a track alone on its row: written into
+                // a row other tracks share, one track's cover would become
+                // theirs, and nothing here knows theirs is the same.
+                sqlite3_stmt *sharing = nullptr;
+                if (sqlite3_prepare_v2(handle, "SELECT count(*) FROM Track WHERE albumArtId = ?;", -1, &sharing,
+                                       nullptr)
                     != SQLITE_OK) {
-                    return fail(std::string("could not write the image into its row: ") + sqlite3_errmsg(handle));
+                    return fail(std::string("could not count the tracks on an art row: ") + sqlite3_errmsg(handle));
                 }
-                sqlite3_bind_blob(write, 1, bytes.data(), static_cast<int>(bytes.size()), SQLITE_TRANSIENT);
-                sqlite3_bind_int64(write, 2, row);
-                if (sqlite3_step(write) != SQLITE_DONE) {
+                sqlite3_bind_int64(sharing, 1, row);
+                const bool shared = sqlite3_step(sharing) == SQLITE_ROW && sqlite3_column_int64(sharing, 0) > 1;
+                sqlite3_finalize(sharing);
+                if (shared) {
+                    ownRowBytes = std::move(bytes);
+                } else {
+                    sqlite3_stmt *write = nullptr;
+                    if (sqlite3_prepare_v2(handle, "UPDATE AlbumArt SET albumArt = ? WHERE id = ?;", -1, &write,
+                                           nullptr)
+                        != SQLITE_OK) {
+                        return fail(std::string("could not write the image into its row: ") + sqlite3_errmsg(handle));
+                    }
+                    sqlite3_bind_blob(write, 1, bytes.data(), static_cast<int>(bytes.size()), SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(write, 2, row);
+                    if (sqlite3_step(write) != SQLITE_DONE) {
+                        sqlite3_finalize(write);
+                        return fail(std::string("could not write the image into its row: ") + sqlite3_errmsg(handle));
+                    }
                     sqlite3_finalize(write);
-                    return fail(std::string("could not write the image into its row: ") + sqlite3_errmsg(handle));
+                    result.repaired++;
+                    continue;
                 }
-                sqlite3_finalize(write);
-                result.repaired++;
-                continue;
             }
             // Asked of the database as it is now, not of the audit: a
             // track whose row holds a readable image, or names one by a
@@ -769,7 +789,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             // they are, in a row nothing points at any more.
             bool keepsImageInDatabase =
                 entry.storage == ArtworkStorage::InDatabase || entry.storage == ArtworkStorage::InDatabaseOtherFormat;
-            if (!keepsImageInDatabase) {
+            if (!keepsImageInDatabase && ownRowBytes.empty()) {
                 sqlite3_stmt *current = nullptr;
                 // Without the image column a text hash keeps nothing here.
                 const std::string textHash = hasImageColumn
@@ -797,10 +817,10 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 result.keptInDatabase++;
                 continue;
             }
-            std::string bytes;
-            if (!entry.imageOnStick.empty()) {
+            std::string bytes = std::move(ownRowBytes);
+            if (bytes.empty() && !entry.imageOnStick.empty()) {
                 bytes = readWholeFile(entry.imageOnStick);
-            } else if (entry.otherSource && readOtherSource) {
+            } else if (bytes.empty() && entry.otherSource && readOtherSource) {
                 bytes = readOtherSource(entry);
             }
             if (bytes.empty()) {
