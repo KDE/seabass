@@ -774,6 +774,9 @@ int main(int argc, char **argv)
         exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (2, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', "
                  "zeroblob(500));");
         exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (3, '', NULL);");
+        // Stored as text, with a NUL inside: four bytes, which length()
+        // alone counts as two characters.
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (4, 'x', CAST(x'41420043' AS TEXT));");
         sqlite3_close(db);
         const fs::path onStick = fixture.stick / "PIONEER" / "Artwork" / "00001" / "a5_m.jpg";  // written by Fixture
         const fs::path localCopy = seabass::infrastructure::paths::localEngineArtworkDir() / "some-library" / "c.png";
@@ -782,7 +785,7 @@ int main(int argc, char **argv)
         tracks[0].artworkPath = pathToUtf8(onStick);
         tracks[1].artworkPath = pathToUtf8(onStick);  // counted once
         tracks[2].artworkPath = pathToUtf8(localCopy);
-        const std::uint64_t expected = fs::file_size(onStick) + 3000 + 500;
+        const std::uint64_t expected = fs::file_size(onStick) + 3000 + 500 + 4;
         assert(artworkBytesOnStick(tracks, pathToUtf8(fixture.library)) == expected);
         assert(artworkBytesOnStick(tracks, {}) == fs::file_size(onStick));
         fs::remove_all(localCopy.parent_path());

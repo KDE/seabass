@@ -371,7 +371,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     std::string imageLengthSql = "0";
     try {
         if (hasColumn(db, "AlbumArt", "albumArt")) {
-            imageLengthSql = "length(a.albumArt)";
+            imageLengthSql = byteLengthSql("a.albumArt");
         }
     } catch (const std::exception &) {
         fail("could not list the AlbumArt columns in");

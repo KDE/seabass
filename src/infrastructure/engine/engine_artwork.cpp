@@ -250,7 +250,8 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     std::unordered_map<std::int64_t, std::string> imageHeadByRow;
     if (hasImageColumn) {
         sqlite3_stmt *images = nullptr;
-        if (sqlite3_prepare_v2(handle, "SELECT id FROM AlbumArt WHERE length(albumArt) > 0;", -1, &images, nullptr)
+        const std::string listSql = "SELECT id FROM AlbumArt WHERE " + byteLengthSql("albumArt") + " > 0;";
+        if (sqlite3_prepare_v2(handle, listSql.c_str(), -1, &images, nullptr)
             != SQLITE_OK) {
             audit.error = std::string("could not read the AlbumArt table: ") + sqlite3_errmsg(handle);
             sqlite3_close(handle);
@@ -474,7 +475,8 @@ std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, cons
     if (sqlite3_open_v2(pathToUtf8(databaseFile(engineLibraryPath)).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
         == SQLITE_OK) {
         sqlite3_stmt *stmt = nullptr;
-        if (sqlite3_prepare_v2(handle, "SELECT coalesce(sum(length(albumArt)), 0) FROM AlbumArt;", -1, &stmt, nullptr)
+        const std::string sumSql = "SELECT coalesce(sum(" + byteLengthSql("albumArt") + "), 0) FROM AlbumArt;";
+        if (sqlite3_prepare_v2(handle, sumSql.c_str(), -1, &stmt, nullptr)
                 == SQLITE_OK
             && sqlite3_step(stmt) == SQLITE_ROW) {
             bytes += static_cast<std::uint64_t>(sqlite3_column_int64(stmt, 0));
@@ -534,7 +536,7 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     } catch (const std::exception &e) {
         return fail(e.what());
     }
-    const std::string imageLength = hasImageColumn ? "length(a.albumArt)" : "0";
+    const std::string imageLength = hasImageColumn ? byteLengthSql("a.albumArt") : "0";
 
     // beforeWrite is SaveContext::protectForThisChange, which throws when
     // it cannot copy a file aside (no temporary space, say). Uncaught it
