@@ -330,6 +330,51 @@ int main()
         std::cout << "case 10 (two reads writing the same covers at once both get whole copies) OK\n";
     }
 
+    // 11. A schema whose AlbumArt has no albumArt column keeps no images
+    //     in the database, and its files under Artwork/ still show,
+    //     without a warning.
+    {
+        const fs::path older = library.parent_path() / "no-image-column" / "Engine Library";
+        fs::create_directories(older.parent_path());
+        fs::copy(source, older, fs::copy_options::recursive);
+        const std::vector<std::uint8_t> fileHash(20, 0x4D);
+        const fs::path onStick =
+            older / "Artwork" / (seabass::infrastructure::engine::artworkFileName(fileHash) + ".jpg");
+        fs::create_directories(onStick.parent_path());
+        std::ofstream(onStick, std::ios::binary) << jpegImage;
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(older / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_exec(db,
+                            "PRAGMA foreign_keys = OFF; DROP INDEX IF EXISTS index_AlbumArt_hash; DROP TABLE AlbumArt; "
+                            "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY AUTOINCREMENT, hash BLOB);",
+                            nullptr, nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(db, "INSERT INTO AlbumArt (id, hash) VALUES (2, ?);", -1, &stmt, nullptr) == SQLITE_OK);
+        sqlite3_bind_blob(stmt, 1, fileHash.data(), static_cast<int>(fileHash.size()), SQLITE_TRANSIENT);
+        assert(sqlite3_step(stmt) == SQLITE_DONE);
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(older));
+        reader.setProgressReporter(reporter);
+        auto tracks = reader.readTracks();
+        reporter.warnings.clear();
+        reader.fillArtwork(tracks);
+        for (const auto &warning : reporter.warnings) {
+            std::cerr << "warning: " << warning << "\n";
+        }
+        assert(reporter.warnings.empty());
+        bool shown = false;
+        for (const auto &track : tracks) {
+            if (track.sourceId == "2") {
+                shown = !track.artworkPath.empty() && fs::equivalent(seabass::pathFromUtf8(track.artworkPath), onStick);
+            }
+        }
+        assert(shown);
+        std::cout << "case 11 (no albumArt column: covers under Artwork/ still show, no warning) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;

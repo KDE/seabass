@@ -334,12 +334,21 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         }
         sqlite3_finalize(information);
     }
+    // A schema without the image column keeps no images in the database.
+    std::string imageLength = "0";
+    try {
+        if (hasColumn(db, "AlbumArt", "albumArt")) {
+            imageLength = "length(a.albumArt)";
+        }
+    } catch (const std::exception &) {
+        fail("could not list the AlbumArt columns in");
+    }
     sqlite3_stmt *stmt = nullptr;
-    const char *sql =
-        "SELECT t.id, a.hash, a.id, length(a.albumArt) FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
-        "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 "
-        "AND (length(a.albumArt) > 0 OR (typeof(a.hash) = 'blob' AND length(a.hash) > 0))";
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    const std::string sql = "SELECT t.id, a.hash, a.id, " + imageLength
+        + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+          "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 AND ("
+        + imageLength + " > 0 OR (typeof(a.hash) = 'blob' AND length(a.hash) > 0))";
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         fail("could not read AlbumArt in");
     }
     // Per AlbumArt row, since many tracks share one.
