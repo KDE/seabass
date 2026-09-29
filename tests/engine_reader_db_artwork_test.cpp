@@ -470,6 +470,30 @@ int main()
         std::cout << "case 14 (leftovers of interrupted writes are swept) OK\n";
     }
 
+    // 15. A row with a blob hash and an image kept beside it is named by
+    //     that hash, so a later read finds its copy with a stat instead of
+    //     reading and checksumming the image again.
+    {
+        const std::vector<std::uint8_t> blobHash(20, 0xAB);
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO AlbumArt (id, hash, albumArt) VALUES (8, ?, ?);", -1, &stmt,
+                                  nullptr)
+               == SQLITE_OK);
+        sqlite3_bind_blob(stmt, 1, blobHash.data(), static_cast<int>(blobHash.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, pngImage.data(), static_cast<int>(pngImage.size()), SQLITE_TRANSIENT);
+        assert(sqlite3_step(stmt) == SQLITE_DONE);
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        const auto read = artworkBySourceId(seabass::pathToUtf8(library));
+        const std::string expected = std::string("abababababababababababababababababababab") + "-"
+            + std::to_string(pngImage.size()) + ".png";
+        assert(seabass::pathToUtf8(seabass::pathFromUtf8(read.at("8")).filename()) == expected);
+        assert(slurp(read.at("8")) == pngImage);
+        std::cout << "case 15 (an image beside a blob hash is named by that hash) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
