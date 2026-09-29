@@ -539,6 +539,16 @@ BackupRecord FilesystemBackupStore::addToArchive(const std::string &id, const st
     // record stays what it was before the call.
     const fs::path archivePath = dir / ArchiveFileName;
     std::error_code sizeEc;
+    // Something other than a file where the archive should be has no size
+    // to cut back to, and is said so in the same words everywhere. Asked
+    // first because MSVC's file_size answers a directory with 0 and no
+    // error, where POSIX says EISDIR: on Windows the append went ahead as
+    // though onto an empty archive, past the refusal below.
+    std::error_code kindEc;
+    const fs::file_status archiveStatus = fs::status(archivePath, kindEc);
+    if (!kindEc && fs::exists(archiveStatus) && !fs::is_regular_file(archiveStatus)) {
+        throw std::runtime_error("could not read the size of " + pathToUtf8(archivePath) + ": it is not a file");
+    }
     std::uintmax_t archiveBefore = fs::file_size(archivePath, sizeEc);
     if (sizeEc == std::errc::no_such_file_or_directory) {
         // backup() always leaves an archive, even for a record of no
