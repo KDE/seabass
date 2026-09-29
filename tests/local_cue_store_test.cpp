@@ -387,22 +387,27 @@ int main()
             sqlite3_close(rawDb);
         }
 
-        LocalCueStore store(seabass::pathToUtf8(oldPath));
-        const auto summaries = store.listSnapshots();
-        assert(summaries.size() == 1);
-        assert(summaries[0].schemaVersion == 1);
-        const auto restored = store.readSnapshot(summaries[0].id);
-        assert(restored.size() == 1 && restored[0].title == "Old" && restored[0].cues.size() == 1);
-        assert(restored[0].cues[0].comment == "drop");
+        // Its own scope: the store holds the database open, and Windows
+        // will not delete a file that is open -- fs::remove threw there,
+        // uncaught, and the whole test aborted after case 12.
+        {
+            LocalCueStore store(seabass::pathToUtf8(oldPath));
+            const auto summaries = store.listSnapshots();
+            assert(summaries.size() == 1);
+            assert(summaries[0].schemaVersion == 1);
+            const auto restored = store.readSnapshot(summaries[0].id);
+            assert(restored.size() == 1 && restored[0].title == "Old" && restored[0].cues.size() == 1);
+            assert(restored[0].cues[0].comment == "drop");
 
-        // The loop columns arrived too: a loop upserted now reads back.
-        CuePoint loop{CuePoint::Kind::Memory, 0, 2000.0, "", ""};
-        loop.isLoop = true;
-        loop.loopEndMs = 4000.0;
-        store.upsert({makeTrack("n", "new.mp3", "New", "Artist", 100.0, {loop})}, "engine", "OLD");
-        const auto all = store.readAll();
-        assert(all.size() == 1 && all[0].cues.size() == 1);
-        assert(all[0].cues[0].isLoop && all[0].cues[0].loopEndMs == 4000.0);
+            // The loop columns arrived too: a loop upserted now reads back.
+            CuePoint loop{CuePoint::Kind::Memory, 0, 2000.0, "", ""};
+            loop.isLoop = true;
+            loop.loopEndMs = 4000.0;
+            store.upsert({makeTrack("n", "new.mp3", "New", "Artist", 100.0, {loop})}, "engine", "OLD");
+            const auto all = store.readAll();
+            assert(all.size() == 1 && all[0].cues.size() == 1);
+            assert(all[0].cues[0].isLoop && all[0].cues[0].loopEndMs == 4000.0);
+        }
         fs::remove(oldPath);
         std::cout << "case 13 (a store from before format versions and loops is brought up to date) OK\n";
     }
