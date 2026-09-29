@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -264,8 +266,10 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 }
 
 // Track id -> cover, for the art that costs more than the catalog to find:
-// an image kept in the row, written out to this computer. The artwork
-// stage of a progressive read, so the track list never waits for it.
+// an image kept in the row, written out to this computer, and an image
+// file under Artwork/ named by the row's blob hash, looked for on the
+// stick. The artwork stage of a progressive read, so the track list never
+// waits for either.
 std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &engineLibraryPath)
 {
     std::unordered_map<int64_t, std::string> result;
@@ -277,6 +281,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         }
         return result;
     }
+    const std::string artworkDirectory = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Artwork");
     // The library's own directory, named by its Information uuid.
     std::filesystem::path libraryDirectory;
     {
@@ -296,8 +301,9 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     }
     sqlite3_stmt *stmt = nullptr;
     const char *sql =
-        "SELECT t.id, a.hash, a.id FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
-        "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 AND length(a.albumArt) > 0";
+        "SELECT t.id, a.hash, a.id, length(a.albumArt) > 0 FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+        "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 "
+        "AND (length(a.albumArt) > 0 OR (typeof(a.hash) = 'blob' AND length(a.hash) > 0))";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return result;
@@ -306,14 +312,24 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
     std::unordered_map<int64_t, std::string> fileByRow;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const int64_t trackId = sqlite3_column_int64(stmt, 0);
-        const unsigned char *hashText = sqlite3_column_text(stmt, 1);
-        const std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
         const int64_t albumArtId = sqlite3_column_int64(stmt, 2);
+        const bool imageInRow = sqlite3_column_int(stmt, 3) != 0;
         auto known = fileByRow.find(albumArtId);
         if (known == fileByRow.end()) {
             std::string file;
             try {
-                file = databaseArtworkFile(db, albumArtId, hash, libraryDirectory);
+                if (imageInRow) {
+                    const unsigned char *hashText = sqlite3_column_text(stmt, 1);
+                    const std::string hash = hashText ? reinterpret_cast<const char *>(hashText) : std::string();
+                    file = databaseArtworkFile(db, albumArtId, hash, libraryDirectory);
+                } else {
+                    const void *blob = sqlite3_column_blob(stmt, 1);
+                    const std::span<const std::uint8_t> hash(static_cast<const std::uint8_t *>(blob),
+                                                             static_cast<size_t>(sqlite3_column_bytes(stmt, 1)));
+                    if (!std::string_view(static_cast<const char *>(blob), hash.size()).starts_with("image://")) {
+                        file = cachedArtworkFile(artworkDirectory, hash);
+                    }
+                }
             } catch (const std::exception &) {
                 // One unreadable image is not worth the others.
             }

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "application/ports/progress_reporter.hpp"
+#include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -165,6 +166,36 @@ int main()
         const auto again = artworkBySourceId(seabass::pathToUtf8(other));
         assert(again.at("1") == theirs.at("1"));
         std::cout << "case 4 (two libraries with the same hash keep their own covers) OK\n";
+    }
+
+    // 5. Current libraries keep each cover as a file under Artwork/, named
+    //    by the row's 20-byte hash. The track names that file itself, on
+    //    the stick; one whose file is gone names none.
+    {
+        const std::vector<std::uint8_t> present(20, 0x5A);
+        const std::vector<std::uint8_t> gone(20, 0x6B);
+        const std::string presentName = seabass::infrastructure::engine::artworkFileName(present);
+        const fs::path artwork = library / "Artwork" / (presentName + ".png");
+        fs::create_directories(artwork.parent_path());
+        std::ofstream(artwork, std::ios::binary) << pngImage;
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        for (const auto &[id, hash] : {std::pair{4, &present}, std::pair{5, &gone}}) {
+            sqlite3_stmt *stmt = nullptr;
+            assert(sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO AlbumArt (id, hash, albumArt) VALUES (?, ?, NULL);", -1,
+                                      &stmt, nullptr)
+                   == SQLITE_OK);
+            sqlite3_bind_int(stmt, 1, id);
+            sqlite3_bind_blob(stmt, 2, hash->data(), static_cast<int>(hash->size()), SQLITE_TRANSIENT);
+            assert(sqlite3_step(stmt) == SQLITE_DONE);
+            sqlite3_finalize(stmt);
+        }
+        sqlite3_close(db);
+        const auto read = artworkBySourceId(seabass::pathToUtf8(library));
+        assert(!read.at("4").empty());
+        assert(fs::equivalent(seabass::pathFromUtf8(read.at("4")), artwork));
+        assert(read.at("5").empty());
+        std::cout << "case 5 (a cover kept as a file under Artwork/ is shown from the stick) OK\n";
     }
 
     fs::remove_all(library.parent_path(), ec);

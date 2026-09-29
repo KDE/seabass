@@ -115,6 +115,31 @@ std::string artworkFileName(std::span<const std::uint8_t> hash)
     return out;
 }
 
+std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash, bool *anyFile)
+{
+    const std::string name = artworkFileName(hash);
+    std::error_code ec;
+    for (const char *extension : {".jpg", ".jpeg", ".png"}) {
+        const fs::path cached = pathFromUtf8(artworkDirectory) / pathFromUtf8(name + extension);
+        if (!fs::is_regular_file(cached, ec)) {
+            continue;
+        }
+        if (anyFile != nullptr) {
+            *anyFile = true;
+        }
+        // There being a file is not the question a player asks. An
+        // unclean unplug leaves directory entries whose data is gone: the
+        // name is right, the size is zero, and Engine draws its grey
+        // placeholder. Counting those as "a player can read this" is how a
+        // stick reports every cover art fixed while the player shows
+        // blanks, so the bytes have to say JPEG or PNG.
+        if (isImageARepairCanName(cached)) {
+            return pathToUtf8(cached);
+        }
+    }
+    return {};
+}
+
 ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type)
 {
     if (reference.empty()) {
@@ -370,28 +395,9 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         }
 
         const std::span<const std::uint8_t> hash(static_cast<const std::uint8_t *>(blob), static_cast<size_t>(size));
-        const std::string name = artworkFileName(hash);
-        std::error_code ec;
-        bool readable = false;
         bool anyFile = false;
-        for (const char *extension : {".jpg", ".jpeg", ".png"}) {
-            const fs::path cached = artwork / pathFromUtf8(name + extension);
-            if (!fs::is_regular_file(cached, ec)) {
-                continue;
-            }
-            anyFile = true;
-            // There being a file is not the question a player asks. An
-            // unclean unplug leaves directory entries whose data is gone:
-            // the name is right, the size is zero, and Engine draws its
-            // grey placeholder. Counting those as "a player can read this"
-            // is how a stick reports every cover art fixed while the
-            // player shows blanks -- so the bytes have to say JPEG or PNG,
-            // which is all isImageARepairCanName asks.
-            if (isImageARepairCanName(cached)) {
-                readable = true;
-                break;
-            }
-        }
+        const bool readable = !cachedArtworkFile(pathToUtf8(artwork), hash, &anyFile).empty();
+        const std::string name = artworkFileName(hash);
         if (readable) {
             audit.readableByAPlayer++;
         } else {

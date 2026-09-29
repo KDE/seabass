@@ -139,6 +139,13 @@ std::string artworkFileName(std::span<const std::uint8_t> hash);
 // the row beside it.
 enum class ReferenceType { Blob, Text };
 
+// The file a player reads for a row's hash: artworkFileName() under
+// `artworkDirectory` (the library's Artwork/), as ".jpg", ".jpeg" or
+// ".png", and holding a JPEG or PNG. Empty when there is none. `anyFile`,
+// when given, is set if a file by one of those names exists at all.
+std::string cachedArtworkFile(const std::string &artworkDirectory, std::span<const std::uint8_t> hash,
+                              bool *anyFile = nullptr);
+
 // Which storage a raw AlbumArt.hash value is.
 ArtworkStorage classifyArtworkReference(std::string_view reference, ReferenceType type);
 
