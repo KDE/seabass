@@ -10,6 +10,13 @@
 // the pass: its progress reporter was gone and the pass died on a pure
 // virtual call ("terminate called without an active exception").
 //
+// Second, found by review: a pass that does listen to its cancel (every
+// real stage does) was left to run on, because nothing cancelled it when
+// the process began to end, and a real stick's cue stage takes seconds.
+// endProcess() waited out its bound for reads and cut the process off
+// with std::_Exit, static destructors and all. The cache cancels its pass
+// at the start of the end now, and the process ends the ordinary way.
+//
 // The child stands in for main(): a cache with passes queued, a static
 // whose destructor aborts if a pass is still running then (the reporter,
 // the readers' statics), and the ending main() has. The parent wants a
@@ -54,6 +61,36 @@ struct StandsInForTheReporter
     }
 } standsInForTheReporter;
 
+// A pass as long as a real stick's cue stage, which ends when cancelled.
+int childListening(int argc, char **argv)
+{
+    QCoreApplication app(argc, argv);
+    auto stage = [](LibraryCatalogCache::Detail, const std::string &, const std::string &,
+                    std::vector<seabass::domain::Track> &, LibraryCatalogCache::StageNotes &,
+                    seabass::application::ProgressReporter &, seabass::application::CancellationToken cancel) {
+        ++passesRunning;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (!cancel.cancelled() && std::chrono::steady_clock::now() < until) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        --passesRunning;
+        cancel.throwIfCancelled();
+    };
+    auto mtime = [](const std::string &, const std::string &) { return std::chrono::system_clock::time_point{}; };
+    auto *cache = new LibraryCatalogCache(stage, mtime);
+    cache->prefetch("rekordbox", "/storm/a");
+    while (passesRunning.load() == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const auto began = std::chrono::steady_clock::now();
+    const int result = seabass::gui::endProcess(0, std::chrono::milliseconds(3000));
+    // Only printed if endProcess() returned: a cut-off process prints nothing.
+    std::cout << "ended in ms: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count()
+              << std::endl;
+    return result;
+}
+
 int child(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -91,6 +128,9 @@ int main(int argc, char **argv)
     if (argc > 1 && std::string(argv[1]) == "child") {
         return child(argc, argv);
     }
+    if (argc > 1 && std::string(argv[1]) == "child-listening") {
+        return childListening(argc, argv);
+    }
     QCoreApplication app(argc, argv);
     QProcess process;
     process.start(QCoreApplication::applicationFilePath(), {QStringLiteral("child")});
@@ -109,6 +149,21 @@ int main(int argc, char **argv)
         std::cerr << "FAIL: a catalog was read after the process began to end: " << out.toStdString() << "\n";
         return 1;
     }
-    std::cout << "prefetch_at_exit_test: the end of the process waits for a prefetch pass and starts no other\n";
+    QProcess listening;
+    listening.start(QCoreApplication::applicationFilePath(), {QStringLiteral("child-listening")});
+    if (!listening.waitForFinished(30000)) {
+        std::cerr << "FAIL: the child with a listening pass did not end\n";
+        listening.kill();
+        return 1;
+    }
+    const QString listeningOut = QString::fromUtf8(listening.readAllStandardOutput());
+    if (listening.exitStatus() != QProcess::NormalExit || listening.exitCode() != 0
+        || !listeningOut.contains(QStringLiteral("ended in ms: "))) {
+        std::cerr << "FAIL: a pass that listens to its cancel was not cancelled when the process began to end; "
+                     "endProcess() waited out its bound and cut the process off: "
+                  << listeningOut.toStdString() << "\n";
+        return 1;
+    }
+    std::cout << "prefetch_at_exit_test: the end of the process waits for a prefetch pass, cancels it and starts no other\n";
     return 0;
 }

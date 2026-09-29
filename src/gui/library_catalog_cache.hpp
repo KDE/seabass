@@ -249,6 +249,10 @@ private:
         std::string path;
     };
 
+    void stopWhenTheProcessEnds();
+    // Cancels the pass in progress and drops the queue; no pass starts
+    // after it. Does not wait.
+    void stopPrefetching();
     static std::string keyFor(const std::string &format, const std::string &path);
     void invalidateLocked(const std::string &key);
     void prefetchLoop();
