@@ -77,9 +77,15 @@ std::unique_ptr<application::LibraryReader> makeReader(const std::string &format
 // (readStickHardwareInfo()'s fallback, label plus size, which clones share).
 std::string volumeIdentityOf(const std::string &engineLibraryPath)
 {
-    const fs::path library = pathFromUtf8(engineLibraryPath);
-    const std::string own = pathToUtf8(infrastructure::paths::localRoot());
-    if (pathToUtf8(library).rfind(own, 0) == 0) {
+    // "…/Engine Library/" names the same folder as "…/Engine Library".
+    fs::path library = pathFromUtf8(engineLibraryPath).lexically_normal();
+    if (!library.has_filename()) {
+        library = library.parent_path();
+    }
+    // Inside Seabass's own tree, as a whole path component: ~/Seabass2 is
+    // not inside ~/Seabass.
+    const fs::path inside = library.lexically_relative(infrastructure::paths::localRoot().lexically_normal());
+    if (!inside.empty() && *inside.begin() != "..") {
         return {};
     }
     const std::string identity =
