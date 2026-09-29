@@ -19,50 +19,139 @@ Frame {
         anchors.fill: parent
         spacing: 12
 
-        // A big, backlit-looking transport button, styled after a hardware
-        // DJ controller's play button rather than a flat UI button.
+        // The play key, after the deck the loaded track plays on: a wide
+        // flat key for a track from either Rekordbox catalog (a CDJ's or
+        // XDJ's transport key), a round pad for one from Engine (a Prime
+        // deck's). The face stays dark; a rim and the glyph light up in
+        // transport green while playing, and while paused the key gives
+        // the deck's own idle signal, a blink or a breath. Switching
+        // library morphs one form into the other. Sizes and colours are
+        // Theme's transport* tokens; see there for what is evoked and
+        // what is deliberately not reproduced.
         Rectangle {
             id: playButton
-            Layout.preferredWidth: 64
-            Layout.preferredHeight: 64
-            radius: width / 2
-            color: playMouseArea.pressed ? Qt.darker(Material.accent, 1.4) : Material.accent
-            border.color: Theme.background
-            border.width: 2
+            objectName: "playButton"
+            // Both Rekordbox catalogs play on the same decks.
+            readonly property bool pioneerForm: root.controller.currentFormat !== "engine"
+            // 0 is the play triangle, 1 the pause bars; in between, the
+            // fold from one to the other.
+            property real morph: root.controller.playing ? 1 : 0
+            Behavior on morph {
+                NumberAnimation { duration: Theme.transportMorphDuration; easing.type: Easing.InOutQuad }
+            }
+            // How lit the rim and glyph are, 0 to 1. Full while playing;
+            // paused, the animations below own it.
+            property real light: root.controller.playing ? 1 : 0
+            property real keyWidth: pioneerForm ? Theme.transportKeyWidth : Theme.transportPadSize
+            Behavior on keyWidth {
+                NumberAnimation { duration: Theme.arrivalTransitionDuration; easing.type: Easing.InOutCubic }
+            }
+            Layout.preferredWidth: keyWidth
+            Layout.preferredHeight: Theme.transportPadSize
+            radius: pioneerForm ? Theme.transportKeyRadius : height / 2
+            Behavior on radius {
+                NumberAnimation { duration: Theme.arrivalTransitionDuration; easing.type: Easing.InOutCubic }
+            }
+            color: playMouseArea.pressed ? Qt.darker(Theme.transportBody, 1.3) : Theme.transportBody
+
+            Connections {
+                target: root.controller
+                function onPlayingChanged() {
+                    if (root.controller.playing) {
+                        playButton.light = 1;
+                    }
+                }
+            }
+
+            // The Pioneer form's blink: on and off in equal halves, a
+            // step and not a fade, the way the key on the deck does it.
+            SequentialAnimation {
+                running: playButton.visible && !root.controller.playing && playButton.pioneerForm
+                loops: Animation.Infinite
+                PropertyAction { target: playButton; property: "light"; value: 1 }
+                PauseAnimation { duration: Theme.transportBlinkHalfPeriod }
+                PropertyAction { target: playButton; property: "light"; value: 0 }
+                PauseAnimation { duration: Theme.transportBlinkHalfPeriod }
+            }
+            // The Denon pad's breath: a sine swell that never quite goes
+            // out and never reaches the playing light.
+            SequentialAnimation {
+                running: playButton.visible && !root.controller.playing && !playButton.pioneerForm
+                loops: Animation.Infinite
+                NumberAnimation { target: playButton; property: "light"; to: 0.7; duration: Theme.transportBreathHalfPeriod; easing.type: Easing.InOutSine }
+                NumberAnimation { target: playButton; property: "light"; to: 0.1; duration: Theme.transportBreathHalfPeriod; easing.type: Easing.InOutSine }
+            }
+
+            Rectangle {
+                id: playFace
+                objectName: "playFace"
+                anchors.fill: parent
+                anchors.margins: Theme.transportFaceInset
+                radius: Math.max(Theme.scaled(4), playButton.radius - Theme.transportFaceInset)
+                color: Theme.transportFace
+            }
+            Rectangle {
+                id: playRim
+                objectName: "playRim"
+                anchors.fill: playFace
+                radius: playFace.radius
+                color: "transparent"
+                border.color: Theme.transportLit
+                border.width: Theme.transportRimWidth
+                opacity: playButton.light
+            }
 
             // Hand-drawn rather than a font glyph: icon-font play/pause
             // characters carry their own (inconsistent, per-font) internal
             // padding, so centering them by anchoring the Text item never
-            // lines the visible ink up with the circle -- only exact
-            // geometry does. Both shapes are built with a bounding box
-            // exactly centered on (cx, cy).
+            // lines the visible ink up with the key; only exact geometry
+            // does. The triangle is two quadrilaterals that meet along
+            // its middle, the bars are two more, and each corner of one
+            // is moved to its counterpart in the other by `morph`, so
+            // the glyph folds instead of swapping. Both shapes' bounding
+            // boxes are centred on (cx, cy); the play shape keeps the
+            // proportions this key has always drawn.
             Canvas {
                 id: playIcon
+                objectName: "playIcon"
                 anchors.fill: parent
                 onPaint: {
-                    var ctx = getContext("2d");
+                    const ctx = getContext("2d");
                     ctx.reset();
-                    ctx.fillStyle = "white";
-                    var cx = width / 2, cy = height / 2;
-                    if (root.controller.playing) {
-                        var barW = width * 0.13;
-                        var barH = height * 0.42;
-                        var gap = width * 0.12;
-                        ctx.fillRect(cx - gap / 2 - barW, cy - barH / 2, barW, barH);
-                        ctx.fillRect(cx + gap / 2, cy - barH / 2, barW, barH);
-                    } else {
-                        var w = width * 0.36, h = height * 0.42;
+                    ctx.fillStyle = Theme.mix(Theme.transportInkOff, Theme.transportLit, playButton.light).toString();
+                    const h = height;
+                    const cx = width / 2, cy = height / 2;
+                    const top = cy - 0.21 * h, bottom = cy + 0.21 * h;
+                    // Left half of the triangle to the left bar, right
+                    // half to the right bar, corner for corner.
+                    const play = [
+                        [[cx - 0.18 * h, top], [cx - 0.18 * h, bottom], [cx, cy + 0.105 * h], [cx, cy - 0.105 * h]],
+                        [[cx, cy - 0.105 * h], [cx, cy + 0.105 * h], [cx + 0.18 * h, cy], [cx + 0.18 * h, cy]]
+                    ];
+                    const pause = [
+                        [[cx - 0.19 * h, top], [cx - 0.19 * h, bottom], [cx - 0.06 * h, bottom], [cx - 0.06 * h, top]],
+                        [[cx + 0.06 * h, top], [cx + 0.06 * h, bottom], [cx + 0.19 * h, bottom], [cx + 0.19 * h, top]]
+                    ];
+                    const t = playButton.morph;
+                    for (let q = 0; q < 2; ++q) {
                         ctx.beginPath();
-                        ctx.moveTo(cx - w / 2, cy - h / 2);
-                        ctx.lineTo(cx - w / 2, cy + h / 2);
-                        ctx.lineTo(cx + w / 2, cy);
+                        for (let i = 0; i < 4; ++i) {
+                            const x = play[q][i][0] + (pause[q][i][0] - play[q][i][0]) * t;
+                            const y = play[q][i][1] + (pause[q][i][1] - play[q][i][1]) * t;
+                            if (i === 0) {
+                                ctx.moveTo(x, y);
+                            } else {
+                                ctx.lineTo(x, y);
+                            }
+                        }
                         ctx.closePath();
                         ctx.fill();
                     }
                 }
                 Connections {
-                    target: root.controller
-                    function onPlayingChanged() { playIcon.requestPaint(); }
+                    target: playButton
+                    function onMorphChanged() { playIcon.requestPaint(); }
+                    function onLightChanged() { playIcon.requestPaint(); }
                 }
             }
 

@@ -485,6 +485,38 @@ QtObject {
     // card column and the gap between the two.
     readonly property real homeWideWidth: homeMediumWidth + rowSpacing + homeCardMinWidth
 
+    // ---- Transport -- the player's play key (PlayerBar.qml) -------
+    //
+    // The key takes the form of the deck the track plays on: a wide flat
+    // key for a track from either Rekordbox catalog, a round pad for one
+    // from Engine. Forms and light evoke the hardware and reproduce
+    // nothing of anyone's trade dress, the stance LibrarySourceToggle
+    // takes with its glyphs. The pad is the height of the artwork square
+    // beside it, which is a plain 64 today, so these are not scaled
+    // either: the two would otherwise part at any font size but 10 pt.
+    readonly property real transportPadSize: 64
+    readonly property real transportKeyWidth: 100
+    readonly property real transportKeyRadius: 9
+    // The key's inset face, and how far in from the key's edge it sits.
+    readonly property real transportFaceInset: 5
+    readonly property real transportRimWidth: 2
+    // A dark key on any ground, as it is on a deck of any colour, and lit
+    // in transport green, the one colour every DJ reads as "playing".
+    // Fixed regardless of useSystemTheme, like the brand colours above.
+    readonly property color transportBody: "#0e1114"
+    readonly property color transportFace: "#23282d"
+    readonly property color transportInkOff: "#9aa5ad"
+    readonly property color transportLit: "#35d97e"
+    // Paused, the key gives the deck's own idle signal: the Pioneer form
+    // blinks, on and off in equal halves, once a second; the Denon pad
+    // breathes on a sine. Both from memory of the decks, not measured.
+    readonly property int transportBlinkHalfPeriod: 500
+    readonly property int transportBreathHalfPeriod: 1100
+    // The play triangle folds into the two pause bars, and back, rather
+    // than swapping: long enough to be seen as a fold, short enough that
+    // the key never lags the press.
+    readonly property int transportMorphDuration: 220
+
     // ---- Titles -- a dedicated (non-bold) display face + scale, set once
     // here and consumed only via PageTitle.qml, so every page title stays
     // consistent. Falls back to the platform's default sans if "Manrope"
