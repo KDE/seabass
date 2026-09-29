@@ -71,8 +71,9 @@ while IFS= read -r file; do
     esac
     is_exempt "$file" && continue
     # REUSE's sidecar: <file>.license carries the header for a file that
-    # cannot, and is checked here as a file of its own.
-    [ -f "$root/$file.license" ] && continue
+    # cannot, and is checked here as a file of its own. It counts only
+    # from the index: one left untracked never reaches CI's reuse lint.
+    git -C "$root" cat-file -e ":$file.license" 2>/dev/null && continue
     # Binary files cannot carry a header; dep5 is where they belong, and
     # saying so is more useful than silently passing them.
     if ! grep -Iq . "$root/$file" 2>/dev/null; then
