@@ -393,6 +393,15 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         entry.storage = classifyArtworkReference(reference, referenceType);
         audit.tracksWithArt++;
 
+        if (entry.storage == ArtworkStorage::InDatabase && !hasImageColumn) {
+            // A text hash on a schema whose rows cannot hold an image
+            // names nothing a player can find: a row without a usable
+            // hash, rebuilt like one.
+            entry.storage = ArtworkStorage::RowWithoutHash;
+            findASourceFor(entry);
+            audit.unreadable.push_back(std::move(entry));
+            continue;
+        }
         if (entry.storage == ArtworkStorage::InDatabase) {
             // A text hash names the image in its own row, and that row
             // holds none.
@@ -534,6 +543,10 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     // rollback then restores underneath a connection still holding it.
     try {
         for (const ArtworkEntry &entry : entries) {
+            if (entry.storage == ArtworkStorage::InDatabaseUnreadable && !hasImageColumn) {
+                result.noLongerInDatabase++;  // rows here cannot hold an image
+                continue;
+            }
             if (entry.storage == ArtworkStorage::InDatabaseUnreadable) {
                 // Repaired in place: the image goes into the row the track
                 // already points at, whose hash and id stay, so every track
@@ -603,9 +616,12 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             bool keepsImageInDatabase = entry.storage == ArtworkStorage::InDatabase;
             if (!keepsImageInDatabase) {
                 sqlite3_stmt *current = nullptr;
-                const std::string sql = "SELECT a.id, " + imageLength
-                    + " > 0, typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://' "
-                      "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
+                // Without the image column a text hash keeps nothing here.
+                const std::string textHash = hasImageColumn
+                    ? "typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://'"
+                    : "0";
+                const std::string sql = "SELECT a.id, " + imageLength + " > 0, " + textHash
+                    + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
                 if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &current, nullptr)
                     != SQLITE_OK) {
                     return fail(std::string("could not read the track's art row: ") + sqlite3_errmsg(handle));
