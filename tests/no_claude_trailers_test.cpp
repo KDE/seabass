@@ -347,6 +347,13 @@ int runPreCommitAll(const Repo &repo)
                + " --all >/dev/null 2>&1");
 }
 
+// The same, over the staged files only: what a commit runs.
+int runPreCommitStaged(const Repo &repo)
+{
+    return run("cd " + seabass::pathToGenericUtf8(repo.dir) + " && " + seabass::pathToGenericUtf8(HooksDir / "pre-commit")
+               + " >/dev/null 2>&1");
+}
+
 const std::string Header = "SPDX-FileCopyrightText: 2026 Test\nSPDX-License-Identifier: CC0-1.0\n";
 
 // makeRepo's own commits carry no headers; dep5 covers them, as it
@@ -380,6 +387,20 @@ void testPreCommitAcceptsALicenseSidecar()
     assert(run(repo.git("add -A")) == 0);
 
     assert(runPreCommitAll(repo) == 0);
+    assert(runPreCommitStaged(repo) == 0);
+}
+
+// A sidecar only on disk is not in the commit, so reuse lint in CI never
+// sees it: the file it was meant to cover is still bare.
+void testPreCommitRefusesAnUntrackedSidecar()
+{
+    const Repo repo = makeHeaderRepo("precommit-untracked-sidecar");
+    write(repo.dir / "plain.desktop", "[Desktop Entry]\n");
+    assert(run(repo.git("add plain.desktop")) == 0);
+    write(repo.dir / "plain.desktop.license", Header);
+
+    assert(runPreCommitStaged(repo) == 1);
+    assert(runPreCommitAll(repo) == 1);
 }
 
 // The sidecar is itself a file and needs the header it is there to carry.
@@ -408,6 +429,7 @@ int main()
     testPreCommitRefusesAFileWithoutAHeader();
     testPreCommitAcceptsALicenseSidecar();
     testPreCommitRefusesAnEmptySidecar();
+    testPreCommitRefusesAnUntrackedSidecar();
     std::cout << "no_claude_trailers_test passed\n";
     return 0;
 }
