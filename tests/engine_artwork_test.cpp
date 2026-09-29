@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
+#include <thread>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -937,6 +939,30 @@ int main(int argc, char **argv)
                                                  [](const ArtworkEntry &) { return jpeg("TAGS"); });
         assert(gone.repaired == 0 && gone.noLongerInDatabase == 1);
         std::cout << "case 18 (junk in a row whose hash names its art elsewhere does not decide it) OK\n";
+    }
+
+    // 19. A save committing while the audit opens the database is waited
+    //     out, not reported as a database that cannot be read.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_busy");
+        sqlite3 *db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (2, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', x'"
+                 "FFD8FF00');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'T', 'A', 2);");
+        exec(db, "BEGIN EXCLUSIVE;");
+        std::thread release([db] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+        });
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
+        release.join();
+        sqlite3_close(db);
+        if (!audit.error.empty()) {
+            std::cerr << audit.error << "\n";
+        }
+        assert(audit.error.empty());
+        assert(audit.readableByAPlayer == 1);
+        std::cout << "case 19 (a save committing is waited out) OK\n";
     }
 
     std::cout << "engine_artwork_test: all cases passed\n";
