@@ -340,22 +340,26 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
             // Nothing to find the art by, which is two different things.
             //
             // Engine's way of saying "this track has no cover" is not a
-            // missing albumArtId. It is a row with an empty text hash and
-            // no image: libdjinterop seeds AlbumArt (1, '', NULL) in every
-            // schema it writes (schema_1_18_0_os.cpp and its siblings) and
-            // points art-less tracks at it. 0 is the other spelling, which
-            // names no row at all. Both are "no art asked for", and
-            // reporting them would put a permanent, unfixable warning on
-            // every healthy library: most tracks on most sticks have no
-            // cover. Told by the row's content rather than its id, since a
-            // library Engine writes can hold real art at id 1.
+            // missing albumArtId. It is a seeded row at id 1 with nothing
+            // in it: Engine 2.x and 3.x write AlbumArt (1, NULL, NULL),
+            // libdjinterop (1, '', NULL) (its schema_*.cpp, and the
+            // firmware reference dumps under testdata/ref), and art-less
+            // tracks point at it. An empty text hash with no image is the
+            // same row wherever it sits. 0 names no row at all. All are "no
+            // art asked for", and reporting them would put a permanent,
+            // unfixable warning on every healthy library: most tracks on
+            // most sticks have no cover. The seed is told by its id
+            // because nothing else sets it apart; a library whose row 1
+            // holds a hash or an image is decided by that content above.
             //
-            // What is left -- a row whose hash is NULL or an empty blob --
-            // is art asked for that nothing can resolve. The committed
-            // fixture has two of those (two tracks at AlbumArt 469, hash
-            // NULL), and counting them as "no art asked for" left them out
-            // of every figure the page shows.
-            if (!pointsAtArt || albumArtId == 0 || referenceType == ReferenceType::Text) {
+            // What is left -- a row of its own whose hash is NULL or an
+            // empty blob -- is art asked for that nothing can resolve. The
+            // committed fixture has two of those (two tracks at AlbumArt
+            // 469, hash NULL), and counting them as "no art asked for"
+            // left them out of every figure the page shows.
+            constexpr std::int64_t SeededNoCoverRow = 1;
+            if (!pointsAtArt || albumArtId == 0 || albumArtId == SeededNoCoverRow
+                || referenceType == ReferenceType::Text) {
                 continue;
             }
             entry.storage = ArtworkStorage::RowWithoutHash;
