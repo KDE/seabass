@@ -51,6 +51,97 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+#else
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
+#if defined(_WIN32)
+// A pull on Windows. A stick there is a drive letter, and a pulled stick is
+// that letter gone: every path under it fails at once, while a handle the
+// app already holds is left alone by this -- what a rename is on Linux, the
+// test's model of a pull everywhere. A rename cannot be the model here:
+// Windows refuses to rename a directory while any file under it is open,
+// and the app keeps its catalogs open, so the storm could only ever have
+// pulled a stick the app was not reading, which is the one pull that
+// cannot race with anything.
+//
+// The letter is a DOS device of this logon session, mapped to the stick's
+// directory with DefineDosDevice -- what `subst` does, no elevation needed
+// -- and a quit leg's child, in the same session, sees it too. Letters are
+// taken from the free ones at the top of the alphabet, and a letter a
+// crashed storm left behind (one pointing into a scratch storm_ tree) is
+// taken back first.
+namespace storm_drive
+{
+inline std::wstring deviceName(wchar_t letter)
+{
+    return std::wstring(1, letter) + L":";
+}
+
+// The directory `letter` is mapped to, as the NT path QueryDosDevice gives
+// ("\??\C:\..."), or empty when it is not a DOS device.
+inline std::wstring targetOf(wchar_t letter)
+{
+    wchar_t buffer[4096] = {};
+    if (::QueryDosDeviceW(deviceName(letter).c_str(), buffer, 4096) == 0) {
+        return {};
+    }
+    return buffer;
+}
+
+inline bool map(wchar_t letter, const std::filesystem::path &directory)
+{
+    return ::DefineDosDeviceW(0, deviceName(letter).c_str(), directory.wstring().c_str()) != 0;
+}
+
+inline bool unmap(wchar_t letter)
+{
+    return ::DefineDosDeviceW(DDD_REMOVE_DEFINITION, deviceName(letter).c_str(), nullptr) != 0;
+}
+
+// Letters a storm that died left mapped: they point into a scratch storm
+// tree (seabass-test-<pid>\...\storm_...), which nothing else maps, of a
+// process that is gone. A storm still running -- a hunt runs several --
+// keeps its own.
+inline void unmapLeftovers()
+{
+    const std::wstring marker = L"seabass-test-";
+    for (wchar_t letter = L'Z'; letter >= L'F'; --letter) {
+        const std::wstring target = targetOf(letter);
+        const size_t at = target.find(marker);
+        if (at == std::wstring::npos || target.find(L"\\storm_") == std::wstring::npos) {
+            continue;
+        }
+        const DWORD pid = static_cast<DWORD>(std::wcstoul(target.c_str() + at + marker.size(), nullptr, 10));
+        HANDLE owner = pid != 0 ? ::OpenProcess(SYNCHRONIZE, FALSE, pid) : nullptr;
+        const bool alive = owner != nullptr && ::WaitForSingleObject(owner, 0) == WAIT_TIMEOUT;
+        if (owner != nullptr) {
+            ::CloseHandle(owner);
+        }
+        if (!alive) {
+            unmap(letter);
+        }
+    }
+}
+
+// A letter no drive and no DOS device uses, from Z down, or 0.
+inline wchar_t freeLetter()
+{
+    const DWORD used = ::GetLogicalDrives();
+    for (wchar_t letter = L'Z'; letter >= L'F'; --letter) {
+        if (!(used & (1u << (letter - L'A'))) && targetOf(letter).empty()) {
+            return letter;
+        }
+    }
+    return 0;
+}
+}  // namespace storm_drive
 #endif
 
 // The storm's side of the world (tests/qml-storm, docs/testing.md): sticks
@@ -64,7 +155,8 @@
 // monitor, after which MediaController re-detects on its own debounce. A
 // pull renames the stick's directory away, so its mount point is gone and
 // every open by path fails, as on a pulled stick; a re-plug renames it
-// back.
+// back. On Windows the stick is a drive letter and a pull takes the letter
+// away instead (storm_drive, above).
 //
 // Reads are the real readers, run through a catalog cache whose passes the
 // weather wraps: most pass, some are slowed, some held until released (and
@@ -95,6 +187,9 @@ class StormFixture : public QObject
     {
         std::filesystem::path root;     // where it is mounted
         std::filesystem::path outside;  // where it waits while pulled
+        // Windows: the drive letter root is, mapped to outside (which is
+        // the stick's directory in and out -- see storm_drive).
+        wchar_t letter = 0;
         std::string label;
         std::string uuid;
         bool plugged = true;
@@ -129,10 +224,13 @@ public:
             // The end of the process decides what happens to a read still
             // held: nothing here may wait for it, or free what it uses. The
             // scratch tree is removed at exit, when there is one, and needs
-            // the sticks' directory writable for that.
+            // the sticks' directory writable for that. A drive letter
+            // (Windows) is not the exit's to remove: it outlives the
+            // process, so it goes now, which to a read still held is a pull.
             if (!m_base.empty()) {
                 mediaWritable(m_base / "media", true);
             }
+            unmapLetters();
             return;
         }
         releaseAll();
@@ -155,6 +253,9 @@ public:
         QThreadPool::globalInstance()->waitForDone();
         const bool nothingRuns = seabass::gui::AsyncWorkers::instance().waitForAll(std::chrono::seconds(30));
         removeSticks();
+#if defined(_WIN32)
+        storm_drive::unmapLeftovers();
+#endif
         // The last seed's cache holds three sticks' catalogs; a hunt of a
         // hundred seeds in one process kept every one of them. Freed only
         // when no read is running, since one let go of may still be in it.
@@ -177,18 +278,32 @@ public:
             Stick stick;
             stick.label = "STORM" + std::to_string(i);
             stick.uuid = "5702-" + std::to_string(seed) + "-" + std::to_string(i);
+#if defined(_WIN32)
+            // The stick's files never move: its letter comes and goes.
+            stick.outside = base / "sticks" / stick.label;
+            const fs::path content = stick.outside;
+#else
             stick.root = base / "media" / stick.label;
             stick.outside = base / "pulled" / stick.label;
-            fs::create_directories(stick.root, ec);
+            const fs::path content = stick.root;
             fs::create_directories(stick.outside.parent_path(), ec);
-            seabass::testing::copyPioneerFixture(from / "rekordbox", stick.root / "PIONEER", ec);
+#endif
+            fs::create_directories(content, ec);
+            seabass::testing::copyPioneerFixture(from / "rekordbox", content / "PIONEER", ec);
             if (ec) {
                 return QStringLiteral("could not copy the rekordbox fixture: ") + QString::fromStdString(ec.message());
             }
-            fs::copy(from / "engine", stick.root / "Engine Library", fs::copy_options::recursive, ec);
+            fs::copy(from / "engine", content / "Engine Library", fs::copy_options::recursive, ec);
             if (ec) {
                 return QStringLiteral("could not copy the Engine fixture: ") + QString::fromStdString(ec.message());
             }
+#if defined(_WIN32)
+            stick.letter = storm_drive::freeLetter();
+            if (stick.letter == 0 || !storm_drive::map(stick.letter, content)) {
+                return QStringLiteral("no free drive letter to put %1 in").arg(QString::fromStdString(stick.label));
+            }
+            stick.root = fs::path(std::wstring(1, stick.letter) + L":/");
+#endif
             world->sticks.push_back(stick);
         }
         mediaWritable(base / "media", false);
@@ -313,7 +428,11 @@ public:
         const std::string p = seabass::pathToGenericUtf8(seabass::gui::pathFromQString(path));
         for (size_t i = 0; i < m_world->sticks.size(); ++i) {
             const std::string root = seabass::pathToGenericUtf8(m_world->sticks[i].root);
-            if (p == root || (p.size() > root.size() && p.compare(0, root.size(), root) == 0 && p[root.size()] == '/')) {
+            // A drive root ("Y:/", Windows) already ends in the separator.
+            const bool rootEndsInSlash = !root.empty() && root.back() == '/';
+            if (p == root
+                || (p.size() > root.size() && p.compare(0, root.size(), root) == 0
+                    && (rootEndsInSlash || p[root.size()] == '/'))) {
                 return static_cast<int>(i);
             }
         }
@@ -333,9 +452,17 @@ public:
             if (!stick.plugged) {
                 return false;
             }
+#if defined(_WIN32)
+            // The letter goes, as it does when a stick is pulled; see
+            // storm_drive. Handles already open on it stay open.
+            if (!storm_drive::unmap(stick.letter)) {
+                ec = std::error_code(static_cast<int>(::GetLastError()), std::system_category());
+            }
+#else
             mediaWritable(stick.root.parent_path(), true);
             std::filesystem::rename(stick.root, stick.outside, ec);
             mediaWritable(stick.root.parent_path(), false);
+#endif
             if (ec) {
                 std::fprintf(stderr, "storm: could not pull %s: %s\n", stick.label.c_str(), ec.message().c_str());
                 return false;
@@ -359,6 +486,14 @@ public:
             if (stick.plugged) {
                 return false;
             }
+#if defined(_WIN32)
+            // Back at the same letter, as Windows gives a stick it has seen
+            // before. Nothing can have written to its mount point while it
+            // was out: with the letter gone there is no such path.
+            if (!storm_drive::map(stick.letter, stick.outside)) {
+                ec = std::error_code(static_cast<int>(::GetLastError()), std::system_category());
+            }
+#else
             mediaWritable(stick.root.parent_path(), true);
             if (std::filesystem::exists(stick.root)) {
                 // Something wrote to the mount point while the stick was out.
@@ -376,6 +511,7 @@ public:
             }
             std::filesystem::rename(stick.outside, stick.root, ec);
             mediaWritable(stick.root.parent_path(), false);
+#endif
             if (ec) {
                 std::fprintf(stderr, "storm: could not insert %s: %s\n", stick.label.c_str(), ec.message().c_str());
                 return false;
@@ -564,8 +700,28 @@ public:
     Q_INVOKABLE bool lockHeld(const QString &root) const
     {
 #if defined(_WIN32)
-        Q_UNUSED(root);
-        return false;
+        // The same question of LockFileEx, which StickWriteLock takes on
+        // Windows: scoped to the handle as flock is to the open file
+        // description, so a second handle in this process conflicts too.
+        // It used to answer false here, which made the storm's "no lock
+        // held at rest" a check that could not fail on Windows.
+        const std::string lock = seabass::infrastructure::backup::writeLockPathForBackupDir(
+            seabass::infrastructure::backup::backupDirForStickRoot(root.toStdString()));
+        HANDLE handle = ::CreateFileW(seabass::pathFromUtf8(lock).c_str(), GENERIC_READ | GENERIC_WRITE,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                      FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+        OVERLAPPED overlapped = {};
+        const bool held = !::LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD,
+                                        MAXDWORD, &overlapped);
+        if (!held) {
+            OVERLAPPED unlock = {};
+            ::UnlockFileEx(handle, 0, MAXDWORD, MAXDWORD, &unlock);
+        }
+        ::CloseHandle(handle);
+        return held;
 #else
         const std::string lock = seabass::infrastructure::backup::writeLockPathForBackupDir(
             seabass::infrastructure::backup::backupDirForStickRoot(root.toStdString()));
@@ -672,7 +828,8 @@ public:
             child.kill();
             child.waitForFinished(5000);
             removeChildScratch(childPid);
-            return QStringLiteral("the process did not end within %1 ms of the walk:\n").arg(boundMs)
+            return QStringLiteral("the process did not end within %1 ms of the walk:
+").arg(boundMs)
                 + QString::fromUtf8(child.readAll()).right(6000);
         }
         removeChildScratch(childPid);
@@ -698,6 +855,10 @@ private:
         if (pid <= 0) {
             return;
         }
+#if defined(_WIN32)
+        // A child that was killed never let its drive letters go.
+        storm_drive::unmapLeftovers();
+#endif
         std::error_code ec;
         const fs::path root = fs::temp_directory_path(ec) / ("seabass-test-" + std::to_string(pid));
         if (ec || !fs::exists(root, ec)) {
@@ -718,8 +879,19 @@ private:
     // fails there, where it would otherwise quietly make the directory
     // again (and the stick could not go back in). Opened only for the
     // moment a stick goes in or out.
+    //
+    // Nothing to do on Windows, and nothing done: the sticks have no
+    // mount directory there, and a pulled stick's mount point is a drive
+    // letter that is not there, so a write aimed at it fails as a write
+    // to a read-only /media does. (fs::permissions would only flip the
+    // read-only attribute, which does not stop a file being made in a
+    // directory in any case.)
     static void mediaWritable(const std::filesystem::path &media, bool writable)
     {
+#if defined(_WIN32)
+        Q_UNUSED(media);
+        Q_UNUSED(writable);
+#else
         std::error_code ec;
         std::filesystem::permissions(media,
                                      writable ? std::filesystem::perms::owner_all | std::filesystem::perms::group_read
@@ -727,6 +899,7 @@ private:
                                               : std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec
                                                     | std::filesystem::perms::group_read | std::filesystem::perms::group_exec,
                                      std::filesystem::perm_options::replace, ec);
+#endif
     }
 
     bool valid(int i) const { return m_world && i >= 0 && static_cast<size_t>(i) < m_world->sticks.size(); }
@@ -1000,8 +1173,28 @@ private:
         }
     }
 
+    // Windows: every letter this seed's sticks have. A DOS device outlives
+    // the process that made it, for the rest of the logon session, so it
+    // is let go of here and never left to the exit.
+    void unmapLetters()
+    {
+#if defined(_WIN32)
+        if (!m_world) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_world->mutex);
+        for (Stick &stick : m_world->sticks) {
+            if (stick.plugged && stick.letter != 0) {
+                storm_drive::unmap(stick.letter);
+                stick.plugged = false;
+            }
+        }
+#endif
+    }
+
     void removeSticks()
     {
+        unmapLetters();
         if (m_base.empty()) {
             return;
         }

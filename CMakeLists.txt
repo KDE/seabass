@@ -1294,6 +1294,28 @@ if(SEABASS_GUI AND Qt6_FOUND)
                 LABELS "storm"
                 TIMEOUT 600
                 RESOURCE_LOCK xvfb)
+        elseif(WIN32)
+            # Windows has no xvfb and needs none: the storm runs in a real
+            # window on the desktop, as it does on the X server xvfb gives
+            # Linux (Sebastian, 2026-09-29), so the environment is the
+            # suite's without its offscreen platform -- and with its
+            # SEABASS_IGNORE_REMOVABLE_MEDIA=1, without which the storm
+            # refuses to start, since it must never see a real stick. A
+            # pull is a drive letter going away there, not a rename (see
+            # StormFixture::pull and docs/testing.md).
+            set(_seabass_storm_env "${_seabass_qml_test_env}")
+            list(REMOVE_ITEM _seabass_storm_env "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME seabass_qml_storm_tests
+                COMMAND seabass_qml_tests -input ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml-storm)
+            # A seed takes about 290 s here, walk and quit leg, on the
+            # 4-core shakedown laptop's Debug build, so the default three
+            # need about 15 minutes where Linux needs 2.5: the ten given
+            # there cut the third seed off.
+            set_tests_properties(seabass_qml_storm_tests PROPERTIES
+                ENVIRONMENT "${_seabass_storm_env}"
+                LABELS "storm"
+                TIMEOUT 1800
+                PROCESSORS 2)
         endif()
 
         # What a shader draws, pixel by pixel. Same display as the suite
