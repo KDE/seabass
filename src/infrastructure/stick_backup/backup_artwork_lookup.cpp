@@ -31,10 +31,12 @@ BackupArtworkLookup::~BackupArtworkLookup()
     }
 }
 
-// The track's cover as the backed-up library recorded it: its AlbumArt
-// hash, spelled the way an artwork file is named. Empty when that library
-// does not know the track, or knows it without a cover.
-std::string BackupArtworkLookup::artworkNameForTrack(const fs::path &archive, const std::string &trackPath)
+// The track's cover as the backed-up library recorded it: the image its
+// AlbumArt row keeps in the database, or else the row's hash spelled the
+// way an artwork file is named. Both empty when that library does not know
+// the track, or knows it without a cover.
+BackupArtworkLookup::TrackArtwork BackupArtworkLookup::artworkForTrack(const fs::path &archive,
+                                                                       const std::string &trackPath)
 {
     ExtractedDatabase &extracted = m_databases[seabass::pathToUtf8(archive)];
     if (!extracted.tried) {
@@ -66,6 +68,7 @@ std::string BackupArtworkLookup::artworkNameForTrack(const fs::path &archive, co
     if (extracted.file.empty()) {
         return {};
     }
+    TrackArtwork found;
 
     sqlite3 *handle = nullptr;
     if (sqlite3_open_v2(seabass::pathToUtf8(extracted.file).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
@@ -74,27 +77,45 @@ std::string BackupArtworkLookup::artworkNameForTrack(const fs::path &archive, co
         }
         return {};
     }
-    std::string name;
     sqlite3_stmt *stmt = nullptr;
     // Engine stores the path relative to its own library directory, one
     // level inside the stick root the archive paths start at.
     const std::string enginePath = "../" + trackPath;
-    if (sqlite3_prepare_v2(handle,
-                           "SELECT a.hash FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.path = ?;", -1,
-                           &stmt, nullptr) == SQLITE_OK) {
+    // A schema without the image column keeps no covers in the database.
+    const bool prepared =
+        sqlite3_prepare_v2(handle,
+                           "SELECT a.hash, a.albumArt FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+                           "WHERE t.path = ?;",
+                           -1, &stmt, nullptr)
+            == SQLITE_OK
+        || sqlite3_prepare_v2(handle,
+                              "SELECT a.hash, NULL FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
+                              "WHERE t.path = ?;",
+                              -1, &stmt, nullptr)
+            == SQLITE_OK;
+    if (prepared) {
         sqlite3_bind_text(stmt, 1, enginePath.c_str(), -1, SQLITE_TRANSIENT);
         if (sqlite3_step(stmt) == SQLITE_ROW) {
+            // An older library keeps the image in the row; the hash beside
+            // it is text and names no file.
+            if (const void *image = sqlite3_column_blob(stmt, 1)) {
+                std::string bytes(static_cast<const char *>(image), static_cast<size_t>(sqlite3_column_bytes(stmt, 1)));
+                if (!engine::extensionForImage(bytes).empty()) {
+                    found.bytes = std::move(bytes);
+                }
+            }
+            const bool blobHash = sqlite3_column_type(stmt, 0) == SQLITE_BLOB;
             const void *blob = sqlite3_column_blob(stmt, 0);
             const int size = sqlite3_column_bytes(stmt, 0);
-            if (blob != nullptr && size == 20) {
-                name = engine::artworkFileName(
+            if (found.bytes.empty() && blobHash && blob != nullptr && size == 20) {
+                found.name = engine::artworkFileName(
                     std::span<const std::uint8_t>(static_cast<const std::uint8_t *>(blob), 20));
             }
         }
     }
     sqlite3_finalize(stmt);
     sqlite3_close(handle);
-    return name;
+    return found;
 }
 
 std::string BackupArtworkLookup::findForTrack(const std::string &trackPath)
@@ -112,11 +133,15 @@ std::string BackupArtworkLookup::findForTrack(const std::string &trackPath)
         if (!fs::is_regular_file(archive, ec)) {
             continue;
         }
-        const std::string name = artworkNameForTrack(archive, trackPath);
-        if (name.empty()) {
+        TrackArtwork found = artworkForTrack(archive, trackPath);
+        if (!found.bytes.empty()) {
+            bytes = std::move(found.bytes);
+            break;
+        }
+        if (found.name.empty()) {
             continue;
         }
-        bytes = find(name);
+        bytes = find(found.name);
         if (!bytes.empty()) {
             break;
         }

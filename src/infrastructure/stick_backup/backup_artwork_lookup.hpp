@@ -60,7 +60,12 @@ private:
         bool tried = false;
     };
 
-    std::string artworkNameForTrack(const std::filesystem::path &archive, const std::string &trackPath);
+    struct TrackArtwork
+    {
+        std::string bytes;  // the image itself, when the library keeps it in the database
+        std::string name;   // otherwise the artwork file to look for
+    };
+    TrackArtwork artworkForTrack(const std::filesystem::path &archive, const std::string &trackPath);
 
     std::vector<std::filesystem::path> m_archives;
     std::map<std::string, std::string> m_found;       // name -> bytes, "" when looked for and not there
