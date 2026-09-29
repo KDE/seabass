@@ -370,7 +370,8 @@ Item {
         case "metadataBackup": return () => h.metadataBackupRequested(s.label, s.rb, s.engine, s.libraryId);
         case "metadataRestore": return () => h.metadataRestoreRequested(s.label, s.rb, s.engine, s.libraryId);
         case "sync": return () => h.syncRequested(s.label, s.rb, s.engine);
-        case "backups": return () => h.backupsHubRequested(s.label, s.rb, s.engine, s.mount, s.device);
+        case "fullBackup": return () => h.fullStickBackupRequested(s.label, s.rb, s.engine);
+        case "manageBackups": return () => h.manageBackupsRequested(s.label, "");
         case "settings": return () => h.settingsRequested(s.label, s.rb);
         case "restoreStick": return () => h.restoreStickBackupRequested(s.mount, s.device, "", s.label);
         case "clone": {
@@ -387,7 +388,7 @@ Item {
     // Weighted towards the pages that write, where a pull does the most.
     readonly property var openable: ["browse", "browse", "duplicates", "duplicates", "health", "health",
         "statistics", "performance", "metadataBackup", "metadataBackup", "metadataRestore", "metadataRestore",
-        "metadataRestore", "sync", "sync", "sync", "backups", "settings", "restoreStick", "clone"]
+        "metadataRestore", "sync", "sync", "sync", "fullBackup", "manageBackups", "settings", "restoreStick", "clone"]
 
     property var lastOpen: null
 
@@ -486,12 +487,6 @@ Item {
         } else if (name === "MetadataBackupPage") {
             what = "restore";
             fn = () => p.metadataRestoreRequested();
-        } else if (name === "BackupsHubPage") {
-            const which = runner.below(3);
-            what = ["manage backups", "full stick backup", "restore"][which];
-            fn = [() => p.manageBackupsRequested(s.label, ""),
-                  () => p.fullStickBackupRequested(s.label, s.rb, s.engine),
-                  () => p.restoreStickBackupRequested(p.mountPoint, p.devicePath, "")][which];
         }
         if (!fn) {
             runner.actScope();
@@ -862,14 +857,34 @@ Item {
         runner.note("rest: " + why);
         stormFixture.setWeather(0, 0, 0, 0, 0);
         stormFixture.releaseAll();
+        // A stick pulled out from under a save is back for the rest, so
+        // what the save left is looked at by the recovery path and by
+        // checkLocks(), which passes over a stick that is not in.
+        const back = [];
+        for (const key in runner.pulledMidSave) {
+            const i = Number(key);
+            if (!stormFixture.plugged(i)) {
+                runner.note("insert S" + i + ", pulled mid-save, for the rest");
+                stormFixture.insert(i);
+                back.push(i);
+            }
+        }
+        runner.pulledMidSave = {};
         let idleSince = -1;
         const started = Date.now();
         const poll = () => {
             if (runner.done) {
                 return;
             }
-            // A stick pulled out from under a save is back for the rest,
-            // so what the save left is looked at by the recovery path.
+            const unlisted = back.filter(i => runner.listed(i) === null);
+            if (unlisted.length > 0) {
+                if (Date.now() - started > 60000) {
+                    runner.fail("S" + unlisted.join(", S") + " not listed 60 s after going back in for the rest");
+                    return;
+                }
+                runner.after(50, poll);
+                return;
+            }
             const busy = stormFixture.busyNow(runner.window);
             const running = stormFixture.liveWorkers() + stormFixture.activeWrites();
             if (busy.length === 0) {
