@@ -115,8 +115,9 @@ std::vector<const char *> candidateNames()
 // function pointer. The distributions' packages happen to be built so
 // that it does not matter, which is why an installed Seabass never saw
 // it. glibc only (musl has no DEEPBIND and resolves differently), and not
-// under AddressSanitizer, which refuses DEEPBIND libraries outright.
-#if defined(RTLD_DEEPBIND) && !defined(__SANITIZE_ADDRESS__)
+// under AddressSanitizer or ThreadSanitizer, which refuse DEEPBIND
+// libraries outright (the process dies at the dlopen).
+#if defined(RTLD_DEEPBIND) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
 constexpr int SqlCipherOpenFlags = RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND;
 #else
 constexpr int SqlCipherOpenFlags = RTLD_NOW | RTLD_LOCAL;
