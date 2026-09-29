@@ -797,10 +797,22 @@ int main(int argc, char **argv)
         tracks[0].artworkPath = pathToUtf8(onStick);
         tracks[1].artworkPath = pathToUtf8(onStick);  // counted once
         tracks[2].artworkPath = pathToUtf8(localCopy);
-        const std::uint64_t expected = fs::file_size(onStick) + 3000 + 500 + 4;
+        // A file-kind row whose Artwork/ file is there, which no track names:
+        // what a failed artwork stage leaves. Counted from the database.
+        db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (5, x'6666666666666666666666666666666666666666', NULL);");
+        sqlite3_close(db);
+        const fs::path fileCover = fixture.library / "Artwork" / (artworkFileName(std::vector<std::uint8_t>(20, 0x66)) + ".jpg");
+        write(fileCover, jpeg(std::string(1234, 'f')));
+        const std::uint64_t expected = fs::file_size(onStick) + 3000 + 500 + 4 + fs::file_size(fileCover);
         assert(artworkBytesOnStick(tracks, pathToUtf8(fixture.library)) == expected);
         assert(artworkBytesOnStick(tracks, {}) == fs::file_size(onStick));
         fs::remove_all(localCopy.parent_path());
+
+        // A database that cannot be read gives no figure, not a smaller one.
+        Fixture broken(seabass::testing::scratchRoot() / "seabass_engine_artwork_stick_bytes_broken");
+        write(broken.library / "Database2" / "m.db", std::string(4096, 'x'));
+        assert(!artworkBytesOnStick(tracks, pathToUtf8(broken.library)).has_value());
         std::cout << "case 15 (covers are counted where they take up the stick, database included) OK\n";
     }
 

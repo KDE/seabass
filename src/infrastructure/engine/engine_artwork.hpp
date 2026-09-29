@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -258,7 +259,8 @@ inline std::string extensionForImage(std::string_view bytes)
 // What the covers of these tracks take up on the stick: each distinct
 // image file once, plus, for `engineLibraryPath` when given, the images
 // that library keeps inside its database.
-std::uint64_t artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath);
+std::optional<std::uint64_t> artworkBytesOnStick(const std::vector<domain::Track> &tracks,
+                                                 const std::string &engineLibraryPath);
 
 // Gives each entry the library's own storage and points the track at it.
 // From schema 3.0.2 on: the image copied into Artwork/ under the hash of
