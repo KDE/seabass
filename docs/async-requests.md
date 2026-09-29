@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # A page waiting for a read: one rule
 
 Most pages start work on a background thread: they read a stick's
