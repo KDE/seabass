@@ -34,10 +34,11 @@ namespace
 
 struct QuietReporter : seabass::application::ProgressReporter
 {
+    std::vector<std::string> warnings;
     void start(const std::string &, size_t) override {}
     void tick(size_t) override {}
     void finish() override {}
-    void warn(const std::string &) override {}
+    void warn(const std::string &message) override { warnings.push_back(message); }
 };
 
 void setRow(sqlite3 *db, int id, const std::string &hash, const std::string &image)
@@ -266,6 +267,27 @@ int main()
         assert(stopped);
         assert(!fs::exists(cache) || fs::is_empty(cache));
         std::cout << "case 8 (a stop lands before the artwork stage writes anything) OK\n";
+    }
+
+    // 9. An artwork stage that cannot read the database says so: covers
+    //    missing because of a failed read must not look like a library
+    //    that has none.
+    {
+        const fs::path broken = library.parent_path() / "broken" / "Engine Library";
+        fs::create_directories(broken.parent_path());
+        fs::copy(source, broken, fs::copy_options::recursive);
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(broken / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_exec(db, "ALTER TABLE AlbumArt RENAME TO Gone;", nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+        QuietReporter reporter;
+        seabass::infrastructure::engine::LibdjinteropEngineReader reader(seabass::pathToUtf8(broken));
+        reader.setProgressReporter(reporter);
+        std::vector<seabass::domain::Track> none;
+        reader.fillArtwork(none);
+        assert(reporter.warnings.size() == 1);
+        assert(reporter.warnings[0].find("album art") != std::string::npos);
+        std::cout << "case 9 (an artwork stage that cannot read the database warns) OK\n";
     }
 
     fs::remove_all(library.parent_path(), ec);

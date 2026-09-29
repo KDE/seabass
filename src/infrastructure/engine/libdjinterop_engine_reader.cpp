@@ -278,13 +278,25 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                                                            const application::CancellationToken &cancel)
 {
     std::unordered_map<int64_t, std::string> result;
-    const std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    const std::filesystem::path dbFile = pathFromUtf8(engineLibraryPath) / "Database2" / "m.db";
+    const std::string dbPath = pathToUtf8(dbFile);
+    // An Engine 1.x library has no Database2/m.db and nothing here to read.
+    // Anything else that fails is said, not taken for a library without
+    // covers.
+    std::error_code existsError;
+    if (!std::filesystem::exists(dbFile, existsError) && !existsError) {
+        return result;
+    }
     sqlite3 *db = nullptr;
-    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    const auto fail = [&db, &dbPath](const std::string &what) {
+        const std::string message = db ? sqlite3_errmsg(db) : "out of memory";
         if (db) {
             sqlite3_close(db);
         }
-        return result;
+        throw std::runtime_error(what + " " + dbPath + ": " + message);
+    };
+    if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        fail("could not open");
     }
     const std::string artworkDirectory = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Artwork");
     // The library's own directory, named by its Information uuid.
@@ -310,8 +322,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         "WHERE t.albumArtId IS NOT NULL AND t.albumArtId != 0 "
         "AND (length(a.albumArt) > 0 OR (typeof(a.hash) = 'blob' AND length(a.hash) > 0))";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_close(db);
-        return result;
+        fail("could not read AlbumArt in");
     }
     // Per AlbumArt row, since many tracks share one.
     std::unordered_map<int64_t, std::string> fileByRow;
@@ -501,6 +512,9 @@ std::vector<domain::Track> LibdjinteropEngineReader::readAll()
 
 void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
 {
+    // Its own read-only open, maybe long after readTracks(): a journal a
+    // pulled stick left is recovered first here too.
+    recoverEnginePendingJournals(m_engineLibraryPath);
     std::unordered_map<int64_t, std::string> stored;
     try {
         stored = readStoredArtwork(m_engineLibraryPath, m_cancel);
