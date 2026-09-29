@@ -89,6 +89,49 @@ void writeBackup(const fs::path &archive, const std::string &artworkName, const 
     fs::remove_all(staging);
 }
 
+// A backup of an older library, which keeps each cover in its AlbumArt row
+// beside a hash written as hex text, and has no Artwork/ files at all.
+void writeDatabaseArtworkBackup(const fs::path &archive, const std::string &trackPath, const std::string &hashText,
+                                const std::string &image)
+{
+    const fs::path staging = archive.parent_path() / "staging";
+    fs::remove_all(staging);
+    const fs::path db = staging / "m.db";
+    fs::create_directories(staging);
+    sqlite3 *handle = nullptr;
+    assert(sqlite3_open(seabass::pathToUtf8(db).c_str(), &handle) == SQLITE_OK);
+    auto exec = [&](const std::string &sql) {
+        assert(sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+    };
+    exec("CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT, albumArt BLOB);");
+    exec("CREATE TABLE Track (id INTEGER PRIMARY KEY, albumArtId INTEGER, path TEXT);");
+    sqlite3_stmt *insert = nullptr;
+    assert(sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (1, ?, ?);", -1, &insert,
+                              nullptr)
+           == SQLITE_OK);
+    sqlite3_bind_text(insert, 1, hashText.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(insert, 2, image.data(), static_cast<int>(image.size()), SQLITE_TRANSIENT);
+    assert(sqlite3_step(insert) == SQLITE_DONE);
+    sqlite3_finalize(insert);
+    exec("INSERT INTO Track (id, albumArtId, path) VALUES (1, 1, '../" + trackPath + "');");
+    sqlite3_close(handle);
+
+    const std::string dbBytes = [&] {
+        std::ifstream in(db, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }();
+    std::error_code removeEc;
+    fs::remove(archive, removeEc);
+    PosixArchiveFile file(archive, PosixArchiveFile::OpenMode::ReadWrite);
+    Zip64Writer writer(file, {});
+    writer.addFileFromMemory("Engine Library/Database2/m.db", 1'700'000'000,
+                             std::span<const std::byte>(reinterpret_cast<const std::byte *>(dbBytes.data()),
+                                                        dbBytes.size()));
+    writer.finish("seabass-stick-manifest\t1\tid\tOLDERSTICK\tcomplete\t1700000000\t\t0\n",
+                  std::string(ManifestEntryName), 1'700'000'000);
+    fs::remove_all(staging);
+}
+
 }  // namespace
 
 int main()
@@ -131,6 +174,18 @@ int main()
         BackupArtworkLookup lookup({root / "missing.zip", root / "TORN.zip", archive});
         assert(lookup.find(name) == image);
         std::cout << "case 3 (an unreadable backup is skipped, not fatal) OK\n";
+    }
+
+    // 4. A backup of a library that kept its covers in the database: the
+    //    image comes out of the backed-up row itself.
+    {
+        const std::string png = std::string("\x89PNG\r\n\x1a\n", 8) + "A-COVER-KEPT-IN-THE-ROW";
+        const fs::path older = root / "OLDERSTICK.zip";
+        writeDatabaseArtworkBackup(older, "Contents/Older/song.mp3", "551c96558e2eb05ea31f3735b129f242b720c15", png);
+        BackupArtworkLookup lookup({older});
+        assert(lookup.findForTrack("Contents/Older/song.mp3") == png);
+        assert(lookup.findForTrack("Contents/Older/other.mp3").empty());
+        std::cout << "case 4 (a backup of a library that keeps covers in the database gives them back) OK\n";
     }
 
     fs::remove_all(root);
