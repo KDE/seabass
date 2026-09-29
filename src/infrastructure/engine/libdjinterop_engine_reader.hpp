@@ -37,9 +37,10 @@ public:
     // file is stat'd for its size (application::fillFileSizes) and no
     // artwork file for its existence; artworkPath is what the catalog
     // names, whether or not the file is still there. fillArtwork() adds
-    // the covers that take more: an image kept inside the database,
-    // written out once to paths::localEngineArtworkDir() on this
-    // computer. readAll() is the two.
+    // the covers that take more: an image file under Artwork/, looked for
+    // on the stick, and an image kept inside the database, written out
+    // once to paths::localEngineArtworkDir() on this computer. readAll()
+    // is the two.
     std::vector<domain::Track> readAll() override;
     std::vector<domain::Track> readTracks() override;
     void fillArtwork(std::vector<domain::Track> &tracks) override;

@@ -550,6 +550,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/durable_file_write.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
+    src/infrastructure/engine/engine_artwork.cpp
     src/infrastructure/engine/engine_import_state.cpp
     src/infrastructure/engine/libdjinterop_engine_library_creator.cpp
     src/infrastructure/engine/libdjinterop_engine_reader.cpp
