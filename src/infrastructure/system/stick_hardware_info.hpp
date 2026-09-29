@@ -50,13 +50,16 @@ struct StickHardwareInfo
 
 StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std::string &stickLabel);
 
-// The /proc/mounts line for a mount point: the device node (empty unless
-// it is under /dev/) and the filesystem type. Pure, so it can be tested
-// on any platform.
+// The /proc/mounts line for a mount point, its escapes decoded and a
+// trailing slash ignored: the last /dev/ device mounted there (the one on
+// top) and its filesystem type. Pure, so it can be tested on any platform.
 struct MountEntry
 {
     std::string device;
     std::string filesystem;
+    // The earlier lookup, which compared the raw field, found a /dev/
+    // device too. When it did not, the stick had the fallback identifier.
+    bool rawDeviceMatch = false;
 };
 
 MountEntry findMountEntry(std::istream &mounts, const std::string &mountPoint);

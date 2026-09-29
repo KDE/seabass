@@ -70,26 +70,65 @@ std::string fallbackIdentifier(const std::string &stickLabel, std::uint64_t tota
     return stickLabel + "-" + std::to_string(totalBytes);
 }
 
+// /proc/mounts writes space, tab, newline and backslash as \040, \011,
+// \012 and \134.
+std::string unescapeMountField(const std::string &field)
+{
+    std::string out;
+    out.reserve(field.size());
+    for (std::size_t i = 0; i < field.size(); ++i) {
+        if (field[i] == '\\' && i + 3 < field.size()) {
+            const char a = field[i + 1], b = field[i + 2], c = field[i + 3];
+            if (a >= '0' && a <= '3' && b >= '0' && b <= '7' && c >= '0' && c <= '7') {
+                out.push_back(static_cast<char>((a - '0') * 64 + (b - '0') * 8 + (c - '0')));
+                i += 3;
+                continue;
+            }
+        }
+        out.push_back(field[i]);
+    }
+    return out;
+}
+
+std::string withoutTrailingSlash(std::string path)
+{
+    while (path.size() > 1 && path.back() == '/') {
+        path.pop_back();
+    }
+    return path;
+}
+
 }  // namespace
 
 MountEntry findMountEntry(std::istream &mounts, const std::string &mountPoint)
 {
+    const std::string wanted = withoutTrailingSlash(mountPoint);
     MountEntry entry;
-    bool typeFound = false;
+    std::string anyType;
     std::string line;
     while (std::getline(mounts, line)) {
         std::istringstream fields(line);
         std::string device, mount, fstype;
-        if (!(fields >> device >> mount >> fstype) || mount != mountPoint) {
+        if (!(fields >> device >> mount >> fstype)) {
             continue;
         }
-        if (!typeFound) {
-            entry.filesystem = fstype;
-            typeFound = true;
+        const bool isDevice = device.rfind("/dev/", 0) == 0;
+        if (isDevice && mount == mountPoint) {
+            entry.rawDeviceMatch = true;
         }
-        if (entry.device.empty() && device.rfind("/dev/", 0) == 0) {
+        if (unescapeMountField(mount) != wanted) {
+            continue;
+        }
+        // Later lines are mounted on top of earlier ones: an autofs
+        // placeholder comes first, the stick after it.
+        anyType = fstype;
+        if (isDevice) {
             entry.device = device;
+            entry.filesystem = fstype;
         }
+    }
+    if (entry.device.empty()) {
+        entry.filesystem = anyType;
     }
     return entry;
 }
@@ -158,8 +197,14 @@ StickHardwareInfo readStickHardwareInfo(const std::string &mountPoint, const std
         }
     }
 
+    const std::string fallback = fallbackIdentifier(stickLabel, info.totalBytes);
     if (info.stickIdentifier.empty()) {
-        info.stickIdentifier = fallbackIdentifier(stickLabel, info.totalBytes);
+        info.stickIdentifier = fallback;
+    }
+    // Before the mount field was unescaped, this lookup missed and the
+    // stick was known by the fallback.
+    if (!mount.rawDeviceMatch && info.stickIdentifier != fallback) {
+        info.legacyStickIdentifier = fallback;
     }
 
     return info;
