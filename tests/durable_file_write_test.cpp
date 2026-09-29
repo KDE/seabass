@@ -214,7 +214,7 @@ int main()
         const std::string last = readFile(target);
         assert(last == a || last == b);
         for (const auto &entry : fs::directory_iterator(root)) {
-            assert(entry.path().filename().string().find(".tmp-seabass-write") == std::string::npos
+            assert(seabass::pathToUtf8(entry.path().filename()).find(".tmp-seabass-write") == std::string::npos
                    && "no temporary file is left behind");
         }
         std::cout << "case 7 (two writers of one file at once both finish) OK\n";
