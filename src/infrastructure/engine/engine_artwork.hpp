@@ -64,10 +64,12 @@ enum class ArtworkStorage {
     // the track at a file, which would move it off the storage its
     // library reads.
     InDatabaseUnreadable,
-    // A row holding an image in a format a player may not show (GIF,
-    // WebP, BMP, TIFF). A real image all the same: reported, and never
-    // written over or left behind.
-    InDatabaseOtherFormat,
+    // A row holding bytes in albumArt that are neither JPEG nor PNG: an
+    // image in a format a player may not show (GIF, WebP, AVIF...) or
+    // bytes that are no picture at all. Seabass cannot tell a real cover
+    // from damage there, so it leaves the row alone: never written over,
+    // never pointed away from, and not counted among the faults.
+    InDatabaseLeftAlone,
     // No art row, or Engine's own empty "no cover" row.
     None,
 };
@@ -104,6 +106,10 @@ struct ArtworkAudit
     // Tracks whose art a player cannot find, worst first: the repairable
     // ones (imageOnStick set) before the ones with nothing to copy.
     std::vector<ArtworkEntry> unreadable;
+    // Tracks whose row keeps bytes in the database that Seabass leaves
+    // alone (InDatabaseLeftAlone). Apart from the faults: a library of GIF
+    // covers is not a broken one.
+    std::vector<ArtworkEntry> leftAlone;
     // Set when the database could not be read at all.
     std::string error;
 
@@ -203,28 +209,15 @@ struct ArtworkRepair
     // Entries left alone because the track's row keeps its art in the
     // database: re-pointing it would drop that image.
     int keptInDatabase = 0;
-    // Entries whose row in the database already holds a readable image
-    // when the repair gets to them: another track sharing the row was
-    // given it first. Nothing is written for them.
-    int alreadyReadable = 0;
     // InDatabaseUnreadable entries whose row no longer keeps its image in
     // the database when the repair gets to them: nothing is written.
     int noLongerInDatabase = 0;
+    // Entries given up because a check of the database could not be read:
+    // nothing is written for them, whatever the check would have said.
+    int failedReads = 0;
+    std::vector<std::string> failureReasons;
     std::string error;
 };
-
-// Whether the bytes start like a real image in a format a player is not
-// promised to show: GIF, WebP, BMP or TIFF. Such an image is somebody's
-// cover all the same, so nothing writes over it. Needs the first twelve
-// bytes (WebP names itself at offset 8).
-inline bool isOtherImageFormat(std::string_view bytes)
-{
-    const auto startsWith = [&bytes](std::string_view magic, size_t at = 0) {
-        return bytes.size() >= at + magic.size() && bytes.substr(at, magic.size()) == magic;
-    };
-    return startsWith("GIF87a") || startsWith("GIF89a") || (startsWith("RIFF") && startsWith("WEBP", 8))
-        || startsWith("BM") || startsWith(std::string_view("II*\0", 4)) || startsWith(std::string_view("MM\0*", 4));
-}
 
 // The extension an Engine artwork file must carry, decided on the bytes
 // rather than on the name the source had.

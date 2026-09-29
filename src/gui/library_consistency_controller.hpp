@@ -294,7 +294,7 @@ class LibraryConsistencyController : public QObject
     Q_PROPERTY(int artworkEmptyFileCount READ artworkEmptyFileCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkBrokenRowCount READ artworkBrokenRowCount NOTIFY artworkChanged)
     Q_PROPERTY(int artworkEmptyInDatabaseCount READ artworkEmptyInDatabaseCount NOTIFY artworkChanged)
-    Q_PROPERTY(int artworkOtherFormatCount READ artworkOtherFormatCount NOTIFY artworkChanged)
+    Q_PROPERTY(int artworkLeftAloneCount READ artworkLeftAloneCount NOTIFY artworkChanged)
     Q_PROPERTY(QString artworkError READ artworkError NOTIFY artworkChanged)
     // Tracks whose Engine row does not say what sample rate they are, and
     // how many of those the files themselves can answer for. Engine turns
@@ -414,9 +414,9 @@ public:
     // draw. Repaired in place, in that row, since the library reads its
     // art from there.
     int artworkEmptyInDatabaseCount() const;
-    // Covers kept inside the database in a format a player may not show
-    // (GIF, WebP, BMP, TIFF). Left alone: they are real images.
-    int artworkOtherFormatCount() const;
+    // Covers kept inside the database in a form Seabass leaves alone: bytes
+    // that are neither JPEG nor PNG. Not among the faults.
+    int artworkLeftAloneCount() const { return static_cast<int>(m_artwork.leftAlone.size()); }
     // Set when the audit could not read the database. Without it an audit
     // that failed looks exactly like a library with nothing wrong: no
     // counts, no notice, no word to the user.

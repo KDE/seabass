@@ -170,17 +170,20 @@ Page {
                         + "puts a copy back into the database itself, because that library reads its covers "
                         + "from there.");
                 }
-                const otherFormat = consistencyController?.artworkOtherFormatCount;
-                if (otherFormat > 0) {
-                    parts.push(otherFormat + " keep their cover inside the Engine database in a format players may "
-                        + "not show (GIF, WebP, BMP or TIFF). Seabass leaves those as they are.");
+                const leftAlone = consistencyController?.artworkLeftAloneCount;
+                if (leftAlone > 0) {
+                    parts.push(leftAlone + " keep their cover inside the Engine database in a form Seabass leaves "
+                        + "alone: an image in a format players may not show, or data that is no picture. Seabass "
+                        + "never writes over those.");
                 }
-                parts.push(fixable > 0
-                    ? fixable + " of " + consistencyController?.artworkUnreadableCount + " can be put back: Seabass "
-                      + "takes the image from the rekordbox art on this stick, the track's own tags, or a stick "
-                      + "backup on this computer, whichever still has a copy, in that order."
-                    : "None of them has a copy left on this stick, in the tracks themselves, or in a backup on this "
-                      + "computer. Re-importing or re-analysing in Engine DJ is what would rebuild them.");
+                if (consistencyController?.artworkUnreadableCount > 0) {
+                    parts.push(fixable > 0
+                        ? fixable + " of " + consistencyController?.artworkUnreadableCount + " can be put back: Seabass "
+                          + "takes the image from the rekordbox art on this stick, the track's own tags, or a stick "
+                          + "backup on this computer, whichever still has a copy, in that order."
+                        : "None of them has a copy left on this stick, in the tracks themselves, or in a backup on this "
+                          + "computer. Re-importing or re-analysing in Engine DJ is what would rebuild them.");
+                }
                 return parts.join(" ");
             }
         }

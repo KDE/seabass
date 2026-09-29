@@ -399,38 +399,34 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         const bool pointsAtArt = sqlite3_column_type(stmt, 4) != SQLITE_NULL;
         const std::int64_t albumArtId = sqlite3_column_int64(stmt, 4);
 
-        // A row holding an image is decided by that image alone: whatever
-        // its hash says, this is what a player shows, and it is never
-        // re-pointed. Bytes there that are no image decide nothing when
-        // the hash names the art elsewhere (a file, an imported path); a
-        // text hash names the image in the row itself, so there they make
-        // the row a fault, repaired in place.
+        // A row holding bytes in albumArt is decided by them. A JPEG or
+        // PNG is what a player shows, whatever the hash says. Anything else
+        // (an image in another format, or bytes that are no picture) is
+        // left alone: Seabass cannot tell a real cover from damage there,
+        // so it neither writes over the row nor points a track away from
+        // it, and does not count it as a fault. The one exception is a
+        // file the row's blob hash names under Artwork/, which a player
+        // finds whatever the column holds.
         if (const auto image = pointsAtArt ? imageHeadByRow.find(albumArtId) : imageHeadByRow.end();
             image != imageHeadByRow.end()) {
+            audit.tracksWithArt++;
             if (!extensionForImage(image->second).empty()) {
-                audit.tracksWithArt++;
                 audit.readableByAPlayer++;
                 continue;
             }
             const std::string_view hashBytes(static_cast<const char *>(blob), blob ? static_cast<size_t>(size) : 0);
-            if (isOtherImageFormat(image->second)) {
-                // A real image a player may not show: reported, and left
-                // alone. No repair is offered, since any would write over
-                // it or leave it behind.
-                audit.tracksWithArt++;
-                entry.storage = ArtworkStorage::InDatabaseOtherFormat;
-                entry.reference = std::string(hashBytes);
-                audit.unreadable.push_back(std::move(entry));
+            if (referenceType == ReferenceType::Blob && size > 0 && !hashBytes.starts_with(ImportedPrefix)
+                && !cachedArtworkFile(pathToUtf8(artwork),
+                                      std::span<const std::uint8_t>(static_cast<const std::uint8_t *>(blob),
+                                                                    static_cast<size_t>(size)))
+                        .empty()) {
+                audit.readableByAPlayer++;
                 continue;
             }
-            if (classifyArtworkReference(hashBytes, referenceType) == ArtworkStorage::InDatabase) {
-                audit.tracksWithArt++;
-                entry.storage = ArtworkStorage::InDatabaseUnreadable;
-                entry.reference = std::string(hashBytes);
-                findASourceFor(entry);
-                audit.unreadable.push_back(std::move(entry));
-                continue;
-            }
+            entry.storage = ArtworkStorage::InDatabaseLeftAlone;
+            entry.reference = std::string(hashBytes);
+            audit.leftAlone.push_back(std::move(entry));
+            continue;
         }
         if (blob == nullptr || size <= 0) {
             // Nothing to find the art by, which is two different things.
@@ -609,6 +605,14 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         return result;
     };
 
+    // A check of the database that cannot be read: the entry is given up,
+    // counted with its reason, and nothing is written for it.
+    const auto giveUp = [&](const ArtworkEntry &entry, const std::string &what) {
+        result.failedReads++;
+        result.failureReasons.push_back("track " + std::to_string(entry.trackId) + ": " + what + ": "
+                                        + sqlite3_errmsg(handle));
+    };
+
     bool hasImageColumn = false;
     try {
         hasImageColumn = hasColumn(handle, "AlbumArt", "albumArt");
@@ -633,35 +637,36 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 continue;
             }
             if (entry.storage == ArtworkStorage::InDatabaseUnreadable) {
-                // Repaired in place: the image goes into the row the track
-                // already points at, whose hash and id stay, so every track
-                // sharing the row keeps it. Asked of the row as it is now.
+                // Repaired in place, and only into a value that is positively
+                // empty: NULL or no bytes, measured in SQL. Asked of the row
+                // as it is now, and a check that cannot be read gives the
+                // entry up rather than answer for it.
                 sqlite3_stmt *current = nullptr;
-                if (sqlite3_prepare_v2(handle,
-                                       "SELECT a.id, typeof(a.hash) = 'text' AND a.hash != '' "
-                                       "AND substr(a.hash, 1, 8) != 'image://' "
-                                       "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;",
-                                       -1, &current, nullptr)
-                    != SQLITE_OK) {
-                    return fail(std::string("could not read the track's art row: ") + sqlite3_errmsg(handle));
+                const std::string sql = "SELECT a.id, " + imageLength
+                    + ", typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://' "
+                      "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
+                if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &current, nullptr) != SQLITE_OK) {
+                    giveUp(entry, "could not read its art row");
+                    continue;
                 }
                 sqlite3_bind_int64(current, 1, entry.trackId);
-                if (sqlite3_step(current) != SQLITE_ROW) {
+                const int step = sqlite3_step(current);
+                if (step == SQLITE_DONE) {
                     sqlite3_finalize(current);
                     result.tracksNoLongerThere++;
                     continue;
                 }
-                const std::int64_t row = sqlite3_column_int64(current, 0);
-                const bool storedInDatabase = sqlite3_column_int(current, 1) != 0;
-                sqlite3_finalize(current);
-                const std::string headBytes = albumArtImageHead(handle, row);
-                if (isOtherImageFormat(headBytes)) {
-                    result.keptInDatabase++;  // a real image, in a format of its own
+                if (step != SQLITE_ROW) {
+                    sqlite3_finalize(current);
+                    giveUp(entry, "could not read its art row");
                     continue;
                 }
-                if (!extensionForImage(headBytes).empty()) {
-                    // Never overwritten: whatever put it there, it reads.
-                    result.alreadyReadable++;
+                const std::int64_t row = sqlite3_column_int64(current, 0);
+                const bool empty = sqlite3_column_type(current, 1) == SQLITE_NULL || sqlite3_column_int64(current, 1) == 0;
+                const bool storedInDatabase = sqlite3_column_int(current, 2) != 0;
+                sqlite3_finalize(current);
+                if (!empty) {
+                    result.keptInDatabase++;  // it holds something: never written over
                     continue;
                 }
                 if (!storedInDatabase) {
@@ -688,10 +693,16 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 if (sqlite3_prepare_v2(handle, "SELECT count(*) FROM Track WHERE albumArtId = ?;", -1, &sharing,
                                        nullptr)
                     != SQLITE_OK) {
-                    return fail(std::string("could not count the tracks on an art row: ") + sqlite3_errmsg(handle));
+                    giveUp(entry, "could not count the tracks on its art row");
+                    continue;
                 }
                 sqlite3_bind_int64(sharing, 1, row);
-                const bool shared = sqlite3_step(sharing) == SQLITE_ROW && sqlite3_column_int64(sharing, 0) > 1;
+                if (sqlite3_step(sharing) != SQLITE_ROW) {
+                    sqlite3_finalize(sharing);
+                    giveUp(entry, "could not count the tracks on its art row");
+                    continue;
+                }
+                const bool shared = sqlite3_column_int64(sharing, 0) > 1;
                 sqlite3_finalize(sharing);
                 if (shared) {
                     ownRowBytes = std::move(bytes);
@@ -714,36 +725,34 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 }
             }
             // Asked of the database as it is now, not of the audit: a
-            // track whose row holds a readable image, or names one by a
-            // text hash, keeps its art in the database and is never
-            // re-pointed. The new row would hold no image, and the old one
-            // would be left to nobody. Bytes that are no image stay where
-            // they are, in a row nothing points at any more.
+            // track whose row holds any bytes in albumArt, or names an
+            // image by a text hash, keeps its art in the database and is
+            // never pointed away from it. A check that cannot be read gives
+            // the entry up.
             bool keepsImageInDatabase =
-                entry.storage == ArtworkStorage::InDatabase || entry.storage == ArtworkStorage::InDatabaseOtherFormat;
+                entry.storage == ArtworkStorage::InDatabase || entry.storage == ArtworkStorage::InDatabaseLeftAlone;
             if (!keepsImageInDatabase && ownRowBytes.empty()) {
                 sqlite3_stmt *current = nullptr;
                 // Without the image column a text hash keeps nothing here.
                 const std::string textHash = hasImageColumn
                     ? "typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://'"
                     : "0";
-                const std::string sql = "SELECT a.id, " + imageLength + " > 0, " + textHash
+                const std::string sql = "SELECT coalesce(" + imageLength + ", 0) > 0 OR " + textHash
                     + " FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
-                if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &current, nullptr)
-                    != SQLITE_OK) {
-                    return fail(std::string("could not read the track's art row: ") + sqlite3_errmsg(handle));
+                if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &current, nullptr) != SQLITE_OK) {
+                    giveUp(entry, "could not read its art row");
+                    continue;
                 }
                 sqlite3_bind_int64(current, 1, entry.trackId);
-                if (sqlite3_step(current) == SQLITE_ROW) {
-                    const std::int64_t row = sqlite3_column_int64(current, 0);
-                    const bool holdsBytes = sqlite3_column_int(current, 1) != 0;
-                    keepsImageInDatabase = sqlite3_column_int(current, 2) != 0
-                        || (holdsBytes && [&] {
-                               const std::string head = albumArtImageHead(handle, row);
-                               return !extensionForImage(head).empty() || isOtherImageFormat(head);
-                           }());
+                const int step = sqlite3_step(current);
+                if (step == SQLITE_ROW) {
+                    keepsImageInDatabase = sqlite3_column_int(current, 0) != 0;
                 }
                 sqlite3_finalize(current);
+                if (step != SQLITE_ROW && step != SQLITE_DONE) {
+                    giveUp(entry, "could not read its art row");
+                    continue;
+                }
             }
             if (keepsImageInDatabase) {
                 result.keptInDatabase++;
