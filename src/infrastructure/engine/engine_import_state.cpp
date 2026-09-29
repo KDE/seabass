@@ -60,7 +60,9 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
         return state;
     }
     // A journal left by a pulled stick would fail the read-only open
-    // below with "readonly"; see engine_pending_journals.hpp (#48).
+    // below with "readonly"; see engine_pending_journals.hpp (#48). A
+    // database another connection is writing is left to the read below,
+    // which, read-only, cannot roll anything back.
     try {
         recoverEnginePendingJournals(engineLibraryPath);
     } catch (const std::exception &e) {
@@ -77,6 +79,16 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
         }
         return state;
     }
+    // A lock (another connection writing) or a journal still pending is a
+    // read that failed, not a library without this column.
+    const auto failedToRead = [&state, handle](int code) {
+        const int primary = code & 0xff;
+        if (primary != SQLITE_BUSY && primary != SQLITE_LOCKED && primary != SQLITE_READONLY) {
+            return false;
+        }
+        state.error = std::string("could not read the Engine database: ") + sqlite3_errmsg(handle);
+        return true;
+    };
     sqlite3_stmt *stmt = nullptr;
     // Not "WHERE id = 1". Engine's own libraries number that row 1, and a
     // library libdjinterop created numbers it 2 (see the upstream reports
@@ -89,12 +101,12 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
         == SQLITE_OK) {
         if (sqlite3_step(stmt) == SQLITE_ROW) {
             state.engineCounter = static_cast<std::uint64_t>(sqlite3_column_int64(stmt, 0));
-        } else {
+        } else if (!failedToRead(sqlite3_extended_errcode(handle))) {
             // No Information row is an Engine library this app cannot
             // reason about, not a finding to report.
             state.hasEngineLibrary = false;
         }
-    } else {
+    } else if (!failedToRead(sqlite3_extended_errcode(handle))) {
         // A schema without the column: an older Engine generation, which
         // does not have this prompt to suppress.
         state.hasEngineLibrary = false;
