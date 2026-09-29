@@ -268,10 +268,16 @@ inline std::string extensionForImage(std::string_view bytes)
 }
 
 // What the covers of these tracks take up on the stick: each distinct
-// image file once, plus, for `engineLibraryPath` when given, the images
-// that library keeps inside its database.
-std::optional<std::uint64_t> artworkBytesOnStick(const std::vector<domain::Track> &tracks,
-                                                 const std::string &engineLibraryPath);
+// image file once, plus, for `engineLibraryPath` when given, the covers
+// that Engine library keeps: images in its database and files its rows
+// name under Artwork/. When that database cannot be read, the rest is
+// still counted and engineUnreadable says the Engine part is missing.
+struct ArtworkBytes
+{
+    std::uint64_t bytes = 0;
+    bool engineUnreadable = false;
+};
+ArtworkBytes artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath);
 
 // Gives each entry the library's own storage and points the track at it.
 // From schema 3.0.2 on: the image copied into Artwork/ under the hash of

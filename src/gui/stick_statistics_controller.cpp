@@ -206,11 +206,11 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
         for (const auto &t : combinedTracks) {
             audioBytes += t.fileSizeBytes;
         }
-        // Empty when the Engine database could not be read to count its
-        // covers: said on the figure rather than shown as a smaller one.
-        const std::optional<std::uint64_t> measuredArtwork =
+        // When the Engine database could not be read, the other covers are
+        // still counted and the figure says the Engine part is missing.
+        const infrastructure::engine::ArtworkBytes measuredArtwork =
             infrastructure::engine::artworkBytesOnStick(combinedTracks, enginePath.toStdString());
-        artworkBytes = measuredArtwork.value_or(0);
+        artworkBytes = measuredArtwork.bytes;
 
         std::uint64_t metadataBytes = 0;
         if (!rekordboxPath.isEmpty()) {
@@ -233,7 +233,8 @@ StickStatisticsScanResult runScanTask(QString stickLabel, QString rekordboxPath,
         root.sizeBytes = hwInfo.totalBytes;
         root.children = {
             audioNode,
-            {measuredArtwork ? "Artwork" : "Artwork (covers could not be read)", artworkBytes, {}},
+            {measuredArtwork.engineUnreadable ? "Artwork (Engine covers could not be read)" : "Artwork", artworkBytes,
+             {}},
             {"Database & Analysis Files", metadataBytes, {}},
             {"Other / Unaccounted", otherBytes, {}},
             {"Free Space", hwInfo.freeBytes, {}},

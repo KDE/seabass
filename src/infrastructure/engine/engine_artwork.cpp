@@ -578,8 +578,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     return audit;
 }
 
-std::optional<std::uint64_t> artworkBytesOnStick(const std::vector<domain::Track> &tracks,
-                                                 const std::string &engineLibraryPath)
+ArtworkBytes artworkBytesOnStick(const std::vector<domain::Track> &tracks, const std::string &engineLibraryPath)
 {
     // The copies the reader writes out of the database are on this
     // computer, not the stick: the images they copy are counted below. So
@@ -599,17 +598,17 @@ std::optional<std::uint64_t> artworkBytesOnStick(const std::vector<domain::Track
         bytes += application::fileSizeOnDisk(track.artworkPath).value_or(0);
     }
     if (engineLibraryPath.empty()) {
-        return bytes;
+        return {bytes, false};
     }
     const fs::path db = databaseFile(engineLibraryPath);
     std::error_code ec;
     if (!fs::exists(db, ec) && !ec) {
-        return bytes;  // no Engine database here to count
+        return {bytes, false};  // no Engine database here to count
     }
     sqlite3 *handle = nullptr;
-    const auto giveUp = [&handle]() -> std::optional<std::uint64_t> {
+    const auto giveUp = [&handle, &bytes]() {
         sqlite3_close(handle);
-        return std::nullopt;
+        return ArtworkBytes{bytes, true};
     };
     if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         return giveUp();
@@ -659,7 +658,7 @@ std::optional<std::uint64_t> artworkBytesOnStick(const std::vector<domain::Track
             bytes += application::fileSizeOnDisk(file).value_or(0);
         }
     }
-    return bytes;
+    return {bytes, false};
 }
 
 ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,

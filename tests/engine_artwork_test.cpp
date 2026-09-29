@@ -805,14 +805,18 @@ int main(int argc, char **argv)
         const fs::path fileCover = fixture.library / "Artwork" / (artworkFileName(std::vector<std::uint8_t>(20, 0x66)) + ".jpg");
         write(fileCover, jpeg(std::string(1234, 'f')));
         const std::uint64_t expected = fs::file_size(onStick) + 3000 + 500 + 4 + fs::file_size(fileCover);
-        assert(artworkBytesOnStick(tracks, pathToUtf8(fixture.library)) == expected);
-        assert(artworkBytesOnStick(tracks, {}) == fs::file_size(onStick));
+        assert(artworkBytesOnStick(tracks, pathToUtf8(fixture.library)).bytes == expected);
+        assert(!artworkBytesOnStick(tracks, pathToUtf8(fixture.library)).engineUnreadable);
+        assert(artworkBytesOnStick(tracks, {}).bytes == fs::file_size(onStick));
         fs::remove_all(localCopy.parent_path());
 
-        // A database that cannot be read gives no figure, not a smaller one.
+        // A database that cannot be read loses the Engine part only, and
+        // says so: the rest is still counted.
         Fixture broken(seabass::testing::scratchRoot() / "seabass_engine_artwork_stick_bytes_broken");
         write(broken.library / "Database2" / "m.db", std::string(4096, 'x'));
-        assert(!artworkBytesOnStick(tracks, pathToUtf8(broken.library)).has_value());
+        const ArtworkBytes partial = artworkBytesOnStick(tracks, pathToUtf8(broken.library));
+        assert(partial.engineUnreadable);
+        assert(partial.bytes == fs::file_size(onStick));
         std::cout << "case 15 (covers are counted where they take up the stick, database included) OK\n";
     }
 
