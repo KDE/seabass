@@ -40,6 +40,11 @@ inline void recoverEnginePendingJournals(const std::string &engineLibraryPath)
                 int read = SQLITE_ERROR;
                 std::string readError;
                 if (opened == SQLITE_OK) {
+                    // A save in another connection holds the database while
+                    // it writes, and its journal has a live header too: its
+                    // lock is waited out rather than taken for a pulled
+                    // stick's leftover.
+                    sqlite3_busy_timeout(handle, 5000);
                     read = sqlite3_exec(handle, "SELECT count(*) FROM sqlite_master", nullptr, nullptr, nullptr);
                     readError = sqlite3_errmsg(handle);
                 }
