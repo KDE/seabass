@@ -337,25 +337,27 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         const std::int64_t albumArtId = sqlite3_column_int64(stmt, 4);
 
         // A row holding an image is decided by that image alone: whatever
-        // its hash says, this is what a player shows. Never re-pointed; an
-        // unreadable one is repaired in place, when its hash says the
-        // library keeps its images in the database.
+        // its hash says, this is what a player shows, and it is never
+        // re-pointed. Bytes there that are no image decide nothing when
+        // the hash names the art elsewhere (a file, an imported path); a
+        // text hash names the image in the row itself, so there they make
+        // the row a fault, repaired in place.
         if (const auto image = pointsAtArt ? imageHeadByRow.find(albumArtId) : imageHeadByRow.end();
             image != imageHeadByRow.end()) {
-            audit.tracksWithArt++;
             if (!extensionForImage(image->second).empty()) {
+                audit.tracksWithArt++;
                 audit.readableByAPlayer++;
-            } else {
-                entry.storage = ArtworkStorage::InDatabaseUnreadable;
-                if (blob != nullptr && size > 0) {
-                    entry.reference.assign(static_cast<const char *>(blob), static_cast<size_t>(size));
-                }
-                if (classifyArtworkReference(entry.reference, referenceType) == ArtworkStorage::InDatabase) {
-                    findASourceFor(entry);
-                }
-                audit.unreadable.push_back(std::move(entry));
+                continue;
             }
-            continue;
+            const std::string_view hashBytes(static_cast<const char *>(blob), blob ? static_cast<size_t>(size) : 0);
+            if (classifyArtworkReference(hashBytes, referenceType) == ArtworkStorage::InDatabase) {
+                audit.tracksWithArt++;
+                entry.storage = ArtworkStorage::InDatabaseUnreadable;
+                entry.reference = std::string(hashBytes);
+                findASourceFor(entry);
+                audit.unreadable.push_back(std::move(entry));
+                continue;
+            }
         }
         if (blob == nullptr || size <= 0) {
             // Nothing to find the art by, which is two different things.
@@ -561,7 +563,8 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                     continue;
                 }
                 if (!storedInDatabase) {
-                    continue;  // the row is no longer one that keeps its image in the database
+                    result.noLongerInDatabase++;
+                    continue;
                 }
                 std::string bytes;
                 if (!entry.imageOnStick.empty()) {
@@ -592,22 +595,28 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 continue;
             }
             // Asked of the database as it is now, not of the audit: a
-            // track whose row holds an image, or names one by a text hash,
-            // keeps its art in the database and is never re-pointed. The
-            // new row would hold no image, and the old one would be left
-            // to nobody.
+            // track whose row holds a readable image, or names one by a
+            // text hash, keeps its art in the database and is never
+            // re-pointed. The new row would hold no image, and the old one
+            // would be left to nobody. Bytes that are no image stay where
+            // they are, in a row nothing points at any more.
             bool keepsImageInDatabase = entry.storage == ArtworkStorage::InDatabase;
             if (!keepsImageInDatabase) {
                 sqlite3_stmt *current = nullptr;
-                const std::string sql = "SELECT " + imageLength
-                    + " > 0 OR (typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://') "
+                const std::string sql = "SELECT a.id, " + imageLength
+                    + " > 0, typeof(a.hash) = 'text' AND a.hash != '' AND substr(a.hash, 1, 8) != 'image://' "
                       "FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId WHERE t.id = ?;";
                 if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &current, nullptr)
                     != SQLITE_OK) {
                     return fail(std::string("could not read the track's art row: ") + sqlite3_errmsg(handle));
                 }
                 sqlite3_bind_int64(current, 1, entry.trackId);
-                keepsImageInDatabase = sqlite3_step(current) == SQLITE_ROW && sqlite3_column_int(current, 0) != 0;
+                if (sqlite3_step(current) == SQLITE_ROW) {
+                    const std::int64_t row = sqlite3_column_int64(current, 0);
+                    const bool holdsBytes = sqlite3_column_int(current, 1) != 0;
+                    keepsImageInDatabase = sqlite3_column_int(current, 2) != 0
+                        || (holdsBytes && !extensionForImage(albumArtImageHead(handle, row)).empty());
+                }
                 sqlite3_finalize(current);
             }
             if (keepsImageInDatabase) {

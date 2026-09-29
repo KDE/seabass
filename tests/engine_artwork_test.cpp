@@ -872,6 +872,46 @@ int main(int argc, char **argv)
         std::cout << "case 17 (no albumArt column: the art is audited as files) OK\n";
     }
 
+    // 18. Bytes in albumArt that are no image do not decide a row whose
+    //     hash names its art elsewhere: a blob hash whose file is there
+    //     reads, and an imported path is repaired as one. Only a text hash,
+    //     which names the image in the row itself, makes the row a fault
+    //     for an in-place repair.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_junk_in_row");
+        sqlite3 *db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (2, x'7777777777777777777777777777777777777777', "
+                 "x'4A554E4B');");
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES "
+                 "(3, 'image://fileart//media/WHALESHARK2/PIONEER/Artwork/00001/a5_m.jpg', x'4A554E4B');");
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (4, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', "
+                 "x'4A554E4B');");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (2, 'File', 'A', 2);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (3, 'Imported', 'B', 3);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (4, 'In the row', 'C', 4);");
+        sqlite3_close(db);
+        write(fixture.library / "Artwork" / (artworkFileName(std::vector<std::uint8_t>(20, 0x77)) + ".jpg"), jpeg("F"));
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
+        assert(audit.readableByAPlayer == 1);
+        assert(audit.unreadable.size() == 2);
+        assert(audit.unreadable[0].trackId == 3 && audit.unreadable[0].storage == ArtworkStorage::ImportedPath);
+        assert(audit.unreadable[1].trackId == 4 && audit.unreadable[1].storage == ArtworkStorage::InDatabaseUnreadable);
+        const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), {audit.unreadable[0]});
+        assert(repair.error.empty() && repair.repaired == 1);
+
+        // A row that stopped keeping its image in the database between the
+        // audit and the save is counted, not dropped silently.
+        ArtworkEntry moved = audit.unreadable[1];
+        moved.otherSource = true;
+        db = fixture.open();
+        exec(db, "UPDATE AlbumArt SET hash = x'9999999999999999999999999999999999999999' WHERE id = 4;");
+        sqlite3_close(db);
+        const ArtworkRepair gone = repairArtwork(pathToUtf8(fixture.library), {moved}, {}, {},
+                                                 [](const ArtworkEntry &) { return jpeg("TAGS"); });
+        assert(gone.repaired == 0 && gone.noLongerInDatabase == 1);
+        std::cout << "case 18 (junk in a row whose hash names its art elsewhere does not decide it) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }

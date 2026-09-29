@@ -147,15 +147,20 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
         // since it was scanned -- and the page rescans after the save, so
         // the track shows up as still unrepaired rather than vanishing
         // from the report.
+        const std::string source =
+            m_entry.imageOnStick.empty() ? std::string("the image from the track's tags or a stick backup")
+                                         : m_entry.imageOnStick;
         std::string why;
         if (repair.tracksNoLongerThere > 0) {
             why = "the track is no longer in the library";
         } else if (repair.keptInDatabase > 0) {
             why = "its art row keeps the image in the database";
+        } else if (repair.noLongerInDatabase > 0) {
+            why = "its art row no longer keeps its image in the database";
         } else if (repair.notAnImage > 0) {
-            why = m_entry.imageOnStick + " is not a JPEG or a PNG";
+            why = source + " is not a JPEG or a PNG";
         } else {
-            why = m_entry.imageOnStick + " could not be read";
+            why = source + " could not be read";
         }
         ctx.log().record("artwork: skipped track " + std::to_string(m_entry.trackId) + ": " + why);
         return ChangeOutcome::skip();
