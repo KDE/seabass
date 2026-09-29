@@ -566,6 +566,15 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
 {
     connect(&m_repairWatcher, &QFutureWatcher<infrastructure::media::FilesystemRepairResult>::finished, this,
             &LibraryConsistencyController::onFilesystemRepairFinished);
+    connect(&m_importStateWatcher, &QFutureWatcher<infrastructure::engine::RekordboxImportState>::finished, this,
+            [this]() {
+                QString thrown;
+                m_importState = gui::takeResult(m_importStateWatcher, &thrown);
+                if (!thrown.isEmpty()) {
+                    m_importState.error = thrown.toStdString();
+                }
+                emit importStateChanged();
+            });
     // Where this computer keeps full stick backups: read once, the same
     // way and from the same key AppSettingsController writes it, so a
     // cover lost from the stick can be looked for in them.
@@ -601,6 +610,7 @@ LibraryConsistencyController::~LibraryConsistencyController()
     // and is waited for.
     m_pendingScanFormats.clear();
     awaitQuietly(m_repairWatcher);
+    awaitQuietly(m_importStateWatcher);
 }
 
 int LibraryConsistencyController::runningScanTasksForTesting()
@@ -720,10 +730,15 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_cleanupLeftoversError.clear();
     emit cleanupLeftoversChanged();
     // A sqlite row and 24 bytes of a pdb header: cheap enough to read
-    // with the scan rather than behind its own button.
-    m_importState = infrastructure::engine::readRekordboxImportState(m_enginePath.toStdString(),
-                                                                     m_rekordboxPath.toStdString());
+    // with the scan rather than behind its own button. Not on this thread,
+    // though: it may wait for another thread's recovery of m.db, or copy a
+    // pulled stick's m.db aside first.
+    m_importState = {};
     emit importStateChanged();
+    m_importStateWatcher.setFuture(
+        QtConcurrent::run([engine = m_enginePath.toStdString(), rekordbox = m_rekordboxPath.toStdString()]() {
+            return infrastructure::engine::readRekordboxImportState(engine, rekordbox);
+        }));
     // The staged fill is NOT cleared here, for the same reason the staged
     // artwork is not: a rescan re-reads the library, it does not unstage
     // what someone asked for. Clearing the flag while the change stayed
