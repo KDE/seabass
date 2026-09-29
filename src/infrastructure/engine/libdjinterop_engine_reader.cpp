@@ -145,15 +145,21 @@ djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &pro
 }
 
 // The image an AlbumArt row keeps in the database, as a file on this
-// computer, since everything that shows a cover takes a path. Written
-// once under a name taken from the row's hex hash (or, lacking one, from
-// the bytes), so a later scan finds it with a stat and never reads the
-// image again. Empty when the row holds nothing a player could draw.
-std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std::string &hash)
+// computer, since everything that shows a cover takes a path. Written once
+// into `directory`, which belongs to this one library, under the row's hex
+// hash, so a later scan finds it with a stat and never reads the image
+// again. Engine's hash names an image only inside its own library: it is
+// not a checksum of the bytes. Without a hex hash, or without a directory
+// of the library's own (empty `libraryDirectory`), the name is a checksum of the
+// bytes instead, which costs a read each time. Empty when the row holds
+// nothing a player could draw.
+std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std::string &hash,
+                                const std::filesystem::path &libraryDirectory)
 {
-    const std::filesystem::path directory = paths::localEngineArtworkDir();
-    const bool hexHash = !hash.empty() && hash.size() <= 64
+    const bool hexHash = !libraryDirectory.empty() && !hash.empty() && hash.size() <= 64
         && std::all_of(hash.begin(), hash.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
+    const std::filesystem::path directory =
+        libraryDirectory.empty() ? paths::localEngineArtworkDir() / "by-content" : libraryDirectory;
     std::error_code ec;
     if (hexHash) {
         for (const char *extension : {".jpg", ".png"}) {
@@ -271,6 +277,23 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         }
         return result;
     }
+    // The library's own directory, named by its Information uuid.
+    std::filesystem::path libraryDirectory;
+    {
+        sqlite3_stmt *information = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT uuid FROM Information ORDER BY id LIMIT 1", -1, &information, nullptr)
+                == SQLITE_OK
+            && sqlite3_step(information) == SQLITE_ROW) {
+            const unsigned char *text = sqlite3_column_text(information, 0);
+            const std::string uuid = text ? reinterpret_cast<const char *>(text) : std::string();
+            if (!uuid.empty() && uuid.size() <= 64
+                && std::all_of(uuid.begin(), uuid.end(),
+                               [](unsigned char c) { return std::isalnum(c) != 0 || c == '-'; })) {
+                libraryDirectory = paths::localEngineArtworkDir() / uuid;
+            }
+        }
+        sqlite3_finalize(information);
+    }
     sqlite3_stmt *stmt = nullptr;
     const char *sql =
         "SELECT t.id, a.hash, a.id FROM Track t JOIN AlbumArt a ON a.id = t.albumArtId "
@@ -290,7 +313,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
         if (known == fileByRow.end()) {
             std::string file;
             try {
-                file = databaseArtworkFile(db, albumArtId, hash);
+                file = databaseArtworkFile(db, albumArtId, hash, libraryDirectory);
             } catch (const std::exception &) {
                 // One unreadable image is not worth the others.
             }
