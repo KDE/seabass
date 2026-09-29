@@ -1387,6 +1387,24 @@ int main(int argc, char **argv)
         std::cout << "case 25 (a save keeps each track's kind of storage, and the library's is decided once) OK\n";
     }
 
+    // 26. A row whose value cannot be read to see what it holds (here a
+    //     number stored in albumArt, which no blob handle opens) is not
+    //     taken for bytes that are no picture: it is counted as a row that
+    //     could not be checked, and is neither a fault nor left alone.
+    {
+        Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_unchecked");
+        sqlite3 *db = fixture.open();
+        exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (2, '934a576ac3a4a0ab6d66478652b9bb8b7ac68b82', 12345);");
+        exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'T', 'A', 2);");
+        sqlite3_close(db);
+        const ArtworkAudit audit = auditArtwork(pathToUtf8(fixture.library));
+        assert(audit.error.empty());
+        assert(audit.leftAlone.empty());
+        assert(audit.unreadable.empty());
+        assert(audit.unchecked.size() == 1 && audit.unchecked[0].storage == ArtworkStorage::InDatabaseUnchecked);
+        std::cout << "case 26 (a row that cannot be read to check it is counted apart) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }

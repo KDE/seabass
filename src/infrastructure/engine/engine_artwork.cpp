@@ -217,7 +217,7 @@ AlbumArtImageHeads::~AlbumArtImageHeads()
     sqlite3_blob_close(m_blob);
 }
 
-std::string AlbumArtImageHeads::of(std::int64_t albumArtId)
+std::optional<std::string> AlbumArtImageHeads::of(std::int64_t albumArtId)
 {
     // One handle moved from row to row: opening one per row costs a
     // statement's worth of work each time.
@@ -229,16 +229,16 @@ std::string AlbumArtImageHeads::of(std::int64_t albumArtId)
         // a fresh one.
         sqlite3_blob_close(m_blob);
         m_blob = nullptr;
-        return {};
+        return std::nullopt;
     }
     std::string head(static_cast<size_t>(std::min(sqlite3_blob_bytes(m_blob), 12)), '\0');
     if (sqlite3_blob_read(m_blob, head.data(), static_cast<int>(head.size()), 0) != SQLITE_OK) {
-        head.clear();
+        return std::nullopt;
     }
     return head;
 }
 
-std::string albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId)
+std::optional<std::string> albumArtImageHead(sqlite3 *handle, std::int64_t albumArtId)
 {
     return AlbumArtImageHeads(handle).of(albumArtId);
 }
@@ -350,7 +350,7 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
 
     // The first bytes of every image kept in the database, once per row
     // rather than once per track pointing at it, through one blob handle.
-    std::unordered_map<std::int64_t, std::string> imageHeadByRow;
+    std::unordered_map<std::int64_t, std::optional<std::string>> imageHeadByRow;
     if (hasImageColumn) {
         sqlite3_stmt *images = nullptr;
         const std::string listSql = "SELECT id FROM AlbumArt WHERE " + byteLengthSql("albumArt") + " > 0;";
@@ -449,11 +449,18 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
         if (const auto image = pointsAtArt ? imageHeadByRow.find(albumArtId) : imageHeadByRow.end();
             image != imageHeadByRow.end()) {
             audit.tracksWithArt++;
-            if (!extensionForImage(image->second).empty()) {
+            const std::string_view hashBytes(static_cast<const char *>(blob), blob ? static_cast<size_t>(size) : 0);
+            if (!image->second) {
+                // Could not be read to see what it holds: not a verdict.
+                entry.storage = ArtworkStorage::InDatabaseUnchecked;
+                entry.reference = std::string(hashBytes);
+                audit.unchecked.push_back(std::move(entry));
+                continue;
+            }
+            if (!extensionForImage(*image->second).empty()) {
                 audit.readableByAPlayer++;
                 continue;
             }
-            const std::string_view hashBytes(static_cast<const char *>(blob), blob ? static_cast<size_t>(size) : 0);
             if (referenceType == ReferenceType::Blob && size > 0 && !hashBytes.starts_with(ImportedPrefix)
                 && !cachedArtworkFile(pathToUtf8(artwork),
                                       std::span<const std::uint8_t>(static_cast<const std::uint8_t *>(blob),
