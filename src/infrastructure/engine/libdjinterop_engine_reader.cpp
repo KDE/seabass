@@ -6,6 +6,7 @@
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/engine/engine_sqlite.hpp"
+#include "infrastructure/hashing/sha1.hpp"
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -465,12 +466,8 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                 } else if (row.imageLength > 0) {
                     // Named by the blob hash in hex, so a later read finds
                     // the copy with a stat, as for a text hash.
-                    static constexpr char Hex[] = "0123456789abcdef";
-                    std::string hex;
-                    for (const unsigned char c : row.hash) {
-                        hex += Hex[c >> 4];
-                        hex += Hex[c & 0x0F];
-                    }
+                    const std::string hex = hashing::toHex(std::span<const std::uint8_t>(
+                        reinterpret_cast<const std::uint8_t *>(row.hash.data()), row.hash.size()));
                     file = databaseArtworkFile(db, row.albumArtId, hex, row.imageLength, libraryDirectory);
                 }
                 if (file.empty() && row.blobHash && !std::string_view(row.hash).starts_with("image://")) {
