@@ -18,8 +18,10 @@
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <span>
 #include <string_view>
 #include <sstream>
@@ -152,24 +154,32 @@ djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &pro
 // The image an AlbumArt row keeps in the database, as a file on this
 // computer, since everything that shows a cover takes a path. Written once
 // into `libraryDirectory`, which belongs to this one library (its
-// Information uuid), under the row's hex hash and the image's length, so a
-// later scan finds it with a stat and never reads the image again. The
-// length is in the name because the uuid does not settle it: a clone of a
-// stick keeps its uuid, and Engine's hash is not a checksum of the bytes.
-// Without a hex hash, or without a directory of the library's own (empty
-// `libraryDirectory`), the name is a checksum of the bytes instead, which
-// costs a read each time. Empty when the row holds nothing a player could
-// draw.
-std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std::string &hash,
-                                std::int64_t length, const std::filesystem::path &libraryDirectory)
+// Information uuid), so a later scan finds it with a stat and never reads
+// the image again: under the row's hex hash and the image's length, or,
+// for a hash that is no hex (an imported path, or none), under the row, a
+// checksum of that hash and the length. The length is in the name because
+// the uuid does not settle it: a clone of a stick keeps its uuid, and
+// Engine's hash is not a checksum of the bytes. Without a directory of the
+// library's own (no uuid) the name is a checksum of the bytes, which costs
+// a read each time. Empty when the row holds nothing a player could draw;
+// that is known from the image's first bytes, and remembered for the run.
+std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId,
+                                const std::string &hash, std::int64_t length,
+                                const std::filesystem::path &libraryDirectory)
 {
     const bool hexHash = !libraryDirectory.empty() && !hash.empty() && hash.size() <= 64
         && std::all_of(hash.begin(), hash.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
     const std::filesystem::path directory =
         libraryDirectory.empty() ? paths::localEngineArtworkDir() / "by-content" : libraryDirectory;
-    const std::string knownName = hash + "-" + std::to_string(length);
-    std::error_code ec;
+    std::string knownName;
     if (hexHash) {
+        knownName = hash + "-" + std::to_string(length);
+    } else if (!libraryDirectory.empty()) {
+        knownName = "row-" + std::to_string(albumArtId) + "-"
+            + hashing::toHex(hashing::Sha256::of(std::string_view(hash))).substr(0, 16) + "-" + std::to_string(length);
+    }
+    std::error_code ec;
+    if (!knownName.empty()) {
         for (const char *extension : {".jpg", ".png"}) {
             const std::filesystem::path known = directory / pathFromUtf8(knownName + extension);
             if (std::filesystem::is_regular_file(known, ec)
@@ -177,6 +187,25 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std:
                 return pathToUtf8(known);
             }
         }
+    }
+    // Bytes no player draws are told by their first bytes, and not asked
+    // about again in this run.
+    static std::mutex notImagesLock;
+    static std::set<std::string> notImages;
+    const std::string rowKey = pathToUtf8(directory) + "|" + std::to_string(albumArtId) + "|" + std::to_string(length)
+        + "|" + hash;
+    {
+        const std::lock_guard<std::mutex> guard(notImagesLock);
+        if (notImages.count(rowKey) != 0) {
+            return {};
+        }
+    }
+    // Its own blob handle, closed at once: none may stay open while copies
+    // are written, since an open one holds the database.
+    if (extensionForImage(albumArtImageHead(db, albumArtId)).empty()) {
+        const std::lock_guard<std::mutex> guard(notImagesLock);
+        notImages.insert(rowKey);
+        return {};
     }
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(db, "SELECT albumArt FROM AlbumArt WHERE id = ?", -1, &stmt, nullptr) != SQLITE_OK) {
@@ -194,8 +223,8 @@ std::string databaseArtworkFile(sqlite3 *db, std::int64_t albumArtId, const std:
     if (extension.empty()) {
         return {};
     }
-    const std::string name = hexHash ? hash + "-" + std::to_string(bytes.size())
-                                     : hashing::toHex(hashing::Sha256::of(std::string_view(bytes)));
+    const std::string name = !knownName.empty() ? knownName
+                                                : hashing::toHex(hashing::Sha256::of(std::string_view(bytes)));
     const std::filesystem::path file = directory / pathFromUtf8(name + extension);
     std::filesystem::create_directories(directory, ec);
     const auto whole = [&file, &bytes] {

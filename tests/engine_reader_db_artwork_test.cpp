@@ -488,6 +488,24 @@ int main()
         std::cout << "case 16 (a whole read writes no covers out) OK\n";
     }
 
+    // 17. An image beside a hash that is no hex (an imported path, or none)
+    //     is named by its row, its hash and its length, so a later read
+    //     finds the copy with a stat rather than reading and checksumming
+    //     the image every time.
+    {
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(library / "Database2" / "m.db").c_str(), &db) == SQLITE_OK);
+        setRow(db, 10, "image://fileart//media/SOMEWHERE/PIONEER/Artwork/00001/a10.jpg", pngImage);
+        assert(sqlite3_exec(db, "UPDATE Track SET albumArtId = 10 WHERE id = 10;", nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+        const auto read = artworkBySourceId(seabass::pathToUtf8(library));
+        const std::string name = seabass::pathToUtf8(seabass::pathFromUtf8(read.at("10")).filename());
+        assert(name.rfind("row-10-", 0) == 0);
+        assert(name.find("-" + std::to_string(pngImage.size()) + ".png") != std::string::npos);
+        assert(slurp(read.at("10")) == pngImage);
+        std::cout << "case 17 (an image beside a hash that is no hex is named by its row) OK\n";
+    }
+
     fs::remove_all(library.parent_path(), ec);
     std::cout << "engine_reader_db_artwork_test passed\n";
     return 0;
