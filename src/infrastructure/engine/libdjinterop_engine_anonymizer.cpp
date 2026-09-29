@@ -67,33 +67,6 @@ int emptyEngineWaveformColumn(const std::string &dbPath)
     return changed;
 }
 
-// Compacts the database so that no value any earlier step overwrote is
-// still legible in the file.
-//
-// SQLite overwrites a row by writing the new cell and leaving the old
-// bytes where they were, in a freeblock or on a page the freelist has
-// released. Every scrub in this file works by UPDATE, so until the file
-// is rebuilt every original title, artist, album and filename is still
-// sitting in it -- invisible to any reader, perfectly visible to strings.
-//
-// This has to run after the LAST writer. It used to happen inside
-// emptyEngineWaveformColumn(), which runs before libdjinterop's own
-// updates and before scrubFilenameColumn(), so the file was compacted and
-// then refilled with the very values the compaction was meant to remove.
-// A regenerated export still carried 317 real strings, and the reader
-// checks could not see any of them because the live rows were correct.
-void compactDatabase(const std::string &dbPath)
-{
-    sqlite3 *db = nullptr;
-    if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
-        sqlite3_close(db);
-        return;
-    }
-    char *error = nullptr;
-    sqlite3_exec(db, "VACUUM;", nullptr, nullptr, &error);
-    sqlite3_free(error);
-    sqlite3_close(db);
-}
 
 int scrubFilenameColumn(const std::string &destinationRoot)
 {
@@ -123,6 +96,38 @@ int scrubFilenameColumn(const std::string &destinationRoot)
     return changed;
 }
 
+
+}  // namespace
+
+// Compacts the database so that no value any earlier step overwrote is
+// still legible in the file.
+//
+// SQLite overwrites a row by writing the new cell and leaving the old
+// bytes where they were, in a freeblock or on a page the freelist has
+// released. Every scrub in this file works by UPDATE, so until the file
+// is rebuilt every original title, artist, album and filename is still
+// sitting in it -- invisible to any reader, perfectly visible to strings.
+//
+// This has to run after the LAST writer. It used to happen inside
+// emptyEngineWaveformColumn(), which runs before libdjinterop's own
+// updates and before scrubFilenameColumn(), so the file was compacted and
+// then refilled with the very values the compaction was meant to remove.
+// A regenerated export still carried 317 real strings, and the reader
+// checks could not see any of them because the live rows were correct.
+bool compactDatabase(const std::string &dbPath)
+{
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
+        sqlite3_close(db);
+        return false;
+    }
+    char *error = nullptr;
+    const bool compacted = sqlite3_exec(db, "VACUUM;", nullptr, nullptr, &error) == SQLITE_OK;
+    sqlite3_free(error);
+    sqlite3_close(db);
+    return compacted;
+}
+
 // Drops the cover images an older library keeps in AlbumArt.albumArt. A
 // cover is as identifying as a title, and the export already leaves out
 // the Artwork/ directory that newer libraries keep theirs in. The rows
@@ -147,6 +152,12 @@ int stripAlbumArtImages(const std::string &destinationRoot)
         sqlite3_close(db);
         return -1;
     }
+    // The pages the images sat on are overwritten as they are freed, so
+    // they are gone from the file even before it is compacted.
+    if (sqlite3_exec(db, "PRAGMA secure_delete = ON;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
     char *error = nullptr;
     int changed = -1;
     // The hash goes with the image: a text hash names the image in its own
@@ -163,8 +174,6 @@ int stripAlbumArtImages(const std::string &destinationRoot)
     sqlite3_close(db);
     return changed;
 }
-
-}  // namespace
 
 namespace fs = std::filesystem;
 
@@ -449,7 +458,10 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
                                   "This export must not be shared.";
         }
         // Last thing, after every writer above: see compactDatabase().
-        compactDatabase(pathToUtf8(destination / "Database2" / "m.db"));
+        if (result.errorMessage.empty() && !compactDatabase(pathToUtf8(destination / "Database2" / "m.db"))) {
+            result.errorMessage = "the exported database could not be compacted, so values it replaced may still be "
+                                  "in the file. This export must not be shared.";
+        }
     }
     // Same contract as tracksRefused: a file nothing can scrub, still in
     // Database2, means this export must not be shared. Said in
