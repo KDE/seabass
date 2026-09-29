@@ -5,7 +5,8 @@
 // KDE repositories do not carry Co-Authored-By: Claude or
 // Claude-Session trailers. .githooks/commit-msg strips them and
 // .githooks/pre-push refuses to publish any that got past it; this
-// checks both actually do that.
+// checks both actually do that, and that .githooks/pre-commit finds a
+// missing licence header where reuse lint would.
 //
 // Worth a test rather than a read-through because the failure mode is
 // silence. A hook that checks the wrong commit range, or none, exits 0
@@ -336,6 +337,62 @@ void testPrePushIgnoresBranchDeletion()
     assert(runPrePush(repo, zeroSha(), repo.revParse("HEAD")) == 0);
 }
 
+
+// ---------------------------------------------------------------- pre-commit
+
+// Runs the pre-commit hook in `repo`, checking every tracked file.
+int runPreCommitAll(const Repo &repo)
+{
+    return run("cd " + seabass::pathToGenericUtf8(repo.dir) + " && " + seabass::pathToGenericUtf8(HooksDir / "pre-commit")
+               + " --all >/dev/null 2>&1");
+}
+
+const std::string Header = "SPDX-FileCopyrightText: 2026 Test\nSPDX-License-Identifier: CC0-1.0\n";
+
+// makeRepo's own commits carry no headers; dep5 covers them, as it
+// covers the fixtures in the real tree.
+Repo makeHeaderRepo(const std::string &name)
+{
+    const Repo repo = makeRepo(name);
+    fs::create_directories(repo.dir / ".reuse");
+    write(repo.dir / ".reuse" / "dep5", "Files: file*.txt .msg .rev\nCopyright: 2026 Test\nLicense: CC0-1.0\n");
+    return repo;
+}
+
+// A file with no header of its own and nothing else to cover it.
+void testPreCommitRefusesAFileWithoutAHeader()
+{
+    const Repo repo = makeHeaderRepo("precommit-bare");
+    write(repo.dir / "plain.desktop", "[Desktop Entry]\n");
+    assert(run(repo.git("add -A")) == 0);
+
+    assert(runPreCommitAll(repo) == 1);
+}
+
+// REUSE's sidecar: `<file>.license` carries the header for a file that
+// cannot, and reuse lint accepts it. src/gui/org.kde.seabass.desktop is
+// licensed this way.
+void testPreCommitAcceptsALicenseSidecar()
+{
+    const Repo repo = makeHeaderRepo("precommit-sidecar");
+    write(repo.dir / "plain.desktop", "[Desktop Entry]\n");
+    write(repo.dir / "plain.desktop.license", Header);
+    assert(run(repo.git("add -A")) == 0);
+
+    assert(runPreCommitAll(repo) == 0);
+}
+
+// The sidecar is itself a file and needs the header it is there to carry.
+void testPreCommitRefusesAnEmptySidecar()
+{
+    const Repo repo = makeHeaderRepo("precommit-empty-sidecar");
+    write(repo.dir / "plain.desktop", "[Desktop Entry]\n");
+    write(repo.dir / "plain.desktop.license", "nothing here\n");
+    assert(run(repo.git("add -A")) == 0);
+
+    assert(runPreCommitAll(repo) == 1);
+}
+
 }  // namespace
 
 int main()
@@ -348,6 +405,9 @@ int main()
     testPrePushChecksNewBranchesToo();
     testPrePushIgnoresAlreadyPublishedHistory();
     testPrePushIgnoresBranchDeletion();
+    testPreCommitRefusesAFileWithoutAHeader();
+    testPreCommitAcceptsALicenseSidecar();
+    testPreCommitRefusesAnEmptySidecar();
     std::cout << "no_claude_trailers_test passed\n";
     return 0;
 }
