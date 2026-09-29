@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <optional>
+#include <set>
+#include <mutex>
 #include <span>
 #include <string_view>
 #include <sstream>
@@ -281,6 +283,47 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
 // file under Artwork/ named by the row's blob hash, looked for on the
 // stick. The artwork stage of a progressive read, so the track list never
 // waits for either.
+// Tidies a library's local copies, once per library per run: image files
+// straight under its folder (the layout before copies were kept per
+// stick), and each location's folder (at-...) whose newest file is older
+// than 30 days, a stick or backup long gone from that place. The folder in
+// use is kept whatever its age.
+void tidyLocalCopies(const std::filesystem::path &libraryCopies, const std::filesystem::path &inUse)
+{
+    static std::mutex tidiedLock;
+    static std::set<std::string> tidied;
+    {
+        const std::lock_guard<std::mutex> guard(tidiedLock);
+        if (!tidied.insert(pathToUtf8(libraryCopies)).second) {
+            return;
+        }
+    }
+    const auto cutoff = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24 * 30);
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator(libraryCopies, ec)) {
+        std::error_code entryError;
+        if (entry.is_regular_file(entryError)) {
+            std::filesystem::remove(entry.path(), entryError);
+            continue;
+        }
+        const std::string name = pathToUtf8(entry.path().filename());
+        if (!entry.is_directory(entryError) || name.rfind("at-", 0) != 0 || entry.path() == inUse) {
+            continue;
+        }
+        bool recent = false;
+        for (const auto &file : std::filesystem::directory_iterator(entry.path(), entryError)) {
+            std::error_code timeError;
+            if (file.last_write_time(timeError) >= cutoff && !timeError) {
+                recent = true;
+                break;
+            }
+        }
+        if (!recent) {
+            std::filesystem::remove_all(entry.path(), entryError);
+        }
+    }
+}
+
 // Which stick, or failing that which location, a library's local copies
 // belong to. Clones of one library share its uuid, its hashes and maybe an
 // image's length while holding different bytes, so the uuid alone does not
@@ -344,6 +387,7 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
                 && std::all_of(uuid.begin(), uuid.end(),
                                [](unsigned char c) { return std::isalnum(c) != 0 || c == '-'; })) {
                 libraryDirectory = paths::localEngineArtworkDir() / uuid / localCopiesKey(engineLibraryPath, volumeIdentity);
+                tidyLocalCopies(paths::localEngineArtworkDir() / uuid, libraryDirectory);
             }
         }
         sqlite3_finalize(information);
